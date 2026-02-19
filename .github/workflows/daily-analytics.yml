@@ -39,7 +39,7 @@ jobs:
           GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SHEET_NAME: 'RUBIES SEO Tracker'
-          SEARCH_CONSOLE_SITE_URL: 'https://rubyshines.com'
+          SEARCH_CONSOLE_SITE_URL: 'sc-domain:rubyshines.com'
           SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
         run: |
           # Write the service account credentials to a temporary file
