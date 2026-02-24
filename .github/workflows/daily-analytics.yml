@@ -40,6 +40,11 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SHEET_NAME: 'RUBIES SEO Tracker'
           SEARCH_CONSOLE_SITE_URL: 'sc-domain:rubyshines.com'
+          SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          SHOPIFY_API_KEY: ${{ secrets.SHOPIFY_API_KEY }}
+          SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
+          SHOPIFY_API_VERSION: '2025-10'
           SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
         run: |
           # Write the service account credentials to a temporary file
@@ -47,12 +52,18 @@ jobs:
           echo '${{ secrets.SERVICE_ACCOUNT_KEY }}' > service-account-key.json
 
           # Build the .env file from environment variables
+          # Shopify: use either SHOPIFY_ACCESS_TOKEN or (SHOPIFY_API_KEY + SHOPIFY_PASSWORD)
           cat > .env << EOF
           GA4_PROPERTY_ID=${GA4_PROPERTY_ID}
           GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID}
           GOOGLE_SHEET_NAME=${GOOGLE_SHEET_NAME}
           SERVICE_ACCOUNT_KEY_PATH=./service-account-key.json
           SEARCH_CONSOLE_SITE_URL=${SEARCH_CONSOLE_SITE_URL}
+          SHOPIFY_STORE_URL=${SHOPIFY_STORE_URL}
+          SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN}
+          SHOPIFY_API_KEY=${SHOPIFY_API_KEY}
+          SHOPIFY_PASSWORD=${SHOPIFY_PASSWORD}
+          SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION}
           EOF
 
           # Run the automation script

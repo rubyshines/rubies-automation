@@ -5,13 +5,20 @@
   "main": "src/index.js",
   "scripts": {
     "fetch-metrics": "node src/index.js",
-    "test": "node src/index.js"
+    "fetch-365": "node src/run365.js",
+    "test": "node src/index.js",
+    "debug-shopify": "node scripts/debug-shopify-sources.js"
   },
-  "keywords": ["seo", "analytics", "automation"],
+  "keywords": [
+    "seo",
+    "analytics",
+    "automation"
+  ],
   "author": "RUBIES",
   "license": "MIT",
   "dependencies": {
     "@google-analytics/data": "^4.0.0",
+    "@shopify/shopify-api": "^8.0.0",
     "googleapis": "^131.0.0",
     "dotenv": "^16.0.0"
   }

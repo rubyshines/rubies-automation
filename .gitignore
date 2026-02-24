@@ -15,3 +15,6 @@ service-account-key.json
 # IDE
 .vscode/
 .idea/
+
+# Local history (Cursor, editors, etc.)
+.history/

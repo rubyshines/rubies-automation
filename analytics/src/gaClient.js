@@ -1,47 +1,67 @@
 /**
  * gaClient.js
  * Google Analytics 4 API wrapper.
- * Fetches organic traffic data for the last 7 days.
+ *
+ * Fetches organic search traffic metrics for a single day (default: yesterday).
+ * Filters to sessionDefaultChannelGroup == "Organic Search" only.
+ *
+ * Returns:
+ *   sessions, users, newUsers, returningUsers, engagedSessions,
+ *   engagementRate, pagesPerSession, avgSessionDuration, bounceRate
  */
 
 const { BetaAnalyticsDataClient } = require('@google-analytics/data');
+const { getYesterdayDate } = require('./utils');
 
 /**
- * Fetch organic sessions, users, and conversion rate from GA4.
- *
- * Uses the Google Analytics Data API with a filter for "Organic Search" channel
- * so we only see traffic that came from search engines (not direct, paid, social, etc).
- *
- * @returns {Promise<{ sessions: number, users: number, conversionRate: number }>}
+ * @param {{ date?: string, startDate?: string, endDate?: string }} options
+ *   - date = YYYY-MM-DD for a single day (default: yesterday).
+ *   - startDate + endDate = range (overrides date when both provided).
+ * @returns {Promise<{
+ *   sessions: number,
+ *   users: number,
+ *   newUsers: number,
+ *   returningUsers: number,
+ *   engagedSessions: number,
+ *   engagementRate: number,
+ *   pagesPerSession: number,
+ *   avgSessionDuration: number,
+ *   bounceRate: number,
+ * }>}
  */
-async function fetchGoogleAnalyticsData() {
-  // Initialize the GA4 client using the service account key file
+async function fetchGoogleAnalyticsData(options = {}) {
+  let startDate;
+  let endDate;
+  if (options.startDate != null && options.endDate != null) {
+    startDate = options.startDate;
+    endDate = options.endDate;
+  } else {
+    const date = options.date || getYesterdayDate();
+    startDate = date;
+    endDate = date;
+  }
+
   const analyticsDataClient = new BetaAnalyticsDataClient({
     keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
   });
 
-  const propertyId = process.env.GA4_PROPERTY_ID;
-
-  // Run the report request against the GA4 API
   const [response] = await analyticsDataClient.runReport({
-    property: `properties/${propertyId}`,
+    property: `properties/${process.env.GA4_PROPERTY_ID}`,
 
-    // Last 7 days window (today counted as "0daysAgo")
-    dateRanges: [
-      {
-        startDate: '7daysAgo',
-        endDate: 'today',
-      },
-    ],
+    dateRanges: [{ startDate, endDate }],
 
-    // The numbers we want back
     metrics: [
       { name: 'sessions' },
       { name: 'activeUsers' },
-      { name: 'conversions' },
+      { name: 'newUsers' },
+      { name: 'engagedSessions' },
+      { name: 'engagementRate' },
+      { name: 'screenPageViewsPerSession' },
+      { name: 'averageSessionDuration' },
+      { name: 'bounceRate' },
     ],
 
-    // Only include rows where traffic channel is organic search
+    // Organic search traffic only
     dimensionFilter: {
       filter: {
         fieldName: 'sessionDefaultChannelGroup',
@@ -53,24 +73,51 @@ async function fetchGoogleAnalyticsData() {
     },
   });
 
-  // If no rows came back, organic traffic is zero
+  const empty = {
+    sessions: 0,
+    users: 0,
+    newUsers: 0,
+    returningUsers: 0,
+    engagedSessions: 0,
+    engagementRate: 0,
+    pagesPerSession: 0,
+    avgSessionDuration: 0,
+    bounceRate: 0,
+  };
+
   if (!response.rows || response.rows.length === 0) {
-    console.log('  ⚠️  No organic traffic data found in GA4 for the last 7 days');
-    return { sessions: 0, users: 0, conversionRate: 0 };
+    console.log(`  ⚠️  No organic traffic data found in GA4 for ${startDate}–${endDate}`);
+    return empty;
   }
 
-  // GA4 returns metric values as strings, so parse them to numbers
   const row = response.rows[0];
-  const sessions = parseInt(row.metricValues[0].value, 10) || 0;
-  const users = parseInt(row.metricValues[1].value, 10) || 0;
-  const conversions = parseFloat(row.metricValues[2].value) || 0;
+  const v = (i) => row.metricValues[i]?.value || '0';
 
-  // Conversion rate = (conversions ÷ sessions) × 100, rounded to 1 decimal place
-  const conversionRate = sessions > 0
-    ? Math.round((conversions / sessions) * 100 * 10) / 10
-    : 0;
+  const sessions        = parseInt(v(0), 10)                                    || 0;
+  const users           = parseInt(v(1), 10)                                    || 0;
+  const newUsers        = parseInt(v(2), 10)                                    || 0;
+  const engagedSessions = parseInt(v(3), 10)                                    || 0;
+  // engagementRate comes back as a decimal (e.g. 0.742); convert to %
+  const engagementRate  = Math.round(parseFloat(v(4)) * 100 * 100) / 100       || 0;
+  const pagesPerSession = Math.round(parseFloat(v(5)) * 100) / 100             || 0;
+  // averageSessionDuration is in seconds as a float; round to whole seconds
+  const avgSessionDuration = Math.round(parseFloat(v(6)))                      || 0;
+  // bounceRate comes back as a decimal (e.g. 0.258); convert to %
+  const bounceRate      = Math.round(parseFloat(v(7)) * 100 * 100) / 100       || 0;
 
-  return { sessions, users, conversionRate };
+  const returningUsers  = Math.max(0, users - newUsers);
+
+  return {
+    sessions,
+    users,
+    newUsers,
+    returningUsers,
+    engagedSessions,
+    engagementRate,
+    pagesPerSession,
+    avgSessionDuration,
+    bounceRate,
+  };
 }
 
 module.exports = { fetchGoogleAnalyticsData };

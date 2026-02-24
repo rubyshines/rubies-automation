@@ -1,70 +1,168 @@
 /**
  * gscClient.js
  * Google Search Console API wrapper.
- * Fetches the top 10 keywords by impressions for the last 7 days.
+ *
+ * Exports two functions:
+ *   fetchGSCSummary()   - site-wide daily totals (no dimensions)
+ *   fetchGSCKeywords()  - top 10 keywords by impressions
+ *   fetchGSCPages()     - top 10 pages by clicks
+ *
+ * All functions accept an optional { date } option (YYYY-MM-DD); default: yesterday.
+ * GSC data typically lags 2-3 days — callers should handle empty results gracefully.
  */
 
 const { google } = require('googleapis');
-const { getDaysAgoDate } = require('./utils');
+const { getYesterdayDate } = require('./utils');
 
-/**
- * Fetch the top 10 search queries from Google Search Console.
- *
- * Results are sorted by impressions descending so we always see
- * the keywords getting the most visibility, not just the most clicks.
- *
- * @returns {Promise<Array<{ query: string, impressions: number, clicks: number, position: number, ctr: number }>>}
- */
-async function fetchSearchConsoleData() {
-  // Authenticate using the service account key file
+async function getSearchConsoleClient() {
   const auth = new google.auth.GoogleAuth({
     keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
     scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
   });
-
   const authClient = await auth.getClient();
-  const searchconsole = google.searchconsole({ version: 'v1', auth: authClient });
+  return google.searchconsole({ version: 'v1', auth: authClient });
+}
 
-  // Build a 7-day date range (Search Console uses inclusive start/end dates)
-  const endDate = getDaysAgoDate(0);    // today
-  const startDate = getDaysAgoDate(7);  // 7 days ago
+// ─────────────────────────────────────────────────────────────────────────────
+// Site-wide daily summary
+// ─────────────────────────────────────────────────────────────────────────────
 
-  const siteUrl = process.env.SEARCH_CONSOLE_SITE_URL;
+/**
+ * Fetch site-wide totals for one day or a date range (no dimension grouping).
+ *
+ * @param {{ date?: string, startDate?: string, endDate?: string }} options
+ * @returns {Promise<{ totalClicks: number, totalImpressions: number, avgCtr: number, avgPosition: number } | null>}
+ */
+async function fetchGSCSummary(options = {}) {
+  const startDate = options.startDate != null && options.endDate != null
+    ? options.startDate
+    : (options.date || getYesterdayDate());
+  const endDate = options.startDate != null && options.endDate != null
+    ? options.endDate
+    : (options.date || getYesterdayDate());
+  const searchconsole = await getSearchConsoleClient();
 
   const response = await searchconsole.searchanalytics.query({
-    siteUrl,
+    siteUrl: process.env.SEARCH_CONSOLE_SITE_URL,
     requestBody: {
       startDate,
       endDate,
-      dimensions: ['query'],        // Group results by search keyword
-      searchType: 'web',            // Web results only (not image, video, etc.)
-      rowLimit: 10,                 // Top 10 keywords
-      orderBy: [
-        {
-          fieldName: 'impressions',
-          sortOrder: 'DESCENDING',  // Highest impressions first
-        },
-      ],
+      dimensions: [],   // no dimensions = one aggregated row for the whole site
+      type: 'web',      // web search only (default)
+      dataState: 'all', // include fresh/partial data so recent days match the GSC UI
     },
   });
 
   const rows = response.data.rows || [];
+  if (rows.length === 0) return null;
 
-  if (rows.length === 0) {
-    console.log('  ⚠️  No Search Console data found for the last 7 days');
-    return [];
-  }
-
-  // Map the raw API response into a clean, readable format
-  return rows.map((row) => ({
-    query: row.keys[0],
-    impressions: row.impressions || 0,
-    clicks: row.clicks || 0,
-    // Position is the average rank (1 = top of page 1). Round to 1 decimal.
-    position: Math.round((row.position || 0) * 10) / 10,
-    // CTR comes back as a decimal (e.g. 0.036 = 3.6%), convert to percentage
-    ctr: Math.round((row.ctr || 0) * 100 * 10) / 10,
-  }));
+  const r = rows[0];
+  return {
+    totalClicks:      r.clicks      || 0,
+    totalImpressions: r.impressions || 0,
+    avgCtr:           Math.round((r.ctr      || 0) * 100 * 100) / 100,
+    avgPosition:      Math.round((r.position || 0) * 10) / 10,
+  };
 }
 
-module.exports = { fetchSearchConsoleData };
+// ─────────────────────────────────────────────────────────────────────────────
+// Top keywords by clicks (fetch up to 1,000, save top 50)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GSC_KEYWORDS_FETCH_LIMIT = 1000;
+const GSC_KEYWORDS_SAVE_TOP = 50;
+
+/**
+ * Fetch up to 1,000 keywords from Search Console, ordered by clicks (traffic drivers).
+ * Returns the top 50 by clicks for writing to the sheet (~80–90% of click coverage).
+ * Supports a date range for 365-day aggregation.
+ *
+ * @param {{ date?: string, startDate?: string, endDate?: string }} options
+ * @returns {Promise<{ totalFound: number, keywords: Array<{ keyword: string, rank: number, clicks: number, impressions: number, ctr: number }> }>}
+ */
+async function fetchGSCKeywords(options = {}) {
+  const startDate = options.startDate != null && options.endDate != null
+    ? options.startDate
+    : (options.date || getYesterdayDate());
+  const endDate = options.startDate != null && options.endDate != null
+    ? options.endDate
+    : (options.date || getYesterdayDate());
+  const searchconsole = await getSearchConsoleClient();
+
+  const response = await searchconsole.searchanalytics.query({
+    siteUrl: process.env.SEARCH_CONSOLE_SITE_URL,
+    requestBody: {
+      startDate,
+      endDate,
+      dimensions: ['query'],
+      type: 'web',
+      dataState: 'all',
+      rowLimit: GSC_KEYWORDS_FETCH_LIMIT,
+      orderBy: [{ fieldName: 'clicks', sortOrder: 'DESCENDING' }],
+    },
+  });
+
+  const rows = response.data.rows || [];
+  const mapped = rows.map((row) => ({
+    keyword:     row.keys[0],
+    rank:        Math.round((row.position    || 0) * 10)       / 10,
+    clicks:      row.clicks      || 0,
+    impressions: row.impressions || 0,
+    ctr:         Math.round((row.ctr         || 0) * 100 * 100) / 100,
+  }));
+
+  const top50 = mapped.slice(0, GSC_KEYWORDS_SAVE_TOP);
+  return { totalFound: rows.length, keywords: top50 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top pages by clicks (fetch up to 100, save top 25)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GSC_PAGES_FETCH_LIMIT = 100;
+const GSC_PAGES_SAVE_TOP = 25;
+
+/**
+ * Fetch up to 100 landing pages from Search Console, ordered by clicks descending.
+ * Returns the top 25 by clicks for writing to the sheet (~99%+ click coverage).
+ * Supports a date range for 365-day aggregation.
+ *
+ * @param {{ date?: string, startDate?: string, endDate?: string }} options
+ * @returns {Promise<{ totalFound: number, pages: Array<{ page: string, clicks: number, impressions: number, avgPosition: number, ctr: number }> }>}
+ */
+async function fetchGSCPages(options = {}) {
+  const startDate = options.startDate != null && options.endDate != null
+    ? options.startDate
+    : (options.date || getYesterdayDate());
+  const endDate = options.startDate != null && options.endDate != null
+    ? options.endDate
+    : (options.date || getYesterdayDate());
+  const searchconsole = await getSearchConsoleClient();
+
+  const response = await searchconsole.searchanalytics.query({
+    siteUrl: process.env.SEARCH_CONSOLE_SITE_URL,
+    requestBody: {
+      startDate,
+      endDate,
+      dimensions: ['page'],
+      type: 'web',
+      dataState: 'all',
+      rowLimit: GSC_PAGES_FETCH_LIMIT,
+      orderBy: [{ fieldName: 'clicks', sortOrder: 'DESCENDING' }],
+    },
+  });
+
+  const rows = response.data.rows || [];
+  const mapped = rows.map((row) => ({
+    page:        row.keys[0],
+    clicks:      row.clicks      || 0,
+    impressions: row.impressions || 0,
+    avgPosition: Math.round((row.position || 0) * 10)        / 10,
+    ctr:         Math.round((row.ctr      || 0) * 100 * 100) / 100,
+  }));
+
+  const top25 = mapped.slice(0, GSC_PAGES_SAVE_TOP);
+  return { totalFound: rows.length, pages: top25 };
+}
+
+module.exports = { fetchGSCSummary, fetchGSCKeywords, fetchGSCPages };

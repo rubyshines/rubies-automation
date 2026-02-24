@@ -1,6 +1,6 @@
 # RUBIES Analytics Automation
 
-Automatically tracks SEO performance daily by pulling data from Google Analytics 4 and Google Search Console, then writing to a Google Sheet.
+Automatically tracks SEO performance daily by pulling data from Google Analytics 4, Google Search Console, and Shopify, then writing to a Google Sheet.
 
 ## What It Does
 
@@ -21,6 +21,12 @@ Automatically tracks SEO performance daily by pulling data from Google Analytics
   - Google Analytics (Viewer role)
   - Search Console (Full permission)
   - Target Google Sheet (Editor access)
+- Shopify store with Admin API access (at least `read_orders`)
+
+**Shopify authentication** (use one of these):
+
+- **Token-only (Custom App):** set `SHOPIFY_STORE_URL` and `SHOPIFY_ACCESS_TOKEN`.
+- **API key + password (same as rubies-utilities / legacy Private App):** set `SHOPIFY_STORE_URL`, `SHOPIFY_API_KEY`, and `SHOPIFY_PASSWORD`. You can use the same values as in `rubies-utilities/creds/creds-from-shopify.json` (`shopifyApiKey` → `SHOPIFY_API_KEY`, `shopifyPassword` → `SHOPIFY_PASSWORD`).
 
 ## Local Setup
 
@@ -63,6 +69,8 @@ The script runs automatically via GitHub Actions. Credentials are stored as GitH
 | `GA4_PROPERTY_ID` | `363593585` |
 | `GOOGLE_SHEET_ID` | Your sheet ID from the URL |
 | `SERVICE_ACCOUNT_KEY` | Full contents of `service-account-key.json` |
+| `SHOPIFY_STORE_URL` | Your store (e.g. `rubies-active-wear.myshopify.com`) |
+| `SHOPIFY_ACCESS_TOKEN` *or* `SHOPIFY_API_KEY` + `SHOPIFY_PASSWORD` | Shopify Admin API credentials (see Shopify authentication above) |
 
 See the main repo README for step-by-step GitHub setup instructions.
 
@@ -85,26 +93,38 @@ See the main repo README for step-by-step GitHub setup instructions.
 - Verify the `SEARCH_CONSOLE_SITE_URL` matches exactly what's verified in GSC
 - GSC data can lag 2–3 days; recent days may show low numbers
 
+**Shopify: lots of "Unknown" in channel breakdown**
+- The script uses the Orders API and classifies each order by `source_name`, `referring_site`, and `landing_site`. Many orders have no or generic values (e.g. `source_name: "web"`), so they are mapped to **direct**; anything that doesn’t match search/social/email rules becomes **unknown**.
+- **Validate:** From the `analytics` folder run:
+  ```bash
+  npm run debug-shopify
+  ```
+  Or for a specific date: `node scripts/debug-shopify-sources.js 2026-02-18`
+  This prints each order’s raw `source_name`, `referring_site`, `landing_site` and the classified channel so you can see why something is unknown.
+- **Double-check in Shopify:** In Shopify Admin go to **Analytics → Reports** and use “Sales by traffic source” or “Sessions by referrer source” for the same date. The API does not expose the exact same session attribution as the Shopify UI; our breakdown is order-based and best-effort.
+
 **Sheet not found / tab errors**
 - Make sure `GOOGLE_SHEET_NAME` in `.env` exactly matches your sheet's document title
 - Make sure the sheet has been shared with the service account email
 
 ## Data Output
 
-**Tab: "RUBIES SEO Tracker - Daily Metrics"**
+**Tab: "Daily Metrics"** — GA4 only (original analytics; not mixed with Shopify).
 
 | Date | Organic Sessions | Organic Users | Conversion Rate (%) | Notes |
 |---|---|---|---|---|
 | 2026-02-18 | 1234 | 1150 | 2.5 | Baseline (first run) |
 | 2026-02-19 | 1289 | 1201 | 2.7 | |
 
-**Tab: "RUBIES SEO Tracker - Keyword Rankings"**
+**Tab: "Keyword Rankings"** — GSC only.
 
 | Keyword | 2026-02-18 Rank | 2026-02-18 Clicks | 2026-02-18 Impressions | 2026-02-19 Rank | ... |
 |---|---|---|---|---|---|
 | trans swimwear | 12.3 | 45 | 1250 | 11.8 | ... |
 
 New date columns are added automatically each day. Historical data is never overwritten.
+
+**Tab: "Shopify Channel Breakdown"** — Shopify only (per-channel orders/revenue). Separate from Daily Metrics.
 
 ## Support
 
