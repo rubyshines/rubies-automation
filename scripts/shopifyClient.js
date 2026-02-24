@@ -1,34 +1,41 @@
 /**
  * shopifyClient.js
- * Shopify Analytics via ShopifyQL (GraphQL Admin API).
+ * Shopify Analytics via ShopifyQL (GraphQL Admin API) for backfill + daily pipeline.
  *
  * Exports:
  *   fetchShopifyChannels()   - sessions/orders/revenue/AOV/new+returning by channel
  *   fetchShopifyGeography()  - sessions/orders/revenue/conv% by country (top 10, excl. China)
  *
- * Requires "read_reports" permission on your Shopify API credentials.
- * Shopify Admin → Apps → your private/custom app → edit permissions → enable "Reports".
+ * Auth:
+ *   SHOPIFY_STORE_URL   - your-store.myshopify.com
+ *   SHOPIFY_API_KEY     - Admin API key (legacy private app) [optional]
+ *   SHOPIFY_PASSWORD    - Admin API password / access token
  *
- * Confirmed ShopifyQL columns used:
- *   sessions table:  sessions, referring_medium, session_country
- *   sales table:     orders, total_sales (order total = products + shipping + tax),
- *                    new_customers, returning_customers, referring_medium, billing_country
+ * Requires \"read_reports\" permission on your Shopify API credentials.
  */
 
-const { getYesterdayDate } = require('./utils');
+// Minimal date helper (only used when callers omit explicit dates)
+function getYesterdayDate() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
-const SHOPIFY_STORE_URL   = process.env.SHOPIFY_STORE_URL;
+const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const SHOPIFY_PASSWORD     = process.env.SHOPIFY_PASSWORD || process.env.SHOPIFY_API_PASSWORD;
-const SHOPIFY_API_VERSION  = '2025-10';
+const SHOPIFY_PASSWORD = process.env.SHOPIFY_PASSWORD || process.env.SHOPIFY_API_PASSWORD;
+const SHOPIFY_API_VERSION = '2025-10';
 
-const graphqlToken  = SHOPIFY_ACCESS_TOKEN || SHOPIFY_PASSWORD;
+const graphqlToken = SHOPIFY_ACCESS_TOKEN || SHOPIFY_PASSWORD;
 const hasCredentials = Boolean(SHOPIFY_STORE_URL && graphqlToken);
 
 if (!hasCredentials) {
   console.log(
     '  ⚠️  Shopify env vars missing. Set SHOPIFY_STORE_URL and either ' +
-    'SHOPIFY_ACCESS_TOKEN or SHOPIFY_PASSWORD. Shopify metrics will be skipped.'
+    'SHOPIFY_ACCESS_TOKEN or SHOPIFY_PASSWORD. Shopify metrics will be skipped.',
   );
 }
 
@@ -86,10 +93,6 @@ function parseTableData(tableData) {
 // Channel mapping
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Map a ShopifyQL `referring_medium` value to one of our five channel buckets.
- * Confirmed values: null (direct), "search", "social", "email", "email/sms"
- */
 function mapChannel(referringMedium) {
   if (!referringMedium) return 'Direct';
   const ch = referringMedium.toLowerCase();
@@ -103,28 +106,6 @@ function mapChannel(referringMedium) {
 // Channel breakdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Fetch per-channel analytics for one day or a date range (default: yesterday).
- *
- * Returns an array of channel rows, one per channel:
- *   channel, sessions, orders, revenue, conversionRate, avgOrderValue,
- *   newCustomers, returningCustomers
- *
- * Sessions exclude China (bot/spam traffic).
- * Sales include new_customers and returning_customers (confirmed ShopifyQL metrics).
- *
- * @param {{ date?: string, startDate?: string, endDate?: string }} options
- * @returns {Promise<Array<{
- *   channel: string,
- *   sessions: number,
- *   orders: number,
- *   revenue: number,
- *   conversionRate: number,
- *   avgOrderValue: number,
- *   newCustomers: number,
- *   returningCustomers: number,
- * }> | null>}
- */
 async function fetchShopifyChannels(options = {}) {
   if (!hasCredentials) return null;
 
@@ -139,15 +120,12 @@ async function fetchShopifyChannels(options = {}) {
     untilDate = date;
   }
 
-  // Sessions: filter out China bot traffic; session_country only works on
-  // the sessions table standalone (not in an implicit join with sales).
   const sessionsQL = `FROM sessions
   SHOW sessions
   GROUP BY referring_medium
   WHERE session_country != 'China'
   SINCE ${sinceDate} UNTIL ${untilDate}`;
 
-  // Sales: orders, total_sales (order total incl. shipping + tax), new/returning customers
   const salesQL = `FROM sales
   SHOW orders, total_sales, new_customers, returning_customers
   GROUP BY referring_medium
@@ -162,7 +140,7 @@ async function fetchShopifyChannels(options = {}) {
   } catch (err) {
     console.error('  ✗ ShopifyQL sessions query failed:', err.message);
     if (err.message.includes('403') || err.message.toLowerCase().includes('access')) {
-      console.error('    → Ensure "read_reports" is enabled on your Shopify API credentials');
+      console.error('    → Ensure \"read_reports\" is enabled on your Shopify API credentials');
     }
   }
 
@@ -188,22 +166,22 @@ async function fetchShopifyChannels(options = {}) {
 
   for (const row of salesRows) {
     const ch = mapChannel(row.referring_medium);
-    buckets[ch].orders           += parseFloat(row.orders)             || 0;
-    buckets[ch].revenue          += parseFloat(row.total_sales)       || 0;
-    buckets[ch].newCustomers     += parseFloat(row.new_customers)     || 0;
+    buckets[ch].orders += parseFloat(row.orders) || 0;
+    buckets[ch].revenue += parseFloat(row.total_sales) || 0;
+    buckets[ch].newCustomers += parseFloat(row.new_customers) || 0;
     buckets[ch].returningCustomers += parseFloat(row.returning_customers) || 0;
   }
 
   return CHANNELS.map((ch) => {
     const b = buckets[ch];
     return {
-      channel:            b.channel,
-      sessions:           b.sessions,
-      orders:             b.orders,
-      revenue:            Math.round(b.revenue * 100) / 100,
-      conversionRate:     b.sessions > 0 ? Math.round((b.orders / b.sessions) * 100 * 100) / 100 : 0,
-      avgOrderValue:      b.orders  > 0 ? Math.round((b.revenue / b.orders) * 100) / 100 : 0,
-      newCustomers:       b.newCustomers,
+      channel: b.channel,
+      sessions: b.sessions,
+      orders: b.orders,
+      revenue: Math.round(b.revenue * 100) / 100,
+      conversionRate: b.sessions > 0 ? Math.round((b.orders / b.sessions) * 100 * 100) / 100 : 0,
+      avgOrderValue: b.orders > 0 ? Math.round((b.revenue / b.orders) * 100) / 100 : 0,
+      newCustomers: b.newCustomers,
       returningCustomers: b.returningCustomers,
     };
   });
@@ -213,20 +191,6 @@ async function fetchShopifyChannels(options = {}) {
 // Geography breakdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Fetch per-country analytics for one day or a date range (default: yesterday).
- * Top 10 countries by sessions; excludes China.
- * Merges session_country (sessions table) with billing_country (sales table).
- *
- * @param {{ date?: string, startDate?: string, endDate?: string }} options
- * @returns {Promise<Array<{
- *   country: string,
- *   sessions: number,
- *   orders: number,
- *   revenue: number,
- *   conversionRate: number,
- * }> | null>}
- */
 async function fetchShopifyGeography(options = {}) {
   if (!hasCredentials) return null;
 
@@ -270,8 +234,6 @@ async function fetchShopifyGeography(options = {}) {
 
   if (sessionsRows.length === 0 && salesRows.length === 0) return null;
 
-  // Merge by country name — session_country and billing_country both return
-  // full country names (e.g. "United States", "Canada")
   const map = {};
 
   for (const row of sessionsRows) {
@@ -283,19 +245,20 @@ async function fetchShopifyGeography(options = {}) {
   for (const row of salesRows) {
     const country = row.billing_country || 'Unknown';
     if (!map[country]) map[country] = { country, sessions: 0, orders: 0, revenue: 0 };
-    map[country].orders  += parseFloat(row.orders)      || 0;
+    map[country].orders += parseFloat(row.orders) || 0;
     map[country].revenue += parseFloat(row.total_sales) || 0;
   }
 
   return Object.values(map)
     .sort((a, b) => b.sessions - a.sessions)
     .map((c) => ({
-      country:        c.country,
-      sessions:       c.sessions,
-      orders:         c.orders,
-      revenue:        Math.round(c.revenue * 100) / 100,
+      country: c.country,
+      sessions: c.sessions,
+      orders: c.orders,
+      revenue: Math.round(c.revenue * 100) / 100,
       conversionRate: c.sessions > 0 ? Math.round((c.orders / c.sessions) * 100 * 100) / 100 : 0,
     }));
 }
 
 module.exports = { fetchShopifyChannels, fetchShopifyGeography };
+

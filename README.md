@@ -4,16 +4,6 @@ Collection of automation scripts for RUBIES operations.
 
 ## Projects
 
-### Analytics (`/analytics`)
-Daily SEO tracking automation that pulls data from Google Analytics 4 and Google Search Console into a Google Sheet.
-
-- Tracks organic sessions, users, and conversion rate
-- Monitors top 10 keyword rankings daily
-- Prevents duplicate runs on the same day
-- Runs automatically at 9 AM UTC via GitHub Actions
-
-**Setup:** See [analytics/README.md](analytics/README.md)
-
 ### SEO backfill (one-time)
 
 Historical data backfill into Supabase for GSC, Shopify, and GA4. Run locally only (not on GitHub Actions).
@@ -25,7 +15,6 @@ Historical data backfill into Supabase for GSC, Shopify, and GA4. Run locally on
 
 ### Future Automations
 - `wholesale/` — Wholesale lead management *(coming soon)*
-- `inventory/` — Inventory sync *(coming soon)*
 
 ## GitHub Actions
 

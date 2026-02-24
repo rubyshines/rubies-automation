@@ -347,7 +347,7 @@ async function backfillShopify() {
   const endStr = formatDate(end);
   console.log(`  Date range: ${startStr} → ${endStr} (per-day, ${DELAY_SHOPIFY_MS}ms delay)`);
 
-  const { fetchShopifyChannels, fetchShopifyGeography } = require('../analytics/src/shopifyClient');
+  const { fetchShopifyChannels, fetchShopifyGeography } = require('./shopifyClient');
   const days = getDaysInRange(startStr, endStr);
 
   let channelRows = 0;

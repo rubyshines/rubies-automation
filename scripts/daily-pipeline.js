@@ -25,7 +25,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { BetaAnalyticsDataClient } = require('@google-analytics/data');
 
 // Shopify
-const { fetchShopifyChannels, fetchShopifyGeography } = require('../analytics/src/shopifyClient');
+const { fetchShopifyChannels, fetchShopifyGeography } = require('./shopifyClient');
 
 // Google Sheets
 const { google } = require('googleapis');
@@ -95,6 +95,41 @@ function stripQueryParams(p) {
   if (!p || typeof p !== 'string') return p || '';
   const i = p.indexOf('?');
   return i === -1 ? p : p.slice(0, i);
+}
+
+function formatEasternTimestampForDateLabel(dateStr) {
+  try {
+    const now = new Date();
+    const timeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    const timeParts = timeFormatter.formatToParts(now);
+    const hour = timeParts.find((p) => p.type === 'hour')?.value || '';
+    const minute = timeParts.find((p) => p.type === 'minute')?.value || '';
+    const period = (timeParts.find((p) => p.type === 'dayPeriod')?.value || '').toLowerCase();
+    const timeLabel = `${hour}:${minute}${period}`;
+
+    let targetDate;
+    if (dateStr) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      targetDate = new Date(Date.UTC(y, m - 1, d));
+    } else {
+      targetDate = now;
+    }
+    const dateFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+    });
+    const dateLabel = dateFormatter.format(targetDate);
+    return `${timeLabel} ET on ${dateLabel}`;
+  } catch (_) {
+    return `${dateStr || new Date().toISOString().slice(0, 10)} (ET)`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -574,7 +609,7 @@ async function sendNotification(status, targetDates, gapDates, results) {
     text = [
       'Daily pipeline completed successfully.',
       '',
-      `Date processed: ${date}`,
+      `Processed ${formatEasternTimestampForDateLabel(date)}`,
       `Gap days filled: ${gapCount}${gapCount ? ` (${gapList})` : ''}`,
       '',
       'Rows written:',
@@ -587,7 +622,7 @@ async function sendNotification(status, targetDates, gapDates, results) {
       `- Shopify Channels: ${rows.shopifyChannels}`,
       `- Shopify Geography: ${rows.shopifyGeo}`,
       '',
-      'Next run: tomorrow at 5am UTC',
+      'Next run: tomorrow at 5am ET',
     ].join('\n');
   } else if (status === 'partial') {
     subject = `⚠️ RUBIES Pipeline — ${date} completed with errors`;
@@ -799,7 +834,7 @@ async function writePipelineSummary(targetDates) {
 
   // Build full sheet body (overwrite tab)
   const rows = [];
-  rows.push([`Last updated: ${new Date().toISOString()}`]);
+  rows.push([`Last updated: ${formatEasternTimestampForDateLabel()} `]);
   rows.push([]);
   rows.push(['GSC Last 7 Days']);
   rows.push(['Date', 'Clicks', 'Impressions', 'CTR', 'Avg Position']);

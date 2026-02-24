@@ -26,7 +26,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          SERVICE_ACCOUNT_KEY_PATH: './analytics/service-account-key.json'
+          SERVICE_ACCOUNT_KEY_PATH: './service-account-key.json'
           GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
           SEARCH_CONSOLE_SITE_URL: ${{ secrets.SEARCH_CONSOLE_SITE_URL }}
           SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
@@ -35,7 +35,7 @@ jobs:
           SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
         run: |
-          # Write service account key from secret to file expected by analytics & pipeline
-          echo '${{ secrets.SERVICE_ACCOUNT_KEY }}' > analytics/service-account-key.json
+          # Write service account key from secret to file expected by pipeline
+          echo '${{ secrets.SERVICE_ACCOUNT_KEY }}' > service-account-key.json
           node scripts/daily-pipeline.js
 
