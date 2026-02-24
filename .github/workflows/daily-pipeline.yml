@@ -2,7 +2,7 @@ name: RUBIES SEO Daily Pipeline
 
 on:
   schedule:
-    - cron: '0 5 * * *' # 5am UTC daily
+    - cron: '0 10 * * *' # 5am US Eastern (UTC-5; GitHub cron is UTC)
   workflow_dispatch:
 
 jobs:
