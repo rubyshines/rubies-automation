@@ -1,0 +1,41 @@
+name: RUBIES SEO Daily Pipeline
+
+on:
+  schedule:
+    - cron: '0 5 * * *' # 5am UTC daily
+  workflow_dispatch:
+
+jobs:
+  run-daily-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run daily pipeline
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SERVICE_ACCOUNT_KEY_PATH: './analytics/service-account-key.json'
+          GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
+          SEARCH_CONSOLE_SITE_URL: ${{ secrets.SEARCH_CONSOLE_SITE_URL }}
+          SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
+          SHOPIFY_API_KEY: ${{ secrets.SHOPIFY_API_KEY }}
+          SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+        run: |
+          # Write service account key from secret to file expected by analytics & pipeline
+          echo '${{ secrets.SERVICE_ACCOUNT_KEY }}' > analytics/service-account-key.json
+          node scripts/daily-pipeline.js
+

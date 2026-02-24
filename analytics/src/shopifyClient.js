@@ -20,7 +20,7 @@ const { getYesterdayDate } = require('./utils');
 const SHOPIFY_STORE_URL   = process.env.SHOPIFY_STORE_URL;
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
 const SHOPIFY_PASSWORD     = process.env.SHOPIFY_PASSWORD || process.env.SHOPIFY_API_PASSWORD;
-const SHOPIFY_API_VERSION  = process.env.SHOPIFY_API_VERSION || '2025-10';
+const SHOPIFY_API_VERSION  = '2025-10';
 
 const graphqlToken  = SHOPIFY_ACCESS_TOKEN || SHOPIFY_PASSWORD;
 const hasCredentials = Boolean(SHOPIFY_STORE_URL && graphqlToken);

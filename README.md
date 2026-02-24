@@ -14,6 +14,15 @@ Daily SEO tracking automation that pulls data from Google Analytics 4 and Google
 
 **Setup:** See [analytics/README.md](analytics/README.md)
 
+### SEO backfill (one-time)
+
+Historical data backfill into Supabase for GSC, Shopify, and GA4. Run locally only (not on GitHub Actions).
+
+- **Script:** `scripts/backfill.js`
+- **Run:** From repo root: `npm run backfill` or `node scripts/backfill.js`
+- **Config:** `config.json` at project root; copy `.env.example` to `.env` and set `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, and same auth as analytics (e.g. `SERVICE_ACCOUNT_KEY_PATH`, `SEARCH_CONSOLE_SITE_URL`, `SHOPIFY_*`, `GA4_PROPERTY_ID`).
+- **Schema:** If you don’t set `SUPABASE_DATABASE_URL`, run `scripts/supabase-schema.sql` once in the Supabase SQL Editor to create tables.
+
 ### Future Automations
 - `wholesale/` — Wholesale lead management *(coming soon)*
 - `inventory/` — Inventory sync *(coming soon)*

@@ -1,0 +1,79 @@
+{
+  "baseline_date": "2026-02-20",
+  "backfill_months": 24,
+  "store_url": "rubyshines.com",
+  "email_recipient": "jamie@rubyshines.com",
+  "email_send_time": "06:00",
+  "pipeline_sender_email": "jamie@rubyshines.com",
+  "alert_thresholds": {
+    "keyword_position_change": 3,
+    "ctr_change_percent": 20,
+    "clicks_change_percent": 20
+  },
+  "keywords": {
+    "non_branded": [
+      "trans underwear",
+      "trans swimwear",
+      "trans bikini",
+      "no tuck underwear",
+      "no tuck swimwear",
+      "no tuck shaping underwear",
+      "gender affirming underwear for trans women",
+      "gender affirming swimwear for trans women",
+      "underwear for trans women",
+      "transgender underwear",
+      "trans girl underwear",
+      "trans girl swimwear",
+      "trans girl bikini",
+      "mtf underwear",
+      "trans women swimwear",
+      "tucking underwear",
+      "gaff underwear",
+      "gaff alternative",
+      "no gaff underwear",
+      "trans swimwear kids",
+      "gender affirming swimwear kids",
+      "gender affirming underwear kids"
+    ],
+    "branded": ["rubies", "rubies swimwear", "rubies underwear", "rubyshines"]
+  },
+  "priority_product_urls": [
+    "/products/the-aj-shaping-underwear",
+    "/products/the-ruby-no-tuck-shaping-bikini-bottom",
+    "/products/the-sky-shaping-one-piece",
+    "/products/the-brooke-bra",
+    "/products/the-extra-cute-shaping-underwear",
+    "/products/the-shaping-shorty-shorts",
+    "/products/shaping_chest-pads",
+    "/products/magical-shaping-chest-pads"
+  ],
+  "priority_page_urls": [
+    "/pages/how-it-works",
+    "/pages/shop-adults",
+    "/pages/shop-kids",
+    "/pages/about-us",
+    "/pages/size-guide",
+    "/pages/exchanges-and-returns",
+    "/pages/stock-rubies-in-your-store",
+    "/pages/customer-care"
+  ],
+  "redirect_source_urls": [
+    "/pages/contact",
+    "/pages/pass-it-along",
+    "/pages/how-to-wear",
+    "/pages/exchanges-and-returns",
+    "/pages/shop-unicorns",
+    "/pages/about",
+    "/collections/new-arrivals",
+    "/collections/form-fitting-clothing",
+    "/collections/the-most-comfortable-underwear-for-trans-women",
+    "/collections/everyday",
+    "/collections/adults",
+    "/collections/swimwear",
+    "/collections/shop-all",
+    "/collections/the-most-comfortable-swimwear-for-trans-girls-and-adults",
+    "/collections/shaping-products",
+    "/products/form-fitting-bikini-bottom",
+    "/products/no-tuck-shaping-underwear"
+  ]
+}
