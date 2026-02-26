@@ -5,6 +5,8 @@
  * Exports:
  *   fetchShopifyChannels()   - sessions/orders/revenue/AOV/new+returning by channel
  *   fetchShopifyGeography()  - sessions/orders/revenue/conv% by country (top 10, excl. China)
+ *   runShopifyQLQuery()      - low-level ShopifyQL query runner (for custom queries)
+ *   parseTableData()         - parse ShopifyQL tableData into row objects
  *
  * Auth:
  *   SHOPIFY_STORE_URL   - your-store.myshopify.com
@@ -260,5 +262,5 @@ async function fetchShopifyGeography(options = {}) {
     }));
 }
 
-module.exports = { fetchShopifyChannels, fetchShopifyGeography };
+module.exports = { fetchShopifyChannels, fetchShopifyGeography, runShopifyQLQuery, parseTableData };
 

@@ -1,4 +1,4 @@
-name: RUBIES SEO Daily Pipeline
+name: RUBIES Daily SEO Tracking
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-daily-pipeline:
+  run-daily-seo-tracking:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run daily pipeline
+      - name: Run daily SEO tracking
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -37,5 +37,5 @@ jobs:
         run: |
           # Write service account key from secret to file expected by pipeline
           echo '${{ secrets.SERVICE_ACCOUNT_KEY }}' > service-account-key.json
-          node seo-tracking/daily-pipeline.js
+          node seo-tracking/daily-seo-tracking.js
 
