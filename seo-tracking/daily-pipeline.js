@@ -17,30 +17,15 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const configPath = path.join(__dirname, '..', 'config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-// Supabase
-const { createClient } = require('@supabase/supabase-js');
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+// Shared clients
+const { getSupabaseClient, upsert } = require('../shared/supabaseClient');
+const { getSearchConsoleClient } = require('../shared/googleSearchConsoleClient');
+const { getGa4Client } = require('../shared/ga4Client');
+const { getSheetsClient } = require('../shared/googleSheetsClient');
+const { getSendgridClient } = require('../shared/sendgridClient');
+const { fetchShopifyChannels, fetchShopifyGeography } = require('../shared/shopifyClient');
 
-// GA4
-const { BetaAnalyticsDataClient } = require('@google-analytics/data');
-
-// Shopify
-const { fetchShopifyChannels, fetchShopifyGeography } = require('./shopifyClient');
-
-// Google Sheets
-const { google } = require('googleapis');
-
-// SendGrid (optional – pipeline still runs if missing)
-let sgMail = null;
-try {
-  // eslint-disable-next-line global-require, import/no-extraneous-dependencies
-  sgMail = require('@sendgrid/mail');
-  if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  }
-} catch (err) {
-  console.log('  ℹ SendGrid module not available; email notifications will be skipped unless installed.');
-}
+const supabase = getSupabaseClient();
 
 // ---------------------------------------------------------------------------
 // Date helpers
@@ -127,22 +112,10 @@ function formatEasternTimestampForDateLabel(dateStr) {
     });
     const dateLabel = dateFormatter.format(targetDate);
     return `${timeLabel} ET on ${dateLabel}`;
-  } catch (_) {
+  } catch (err) {
+    console.error('  ⚠ formatEasternTimestampForDateLabel fell back to ISO date:', err.message);
     return `${dateStr || new Date().toISOString().slice(0, 10)} (ET)`;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Supabase helpers
-// ---------------------------------------------------------------------------
-
-async function upsert(table, rows, conflictCols) {
-  if (!rows.length) return 0;
-  const { error } = await supabase.from(table).upsert(rows, {
-    onConflict: conflictCols ? conflictCols.join(',') : undefined,
-  });
-  if (error) throw error;
-  return rows.length;
 }
 
 async function getLastGscDate() {
@@ -183,13 +156,7 @@ async function getGapDates() {
 // ---------------------------------------------------------------------------
 
 async function getGSCClient() {
-  const { google } = require('googleapis');
-  const auth = new google.auth.GoogleAuth({
-    keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
-    scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
-  });
-  const authClient = await auth.getClient();
-  return google.searchconsole({ version: 'v1', auth: authClient });
+  return getSearchConsoleClient();
 }
 
 async function runGSC(targetDates, results) {
@@ -209,6 +176,8 @@ async function runGSC(targetDates, results) {
   let kwRows = 0;
   let kpRows = 0;
   let pageRows = 0;
+  let hadError = false;
+  let lastError = null;
 
   try {
     const client = await getGSCClient();
@@ -236,6 +205,8 @@ async function runGSC(targetDates, results) {
         if (rows.length) summaryRows += await upsert('gsc_daily_summary', rows, ['date']);
       } catch (err) {
         console.error(`  ✗ GSC summary ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
 
       // 2) Keywords
@@ -270,6 +241,8 @@ async function runGSC(targetDates, results) {
         if (rows.length) kwRows += await upsert('gsc_keywords', rows, ['date', 'keyword']);
       } catch (err) {
         console.error(`  ✗ GSC keywords ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
 
       // 3) Keyword + page
@@ -305,6 +278,8 @@ async function runGSC(targetDates, results) {
         if (rows.length) kpRows += await upsert('gsc_keyword_pages', rows, ['date', 'keyword', 'page_url']);
       } catch (err) {
         console.error(`  ✗ GSC keyword+page ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
 
       // 4) Pages
@@ -331,22 +306,33 @@ async function runGSC(targetDates, results) {
         if (rows.length) pageRows += await upsert('gsc_pages', rows, ['date', 'page_url']);
       } catch (err) {
         console.error(`  ✗ GSC pages ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
 
       await sleep(500); // rate limiting between days
     }
 
-    results[sourceKey] = {
-      success: true,
-      rowsWritten: summaryRows + kwRows + kpRows + pageRows,
-      error: null,
-      detail: {
-        gsc_daily_summary: summaryRows,
-        gsc_keywords: kwRows,
-        gsc_keyword_pages: kpRows,
-        gsc_pages: pageRows,
-      },
-    };
+    const totalRows = summaryRows + kwRows + kpRows + pageRows;
+    if (hadError && totalRows === 0) {
+      results[sourceKey] = {
+        success: false,
+        rowsWritten: 0,
+        error: lastError || 'GSC: errors occurred and no rows were written',
+      };
+    } else {
+      results[sourceKey] = {
+        success: true,
+        rowsWritten: totalRows,
+        error: null,
+        detail: {
+          gsc_daily_summary: summaryRows,
+          gsc_keywords: kwRows,
+          gsc_keyword_pages: kpRows,
+          gsc_pages: pageRows,
+        },
+      };
+    }
   } catch (err) {
     results[sourceKey] = { success: false, rowsWritten: 0, error: err.message };
   }
@@ -357,9 +343,7 @@ async function runGSC(targetDates, results) {
 // ---------------------------------------------------------------------------
 
 async function getGA4Client() {
-  return new BetaAnalyticsDataClient({
-    keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
-  });
+  return getGa4Client();
 }
 
 async function runGA4(targetDates, results) {
@@ -378,6 +362,8 @@ async function runGA4(targetDates, results) {
   const property = `properties/${process.env.GA4_PROPERTY_ID}`;
   let dailyRows = 0;
   let lpRows = 0;
+  let hadError = false;
+  let lastError = null;
 
   try {
     for (const date of targetDates) {
@@ -428,6 +414,8 @@ async function runGA4(targetDates, results) {
         }
       } catch (err) {
         console.error(`  ✗ GA4 daily ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
 
       // Landing pages
@@ -476,18 +464,29 @@ async function runGA4(targetDates, results) {
         }
       } catch (err) {
         console.error(`  ✗ GA4 landing pages ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
     }
 
-    results[sourceKey] = {
-      success: true,
-      rowsWritten: dailyRows + lpRows,
-      error: null,
-      detail: {
-        ga4_daily: dailyRows,
-        ga4_landing_pages: lpRows,
-      },
-    };
+    const totalRows = dailyRows + lpRows;
+    if (hadError && totalRows === 0) {
+      results[sourceKey] = {
+        success: false,
+        rowsWritten: 0,
+        error: lastError || 'GA4: errors occurred and no rows were written',
+      };
+    } else {
+      results[sourceKey] = {
+        success: true,
+        rowsWritten: totalRows,
+        error: null,
+        detail: {
+          ga4_daily: dailyRows,
+          ga4_landing_pages: lpRows,
+        },
+      };
+    }
   } catch (err) {
     results[sourceKey] = { success: false, rowsWritten: 0, error: err.message };
   }
@@ -511,6 +510,8 @@ async function runShopify(targetDates, results) {
 
   let channelRows = 0;
   let geoRows = 0;
+  let hadError = false;
+  let lastError = null;
 
   try {
     for (const date of targetDates) {
@@ -545,20 +546,31 @@ async function runShopify(targetDates, results) {
         }
       } catch (err) {
         console.error(`  ✗ Shopify ${date}: ${err.message}`);
+        hadError = true;
+        lastError = err.message;
       }
 
       await sleep(500);
     }
 
-    results[sourceKey] = {
-      success: true,
-      rowsWritten: channelRows + geoRows,
-      error: null,
-      detail: {
-        shopify_daily_channels: channelRows,
-        shopify_geography: geoRows,
-      },
-    };
+    const totalRows = channelRows + geoRows;
+    if (hadError && totalRows === 0) {
+      results[sourceKey] = {
+        success: false,
+        rowsWritten: 0,
+        error: lastError || 'Shopify: errors occurred and no rows were written',
+      };
+    } else {
+      results[sourceKey] = {
+        success: true,
+        rowsWritten: totalRows,
+        error: null,
+        detail: {
+          shopify_daily_channels: channelRows,
+          shopify_geography: geoRows,
+        },
+      };
+    }
   } catch (err) {
     results[sourceKey] = { success: false, rowsWritten: 0, error: err.message };
   }
@@ -581,8 +593,9 @@ function classifyStatus(results) {
 async function sendNotification(status, targetDates, gapDates, results) {
   const to = config.email_recipient;
   const from = config.pipeline_sender_email;
-  if (!sgMail || !to || !from || !process.env.SENDGRID_API_KEY) {
-    console.log('  ℹ Skipping email notification (missing @sendgrid/mail, SENDGRID_API_KEY, email_recipient, or pipeline_sender_email).');
+  const sgMail = getSendgridClient();
+  if (!sgMail || !to || !from) {
+    console.log('  ℹ Skipping email notification (missing SendGrid client, email_recipient, or pipeline_sender_email).');
     return;
   }
 
@@ -676,12 +689,7 @@ async function writePipelineSummary(targetDates) {
   }
 
   const tabName = 'Pipeline Summary';
-  const auth = new google.auth.GoogleAuth({
-    keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  const authClient = await auth.getClient();
-  const sheets = google.sheets({ version: 'v4', auth: authClient });
+  const sheets = await getSheetsClient();
 
   // Ensure tab exists
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: sheetId });
@@ -797,8 +805,8 @@ async function writePipelineSummary(targetDates) {
         const u = new URL(withoutQuery);
         return u.pathname || '/';
       }
-    } catch (_) {
-      // fall through
+    } catch (err) {
+      console.error('  ⚠ normalizePagePath fell back to raw path:', err.message);
     }
     return withoutQuery;
   }

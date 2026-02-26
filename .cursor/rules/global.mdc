@@ -1,0 +1,24 @@
+---
+description: Global rules for all RUBIES automations
+alwaysApply: true
+---
+
+# Global Rules
+
+## Code Style
+- Node.js / CommonJS only (`require` / `module.exports`)
+- Async/await preferred over raw promises
+- No tests — solo project, prioritise simplicity and reliability
+- Error handling: minimal but informative — enough context to diagnose, never swallow silently, never over-log
+- Never hardcode keys — always `process.env.VARIABLE_NAME`
+- Make every change as simple as possible, minimal blast radius
+- Find root causes, not temporary fixes
+
+## Shared Utilities
+Always check `/shared` before creating any new API client or utility. Existing clients: Shopify, Supabase, Google Sheets, Claude API. Use them. Don't duplicate them.
+
+## Environment
+- Local: `.env` file
+- GitHub Actions: GitHub Secrets
+
+Never modify any `CONTEXT.md` file.

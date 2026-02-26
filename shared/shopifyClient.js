@@ -11,7 +11,7 @@
  *   SHOPIFY_API_KEY     - Admin API key (legacy private app) [optional]
  *   SHOPIFY_PASSWORD    - Admin API password / access token
  *
- * Requires \"read_reports\" permission on your Shopify API credentials.
+ * Requires "read_reports" permission on your Shopify API credentials.
  */
 
 // Minimal date helper (only used when callers omit explicit dates)
@@ -140,7 +140,7 @@ async function fetchShopifyChannels(options = {}) {
   } catch (err) {
     console.error('  ✗ ShopifyQL sessions query failed:', err.message);
     if (err.message.includes('403') || err.message.toLowerCase().includes('access')) {
-      console.error('    → Ensure \"read_reports\" is enabled on your Shopify API credentials');
+      console.error('    → Ensure "read_reports" is enabled on your Shopify API credentials');
     }
   }
 

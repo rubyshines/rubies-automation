@@ -1,0 +1,24 @@
+---
+description: Rules for SEO tracking project
+globs: seo-tracking/**
+alwaysApply: false
+---
+
+# SEO Tracking Rules
+
+## Session Start
+At the start of every conversation, read these files before doing anything else:
+- `seo-tracking/CONTEXT.md`
+- `seo-tracking/tasks/todo.md`
+- `seo-tracking/tasks/lessons.md`
+- `seo-tracking/tasks/decisions.md`
+
+## Auto-Update Task Files
+After every task, correction, or decision — without being asked:
+- `seo-tracking/tasks/todo.md` — mark completed items done, add newly discovered tasks
+- `seo-tracking/tasks/lessons.md` — append: `[YYYY-MM-DD] - [what was corrected or learned] - [rule going forward]`
+- `seo-tracking/tasks/decisions.md` — append only when an architectural or approach decision was made: `[YYYY-MM-DD] - [decision] - [why]`
+
+One line per entry. Do not ask permission. Just do it.
+Only update files within `seo-tracking/` — never touch other project folders.
+Never modify `seo-tracking/CONTEXT.md` — that is maintained manually.

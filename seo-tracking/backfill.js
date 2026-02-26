@@ -1,7 +1,7 @@
 /**
  * RUBIES SEO Analytics — Spec 1: Historical Data Backfill
  *
- * One-time script. Run locally: node scripts/backfill.js
+ * One-time script. Run locally: node seo-tracking/backfill.js
  * Populates Supabase with historical GSC, Shopify, and GA4 data.
  * Safe to re-run (upserts). Uses config.json at project root.
  */
@@ -12,6 +12,10 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const configPath = path.join(__dirname, '..', 'config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+const { upsert } = require('../shared/supabaseClient');
+const { getSearchConsoleClient } = require('../shared/googleSearchConsoleClient');
+const { getGa4Client } = require('../shared/ga4Client');
 
 const GSC_MONTHS = 16; // API hard limit
 const SHOPIFY_MONTHS = 24;
@@ -79,13 +83,12 @@ function keywordType(keyword) {
 // Supabase
 // ---------------------------------------------------------------------------
 
-let supabase;
 let summary = { tables: {}, failures: [], gscActualStart: null };
 
 async function ensureSchema() {
   const dbUrl = process.env.SUPABASE_DATABASE_URL;
   if (!dbUrl) {
-    console.log('  ℹ SUPABASE_DATABASE_URL not set — skipping schema creation. Run scripts/supabase-schema.sql in Supabase SQL Editor if needed.');
+    console.log('  ℹ SUPABASE_DATABASE_URL not set — skipping schema creation. Run seo-tracking/supabase-schema.sql in Supabase SQL Editor if needed.');
     return;
   }
   const { Client } = require('pg');
@@ -101,40 +104,9 @@ async function ensureSchema() {
   }
 }
 
-function getSupabase() {
-  if (supabase) return supabase;
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
-  if (!url || !key) throw new Error('SUPABASE_URL and SUPABASE_SERVICE_KEY must be set');
-  const { createClient } = require('@supabase/supabase-js');
-  supabase = createClient(url, key);
-  return supabase;
-}
-
-async function upsert(table, rows, conflictColumns) {
-  if (!rows.length) return 0;
-  const sb = getSupabase();
-  const cols = conflictColumns ? conflictColumns : []; // Supabase upsert uses onConflict
-  const { error } = await sb.from(table).upsert(rows, {
-    onConflict: conflictColumns ? conflictColumns.join(',') : undefined,
-  });
-  if (error) throw error;
-  return rows.length;
-}
-
 // ---------------------------------------------------------------------------
 // GSC (16 months, monthly chunks, 1s delay)
 // ---------------------------------------------------------------------------
-
-async function getGSCClient() {
-  const { google } = require('googleapis');
-  const auth = new google.auth.GoogleAuth({
-    keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
-    scopes: ['https://www.googleapis.com/auth/webmasters.readonly'],
-  });
-  const authClient = await auth.getClient();
-  return google.searchconsole({ version: 'v1', auth: authClient });
-}
 
 async function backfillGSC() {
   const source = 'Google Search Console';
@@ -152,7 +124,7 @@ async function backfillGSC() {
   if (summary.gscActualStart === null) summary.gscActualStart = startRange;
 
   try {
-    const searchconsole = await getGSCClient();
+    const searchconsole = await getSearchConsoleClient();
 
     // 1) Daily summary
     let totalSummary = 0;
@@ -422,10 +394,7 @@ async function backfillGA4() {
   console.log(`\n--- ${source} ---`);
   console.log(`  Skipping gap: ${GA4_GAP_START} through ${GA4_GAP_END}`);
 
-  const { BetaAnalyticsDataClient } = require('@google-analytics/data');
-  const client = new BetaAnalyticsDataClient({
-    keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
-  });
+  const client = getGa4Client();
   const property = `properties/${process.env.GA4_PROPERTY_ID}`;
 
   const today = formatDate(new Date());
@@ -513,10 +482,7 @@ async function backfillGA4LandingPages() {
   console.log(`\n--- ${source} ---`);
   console.log(`  Skipping gap: ${GA4_GAP_START} through ${GA4_GAP_END}`);
 
-  const { BetaAnalyticsDataClient } = require('@google-analytics/data');
-  const client = new BetaAnalyticsDataClient({
-    keyFile: process.env.SERVICE_ACCOUNT_KEY_PATH,
-  });
+  const client = getGa4Client();
   const property = `properties/${process.env.GA4_PROPERTY_ID}`;
   const today = formatDate(new Date());
   const startOverall = '2020-01-01';

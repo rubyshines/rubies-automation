@@ -4,8 +4,8 @@
   "private": true,
   "description": "RUBIES SEO automations and one-time backfill",
   "scripts": {
-    "backfill": "node scripts/backfill.js",
-    "daily-pipeline": "node scripts/daily-pipeline.js"
+    "backfill": "node seo-tracking/backfill.js",
+    "daily-pipeline": "node seo-tracking/daily-pipeline.js"
   },
   "dependencies": {
     "@google-analytics/data": "^4.0.0",

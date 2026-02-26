@@ -37,5 +37,5 @@ jobs:
         run: |
           # Write service account key from secret to file expected by pipeline
           echo '${{ secrets.SERVICE_ACCOUNT_KEY }}' > service-account-key.json
-          node scripts/daily-pipeline.js
+          node seo-tracking/daily-pipeline.js
 
