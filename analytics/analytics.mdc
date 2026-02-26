@@ -1,0 +1,24 @@
+---
+description: Rules for analytics project
+globs: analytics/**
+alwaysApply: false
+---
+
+# Analytics Rules
+
+## Session Start
+At the start of every conversation, read these files before doing anything else:
+- `analytics/CONTEXT.md`
+- `analytics/tasks/todo.md`
+- `analytics/tasks/lessons.md`
+- `analytics/tasks/decisions.md`
+
+## Auto-Update Task Files
+After every task, correction, or decision — without being asked:
+- `analytics/tasks/todo.md` — mark completed items done, add newly discovered tasks
+- `analytics/tasks/lessons.md` — append: `[YYYY-MM-DD] - [what was corrected or learned] - [rule going forward]`
+- `analytics/tasks/decisions.md` — append only when an architectural or approach decision was made: `[YYYY-MM-DD] - [decision] - [why]`
+
+One line per entry. Do not ask permission. Just do it.
+Only update files within `analytics/` — never touch other project folders.
+Never modify `analytics/CONTEXT.md` — that is maintained manually.

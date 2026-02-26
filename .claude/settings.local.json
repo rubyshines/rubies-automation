@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c:*)",
+      "Bash(node:*)",
+      "Bash(cd \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations\" && git add package.json shared/shopifyClient.js analytics/daily-sales-report.js .github/workflows/daily-sales-report.yml .github/workflows/daily-seo-tracking.yml seo-tracking/daily-seo-tracking.js .github/workflows/daily-pipeline.yml seo-tracking/daily-pipeline.js)",
+      "Bash(cd \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations\" && git commit -m \"$\\(cat <<'EOF'\nUpdate daily sales email with channel comparisons, new color palette, and cleanup workflows\n\n- Channel breakdown now shows last 7d vs prev 7d and last 30d vs prev 30d \\(period-over-period instead of single day\\)\n- Replace bright purple theme with professional slate/blue palette\n- Delete dead daily-analytics.yml workflow \\(referenced non-existent script\\)\n- Rename daily-pipeline → daily-seo-tracking for clarity \\(yml, js, npm script\\)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(cd \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations\" && git push)"
+    ]
+  }
+}
