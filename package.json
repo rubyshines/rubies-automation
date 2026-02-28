@@ -6,14 +6,17 @@
   "scripts": {
     "backfill": "node seo-tracking/backfill.js",
     "daily-seo-tracking": "node seo-tracking/daily-seo-tracking.js",
-    "daily-sales-report": "node analytics/daily-sales-report.js"
+    "daily-sales-report": "node analytics/daily-sales-report.js",
+    "wholesale": "node wholesale/discover.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@google-analytics/data": "^4.0.0",
-    "@supabase/supabase-js": "^2.45.0",
     "@sendgrid/mail": "^7.7.0",
+    "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.0.0",
     "googleapis": "^131.0.0",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "puppeteer": "^22.15.0"
   }
 }

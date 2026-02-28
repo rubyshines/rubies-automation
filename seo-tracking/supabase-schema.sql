@@ -1,4 +1,4 @@
--- RUBIES SEO Backfill — Supabase schema
+I think-- RUBIES SEO Backfill — Supabase schema
 -- Run this once in Supabase SQL Editor if you don't set SUPABASE_DATABASE_URL (script can create tables via pg when that is set).
 
 -- gsc_daily_summary

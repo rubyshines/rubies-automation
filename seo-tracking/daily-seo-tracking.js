@@ -897,10 +897,12 @@ async function main() {
   const status = classifyStatus(results);
   console.log('  Pipeline status:', status);
 
-  try {
-    await sendNotification(status, targetDates, gapDates, results);
-  } catch (err) {
-    console.error('  ✗ Failed to send SendGrid notification:', err.message);
+  if (status !== 'success') {
+    try {
+      await sendNotification(status, targetDates, gapDates, results);
+    } catch (err) {
+      console.error('  ✗ Failed to send SendGrid notification:', err.message);
+    }
   }
 
   try {
