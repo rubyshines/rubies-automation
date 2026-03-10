@@ -7,11 +7,13 @@
     "backfill": "node seo-tracking/backfill.js",
     "daily-seo-tracking": "node seo-tracking/daily-seo-tracking.js",
     "daily-sales-report": "node analytics/daily-sales-report.js",
-    "wholesale": "node wholesale/discover.js"
+    "wholesale": "node wholesale/discover.js",
+    "weekly-seo-digest": "node seo-tracking/weekly-seo-digest.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@google-analytics/data": "^4.0.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@sendgrid/mail": "^7.7.0",
     "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.0.0",

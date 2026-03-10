@@ -18,3 +18,4 @@ service-account-key.json
 
 # Local history (Cursor, editors, etc.)
 .history/
+customer-service/product-cache.json

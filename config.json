@@ -1,5 +1,5 @@
 {
-  "baseline_date": "2026-02-20",
+  "baseline_date": "2026-02-18",
   "backfill_months": 24,
   "store_url": "rubyshines.com",
   "email_recipient": "jamie@rubyshines.com",
@@ -35,7 +35,12 @@
       "gender affirming swimwear kids",
       "gender affirming underwear kids"
     ],
-    "branded": ["rubies", "rubies swimwear", "rubies underwear", "rubyshines"]
+    "branded": [
+      "rubies",
+      "rubies swimwear",
+      "rubies underwear",
+      "rubyshines"
+    ]
   },
   "priority_product_urls": [
     "/products/the-aj-shaping-underwear",
@@ -75,5 +80,89 @@
     "/collections/shaping-products",
     "/products/form-fitting-bikini-bottom",
     "/products/no-tuck-shaping-underwear"
-  ]
+  ],
+  "strategy_progress": {
+    "last_updated": "2026-03-10",
+    "tasks": {
+      "phase1_task1": {
+        "status": "completed",
+        "name": "Fix title tags & meta descriptions",
+        "completed_date": "2026-02-20"
+      },
+      "phase1_task2": {
+        "status": "completed",
+        "name": "Product URL redirect",
+        "completed_date": "2026-02-20"
+      },
+      "phase2_task3": {
+        "status": "completed",
+        "name": "Enrich landing pages",
+        "completed_date": "2026-03-08"
+      },
+      "phase2_task4": {
+        "status": "not_started",
+        "name": "Launch blog (5 posts)",
+        "notes": ""
+      },
+      "phase2_task5": {
+        "status": "completed",
+        "name": "Add schema markup",
+        "completed_date": "2026-03-10"
+      },
+      "phase3_task6": {
+        "status": "not_started",
+        "name": "Scale content production"
+      },
+      "phase3_task7": {
+        "status": "not_started",
+        "name": "Build new backlinks"
+      },
+      "phase3_task8": {
+        "status": "not_started",
+        "name": "Dominate both audiences"
+      },
+      "phase3_task9": {
+        "status": "not_started",
+        "name": "Internal linking architecture"
+      }
+    },
+    "blog_posts": {
+      "no_tuck_vs_tucking": {
+        "status": "not_started",
+        "target_keywords": [
+          "no tuck swimwear",
+          "non tucking gaff",
+          "gaff alternative"
+        ]
+      },
+      "parents_guide_swimwear": {
+        "status": "not_started",
+        "target_keywords": [
+          "swimwear trans daughter",
+          "trans youth swimwear"
+        ]
+      },
+      "comfortable_underwear_trans_woman": {
+        "status": "not_started",
+        "target_keywords": [
+          "trans women underwear",
+          "mtf underwear"
+        ]
+      },
+      "shaping_technology": {
+        "status": "not_started",
+        "target_keywords": [
+          "no tuck underwear",
+          "how does shaping work"
+        ]
+      },
+      "swimming_confidence": {
+        "status": "not_started",
+        "target_keywords": [
+          "comfortable trans swimwear",
+          "swimming trans"
+        ]
+      }
+    }
+  }
 }

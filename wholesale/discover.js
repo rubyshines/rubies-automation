@@ -489,16 +489,47 @@ async function main() {
   if (args['sync-sheets']) {
     const client = getSupabaseClient();
     const minScore = args['min-score'] ? parseInt(args['min-score'], 10) : 4;
-    console.log(`\n[SHEETS] Fetching researched prospects with score >= ${minScore}...`);
-    const { data: prospects, error } = await client
-      .from('retailer_prospects')
-      .select('*')
-      .gte('score', minScore)
-      .not('status', 'eq', 'found')
-      .order('score', { ascending: false });
-    if (error) { console.error('DB error:', error.message); process.exit(1); }
-    console.log(`[SHEETS] Found ${prospects.length} prospects`);
-    await syncProspectsToSheet(prospects, { verbose: true });
+    const fresh = !!args.fresh;
+
+    if (fresh) {
+      // Fresh: fetch all qualifying prospects and rewrite the sheet
+      console.log(`\n[SHEETS] Fresh sync — fetching all prospects with score >= ${minScore}...`);
+      const { data: prospects, error } = await client
+        .from('retailer_prospects')
+        .select('*')
+        .gte('score', minScore)
+        .not('status', 'eq', 'found')
+        .order('score', { ascending: false });
+      if (error) { console.error('DB error:', error.message); process.exit(1); }
+      console.log(`[SHEETS] Found ${prospects.length} prospects`);
+      const added = await syncProspectsToSheet(prospects, { verbose: true, fresh: true });
+      // Mark all as synced
+      const ids = prospects.map(p => p.id);
+      for (let i = 0; i < ids.length; i += 200) {
+        await client.from('retailer_prospects').update({ synced_to_sheet: true }).in('id', ids.slice(i, i + 200));
+      }
+      console.log(`[SHEETS] ${added} rows written, all marked as synced`);
+    } else {
+      // Incremental: only fetch prospects not yet synced
+      console.log(`\n[SHEETS] Fetching new prospects with score >= ${minScore} not yet in sheet...`);
+      const { data: prospects, error } = await client
+        .from('retailer_prospects')
+        .select('*')
+        .gte('score', minScore)
+        .not('status', 'eq', 'found')
+        .eq('synced_to_sheet', false);
+      if (error) { console.error('DB error:', error.message); process.exit(1); }
+      console.log(`[SHEETS] Found ${prospects.length} new prospects to add`);
+      const added = await syncProspectsToSheet(prospects, { verbose: true, fresh: false });
+      if (added > 0) {
+        // Mark synced
+        const ids = prospects.map(p => p.id);
+        for (let i = 0; i < ids.length; i += 200) {
+          await client.from('retailer_prospects').update({ synced_to_sheet: true }).in('id', ids.slice(i, i + 200));
+        }
+        console.log(`[SHEETS] ${added} new rows added and marked as synced`);
+      }
+    }
     return;
   }
 

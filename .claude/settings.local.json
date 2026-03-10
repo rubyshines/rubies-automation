@@ -8,7 +8,20 @@
       "Bash(cd \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations\" && git push)",
       "Bash(cd \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations\" && npm install @anthropic-ai/sdk 2>&1 | tail -4)",
       "Bash(cd \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations\" && node -e \"require\\('googleapis'\\); console.log\\('googleapis ok'\\)\" 2>&1 | grep -v deprecated && ls *.json 2>/dev/null && grep WHOLESALE_SHEET_ID .env)",
-      "Bash(grep \"no score, FOUND\" \"/private/tmp/claude-501/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/tasks/b2idh4280.output\" | grep -oP \"ai=\\\\d+ms\" | sort -t= -k2 -n | head -20 && echo \"---\" && grep \"no score, FOUND\" \"/private/tmp/claude-501/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/tasks/b2idh4280.output\" | grep -oP \"ai=\\\\d+ms\" | sort -t= -k2 -n | tail -20)"
+      "Bash(grep \"no score, FOUND\" \"/private/tmp/claude-501/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/tasks/b2idh4280.output\" | grep -oP \"ai=\\\\d+ms\" | sort -t= -k2 -n | head -20 && echo \"---\" && grep \"no score, FOUND\" \"/private/tmp/claude-501/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/tasks/b2idh4280.output\" | grep -oP \"ai=\\\\d+ms\" | sort -t= -k2 -n | tail -20)",
+      "WebFetch(domain:rubyshines.com)",
+      "mcp__rubies-cs__lookup_customer",
+      "mcp__rubies-cs__get_customer_orders",
+      "mcp__rubies-cs__create_exchange_order",
+      "mcp__rubies-cs__parse_wholesale_input",
+      "mcp__rubies-cs__search_products",
+      "mcp__rubies-cs__create_wholesale_order",
+      "mcp__rubies-cs__seo_report",
+      "mcp__rubies-cs__update_seo_progress"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "rubies-cs"
+  ]
 }

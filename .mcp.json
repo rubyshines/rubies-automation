@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "rubies-cs": {
+      "command": "node",
+      "args": [
+        "/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/customer-service/server.js"
+      ]
+    }
+  }
+}
