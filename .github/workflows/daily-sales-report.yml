@@ -2,7 +2,7 @@ name: RUBIES Daily Sales Report
 
 on:
   schedule:
-    - cron: '10 5 * * *' # 5:10am UTC = 12:10am EST / 1:10am EDT
+    - cron: '1 4 * * *' # 4:01 UTC = 12:01am EDT / 11:01pm EST
   workflow_dispatch:
 
 jobs:

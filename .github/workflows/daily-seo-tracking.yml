@@ -2,7 +2,7 @@ name: RUBIES Daily SEO Tracking
 
 on:
   schedule:
-    - cron: '0 10 * * *' # 5am US Eastern (UTC-5; GitHub cron is UTC)
+    - cron: '0 10 * * *' # 6am EDT / 5am EST
   workflow_dispatch:
 
 jobs:
