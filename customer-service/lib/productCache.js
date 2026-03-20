@@ -1,45 +1,96 @@
 /**
  * Product catalog cache with fuzzy matching.
- * Persists to disk so startup is instant. Reload on demand via reload_products tool.
+ * Loads from Supabase on startup (synced by syncProducts.js).
+ * Reload on demand via reload_products tool.
  */
 
-const fs = require('fs');
-const path = require('path');
 const { fetchAllProducts } = require('./shopify');
-
-const CACHE_FILE = path.resolve(__dirname, '../../product-cache.json');
+const { getSupabaseClient } = require('../../shared/supabaseClient');
 
 let cachedProducts = [];
 
-function loadFromDisk() {
+let cacheTimestamp = null;
+
+/**
+ * Load products + variants from Supabase and reshape into the same
+ * in-memory format that the rest of the codebase expects.
+ */
+async function loadFromSupabase() {
   try {
-    const raw = fs.readFileSync(CACHE_FILE, 'utf8');
-    const { products, savedAt } = JSON.parse(raw);
-    cachedProducts = products;
-    console.error(`[ProductCache] Loaded ${cachedProducts.length} products from disk (saved ${savedAt})`);
+    const supabase = getSupabaseClient();
+
+    const { data: products, error: pErr } = await supabase
+      .from('products')
+      .select('*')
+      .eq('status', 'ACTIVE');
+    if (pErr) throw pErr;
+    if (!products || !products.length) return false;
+
+    const { data: variants, error: vErr } = await supabase
+      .from('product_variants')
+      .select('*');
+    if (vErr) throw vErr;
+
+    // Group variants by product
+    const variantsByProduct = new Map();
+    for (const v of (variants || [])) {
+      if (!variantsByProduct.has(v.shopify_product_id)) {
+        variantsByProduct.set(v.shopify_product_id, []);
+      }
+      variantsByProduct.get(v.shopify_product_id).push({
+        id: v.shopify_variant_id,
+        title: v.title,
+        sku: v.sku,
+        price: String(v.price),
+        inventoryQuantity: v.inventory_quantity,
+        selectedOptions: v.selected_options || [],
+      });
+    }
+
+    cachedProducts = products.map(p => ({
+      id: p.shopify_product_id,
+      title: p.title,
+      handle: p.handle,
+      status: p.status,
+      productType: p.product_type,
+      vendor: p.vendor,
+      descriptionHtml: p.description_html,
+      tags: p.tags || [],
+      metafields: {
+        collections: p.collections || [],
+        categories: p.categories || [],
+        age_groups: p.age_groups || [],
+        kid_sizes: p.kid_sizes || [],
+        adult_sizes: p.adult_sizes || [],
+        kid_colors: p.kid_colors || [],
+        adult_colors: p.adult_colors || [],
+        bundle_product_1: p.bundle_product_1,
+        bundle_product_2: p.bundle_product_2,
+        labels: p.labels || [],
+        discount_percent: p.discount_percent,
+      },
+      variants: variantsByProduct.get(p.shopify_product_id) || [],
+    }));
+
+    cacheTimestamp = products[0]?.synced_at ? new Date(products[0].synced_at) : new Date();
+    console.error(`[ProductCache] Loaded ${cachedProducts.length} products from Supabase (synced ${cacheTimestamp.toISOString()})`);
     return true;
-  } catch {
+  } catch (err) {
+    console.error(`[ProductCache] Failed to load from Supabase: ${err.message}`);
     return false;
   }
 }
 
+/**
+ * Fetch from Shopify, sync to Supabase, then reload cache from Supabase.
+ */
 async function loadProducts() {
-  const allProducts = [];
-  let cursor = null;
+  // Sync to Supabase via the sync script
+  const { run: syncProducts } = require('../sync/syncProducts');
+  await syncProducts();
 
-  while (true) {
-    const { products, pageInfo } = await fetchAllProducts(cursor);
-    allProducts.push(...products);
-    if (!pageInfo.hasNextPage) break;
-    cursor = pageInfo.endCursor;
-  }
-
-  cachedProducts = allProducts.filter(p => p.status === 'ACTIVE');
-  const variantCount = cachedProducts.reduce((s, p) => s + p.variants.length, 0);
-  console.error(`[ProductCache] Fetched ${cachedProducts.length} active products, ${variantCount} variants`);
-
-  fs.writeFileSync(CACHE_FILE, JSON.stringify({ products: cachedProducts, savedAt: new Date().toISOString() }));
-  console.error(`[ProductCache] Cache saved to disk`);
+  // Reload from Supabase
+  await loadFromSupabase();
 }
 
 // No-op kept for compatibility but no longer called automatically
@@ -192,6 +243,9 @@ function searchProducts(query) {
           price: variant.price,
           inventoryQuantity: variant.inventoryQuantity,
           options: variant.selectedOptions,
+          collections: product.metafields?.collections || [],
+          categories: product.metafields?.categories || [],
+          ageGroups: product.metafields?.age_groups || [],
           score,
         });
       }
@@ -226,4 +280,9 @@ function getVariantById(variantGid) {
   return null;
 }
 
-module.exports = { loadFromDisk, loadProducts, startRefresh, getProducts, searchProducts, getVariantById };
+function getCacheAgeHours() {
+  if (!cacheTimestamp) return Infinity;
+  return (Date.now() - new Date(cacheTimestamp).getTime()) / (1000 * 60 * 60);
+}
+
+module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getCacheAgeHours };

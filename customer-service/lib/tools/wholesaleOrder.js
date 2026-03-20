@@ -33,88 +33,228 @@ const CURRENCY_OVERRIDES = {
   'hello@sockdrawerheroes.com': 'USD',
 };
 
+// ---------------------------------------------------------------------------
+// CSV Matrix Parser — programmatically maps header columns to sizes
+// ---------------------------------------------------------------------------
+
+const KNOWN_SIZES = new Set([
+  'XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', 'XL', 'XXL',
+  '1X', '2X', '3X', '4X', '5X',
+  '3XL', '4XL', '5XL',  // spreadsheet aliases for 3X, 4X, 5X
+  '4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16',
+]);
+
+function parseCSVMatrix(lines) {
+  const results = [];
+  const errors = [];
+  const skippedRows = [];      // rows with a product/colour but zero quantities
+  const unknownProducts = [];  // product names not found in catalog
+
+  // Parse header row to find size column indices
+  const headerCells = lines[0].split(',').map(c => c.trim());
+  const sizeColumns = []; // { index, size }
+  for (let i = 0; i < headerCells.length; i++) {
+    const cell = headerCells[i].toUpperCase();
+    if (KNOWN_SIZES.has(cell)) {
+      sizeColumns.push({ index: i, size: headerCells[i] }); // preserve original case
+    }
+  }
+
+  // Find product and colour column indices (typically 0 and 1)
+  const productColIdx = 0;
+  const colourColIdx = 1;
+
+  let currentProduct = '';
+
+  for (let row = 1; row < lines.length; row++) {
+    const cells = lines[row].split(',').map(c => c.trim());
+
+    // Update current product if column has a value
+    if (cells[productColIdx] && cells[productColIdx].length > 0) {
+      currentProduct = cells[productColIdx];
+    }
+    const colour = cells[colourColIdx] || '';
+
+    if (!currentProduct || !colour) continue;
+
+    // Extract quantities from size columns
+    let rowHasQty = false;
+    for (const { index, size } of sizeColumns) {
+      const val = cells[index];
+      if (!val || val.length === 0) continue;
+      const qty = parseInt(val, 10);
+      if (isNaN(qty) || qty <= 0) continue;
+
+      rowHasQty = true;
+
+      // Build search query: "ProductName Colour Size"
+      const query = `${currentProduct} ${colour} ${size}`;
+      const searchResults = searchProducts(query);
+
+      if (searchResults.length === 0) {
+        errors.push(`No match for: "${query}" (row ${row + 1}, size ${size})`);
+        continue;
+      }
+
+      const best = searchResults[0];
+      results.push({
+        query,
+        matchedProduct: best.productTitle,
+        matchedVariant: best.variantTitle,
+        variantId: best.variantId,
+        sku: best.sku,
+        price: best.price,
+        quantity: qty,
+      });
+    }
+
+    // Track rows with no quantities (product listed but nothing ordered)
+    if (!rowHasQty) {
+      skippedRows.push({ row: row + 1, product: currentProduct, colour });
+    }
+
+    // Check if product name is recognized (only check once per new product name)
+    if (cells[productColIdx] && cells[productColIdx].length > 0) {
+      const productCheck = searchProducts(currentProduct);
+      if (productCheck.length === 0) {
+        unknownProducts.push({ row: row + 1, product: currentProduct });
+      }
+    }
+  }
+
+  // Build warnings
+  const warnings = [];
+  if (unknownProducts.length > 0) {
+    warnings.push(`⚠️ UNKNOWN PRODUCTS (not found in catalog): ${unknownProducts.map(u => `"${u.product}" (row ${u.row})`).join(', ')}`);
+  }
+  if (skippedRows.length > 0) {
+    warnings.push(`ℹ️ Rows with zero quantities (skipped): ${skippedRows.map(s => `${s.product} / ${s.colour} (row ${s.row})`).join(', ')}`);
+  }
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ format: 'csv_matrix', resolved: results, warnings, errors }, null, 2),
+    }],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Simple Text Parser — one item per line
+// ---------------------------------------------------------------------------
+
+function parseSimpleText(lines) {
+  const results = [];
+  const errors = [];
+
+  for (const line of lines) {
+    let quantity = 1;
+    let query = line;
+
+    // "... qty 3" or "... qty: 3" or "... quantity: 3" or "... qty. 3"
+    const qtyMatch = line.match(/^(.+?)[,\s]+(?:qty|quantity)\.?\s*:?\s*(\d+)\s*$/i);
+    if (qtyMatch) {
+      query = qtyMatch[1].trim();
+      quantity = parseInt(qtyMatch[2]);
+    }
+    // "2x ..." or "2 x ..."
+    else {
+      const xMatch = line.match(/^(\d+)\s*x\s+(.+)/i);
+      if (xMatch) {
+        quantity = parseInt(xMatch[1]);
+        query = xMatch[2];
+      } else {
+        // "... x2" or "... x 2" (quantity at end with x)
+        const endXMatch = line.match(/^(.+?)\s*x\s*(\d+)\s*$/i);
+        if (endXMatch) {
+          query = endXMatch[1].trim();
+          quantity = parseInt(endXMatch[2]);
+        } else {
+          // "..., 2" (quantity at end after comma)
+          const endMatch = line.match(/^(.+?),\s*(\d+)$/);
+          if (endMatch) {
+            query = endMatch[1];
+            quantity = parseInt(endMatch[2]);
+          } else {
+            // "2, ..." (quantity at start before comma)
+            const startMatch = line.match(/^(\d+),\s*(.+)$/);
+            if (startMatch) {
+              quantity = parseInt(startMatch[1]);
+              query = startMatch[2];
+            }
+          }
+        }
+      }
+    }
+
+    const searchResults = searchProducts(query.trim());
+    if (searchResults.length === 0) {
+      errors.push(`No match for: "${line}"`);
+      continue;
+    }
+
+    const best = searchResults[0];
+    results.push({
+      query: line,
+      matchedProduct: best.productTitle,
+      matchedVariant: best.variantTitle,
+      variantId: best.variantId,
+      sku: best.sku,
+      price: best.price,
+      quantity,
+    });
+  }
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ format: 'simple_text', resolved: results, errors }, null, 2),
+    }],
+  };
+}
+
 const tools = [
   {
     name: 'parse_wholesale_input',
-    description: 'Parse CSV, text, or structured input into resolved product line items with variant IDs. Use this before create_wholesale_order when input comes from a spreadsheet or free-form text.',
+    description: [
+      'Parse CSV matrix, text, or structured input into resolved product line items with variant IDs.',
+      'Use this before create_wholesale_order when input comes from a spreadsheet or free-form text.',
+      'IMPORTANT: For CSV matrix format (size columns as headers, quantities in cells), pass the RAW CSV including the header row.',
+      'The tool auto-detects CSV matrix format by looking for size-related column headers (XXS, XS, S, M, L, XL, or numeric sizes like 4, 6, 8, 10).',
+      'For CSV matrix: the first column is product name, second is colour. Empty product name = same product as row above.',
+      'For simple text: one item per line, e.g. "AJ Black S x3" or "3x AJ Black S".',
+    ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         input: {
           type: 'string',
-          description: 'CSV, tab-separated, or free-form text listing products and quantities. Each line should have product info and a quantity.',
+          description: 'Raw CSV (with header row) or free-form text listing products and quantities.',
         },
       },
       required: ['input'],
     },
     handler: async ({ input }) => {
       const lines = input.split('\n').map(l => l.trim()).filter(Boolean);
-      const results = [];
-      const errors = [];
 
-      for (const line of lines) {
-        // Try to extract quantity and product description
-        // Supported formats:
-        //   "AJ Black 6, qty 3"    → qty/quantity keyword
-        //   "2x Black 14 AJ"       → Nx prefix
-        //   "Black 14 AJ, 2"       → trailing number after comma
-        //   "2, Black 14 AJ"       → leading number before comma
-        let quantity = 1;
-        let query = line;
+      // --- Detect CSV matrix format ---
+      // Check if first line looks like a header with size columns
+      const KNOWN_SIZES = new Set([
+        'XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', 'XL', 'XXL',
+        '1X', '2X', '3X', '4X', '5X',
+        '4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16',
+      ]);
 
-        // "... qty 3" or "... qty: 3" or "... quantity: 3" or "... qty. 3"
-        const qtyMatch = line.match(/^(.+?)[,\s]+(?:qty|quantity)\.?\s*:?\s*(\d+)\s*$/i);
-        if (qtyMatch) {
-          query = qtyMatch[1].trim();
-          quantity = parseInt(qtyMatch[2]);
-        }
-        // "2x ..." or "2 x ..."
-        else {
-          const xMatch = line.match(/^(\d+)\s*x\s+(.+)/i);
-          if (xMatch) {
-            quantity = parseInt(xMatch[1]);
-            query = xMatch[2];
-          } else {
-            // "..., 2" (quantity at end after comma)
-            const endMatch = line.match(/^(.+?),\s*(\d+)$/);
-            if (endMatch) {
-              query = endMatch[1];
-              quantity = parseInt(endMatch[2]);
-            } else {
-              // "2, ..." (quantity at start before comma)
-              const startMatch = line.match(/^(\d+),\s*(.+)$/);
-              if (startMatch) {
-                quantity = parseInt(startMatch[1]);
-                query = startMatch[2];
-              }
-            }
-          }
-        }
+      const firstLineCells = lines[0].split(',').map(c => c.trim());
+      const sizeColumnsInHeader = firstLineCells.filter(c => KNOWN_SIZES.has(c.toUpperCase()));
+      const isCSVMatrix = sizeColumnsInHeader.length >= 3; // At least 3 size columns = matrix format
 
-        const searchResults = searchProducts(query.trim());
-        if (searchResults.length === 0) {
-          errors.push(`No match for: "${line}"`);
-          continue;
-        }
-
-        const best = searchResults[0];
-        results.push({
-          query: line,
-          matchedProduct: best.productTitle,
-          matchedVariant: best.variantTitle,
-          variantId: best.variantId,
-          sku: best.sku,
-          price: best.price,
-          quantity,
-        });
+      if (isCSVMatrix) {
+        return parseCSVMatrix(lines);
       }
 
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ resolved: results, errors }, null, 2),
-        }],
-      };
+      // --- Simple text format (one item per line) ---
+      return parseSimpleText(lines);
     },
   },
   {

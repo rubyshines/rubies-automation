@@ -13,7 +13,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { z } = require('zod');
-const { loadFromDisk, loadProducts } = require('./lib/productCache');
+const { loadFromSupabase, loadProducts, getCacheAgeHours } = require('./lib/productCache');
 
 // Import tool definitions
 const customerLookupTools = require('./lib/tools/customerLookup');
@@ -23,6 +23,18 @@ const wholesaleOrderTools = require('./lib/tools/wholesaleOrder');
 const invoiceOrderTools = require('./lib/tools/invoiceOrder');
 const reloadProductsTools = require('./lib/tools/reloadProducts');
 const seoTrendsTools = require('./lib/tools/seoTrends');
+const klaviyoTools = require('./lib/tools/klaviyo');
+const csHistoryTools = require('./lib/tools/csHistory');
+const csKnowledgeTools = require('./lib/tools/csKnowledge');
+const csAdminTools = require('./lib/tools/csAdmin');
+const marginsTools = require('./lib/tools/margins');
+const reviewsTools = require('./lib/tools/reviews');
+const inventoryTools = require('./lib/tools/inventory');
+const blogResearchTools = require('./lib/tools/blogResearch');
+const draftOrderTools = require('./lib/tools/draftOrders');
+const adminTools = require('./lib/tools/adminTools');
+const ltvTools = require('./lib/tools/ltv');
+const createOrderTools = require('./lib/tools/createOrder');
 
 const allTools = [
   ...customerLookupTools,
@@ -32,6 +44,18 @@ const allTools = [
   ...invoiceOrderTools,
   ...reloadProductsTools,
   ...seoTrendsTools,
+  ...klaviyoTools,
+  ...csHistoryTools,
+  ...csKnowledgeTools,
+  ...csAdminTools,
+  ...marginsTools,
+  ...reviewsTools,
+  ...inventoryTools,
+  ...blogResearchTools,
+  ...draftOrderTools,
+  ...adminTools,
+  ...ltvTools,
+  ...createOrderTools,
 ];
 
 /**
@@ -107,19 +131,25 @@ async function main() {
     });
   }
 
-  // Load from disk instantly (no network), fall back to Shopify fetch if no cache yet
-  const hasDiskCache = loadFromDisk();
+  // Load from Supabase (async but fast), fall back to Shopify fetch if empty
+  const hasCache = await loadFromSupabase();
 
   // Connect transport — handshake happens immediately
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('[CS MCP] Server running on stdio');
 
-  // If no disk cache exists yet, fetch from Shopify in background
-  if (!hasDiskCache) {
-    console.error('[CS MCP] No disk cache found, fetching from Shopify...');
+  // Refresh products if no cache or cache is older than 7 days
+  const cacheAge = getCacheAgeHours();
+  if (!hasCache) {
+    console.error('[CS MCP] No products in Supabase, fetching from Shopify...');
     loadProducts().catch(err => {
       console.error('[CS MCP] Warning: Failed to load product cache:', err.message);
+    });
+  } else if (cacheAge > 168) { // 7 days
+    console.error(`[CS MCP] Product cache is ${Math.round(cacheAge / 24)} days old, refreshing in background...`);
+    loadProducts().catch(err => {
+      console.error('[CS MCP] Warning: Background refresh failed:', err.message);
     });
   }
 }

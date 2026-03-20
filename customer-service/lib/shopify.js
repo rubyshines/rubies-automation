@@ -8,46 +8,67 @@ const SHOPIFY_API_VERSION = '2025-10';
 
 function getConfig() {
   const storeUrl = process.env.SHOPIFY_STORE_URL;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_PASSWORD;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_PASSWORD || process.env.SHOPIFY_API_PASSWORD;
   if (!storeUrl || !token) {
     throw new Error('Missing SHOPIFY_STORE_URL and SHOPIFY_ACCESS_TOKEN/SHOPIFY_PASSWORD in .env');
   }
   return { storeUrl, token };
 }
 
-async function shopifyGraphQL(query, variables = {}) {
+async function shopifyGraphQL(query, variables = {}, { retries = 3 } = {}) {
   const { storeUrl, token } = getConfig();
   const url = `https://${storeUrl}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Access-Token': token,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': token,
+        },
+        body: JSON.stringify({ query, variables }),
+      });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Shopify API error (${response.status}): ${text}`);
-  }
+      // Retry on 429 (rate limit) and 5xx
+      if ((response.status === 429 || response.status >= 500) && attempt < retries) {
+        const waitMs = response.status === 429 ? 2000 * attempt : 1000 * attempt;
+        console.error(`[Shopify] ${response.status} on attempt ${attempt}, retrying in ${waitMs}ms...`);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
 
-  const json = await response.json();
-  if (json.errors) {
-    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
-  }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Shopify API error (${response.status}): ${text}`);
+      }
 
-  // Check for userErrors in mutations
-  const dataKeys = Object.keys(json.data || {});
-  for (const key of dataKeys) {
-    const userErrors = json.data[key]?.userErrors;
-    if (userErrors && userErrors.length > 0) {
-      throw new Error(`Shopify user errors: ${JSON.stringify(userErrors)}`);
+      const json = await response.json();
+      if (json.errors) {
+        throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
+      }
+
+      // Check for userErrors in mutations
+      const dataKeys = Object.keys(json.data || {});
+      for (const key of dataKeys) {
+        const userErrors = json.data[key]?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+          throw new Error(`Shopify user errors: ${JSON.stringify(userErrors)}`);
+        }
+      }
+
+      return json.data;
+    } catch (err) {
+      // Retry on network errors (ECONNRESET, fetch failed, etc.)
+      if (attempt < retries && (err.cause?.code === 'ECONNRESET' || err.message?.includes('fetch failed'))) {
+        const waitMs = 2000 * attempt;
+        console.error(`[Shopify] Network error on attempt ${attempt}: ${err.message}, retrying in ${waitMs}ms...`);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      throw err;
     }
   }
-
-  return json.data;
 }
 
 // --- Customer queries ---
@@ -258,6 +279,18 @@ async function fetchAllProducts(cursor = null) {
             handle
             status
             tags
+            descriptionHtml
+            productType
+            vendor
+            metafields(first: 20) {
+              edges {
+                node {
+                  namespace
+                  key
+                  value
+                }
+              }
+            }
             variants(first: 100) {
               edges {
                 node {
@@ -280,15 +313,57 @@ async function fetchAllProducts(cursor = null) {
     }
   `, { after: cursor });
 
-  const products = data.products.edges.map(e => ({
-    ...e.node,
-    variants: e.node.variants.edges.map(v => v.node),
-  }));
+  const products = data.products.edges.map(e => {
+    const node = e.node;
+    // Extract custom metafields into a flat object
+    const metafields = {};
+    for (const mf of (node.metafields?.edges || [])) {
+      const { namespace, key, value } = mf.node;
+      if (namespace === 'custom') {
+        try { metafields[key] = JSON.parse(value); } catch { metafields[key] = value; }
+      }
+    }
+    return {
+      ...node,
+      metafields,
+      variants: node.variants.edges.map(v => v.node),
+    };
+  });
 
   return {
     products,
     pageInfo: data.products.pageInfo,
   };
+}
+
+// --- Customer mutations ---
+
+async function createCustomer(input) {
+  const data = await shopifyGraphQL(`
+    mutation customerCreate($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer {
+          id
+          firstName
+          lastName
+          email
+          phone
+          defaultAddress {
+            address1
+            city
+            province
+            country
+            zip
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `, { input });
+  return data.customerCreate.customer;
 }
 
 // --- Draft order mutations ---
@@ -375,9 +450,17 @@ async function deleteDraftOrder(draftOrderId) {
 
 async function sendDraftOrderInvoice(draftOrderId, email) {
   const gid = normalizeGid(draftOrderId, 'DraftOrder');
+  const variables = { id: gid };
+  let emailParam = '';
+  let emailDecl = '';
+  if (email) {
+    emailDecl = ', $email: EmailInput';
+    emailParam = ', email: $email';
+    variables.email = { to: email };
+  }
   const data = await shopifyGraphQL(`
-    mutation sendInvoice($id: ID!, $email: DraftOrderInvoiceInput) {
-      draftOrderInvoiceSend(id: $id, email: $email) {
+    mutation sendInvoice($id: ID!${emailDecl}) {
+      draftOrderInvoiceSend(id: $id${emailParam}) {
         draftOrder {
           id
           name
@@ -389,8 +472,265 @@ async function sendDraftOrderInvoice(draftOrderId, email) {
         }
       }
     }
-  `, { id: gid, email: email ? { to: email } : undefined });
+  `, variables);
   return data.draftOrderInvoiceSend.draftOrder;
+}
+
+// --- Draft order queries ---
+
+async function listDraftOrders({ status, limit = 20 } = {}) {
+  const queryParts = [];
+  if (status) queryParts.push(`status:${status}`);
+  const queryString = queryParts.length ? queryParts.join(' ') : null;
+
+  const variables = { first: limit };
+  if (queryString) variables.query = queryString;
+
+  const data = await shopifyGraphQL(`
+    query listDraftOrders($first: Int!${queryString ? ', $query: String' : ''}) {
+      draftOrders(first: $first, sortKey: UPDATED_AT, reverse: true${queryString ? ', query: $query' : ''}) {
+        edges {
+          node {
+            id
+            name
+            createdAt
+            updatedAt
+            status
+            invoiceUrl
+            customer {
+              id
+              email
+              firstName
+              lastName
+            }
+            totalPrice
+            presentmentCurrencyCode
+            lineItems(first: 50) {
+              edges {
+                node {
+                  title
+                  variant { id title }
+                  quantity
+                  originalUnitPrice
+                }
+              }
+            }
+            note2
+            tags
+          }
+        }
+      }
+    }
+  `, variables);
+
+  return data.draftOrders.edges.map(e => ({
+    ...e.node,
+    lineItems: e.node.lineItems.edges.map(li => li.node),
+  }));
+}
+
+// --- Order sync query (comprehensive, dual-currency) ---
+
+/**
+ * Fetch orders for syncing to Supabase. Includes all money fields in both
+ * shop and presentment currencies, billing/shipping addresses, discounts,
+ * refund totals, and line-item details.
+ *
+ * @param {string|null} since - ISO date string; only orders updated after this
+ * @param {string|null} cursor - pagination cursor
+ * @returns {{ orders, pageInfo }}
+ */
+async function fetchOrdersForSync(since = null, cursor = null) {
+  const queryParts = [];
+  if (since) queryParts.push(`updated_at:>='${since}'`);
+  const queryString = queryParts.join(' ') || null;
+
+  const variables = { first: 50, after: cursor || null };
+  if (queryString) variables.query = queryString;
+
+  const data = await shopifyGraphQL(`
+    query fetchOrdersForSync($first: Int!, $after: String${queryString ? ', $query: String' : ''}) {
+      orders(first: $first, after: $after, sortKey: UPDATED_AT, reverse: false${queryString ? ', query: $query' : ''}) {
+        edges {
+          node {
+            id
+            name
+            createdAt
+            updatedAt
+            cancelledAt
+            closedAt
+            sourceName
+
+            displayFinancialStatus
+            displayFulfillmentStatus
+
+            customer {
+              id
+              email
+              firstName
+              lastName
+            }
+
+            # --- Money: shop currency ---
+            totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            subtotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalShippingPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalTaxSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalDiscountsSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            currentTotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+            totalRefundedSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+
+            # --- Addresses ---
+            shippingAddress {
+              firstName lastName address1 address2 city province provinceCode
+              country countryCodeV2 zip phone company
+            }
+            billingAddress {
+              firstName lastName address1 address2 city province provinceCode
+              country countryCodeV2 zip phone company
+            }
+
+            # --- Discounts ---
+            discountCodes
+            discountApplications(first: 10) {
+              edges {
+                node {
+                  allocationMethod
+                  targetType
+                  value {
+                    ... on MoneyV2 { amount currencyCode }
+                    ... on PricingPercentageValue { percentage }
+                  }
+                  ... on DiscountCodeApplication { code }
+                  ... on AutomaticDiscountApplication { title }
+                  ... on ScriptDiscountApplication { title }
+                  ... on ManualDiscountApplication { title }
+                }
+              }
+            }
+
+            # --- Fulfillments ---
+            fulfillments {
+              status
+              createdAt
+              trackingInfo { number url }
+            }
+
+            # --- Line items ---
+            lineItems(first: 100) {
+              edges {
+                node {
+                  title
+                  variantTitle
+                  sku
+                  quantity
+                  variant { id }
+                  originalUnitPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                  discountAllocations {
+                    allocatedAmountSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+                    discountApplication {
+                      allocationMethod
+                      targetType
+                      value {
+                        ... on MoneyV2 { amount currencyCode }
+                        ... on PricingPercentageValue { percentage }
+                      }
+                    }
+                  }
+                  duties {
+                    price { shopMoney { amount currencyCode } }
+                  }
+                }
+              }
+            }
+
+            # --- Refunds (summary only) ---
+            refunds {
+              createdAt
+              refundLineItems(first: 50) {
+                edges {
+                  node {
+                    quantity
+                    lineItem { sku variantTitle }
+                  }
+                }
+              }
+            }
+
+            note
+            tags
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  `, variables);
+
+  const orders = data.orders.edges.map(e => {
+    const o = e.node;
+
+    // Flatten line items
+    o.lineItems = o.lineItems.edges.map(li => li.node);
+
+    // Flatten discount applications
+    o.discountApplications = (o.discountApplications?.edges || []).map(e => e.node);
+
+    // Build per-line-item refunded quantity map from refunds
+    const refundedBySkuVariant = {};
+    for (const refund of (o.refunds || [])) {
+      for (const rli of (refund.refundLineItems?.edges || []).map(e => e.node)) {
+        const key = `${rli.lineItem?.sku || ''}::${rli.lineItem?.variantTitle || ''}`;
+        refundedBySkuVariant[key] = (refundedBySkuVariant[key] || 0) + rli.quantity;
+      }
+    }
+    o._refundedBySkuVariant = refundedBySkuVariant;
+
+    // Earliest fulfillment date
+    const fulfillmentDates = (o.fulfillments || [])
+      .filter(f => f.createdAt)
+      .map(f => new Date(f.createdAt));
+    o._earliestFulfillmentDate = fulfillmentDates.length
+      ? new Date(Math.min(...fulfillmentDates)).toISOString()
+      : null;
+
+    return o;
+  });
+
+  return {
+    orders,
+    pageInfo: data.orders.pageInfo,
+  };
+}
+
+/**
+ * Fetch a single Shopify customer profile by GID.
+ */
+async function getCustomerProfile(customerId) {
+  const gid = normalizeGid(customerId, 'Customer');
+  const data = await shopifyGraphQL(`
+    query getCustomerProfile($id: ID!) {
+      customer(id: $id) {
+        id
+        firstName
+        lastName
+        email
+        phone
+        defaultAddress {
+          address1 address2 city province provinceCode
+          country countryCodeV2 zip phone company
+        }
+        numberOfOrders
+        amountSpent { amount currencyCode }
+        createdAt
+        note
+        tags
+      }
+    }
+  `, { id: gid });
+  return data.customer;
 }
 
 // --- Helpers ---
@@ -416,10 +756,14 @@ module.exports = {
   getCustomerFulfilledOrders,
   getOrderByNumber,
   fetchAllProducts,
+  fetchOrdersForSync,
+  getCustomerProfile,
   createDraftOrder,
   deleteDraftOrder,
   completeDraftOrder,
   sendDraftOrderInvoice,
+  listDraftOrders,
   normalizeGid,
+  createCustomer,
   normalizeOrderNumber,
 };

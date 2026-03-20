@@ -11,7 +11,9 @@
 
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+if (!process.env.SUPABASE_URL) {
+  require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+}
 
 // Config
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -785,11 +787,11 @@ async function writePipelineSummary(targetDates) {
   }
 
   // Section 5 — Priority pages last 7 days (priority products + pages)
-  const priorityUrls = [
-    ...(config.priority_product_urls || []),
-    ...(config.priority_page_urls || []),
-  ];
-  const prioritySet = new Set(priorityUrls);
+  const { data: trackedUrlRows } = await supabase
+    .from('seo_tracked_urls')
+    .select('url')
+    .in('category', ['priority_product', 'priority_page']);
+  const prioritySet = new Set((trackedUrlRows || []).map(r => r.url));
 
   const { data: pageRows } = await supabase
     .from('gsc_pages')
@@ -873,12 +875,11 @@ async function writePipelineSummary(targetDates) {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Exported run() for unified runner
 // ---------------------------------------------------------------------------
 
-async function main() {
+async function run() {
   console.log('RUBIES Daily Pipeline — starting');
-  console.log('Config:', configPath);
 
   const { targetDates, gapDates } = await getGapDates();
   console.log(`  Target dates: ${targetDates.join(', ')}`);
@@ -896,26 +897,60 @@ async function main() {
 
   const status = classifyStatus(results);
   console.log('  Pipeline status:', status);
-
-  if (status !== 'success') {
-    try {
-      await sendNotification(status, targetDates, gapDates, results);
-    } catch (err) {
-      console.error('  ✗ Failed to send SendGrid notification:', err.message);
-    }
-  }
-
-  try {
-    await writePipelineSummary(targetDates);
-  } catch (err) {
-    console.error('  ✗ Failed to write Pipeline Summary sheet:', err.message);
-  }
-
   console.log('RUBIES Daily Pipeline — done');
+
+  return {
+    sources: {
+      gsc: results.gsc,
+      ga4: results.ga4,
+      shopify_channels: {
+        success: results.shopify.success,
+        rowsWritten: results.shopify?.detail?.shopify_daily_channels || 0,
+        error: results.shopify.error,
+      },
+      shopify_geo: {
+        success: results.shopify.success,
+        rowsWritten: results.shopify?.detail?.shopify_geography || 0,
+        error: results.shopify.error,
+      },
+      ga4_landing: {
+        success: results.ga4.success,
+        rowsWritten: results.ga4?.detail?.ga4_landing_pages || 0,
+        error: results.ga4.error,
+      },
+    },
+    status,
+    _internal: { targetDates, gapDates, results },
+  };
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = { run };
+
+// ---------------------------------------------------------------------------
+// Standalone mode
+// ---------------------------------------------------------------------------
+
+if (require.main === module) {
+  (async () => {
+    const result = await run();
+    const { targetDates, gapDates, results } = result._internal;
+
+    if (result.status !== 'success') {
+      try {
+        await sendNotification(result.status, targetDates, gapDates, results);
+      } catch (err) {
+        console.error('  ✗ Failed to send SendGrid notification:', err.message);
+      }
+    }
+
+    try {
+      await writePipelineSummary(targetDates);
+    } catch (err) {
+      console.error('  ✗ Failed to write Pipeline Summary sheet:', err.message);
+    }
+  })().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
 

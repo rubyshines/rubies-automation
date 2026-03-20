@@ -14,10 +14,6 @@ function loadConfig() {
   return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 }
 
-function saveConfig(config) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n', 'utf8');
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -86,12 +82,12 @@ function computeDateRanges(periodDays = 30, compareTo = 'previous_period', basel
 
   let compareStart, compareEnd;
   if (compareTo === 'baseline') {
-    // Compare current period to all data before the baseline date
-    // Use the same number of days so metrics are comparable
     compareEnd = addDays(baseline, -1);
     compareStart = addDays(compareEnd, -(periodDays - 1));
+  } else if (compareTo === 'year_ago') {
+    compareEnd = addDays(endDate, -365);
+    compareStart = addDays(startDate, -365);
   } else {
-    // previous_period: the N days right before the current period
     compareEnd = addDays(startDate, -1);
     compareStart = addDays(compareEnd, -(periodDays - 1));
   }
@@ -116,6 +112,31 @@ function getSupabase() {
     _supabase = getSupabaseClient();
   }
   return _supabase;
+}
+
+// ---------------------------------------------------------------------------
+// Supabase state fetchers (replaces config.json for dynamic state)
+// ---------------------------------------------------------------------------
+
+async function fetchStrategyItems() {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('seo_strategy_items')
+    .select('*')
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(`fetchStrategyItems: ${error.message}`);
+  return data || [];
+}
+
+async function fetchTrackedUrls(categories) {
+  const supabase = getSupabase();
+  let query = supabase.from('seo_tracked_urls').select('url, category');
+  if (categories) {
+    query = query.in('category', categories);
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(`fetchTrackedUrls: ${error.message}`);
+  return data || [];
 }
 
 // ---------------------------------------------------------------------------
@@ -291,18 +312,15 @@ async function fetchKeywords(ranges, keywordType = 'all', limit = 10) {
 
 async function fetchPages(ranges, limit = 10) {
   const supabase = getSupabase();
-  const config = loadConfig();
   const { current, compare } = ranges;
 
-  const [pagesCurrent, pagesCompare] = await Promise.all([
+  const [pagesCurrent, pagesCompare, trackedUrls] = await Promise.all([
     supabase.from('gsc_pages').select('*').gte('date', current.start).lte('date', current.end),
     supabase.from('gsc_pages').select('*').gte('date', compare.start).lte('date', compare.end),
+    fetchTrackedUrls(['priority_product', 'priority_page']),
   ]);
 
-  const prioritySet = new Set([
-    ...(config.priority_product_urls || []),
-    ...(config.priority_page_urls || []),
-  ]);
+  const prioritySet = new Set(trackedUrls.map(r => r.url));
 
   const aggregate = (rows) => {
     const agg = {};
@@ -476,7 +494,7 @@ function detectAnomalies(overviewData, keywordData, pageData) {
   const posChange = gsc.current.position - gsc.compare.position;
   if (Math.abs(posChange) > (thresholds.keyword_position_change || 3)) {
     anomalies.push({
-      severity: posChange < 0 ? 'positive' : 'negative', // lower position = better
+      severity: posChange < 0 ? 'positive' : 'negative',
       message: `Average position ${posChange < 0 ? 'improved' : 'worsened'} by ${Math.abs(posChange).toFixed(1)} spots (${gsc.compare.position} -> ${gsc.current.position})`,
     });
   }
@@ -521,12 +539,10 @@ function detectAnomalies(overviewData, keywordData, pageData) {
 // Recommendations
 // ---------------------------------------------------------------------------
 
-function generateRecommendations(overviewData, keywordData, pageData) {
-  const config = loadConfig();
-  const progress = config.strategy_progress || {};
-  const tasks = progress.tasks || {};
-  const blogPosts = progress.blog_posts || {};
-  const recommendations = [];
+async function generateRecommendations(overviewData, keywordData, pageData) {
+  const items = await fetchStrategyItems();
+  const tasks = items.filter(i => i.type === 'task');
+  const blogPosts = items.filter(i => i.type === 'blog_post');
 
   // 1. What's working
   const working = [];
@@ -567,8 +583,8 @@ function generateRecommendations(overviewData, keywordData, pageData) {
   }
 
   // 3. Roadmap status
-  const roadmap = Object.entries(tasks).map(([id, t]) => ({
-    id,
+  const roadmap = tasks.map(t => ({
+    id: t.id,
     name: t.name,
     status: t.status,
     completedDate: t.completed_date,
@@ -588,17 +604,15 @@ function generateRecommendations(overviewData, keywordData, pageData) {
   }
 
   // Blog-specific recommendations based on keyword data
-  const blogEntries = Object.entries(blogPosts);
-  const notStartedBlogs = blogEntries.filter(([, b]) => b.status === 'not_started');
+  const notStartedBlogs = blogPosts.filter(b => b.status === 'not_started');
   if (notStartedBlogs.length > 0 && keywordData) {
-    // Rank blog posts by how their target keywords are performing
     const kwMap = new Map(keywordData.gainers.concat(keywordData.losers).map(k => [k.keyword, k]));
-    const scored = notStartedBlogs.map(([id, blog]) => {
+    const scored = notStartedBlogs.map(blog => {
       const totalImpressions = (blog.target_keywords || []).reduce((sum, kw) => {
         const match = kwMap.get(kw);
         return sum + (match ? match.impressions : 0);
       }, 0);
-      return { id, name: id.replace(/_/g, ' '), keywords: blog.target_keywords, totalImpressions };
+      return { id: blog.id, name: blog.name, keywords: blog.target_keywords, totalImpressions };
     }).sort((a, b) => b.totalImpressions - a.totalImpressions);
 
     if (scored.length > 0 && scored[0].totalImpressions > 0) {
@@ -606,80 +620,104 @@ function generateRecommendations(overviewData, keywordData, pageData) {
     }
   }
 
-  // 5. Stale progress reminder
-  const lastUpdated = progress.last_updated;
+  // 5. Stale progress reminder — use most recent updated_at from any strategy item
+  const lastUpdated = items.reduce((latest, i) => {
+    const d = i.updated_at ? new Date(i.updated_at) : null;
+    return d && (!latest || d > latest) ? d : latest;
+  }, null);
+
   if (lastUpdated) {
-    const daysSinceUpdate = Math.floor((new Date() - new Date(lastUpdated)) / (1000 * 60 * 60 * 24));
+    const daysSinceUpdate = Math.floor((new Date() - lastUpdated) / (1000 * 60 * 60 * 24));
     if (daysSinceUpdate > 14) {
       nextActions.push(`Strategy progress hasn't been updated in ${daysSinceUpdate} days — consider updating status`);
     }
   }
 
   // In-progress tasks for a long time
-  if (currentTask) {
+  if (currentTask && lastUpdated) {
     const inProgressTasks = roadmap.filter(t => t.status === 'in_progress');
+    const days = Math.floor((new Date() - lastUpdated) / (1000 * 60 * 60 * 24));
     for (const t of inProgressTasks) {
-      // We don't have start dates for in_progress, but flag if last_updated is stale
-      if (lastUpdated) {
-        const days = Math.floor((new Date() - new Date(lastUpdated)) / (1000 * 60 * 60 * 24));
-        if (days > 21) {
-          nextActions.push(`"${t.name}" has been in progress for a while — is it still active?`);
-        }
+      if (days > 21) {
+        nextActions.push(`"${t.name}" has been in progress for a while — is it still active?`);
       }
     }
   }
 
-  return { working, attention, roadmap, nextActions, blogPosts: Object.entries(blogPosts).map(([id, b]) => ({ id, ...b })) };
+  return {
+    working,
+    attention,
+    roadmap,
+    nextActions,
+    blogPosts: blogPosts.map(b => ({
+      id: b.id,
+      status: b.status,
+      target_keywords: b.target_keywords,
+      published_url: b.published_url,
+      published_date: b.published_date,
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Strategy progress update
 // ---------------------------------------------------------------------------
 
-function updateStrategyProgress(task, status, notes) {
-  const config = loadConfig();
-  if (!config.strategy_progress) {
-    throw new Error('No strategy_progress section in config.json');
+async function updateStrategyProgress(task, status, notes) {
+  const supabase = getSupabase();
+
+  // Fetch the item to verify it exists
+  const { data: existing, error: fetchErr } = await supabase
+    .from('seo_strategy_items')
+    .select('*')
+    .eq('id', task)
+    .single();
+
+  if (fetchErr || !existing) {
+    // List valid items for error message
+    const { data: all } = await supabase
+      .from('seo_strategy_items')
+      .select('id')
+      .order('sort_order');
+    const validIds = (all || []).map(r => r.id).join(', ');
+    throw new Error(`Unknown task: ${task}. Valid items: ${validIds}`);
   }
 
-  const tasks = config.strategy_progress.tasks || {};
-  if (!tasks[task]) {
-    // Check blog_posts too
-    const blogs = config.strategy_progress.blog_posts || {};
-    if (blogs[task]) {
-      blogs[task].status = status;
-      if (notes) blogs[task].notes = notes;
-      config.strategy_progress.last_updated = formatDate(new Date());
-      saveConfig(config);
+  const updates = {
+    status,
+    updated_at: new Date().toISOString(),
+  };
+  if (notes) updates.notes = notes;
+  if (status === 'completed') updates.completed_date = formatDate(new Date());
 
-      const allBlogs = Object.entries(blogs);
-      const nextBlog = allBlogs.find(([id, b]) => b.status === 'not_started' && id !== task);
-      return {
-        updated: task,
-        status,
-        nextRecommendation: nextBlog ? `Next blog post: ${nextBlog[0].replace(/_/g, ' ')}` : 'All blog posts addressed!',
-      };
-    }
-    throw new Error(`Unknown task: ${task}. Valid tasks: ${Object.keys(tasks).join(', ')}, ${Object.keys(blogs).join(', ')}`);
-  }
+  const { error: updateErr } = await supabase
+    .from('seo_strategy_items')
+    .update(updates)
+    .eq('id', task);
 
-  tasks[task].status = status;
-  if (notes) tasks[task].notes = notes;
-  if (status === 'completed') {
-    tasks[task].completed_date = formatDate(new Date());
-  }
-  config.strategy_progress.last_updated = formatDate(new Date());
-  saveConfig(config);
+  if (updateErr) throw new Error(`Update failed: ${updateErr.message}`);
 
-  // Find next recommended task
-  const allTasks = Object.entries(tasks);
-  const nextTask = allTasks.find(([id, t]) => t.status === 'not_started' && id !== task);
+  // Find next recommended item of the same type
+  const { data: remaining } = await supabase
+    .from('seo_strategy_items')
+    .select('id, name, type')
+    .eq('type', existing.type)
+    .eq('status', 'not_started')
+    .neq('id', task)
+    .order('sort_order')
+    .limit(1);
+
+  const next = remaining?.[0];
+  const label = existing.type === 'blog_post' ? 'blog post' : 'task';
+  const nextRec = next
+    ? `Next ${label}: ${next.name} (${next.id})`
+    : `All ${label}s completed or in progress!`;
 
   return {
     updated: task,
-    name: tasks[task].name,
+    name: existing.name,
     status,
-    nextRecommendation: nextTask ? `Next task: ${nextTask[1].name} (${nextTask[0]})` : 'All strategy tasks completed or in progress!',
+    nextRecommendation: nextRec,
   };
 }
 
@@ -694,6 +732,10 @@ module.exports = {
   formatDate,
   addDays,
   loadConfig,
+
+  // Supabase state
+  fetchStrategyItems,
+  fetchTrackedUrls,
 
   // Core
   computeDateRanges,

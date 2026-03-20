@@ -187,7 +187,7 @@ const tools = [
         ]);
 
         const anomalies = detectAnomalies(overview, kwData, pageData);
-        const recs = generateRecommendations(overview, kwData, pageData);
+        const recs = await generateRecommendations(overview, kwData, pageData);
 
         md += `# RUBIES SEO Report\n\n`;
         md += formatNotableChanges(anomalies) + '\n';
@@ -239,7 +239,7 @@ const tools = [
       }
 
       try {
-        const result = updateStrategyProgress(task, status, notes);
+        const result = await updateStrategyProgress(task, status, notes);
         let md = `## Strategy Progress Updated\n\n`;
         md += `- **Task:** ${result.name || task}\n`;
         md += `- **Status:** ${status}\n`;
@@ -255,5 +255,133 @@ const tools = [
     },
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Tool: seo_keywords
+// ---------------------------------------------------------------------------
+
+const seoKeywordsTool = {
+  name: 'seo_keywords',
+  description: 'Query raw SEO keyword data from Google Search Console. Filter by keyword, position range, or minimum impressions. Returns individual keyword performance for deep analysis.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      keyword: {
+        type: 'string',
+        description: 'Search for keywords containing this text (e.g. "tucking", "swimwear")',
+      },
+      min_position: {
+        type: 'number',
+        description: 'Minimum average position (default: 1)',
+      },
+      max_position: {
+        type: 'number',
+        description: 'Maximum average position (default: 100)',
+      },
+      min_impressions: {
+        type: 'number',
+        description: 'Minimum total impressions (default: 10)',
+      },
+      period_days: {
+        type: 'number',
+        description: 'Number of days to analyze (default: 30)',
+      },
+      sort_by: {
+        type: 'string',
+        description: 'Sort by: impressions (default), clicks, position, ctr',
+      },
+      limit: {
+        type: 'number',
+        description: 'Max keywords to return (default: 50)',
+      },
+    },
+    required: [],
+  },
+  handler: async ({ keyword, min_position, max_position, min_impressions, period_days, sort_by, limit }) => {
+    const { getSupabaseClient } = require('../../../shared/supabaseClient');
+    const supabase = getSupabaseClient();
+
+    const periodDays = period_days || 30;
+    const minImpressions = min_impressions || 10;
+    const minPos = min_position || 1;
+    const maxPos = max_position || 100;
+    const maxResults = Math.min(limit || 50, 200);
+    const sortField = sort_by || 'impressions';
+
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() - 1);
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - (periodDays - 1));
+    const fmt = (d) => d.toISOString().slice(0, 10);
+
+    let query = supabase
+      .from('gsc_keywords')
+      .select('keyword, clicks, impressions, position, ctr, date')
+      .gte('date', fmt(startDate))
+      .lte('date', fmt(endDate));
+
+    if (keyword) query = query.ilike('keyword', `%${keyword}%`);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`Supabase error: ${error.message}`);
+
+    // Aggregate by keyword
+    const agg = {};
+    for (const r of (data || [])) {
+      if (!agg[r.keyword]) {
+        agg[r.keyword] = { keyword: r.keyword, clicks: 0, impressions: 0, positionSum: 0, ctrSum: 0, count: 0 };
+      }
+      const a = agg[r.keyword];
+      a.clicks += r.clicks || 0;
+      a.impressions += r.impressions || 0;
+      a.positionSum += r.position || 0;
+      a.ctrSum += r.ctr || 0;
+      a.count++;
+    }
+
+    const keywords = Object.values(agg)
+      .map(a => ({
+        keyword: a.keyword,
+        clicks: a.clicks,
+        impressions: a.impressions,
+        position: Math.round((a.positionSum / a.count) * 10) / 10,
+        ctr: Math.round((a.ctrSum / a.count) * 1000) / 1000,
+      }))
+      .filter(k => k.impressions >= minImpressions && k.position >= minPos && k.position <= maxPos);
+
+    // Sort
+    const sortFn = {
+      clicks: (a, b) => b.clicks - a.clicks,
+      impressions: (a, b) => b.impressions - a.impressions,
+      position: (a, b) => a.position - b.position,
+      ctr: (a, b) => b.ctr - a.ctr,
+    };
+    keywords.sort(sortFn[sortField] || sortFn.impressions);
+
+    const results = keywords.slice(0, maxResults);
+
+    if (!results.length) {
+      return { content: [{ type: 'text', text: `No keywords found matching your filters.` }] };
+    }
+
+    let md = `## SEO Keywords (${results.length} of ${keywords.length})\n`;
+    md += `Period: ${fmt(startDate)} to ${fmt(endDate)} | Sorted by: ${sortField}\n\n`;
+    md += '| Keyword | Clicks | Impressions | Position | CTR |\n';
+    md += '|---------|--------|-------------|----------|-----|\n';
+
+    for (const k of results) {
+      md += `| ${k.keyword} | ${k.clicks} | ${k.impressions.toLocaleString()} | ${k.position} | ${(k.ctr * 100).toFixed(1)}% |\n`;
+    }
+
+    // Summary
+    const totalClicks = results.reduce((s, k) => s + k.clicks, 0);
+    const totalImpressions = results.reduce((s, k) => s + k.impressions, 0);
+    md += `\n**Totals:** ${totalClicks.toLocaleString()} clicks, ${totalImpressions.toLocaleString()} impressions across ${results.length} keywords\n`;
+
+    return { content: [{ type: 'text', text: md }] };
+  },
+};
+
+tools.push(seoKeywordsTool);
 
 module.exports = tools;

@@ -44,37 +44,62 @@ function changeCell(current, compare, invertColor) {
   return `<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;color:${color};font-weight:600;">${arrowChar} ${changeText}</td>`;
 }
 
-function metricRow(label, current, baseline, lastWeek, unit, invertColor) {
+function metricRow(label, current, comparisons, unit, invertColor) {
   const prefix = unit === '$' ? '$' : '';
   const suffix = unit === '%' ? '%' : '';
 
+  const changeCells = comparisons.map(c => changeCell(current, c, invertColor)).join('');
   return `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #eee;font-weight:500;">${label}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;">${prefix}${fmtNum(current)}${suffix}</td>
-      ${changeCell(current, baseline, invertColor)}
-      ${changeCell(current, lastWeek, invertColor)}
+      ${changeCells}
     </tr>`;
 }
 
-function buildEmail(baselineOverview, weekOverview, kwData, pageData, anomalies, recs) {
-  const config = loadConfig();
-  const bl = baselineOverview;  // vs baseline
-  const wk = weekOverview;      // vs last week (current values are the same)
-
-  // Scorecard — current value, then vs baseline, then vs last week
-  const scorecardRows = [
-    metricRow('Organic Clicks', bl.gsc.current.clicks, bl.gsc.compare.clicks, wk.gsc.compare.clicks, '#'),
-    metricRow('Impressions', bl.gsc.current.impressions, bl.gsc.compare.impressions, wk.gsc.compare.impressions, '#'),
-    metricRow('Avg CTR', bl.gsc.current.ctr, bl.gsc.compare.ctr, wk.gsc.compare.ctr, '%'),
-    metricRow('Avg Position', bl.gsc.current.position, bl.gsc.compare.position, wk.gsc.compare.position, '#', true),
-    metricRow('Organic Sessions', bl.ga4.current.sessions, bl.ga4.compare.sessions, wk.ga4.compare.sessions, '#'),
-    metricRow('Organic Revenue', bl.shopify.current.revenue, bl.shopify.compare.revenue, wk.shopify.compare.revenue, '$'),
-    metricRow('Organic Orders', bl.shopify.current.orders, bl.shopify.compare.orders, wk.shopify.compare.orders, '#'),
+function buildScorecard(title, periodLabel, headers, bl, wk, ya) {
+  const rows = [
+    metricRow('Organic Clicks', bl.gsc.current.clicks, [bl.gsc.compare.clicks, wk.gsc.compare.clicks, ya.gsc.compare.clicks], '#'),
+    metricRow('Impressions', bl.gsc.current.impressions, [bl.gsc.compare.impressions, wk.gsc.compare.impressions, ya.gsc.compare.impressions], '#'),
+    metricRow('Avg CTR', bl.gsc.current.ctr, [bl.gsc.compare.ctr, wk.gsc.compare.ctr, ya.gsc.compare.ctr], '%'),
+    metricRow('Avg Position', bl.gsc.current.position, [bl.gsc.compare.position, wk.gsc.compare.position, ya.gsc.compare.position], '#', true),
+    metricRow('Organic Sessions', bl.ga4.current.sessions, [bl.ga4.compare.sessions, wk.ga4.compare.sessions, ya.ga4.compare.sessions], '#'),
+    metricRow('Organic Revenue', bl.shopify.current.revenue, [bl.shopify.compare.revenue, wk.shopify.compare.revenue, ya.shopify.compare.revenue], '$'),
+    metricRow('Organic Orders', bl.shopify.current.orders, [bl.shopify.compare.orders, wk.shopify.compare.orders, ya.shopify.compare.orders], '#'),
   ].join('');
 
+  return `
+    <h2 style="margin:24px 0 12px;font-size:16px;color:#374151;">${title}</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <tr style="background:#f9fafb;">
+        <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e7eb;">Metric</th>
+        <th style="padding:8px 12px;text-align:right;font-weight:600;border-bottom:2px solid #e5e7eb;">${periodLabel}</th>
+        ${headers.map(h => `<th style="padding:8px 12px;text-align:right;font-weight:600;border-bottom:2px solid #e5e7eb;">${h}</th>`).join('')}
+      </tr>
+      ${rows}
+    </table>`;
+}
+
+function buildEmail(weeklyData, monthlyData, kwData, pageData, anomalies, recs) {
+
+  // Weekly scorecard
+  const weeklyScorecardHtml = buildScorecard(
+    'Last 7 Days',
+    'Last 7 Days',
+    ['vs Baseline', 'vs Prior 7 Days', 'vs Same Week Last Year'],
+    weeklyData.baseline, weeklyData.prev, weeklyData.yearAgo,
+  );
+
+  // Monthly scorecard
+  const monthlyScorecardHtml = buildScorecard(
+    'Last 30 Days',
+    'Last 30 Days',
+    ['vs Baseline', 'vs Prior 30 Days', 'vs Same Period Last Year'],
+    monthlyData.baseline, monthlyData.prev, monthlyData.yearAgo,
+  );
+
   // Notable changes
-  const notableHtml = anomalies.slice(0, 3).map(a => {
+  const notableHtml = anomalies.slice(0, 6).map(a => {
     const icon = a.severity === 'positive' ? '\u2705' : '\u26a0\ufe0f';
     return `<li style="margin-bottom:4px;">${icon} ${a.message}</li>`;
   }).join('');
@@ -124,7 +149,7 @@ function buildEmail(baselineOverview, weekOverview, kwData, pageData, anomalies,
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<div style="max-width:600px;margin:0 auto;padding:20px;">
+<div style="max-width:640px;margin:0 auto;padding:20px;">
 
   <!-- Header -->
   <div style="background:linear-gradient(135deg,#7c3aed,#a855f7);border-radius:12px 12px 0 0;padding:24px;text-align:center;">
@@ -134,17 +159,11 @@ function buildEmail(baselineOverview, weekOverview, kwData, pageData, anomalies,
 
   <div style="background:#fff;border-radius:0 0 12px 12px;padding:24px;">
 
-    <!-- Scorecard -->
-    <h2 style="margin:0 0 12px;font-size:16px;color:#374151;">Scorecard</h2>
-    <table style="width:100%;border-collapse:collapse;font-size:14px;">
-      <tr style="background:#f9fafb;">
-        <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e7eb;">Metric</th>
-        <th style="padding:8px 12px;text-align:right;font-weight:600;border-bottom:2px solid #e5e7eb;">This Week</th>
-        <th style="padding:8px 12px;text-align:right;font-weight:600;border-bottom:2px solid #e5e7eb;">vs Baseline</th>
-        <th style="padding:8px 12px;text-align:right;font-weight:600;border-bottom:2px solid #e5e7eb;">vs Last Week</th>
-      </tr>
-      ${scorecardRows}
-    </table>
+    <!-- Weekly Scorecard -->
+    ${weeklyScorecardHtml}
+
+    <!-- Monthly Scorecard -->
+    ${monthlyScorecardHtml}
 
     <!-- Notable Changes -->
     <h2 style="margin:24px 0 8px;font-size:16px;color:#374151;">Notable Changes</h2>
@@ -208,25 +227,71 @@ async function main() {
   console.log('RUBIES Weekly SEO Digest — starting');
   const config = loadConfig();
 
-  // Fetch two comparison sets: baseline and last week
-  const baselineRanges = computeDateRanges(7, 'baseline');
-  const weekRanges = computeDateRanges(7, 'previous_period');
-  console.log(`  Period: ${baselineRanges.current.start} to ${baselineRanges.current.end}`);
-  console.log(`  vs Baseline: ${baselineRanges.compare.start} to ${baselineRanges.compare.end}`);
-  console.log(`  vs Last Week: ${weekRanges.compare.start} to ${weekRanges.compare.end}`);
+  // --- Weekly ranges (7 days) ---
+  const weekBaselineRanges = computeDateRanges(7, 'baseline');
+  const weekPrevRanges = computeDateRanges(7, 'previous_period');
+  const weekYearAgoRanges = computeDateRanges(7, 'year_ago');
 
-  const [baselineOverview, weekOverview] = await Promise.all([
-    fetchOverview(baselineRanges),
-    fetchOverview(weekRanges),
+  console.log(`  Weekly period: ${weekBaselineRanges.current.start} to ${weekBaselineRanges.current.end}`);
+  console.log(`  vs Baseline: ${weekBaselineRanges.compare.start} to ${weekBaselineRanges.compare.end}`);
+  console.log(`  vs Last Week: ${weekPrevRanges.compare.start} to ${weekPrevRanges.compare.end}`);
+  console.log(`  vs Year Ago: ${weekYearAgoRanges.compare.start} to ${weekYearAgoRanges.compare.end}`);
+
+  // --- Monthly ranges (30 days) ---
+  const monthBaselineRanges = computeDateRanges(30, 'baseline');
+  const monthPrevRanges = computeDateRanges(30, 'previous_period');
+  const monthYearAgoRanges = computeDateRanges(30, 'year_ago');
+
+  console.log(`  Monthly period: ${monthBaselineRanges.current.start} to ${monthBaselineRanges.current.end}`);
+  console.log(`  vs Baseline: ${monthBaselineRanges.compare.start} to ${monthBaselineRanges.compare.end}`);
+  console.log(`  vs Prev 30 Days: ${monthPrevRanges.compare.start} to ${monthPrevRanges.compare.end}`);
+  console.log(`  vs Year Ago: ${monthYearAgoRanges.compare.start} to ${monthYearAgoRanges.compare.end}`);
+
+  // Fetch all overview data in parallel (6 queries)
+  const [
+    weekBaselineOv, weekPrevOv, weekYearAgoOv,
+    monthBaselineOv, monthPrevOv, monthYearAgoOv,
+  ] = await Promise.all([
+    fetchOverview(weekBaselineRanges),
+    fetchOverview(weekPrevRanges),
+    fetchOverview(weekYearAgoRanges),
+    fetchOverview(monthBaselineRanges),
+    fetchOverview(monthPrevRanges),
+    fetchOverview(monthYearAgoRanges),
   ]);
 
-  // Keywords and pages use baseline comparison
-  const kwData = await fetchKeywords(baselineRanges, 'non_branded', 10);
-  const pageData = await fetchPages(baselineRanges, 10);
-  const anomalies = detectAnomalies(baselineOverview, kwData, pageData);
-  const recs = generateRecommendations(baselineOverview, kwData, pageData);
+  const weeklyData = { baseline: weekBaselineOv, prev: weekPrevOv, yearAgo: weekYearAgoOv };
+  const monthlyData = { baseline: monthBaselineOv, prev: monthPrevOv, yearAgo: monthYearAgoOv };
 
-  const html = buildEmail(baselineOverview, weekOverview, kwData, pageData, anomalies, recs);
+  // Keywords and pages use weekly baseline comparison (same as before)
+  const kwData = await fetchKeywords(weekBaselineRanges, 'non_branded', 10);
+  const pageData = await fetchPages(weekBaselineRanges, 10);
+
+  // Anomalies & recommendations — run detection across all comparison sets
+  // Tag each anomaly with its source for context in the email
+  function tagAnomalies(list, source) {
+    return list.map(a => ({ ...a, message: `[${source}] ${a.message}` }));
+  }
+
+  const weeklyAnomalies = tagAnomalies(detectAnomalies(weekBaselineOv, kwData, pageData), 'Weekly vs Baseline');
+  const weekYearAnomalies = tagAnomalies(detectAnomalies(weekYearAgoOv, null, null), 'Weekly vs Last Year');
+  const monthPrevAnomalies = tagAnomalies(detectAnomalies(monthPrevOv, null, null), 'Monthly vs Prev 30d');
+  const monthYearAnomalies = tagAnomalies(detectAnomalies(monthYearAgoOv, null, null), 'Monthly vs Last Year');
+
+  // Merge anomalies, dedup by message
+  const seenMessages = new Set();
+  const anomalies = [];
+  for (const a of [...weeklyAnomalies, ...weekYearAnomalies, ...monthPrevAnomalies, ...monthYearAnomalies]) {
+    if (!seenMessages.has(a.message)) {
+      seenMessages.add(a.message);
+      anomalies.push(a);
+    }
+  }
+  anomalies.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'negative' ? -1 : 1));
+
+  const recs = await generateRecommendations(weekBaselineOv, kwData, pageData);
+
+  const html = buildEmail(weeklyData, monthlyData, kwData, pageData, anomalies, recs);
 
   const sgMail = getSendgridClient();
   if (!sgMail) {

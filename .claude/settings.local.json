@@ -17,7 +17,20 @@
       "mcp__rubies-cs__search_products",
       "mcp__rubies-cs__create_wholesale_order",
       "mcp__rubies-cs__seo_report",
-      "mcp__rubies-cs__update_seo_progress"
+      "mcp__rubies-cs__update_seo_progress",
+      "WebSearch",
+      "WebFetch(domain:judge.me)",
+      "WebFetch(domain:developers.gorgias.com)",
+      "WebFetch(domain:prismatic.io)",
+      "mcp__rubies-cs__klaviyo_campaigns",
+      "mcp__rubies-cs__klaviyo_campaign_content",
+      "mcp__rubies-cs__cs_get_knowledge",
+      "mcp__rubies-cs__blog_topic_ideas",
+      "mcp__rubies-cs__search_reviews",
+      "mcp__rubies-cs__blog_search_emails",
+      "mcp__rubies-cs__klaviyo_list_stats",
+      "mcp__rubies-cs__create_order",
+      "mcp__rubies-cs__get_order_details"
     ]
   },
   "enableAllProjectMcpServers": true,
