@@ -913,7 +913,7 @@ async function prescribeDonationRouting(intake, context) {
     return {
       phase: 'donation_routing',
       type: 'local_no_partner',
-      response_text: `${programExplanation} Feel free to donate locally to any organization that supports the gender-diverse community. ${washReminder} Do you know of any LGBTQ+ organizations in your area we could partner with?`,
+      response_text: `${programExplanation} Feel free to donate locally to any organization that supports the gender-diverse community. Do you know of any LGBTQ+ organizations in your area we could partner with?`,
       audit: `No partners in ${country} — local donation + ask for org referral`,
     };
   }
@@ -922,7 +922,7 @@ async function prescribeDonationRouting(intake, context) {
     return {
       phase: 'donation_routing',
       type: 'local_single',
-      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally to any organization that supports the gender-diverse community. ${washReminder}`,
+      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally to any organization that supports the gender-diverse community.`,
       audit: `Single item in ${country} — local donation (not worth shipping to partner)`,
     };
   }
