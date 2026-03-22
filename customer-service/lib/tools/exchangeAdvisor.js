@@ -185,6 +185,8 @@ IMPORTANT:
 - For sizes: normalize to catalog format (M not Medium, 1X not XL, 14 not fourteen).
 - For items: if they say "underwear" without a product name, put "underwear" as product. If "bikini bottom" put that. Be specific.
 - For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags" = close_fit_loose. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction).
+- EXCLUSIONS: If the customer says "just the X" or "only the X" or "not the Y" or "the Y fits fine", ONLY include the items they want to exchange. Do NOT include items they explicitly said are fine or excluded. For example "just the AJ, the Ruby fits fine" means ONLY the AJ goes in items — do NOT include the Ruby.
+- When confirming a size, only apply it to the items the customer is actually exchanging. If they say "1X for the AJ" don't apply 1X to other products.
 
 Return ONLY JSON. No explanation.`;
 
@@ -498,6 +500,13 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
       pronouns: intake.pronouns,
       buying_for: intake.buying_for,
       third_party_label: intake.third_party_label,
+      address: customer.defaultAddress ? {
+        address1: customer.defaultAddress.address1,
+        city: customer.defaultAddress.city,
+        province: customer.defaultAddress.province,
+        country: customer.defaultAddress.country,
+        zip: customer.defaultAddress.zip,
+      } : null,
     },
     order: targetOrder ? {
       name: targetOrder.name,

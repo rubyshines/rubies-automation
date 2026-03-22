@@ -57,11 +57,19 @@ function composeAgentResponse(s) {
     return response;
   }
 
-  // Needs info — use the tree's per-item response text
+  // Needs info — use the tree's per-item response text + include multi-item flags
   if (s.status === 'needs_info' && items.length > 0) {
     const actionTexts = items.filter(i => i.response_text).map(i => i.response_text);
     if (actionTexts.length > 0) {
-      return greeting + actionTexts.join(' ');
+      let response = greeting + actionTexts.join(' ');
+      // Include multi-item flags in the same message
+      const multiItemFlags = (s.prescription.flags || []).filter(f =>
+        f.includes('Would you like to exchange')
+      );
+      if (multiItemFlags.length > 0) {
+        response += '\n\nAlso, ' + multiItemFlags[0].replace(/^Order also has /, 'I noticed your order also has ').replace(/ — ask: "/, ' — ').replace(/"$/, '');
+      }
+      return response;
     }
   }
 
@@ -135,6 +143,7 @@ async function handleTestConversation({ customer_email, messages }) {
       customer: customerMsg,
       agent: agentResponse,
       status: s.status,
+      _structured: s,
       items: (s.intake.items || []).map(it => ({
         product: it.product,
         size: it.size,
@@ -149,6 +158,13 @@ async function handleTestConversation({ customer_email, messages }) {
   }
 
   // Build the simulated exchange order
+  // Capture customer address from last structured result
+  let customerAddress = null;
+  if (conversationLog.length > 0) {
+    const lastS = conversationLog[conversationLog.length - 1]._structured;
+    if (lastS?.customer?.address) customerAddress = lastS.customer.address;
+  }
+
   // Use the last structured status (from tree), not intake.status (pre-tree)
   const lastStructuredStatus = conversationLog.length > 0 ? conversationLog[conversationLog.length - 1].status : null;
   let orderSimulation = null;
@@ -159,6 +175,7 @@ async function handleTestConversation({ customer_email, messages }) {
         customer: customer_email,
         name: intake.name,
         tags: ['exchange', 'cs-mcp'],
+        address: customerAddress,
         items: resolvedItems.map(i => ({
           product: i.product,
           from_size: i.size,
@@ -200,7 +217,12 @@ async function handleTestConversation({ customer_email, messages }) {
   md += '## C. Resolution\n\n';
   if (orderSimulation) {
     md += `Status: EXCHANGE ORDER CREATED (simulation)\n`;
-    md += `Customer: ${orderSimulation.customer}${orderSimulation.name ? ' (' + orderSimulation.name + ')' : ''}\n\n`;
+    md += `Customer: ${orderSimulation.customer}${orderSimulation.name ? ' (' + orderSimulation.name + ')' : ''}\n`;
+    if (orderSimulation.address) {
+      const a = orderSimulation.address;
+      md += `Ship to: ${[a.address1, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}\n`;
+    }
+    md += '\n';
     for (const item of orderSimulation.items) {
       md += `${item.product} — ${item.color || 'same color'}\n`;
       md += `  Was: ${item.from_size}\n`;
