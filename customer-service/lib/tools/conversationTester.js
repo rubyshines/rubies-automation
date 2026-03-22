@@ -12,6 +12,7 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
+const { getProductNickname } = require('../decisionTree');
 
 // Import the advisor handler
 const advisorTools = require('./exchangeAdvisor');
@@ -37,7 +38,7 @@ function composeAgentResponse(s) {
 
     let response;
     if (systemPickedSize) {
-      const desc = resolvedItems.map(i => `a ${i.product} in size ${i.resolved_size}`).join(' and ');
+      const desc = resolvedItems.map(i => `a ${getProductNickname(i.product)} in size ${i.resolved_size}`).join(' and ');
       response = greeting + `I've gone ahead and created a new order for ${desc}.`;
     } else {
       response = greeting + `I've gone ahead and created an exchange order for you.`;
@@ -49,7 +50,7 @@ function composeAgentResponse(s) {
     }
 
     // Closing
-    const desc = resolvedItems.map(i => `${i.product} in ${i.resolved_size}`).join(' and ');
+    const desc = resolvedItems.map(i => `${getProductNickname(i.product)} in ${i.resolved_size}`).join(' and ');
     response += `\n\nYour new ${desc} is on its way!`;
 
     return response;

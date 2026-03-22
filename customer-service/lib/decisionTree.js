@@ -14,6 +14,52 @@
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
 // ---------------------------------------------------------------------------
+// Product nicknames — short names for customer-facing messages
+// ---------------------------------------------------------------------------
+
+const PRODUCT_NICKNAMES = {
+  'THE AJ NO-TUCK SHAPING UNDERWEAR': 'AJ',
+  'THE AVA SEAMLESS SHAPING BRA': 'Ava',
+  'THE BROOKE SHAPING BRA': 'Brooke',
+  'THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR': 'Charlie',
+  'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM': 'Cheeky',
+  'THE FLO SHAPING DANCE UNDERWEAR': 'Flo',
+  'THE MIA HALTER BIKINI TOP': 'Mia',
+  'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM': 'Ruby',
+  'THE SASSY NO-TUCK SHAPING UNDERWEAR': 'Sassy',
+  'THE SERENA NO-TUCK SHAPING SHORTY SHORT': 'Serena',
+  'THE SKY NO-TUCK SHAPING ONE-PIECE': 'Sky',
+  'THE STELLA HIGH WAISTED SHAPING BIKINI BOTTOM': 'Stella',
+  'THE SUNNY QUEENY TANKINI': 'Queeny',
+  'MAGICAL SHAPING GEL CHEST PADS': 'Magical Chest Pads',
+  'RUBIES SHAPING CHEST PADS': 'Chest Pads',
+  'NO-TUCK SHAPING UNDERWEAR': 'No-Tuck Underwear',
+  'EVERY GIRL DESERVES TO SHINE ADULT TEE': 'Adult Tee',
+  'THE RUBIES BIKINI SET - BIKINI BOTTOM + BIKINI TOP': 'Bikini Set',
+  'THE RUBIES MATCHING SET - UNDERWEAR + BRA': 'Matching Set',
+  'THE RUBIES SHAPING BUNDLE - 3 AJ UNDERWEAR + 1 BIKINI BOTTOM': 'Shaping Bundle',
+  'RUBIES GIFT CARD': 'Gift Card',
+  'PROGRESS PRIDE EARRINGS': 'Pride Earrings',
+  'PROGRESS PRIDE FLAG': 'Pride Flag',
+  'PROGRESS PRIDE PINS': 'Pride Pins',
+};
+
+/**
+ * Get short nickname for a product. Falls back to the full title if no nickname.
+ */
+function getProductNickname(fullTitle) {
+  if (!fullTitle) return 'item';
+  // Try exact match
+  const upper = fullTitle.toUpperCase();
+  if (PRODUCT_NICKNAMES[upper]) return PRODUCT_NICKNAMES[upper];
+  // Try partial match — find the key that's contained in the title
+  for (const [key, nick] of Object.entries(PRODUCT_NICKNAMES)) {
+    if (upper.includes(key) || key.includes(upper)) return nick;
+  }
+  return fullTitle;
+}
+
+// ---------------------------------------------------------------------------
 // Size constants (shared with exchangeAdvisor.js)
 // ---------------------------------------------------------------------------
 
@@ -948,6 +994,9 @@ module.exports = {
   prescribeOrderCreation,
   prescribeDonationRouting,
   checkPositiveFeedback,
+  // Product nicknames
+  getProductNickname,
+  PRODUCT_NICKNAMES,
   // Size utilities (shared)
   normalizeSize,
   getSizeList,
