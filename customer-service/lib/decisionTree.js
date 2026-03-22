@@ -886,7 +886,18 @@ async function prescribeDonationRouting(intake, context) {
   }
 
   const country = context.customerCountry;
-  const itemCount = nonDefectItems.length;
+  // Count total UNITS being returned, not just intake entries
+  // Match intake items to order line items to get quantities
+  let itemCount = 0;
+  const orderLineItems = context.targetOrder?.lineItems || [];
+  for (const intakeItem of nonDefectItems) {
+    const orderMatch = orderLineItems.find(oi =>
+      oi.title?.toLowerCase().includes((intakeItem.product || '').toLowerCase()) ||
+      (intakeItem.product || '').toLowerCase().includes((oi.title || '').toLowerCase().split(' ')[1] || '')
+    );
+    itemCount += orderMatch?.quantity || 1;
+  }
+  if (itemCount === 0) itemCount = nonDefectItems.length; // fallback
 
   if (!country) {
     return {
