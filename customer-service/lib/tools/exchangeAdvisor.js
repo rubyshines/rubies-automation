@@ -167,7 +167,7 @@ Return JSON:
       "product": string — product name as close to catalog as possible,
       "size": string or null — their CURRENT size (what they have now),
       "color": string or null,
-      "issue": "close_fit_tight" | "close_fit_loose" | "way_off" | "product_not_working" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "wrong_item" | "missing" | "none" | "unclear",
+      "issue": "close_fit_tight" | "close_fit_loose" | "doesnt_fit" | "way_off" | "product_not_working" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "wrong_item" | "missing" | "none" | "unclear",
       "desired_size": string or null — ONLY if customer named a SPECIFIC size (e.g. "size L", "a 14"). Do NOT fill this in if they said "next size up" or "one size down" — those are directions not specific sizes.,
       "desired_product": string or null — if they want a different product
     }
@@ -184,7 +184,7 @@ IMPORTANT:
 - For names: ONLY extract if they explicitly introduce themselves. "Hi Jamie" is addressing the agent, not their name.
 - For sizes: normalize to catalog format (M not Medium, 1X not XL, 14 not fourteen).
 - For items: if they say "underwear" without a product name, put "underwear" as product. If "bikini bottom" put that. Be specific.
-- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags" = close_fit_loose. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect.
+- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags" = close_fit_loose. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction).
 
 Return ONLY JSON. No explanation.`;
 
@@ -251,7 +251,9 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
       if (existing) {
         if (!existing.size && aiItem.size) existing.size = normalizeSize(aiItem.size);
         if (!existing.color && aiItem.color) existing.color = aiItem.color;
-        if (!existing.issue && aiItem.issue && aiItem.issue !== 'unclear') existing.issue = aiItem.issue;
+        // Allow upgrading issue from vague (doesnt_fit, unclear, none) to specific (close_fit_tight, etc.)
+        const vagueIssues = new Set(['doesnt_fit', 'unclear', 'none', null, undefined]);
+        if (vagueIssues.has(existing.issue) && aiItem.issue && !vagueIssues.has(aiItem.issue)) existing.issue = aiItem.issue;
         if (!existing.desired_size && aiItem.desired_size) existing.desired_size = normalizeSize(aiItem.desired_size);
         if (!existing.resolved_size && aiItem.desired_size) existing.resolved_size = normalizeSize(aiItem.desired_size);
       } else {
@@ -268,9 +270,13 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
     }
   }
 
-  if (!intake.issue_type && intake.items.length > 0) {
-    const firstIssue = intake.items.find(i => i.issue && i.issue !== 'unclear')?.issue;
-    if (firstIssue) intake.issue_type = firstIssue;
+  // Update issue_type from items — allow upgrading from vague to specific
+  if (intake.items.length > 0) {
+    const vagueIssueTypes = new Set(['doesnt_fit', 'unclear', 'none', null, undefined]);
+    const firstSpecificIssue = intake.items.find(i => i.issue && !vagueIssueTypes.has(i.issue))?.issue;
+    if (firstSpecificIssue && vagueIssueTypes.has(intake.issue_type)) {
+      intake.issue_type = firstSpecificIssue;
+    }
   }
 
   if (!intake.measurement && parsed.measurement) intake.measurement = parsed.measurement;

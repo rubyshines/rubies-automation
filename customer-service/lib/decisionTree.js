@@ -453,6 +453,10 @@ function prescribeActionClassification(intake) {
     } else if (item.issue === 'product_not_working' || item.issue === 'expectation_mismatch') {
       classified.action = 'probe_needed';
       classified.audit = 'Product not working — need to probe';
+    } else if (item.issue === 'doesnt_fit' || item.issue === 'fit_issue') {
+      // Customer said "doesn't fit" without specifying tight or loose
+      classified.action = 'fit_direction_unclear';
+      classified.audit = 'Fit issue without direction — ask tight vs loose';
     } else if (item.issue === 'tight_legs') {
       classified.action = 'style_switch';
       classified.audit = 'Tight legs — recommend alternative style';
@@ -462,6 +466,10 @@ function prescribeActionClassification(intake) {
     } else if (item.issue === 'refund_request') {
       classified.action = 'refund';
       classified.audit = 'Refund requested';
+    } else if (item.issue === 'unclear' || item.issue === 'none') {
+      // Customer said it doesn't fit but didn't say how — ask product-specific fit question
+      classified.action = 'fit_direction_unclear';
+      classified.audit = 'Fit issue but direction unclear — ask tight vs loose';
     } else {
       classified.action = 'needs_clarification';
       classified.audit = 'Issue unclear — ask what didn\'t work';
@@ -798,10 +806,33 @@ function prescribeSizingResolution(classifiedItems, intake, context) {
         break;
       }
 
+      case 'fit_direction_unclear': {
+        // Customer says "doesn't fit" but didn't say tight or loose.
+        // Ask a product-specific fit question.
+        rx.state = 'AWAITING_CLARIFICATION';
+        const prodLowerFit = (item.product || '').toLowerCase();
+        const isBra = prodLowerFit.includes('bra');
+        const isBikiniTop = prodLowerFit.includes('mia') || prodLowerFit.includes('halter') || prodLowerFit.includes('tankini');
+        const isTop = isBra || isBikiniTop || prodLowerFit.includes('top');
+        const isOnepiece = prodLowerFit.includes('one') || prodLowerFit.includes('sky');
+        const nick = getProductNickname(item.product);
+
+        if (isOnepiece) {
+          rx.response_text = `Can you let me know how the ${nick} fits? For example, does the bottom feel too tight or too loose around the waist, or does the top come up too high or sit too low?`;
+        } else if (isTop) {
+          rx.response_text = `Can you let me know how the ${nick} fits? Was it too tight or too loose up top?`;
+        } else {
+          rx.response_text = `Can you let me know how the ${nick} fits? Was the waist too tight or too loose?`;
+        }
+        rx.audit = `Fit direction unclear — asking product-specific question (${isOnepiece ? 'onepiece' : isTop ? 'top' : 'bottom'})`;
+        prescription.still_needed.push(`fit_direction for ${item.product}`);
+        break;
+      }
+
       case 'needs_clarification':
       default: {
         rx.state = 'AWAITING_CLARIFICATION';
-        rx.response_text = `Can you let me know what didn't work out with the ${item.product || 'item'}?`;
+        rx.response_text = `Can you let me know what didn't work out with the ${getProductNickname(item.product) || 'item'}?`;
         rx.audit = 'Unclear issue — asking for clarification';
         prescription.still_needed.push(`clarification for ${item.product || 'item'}`);
         break;
