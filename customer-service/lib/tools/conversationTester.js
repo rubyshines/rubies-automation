@@ -49,10 +49,6 @@ function composeAgentResponse(s) {
       response += '\n\n' + s.prescription.donation.text;
     }
 
-    // Closing
-    const desc = resolvedItems.map(i => `${getProductNickname(i.product)} in ${i.resolved_size}`).join(' and ');
-    response += `\n\nYour new ${desc} is on its way!`;
-
     return response;
   }
 
