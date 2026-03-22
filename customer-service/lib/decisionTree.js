@@ -651,14 +651,15 @@ function prescribeSizingResolution(classifiedItems, intake, context) {
           const delta = getCumulativeDelta(currentSize, s) || { inches: 2, cm: 5 };
           const unit = useInches ? `${delta.inches}"` : `${delta.cm}cm`;
           const sign = direction === 'up' ? '+' : '-';
+          const more = direction === 'up' ? 'more' : 'less';
           let description;
           switch (productType) {
-            case 'bra': description = `the bra band will be ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
-            case 'bikini_top': description = `the bikini top band will be ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
-            case 'top': description = `${sign}${unit} of fabric around the torso`; break;
-            default: description = `${sign}${unit} of fabric around the waist`; break;
+            case 'bra': description = `which has the bra band ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
+            case 'bikini_top': description = `which has the bikini top band ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
+            case 'top': description = `which has ${unit} ${more} fabric around the torso`; break;
+            default: description = `which has ${unit} ${more} fabric around the waist`; break;
           }
-          return { size: s, delta, formatted: `${s} (${description})` };
+          return { size: s, delta, formatted: `${s} ${description}` };
         });
 
         if ((isABit || isNextSize) && adjacent.length >= 1) {
