@@ -177,55 +177,54 @@ async function handleTestConversation({ customer_email, messages }) {
     }
   }
 
-  // Format output
-  let md = '## Exchange Conversation Test (Simulation)\n\n';
-  md += `**Customer:** ${customerInfo}\n`;
-  md += `${orderInfo}\n`;
-  md += '---\n\n';
+  // ═══════════════════════════════════════════════════════════════════
+  // FORMAT OUTPUT — always three sections, deterministic, no AI
+  // ═══════════════════════════════════════════════════════════════════
 
+  let md = '';
+
+  // ── SECTION A: ORIGINAL ORDER ──
+  md += '## A. Original Order\n\n';
+  md += `Customer: ${customerInfo}\n`;
+  if (orderInfo) {
+    md += orderInfo;
+  } else {
+    md += 'No fulfilled order found.\n';
+  }
+  md += '\n';
+
+  // ── SECTION B: CONVERSATION ──
+  md += '## B. Conversation\n\n';
   for (const entry of conversationLog) {
-    md += `**Message ${entry.messageNum} — Customer:**\n`;
-    md += `> ${entry.customer}\n\n`;
-
-    md += `**Message ${entry.messageNum} — AI Agent** (status: ${entry.status}):\n`;
-    md += `> ${entry.agent.replace(/\n/g, '\n> ')}\n\n`;
-
-    if (entry.items?.length > 0) {
-      md += `_Intake: ${entry.items.map(i =>
-        `${i.product || '?'} ${i.size || '?'}${i.resolved_size ? ' → ' + i.resolved_size : ''} (${i.issue || '?'})`
-      ).join(', ')}`;
-      if (entry.name) md += ` | name: ${entry.name}`;
-      md += '_\n\n';
-    }
-
+    md += `[Customer message ${entry.messageNum}]: ${entry.customer}\n\n`;
+    md += `[AI agent response ${entry.messageNum}]: ${entry.agent}\n\n`;
     if (entry.flags?.length > 0) {
-      for (const f of entry.flags) md += `_⚠️ ${f}_\n`;
+      for (const f of entry.flags) md += `[Flag]: ${f}\n`;
       md += '\n';
     }
-
-    md += '---\n\n';
   }
 
+  // ── SECTION C: RESOLUTION ──
+  md += '## C. Resolution\n\n';
   if (orderSimulation) {
-    md += '## Exchange Order (SIMULATION — not created)\n\n';
-    md += `**Customer:** ${orderSimulation.customer}${orderSimulation.name ? ' (' + orderSimulation.name + ')' : ''}\n`;
-    md += `**Tags:** ${orderSimulation.tags.join(', ')}\n\n`;
-    md += '**Line items:**\n';
+    md += `Status: EXCHANGE ORDER CREATED (simulation)\n`;
+    md += `Customer: ${orderSimulation.customer}${orderSimulation.name ? ' (' + orderSimulation.name + ')' : ''}\n\n`;
     for (const item of orderSimulation.items) {
-      md += `  ${item.product} — ${item.color || 'same color'} / ${item.to_size}\n`;
-      md += `  _(was: ${item.from_size} → now: ${item.to_size})_\n`;
-      md += `  Discount: Exchange (100% off) — $0.00\n\n`;
+      md += `${item.product} — ${item.color || 'same color'}\n`;
+      md += `  Was: ${item.from_size}\n`;
+      md += `  Now: ${item.to_size}\n`;
+      md += `  Price: $0.00 (exchange)\n\n`;
     }
-    md += '**Shipping:** Free ($0.00)\n';
-    md += '**Total:** $0.00\n';
-  } else if (lastStructuredStatus !== 'ready') {
-    md += '## No Exchange Order\n\n';
-    md += `Conversation not yet resolved. Status: ${intake?.status || 'unknown'}\n`;
+    md += `Shipping: Free\n`;
+    md += `Total: $0.00\n`;
+  } else {
+    md += `Status: NOT RESOLVED\n`;
     if (conversationLog.length > 0) {
       const lastEntry = conversationLog[conversationLog.length - 1];
+      md += `Current state: ${lastEntry.status}\n`;
       const unresolvedItems = (lastEntry.items || []).filter(i => !i.resolved_size);
       if (unresolvedItems.length > 0) {
-        md += `Still needed: ${unresolvedItems.map(i => `size confirmation for ${i.product || 'item'}`).join(', ')}\n`;
+        md += `Still needed: ${unresolvedItems.map(i => 'size confirmation for ' + (i.product || 'item')).join(', ')}\n`;
       }
     }
   }
