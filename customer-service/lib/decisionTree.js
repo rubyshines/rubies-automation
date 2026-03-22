@@ -49,13 +49,30 @@ const PRODUCT_NICKNAMES = {
  */
 function getProductNickname(fullTitle) {
   if (!fullTitle) return 'item';
-  // Try exact match
   const upper = fullTitle.toUpperCase();
+
+  // Try exact match
   if (PRODUCT_NICKNAMES[upper]) return PRODUCT_NICKNAMES[upper];
-  // Try partial match — find the key that's contained in the title
+
+  // Try: does any nickname key contain the title or vice versa
   for (const [key, nick] of Object.entries(PRODUCT_NICKNAMES)) {
     if (upper.includes(key) || key.includes(upper)) return nick;
   }
+
+  // Try: extract the person name from "THE [NAME] ..." pattern
+  // Handles product name changes (e.g., "THE AJ SHAPING UNDERWEAR" vs "THE AJ NO-TUCK SHAPING UNDERWEAR")
+  const nameMatch = fullTitle.match(/^THE\s+(\w+)\s/i);
+  if (nameMatch) {
+    const name = nameMatch[1].toUpperCase();
+    for (const [key, nick] of Object.entries(PRODUCT_NICKNAMES)) {
+      if (key.includes('THE ' + name + ' ')) return nick;
+    }
+    // If the extracted name is a known nickname, just return it capitalized
+    const knownNicks = Object.values(PRODUCT_NICKNAMES);
+    const capitalized = name.charAt(0) + name.slice(1).toLowerCase();
+    if (knownNicks.includes(capitalized)) return capitalized;
+  }
+
   return fullTitle;
 }
 
@@ -371,21 +388,25 @@ function prescribeOrderIdentification(intake, context) {
   }
 
   // Multi-size purchase detection
+  // Only flag if the SAME product appears in genuinely DIFFERENT sizes (not just different colors)
   if (context.targetOrder) {
     const items = context.targetOrder.lineItems || [];
     const productSizes = {};
     for (const li of items) {
       const key = li.title;
-      if (!productSizes[key]) productSizes[key] = [];
-      productSizes[key].push(li.variantTitle);
+      // Extract size from SKU (last segment) — deterministic
+      const skuSize = li.sku ? normalizeSize(li.sku.split('-').pop()) : null;
+      if (!productSizes[key]) productSizes[key] = new Set();
+      if (skuSize) productSizes[key].add(skuSize);
     }
-    for (const [product, sizes] of Object.entries(productSizes)) {
-      if (sizes.length > 1) {
+    for (const [product, sizeSet] of Object.entries(productSizes)) {
+      const uniqueSizes = [...sizeSet];
+      if (uniqueSizes.length > 1) {
         prescription.actions.push({
           type: 'multi_size_flag',
-          text: `Customer bought ${product} in ${sizes.length} sizes (${sizes.join(', ')}) — sizing uncertainty. Offer measurement help.`,
+          text: `Customer bought ${getProductNickname(product)} in ${uniqueSizes.length} different sizes (${uniqueSizes.join(', ')}) — sizing uncertainty. Offer measurement help.`,
         });
-        prescription.audit.push(`Multi-size purchase: ${product} in ${sizes.join(', ')}`);
+        prescription.audit.push(`Multi-size purchase: ${product} in ${uniqueSizes.join(', ')}`);
       }
     }
   }
@@ -555,10 +576,64 @@ function prescribeSizingResolution(classifiedItems, intake, context) {
         const adjacent = getAdjacentSizes(currentSize, direction, 2);
 
         if (adjacent.length === 0) {
-          rx.state = 'AWAITING_MEASUREMENT';
-          rx.response_text = `${currentSize} is ${direction === 'up' ? 'the largest' : 'the smallest'} size available. Could you send your ${context.measurementType || 'waist'} measurement so I can help find the right fit?`;
-          rx.audit = `At size boundary (${currentSize}), need measurement`;
-          prescription.still_needed.push(`measurement for ${item.product}`);
+          // Check if we're at the youth→adult boundary (size 16 going up)
+          const isYouthSystem = NUMERIC_SIZES.includes(currentSize);
+          const isAtTop = isYouthSystem && currentSize === '16' && direction === 'up';
+          const isAtBottom = !isYouthSystem && currentSize === 'XXS' && direction === 'down';
+
+          if (isAtTop) {
+            // Youth 16 = Adult M. Next up is L.
+            const adultNext = 'L';
+            const crossoverNote = 'Just a heads up — size 16 is the largest youth size so this moves into adult sizing.';
+
+            if (isABit || isNextSize) {
+              // High confidence — auto-confirm, note the crossover
+              rx.state = 'CONFIRMED';
+              if (intakeItem) intakeItem.resolved_size = adultNext;
+              if (!intake.resolution_sizes.some(r => r.product === item.product)) {
+                intake.resolution_sizes.push({ product: item.product, from_size: currentSize, to_size: adultNext });
+              }
+              rx.response_text = null;
+              rx._crossover_note = crossoverNote;
+              rx.audit = `Youth→adult crossover: 16 → L (auto-confirmed, high confidence "${isABit ? 'a bit' : 'next size'}")`;
+            } else {
+              // Lower confidence — confirm with delta
+              const adultDelta = getCumulativeDelta('M', adultNext) || { inches: 2, cm: 5 };
+              const unit = useInches ? `${adultDelta.inches}"` : `${adultDelta.cm}cm`;
+              let desc;
+              switch (productType) {
+                case 'bra': desc = `the bra band will be ${unit} longer`; break;
+                case 'bikini_top': desc = `the bikini top band will be ${unit} longer`; break;
+                case 'top': desc = `+${unit} of fabric around the torso`; break;
+                default: desc = `+${unit} of fabric around the waist`; break;
+              }
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.response_text = `Size 16 is the largest youth size. The next size up moves into adult sizing — size L (${desc}). Shall I set that up?`;
+              rx.audit = `Youth→adult crossover: 16 → L (confirming, lower confidence)`;
+              prescription.still_needed.push(`size_confirmation for ${item.product}`);
+            }
+          } else if (isAtBottom) {
+            if (isABit || isNextSize) {
+              rx.state = 'CONFIRMED';
+              if (intakeItem) intakeItem.resolved_size = '16';
+              if (!intake.resolution_sizes.some(r => r.product === item.product)) {
+                intake.resolution_sizes.push({ product: item.product, from_size: currentSize, to_size: '16' });
+              }
+              rx.response_text = null;
+              rx._crossover_note = 'Just a heads up — XXS is the smallest adult size so this moves into youth sizing (size 16).';
+              rx.audit = `Adult→youth crossover: XXS → 16 (auto-confirmed, high confidence)`;
+            } else {
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.response_text = `XXS is the smallest adult size. The next size down moves into youth sizing — size 16. Shall I set that up?`;
+              rx.audit = `Adult→youth crossover: XXS → 16 (confirming, lower confidence)`;
+              prescription.still_needed.push(`size_confirmation for ${item.product}`);
+            }
+          } else {
+            rx.state = 'AWAITING_MEASUREMENT';
+            rx.response_text = `${currentSize} is ${direction === 'up' ? 'the largest' : 'the smallest'} size available. Could you send your ${context.measurementType || 'waist'} measurement so I can help find the right fit?`;
+            rx.audit = `At size boundary (${currentSize}), need measurement`;
+            prescription.still_needed.push(`measurement for ${item.product}`);
+          }
           break;
         }
 
@@ -931,6 +1006,16 @@ async function walkTree(intake, context) {
           options: item.options || null,
           recommendation: item.recommendation || null,
           skip_donation: item.skip_donation || false,
+          _crossover_note: item._crossover_note || null,
+        });
+      }
+      // Add crossover note as separate response part (fires even when item is auto-confirmed)
+      if (item._crossover_note) {
+        result.response_parts.push({
+          type: 'crossover_note',
+          priority: 4,
+          text: item._crossover_note,
+          product: item.product,
         });
       }
     }

@@ -44,6 +44,11 @@ function composeAgentResponse(s) {
       response = greeting + `I've gone ahead and created an exchange order for you.`;
     }
 
+    // Crossover note (youth→adult or vice versa)
+    if (s.prescription.crossover_note) {
+      response += '\n\n' + s.prescription.crossover_note;
+    }
+
     // Donation
     if (s.prescription.donation?.text) {
       response += '\n\n' + s.prescription.donation.text;
@@ -80,31 +85,9 @@ async function handleTestConversation({ customer_email, messages }) {
     return { content: [{ type: 'text', text: 'Error: provide customer_email and messages array' }] };
   }
 
-  // Get customer + order context for display header
+  // Customer/order info populated from first advisor call's _structured result
   let customerInfo = customer_email;
   let orderInfo = '';
-  try {
-    const customers = await searchCustomers(customer_email);
-    if (customers.length > 0) {
-      const c = customers[0];
-      const country = c.defaultAddress?.countryCodeV2 || c.defaultAddress?.country || '?';
-      customerInfo = `${customer_email} | ${country}`;
-
-      const { orders } = await getCustomerOrders(c.id, 10);
-      const fulfilled = orders.filter(o =>
-        o.displayFulfillmentStatus === 'FULFILLED' && !o.cancelledAt && o.displayFinancialStatus !== 'REFUNDED'
-      );
-      if (fulfilled.length > 0) {
-        const order = fulfilled[0];
-        orderInfo = `**Order ${order.name}** (${order.createdAt?.split('T')[0]}):\n`;
-        for (const li of (order.lineItems || [])) {
-          orderInfo += `  ${li.quantity}x ${li.title} — ${li.variantTitle}\n`;
-        }
-      }
-    }
-  } catch (e) {
-    customerInfo = `${customer_email} (error: ${e.message})`;
-  }
 
   // Walk through messages, accumulating intake via _structured
   let intake = null;
@@ -123,6 +106,18 @@ async function handleTestConversation({ customer_email, messages }) {
 
       s = result._structured;
       if (s) intake = s.intake;
+
+      // Populate header from first advisor call (uses the actual order the advisor resolved)
+      if (i === 0 && s) {
+        const c = s.customer;
+        customerInfo = `${c.email || customer_email} | ${c.country || '?'}`;
+        if (s.order) {
+          orderInfo = `Order ${s.order.name} (${s.order.date}):\n`;
+          for (const li of s.order.items) {
+            orderInfo += `  ${li.quantity}x ${li.title} — ${li.variant} (SKU: ${li.sku || 'n/a'})\n`;
+          }
+        }
+      }
     } catch (e) {
       conversationLog.push({ messageNum: i + 1, customer: customerMsg, agent: `(Error: ${e.message})`, status: 'error' });
       continue;

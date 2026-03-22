@@ -205,9 +205,10 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   if (orderItems && orderItems.length > 0) {
     orderContext = '\n\nORDER ITEMS (use these to match what the customer is referring to):\n';
     for (const li of orderItems) {
-      orderContext += `- ${li.quantity}x ${li.title} — ${li.variantTitle} (SKU: ${li.sku || 'n/a'})\n`;
+      const size = li._skuSize || li.variantTitle || 'unknown';
+      orderContext += `- ${li.quantity}x ${li.title} — size: ${size} (SKU: ${li.sku || 'n/a'})\n`;
     }
-    orderContext += '\nWhen the customer refers to a product, match it to one of these order items. Return the product name and current size exactly as shown above.';
+    orderContext += '\nIMPORTANT: Use the size shown above (derived from SKU) as the definitive current size. When the customer refers to a product, match it to one of these order items and return that size.';
   }
 
   // Call AI
@@ -341,6 +342,17 @@ function computeIntakeStatus(intake) {
 async function handleExchangeAdvisor({ customer_email, issue_description, order_number, intake: existingIntake }) {
   const supabase = getSupabaseClient();
 
+  // STEP 0: Quick-extract order number from message BEFORE order lookup
+  // This is a simple regex — not AI. We need it before we know which order to pull.
+  let messageOrderNumber = null;
+  if (issue_description) {
+    const orderMatch = issue_description.match(/#\s*(\d{4,6})\b/) || issue_description.match(/order\s*#?\s*(\d{4,6})\b/i);
+    if (orderMatch) {
+      const num = parseInt(orderMatch[1], 10);
+      if (num >= 1000 && num <= 999999) messageOrderNumber = orderMatch[1];
+    }
+  }
+
   // STEP 1: Find customer
   let customers = await searchCustomers(customer_email);
   let customer = customers[0] || null;
@@ -359,7 +371,8 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
 
   const { fulfilled, exchanges, all } = analyzeOrders(orders);
   let targetOrder = null;
-  const effectiveOrderNumber = order_number || existingIntake?.order_number || null;
+  // Priority: explicit param > message extraction > previous intake > auto-detect
+  const effectiveOrderNumber = order_number || messageOrderNumber || existingIntake?.order_number || null;
 
   if (effectiveOrderNumber) {
     const normalized = effectiveOrderNumber.toString().replace('#', '');
@@ -396,8 +409,13 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     };
   }
 
-  // STEP 3: Parse message WITH order context
-  const orderLineItems = targetOrder?.lineItems || [];
+  // STEP 3: Extract size from SKU (deterministic) and parse message WITH order context
+  const orderLineItems = (targetOrder?.lineItems || []).map(li => {
+    // SKU format: PRODUCT-COLOR-SIZE (e.g., AJ-PNK-16, MIA-BLK-S, UNW-PNK-L)
+    // The last segment is always the size
+    const skuSize = li.sku ? li.sku.split('-').pop() : null;
+    return { ...li, _skuSize: skuSize ? normalizeSize(skuSize) : null };
+  });
   const intake = await parseExchangeIntake(issue_description, existingIntake || null, orderLineItems);
   intake._latestMessage = issue_description;
   intake.conversation_email = customer_email;
@@ -460,8 +478,10 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         options: a.options || null,
         recommendation: a.recommendation || null,
         skip_donation: a.skip_donation || false,
+        crossover_note: a._crossover_note || null,
       })),
       donation: donationActions[0] ? { type: donationActions[0].type, text: donationActions[0].text } : null,
+      crossover_note: treeResult.response_parts.find(p => p.type === 'crossover_note')?.text || null,
       still_needed: treeResult.still_needed,
       flags: flagActions.map(a => a.text),
     },
