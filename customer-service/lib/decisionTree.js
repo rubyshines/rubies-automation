@@ -377,7 +377,7 @@ function prescribeOrderIdentification(intake, context) {
           if (!alreadyTracked) {
             prescription.actions.push({
               type: 'multi_item_flag',
-              text: `Order also has ${oi.title} in size ${oiSize} — ask: "Would you like to exchange that one too?"`,
+              text: `Order also has ${getProductNickname(oi.title)} in size ${oiSize} — ask: "Would you like to exchange that one too?"`,
             });
             prescription.audit.push(`Multi-item flag: ${oi.title} size ${oiSize} (different product, same size + category)`);
             break; // Only flag once per category

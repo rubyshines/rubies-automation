@@ -167,6 +167,13 @@ async function handleTestConversation({ customer_email, messages }) {
 
   // Use the last structured status (from tree), not intake.status (pre-tree)
   const lastStructuredStatus = conversationLog.length > 0 ? conversationLog[conversationLog.length - 1].status : null;
+  // Get order items from last structured result for quantity lookup
+  let orderItems = [];
+  if (conversationLog.length > 0) {
+    const lastS = conversationLog[conversationLog.length - 1]._structured;
+    if (lastS?.order?.items) orderItems = lastS.order.items;
+  }
+
   let orderSimulation = null;
   if (lastStructuredStatus === 'ready') {
     const resolvedItems = (intake.items || []).filter(i => i.resolved_size);
@@ -176,12 +183,20 @@ async function handleTestConversation({ customer_email, messages }) {
         name: intake.name,
         tags: ['exchange', 'cs-mcp'],
         address: customerAddress,
-        items: resolvedItems.map(i => ({
-          product: i.product,
-          from_size: i.size,
-          to_size: i.resolved_size,
-          color: i.color,
-        })),
+        items: resolvedItems.map(i => {
+          // Find quantity from original order by matching product name
+          const orderMatch = orderItems.find(oi =>
+            oi.title?.toLowerCase().includes(i.product?.toLowerCase()) ||
+            i.product?.toLowerCase().includes(oi.title?.toLowerCase()?.split(' ')[1] || '')
+          );
+          return {
+            product: i.product,
+            from_size: i.size,
+            to_size: i.resolved_size,
+            color: i.color,
+            quantity: orderMatch?.quantity || 1,
+          };
+        }),
       };
     }
   }
@@ -224,12 +239,9 @@ async function handleTestConversation({ customer_email, messages }) {
     }
     md += '\n';
     for (const item of orderSimulation.items) {
-      md += `${item.product} — ${item.color || 'same color'}\n`;
-      md += `  Was: ${item.from_size}\n`;
-      md += `  Now: ${item.to_size}\n`;
-      md += `  Price: $0.00 (exchange)\n\n`;
+      md += `  ${item.quantity}x ${item.product} — ${item.color || 'same color'} / ${item.to_size} (was: ${item.from_size}) — $0.00 exchange\n`;
     }
-    md += `Shipping: Free\n`;
+    md += `\nShipping: Free\n`;
     md += `Total: $0.00\n`;
   } else {
     md += `Status: NOT RESOLVED\n`;
