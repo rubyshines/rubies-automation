@@ -35,6 +35,8 @@ const draftOrderTools = require('./lib/tools/draftOrders');
 const adminTools = require('./lib/tools/adminTools');
 const ltvTools = require('./lib/tools/ltv');
 const createOrderTools = require('./lib/tools/createOrder');
+const exchangeAdvisorTools = require('./lib/tools/exchangeAdvisor');
+const conversationTesterTools = require('./lib/tools/conversationTester');
 
 const allTools = [
   ...customerLookupTools,
@@ -56,6 +58,8 @@ const allTools = [
   ...adminTools,
   ...ltvTools,
   ...createOrderTools,
+  ...exchangeAdvisorTools,
+  ...conversationTesterTools,
 ];
 
 /**

@@ -25,7 +25,12 @@
     "cs-sync-costs": "node customer-service/sync/syncCosts.js",
     "cs-sync-products": "node customer-service/sync/syncProducts.js",
     "daily-sync-all": "node daily-sync-all.js",
-    "cs-sync-full": "node customer-service/sync/syncAll.js --orders --full && node customer-service/sync/syncAll.js --customers && node customer-service/sync/syncAll.js --refresh-aggregates"
+    "cs-sync-full": "node customer-service/sync/syncAll.js --orders --full && node customer-service/sync/syncAll.js --customers && node customer-service/sync/syncAll.js --refresh-aggregates",
+    "cs-seed-donation-partners": "node customer-service/import/seedDonationPartners.js",
+    "cs-extract-exchange-rules": "node customer-service/import/extractExchangeRules.js",
+    "cs-review-exchange-rules": "node customer-service/import/reviewExchangeRules.js",
+    "cs-extract-tone": "node customer-service/import/extractToneSamples.js",
+    "cs-seed-size-charts": "node customer-service/import/seedSizeCharts.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
