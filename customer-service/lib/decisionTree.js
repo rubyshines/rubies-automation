@@ -552,7 +552,7 @@ function prescribeSizingResolution(classifiedItems, intake, context) {
             rx.audit = `Specific size requested: ${currentSize} → ${desiredSize} (${delta.inches}" delta, ≤2" — auto-confirmed)`;
           } else if (delta) {
             // Big jump (>2") — confirm with fabric delta
-            const unit = useInches ? `${delta.inches}"` : `${delta.cm}cm`;
+            const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
             let bodyDesc;
             switch (productType) {
               case 'bra': bodyDesc = `the bra band will be ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
@@ -649,7 +649,7 @@ function prescribeSizingResolution(classifiedItems, intake, context) {
         const sizeList = getSizeList(currentSize);
         const optionDetails = adjacent.map(s => {
           const delta = getCumulativeDelta(currentSize, s) || { inches: 2, cm: 5 };
-          const unit = useInches ? `${delta.inches}"` : `${delta.cm}cm`;
+          const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
           const sign = direction === 'up' ? '+' : '-';
           const more = direction === 'up' ? 'more' : 'less';
           let description;
