@@ -486,7 +486,7 @@ function prescribeActionClassification(intake) {
 // Phase 4: Sizing Resolution
 // ---------------------------------------------------------------------------
 
-function prescribeSizingResolution(classifiedItems, intake, context) {
+async function prescribeSizingResolution(classifiedItems, intake, context) {
   const prescription = {
     phase: 'sizing_resolution',
     items: [],
@@ -692,15 +692,53 @@ function prescribeSizingResolution(classifiedItems, intake, context) {
 
       case 'sizing_exchange_measurement': {
         if (intake.measurement) {
-          // We have measurement — look up the size
-          rx.state = 'AWAITING_SIZE_CONFIRMATION';
-          rx.response_text = `Based on your measurement, I'd recommend size [LOOKUP_NEEDED]. Shall I set that up?`;
-          rx.audit = `Measurement provided: ${intake.measurement.value} ${intake.measurement.unit} — lookup needed`;
-          rx.lookup_needed = {
-            measurement: intake.measurement,
-            product: item.product,
-          };
-          prescription.still_needed.push(`size_confirmation for ${item.product}`);
+          // We have measurement — look up the size from size_charts table
+          const m = intake.measurement;
+          const prodLowerM = (item.product || '').toLowerCase();
+          const isBraM = prodLowerM.includes('bra');
+          const isTopM = isBraM || prodLowerM.includes('top') || prodLowerM.includes('mia') || prodLowerM.includes('tankini');
+          const isOnepieceM = prodLowerM.includes('one') || prodLowerM.includes('sky');
+          const isSwimM = prodLowerM.includes('bikini') || prodLowerM.includes('swim') || prodLowerM.includes('ruby') || prodLowerM.includes('cheeky') || prodLowerM.includes('stella');
+          const isKidsM = NUMERIC_SIZES.includes(normalizeSize(item.size));
+
+          // Determine chart category
+          let chartCategory;
+          if (isOnepieceM) chartCategory = isKidsM ? 'kids_onepiece' : 'adult_onepiece';
+          else if (isTopM) chartCategory = isKidsM ? 'kids_tops' : 'adult_tops';
+          else if (isSwimM) chartCategory = isKidsM ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
+          else chartCategory = isKidsM ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
+
+          const measureType = isTopM ? 'chest' : 'waist';
+          const unit = m.unit === 'cm' ? 'cm' : 'inches';
+          const nick = getProductNickname(item.product);
+
+          try {
+            const supabase = getSupabaseClient();
+            const { data: sizeMatches } = await supabase.rpc('find_size_by_measurement', {
+              p_chart_category: chartCategory,
+              p_measurement_type: measureType,
+              p_value: m.value,
+              p_unit: unit,
+            });
+
+            if (sizeMatches && sizeMatches.length > 0) {
+              const recommendedSize = sizeMatches[0].size_label;
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.response_text = `Based on your ${measureType} measurement of ${m.value} ${unit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              rx.audit = `Measurement lookup: ${m.value} ${unit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
+              prescription.still_needed.push(`size_confirmation for ${item.product}`);
+            } else {
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.response_text = `Your ${measureType} measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check the measurement? It should be around the ${measureType === 'waist' ? 'belly, just under the belly button' : 'chest where a bra band would sit'}.`;
+              rx.audit = `Measurement lookup: ${m.value} ${unit} in ${chartCategory} — no match found`;
+              prescription.still_needed.push(`measurement for ${item.product}`);
+            }
+          } catch (e) {
+            rx.state = 'AWAITING_SIZE_CONFIRMATION';
+            rx.response_text = `Based on your measurement, I'd recommend trying a smaller size. Shall I help find the right one?`;
+            rx.audit = `Measurement lookup failed: ${e.message}`;
+            prescription.still_needed.push(`size_confirmation for ${item.product}`);
+          }
         } else {
           rx.state = 'AWAITING_MEASUREMENT';
           const measureType = item.product?.toLowerCase().match(/bra|top/) ? 'chest' : 'waist';
@@ -1037,7 +1075,7 @@ async function walkTree(intake, context) {
     result.phases_completed.push('classify_actions');
 
     // Phase 4: Sizing resolution
-    const phase4 = prescribeSizingResolution(phase3.items, intake, context);
+    const phase4 = await prescribeSizingResolution(phase3.items, intake, context);
     for (const item of phase4.items) {
       if (item.response_text) {
         result.response_parts.push({
