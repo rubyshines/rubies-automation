@@ -798,8 +798,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const unit = useInches ? 'inches' : 'cm';
           const measureLocation = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
           const thirdPartyPrefix = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
-          rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation}, in ${unit}, I can help recommend the right size.`;
-          rx.audit = `Way off — asking for ${measureType} measurement in ${unit}`;
+          rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation} I can help recommend the right size.`;
+          rx.audit = `Way off — asking for ${measureType} measurement`;
           prescription.still_needed.push(`measurement for ${item.product}`);
         }
         break;
@@ -848,7 +848,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         } else {
           rx.state = 'AWAITING_MEASUREMENT';
           const unit = useInches ? 'inches' : 'cm';
-          rx.response_text = `For the one-piece, I need both your waist measurement (around the belly, just under the belly button) and your height, in ${unit}.`;
+          rx.response_text = `For the one-piece, if you send me the measurement around the belly, just under the belly button, and your height, I can help recommend the right size.`;
           rx.audit = 'One-piece — need waist + height';
           prescription.still_needed.push(`waist_and_height for ${item.product}`);
         }
