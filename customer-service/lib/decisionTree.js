@@ -514,13 +514,22 @@ function prescribeActionClassification(intake) {
     } else if (item.issue === 'onepiece_fit') {
       classified.action = 'onepiece_check';
       classified.audit = 'One-piece fit — need waist + height';
-    } else if (item.issue === 'refund_request') {
+    } else if (item.issue === 'refund_request' || intake.message_type === 'refund') {
       classified.action = 'refund';
-      classified.audit = 'Refund requested';
+      classified.audit = 'Refund/return requested';
     } else if (item.issue === 'unclear' || item.issue === 'none') {
-      // Customer said it doesn't fit but didn't say how — ask product-specific fit question
-      classified.action = 'fit_direction_unclear';
-      classified.audit = 'Fit issue but direction unclear — ask tight vs loose';
+      // Check if the overall message_type gives us a clue
+      if (intake.message_type === 'defect') {
+        classified.action = 'defect';
+        classified.audit = 'Defect (from message type)';
+      } else if (intake.message_type === 'product_not_working') {
+        classified.action = 'probe_needed';
+        classified.audit = 'Product not working (from message type)';
+      } else {
+        // Customer said it doesn't fit but didn't say how — ask product-specific fit question
+        classified.action = 'fit_direction_unclear';
+        classified.audit = 'Fit issue but direction unclear — ask tight vs loose';
+      }
     } else {
       classified.action = 'needs_clarification';
       classified.audit = 'Issue unclear — ask what didn\'t work';
@@ -892,10 +901,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         }
 
         rx.state = 'AWAITING_DECISION';
-        // Gently suggest exchange first
-        rx.response_text = `Before we process the refund, would you be open to trying a different size or style? Sometimes a small adjustment makes all the difference.`;
+        // Acknowledge the return, ask what didn't work, gently suggest exchange
+        const nick = getProductNickname(item.product);
+        rx.response_text = `No problem, can you let me know what didn't work out with the ${nick}? If it's a sizing issue I may be able to help find a better fit.`;
         rx.refund_eligible = eligible;
-        rx.audit = `Refund requested — eligible: ${eligible}. Suggesting exchange first.`;
+        rx.audit = `Return/refund requested — eligible: ${eligible}. Asking what didn't work + offering exchange alternative.`;
         prescription.still_needed.push(`decision for ${item.product}`);
         break;
       }
