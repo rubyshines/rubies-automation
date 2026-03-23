@@ -183,6 +183,88 @@ function getCumulativeDelta(fromSize, toSize) {
 }
 
 // ---------------------------------------------------------------------------
+// Geographic helpers — geocoding + distance
+// ---------------------------------------------------------------------------
+
+/**
+ * Geocode an address using Google Maps Geocoding API.
+ * Falls back to US state centroids if API is unavailable.
+ * Returns { lat, lng } or null.
+ */
+async function geocodeAddress(address) {
+  // Try Google Maps API first
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (apiKey) {
+    try {
+      const parts = [address.address1, address.city, address.province, address.zip, address.country].filter(Boolean);
+      const query = encodeURIComponent(parts.join(', '));
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${apiKey}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === 'OK' && data.results.length > 0) {
+          const loc = data.results[0].geometry.location;
+          return { lat: loc.lat, lng: loc.lng };
+        }
+      }
+    } catch (e) { /* fall through to state lookup */ }
+  }
+
+  // Fallback: US state centroids (good enough to pick closest of 9 partners)
+  const province = (address.province || address.city || '').toUpperCase();
+  const STATE_CENTROIDS = {
+    'ALABAMA': [32.8, -86.8], 'ALASKA': [64.2, -152.5], 'ARIZONA': [34.0, -111.1],
+    'ARKANSAS': [35.2, -91.8], 'CALIFORNIA': [36.8, -119.4], 'COLORADO': [39.0, -105.5],
+    'CONNECTICUT': [41.6, -72.7], 'DELAWARE': [38.9, -75.5], 'FLORIDA': [27.8, -81.8],
+    'GEORGIA': [32.2, -83.6], 'HAWAII': [19.9, -155.6], 'IDAHO': [44.1, -114.7],
+    'ILLINOIS': [40.3, -89.0], 'INDIANA': [40.3, -86.1], 'IOWA': [42.0, -93.2],
+    'KANSAS': [38.5, -98.3], 'KENTUCKY': [37.7, -84.7], 'LOUISIANA': [30.4, -91.9],
+    'MAINE': [45.3, -69.4], 'MARYLAND': [39.0, -76.6], 'MASSACHUSETTS': [42.4, -71.4],
+    'MICHIGAN': [44.3, -84.5], 'MINNESOTA': [46.7, -94.7], 'MISSISSIPPI': [32.3, -89.4],
+    'MISSOURI': [37.9, -91.8], 'MONTANA': [46.8, -110.4], 'NEBRASKA': [41.1, -98.3],
+    'NEVADA': [38.8, -116.4], 'NEW HAMPSHIRE': [43.2, -71.6], 'NEW JERSEY': [40.1, -74.4],
+    'NEW MEXICO': [34.5, -105.9], 'NEW YORK': [43.3, -74.5], 'NORTH CAROLINA': [35.6, -79.0],
+    'NORTH DAKOTA': [47.5, -100.5], 'OHIO': [40.4, -82.9], 'OKLAHOMA': [35.0, -97.1],
+    'OREGON': [43.8, -120.6], 'PENNSYLVANIA': [41.2, -77.2], 'RHODE ISLAND': [41.6, -71.5],
+    'SOUTH CAROLINA': [33.8, -81.2], 'SOUTH DAKOTA': [43.9, -99.4], 'TENNESSEE': [35.5, -86.0],
+    'TEXAS': [31.1, -97.6], 'UTAH': [39.3, -111.1], 'VERMONT': [44.6, -72.6],
+    'VIRGINIA': [37.8, -78.2], 'WASHINGTON': [47.4, -120.7], 'WEST VIRGINIA': [38.6, -80.6],
+    'WISCONSIN': [43.8, -88.8], 'WYOMING': [43.1, -107.6],
+    // Canadian provinces
+    'ALBERTA': [51.0, -114.0], 'BRITISH COLUMBIA': [53.7, -127.6], 'MANITOBA': [49.9, -97.1],
+    'NEW BRUNSWICK': [46.5, -66.2], 'NEWFOUNDLAND AND LABRADOR': [53.1, -57.7],
+    'NOVA SCOTIA': [44.7, -63.7], 'ONTARIO': [51.3, -85.3], 'PRINCE EDWARD ISLAND': [46.5, -63.4],
+    'QUEBEC': [52.9, -73.5], 'SASKATCHEWAN': [52.9, -106.5],
+    // Swiss cantons
+    'BERN': [46.9, 7.4], 'ZURICH': [47.4, 8.5], 'GENEVA': [46.2, 6.1],
+  };
+
+  const coords = STATE_CENTROIDS[province];
+  if (coords) return { lat: coords[0], lng: coords[1] };
+
+  // Try matching partial state name
+  for (const [state, c] of Object.entries(STATE_CENTROIDS)) {
+    if (state.includes(province) || province.includes(state)) return { lat: c[0], lng: c[1] };
+  }
+
+  return null;
+}
+
+/**
+ * Haversine distance between two lat/lng points in kilometers.
+ */
+function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ---------------------------------------------------------------------------
 // Phase 0: Safety Override
 // ---------------------------------------------------------------------------
 
@@ -946,12 +1028,15 @@ async function prescribeDonationRouting(intake, context) {
   }
 
   const supabase = getSupabaseClient();
+
+  // Fetch ALL active partners in the customer's country (with lat/lng)
   let partners = [];
   try {
-    const { data } = await supabase.rpc('get_donation_partners_by_country', {
-      p_country_code: country,
-      p_limit: 3,
-    });
+    const { data } = await supabase
+      .from('donation_partners')
+      .select('id, name, region, city, address, description, donations_routed, latitude, longitude')
+      .eq('country_code', country)
+      .eq('active', true);
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
 
@@ -976,14 +1061,45 @@ async function prescribeDonationRouting(intake, context) {
     };
   }
 
-  // Multiple items — route to partner with fewest donations
-  const partner = partners[0]; // Already sorted by donations_routed ASC
+  // Multiple items — find closest partner by geographic proximity
+  // Geocode the customer's address using Google Maps, then haversine distance
+  let partner = partners[0]; // fallback to first partner
+  let routingMethod = 'load_balance';
+
+  const customerAddress = context.customer?.defaultAddress;
+  if (customerAddress) {
+    try {
+      const customerCoords = await geocodeAddress(customerAddress);
+      if (customerCoords) {
+        // Calculate distance to each partner
+        const withDistance = partners
+          .filter(p => p.latitude && p.longitude)
+          .map(p => ({
+            ...p,
+            distance_km: haversineDistance(customerCoords.lat, customerCoords.lng, p.latitude, p.longitude),
+          }))
+          .sort((a, b) => a.distance_km - b.distance_km);
+
+        if (withDistance.length > 0) {
+          // Pick closest 3, then load-balance among them
+          const closest3 = withDistance.slice(0, 3);
+          partner = closest3.sort((a, b) => a.donations_routed - b.donations_routed)[0];
+          routingMethod = `geographic (${Math.round(partner.distance_km)} km away)`;
+        }
+      }
+    } catch (e) {
+      // Geocoding failed — fall back to load-balance
+      partner = partners.sort((a, b) => a.donations_routed - b.donations_routed)[0];
+      routingMethod = 'load_balance (geocoding failed)';
+    }
+  }
+
   return {
     phase: 'donation_routing',
     type: 'partner',
     partner,
     response_text: `${programExplanation} Since you have multiple items, you can donate to ${partner.name} at ${partner.address}. They ${partner.description.toLowerCase()} ${washReminder}`,
-    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — ${partner.donations_routed} previous donations`,
+    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${partner.donations_routed} previous donations`,
   };
 }
 
