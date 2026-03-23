@@ -76,6 +76,17 @@ function getProductNickname(fullTitle) {
   return fullTitle;
 }
 
+/**
+ * Pluralize a product nickname when quantity > 1.
+ * "AJ" → "AJs", "Sassy" → "Sassys", "Chest Pads" stays "Chest Pads"
+ */
+function pluralizeNickname(nickname, quantity) {
+  if (!nickname || quantity <= 1) return nickname;
+  // Already plural
+  if (nickname.endsWith('s') || nickname.endsWith('Pads')) return nickname;
+  return nickname + 's';
+}
+
 // ---------------------------------------------------------------------------
 // Size constants (shared with exchangeAdvisor.js)
 // ---------------------------------------------------------------------------
@@ -1319,6 +1330,7 @@ module.exports = {
   checkPositiveFeedback,
   // Product nicknames
   getProductNickname,
+  pluralizeNickname,
   PRODUCT_NICKNAMES,
   // Size utilities (shared)
   normalizeSize,

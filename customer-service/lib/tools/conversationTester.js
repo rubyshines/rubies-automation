@@ -12,7 +12,7 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
-const { getProductNickname } = require('../decisionTree');
+const { getProductNickname, pluralizeNickname } = require('../decisionTree');
 
 // Import the advisor handler
 const advisorTools = require('./exchangeAdvisor');
@@ -48,7 +48,14 @@ function composeAgentResponse(s) {
 
     let response;
     if (systemPickedSize) {
-      const desc = resolvedItems.map(i => `a ${getProductNickname(i.product)} in size ${i.resolved_size}`).join(' and ');
+      const orderItems = s.order?.items || [];
+      const desc = resolvedItems.map(i => {
+        const nick = getProductNickname(i.product);
+        const orderMatch = orderItems.find(oi => oi.title?.toLowerCase().includes((i.product || '').toLowerCase().split(' ')[0]));
+        const qty = orderMatch?.quantity || 1;
+        const name = pluralizeNickname(nick, qty);
+        return qty > 1 ? `${qty} ${name} in size ${i.resolved_size}` : `a ${name} in size ${i.resolved_size}`;
+      }).join(' and ');
       response = greeting + `I've gone ahead and created a new order for ${desc}.`;
     } else {
       response = greeting + `I've gone ahead and created an exchange order for you.`;
