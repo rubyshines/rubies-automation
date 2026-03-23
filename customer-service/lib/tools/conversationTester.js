@@ -32,6 +32,16 @@ function composeAgentResponse(s) {
     return 'We\'ll process a refund for you right away. No questions asked. We hope your situation improves.';
   }
 
+  // Refund confirmed
+  const refundItems = items.filter(i => i.state === 'REFUND_CONFIRMED');
+  if (refundItems.length > 0) {
+    let response = greeting + refundItems[0].response_text;
+    if (s.prescription.donation?.text) {
+      response += '\n\n' + s.prescription.donation.text;
+    }
+    return response;
+  }
+
   // Ready — order can be created
   if (s.status === 'ready' && resolvedItems.length > 0) {
     const systemPickedSize = resolvedItems.some(i => !i.desired_size && i.resolved_size);
@@ -232,9 +242,26 @@ async function handleTestConversation({ customer_email, messages }) {
     }
   }
 
+  // Check for refund resolution
+  let isRefund = false;
+  if (conversationLog.length > 0) {
+    const lastS = conversationLog[conversationLog.length - 1]._structured;
+    isRefund = lastS?.prescription?.items?.some(i => i.state === 'REFUND_CONFIRMED');
+  }
+
   // ── SECTION C: RESOLUTION ──
   md += '## C. Resolution\n\n';
-  if (orderSimulation) {
+  if (isRefund) {
+    const lastS = conversationLog[conversationLog.length - 1]._structured;
+    const refundedItems = (intake?.items || []);
+    md += `Status: REFUND PROCESSED (simulation)\n`;
+    md += `Customer: ${customer_email}${intake?.name ? ' (' + intake.name + ')' : ''}\n\n`;
+    for (const item of refundedItems) {
+      const nick = getProductNickname(item.product);
+      md += `  Refund: ${nick} — ${item.color || 'original color'} / ${item.size || '?'}\n`;
+    }
+    md += '\n';
+  } else if (orderSimulation) {
     md += `Status: EXCHANGE ORDER CREATED (simulation)\n`;
     md += `Customer: ${orderSimulation.customer}${orderSimulation.name ? ' (' + orderSimulation.name + ')' : ''}\n`;
     if (orderSimulation.address) {

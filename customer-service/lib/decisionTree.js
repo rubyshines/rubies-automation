@@ -900,13 +900,29 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           eligible = days <= 60 ? 'yes' : days <= 180 ? 'generous' : 'escalate';
         }
 
-        rx.state = 'AWAITING_DECISION';
-        // Acknowledge the return, ask what didn't work, gently suggest exchange
         const nick = getProductNickname(item.product);
-        rx.response_text = `No problem, can you let me know what didn't work out with the ${nick}? If it's a sizing issue I may be able to help find a better fit.`;
-        rx.refund_eligible = eligible;
-        rx.audit = `Return/refund requested — eligible: ${eligible}. Asking what didn't work + offering exchange alternative.`;
-        prescription.still_needed.push(`decision for ${item.product}`);
+
+        // Check if this is a REPEAT refund request (we already asked what's wrong, they're insisting)
+        // Detect by checking if intake already had a refund-related note from a PREVIOUS message
+        // (intake._refundAskedOnce is set after first ask)
+        const alreadyAsked = intake._refundAskedOnce === true;
+
+        if (alreadyAsked) {
+          // Customer insists — process refund gracefully
+          rx.state = 'REFUND_CONFIRMED';
+          rx.response_text = `No problem, I'll process a refund for the ${nick} for you.`;
+          rx.refund_confirmed = true;
+          rx.refund_eligible = eligible;
+          rx.audit = `Refund confirmed — customer insists. Eligible: ${eligible}. Processing gracefully.`;
+        } else {
+          // First time — ask what didn't work, gently suggest exchange
+          rx.state = 'AWAITING_DECISION';
+          rx.response_text = `No problem, can you let me know what didn't work out with the ${nick}? If it's a sizing issue I may be able to help find a better fit.`;
+          rx.refund_eligible = eligible;
+          rx.audit = `Return/refund requested — eligible: ${eligible}. Asking what didn't work + offering exchange alternative.`;
+          intake._refundAskedOnce = true;
+          prescription.still_needed.push(`decision for ${item.product}`);
+        }
         break;
       }
 
