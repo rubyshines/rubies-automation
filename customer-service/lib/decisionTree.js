@@ -501,7 +501,10 @@ function prescribeActionClassification(intake) {
     } else if (item.issue === 'way_off') {
       classified.action = 'sizing_exchange_measurement';
       classified.audit = 'Way off — need measurement';
-    } else if (item.issue === 'product_not_working' || item.issue === 'expectation_mismatch') {
+    } else if (item.issue === 'expectation_mismatch') {
+      classified.action = 'expectation_mismatch';
+      classified.audit = 'Expectation mismatch — shaping vs tucking explanation needed';
+    } else if (item.issue === 'product_not_working') {
       classified.action = 'probe_needed';
       classified.audit = 'Product not working — need to probe';
     } else if (item.issue === 'doesnt_fit' || item.issue === 'fit_issue') {
@@ -816,9 +819,42 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
 
       case 'probe_needed': {
         rx.state = 'AWAITING_CLARIFICATION';
-        rx.response_text = `Can you let me know what didn't work out with the ${item.product}?`;
+        const probeNick = getProductNickname(item.product);
+        if (isThirdParty) {
+          rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${probeNick}?`;
+        } else {
+          rx.response_text = `Can you let me know what didn't work out with the ${probeNick}?`;
+        }
         rx.audit = 'Product not working — probing before deciding path';
         prescription.still_needed.push(`clarification for ${item.product}`);
+        break;
+      }
+
+      case 'expectation_mismatch': {
+        // Customer says it "doesn't work" / "doesn't hide" / "can still see"
+        // Two-branch explanation: fit issue vs expectation mismatch
+        rx.state = 'AWAITING_DECISION';
+        const emNick = getProductNickname(item.product);
+        const emProdLower = (item.product || '').toLowerCase();
+        const emIsTop = emProdLower.includes('bra') || emProdLower.includes('top');
+        const comfortRef = isThirdParty
+          ? `your ${intake.third_party_label || "child"}'s comfort is most important`
+          : 'your comfort is most important';
+        const theyRef = isThirdParty ? (intake.pronouns === 'she/her' ? 'she' : 'they') : 'you';
+        const themRef = isThirdParty ? (intake.pronouns === 'she/her' ? 'her' : 'them') : 'you';
+        const measureAsk = isThirdParty
+          ? `your ${intake.third_party_label || "child"}'s measurement`
+          : 'the measurement';
+
+        if (emIsTop) {
+          // Tops don't need the shaping vs tucking explanation — just ask about fit
+          rx.response_text = `Can you let me know how the ${emNick} fits? If you send me ${measureAsk} around the chest where a bra band would sit I can help find the right size. Ultimately ${comfortRef}.`;
+          rx.audit = 'Product not working (top) — asking for measurement';
+        } else {
+          rx.response_text = `If ${theyRef} ${theyRef === 'she' ? 'is' : 'are'} feeling the shaping is not working it's often due to two reasons: either the fit is off or there is a mismatch of expectations.\n\nIn terms of the fit, unlike "tucking" bottoms they are intended to be worn comfortably. Not too tight or too loose. If you send me ${measureAsk} around the belly and just under the belly button I can double check the sizing.\n\nIn terms of expectations, our shaping bottoms are meant to reshape the front area to create a feminine mound. This is in contrast to "tucking" or "gaffing" underwear which completely flattens the area. This is why our shaping bottoms are very comfortable and can be worn for all activities.\n\nUltimately ${comfortRef} so let me know what ${theyRef === 'she' ? 'she' : 'you'} would like to do next. I'd be happy to send out another size to try.`;
+        }
+        rx.audit = 'Expectation mismatch — two-branch explanation (fit vs expectations)';
+        prescription.still_needed.push(`decision for ${item.product}`);
         break;
       }
 
@@ -952,7 +988,12 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
       case 'needs_clarification':
       default: {
         rx.state = 'AWAITING_CLARIFICATION';
-        rx.response_text = `Can you let me know what didn't work out with the ${getProductNickname(item.product) || 'item'}?`;
+        const clarNick = getProductNickname(item.product) || 'item';
+        if (isThirdParty) {
+          rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${clarNick}?`;
+        } else {
+          rx.response_text = `Can you let me know what didn't work out with the ${clarNick}?`;
+        }
         rx.audit = 'Unclear issue — asking for clarification';
         prescription.still_needed.push(`clarification for ${item.product || 'item'}`);
         break;

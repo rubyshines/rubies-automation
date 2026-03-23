@@ -184,7 +184,7 @@ IMPORTANT:
 - For names: ONLY extract if they explicitly introduce themselves. "Hi Jamie" is addressing the agent, not their name.
 - For sizes: normalize to catalog format (M not Medium, 1X not XL, 14 not fourteen).
 - For items: if they say "underwear" without a product name, put "underwear" as product. If "bikini bottom" put that. Be specific.
-- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags" = close_fit_loose. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction).
+- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags" = close_fit_loose. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction). "doesn't hide/doesn't conceal/can still see/still visible/not flat/doesn't flatten/shows through" = expectation_mismatch (the customer expected flattening but RUBIES shapes, not flattens). "doesn't work" WITHOUT specifics = product_not_working (we need to probe further).
 - EXCLUSIONS: If the customer says "just the X" or "only the X" or "not the Y" or "the Y fits fine", ONLY include the items they want to exchange. Do NOT include items they explicitly said are fine or excluded. For example "just the AJ, the Ruby fits fine" means ONLY the AJ goes in items — do NOT include the Ruby.
 - When confirming a size, only apply it to the items the customer is actually exchanging. If they say "1X for the AJ" don't apply 1X to other products.
 - RETURNS: "I want to return", "can I return", "I'd like to send back", "return for a refund" → message_type = "refund", customer_intent = "refund". A "return" means the customer wants their money back, not an exchange. Don't confuse with "exchange" or "swap".
@@ -254,8 +254,9 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
       if (existing) {
         if (!existing.size && aiItem.size) existing.size = normalizeSize(aiItem.size);
         if (!existing.color && aiItem.color) existing.color = aiItem.color;
-        // Allow upgrading issue from vague (doesnt_fit, unclear, none) to specific (close_fit_tight, etc.)
-        const vagueIssues = new Set(['doesnt_fit', 'unclear', 'none', null, undefined]);
+        // Allow upgrading issue from vague/general to specific
+        // product_not_working can upgrade to expectation_mismatch, close_fit_tight, etc.
+        const vagueIssues = new Set(['doesnt_fit', 'product_not_working', 'unclear', 'none', null, undefined]);
         if (vagueIssues.has(existing.issue) && aiItem.issue && !vagueIssues.has(aiItem.issue)) existing.issue = aiItem.issue;
         if (!existing.desired_size && aiItem.desired_size) existing.desired_size = normalizeSize(aiItem.desired_size);
         if (!existing.resolved_size && aiItem.desired_size) existing.resolved_size = normalizeSize(aiItem.desired_size);
@@ -275,7 +276,7 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
 
   // Update issue_type from items — allow upgrading from vague to specific
   if (intake.items.length > 0) {
-    const vagueIssueTypes = new Set(['doesnt_fit', 'unclear', 'none', null, undefined]);
+    const vagueIssueTypes = new Set(['doesnt_fit', 'product_not_working', 'unclear', 'none', null, undefined]);
     const firstSpecificIssue = intake.items.find(i => i.issue && !vagueIssueTypes.has(i.issue))?.issue;
     if (firstSpecificIssue && vagueIssueTypes.has(intake.issue_type)) {
       intake.issue_type = firstSpecificIssue;
