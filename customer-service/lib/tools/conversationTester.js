@@ -69,7 +69,7 @@ function composeAgentResponse(s) {
 
   // Needs info — use the tree's per-item response text + include multi-item flags
   if (s.status === 'needs_info' && items.length > 0) {
-    const actionTexts = items.filter(i => i.response_text).map(i => i.response_text);
+    const actionTexts = [...new Set(items.filter(i => i.response_text).map(i => i.response_text))];
     if (actionTexts.length > 0) {
       let response = greeting + actionTexts.join(' ');
       // Include multi-item flags in the same message

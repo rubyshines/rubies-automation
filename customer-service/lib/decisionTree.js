@@ -502,8 +502,16 @@ function prescribeActionClassification(intake) {
       classified.action = 'sizing_exchange_measurement';
       classified.audit = 'Way off — need measurement';
     } else if (item.issue === 'expectation_mismatch') {
-      classified.action = 'expectation_mismatch';
-      classified.audit = 'Expectation mismatch — shaping vs tucking explanation needed';
+      // Shaping explanation only applies to bottoms — tops just ask about fit
+      const emProd = (item.product || '').toLowerCase();
+      const emIsBottom = !emProd.match(/bra|top|mia|halter|tankini|chest pad|pad/);
+      if (emIsBottom) {
+        classified.action = 'expectation_mismatch';
+        classified.audit = 'Expectation mismatch (bottoms) — shaping vs tucking explanation needed';
+      } else {
+        classified.action = 'fit_direction_unclear';
+        classified.audit = 'Product not working (top) — ask about fit, no shaping explanation';
+      }
     } else if (item.issue === 'product_not_working') {
       classified.action = 'probe_needed';
       classified.audit = 'Product not working — need to probe';
@@ -835,8 +843,6 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // Two-branch explanation: fit issue vs expectation mismatch
         rx.state = 'AWAITING_DECISION';
         const emNick = getProductNickname(item.product);
-        const emProdLower = (item.product || '').toLowerCase();
-        const emIsTop = emProdLower.includes('bra') || emProdLower.includes('top');
         const comfortRef = isThirdParty
           ? `your ${intake.third_party_label || "child"}'s comfort is most important`
           : 'your comfort is most important';
@@ -846,13 +852,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           ? `your ${intake.third_party_label || "child"}'s measurement`
           : 'the measurement';
 
-        if (emIsTop) {
-          // Tops don't need the shaping vs tucking explanation — just ask about fit
-          rx.response_text = `Can you let me know how the ${emNick} fits? If you send me ${measureAsk} around the chest where a bra band would sit I can help find the right size. Ultimately ${comfortRef}.`;
-          rx.audit = 'Product not working (top) — asking for measurement';
-        } else {
-          rx.response_text = `If ${theyRef} ${theyRef === 'she' ? 'is' : 'are'} feeling the shaping is not working it's often due to two reasons: either the fit is off or there is a mismatch of expectations.\n\nIn terms of the fit, unlike "tucking" bottoms they are intended to be worn comfortably. Not too tight or too loose. If you send me ${measureAsk} around the belly and just under the belly button I can double check the sizing.\n\nIn terms of expectations, our shaping bottoms are meant to reshape the front area to create a feminine mound. This is in contrast to "tucking" or "gaffing" underwear which completely flattens the area. This is why our shaping bottoms are very comfortable and can be worn for all activities.\n\nUltimately ${comfortRef} so let me know what ${theyRef === 'she' ? 'she' : 'you'} would like to do next. I'd be happy to send out another size to try.`;
-        }
+        // This case only fires for bottoms (tops are redirected to fit_direction_unclear in classification)
+        rx.response_text = `If ${theyRef} ${theyRef === 'she' ? 'is' : 'are'} feeling the shaping is not working it's often due to two reasons: either the fit is off or there is a mismatch of expectations.\n\nIn terms of the fit, unlike "tucking" bottoms they are intended to be worn comfortably. Not too tight or too loose. If you send me ${measureAsk} around the belly and just under the belly button I can double check the sizing.\n\nIn terms of expectations, our shaping bottoms are meant to reshape the front area to create a feminine mound. This is in contrast to "tucking" or "gaffing" underwear which completely flattens the area. This is why our shaping bottoms are very comfortable and can be worn for all activities.\n\nUltimately ${comfortRef} so let me know what ${theyRef === 'she' ? 'she' : 'you'} would like to do next. I'd be happy to send out another size to try.`;
         rx.audit = 'Expectation mismatch — two-branch explanation (fit vs expectations)';
         prescription.still_needed.push(`decision for ${item.product}`);
         break;
