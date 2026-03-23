@@ -389,20 +389,28 @@ function prescribeOrderIdentification(intake, context) {
     for (const intakeItem of intake.items) {
       if (!intakeItem.size) continue;
       const normalizedSize = normalizeSize(intakeItem.size);
-      const isBottom = !intakeItem.product?.toLowerCase().match(/bra|top|chest pad/);
+      const intakeProdLower = (intakeItem.product || '').toLowerCase();
+      const intakeCategory = intakeProdLower.match(/chest pad|pad/) ? 'pads'
+        : intakeProdLower.match(/bra|top|mia|halter|tankini/) ? 'tops'
+        : 'bottoms';
 
       for (const oi of orderItems) {
-        const oiIsBottom = !oi.title?.toLowerCase().match(/bra|top|chest pad/);
-        if (isBottom !== oiIsBottom) continue; // Different category (bottoms vs tops)
+        const oiLower = (oi.title || '').toLowerCase();
+        const oiCategory = oiLower.match(/chest pad|pad/) ? 'pads'
+          : oiLower.match(/bra|top|mia|halter|tankini/) ? 'tops'
+          : 'bottoms';
+        if (intakeCategory !== oiCategory) continue; // Different category
+        if (intakeCategory === 'pads') continue; // Never flag pads for multi-item exchange
 
         const oiSizeMatch = oi.variantTitle?.match(/\b(\d{1,2}|XXS\+?|XS\+?|S|M|L|[1-4]X)\b/i);
         const oiSize = oiSizeMatch ? normalizeSize(oiSizeMatch[1]) : null;
         if (oiSize !== normalizedSize) continue; // Different size
 
         // Is this the SAME product (including different colors)?
-        const isSameProduct = intakeItem.product && oi.title &&
-          (oi.title.toLowerCase().includes(intakeItem.product.toLowerCase()) ||
-           intakeItem.product.toLowerCase().includes(oi.title.toLowerCase()));
+        // Use word-level matching: all significant words in intake product appear in order title
+        const intakeWords = (intakeItem.product || '').toLowerCase().split(/\s+/).filter(w => w.length > 1 && w !== 'the');
+        const oiTitleLower = (oi.title || '').toLowerCase();
+        const isSameProduct = intakeWords.length > 0 && intakeWords.every(w => oiTitleLower.includes(w));
 
         if (isSameProduct) {
           // Same product, same size — assume customer means all of them
@@ -767,12 +775,14 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             if (sizeMatches && sizeMatches.length > 0) {
               const recommendedSize = sizeMatches[0].size_label;
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              rx.response_text = `Based on your ${measureType} measurement of ${m.value} ${unit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
+              rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${unit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
               rx.audit = `Measurement lookup: ${m.value} ${unit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
             } else {
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              rx.response_text = `Your ${measureType} measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check the measurement? It should be around the ${measureType === 'waist' ? 'belly, just under the belly button' : 'chest where a bra band would sit'}.`;
+              const measureLoc2 = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
+              rx.response_text = `The measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check? It should be measured ${measureLoc2}.`;
               rx.audit = `Measurement lookup: ${m.value} ${unit} in ${chartCategory} — no match found`;
               prescription.still_needed.push(`measurement for ${item.product}`);
             }
@@ -786,7 +796,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           rx.state = 'AWAITING_MEASUREMENT';
           const measureType = item.product?.toLowerCase().match(/bra|top/) ? 'chest' : 'waist';
           const unit = useInches ? 'inches' : 'cm';
-          rx.response_text = `Could you send me the ${measureType} measurement around the ${measureType === 'waist' ? 'belly, just under the belly button' : 'chest where a bra band would sit'}, in ${unit}?`;
+          const measureLocation = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
+          const thirdPartyPrefix = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
+          rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation}, in ${unit}, I can help recommend the right size.`;
           rx.audit = `Way off — asking for ${measureType} measurement in ${unit}`;
           prescription.still_needed.push(`measurement for ${item.product}`);
         }
