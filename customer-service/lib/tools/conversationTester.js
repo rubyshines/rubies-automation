@@ -119,6 +119,10 @@ async function handleTestConversation({ customer_email, messages }) {
       if (i === 0 && s) {
         const c = s.customer;
         customerInfo = `${c.email || customer_email} | ${c.country || '?'}`;
+        if (c.address) {
+          const a = c.address;
+          customerInfo += `\nAddress: ${[a.address1, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}`;
+        }
         if (s.order) {
           orderInfo = `Order ${s.order.name} (${s.order.date}):\n`;
           for (const li of s.order.items) {
