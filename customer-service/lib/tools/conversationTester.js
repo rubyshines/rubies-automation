@@ -50,7 +50,8 @@ function composeAgentResponse(s) {
     if (systemPickedSize) {
       const orderItems = s.order?.items || [];
       const desc = resolvedItems.map(i => {
-        const nick = getProductNickname(i.product);
+        const displayProduct = i.resolved_product || i.product;
+        const nick = getProductNickname(displayProduct);
         const orderMatch = orderItems.find(oi => oi.title?.toLowerCase().includes((i.product || '').toLowerCase().split(' ')[0]));
         const qty = orderMatch?.quantity || 1;
         const name = pluralizeNickname(nick, qty);
@@ -211,7 +212,8 @@ async function handleTestConversation({ customer_email, messages }) {
             i.product?.toLowerCase().includes(oi.title?.toLowerCase()?.split(' ')[1] || '')
           );
           return {
-            product: i.product,
+            product: i.resolved_product || i.product,
+            from_product: i.resolved_product ? i.product : null,
             from_size: i.size,
             to_size: i.resolved_size,
             color: i.color,
@@ -277,7 +279,9 @@ async function handleTestConversation({ customer_email, messages }) {
     }
     md += '\n';
     for (const item of orderSimulation.items) {
-      md += `  ${item.quantity}x ${item.product} — ${item.color || 'same color'} / ${item.to_size} (was: ${item.from_size}) — $0.00 exchange\n`;
+      const productChange = item.from_product ? ` (was: ${item.from_product})` : '';
+      const sizeChange = item.from_size !== item.to_size ? ` (was: ${item.from_size})` : '';
+      md += `  ${item.quantity}x ${item.product}${productChange} — ${item.color || 'same color'} / ${item.to_size}${sizeChange} — $0.00 exchange\n`;
     }
     md += `\nShipping: Free\n`;
     md += `Total: $0.00\n`;

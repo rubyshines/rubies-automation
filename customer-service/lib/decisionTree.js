@@ -893,6 +893,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         const thatThem = recommendation.endsWith('s') ? 'them' : 'that';
         rx.response_text = `The ${recommendation} ${hasHave} a larger leg opening which may work better. Would you like to try ${thatThem} instead? ${link}`;
         rx.recommendation = { product: recommendation, link };
+        // Store the pending style switch on the intake item so confirmation uses the new product
+        const intakeItemStyle = intake.items.find(ii => ii.product === item.product);
+        if (intakeItemStyle) {
+          intakeItemStyle._pendingStyleSwitch = recommendation;
+        }
         rx.audit = `Tight legs → ${recommendation} (${isKids ? 'kids' : 'adult'}, ${isSwim ? 'swim' : 'underwear'})`;
         prescription.still_needed.push(`style_confirmation for ${item.product}`);
         break;

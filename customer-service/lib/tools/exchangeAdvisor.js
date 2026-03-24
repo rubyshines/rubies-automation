@@ -286,12 +286,27 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   if (!intake.measurement && parsed.measurement) intake.measurement = parsed.measurement;
 
   // Confirmation handling
-  if (parsed.is_confirmation && parsed.confirmed_size && intake.items.length > 0) {
-    const resolvedSize = normalizeSize(parsed.confirmed_size);
+  if (parsed.is_confirmation && intake.items.length > 0) {
     const unresolved = intake.items.find(i => !i.resolved_size);
     if (unresolved) {
-      unresolved.resolved_size = resolvedSize;
-      intake.resolution_sizes.push({ product: unresolved.product, from_size: unresolved.size, to_size: resolvedSize });
+      // Check for pending style switch (e.g., Ruby → Cheeky)
+      if (unresolved._pendingStyleSwitch) {
+        unresolved.resolved_product = unresolved._pendingStyleSwitch;
+        // "same size" or no size specified → use current size
+        const resolvedSize = parsed.confirmed_size ? normalizeSize(parsed.confirmed_size) : unresolved.size;
+        unresolved.resolved_size = resolvedSize;
+        intake.resolution_sizes.push({
+          product: unresolved.resolved_product,
+          from_size: unresolved.size,
+          to_size: resolvedSize,
+          from_product: unresolved.product,
+        });
+        delete unresolved._pendingStyleSwitch;
+      } else if (parsed.confirmed_size) {
+        const resolvedSize = normalizeSize(parsed.confirmed_size);
+        unresolved.resolved_size = resolvedSize;
+        intake.resolution_sizes.push({ product: unresolved.product, from_size: unresolved.size, to_size: resolvedSize });
+      }
     }
   }
 
