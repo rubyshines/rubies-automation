@@ -879,13 +879,13 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         let recommendation, link;
         if (isSwim) {
           recommendation = 'Cheeky Bikini Bottoms';
-          link = 'https://rubyshines.com/collections/adults-swimwear';
+          link = 'https://rubyshines.com/products/the-cheeky-shaping-bikini-bottom';
         } else if (isKids) {
           recommendation = 'Flo Dance Underwear';
-          link = 'https://rubyshines.com/collections/kids-underwear';
+          link = 'https://rubyshines.com/products/the-flo-shaping-dance-underwear';
         } else {
           recommendation = 'Sassy';
-          link = 'https://rubyshines.com/collections/adults-underwear';
+          link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
         }
 
         rx.state = 'AWAITING_STYLE_CONFIRMATION';
