@@ -889,7 +889,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         }
 
         rx.state = 'AWAITING_STYLE_CONFIRMATION';
-        rx.response_text = `For leg openings, the ${recommendation} has the largest cut. Would you like to try that instead? ${link}`;
+        rx.response_text = `The ${recommendation} has a larger leg opening which may work better. Would you like to try that instead? ${link}`;
         rx.recommendation = { product: recommendation, link };
         rx.audit = `Tight legs → ${recommendation} (${isKids ? 'kids' : 'adult'}, ${isSwim ? 'swim' : 'underwear'})`;
         prescription.still_needed.push(`style_confirmation for ${item.product}`);
