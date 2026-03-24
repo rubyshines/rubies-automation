@@ -874,7 +874,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // Determine recommendation based on product type + size system
         const sizeList = item.size ? getSizeList(normalizeSize(item.size)) : null;
         const isKids = sizeList === NUMERIC_SIZES;
-        const isSwim = item.product?.toLowerCase().match(/bikini|swim/);
+        const isSwim = item.product?.toLowerCase().match(/bikini|swim|ruby|stella|cheeky/);
 
         let recommendation, link;
         if (isSwim) {
