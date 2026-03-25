@@ -167,7 +167,7 @@ Return JSON:
       "product": string — product name as close to catalog as possible,
       "size": string or null — their CURRENT size (what they have now),
       "color": string or null,
-      "issue": "close_fit_tight" | "close_fit_loose" | "doesnt_fit" | "way_off" | "product_not_working" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "wrong_item" | "missing" | "none" | "unclear",
+      "issue": "close_fit_tight" | "close_fit_loose" | "doesnt_fit" | "way_off" | "product_not_working" | "product_not_working_loose" | "product_not_working_tight" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "wrong_item" | "missing" | "none" | "unclear",
       "desired_size": string or null — ONLY if customer named a SPECIFIC size (e.g. "size L", "a 14"). Do NOT fill this in if they said "next size up" or "one size down" — those are directions not specific sizes.,
       "desired_product": string or null — if they want a different product
     }
@@ -184,7 +184,7 @@ IMPORTANT:
 - For names: ONLY extract if they explicitly introduce themselves. "Hi Jamie" is addressing the agent, not their name.
 - For sizes: normalize to catalog format (M not Medium, 1X not XL, 14 not fourteen).
 - For items: if they say "underwear" without a product name, put "underwear" as product. If "bikini bottom" put that. Be specific.
-- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags" = close_fit_loose. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction). "doesn't hide/doesn't conceal/can still see/still visible/not flat/doesn't flatten/shows through" = expectation_mismatch (the customer expected flattening but RUBIES shapes, not flattens). "doesn't work" WITHOUT specifics = product_not_working (we need to probe further).
+- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags/bunches/bunching/not tight enough" = close_fit_loose. If the waist fits fine but the product is loose/bunching elsewhere (front, legs, etc.), that's still close_fit_loose — the overall garment is too big even if the waist is OK. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction). "doesn't hide/doesn't conceal/can still see/still visible/not flat/doesn't flatten/shows through" = expectation_mismatch (the customer expected flattening but RUBIES shapes, not flattens). "doesn't work" WITHOUT specifics = product_not_working (we need to probe further). IMPORTANT: If customer says "not working/shaping not working" AND also gives a fit clue like "too loose" or "too tight", use product_not_working_loose or product_not_working_tight — this means they understand the product but think the fit is causing the issue.
 - EXCLUSIONS: If the customer says "just the X" or "only the X" or "not the Y" or "the Y fits fine", ONLY include the items they want to exchange. Do NOT include items they explicitly said are fine or excluded. For example "just the AJ, the Ruby fits fine" means ONLY the AJ goes in items — do NOT include the Ruby.
 - When confirming a size, only apply it to the items the customer is actually exchanging. If they say "1X for the AJ" don't apply 1X to other products.
 - RETURNS: "I want to return", "can I return", "I'd like to send back", "return for a refund" → message_type = "refund", customer_intent = "refund". A "return" means the customer wants their money back, not an exchange. Don't confuse with "exchange" or "swap".
@@ -457,6 +457,44 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     intake.refund_eligible = daysSince <= 60 ? true : 'generous';
   }
 
+  // STEP 3b: Multi-item expansion
+  // When customer says "these underwear" or refers to one product generically,
+  // but the order has multiple line items of the same product in the same size
+  // (e.g. 3x AJ in size 10, different colors), ensure intake reflects all of them.
+  // The tree's multi-item logic handles flagging; here we just make sure the
+  // intake item knows the correct quantity from the order.
+  if (intake.items.length >= 1 && targetOrder) {
+    for (const intakeItem of intake.items) {
+      if (!intakeItem.size) continue;
+      const normalizedSize = normalizeSize(intakeItem.size);
+      const intakeWords = (intakeItem.product || '').toLowerCase().split(/\s+/).filter(w => w.length > 1 && w !== 'the');
+
+      // Count matching order line items (same product, same size, possibly different colors)
+      let matchingQty = 0;
+      const matchingColors = [];
+      for (const oi of orderLineItems) {
+        const oiTitleLower = (oi.title || '').toLowerCase();
+        const oiSize = oi._skuSize;
+        const isSameProduct = intakeWords.length > 0 && intakeWords.every(w => oiTitleLower.includes(w));
+        // Also match generic "underwear" to any underwear product
+        const isGenericMatch = (intakeItem.product || '').toLowerCase() === 'underwear' && !oiTitleLower.match(/bra|top|mia|halter|tankini|chest pad|pad|shorts|one-piece|bikini/);
+        if ((isSameProduct || isGenericMatch) && oiSize === normalizedSize) {
+          matchingQty += oi.quantity;
+          const colorMatch = oi.variantTitle?.match(/^([^/]+)/);
+          if (colorMatch) matchingColors.push(colorMatch[1].trim());
+          // If generic "underwear" matched, update the product name to the real product
+          if (isGenericMatch && !isSameProduct) {
+            intakeItem.product = oi.title;
+          }
+        }
+      }
+      if (matchingQty > 1) {
+        intakeItem._orderQty = matchingQty;
+        intakeItem._orderColors = matchingColors;
+      }
+    }
+  }
+
   intake.status = computeIntakeStatus(intake);
 
   // STEP 4: Walk the decision tree
@@ -504,6 +542,7 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         recommendation: a.recommendation || null,
         skip_donation: a.skip_donation || false,
         crossover_note: a._crossover_note || null,
+        self_diagnosed: a.self_diagnosed || false,
       })),
       donation: donationActions[0] ? { type: donationActions[0].type, text: donationActions[0].text } : null,
       crossover_note: treeResult.response_parts.find(p => p.type === 'crossover_note')?.text || null,

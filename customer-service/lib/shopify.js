@@ -733,6 +733,112 @@ async function getCustomerProfile(customerId) {
   return data.customer;
 }
 
+// --- Refund queries & mutations ---
+
+/**
+ * Calculate a suggested refund for specific line items on an order.
+ * Uses Shopify's suggestedRefund to get correct amounts including taxes/duties.
+ */
+async function calculateRefund(orderId, refundLineItems) {
+  const gid = normalizeGid(orderId, 'Order');
+  const data = await shopifyGraphQL(`
+    query calculateRefund($id: ID!, $refundLineItems: [RefundLineItemInput!]!) {
+      order(id: $id) {
+        id
+        name
+        suggestedRefund(refundLineItems: $refundLineItems) {
+          amountSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          subtotalSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          totalTaxSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          refundLineItems {
+            lineItem {
+              id
+              title
+              variantTitle
+              sku
+              quantity
+              originalUnitPriceSet {
+                shopMoney { amount currencyCode }
+              }
+            }
+            quantity
+            subtotalSet {
+              shopMoney { amount currencyCode }
+            }
+          }
+          suggestedTransactions {
+            gateway
+            parentTransaction { id }
+            amountSet {
+              shopMoney { amount currencyCode }
+              presentmentMoney { amount currencyCode }
+            }
+          }
+        }
+      }
+    }
+  `, { id: gid, refundLineItems });
+  return {
+    order: { id: data.order.id, name: data.order.name },
+    ...data.order.suggestedRefund,
+  };
+}
+
+/**
+ * Create a refund on an order.
+ * @param {object} input - RefundInput (orderId, refundLineItems, transactions, note, notify)
+ */
+async function createRefund(input) {
+  const data = await shopifyGraphQL(`
+    mutation refundCreate($input: RefundInput!) {
+      refundCreate(input: $input) {
+        refund {
+          id
+          createdAt
+          note
+          totalRefundedSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+          refundLineItems(first: 50) {
+            edges {
+              node {
+                lineItem {
+                  title
+                  variantTitle
+                  sku
+                }
+                quantity
+                subtotalSet {
+                  shopMoney { amount currencyCode }
+                }
+              }
+            }
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `, { input });
+  const refund = data.refundCreate.refund;
+  if (refund) {
+    refund.refundLineItems = (refund.refundLineItems?.edges || []).map(e => e.node);
+  }
+  return refund;
+}
+
 // --- Helpers ---
 
 function normalizeOrderNumber(input) {
@@ -747,6 +853,21 @@ function normalizeGid(id, type) {
   const str = String(id).trim();
   if (str.startsWith('gid://')) return str;
   return `gid://shopify/${type}/${str}`;
+}
+
+/**
+ * Build a Shopify admin URL for an order or draft order GID.
+ * Uses SHOPIFY_ADMIN_STORE env var (the admin slug, e.g. "rubies-active-wear"),
+ * falling back to SHOPIFY_STORE_URL with .myshopify.com stripped.
+ */
+function getAdminUrl(gid) {
+  const storeName = process.env.SHOPIFY_ADMIN_STORE
+    || (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '');
+  const numericId = gid.split('/').pop();
+  if (gid.includes('/DraftOrder/')) {
+    return `https://admin.shopify.com/store/${storeName}/draft_orders/${numericId}`;
+  }
+  return `https://admin.shopify.com/store/${storeName}/orders/${numericId}`;
 }
 
 module.exports = {
@@ -766,4 +887,7 @@ module.exports = {
   normalizeGid,
   createCustomer,
   normalizeOrderNumber,
+  calculateRefund,
+  createRefund,
+  getAdminUrl,
 };

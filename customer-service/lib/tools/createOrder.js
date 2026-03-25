@@ -13,6 +13,7 @@ const {
   completeDraftOrder,
   sendDraftOrderInvoice,
   normalizeGid,
+  getAdminUrl,
 } = require('../shopify');
 const { searchProducts } = require('../productCache');
 
@@ -175,7 +176,6 @@ async function handleCreateOrder({
   }
 
   // Build preview markdown
-  const storeUrl = (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '');
   let md = `**Order Preview**\n\n`;
   md += `**Customer:** ${customerInfo.name}`;
   if (customerInfo.created && !confirmed) md += ` (will be created)`;
@@ -257,26 +257,15 @@ async function handleCreateOrder({
   }
 
   const draftOrder = await createDraftOrder(draftInput);
-  const numericDraftId = draftOrder.id.split('/').pop();
+
+  md += `\n---\n**Draft Order Created — Awaiting Confirmation**\n\n`;
+  md += `**Draft:** ${draftOrder.name} — ${getAdminUrl(draftOrder.id)}\n`;
+  md += `**Total:** $${draftOrder.totalPrice}\n`;
 
   if (isFree) {
-    // Free order: complete + mark as paid
-    const completed = await completeDraftOrder(draftOrder.id);
-    const order = completed.order;
-
-    md += `\n---\n**Free Order Created & Completed**\n\n`;
-    md += `**Order:** ${order.name} — https://admin.shopify.com/store/${storeUrl}/orders/${order.id.split('/').pop()}\n`;
-    md += `**Draft:** ${draftOrder.name} — https://admin.shopify.com/store/${storeUrl}/draft_orders/${numericDraftId}\n`;
-    md += `**Status:** Completed (marked as paid)\n`;
+    md += `\nReview the draft order above, then call create_order_complete with draft_order_id="${draftOrder.id}" to complete it and mark as paid.`;
   } else {
-    // Paid order: send invoice to customer
-    await sendDraftOrderInvoice(draftOrder.id);
-
-    md += `\n---\n**Draft Order Created & Invoice Sent**\n\n`;
-    md += `**Draft:** ${draftOrder.name} — https://admin.shopify.com/store/${storeUrl}/draft_orders/${numericDraftId}\n`;
-    md += `**Total:** $${draftOrder.totalPrice}\n`;
-    md += `**Invoice URL:** ${draftOrder.invoiceUrl}\n`;
-    md += `**Invoice:** Sent to ${customerInfo.email || email}\n`;
+    md += `\nReview the draft order above, then call create_order_complete with draft_order_id="${draftOrder.id}" and send_invoice=true to send the invoice to ${customerInfo.email || email}.`;
   }
 
   return { content: [{ type: 'text', text: md }] };
@@ -325,7 +314,7 @@ const tools = [
         },
         free: {
           type: 'boolean',
-          description: 'Set to true for a free order (samples, gifts). 100% discount, free shipping, auto-completed and marked as paid.',
+          description: 'Set to true for a free order (samples, gifts). 100% discount, free shipping. Draft is created but NOT completed — must be confirmed via create_order_complete.',
         },
         discount_percent: {
           type: 'number',
@@ -345,6 +334,63 @@ const tools = [
       required: ['items'],
     },
     handler: handleCreateOrder,
+  },
+  {
+    name: 'create_order_complete',
+    description: 'Complete a previously created draft order. For free orders: marks as paid. For paid orders: sends invoice to customer. IMPORTANT: Always confirm with the user before calling this.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        draft_order_id: {
+          type: 'string',
+          description: 'Draft order GID from create_order phase 2.',
+        },
+        send_invoice: {
+          type: 'boolean',
+          description: 'Set to true to send an invoice instead of completing/marking as paid.',
+        },
+        email: {
+          type: 'string',
+          description: 'Email to send invoice to (only needed if send_invoice=true and customer has no email).',
+        },
+      },
+      required: ['draft_order_id'],
+    },
+    handler: async ({ draft_order_id, send_invoice, email }) => {
+      const draftGid = normalizeGid(draft_order_id, 'DraftOrder');
+
+      if (send_invoice) {
+        const result = await sendDraftOrderInvoice(draftGid, email);
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              '**Invoice Sent**',
+              '',
+              `**Draft:** ${result.name} — ${getAdminUrl(draftGid)}`,
+              `**Invoice URL:** ${result.invoiceUrl}`,
+            ].join('\n'),
+          }],
+        };
+      }
+
+      // Complete and mark as paid
+      const completed = await completeDraftOrder(draftGid);
+      const order = completed.order;
+
+      return {
+        content: [{
+          type: 'text',
+          text: [
+            '**Order Completed**',
+            '',
+            `**Order:** ${order.name} — ${getAdminUrl(order.id)}`,
+            `**Draft:** ${completed.name} — ${getAdminUrl(draftGid)}`,
+            '**Status:** Completed (marked as paid)',
+          ].join('\n'),
+        }],
+      };
+    },
   },
 ];
 

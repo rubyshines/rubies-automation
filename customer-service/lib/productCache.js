@@ -161,6 +161,16 @@ function searchProducts(query) {
     }
   }
 
+  // Merge "tall" modifier into size tokens so "L Tall" matches variant size "l tall"
+  // instead of matching "L" (non-tall) as size and "tall" as a descriptive word
+  const tallIdx = otherTokens.indexOf('tall');
+  if (tallIdx !== -1 && sizeTokens.length > 0) {
+    otherTokens.splice(tallIdx, 1);
+    for (let i = 0; i < sizeTokens.length; i++) {
+      sizeTokens[i] = sizeTokens[i] + ' tall';
+    }
+  }
+
   const results = [];
 
   for (const product of cachedProducts) {

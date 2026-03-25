@@ -4,22 +4,8 @@
  * Two-phase flow: Phase 1 creates draft + shows preview, Phase 2 (confirmed=true) marks it as paid.
  */
 
-const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders } = require('../shopify');
+const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getAdminUrl } = require('../shopify');
 const { searchProducts } = require('../productCache');
-
-function getStoreName() {
-  const storeUrl = process.env.SHOPIFY_STORE_URL || '';
-  return storeUrl.replace('.myshopify.com', '');
-}
-
-function getAdminUrl(gid) {
-  const storeName = getStoreName();
-  const numericId = gid.split('/').pop();
-  if (gid.includes('/DraftOrder/')) {
-    return `https://admin.shopify.com/store/${storeName}/draft_orders/${numericId}`;
-  }
-  return `https://admin.shopify.com/store/${storeName}/orders/${numericId}`;
-}
 
 const tools = [
   {
@@ -27,7 +13,7 @@ const tools = [
     description: [
       'Create a free exchange/replacement draft order. Two-phase flow:',
       'Phase 1 (confirmed omitted or false): creates a draft order at $0 and returns a preview with clickable Shopify admin links to both the original order and draft order. Does NOT mark as paid.',
-      'Phase 2 (confirmed=true + draft_order_id): completes the draft order and marks it as paid.',
+      'Phase 2 (confirmed=true + draft_order_id): completes the draft order and marks it as paid. IMPORTANT: You MUST present the Phase 1 preview summary to the user and receive their explicit confirmation before calling Phase 2. Never auto-confirm.',
       'IMPORTANT: Only FULFILLED, non-cancelled orders may be used as the basis for an exchange.',
       'When determining sizes (e.g. "one size down"), you MUST reference the most recent FULFILLED order — ignore unfulfilled $0 exchange orders.',
       'Do NOT pass original_order_id unless explicitly given an order number by the user. Let the tool auto-find the correct fulfilled order.',

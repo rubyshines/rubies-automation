@@ -12,7 +12,7 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
-const { getProductNickname, pluralizeNickname } = require('../decisionTree');
+const { getProductNickname, pluralizeNickname, getSizeList } = require('../decisionTree');
 
 // Import the advisor handler
 const advisorTools = require('./exchangeAdvisor');
@@ -26,6 +26,23 @@ function composeAgentResponse(s) {
   const greeting = s.customer.name ? `Thanks ${s.customer.name}! ` : 'Hi! ';
   const items = s.prescription.items;
   const resolvedItems = (s.intake.items || []).filter(i => i.resolved_size);
+  const isThirdParty = s.customer.buying_for === 'third_party';
+  const thirdPartyLabel = s.customer.third_party_label || 'them';
+
+  // "for her/him/them/your daughter" phrasing
+  const forWhom = isThirdParty
+    ? (thirdPartyLabel === 'daughter' || thirdPartyLabel === 'son' || thirdPartyLabel === 'kid' || thirdPartyLabel === 'kiddo'
+      ? `for your ${thirdPartyLabel}` : `for ${thirdPartyLabel}`)
+    : 'for you';
+
+  // Positive feedback acknowledgment
+  const hasFeedback = s.audit?.some(a => /positive feedback/i.test(a));
+  let feedbackLine = '';
+  if (hasFeedback && isThirdParty) {
+    feedbackLine = `So lovely to hear you've been with RUBIES for so long! `;
+  } else if (hasFeedback) {
+    feedbackLine = `So glad you love RUBIES! `;
+  }
 
   // Safety override
   if (s.status === 'safety_override') {
@@ -44,23 +61,63 @@ function composeAgentResponse(s) {
 
   // Ready — order can be created
   if (s.status === 'ready' && resolvedItems.length > 0) {
-    const systemPickedSize = resolvedItems.some(i => !i.desired_size && i.resolved_size);
+    const orderItems = s.order?.items || [];
 
-    let response;
-    if (systemPickedSize) {
-      const orderItems = s.order?.items || [];
-      const desc = resolvedItems.map(i => {
-        const displayProduct = i.resolved_product || i.product;
-        const nick = getProductNickname(displayProduct);
-        const orderMatch = orderItems.find(oi => oi.title?.toLowerCase().includes((i.product || '').toLowerCase().split(' ')[0]));
-        const qty = orderMatch?.quantity || 1;
-        const name = pluralizeNickname(nick, qty);
-        return qty > 1 ? `${qty} ${name} in size ${i.resolved_size}` : `a ${name} in size ${i.resolved_size}`;
-      }).join(' and ');
-      response = greeting + `I've gone ahead and created a new order for ${desc}.`;
-    } else {
-      response = greeting + `I've gone ahead and created an exchange order for you.`;
+    // Build item description
+    const desc = resolvedItems.map(i => {
+      const displayProduct = i.resolved_product || i.product;
+      const nick = getProductNickname(displayProduct);
+      let qty = i._orderQty || 0;
+      if (!qty) {
+        const prodLower = (i.product || '').toLowerCase();
+        for (const oi of orderItems) {
+          if (oi.title?.toLowerCase().includes(prodLower.split(' ')[0])) {
+            qty += oi.quantity;
+          }
+        }
+      }
+      qty = qty || 1;
+      const name = pluralizeNickname(nick, qty);
+      const article = /^[aeiou]/i.test(name) ? 'an' : 'a';
+      return qty > 1 ? `${qty} ${name} in size ${i.resolved_size}` : `${article} ${name} in size ${i.resolved_size}`;
+    }).join(' and ');
+
+    // Build sizing explanation from audit trail
+    let sizingExplanation = '';
+    const deltaAudit = s.audit?.find(a => /auto-confirmed.*delta/i.test(a));
+    if (deltaAudit) {
+      const deltaMatch = deltaAudit.match(/(\d+)"\s*delta/);
+      if (deltaMatch) {
+        const inches = deltaMatch[1];
+        sizingExplanation = ` Size ${resolvedItems[0].resolved_size} will be ${inches}" smaller overall which should give ${isThirdParty ? 'her' : 'you'} a snugger fit.`;
+      }
     }
+
+    // Build contextual opening based on direction and issue
+    const firstItem = resolvedItems[0];
+    const fromSize = firstItem.size;
+    const toSize = firstItem.resolved_size;
+    const sizeList = getSizeList(fromSize);
+    const fromIdx = sizeList?.indexOf(fromSize) ?? -1;
+    const toIdx = sizeList?.indexOf(toSize) ?? -1;
+    const wentDown = toIdx < fromIdx;
+
+    // Check if customer self-diagnosed (e.g. "shaping not working, too loose")
+    const isSelfDiagnosed = s.prescription.items.some(i => i.self_diagnosed);
+
+    let explanation;
+    if (isSelfDiagnosed && wentDown) {
+      explanation = `You're right, if it's too loose the shaping won't work as well. The next size down should work better.`;
+    } else if (isSelfDiagnosed && !wentDown) {
+      explanation = `You're right, if it's too tight the shaping won't sit comfortably. The next size up should work better.`;
+    } else if (wentDown) {
+      explanation = `Going one size down sounds right — the ${toSize} will be snugger overall which should give ${isThirdParty ? 'her' : 'you'} a better fit.`;
+    } else {
+      explanation = `The ${toSize} will give ${isThirdParty ? 'her' : 'you'} a bit more room which should be a better fit.`;
+    }
+
+    let response = greeting + feedbackLine + explanation;
+    response += ` I've gone ahead and created a new exchange order for ${desc} ${forWhom}.`;
 
     // Crossover note (youth→adult or vice versa)
     if (s.prescription.crossover_note) {
@@ -79,7 +136,11 @@ function composeAgentResponse(s) {
   if (s.status === 'needs_info' && items.length > 0) {
     const actionTexts = [...new Set(items.filter(i => i.response_text).map(i => i.response_text))];
     if (actionTexts.length > 0) {
-      let response = greeting + actionTexts.join(' ');
+      let response = greeting + feedbackLine + actionTexts.join(' ');
+      // Adapt for third-party
+      if (isThirdParty) {
+        response = response.replace(/\byou\b/g, thirdPartyLabel === 'daughter' || thirdPartyLabel === 'son' ? `your ${thirdPartyLabel}` : thirdPartyLabel);
+      }
       // Include multi-item flags in the same message
       const multiItemFlags = (s.prescription.flags || []).filter(f =>
         f.includes('Would you like to exchange')
@@ -106,7 +167,7 @@ function composeAgentResponse(s) {
 // Tool handler
 // ---------------------------------------------------------------------------
 
-async function handleTestConversation({ customer_email, messages }) {
+async function handleTestConversation({ customer_email, messages, order_number }) {
   if (!customer_email || !messages || messages.length === 0) {
     return { content: [{ type: 'text', text: 'Error: provide customer_email and messages array' }] };
   }
@@ -127,6 +188,7 @@ async function handleTestConversation({ customer_email, messages }) {
       const result = await advisorHandler({
         customer_email,
         issue_description: customerMsg,
+        order_number: order_number || undefined,
         intake,
       });
 
@@ -206,18 +268,23 @@ async function handleTestConversation({ customer_email, messages }) {
         tags: ['exchange', 'cs-mcp'],
         address: customerAddress,
         items: resolvedItems.map(i => {
-          // Find quantity from original order by matching product name
-          const orderMatch = orderItems.find(oi =>
-            oi.title?.toLowerCase().includes(i.product?.toLowerCase()) ||
-            i.product?.toLowerCase().includes(oi.title?.toLowerCase()?.split(' ')[1] || '')
-          );
+          // Use _orderQty from multi-item expansion, or sum matching order line items
+          let qty = i._orderQty || 0;
+          if (!qty) {
+            const prodLower = (i.product || '').toLowerCase();
+            for (const oi of orderItems) {
+              if (oi.title?.toLowerCase().includes(prodLower.split(' ')[0])) {
+                qty += oi.quantity;
+              }
+            }
+          }
           return {
             product: i.resolved_product || i.product,
             from_product: i.resolved_product ? i.product : null,
             from_size: i.size,
             to_size: i.resolved_size,
             color: i.color,
-            quantity: orderMatch?.quantity || 1,
+            quantity: qty || 1,
           };
         }),
       };
@@ -322,6 +389,7 @@ const tools = [
           description: 'Array of customer messages in order, e.g. ["the AJ is too tight", "yes size 14 please — Sarah"]',
           items: { type: 'string' },
         },
+        order_number: { type: 'string', description: 'Optional order number to target (e.g. "28774"). If omitted, uses most recent fulfilled order.' },
       },
       required: ['customer_email', 'messages'],
     },

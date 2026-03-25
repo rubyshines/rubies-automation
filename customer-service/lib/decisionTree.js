@@ -92,9 +92,79 @@ function pluralizeNickname(nickname, quantity) {
 // ---------------------------------------------------------------------------
 
 const NUMERIC_SIZES = ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16'];
+const NUMERIC_EVEN = ['4', '6', '8', '10', '12', '14', '16'];
+const NUMERIC_FULL = ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16']; // even + odd
 const LETTER_SIZES = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
+const LETTER_NO_PLUS = ['XXS', 'XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
+const LETTER_WITH_PLUS = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const SIZE_ALIASES = { 'XL': '1X', 'XXL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X' };
 const ODD_HALF_SIZES = new Set(['7', '9', '11', '13', 'XXS+', 'XS+']);
+
+// ── Product category classification ────────────────────────────────────────
+// Categories determine which size system a product uses.
+// Add new products here instead of matching by regex.
+//
+// Size systems:
+//   swim_bottom: kids = even+odd (4-16), adult = letter with plus (XXS+ XS+)
+//   swim_top:    kids = even only (4-16), adult = letter no plus
+//   underwear_bottom: kids = even only (4-16), adult = letter no plus
+//   underwear_top:    kids = even only (6-16), adult = letter no plus
+//   onepiece:    kids = even+odd (4-16), adult = letter with plus (+ Tall variants)
+//   accessory:   no sizing rules
+//
+// Derived from actual Shopify catalog (2026-03-25):
+//   Ruby, Stella, Cheeky bikini bottoms, Serena shorts → swim_bottom
+//   Mia halter top, Sunny Queeny tankini → swim_top
+//   AJ, Charlie, Sassy, Flo → underwear_bottom
+//   Brooke bra, Ava bra → underwear_top
+//   Sky one-piece → onepiece
+
+const PRODUCT_CATEGORIES = {
+  // Swim bottoms (even+odd numeric, letter with plus sizes)
+  'ruby':     'swim_bottom',
+  'stella':   'swim_bottom',
+  'cheeky':   'swim_bottom',
+  'serena':   'swim_bottom',
+  // Swim tops (even numeric only, letter no plus)
+  'mia':      'swim_top',
+  'queeny':   'swim_top',
+  'sunny':    'swim_top',
+  'tankini':  'swim_top',
+  // Underwear bottoms (even numeric only, letter no plus)
+  'aj':       'underwear_bottom',
+  'charlie':  'underwear_bottom',
+  'sassy':    'underwear_bottom',
+  'flo':      'underwear_bottom',
+  // Underwear tops (even numeric only, letter no plus)
+  'brooke':   'underwear_top',
+  'ava':      'underwear_top',
+  // One-piece (even+odd numeric, letter with plus, tall variants)
+  'sky':      'onepiece',
+  'one-piece': 'onepiece',
+  // Accessories
+  'chest pad': 'accessory',
+  'gift card': 'accessory',
+  'earring':  'accessory',
+  'pin':      'accessory',
+  'flag':     'accessory',
+  'tee':      'accessory',
+  'bundle':   'accessory',
+  'set':      'accessory',
+};
+
+function classifyProduct(productName) {
+  if (!productName) return null;
+  const lower = productName.toLowerCase();
+  for (const [keyword, category] of Object.entries(PRODUCT_CATEGORIES)) {
+    if (lower.includes(keyword)) return category;
+  }
+  return null;
+}
+
+// Which categories use even+odd (full range) numeric sizes?
+const FULL_NUMERIC_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
+// Which categories use letter sizes with plus (XXS+, XS+)?
+const PLUS_LETTER_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 
 function normalizeSize(size) {
   if (!size) return null;
@@ -102,16 +172,28 @@ function normalizeSize(size) {
   return SIZE_ALIASES[s] || s;
 }
 
-function getSizeList(size) {
+function getSizeList(size, productName) {
   const s = normalizeSize(size);
-  if (NUMERIC_SIZES.includes(s)) return NUMERIC_SIZES;
-  if (LETTER_SIZES.includes(s)) return LETTER_SIZES;
+  const category = productName ? classifyProduct(productName) : null;
+
+  if (LETTER_SIZES.includes(s)) {
+    if (category) {
+      return PLUS_LETTER_CATEGORIES.has(category) ? LETTER_WITH_PLUS : LETTER_NO_PLUS;
+    }
+    return LETTER_SIZES; // fallback: full list
+  }
+  if (NUMERIC_SIZES.includes(s)) {
+    if (category) {
+      return FULL_NUMERIC_CATEGORIES.has(category) ? NUMERIC_FULL : NUMERIC_EVEN;
+    }
+    return NUMERIC_SIZES; // fallback: full list
+  }
   return null;
 }
 
-function getAdjacentSizes(currentSize, direction, count = 2) {
+function getAdjacentSizes(currentSize, direction, count = 2, productName) {
   const s = normalizeSize(currentSize);
-  const list = getSizeList(s);
+  const list = getSizeList(s, productName);
   if (!list) return [];
   const idx = list.indexOf(s);
   if (idx < 0) return [];
@@ -400,18 +482,18 @@ function prescribeOrderIdentification(intake, context) {
     for (const intakeItem of intake.items) {
       if (!intakeItem.size) continue;
       const normalizedSize = normalizeSize(intakeItem.size);
-      const intakeProdLower = (intakeItem.product || '').toLowerCase();
-      const intakeCategory = intakeProdLower.match(/chest pad|pad/) ? 'pads'
-        : intakeProdLower.match(/bra|top|mia|halter|tankini/) ? 'tops'
+      const intakePC = classifyProduct(intakeItem.product);
+      const intakeBodyGroup = intakePC === 'accessory' ? 'accessory'
+        : (intakePC === 'underwear_top' || intakePC === 'swim_top') ? 'tops'
         : 'bottoms';
 
       for (const oi of orderItems) {
-        const oiLower = (oi.title || '').toLowerCase();
-        const oiCategory = oiLower.match(/chest pad|pad/) ? 'pads'
-          : oiLower.match(/bra|top|mia|halter|tankini/) ? 'tops'
+        const oiPC = classifyProduct(oi.title);
+        const oiBodyGroup = oiPC === 'accessory' ? 'accessory'
+          : (oiPC === 'underwear_top' || oiPC === 'swim_top') ? 'tops'
           : 'bottoms';
-        if (intakeCategory !== oiCategory) continue; // Different category
-        if (intakeCategory === 'pads') continue; // Never flag pads for multi-item exchange
+        if (intakeBodyGroup !== oiBodyGroup) continue; // Different body group
+        if (intakeBodyGroup === 'accessory') continue; // Never flag accessories for multi-item exchange
 
         const oiSizeMatch = oi.variantTitle?.match(/\b(\d{1,2}|XXS\+?|XS\+?|S|M|L|[1-4]X)\b/i);
         const oiSize = oiSizeMatch ? normalizeSize(oiSizeMatch[1]) : null;
@@ -509,13 +591,23 @@ function prescribeActionClassification(intake) {
       classified.action = 'sizing_exchange';
       classified.direction = 'down';
       classified.audit = 'Close fit — too loose, size down';
+    } else if (item.issue === 'product_not_working_tight') {
+      classified.action = 'sizing_exchange';
+      classified.direction = 'up';
+      classified.self_diagnosed = true;
+      classified.audit = 'Product not working + customer identified tight — self-diagnosed sizing, size up';
+    } else if (item.issue === 'product_not_working_loose') {
+      classified.action = 'sizing_exchange';
+      classified.direction = 'down';
+      classified.self_diagnosed = true;
+      classified.audit = 'Product not working + customer identified loose — self-diagnosed sizing, size down';
     } else if (item.issue === 'way_off') {
       classified.action = 'sizing_exchange_measurement';
       classified.audit = 'Way off — need measurement';
     } else if (item.issue === 'expectation_mismatch') {
       // Shaping explanation only applies to bottoms — tops just ask about fit
-      const emProd = (item.product || '').toLowerCase();
-      const emIsBottom = !emProd.match(/bra|top|mia|halter|tankini|chest pad|pad/);
+      const emCategory = classifyProduct(item.product);
+      const emIsBottom = !emCategory || emCategory === 'swim_bottom' || emCategory === 'underwear_bottom' || emCategory === 'onepiece';
       if (emIsBottom) {
         classified.action = 'expectation_mismatch';
         classified.audit = 'Expectation mismatch (bottoms) — shaping vs tucking explanation needed';
@@ -587,6 +679,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
       response_text: null,
       options: null,
       audit: null,
+      self_diagnosed: item.self_diagnosed || false,
     };
 
     switch (item.action) {
@@ -610,11 +703,16 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         const direction = item.direction;
 
         // Determine product type for fabric delta description
-        const prodLower = (item.product || '').toLowerCase();
+        const itemCategory = classifyProduct(item.product);
         let productType = 'bottom';
-        if (prodLower.includes('brooke') || prodLower.match(/\bbra\b/)) productType = 'bra';
-        else if (prodLower.includes('mia') || prodLower.includes('halter')) productType = 'bikini_top';
-        else if (prodLower.match(/\btop\b/) || prodLower.includes('tankini')) productType = 'top';
+        if (itemCategory === 'underwear_top') {
+          // Brooke = bra, Ava = bra
+          productType = 'bra';
+        } else if (itemCategory === 'swim_top') {
+          // Mia = bikini_top, Queeny/Sunny = top (tankini)
+          const prodLowerDelta = (item.product || '').toLowerCase();
+          productType = prodLowerDelta.includes('mia') || prodLowerDelta.includes('halter') ? 'bikini_top' : 'top';
+        }
 
         // Check if customer already requested a specific size
         const intakeItem = intake.items.find(i => i.product === item.product);
@@ -661,9 +759,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         const issueText = (intakeItem?.issue || item.issue || '').toLowerCase();
         const isABit = /a bit|slightly|little bit|a little/.test(issueText) ||
           /a bit|slightly|little bit|a little/.test((intake._latestMessage || '').toLowerCase());
-        const isNextSize = /next size/.test((intake._latestMessage || '').toLowerCase());
+        const isNextSize = /next size|one size (up|down|smaller|bigger|larger)/.test((intake._latestMessage || '').toLowerCase());
 
-        const adjacent = getAdjacentSizes(currentSize, direction, 2);
+        const adjacent = getAdjacentSizes(currentSize, direction, 2, item.product);
 
         if (adjacent.length === 0) {
           // Check if we're at the youth→adult boundary (size 16 going up)
@@ -728,7 +826,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         }
 
         // Build size options with cumulative fabric deltas
-        const sizeList = getSizeList(currentSize);
+        const sizeList = getSizeList(currentSize, item.product);
         const optionDetails = adjacent.map(s => {
           const delta = getCumulativeDelta(currentSize, s) || { inches: 2, cm: 5 };
           const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
@@ -776,11 +874,10 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         if (intake.measurement) {
           // We have measurement — look up the size from size_charts table
           const m = intake.measurement;
-          const prodLowerM = (item.product || '').toLowerCase();
-          const isBraM = prodLowerM.includes('bra');
-          const isTopM = isBraM || prodLowerM.includes('top') || prodLowerM.includes('mia') || prodLowerM.includes('tankini');
-          const isOnepieceM = prodLowerM.includes('one') || prodLowerM.includes('sky');
-          const isSwimM = prodLowerM.includes('bikini') || prodLowerM.includes('swim') || prodLowerM.includes('ruby') || prodLowerM.includes('cheeky') || prodLowerM.includes('stella');
+          const catM = classifyProduct(item.product);
+          const isTopM = catM === 'underwear_top' || catM === 'swim_top';
+          const isOnepieceM = catM === 'onepiece';
+          const isSwimM = catM === 'swim_bottom' || catM === 'swim_top';
           const isKidsM = NUMERIC_SIZES.includes(normalizeSize(item.size));
 
           // Determine chart category
@@ -872,9 +969,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
 
       case 'style_switch': {
         // Determine recommendation based on product type + size system
-        const sizeList = item.size ? getSizeList(normalizeSize(item.size)) : null;
-        const isKids = sizeList === NUMERIC_SIZES;
-        const isSwim = item.product?.toLowerCase().match(/bikini|swim|ruby|stella|cheeky/);
+        const sizeList = item.size ? getSizeList(normalizeSize(item.size), item.product) : null;
+        // Kids = numeric size system. Letter sizes are always adult.
+        const isKids = sizeList && !LETTER_SIZES.includes(normalizeSize(item.size));
+        const productCategory = classifyProduct(item.product);
+        const isSwim = productCategory === 'swim_bottom' || productCategory === 'swim_top';
 
         let recommendation, link;
         if (isSwim) {
@@ -985,11 +1084,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // Customer says "doesn't fit" but didn't say tight or loose.
         // Ask a product-specific fit question.
         rx.state = 'AWAITING_CLARIFICATION';
-        const prodLowerFit = (item.product || '').toLowerCase();
-        const isBra = prodLowerFit.includes('bra');
-        const isBikiniTop = prodLowerFit.includes('mia') || prodLowerFit.includes('halter') || prodLowerFit.includes('tankini');
-        const isTop = isBra || isBikiniTop || prodLowerFit.includes('top');
-        const isOnepiece = prodLowerFit.includes('one') || prodLowerFit.includes('sky');
+        const fitCategory = classifyProduct(item.product);
+        const isOnepiece = fitCategory === 'onepiece';
+        const isTop = fitCategory === 'underwear_top' || fitCategory === 'swim_top';
         const nick = getProductNickname(item.product);
 
         if (isOnepiece) {
@@ -1066,15 +1163,24 @@ async function prescribeDonationRouting(intake, context) {
 
   const country = context.customerCountry;
   // Count total UNITS being returned, not just intake entries
-  // Match intake items to order line items to get quantities
+  // Use _orderQty from multi-item expansion if available, or sum matching order line items
   let itemCount = 0;
   const orderLineItems = context.targetOrder?.lineItems || [];
   for (const intakeItem of nonDefectItems) {
-    const orderMatch = orderLineItems.find(oi =>
-      oi.title?.toLowerCase().includes((intakeItem.product || '').toLowerCase()) ||
-      (intakeItem.product || '').toLowerCase().includes((oi.title || '').toLowerCase().split(' ')[1] || '')
-    );
-    itemCount += orderMatch?.quantity || 1;
+    if (intakeItem._orderQty) {
+      itemCount += intakeItem._orderQty;
+    } else {
+      // Sum ALL matching line items (could be same product in different colors)
+      let matchedQty = 0;
+      const prodLower = (intakeItem.product || '').toLowerCase();
+      for (const oi of orderLineItems) {
+        const oiLower = (oi.title || '').toLowerCase();
+        if (oiLower.includes(prodLower) || prodLower.includes(oiLower.split(' ')[1] || '')) {
+          matchedQty += oi.quantity;
+        }
+      }
+      itemCount += matchedQty || 1;
+    }
   }
   if (itemCount === 0) itemCount = nonDefectItems.length; // fallback
 
@@ -1252,7 +1358,7 @@ async function walkTree(intake, context) {
     // Phase 4: Sizing resolution
     const phase4 = await prescribeSizingResolution(phase3.items, intake, context);
     for (const item of phase4.items) {
-      if (item.response_text) {
+      if (item.response_text || item.self_diagnosed) {
         result.response_parts.push({
           type: 'item_action',
           priority: 4,
@@ -1263,6 +1369,7 @@ async function walkTree(intake, context) {
           recommendation: item.recommendation || null,
           skip_donation: item.skip_donation || false,
           _crossover_note: item._crossover_note || null,
+          self_diagnosed: item.self_diagnosed || false,
         });
       }
       // Add crossover note as separate response part (fires even when item is auto-confirmed)
@@ -1339,6 +1446,9 @@ module.exports = {
   getProductNickname,
   pluralizeNickname,
   PRODUCT_NICKNAMES,
+  // Product classification
+  classifyProduct,
+  PRODUCT_CATEGORIES,
   // Size utilities (shared)
   normalizeSize,
   getSizeList,

@@ -80,7 +80,90 @@ function buildScorecard(title, periodLabel, headers, bl, wk, ya) {
     </table>`;
 }
 
+function buildExecutiveSummary(weeklyData, monthlyData, kwData, pageData, recs) {
+  const wk = weeklyData.baseline;   // week vs baseline
+  const wkPrev = weeklyData.prev;   // week vs prior week
+  const mo = monthlyData.baseline;  // month vs baseline
+
+  // Overall sentiment
+  const clicksWoW = pctChange(wk.gsc.current.clicks, wkPrev.gsc.compare.clicks);
+  const clicksVsBaseline = pctChange(wk.gsc.current.clicks, wk.gsc.compare.clicks);
+  const revenueVsBaseline = pctChange(wk.shopify.current.revenue, wk.shopify.compare.revenue);
+  const revenue30d = pctChange(mo.shopify.current.revenue, mo.shopify.compare.revenue);
+  const posImproved = wk.gsc.current.position < wk.gsc.compare.position;
+
+  let sentiment, sentimentColor;
+  if (clicksVsBaseline > 30 && revenueVsBaseline > 20) {
+    sentiment = 'strong';
+    sentimentColor = '#16a34a';
+  } else if (clicksVsBaseline > 10 || revenueVsBaseline > 10) {
+    sentiment = 'positive';
+    sentimentColor = '#16a34a';
+  } else if (clicksVsBaseline < -10 || revenueVsBaseline < -10) {
+    sentiment = 'declining';
+    sentimentColor = '#dc2626';
+  } else {
+    sentiment = 'steady';
+    sentimentColor = '#d97706';
+  }
+
+  const sentimentLabel = {
+    strong: 'Strong growth',
+    positive: 'Trending up',
+    steady: 'Holding steady',
+    declining: 'Needs attention',
+  }[sentiment];
+
+  // Build paragraph
+  const lines = [];
+
+  // Headline
+  lines.push(`<strong style="color:${sentimentColor};">${sentimentLabel}.</strong>`);
+
+  // Clicks + revenue vs baseline
+  const clickDir = clicksVsBaseline >= 0 ? 'up' : 'down';
+  const revDir = revenueVsBaseline >= 0 ? 'up' : 'down';
+  lines.push(`Organic clicks are ${clickDir} ${Math.abs(clicksVsBaseline).toFixed(0)}% vs baseline (${fmtNum(wk.gsc.current.clicks)} this week), and organic revenue is ${revDir} ${Math.abs(revenueVsBaseline).toFixed(0)}% at ${fmtCurrency(wk.shopify.current.revenue)}.`);
+
+  // Week-over-week trend
+  const wowDir = clicksWoW >= 0 ? 'up' : 'down';
+  lines.push(`Week-over-week, clicks are ${wowDir} ${Math.abs(clicksWoW).toFixed(0)}%.`);
+
+  // Position
+  if (posImproved) {
+    lines.push(`Average search position improved to ${wk.gsc.current.position.toFixed(1)} (from ${wk.gsc.compare.position.toFixed(1)} at baseline).`);
+  } else {
+    lines.push(`Average search position slipped to ${wk.gsc.current.position.toFixed(1)} (was ${wk.gsc.compare.position.toFixed(1)} at baseline).`);
+  }
+
+  // 30-day revenue
+  lines.push(`Over the last 30 days, organic revenue is ${revenue30d >= 0 ? 'up' : 'down'} ${Math.abs(revenue30d).toFixed(0)}% at ${fmtCurrency(mo.shopify.current.revenue)}.`);
+
+  // Top keyword callout
+  const topGainer = kwData.gainers[0];
+  if (topGainer) {
+    lines.push(`Top keyword mover: "${topGainer.keyword}" (+${topGainer.clicksChange} clicks).`);
+  }
+
+  // What's next
+  const nextAction = recs.nextActions[0];
+  if (nextAction) {
+    lines.push(`<strong>Next up:</strong> ${nextAction}`);
+  }
+
+  return `
+    <div style="margin:0 0 20px;padding:16px;background:#f8f7ff;border-left:4px solid #7c3aed;border-radius:0 8px 8px 0;">
+      <h2 style="margin:0 0 8px;font-size:15px;color:#7c3aed;">The Bottom Line</h2>
+      <p style="margin:0;font-size:14px;color:#374151;line-height:1.6;">
+        ${lines.join(' ')}
+      </p>
+    </div>`;
+}
+
 function buildEmail(weeklyData, monthlyData, kwData, pageData, anomalies, recs) {
+
+  // Executive summary
+  const executiveSummaryHtml = buildExecutiveSummary(weeklyData, monthlyData, kwData, pageData, recs);
 
   // Weekly scorecard
   const weeklyScorecardHtml = buildScorecard(
@@ -158,6 +241,9 @@ function buildEmail(weeklyData, monthlyData, kwData, pageData, anomalies, recs) 
   </div>
 
   <div style="background:#fff;border-radius:0 0 12px 12px;padding:24px;">
+
+    <!-- Executive Summary -->
+    ${executiveSummaryHtml}
 
     <!-- Weekly Scorecard -->
     ${weeklyScorecardHtml}

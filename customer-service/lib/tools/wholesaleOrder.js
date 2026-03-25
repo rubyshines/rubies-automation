@@ -12,22 +12,8 @@
  * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold)
  */
 
-const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, searchCustomers, normalizeGid } = require('../shopify');
+const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, searchCustomers, normalizeGid, getAdminUrl } = require('../shopify');
 const { searchProducts, getVariantById } = require('../productCache');
-
-function getStoreName() {
-  const storeUrl = process.env.SHOPIFY_STORE_URL || '';
-  return storeUrl.replace('.myshopify.com', '');
-}
-
-function getAdminUrl(gid) {
-  const storeName = getStoreName();
-  const numericId = gid.split('/').pop();
-  if (gid.includes('/DraftOrder/')) {
-    return `https://admin.shopify.com/store/${storeName}/draft_orders/${numericId}`;
-  }
-  return `https://admin.shopify.com/store/${storeName}/orders/${numericId}`;
-}
 
 const CURRENCY_OVERRIDES = {
   'hello@sockdrawerheroes.com': 'USD',
