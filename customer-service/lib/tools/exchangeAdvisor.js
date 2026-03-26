@@ -12,7 +12,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
-const { walkTree, normalizeSize } = require('../decisionTree');
+const { walkTree, normalizeSize, _activeProducts } = require('../decisionTree');
 
 // ---------------------------------------------------------------------------
 // Order analysis (still needed — tree uses this context)
@@ -148,7 +148,7 @@ function getAnthropicClient() {
 
 const INTAKE_PARSE_PROMPT = `You are parsing a customer service message from RUBIES, a gender-affirming underwear brand. Extract structured data from this message.
 
-RUBIES products: AJ, Charlie, Brooke, Ruby (youth/numeric sizes: 4,6,7,8,9,10,11,12,13,14,16), Ava, Cheeky, Sassy, Flo Dance (adult/letter sizes: XXS,XXS+,XS,XS+,S,M,L,1X,2X,3X,4X), Brooke Bra (tops), Serena Shorty Shorts, Sky One-Piece, Queeny Tankini, Stella Bikini Bottoms.
+RUBIES products: AJ, Charlie, Brooke, Ruby (youth/numeric sizes: 4,6,7,8,9,10,11,12,13,14,16), Ava, Cheeky, Sassy, Flo Dance (adult/letter sizes: XXS,XXS+,XS,XS+,S,M,L,1X,2X,3X,4X), Brooke Bra (tops), Serena Shorty Shorts, Sky One-Piece, Queeny Tankini, Stella Bikini Bottoms.${Object.values(_activeProducts).length > 0 ? ' ' + Object.values(_activeProducts).map(p => `${p.nickname} (${p.category}${p.sizes ? ', sizes: ' + p.sizes.join(',') : ''})`).join(', ') + '.' : ''}
 
 Size aliases: XL=1X, XXL=2X, 3XL=3X, 4XL=4X. Numeric-to-letter: 10=XXS, 12=XS, 14=S, 16=M.
 
@@ -187,7 +187,7 @@ IMPORTANT:
 - For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags/bunches/bunching/not tight enough" = close_fit_loose. If the waist fits fine but the product is loose/bunching elsewhere (front, legs, etc.), that's still close_fit_loose — the overall garment is too big even if the waist is OK. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction). "doesn't hide/doesn't conceal/can still see/still visible/not flat/doesn't flatten/shows through" = expectation_mismatch (the customer expected flattening but RUBIES shapes, not flattens). "doesn't work" WITHOUT specifics = product_not_working (we need to probe further). IMPORTANT: If customer says "not working/shaping not working" AND also gives a fit clue like "too loose" or "too tight", use product_not_working_loose or product_not_working_tight — this means they understand the product but think the fit is causing the issue.
 - EXCLUSIONS: If the customer says "just the X" or "only the X" or "not the Y" or "the Y fits fine", ONLY include the items they want to exchange. Do NOT include items they explicitly said are fine or excluded. For example "just the AJ, the Ruby fits fine" means ONLY the AJ goes in items — do NOT include the Ruby.
 - When confirming a size, only apply it to the items the customer is actually exchanging. If they say "1X for the AJ" don't apply 1X to other products.
-- RETURNS: "I want to return", "can I return", "I'd like to send back", "return for a refund" → message_type = "refund", customer_intent = "refund". A "return" means the customer wants their money back, not an exchange. Don't confuse with "exchange" or "swap".
+- RETURNS: "I want to return", "can I return", "I'd like to send back", "return for a refund", "not her style", "wasn't for me" → for the SPECIFIC item being returned, set issue = "refund_request". If the ENTIRE message is about returning (no exchanges), also set message_type = "refund". But if the message is mixed (some items exchanging, some returning), set message_type = "exchange" and use issue = "refund_request" on the individual return items. A "return" means the customer wants their money back, not an exchange. Don't confuse with "exchange" or "swap".
 
 Return ONLY JSON. No explanation.`;
 
@@ -248,7 +248,10 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   if (!intake.customer_intent && parsed.customer_intent) intake.customer_intent = parsed.customer_intent;
 
   // Items
-  if (parsed.items?.length) {
+  // If a try-size swap is pending, don't add new items — the customer's product choice
+  // is the swap resolution, not a new exchange request
+  const hasPendingSwap = intake.items.some(i => i._pendingTrySizeSwap && !i.resolved_size);
+  if (parsed.items?.length && !hasPendingSwap) {
     for (const aiItem of parsed.items) {
       const existing = intake.items.find(i => i.product?.toLowerCase() === aiItem.product?.toLowerCase());
       if (existing) {
@@ -285,6 +288,38 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
 
   if (!intake.measurement && parsed.measurement) intake.measurement = parsed.measurement;
 
+  // Try-size swap handling: customer responded to "want to swap for something else?"
+  // This fires BEFORE normal confirmation handling because the customer may name a new product
+  // (e.g. "I'd love an AJ in 3X") which is_confirmation=true AND has a new product in parsed.items
+  const pendingSwapItem = intake.items.find(i => i._pendingTrySizeSwap && !i.resolved_size);
+  if (pendingSwapItem && intake._trySizeOffered) {
+    // Check if customer chose a product (from parsed.items or from confirmation)
+    const chosenProduct = parsed.items?.[0];
+    if (chosenProduct && chosenProduct.product) {
+      // Customer chose a swap — resolve the pending item
+      pendingSwapItem.resolved_product = chosenProduct.product;
+      const resolvedSize = chosenProduct.size ? normalizeSize(chosenProduct.size)
+        : (chosenProduct.desired_size ? normalizeSize(chosenProduct.desired_size)
+        : (parsed.confirmed_size ? normalizeSize(parsed.confirmed_size) : pendingSwapItem.size));
+      pendingSwapItem.resolved_size = resolvedSize;
+      intake.resolution_sizes.push({
+        product: pendingSwapItem.resolved_product,
+        from_size: pendingSwapItem.size,
+        to_size: resolvedSize,
+        from_product: pendingSwapItem.product,
+      });
+      delete pendingSwapItem._pendingTrySizeSwap;
+      // Don't add the parsed item as a NEW intake item — it's the resolution
+      parsed.items = [];
+    } else if (/refund|money back|just return|no thanks|prefer a refund/i.test(messageText || '')) {
+      // Customer declined — mark as refund and track that offer was made
+      pendingSwapItem._pendingTrySizeSwap = false;
+      pendingSwapItem.issue = 'refund_request';
+      if (!intake._exchangeOffered) intake._exchangeOffered = {};
+      intake._exchangeOffered[pendingSwapItem.product] = true;
+    }
+  }
+
   // Confirmation handling
   if (parsed.is_confirmation && intake.items.length > 0) {
     const unresolved = intake.items.find(i => !i.resolved_size);
@@ -311,6 +346,7 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   }
 
   if (parsed.safety_concern) intake._safety_concern = true;
+  if (parsed.positive_feedback) intake._positiveFeedback = true;
   if (!intake.item_count) {
     if (intake.items.length > 1) intake.item_count = 'multiple';
     else if (intake.items.length === 1) intake.item_count = 'single';
@@ -345,7 +381,10 @@ function regexFallbackParse(messageText) {
   else if (/doesn't work|not working/i.test(lower)) result.message_type = 'product_not_working';
   else if (/exchange|swap|too tight|too loose|too big|too small|doesn't fit/i.test(lower)) result.message_type = 'exchange';
 
-  const productMatch = messageText.match(/\b(AJ|Charlie|Brooke|Ruby|Ava|Cheeky|Sassy|Serena|Flo|Stella|Sky|Queeny)\b/gi);
+  const configNicknames = Object.values(_activeProducts).map(p => p.nickname);
+  const allNicknames = ['AJ','Charlie','Brooke','Ruby','Ava','Cheeky','Sassy','Serena','Flo','Stella','Sky','Queeny', ...configNicknames];
+  const productMatchRegex = new RegExp(`\\b(${[...new Set(allNicknames)].join('|')})\\b`, 'gi');
+  const productMatch = messageText.match(productMatchRegex);
   if (productMatch) {
     for (const p of [...new Set(productMatch)]) {
       result.items.push({ product: p, size: null, issue: null });

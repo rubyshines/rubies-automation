@@ -12,6 +12,25 @@
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const path = require('path');
+const fs = require('fs');
+
+// ---------------------------------------------------------------------------
+// Product config — load from products.config.json (active entries only)
+// ---------------------------------------------------------------------------
+
+function loadProductConfig() {
+  try {
+    const configPath = path.join(__dirname, '..', 'products.config.json');
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const all = JSON.parse(raw);
+    return Object.fromEntries(
+      Object.entries(all).filter(([_, v]) => v.status === 'active')
+    );
+  } catch { return {}; }
+}
+
+const _activeProducts = loadProductConfig();
 
 // ---------------------------------------------------------------------------
 // Product nicknames — short names for customer-facing messages
@@ -43,6 +62,20 @@ const PRODUCT_NICKNAMES = {
   'PROGRESS PRIDE FLAG': 'Pride Flag',
   'PROGRESS PRIDE PINS': 'Pride Pins',
 };
+
+// Merge active config products into nicknames.
+// Config only has nickname + keywords (title lives in Shopify).
+// We register the nickname so getProductNickname's THE [NAME] fallback finds it.
+for (const [key, cfg] of Object.entries(_activeProducts)) {
+  // Register all keyword variations so includes-matching works
+  for (const kw of cfg.keywords || [key]) {
+    const upper = `THE ${kw.toUpperCase()}`;
+    // Only add if not already covered by a static entry
+    if (!Object.keys(PRODUCT_NICKNAMES).some(k => k.includes(upper))) {
+      PRODUCT_NICKNAMES[upper] = cfg.nickname;
+    }
+  }
+}
 
 /**
  * Get short nickname for a product. Falls back to the full title if no nickname.
@@ -97,7 +130,20 @@ const NUMERIC_FULL = ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16
 const LETTER_SIZES = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const LETTER_NO_PLUS = ['XXS', 'XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const LETTER_WITH_PLUS = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
-const SIZE_ALIASES = { 'XL': '1X', 'XXL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X' };
+const SIZE_ALIASES = { 'XL': '1X', 'XXL': '2X', '2XL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X' };
+
+// Chest pad sizing: maps bra/top size → chest pad size
+// S = Youth 6-10 / Adult XXS, M = Youth 12-16 / Adult XS-L, L = Adult 1X-4X
+const CHEST_PAD_SIZES = ['S', 'M', 'L'];
+const CHEST_PAD_MAP = {
+  // Youth numeric → pad size
+  '6': 'S', '7': 'S', '8': 'S', '9': 'S', '10': 'S',
+  '11': 'M', '12': 'M', '13': 'M', '14': 'M', '16': 'M',
+  // Adult letter → pad size
+  'XXS': 'S', 'XXS+': 'S',
+  'XS': 'M', 'XS+': 'M', 'S': 'M', 'M': 'M', 'L': 'M',
+  '1X': 'L', '2X': 'L', '3X': 'L', '4X': 'L',
+};
 const ODD_HALF_SIZES = new Set(['7', '9', '11', '13', 'XXS+', 'XS+']);
 
 // ── Product category classification ────────────────────────────────────────
@@ -125,6 +171,7 @@ const PRODUCT_CATEGORIES = {
   'stella':   'swim_bottom',
   'cheeky':   'swim_bottom',
   'serena':   'swim_bottom',
+  'genesis':  'swim_bottom',
   // Swim tops (even numeric only, letter no plus)
   'mia':      'swim_top',
   'queeny':   'swim_top',
@@ -141,21 +188,32 @@ const PRODUCT_CATEGORIES = {
   // One-piece (even+odd numeric, letter with plus, tall variants)
   'sky':      'onepiece',
   'one-piece': 'onepiece',
-  // Accessories
-  'chest pad': 'accessory',
+  // Chest pads (sized by bra/top size: S=Youth 6-10/Adult XXS, M=Youth 12-16/Adult XS-L, L=Adult 1X-4X)
+  'chest pad': 'chest_pads',
+  'pad':       'chest_pads',
+  // Accessories (not sizeable)
   'gift card': 'accessory',
   'earring':  'accessory',
-  'pin':      'accessory',
+  'pins':     'accessory',
   'flag':     'accessory',
   'tee':      'accessory',
   'bundle':   'accessory',
   'set':      'accessory',
 };
 
+// Merge active config products into categories
+for (const cfg of Object.values(_activeProducts)) {
+  for (const kw of cfg.keywords || []) {
+    PRODUCT_CATEGORIES[kw] = cfg.category;
+  }
+}
+
 function classifyProduct(productName) {
   if (!productName) return null;
   const lower = productName.toLowerCase();
-  for (const [keyword, category] of Object.entries(PRODUCT_CATEGORIES)) {
+  // Sort by keyword length descending so longer/more specific keywords match first
+  const entries = Object.entries(PRODUCT_CATEGORIES).sort((a, b) => b[0].length - a[0].length);
+  for (const [keyword, category] of entries) {
     if (lower.includes(keyword)) return category;
   }
   return null;
@@ -166,6 +224,16 @@ const FULL_NUMERIC_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 // Which categories use letter sizes with plus (XXS+, XS+)?
 const PLUS_LETTER_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 
+// Per-product size overrides (from config — for products with non-standard ranges)
+const PRODUCT_SIZE_OVERRIDES = {};
+for (const cfg of Object.values(_activeProducts)) {
+  if (cfg.sizes && cfg.sizes.length > 0) {
+    for (const kw of cfg.keywords || []) {
+      PRODUCT_SIZE_OVERRIDES[kw] = cfg.sizes;
+    }
+  }
+}
+
 function normalizeSize(size) {
   if (!size) return null;
   const s = size.toString().trim().toUpperCase();
@@ -174,7 +242,19 @@ function normalizeSize(size) {
 
 function getSizeList(size, productName) {
   const s = normalizeSize(size);
+
+  // Check per-product size overrides first (e.g. Naomi: XS–2X only)
+  if (productName) {
+    const lower = productName.toLowerCase();
+    for (const [keyword, sizes] of Object.entries(PRODUCT_SIZE_OVERRIDES)) {
+      if (lower.includes(keyword)) return sizes.includes(s) ? sizes : null;
+    }
+  }
+
   const category = productName ? classifyProduct(productName) : null;
+
+  // Chest pads only have S, M, L
+  if (category === 'chest_pads') return CHEST_PAD_SIZES;
 
   if (LETTER_SIZES.includes(s)) {
     if (category) {
@@ -483,13 +563,13 @@ function prescribeOrderIdentification(intake, context) {
       if (!intakeItem.size) continue;
       const normalizedSize = normalizeSize(intakeItem.size);
       const intakePC = classifyProduct(intakeItem.product);
-      const intakeBodyGroup = intakePC === 'accessory' ? 'accessory'
+      const intakeBodyGroup = (intakePC === 'accessory' || intakePC === 'chest_pads') ? 'accessory'
         : (intakePC === 'underwear_top' || intakePC === 'swim_top') ? 'tops'
         : 'bottoms';
 
       for (const oi of orderItems) {
         const oiPC = classifyProduct(oi.title);
-        const oiBodyGroup = oiPC === 'accessory' ? 'accessory'
+        const oiBodyGroup = (oiPC === 'accessory' || oiPC === 'chest_pads') ? 'accessory'
           : (oiPC === 'underwear_top' || oiPC === 'swim_top') ? 'tops'
           : 'bottoms';
         if (intakeBodyGroup !== oiBodyGroup) continue; // Different body group
@@ -514,10 +594,16 @@ function prescribeOrderIdentification(intake, context) {
           }
         } else {
           // DIFFERENT product, same size, same category → ask
-          const alreadyTracked = intake.items.some(i =>
-            i.product && oi.title &&
-            oi.title.toLowerCase().includes(i.product.toLowerCase())
-          );
+          // Check if this order item is already being exchanged (in intake items)
+          const oiNick = getProductNickname(oi.title)?.toLowerCase();
+          const alreadyTracked = intake.items.some(i => {
+            if (!i.product) return false;
+            const iProd = i.product.toLowerCase();
+            const iNick = getProductNickname(i.product)?.toLowerCase();
+            return (oi.title && oi.title.toLowerCase().includes(iProd))
+              || iProd.includes(oiNick || '')
+              || iNick === oiNick;
+          });
           if (!alreadyTracked) {
             prescription.actions.push({
               type: 'multi_item_flag',
@@ -551,6 +637,13 @@ function prescribeOrderIdentification(intake, context) {
           text: `Customer bought ${getProductNickname(product)} in ${uniqueSizes.length} different sizes (${uniqueSizes.join(', ')}) — sizing uncertainty. Offer measurement help.`,
         });
         prescription.audit.push(`Multi-size purchase: ${product} in ${uniqueSizes.join(', ')}`);
+        // Tag intake items from this product so Phase 3 knows it was a try-both-sizes purchase
+        for (const item of intake.items) {
+          if (item.product && product.toLowerCase().includes((getProductNickname(item.product) || '').toLowerCase())) {
+            item._multiSizePurchase = true;
+            item._multiSizeSizes = uniqueSizes;
+          }
+        }
       }
     }
   }
@@ -576,6 +669,16 @@ function prescribeActionClassification(intake) {
       action: null,
       audit: null,
     };
+
+    // True accessories (gift cards, pins, etc.) can't be sized — any return/issue = refund
+    const itemCat = classifyProduct(item.product);
+    if (itemCat === 'accessory') {
+      classified.action = 'refund';
+      classified.audit = 'Accessory product — not sizeable, treating as refund';
+      prescription.items.push(classified);
+      prescription.audit.push(`${item.product || '?'}: ${classified.action} (${classified.audit})`);
+      continue;
+    }
 
     if (item.issue === 'defect' || item.issue === 'DEFECT') {
       classified.action = 'defect';
@@ -629,11 +732,21 @@ function prescribeActionClassification(intake) {
       classified.action = 'onepiece_check';
       classified.audit = 'One-piece fit — need waist + height';
     } else if (item.issue === 'refund_request' || intake.message_type === 'refund') {
-      classified.action = 'refund';
-      classified.audit = 'Refund/return requested';
+      // Check if this is a "tried two sizes, returning the one that didn't fit"
+      const intakeItem = intake.items.find(i => i.product === item.product);
+      if (intakeItem?._multiSizePurchase) {
+        classified.action = 'try_size_return';
+        classified.audit = 'Ordered multiple sizes to try, returning unwanted — offer catalog exchange';
+      } else {
+        classified.action = 'refund';
+        classified.audit = 'Refund/return requested';
+      }
     } else if (item.issue === 'unclear' || item.issue === 'none') {
       // Check if the overall message_type gives us a clue
-      if (intake.message_type === 'defect') {
+      if (intake.message_type === 'refund') {
+        classified.action = 'refund';
+        classified.audit = 'Refund/return requested (from message type)';
+      } else if (intake.message_type === 'defect') {
         classified.action = 'defect';
         classified.audit = 'Defect (from message type)';
       } else if (intake.message_type === 'product_not_working') {
@@ -983,8 +1096,17 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           recommendation = 'Flo Dance Underwear';
           link = 'https://rubyshines.com/products/the-flo-shaping-dance-underwear';
         } else {
-          recommendation = 'Sassy';
-          link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
+          // Adult underwear: check config for additional style-switch targets
+          const configTargets = Object.values(_activeProducts)
+            .filter(p => p.styleSwitch?.isTarget && p.styleSwitch.forCategories?.includes('underwear_bottom'));
+          if (configTargets.length > 0) {
+            const names = ['Sassy', ...configTargets.map(t => t.nickname)];
+            recommendation = names.join(' or the ');
+            link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
+          } else {
+            recommendation = 'Sassy';
+            link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
+          }
         }
 
         rx.state = 'AWAITING_STYLE_CONFIRMATION';
@@ -1046,7 +1168,12 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         break;
       }
 
+      case 'try_size_return':
       case 'refund': {
+        // All returns: always offer a free exchange first, then process refund if declined.
+        const nick = getProductNickname(item.product);
+        const intakeItemRef = intake.items.find(i => i.product === item.product);
+
         // Check eligibility
         let eligible = 'unknown';
         if (context.targetOrder?.createdAt) {
@@ -1054,28 +1181,27 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           eligible = days <= 60 ? 'yes' : days <= 180 ? 'generous' : 'escalate';
         }
 
-        const nick = getProductNickname(item.product);
+        // Has the exchange offer already been made?
+        const alreadyOffered = intake._exchangeOffered?.[item.product];
 
-        // Check if this is a REPEAT refund request (we already asked what's wrong, they're insisting)
-        // Detect by checking if intake already had a refund-related note from a PREVIOUS message
-        // (intake._refundAskedOnce is set after first ask)
-        const alreadyAsked = intake._refundAskedOnce === true;
-
-        if (alreadyAsked) {
-          // Customer insists — process refund gracefully
+        if (alreadyOffered) {
+          // Customer already declined — process refund
           rx.state = 'REFUND_CONFIRMED';
-          rx.response_text = `No problem, I'll process a refund for the ${nick} for you.`;
           rx.refund_confirmed = true;
+          rx.response_text = `No problem at all! I'll process the return for the ${nick}.`;
           rx.refund_eligible = eligible;
-          rx.audit = `Refund confirmed — customer insists. Eligible: ${eligible}. Processing gracefully.`;
+          rx.audit = `Refund confirmed — customer declined exchange offer. Eligible: ${eligible}.`;
         } else {
-          // First time — ask what didn't work, gently suggest exchange
+          // First time — offer a free exchange
           rx.state = 'AWAITING_DECISION';
-          rx.response_text = `No problem, can you let me know what didn't work out with the ${nick}? If it's a sizing issue I may be able to help find a better fit.`;
+          rx.response_text = `Would you like to swap the ${nick} for something else from our catalog? We'd ship it out for free — could be a different style or color. Totally up to you though — if you'd prefer a refund we can do that too.`;
           rx.refund_eligible = eligible;
-          rx.audit = `Return/refund requested — eligible: ${eligible}. Asking what didn't work + offering exchange alternative.`;
-          intake._refundAskedOnce = true;
-          prescription.still_needed.push(`decision for ${item.product}`);
+          rx.audit = `Return requested — eligible: ${eligible}. Offering free exchange before refund.`;
+          // Track that we offered for this specific product
+          if (!intake._exchangeOffered) intake._exchangeOffered = {};
+          intake._exchangeOffered[item.product] = true;
+          if (intakeItemRef) intakeItemRef._pendingTrySizeSwap = true;
+          prescription.still_needed.push(`exchange_or_refund_decision for ${item.product}`);
         }
         break;
       }
@@ -1175,7 +1301,8 @@ async function prescribeDonationRouting(intake, context) {
       const prodLower = (intakeItem.product || '').toLowerCase();
       for (const oi of orderLineItems) {
         const oiLower = (oi.title || '').toLowerCase();
-        if (oiLower.includes(prodLower) || prodLower.includes(oiLower.split(' ')[1] || '')) {
+        const oiSecondWord = oiLower.split(' ')[1];
+        if (oiLower.includes(prodLower) || (oiSecondWord && oiSecondWord.length > 1 && prodLower.includes(oiSecondWord))) {
           matchedQty += oi.quantity;
         }
       }
@@ -1272,25 +1399,7 @@ async function prescribeDonationRouting(intake, context) {
 // Phase 7: Positive feedback detection
 // ---------------------------------------------------------------------------
 
-function checkPositiveFeedback(messageText) {
-  if (!messageText) return null;
-  const lower = messageText.toLowerCase();
-  const signals = [
-    'love rubies', 'love your', 'love the product', 'love these', 'amazing',
-    'thank you so much', 'wonderful', 'you guys are great', 'fantastic',
-    'love what you do', 'great brand', 'so happy', 'love them',
-  ];
-  for (const signal of signals) {
-    if (lower.includes(signal)) {
-      return {
-        detected: true,
-        response_text: 'Thank them genuinely for their kind words. Ask them to spread the word about RUBIES.',
-        audit: `Positive feedback detected: "${signal}"`,
-      };
-    }
-  }
-  return null;
-}
+// checkPositiveFeedback removed — AI parser handles this via intake._positiveFeedback
 
 // ---------------------------------------------------------------------------
 // Main: Walk the full tree
@@ -1318,12 +1427,11 @@ async function walkTree(intake, context) {
     rules_fired: [],       // Rule keys that influenced decisions
   };
 
-  // Phase 0: Safety override
-  const safety = checkSafetyOverride(intake);
-  if (safety.override) {
+  // Phase 0: Safety override (AI parser detects via intake._safety_concern)
+  if (intake._safety_concern) {
     result.status = 'safety_override';
-    result.response_parts.push({ type: 'action', priority: 0, text: safety.message });
-    result.audit.push(safety.audit);
+    result.response_parts.push({ type: 'action', priority: 0, text: 'Safety concern detected. Process immediate refund, no questions asked.' });
+    result.audit.push('[Phase 0] Safety override — AI parser detected safety concern');
     return result;
   }
   result.phases_completed.push('safety_check');
@@ -1390,7 +1498,13 @@ async function walkTree(intake, context) {
   }
 
   // Phase 5: Order creation (if all items confirmed)
-  const allConfirmed = intake.items.length > 0 && intake.items.every(i => i.resolved_size || i.issue === 'defect');
+  // An item is "confirmed" if it has a resolved size (exchange), is a defect (replacement), or was refund-confirmed
+  const refundConfirmedProducts = new Set(
+    result.response_parts.filter(p => p.type === 'item_action' && p.state === 'REFUND_CONFIRMED').map(p => p.product)
+  );
+  const allConfirmed = intake.items.length > 0 && intake.items.every(i =>
+    i.resolved_size || i.issue === 'defect' || refundConfirmedProducts.has(i.product)
+  );
   if (allConfirmed) {
     const phase5 = prescribeOrderCreation(intake);
     if (phase5) {
@@ -1410,11 +1524,10 @@ async function walkTree(intake, context) {
     result.phases_completed.push('donation_routing');
   }
 
-  // Phase 7: Positive feedback
-  const feedback = checkPositiveFeedback(intake._latestMessage);
-  if (feedback) {
-    result.response_parts.push({ type: 'positive_feedback', priority: 7, text: feedback.response_text });
-    result.audit.push(`[Phase 7] ${feedback.audit}`);
+  // Phase 7: Positive feedback (detected by AI parser, not deterministic matching)
+  if (intake._positiveFeedback) {
+    result.response_parts.push({ type: 'positive_feedback', priority: 7, text: 'Acknowledge kind words' });
+    result.audit.push(`[Phase 7] Positive feedback detected by AI parser`);
   }
 
   // Determine overall status
@@ -1441,7 +1554,6 @@ module.exports = {
   prescribeSizingResolution,
   prescribeOrderCreation,
   prescribeDonationRouting,
-  checkPositiveFeedback,
   // Product nicknames
   getProductNickname,
   pluralizeNickname,
@@ -1456,4 +1568,7 @@ module.exports = {
   getGradingDelta,
   formatDelta,
   getCumulativeDelta,
+  // Config-driven products
+  PRODUCT_SIZE_OVERRIDES,
+  _activeProducts,
 };

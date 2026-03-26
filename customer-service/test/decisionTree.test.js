@@ -42,7 +42,6 @@ const {
   prescribeSizingResolution,
   prescribeOrderCreation,
   prescribeDonationRouting,
-  checkPositiveFeedback,
   getProductNickname,
   pluralizeNickname,
   PRODUCT_NICKNAMES,
@@ -54,6 +53,8 @@ const {
   getGradingDelta,
   formatDelta,
   getCumulativeDelta,
+  PRODUCT_SIZE_OVERRIDES,
+  _activeProducts,
 } = require('../lib/decisionTree');
 
 // ---------------------------------------------------------------------------
@@ -272,8 +273,12 @@ describe('classifyProduct', () => {
     assert.equal(classifyProduct('THE SKY NO-TUCK SHAPING ONE-PIECE'), 'onepiece');
   });
 
+  it('classifies chest pads', () => {
+    assert.equal(classifyProduct('RUBIES SHAPING CHEST PADS'), 'chest_pads');
+    assert.equal(classifyProduct('MAGICAL SHAPING GEL CHEST PADS'), 'chest_pads');
+  });
+
   it('classifies accessories', () => {
-    assert.equal(classifyProduct('RUBIES SHAPING CHEST PADS'), 'accessory');
     assert.equal(classifyProduct('RUBIES GIFT CARD'), 'accessory');
   });
 
@@ -377,6 +382,28 @@ describe('getAdjacentSizes — category-based (even/odd split)', () => {
     assert.deepEqual(getAdjacentSizes('XS', 'up', 2, 'THE SKY NO-TUCK SHAPING ONE-PIECE'), ['XS+', 'S']);
   });
 
+  // ── chest_pads: only S, M, L ──
+
+  it('chest_pads: S up → M, L', () => {
+    assert.deepEqual(getAdjacentSizes('S', 'up', 2, 'RUBIES SHAPING CHEST PADS'), ['M', 'L']);
+  });
+
+  it('chest_pads: M up → L', () => {
+    assert.deepEqual(getAdjacentSizes('M', 'up', 1, 'RUBIES SHAPING CHEST PADS'), ['L']);
+  });
+
+  it('chest_pads: M down → S', () => {
+    assert.deepEqual(getAdjacentSizes('M', 'down', 1, 'MAGICAL SHAPING GEL CHEST PADS'), ['S']);
+  });
+
+  it('chest_pads: L up → empty (boundary)', () => {
+    assert.deepEqual(getAdjacentSizes('L', 'up', 1, 'RUBIES SHAPING CHEST PADS'), []);
+  });
+
+  it('chest_pads: S down → empty (boundary)', () => {
+    assert.deepEqual(getAdjacentSizes('S', 'down', 1, 'RUBIES SHAPING CHEST PADS'), []);
+  });
+
   // ── No product name → falls back to full list (backward compat) ──
 
   it('no product: numeric 10 up → 11, 12 (full list)', () => {
@@ -432,6 +459,11 @@ describe('getSizeList — category-based', () => {
   it('onepiece: letter with plus', () => {
     const list = getSizeList('S', 'THE SKY NO-TUCK SHAPING ONE-PIECE');
     assert.ok(list.includes('XS+'));
+  });
+
+  it('chest_pads: only S, M, L', () => {
+    const list = getSizeList('M', 'RUBIES SHAPING CHEST PADS');
+    assert.deepEqual(list, ['S', 'M', 'L']);
   });
 
   it('no product: full numeric list', () => {
@@ -1064,23 +1096,22 @@ describe('prescribeSizingResolution', () => {
   });
 
   describe('refund', () => {
-    it('asks what went wrong on first refund request', async () => {
+    it('offers exchange first on initial refund request', async () => {
       const intake = makeIntake({
         items: [makeItem({ issue: 'refund_request' })],
-        _refundAskedOnce: false,
       });
       const classified = [makeClassified({ action: 'refund' })];
       const ctx = makeContext({ targetOrder: makeOrder() });
       const result = await prescribeSizingResolution(classified, intake, ctx);
       assert.equal(result.items[0].state, 'AWAITING_DECISION');
-      assert.ok(result.items[0].response_text.includes("what didn't work out"));
-      assert.equal(intake._refundAskedOnce, true);
+      assert.ok(result.items[0].response_text.includes('swap'));
+      assert.ok(intake._exchangeOffered['THE AJ NO-TUCK SHAPING UNDERWEAR']);
     });
 
-    it('confirms refund on second request (insists)', async () => {
+    it('confirms refund when exchange already offered', async () => {
       const intake = makeIntake({
         items: [makeItem({ issue: 'refund_request' })],
-        _refundAskedOnce: true,
+        _exchangeOffered: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
       });
       const classified = [makeClassified({ action: 'refund' })];
       const ctx = makeContext({ targetOrder: makeOrder() });
@@ -1257,44 +1288,29 @@ describe('prescribeDonationRouting', () => {
   });
 });
 
-// ============================================================================
-// Phase 7: Positive Feedback
-// ============================================================================
-
-describe('checkPositiveFeedback', () => {
-  it('detects "love rubies"', () => {
-    const result = checkPositiveFeedback('I love rubies so much');
-    assert.equal(result.detected, true);
-  });
-
-  it('detects "amazing"', () => {
-    const result = checkPositiveFeedback('your products are amazing');
-    assert.equal(result.detected, true);
-  });
-
-  it('returns null for normal message', () => {
-    assert.equal(checkPositiveFeedback('The size was too big'), null);
-  });
-
-  it('returns null for empty/null', () => {
-    assert.equal(checkPositiveFeedback(null), null);
-    assert.equal(checkPositiveFeedback(''), null);
-  });
-});
+// Phase 7: Positive Feedback — now handled by AI parser (intake._positiveFeedback)
+// No deterministic tests needed — the AI parser sets the flag
 
 // ============================================================================
 // walkTree Integration Tests
 // ============================================================================
 
 describe('walkTree', () => {
-  it('returns safety_override when safety signal detected', async () => {
-    const intake = makeIntake({ _latestMessage: 'I am not safe at home' });
+  it('returns safety_override when AI parser detects safety concern', async () => {
+    const intake = makeIntake({ _safety_concern: true });
     const result = await walkTree(intake, makeContext());
     assert.equal(result.status, 'safety_override');
     assert.ok(result.response_parts.length > 0);
     assert.equal(result.response_parts[0].priority, 0);
     // Should short-circuit — no other phases
     assert.ok(!result.phases_completed.includes('identify_customer'));
+  });
+
+  it('does not trigger safety_override when no safety concern', async () => {
+    const intake = makeIntake({ _latestMessage: 'The size is too big' });
+    const result = await walkTree(intake, makeContext({ fulfilled: [makeOrder()] }));
+    assert.notEqual(result.status, 'safety_override');
+    assert.ok(result.phases_completed.includes('safety_check'));
   });
 
   it('returns gathering status when no items', async () => {
@@ -1353,5 +1369,90 @@ describe('walkTree', () => {
         `Part ${i} priority ${result.response_parts[i].priority} should be >= part ${i - 1} priority ${result.response_parts[i - 1].priority}`,
       );
     }
+  });
+});
+
+// ============================================================================
+// Config-driven products (Naomi)
+// ============================================================================
+
+describe('Config-driven products', () => {
+  it('Naomi is loaded as active product', () => {
+    assert.ok(_activeProducts.naomi, 'Naomi should be in active products');
+    assert.equal(_activeProducts.naomi.status, 'active');
+  });
+
+  it('Naomi nickname is registered', () => {
+    assert.equal(getProductNickname('THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), 'Naomi');
+  });
+
+  it('Naomi is classified as underwear_bottom', () => {
+    assert.equal(classifyProduct('THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), 'underwear_bottom');
+  });
+
+  it('classifyProduct matches "gaff" keyword too', () => {
+    assert.equal(classifyProduct('Some gaff product'), 'underwear_bottom');
+  });
+
+  it('Naomi has size override XS–2X', () => {
+    assert.ok(PRODUCT_SIZE_OVERRIDES.naomi, 'Should have naomi override');
+    assert.deepEqual(PRODUCT_SIZE_OVERRIDES.naomi, ['XS', 'S', 'M', 'L', '1X', '2X']);
+  });
+
+  it('getSizeList returns Naomi range for Naomi product', () => {
+    const list = getSizeList('M', 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
+    assert.deepEqual(list, ['XS', 'S', 'M', 'L', '1X', '2X']);
+  });
+
+  it('getSizeList returns null for size outside Naomi range', () => {
+    const list = getSizeList('XXS', 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
+    assert.equal(list, null);
+  });
+
+  it('getAdjacentSizes respects Naomi boundary at 2X going up', () => {
+    const result = getAdjacentSizes('2X', 'up', 2, 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
+    assert.deepEqual(result, []);
+  });
+
+  it('getAdjacentSizes respects Naomi boundary at XS going down', () => {
+    const result = getAdjacentSizes('XS', 'down', 2, 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
+    assert.deepEqual(result, []);
+  });
+
+  it('getAdjacentSizes works within Naomi range', () => {
+    const result = getAdjacentSizes('M', 'up', 2, 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
+    assert.deepEqual(result, ['L', '1X']);
+  });
+
+  it('auto-confirms "a bit tight" for Naomi within range', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight' })],
+      _latestMessage: 'it is a bit tight',
+    });
+    const classified = [makeClassified({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.equal(result.items[0].state, 'CONFIRMED');
+    assert.equal(intake.items[0].resolved_size, 'L');
+  });
+
+  it('hits boundary for Naomi at 2X going up', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: '2X', issue: 'too_tight' })],
+      _latestMessage: 'too tight',
+    });
+    const classified = [makeClassified({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: '2X', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    // At boundary — should request measurement since no sizes available
+    assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
+  });
+
+  it('style switch for adult underwear mentions Naomi', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ issue: 'tight_legs', size: 'M' })],
+    });
+    const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('Naomi'));
+    assert.ok(result.items[0].response_text.includes('Sassy'));
   });
 });
