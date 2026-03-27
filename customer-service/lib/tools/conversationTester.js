@@ -12,7 +12,7 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
-const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize } = require('../decisionTree');
+const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize, classifyProduct, getAdjacentSizes, getCumulativeDelta } = require('../decisionTree');
 
 // Import the advisor handler
 const advisorTools = require('./exchangeAdvisor');
@@ -45,6 +45,11 @@ async function composeAgentResponse(s, previousResponses) {
     feedbackLine = `So lovely to hear you've been with RUBIES for so long! `;
   } else if (hasFeedback) {
     feedbackLine = `So glad you love RUBIES! `;
+  }
+
+  // Item clarification needed — ask which items (only if no items have been identified yet)
+  if (s.intake?._needsItemClarification && (!allIntakeItems.length || allIntakeItems.every(i => !i.product))) {
+    return greeting + `I can see your order has a few different items. Which ones didn't fit right?`;
   }
 
   // Safety override — short circuit
@@ -171,15 +176,137 @@ async function composeAgentResponse(s, previousResponses) {
     parts.push({ type: 'refund', text: item.response_text || `I'll process the return for the ${nick}.` });
   }
 
-  // 4. Questions/needs-info (dedup: only ask for each body part measurement once)
-  const askedMeasurements = new Set();
+  // 4. Questions/needs-info — group sizing options by product category
+  // When multiple items need sizing, group by category (underwear, swim, etc.)
+  // and present options from a single reference size per group.
+  const sizingItems = [];
+  const nonSizingItems = [];
+  const matchedIntakeIndices = new Set();
   for (const item of needsInfo) {
-    // Dedup measurement requests
-    if (item.response_text?.includes('measurement')) {
+    // Match by product, preferring unmatched intake items to avoid duplicate matches
+    let intakeItem = null;
+    for (let idx = 0; idx < allIntakeItems.length; idx++) {
+      const ii = allIntakeItems[idx];
+      if (ii.product === item.product && !ii.resolved_size && !matchedIntakeIndices.has(idx)) {
+        intakeItem = ii;
+        matchedIntakeIndices.add(idx);
+        break;
+      }
+    }
+    if (item.options || (item.response_text && /next size|size up|size down|which.*better|which.*prefer/.test(item.response_text))) {
+      sizingItems.push({ ...item, _intake: intakeItem });
+    } else {
+      nonSizingItems.push(item);
+    }
+  }
+
+  if (sizingItems.length > 1) {
+    // Group by product category display name
+    const categoryGroups = new Map();
+    for (const item of sizingItems) {
+      const cat = classifyProduct(item.product) || 'other';
+      const catLabel = cat.includes('swim') ? 'bikini bottoms' : cat.includes('top') ? 'tops' : 'underwear';
+      if (!categoryGroups.has(catLabel)) categoryGroups.set(catLabel, []);
+      categoryGroups.get(catLabel).push(item);
+    }
+
+    const groupTexts = [];
+    const useInches = !s.customer?.country || s.customer.country === 'US' || s.customer.country === 'United States';
+    for (const [catLabel, items] of categoryGroups) {
+      // Determine direction from issue
+      const issue = items[0]._intake?.issue || '';
+      const direction = /loose|big/.test(issue) ? 'down' : 'up';
+
+      // Pick reference size: largest if too tight (up), smallest if too loose (down)
+      const sizes = items.map(i => normalizeSize(i._intake?.size || '')).filter(Boolean);
+      const sizeList = getSizeList(sizes[0], items[0].product);
+      if (!sizeList || sizes.length === 0) {
+        // Fallback: use original per-item text
+        for (const item of items) parts.push({ type: 'question', text: item.response_text });
+        continue;
+      }
+      const sizeIndices = sizes.map(s => sizeList.indexOf(s)).filter(i => i >= 0);
+      const refIdx = direction === 'up' ? Math.max(...sizeIndices) : Math.min(...sizeIndices);
+      const refSize = sizeList[refIdx];
+
+      // Get adjacent sizes from reference
+      const adjacent = getAdjacentSizes(refSize, direction, 2, items[0].product);
+      if (adjacent.length === 0) {
+        for (const item of items) parts.push({ type: 'question', text: item.response_text });
+        continue;
+      }
+
+      const nick = getProductNickname(items[0].product);
+      const optionTexts = adjacent.map(s => {
+        const delta = getCumulativeDelta(refSize, s) || { inches: 2, cm: 5 };
+        const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
+        const more = direction === 'up' ? 'more' : 'less';
+        return `${s} which has ${unit} ${more} fabric around the waist compared to the ${refSize}`;
+      });
+
+      const sizeNote = sizes.length > 1 ? ` in size ${refSize}` : ` from ${refSize}`;
+      const dirWord = direction === 'up' ? 'up' : 'down';
+      groupTexts.push(`The next size ${dirWord} for the ${catLabel}${sizeNote} is ${optionTexts.join(', or ')}.`);
+    }
+
+    let groupedText = groupTexts.join(' ') + ` Which sounds better${forWhom}?`;
+
+    // Add measurement ask for "too tight/loose" (not "a bit")
+    const anyIssue = sizingItems[0]._intake?.issue || '';
+    const isUncertain = !/a bit|slightly|little bit|a little/.test(anyIssue) &&
+      !/a bit|slightly|little bit|a little/.test((s.intake?._latestMessage || '').toLowerCase());
+    if (isUncertain && !s.intake?.measurement) {
+      const measurePart = isThirdParty ? `your ${s.customer.third_party_label || "child"}'s ` : 'the ';
+      groupedText += ` Or if you send me ${measurePart}waist measurement around the belly and just under the belly button I can make a recommendation.`;
+    }
+
+    parts.push({ type: 'question', text: groupedText });
+  } else {
+    // Single item or no sizing items — use original text
+    for (const item of sizingItems) {
+      parts.push({ type: 'question', text: item.response_text });
+    }
+  }
+
+  // Non-sizing questions — group measurement recommendations, dedup measurement requests
+  const measurementRecs = []; // "Based on measurement, I'd recommend size X for the Y"
+  const askedMeasurements = new Set();
+  const otherQuestions = [];
+  for (const item of nonSizingItems) {
+    const isRecommendation = item.response_text?.includes('recommend') && item.response_text?.includes('measurement');
+    const isMeasurementRequest = item.response_text?.includes('send me') && item.response_text?.includes('measurement');
+    if (isRecommendation) {
+      // Extract product and size from recommendation text
+      const sizeMatch = item.response_text.match(/size (\S+)/);
+      const nick = getProductNickname(item.product);
+      if (sizeMatch && nick) {
+        measurementRecs.push({ nick, size: sizeMatch[1] });
+      } else {
+        otherQuestions.push(item);
+      }
+    } else if (isMeasurementRequest) {
       const bodyPart = item.response_text.includes('chest') ? 'chest' : 'waist';
       if (askedMeasurements.has(bodyPart)) continue;
       askedMeasurements.add(bodyPart);
+      otherQuestions.push(item);
+    } else {
+      otherQuestions.push(item);
     }
+  }
+
+  // Combine measurement recommendations into one sentence
+  if (measurementRecs.length > 0) {
+    const m = s.intake?.measurement;
+    const measureRef = isThirdParty ? `${s.customer.third_party_label || "child"}'s` : 'your';
+    const mDisplay = m ? `${m.value} ${m.unit === 'cm' ? 'cm' : '"'}` : '';
+    const recParts = measurementRecs.map(r => `a size ${r.size} for the ${r.nick}`);
+    const recText = recParts.length === 1 ? recParts[0]
+      : recParts.slice(0, -1).join(', ') + ' and ' + recParts[recParts.length - 1];
+    const basedOn = mDisplay ? `Based on ${measureRef} measurement of ${mDisplay}, ` : '';
+    parts.push({ type: 'question', text: `${basedOn}I'd recommend ${recText}. Shall I set that up?` });
+  }
+
+  for (const item of otherQuestions) {
     parts.push({ type: 'question', text: item.response_text });
   }
 
@@ -232,6 +359,12 @@ async function composeAgentResponse(s, previousResponses) {
   if (hasRefunds) {
     const refundTexts = parts.filter(p => p.type === 'refund').map(p => p.text);
     response += (hasExchanges ? '\n\n' : '') + refundTexts.join(' ');
+  }
+
+  // Acknowledge exchange vs reorder question if customer asked
+  const latestMsg = (s.intake?._latestMessage || '').toLowerCase();
+  if (/reorder|re-order|should i order|do i need to order/.test(latestMsg) && /exchange/.test(latestMsg)) {
+    response += ' No need to reorder — we can handle it as an exchange.';
   }
 
   // Add questions
@@ -335,8 +468,10 @@ RULES:
 - Match Jamie's voice from the examples above. He's warm and direct — no corporate-speak, no AI-sounding phrases like "is the move", "absolutely", "I'd be happy to", "great choice"
 - If the customer said something kind about RUBIES, acknowledge it warmly and briefly even if the draft didn't. This is the ONE exception to adding content.
 - Otherwise do NOT add new information, suggestions, or questions not in the draft
+- NEVER replace questions with different questions. If the draft asks an open-ended question ("what didn't work out?"), do NOT narrow it to a specific question ("was it too tight?"). Preserve the intent and scope of every question.
 - NEVER remove order confirmations, refund confirmations, or donation info — these are actionable
 - Do NOT remove sizing explanations or crossover notes
+- Do NOT remove offers of help (e.g. "I can help find the right size" or "we can find an alternative")
 - Do NOT add a sign-off (no "Take care", no signature)
 - Do NOT use emojis
 ${customerName ? `- Customer name: ${customerName}` : '- No customer name detected — use "Hi!" not a name'}
@@ -459,30 +594,39 @@ async function handleTestConversation({ customer_email, messages, order_number }
         name: intake.name,
         tags: ['exchange', 'cs-mcp'],
         address: customerAddress,
-        items: resolvedItems.map(i => {
-          // Use _orderQty from multi-item expansion, or sum matching order line items
+        items: resolvedItems.flatMap(i => {
+          // Expand by color: if _orderColors has multiple colors, create one line per color
+          if (i._orderColors && i._orderColors.length > 1) {
+            return i._orderColors.map(color => ({
+              product: i.resolved_product || i.product,
+              from_product: i.resolved_product ? i.product : null,
+              from_size: i.size,
+              to_size: i.resolved_size,
+              color,
+              quantity: 1,
+            }));
+          }
+          // Single item or no color info — use _orderQty or sum from order line items
           let qty = i._orderQty || 0;
           if (!qty) {
             const prodLower = (i.product || '').toLowerCase();
             const itemSize = i.size ? normalizeSize(i.size) : null;
             for (const oi of orderItems) {
               if (oi.title?.toLowerCase().includes(prodLower.split(' ')[0])) {
-                // If the item has a specific size, only count order items matching that size
-                // This prevents counting ALL Charlies when only the 4X is being returned
                 const oiSkuSize = oi.sku ? normalizeSize(oi.sku.split('-').pop()) : null;
                 if (itemSize && oiSkuSize && oiSkuSize !== itemSize) continue;
                 qty += oi.quantity;
               }
             }
           }
-          return {
+          return [{
             product: i.resolved_product || i.product,
             from_product: i.resolved_product ? i.product : null,
             from_size: i.size,
             to_size: i.resolved_size,
-            color: i.color,
+            color: i._orderColors?.[0] || i.color,
             quantity: qty || 1,
-          };
+          }];
         }),
       };
     }
@@ -592,6 +736,7 @@ async function handleTestConversation({ customer_email, messages, order_number }
       }
     }
   }
+
 
   return { content: [{ type: 'text', text: md }] };
 }

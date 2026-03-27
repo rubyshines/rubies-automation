@@ -1128,6 +1128,50 @@ describe('prescribeSizingResolution', () => {
       assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
       assert.ok(result.items[0].response_text.includes('Sassy'));
     });
+
+    it('recommends Sassy for size 16 (youth/adult boundary)', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: '16', product: 'THE FLO SHAPING DANCE UNDERWEAR' })],
+        _latestMessage: 'The Flo size 16 is too tight on the legs.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', product: 'THE FLO SHAPING DANCE UNDERWEAR', size: '16' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
+      assert.ok(result.items[0].response_text.includes('Sassy'), 'Size 16 should recommend Sassy (adult), not Flo');
+      assert.ok(!result.items[0].response_text.includes('Flo'), 'Size 16 should not recommend Flo (youth)');
+    });
+
+    it('suggests sizing up when already on widest leg product (Sassy)', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: 'L', product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR' })],
+        _latestMessage: 'The Sassy is too tight around the legs.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'L' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
+      assert.ok(result.items[0].response_text.includes('widest leg opening'));
+      assert.ok(result.items[0].response_text.includes('Sizing up'));
+    });
+
+    it('asks for waist measurement when waist not mentioned', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: '10' })],
+        _latestMessage: 'The leg holes are too tight on her thighs.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.ok(result.items[0].response_text.includes('measurement'), 'Should ask for waist measurement when waist not mentioned');
+    });
+
+    it('skips measurement ask when waist confirmed fine', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: '10' })],
+        _latestMessage: 'The waist fits fine but the legs are too tight.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.ok(!result.items[0].response_text.includes('measurement'), 'Should not ask for measurement when waist confirmed fine');
+    });
   });
 
   describe('refund', () => {
@@ -1171,25 +1215,15 @@ describe('prescribeSizingResolution', () => {
   });
 
   describe('defect', () => {
-    it('asks photo + replacement for repeat purchaser', async () => {
-      const orderHistory = [
-        { lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', variantTitle: '10' }] },
-        { lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', variantTitle: '10' }] },
-      ];
-      const intake = makeIntake({ items: [makeItem({ issue: 'defect' })] });
-      const classified = [makeClassified({ action: 'defect' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext({ orderHistory }));
-      assert.equal(result.items[0].state, 'AWAITING_PHOTO');
-      assert.equal(result.items[0].defect_likely_genuine, true);
-      assert.equal(result.items[0].skip_donation, true);
-    });
-
-    it('asks photo + measurement for single purchaser', async () => {
+    it('routes to human with apology and photo request', async () => {
       const intake = makeIntake({ items: [makeItem({ issue: 'defect' })] });
       const classified = [makeClassified({ action: 'defect' })];
       const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT_AND_PHOTO');
-      assert.equal(result.items[0].defect_likely_genuine, false);
+      assert.equal(result.items[0].state, 'ESCALATE_TO_HUMAN');
+      assert.equal(result.items[0].route_to_human, true);
+      assert.equal(result.items[0].skip_donation, true);
+      assert.ok(result.items[0].response_text.includes('photo'));
+      assert.ok(result.items[0].response_text.includes('sorry'));
     });
   });
 
@@ -1394,6 +1428,24 @@ describe('walkTree', () => {
     assert.ok(result.phases_completed.includes('identify_customer'));
     // AJ is underwear (even sizes: 4,6,8,10,12,14,16), so next up from 10 is 12
     assert.equal(intake.items[0].resolved_size, '12');
+  });
+
+  it('"a bit short" in message does not trigger isABit for sizing confidence', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ issue: 'close_fit_tight', size: 'M', product: 'THE SKY NO-TUCK SHAPING ONE-PIECE' })],
+      _latestMessage: 'It\'s too tight around the waist but also a bit short in the torso',
+    });
+    const order = makeOrder({
+      lineItems: [{ title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'M Tall', sku: 'SKY2-BLK-MT', quantity: 1 }],
+    });
+    const ctx = makeContext({ targetOrder: order, fulfilled: [order] });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, ctx);
+    // Should NOT auto-confirm — "a bit short" is not "a bit tight"
+    assert.notEqual(result.status, 'ready');
+    const itemAction = result.response_parts.find(p => p.type === 'item_action');
+    assert.ok(itemAction);
+    assert.notEqual(itemAction.state, 'CONFIRMED');
   });
 
   it('sorts response_parts by priority', async () => {
@@ -1646,13 +1698,12 @@ describe('Config-driven products', () => {
     assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
   });
 
-  it('style switch for adult underwear mentions Naomi', async () => {
+  it('style switch for adult underwear recommends Sassy', async () => {
     const intake = makeIntake({
       items: [makeItem({ issue: 'tight_legs', size: 'M' })],
     });
     const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
     const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('Naomi'));
     assert.ok(result.items[0].response_text.includes('Sassy'));
   });
 });
@@ -2015,5 +2066,133 @@ describe('isSameProduct — nickname matching', () => {
     const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
     const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
     assert.equal(multiFlags.length, 0, 'Should not flag the same product as multi-item');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clarification upgrade — regex-based issue upgrade when parser returns no items
+// (Logic lives in exchangeAdvisor.js but is pure regex, testable standalone)
+// ---------------------------------------------------------------------------
+describe('clarification upgrade regex', () => {
+  // Replicate the regex logic from exchangeAdvisor.js
+  function applyClarification(messageText, items) {
+    const msgLower = (messageText || '').toLowerCase();
+    let clarifiedIssue = null;
+    if (/too tight|too small|too snug|waist.*tight|tight.*waist/.test(msgLower)) clarifiedIssue = 'close_fit_tight';
+    else if (/too loose|too big|too large|waist.*loose|loose.*waist|baggy|bunching/.test(msgLower)) clarifiedIssue = 'close_fit_loose';
+    else if (/a bit tight|slightly tight|little tight/.test(msgLower)) clarifiedIssue = 'close_fit_tight';
+    else if (/a bit loose|slightly loose|little loose/.test(msgLower)) clarifiedIssue = 'close_fit_loose';
+    if (clarifiedIssue) {
+      const vagueIssues = new Set(['doesnt_fit', 'product_not_working', 'unclear', 'none']);
+      for (const item of items) {
+        if (!item.resolved_size && vagueIssues.has(item.issue)) {
+          item.issue = clarifiedIssue;
+        }
+      }
+    }
+    return items;
+  }
+
+  it('upgrades doesnt_fit to close_fit_tight on "too tight"', () => {
+    const items = [{ product: 'AJ', issue: 'doesnt_fit', resolved_size: null }];
+    applyClarification('It\'s too tight around the waist', items);
+    assert.equal(items[0].issue, 'close_fit_tight');
+  });
+
+  it('upgrades doesnt_fit to close_fit_loose on "too loose"', () => {
+    const items = [{ product: 'AJ', issue: 'doesnt_fit', resolved_size: null }];
+    applyClarification('It\'s too loose', items);
+    assert.equal(items[0].issue, 'close_fit_loose');
+  });
+
+  it('does not downgrade close_fit_tight to something else', () => {
+    const items = [{ product: 'AJ', issue: 'close_fit_tight', resolved_size: null }];
+    applyClarification('actually it is too loose', items);
+    // close_fit_tight is not in vagueIssues, so it should not change
+    assert.equal(items[0].issue, 'close_fit_tight');
+  });
+
+  it('does not upgrade already-resolved items', () => {
+    const items = [{ product: 'AJ', issue: 'doesnt_fit', resolved_size: 'L' }];
+    applyClarification('too tight', items);
+    assert.equal(items[0].issue, 'doesnt_fit');
+  });
+
+  it('upgrades on "a bit tight" and "slightly loose"', () => {
+    const items1 = [{ product: 'AJ', issue: 'doesnt_fit', resolved_size: null }];
+    applyClarification('a bit tight', items1);
+    assert.equal(items1[0].issue, 'close_fit_tight');
+
+    const items2 = [{ product: 'AJ', issue: 'doesnt_fit', resolved_size: null }];
+    applyClarification('slightly loose around the waist', items2);
+    assert.equal(items2[0].issue, 'close_fit_loose');
+  });
+
+  it('handles baggy and bunching as close_fit_loose', () => {
+    const items = [{ product: 'AJ', issue: 'product_not_working', resolved_size: null }];
+    applyClarification('it\'s baggy and bunching in the front', items);
+    assert.equal(items[0].issue, 'close_fit_loose');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Body group ambiguity check
+// (Logic lives in exchangeAdvisor.js — replicate here for unit testing)
+// ---------------------------------------------------------------------------
+describe('body group ambiguity check', () => {
+  function checkBodyGroupAmbiguity(products) {
+    const ACCESSORY_CATEGORIES = new Set(['accessory', 'chest_pads', null, undefined]);
+    const nonAccessory = products.filter(p => !ACCESSORY_CATEGORIES.has(p.category));
+    if (nonAccessory.length <= 1) return false;
+    const bodyGroups = new Set();
+    for (const p of nonAccessory) {
+      const cat = p.category || '';
+      if (cat.includes('top') || cat.includes('bra')) bodyGroups.add('top');
+      else if (cat === 'onepiece') bodyGroups.add('onepiece');
+      else bodyGroups.add('bottom');
+    }
+    return bodyGroups.size > 1;
+  }
+
+  it('returns true for mixed tops + bottoms', () => {
+    assert.ok(checkBodyGroupAmbiguity([
+      { category: 'underwear_bottom' },
+      { category: 'underwear_top' },
+    ]));
+  });
+
+  it('returns false for all bottoms (underwear + swim)', () => {
+    assert.ok(!checkBodyGroupAmbiguity([
+      { category: 'underwear_bottom' },
+      { category: 'swim_bottom' },
+    ]));
+  });
+
+  it('returns false for single item', () => {
+    assert.ok(!checkBodyGroupAmbiguity([
+      { category: 'underwear_bottom' },
+    ]));
+  });
+
+  it('ignores accessories', () => {
+    assert.ok(!checkBodyGroupAmbiguity([
+      { category: 'underwear_bottom' },
+      { category: 'accessory' },
+    ]));
+  });
+
+  it('returns true for bottoms + onepiece', () => {
+    assert.ok(checkBodyGroupAmbiguity([
+      { category: 'underwear_bottom' },
+      { category: 'onepiece' },
+    ]));
+  });
+
+  it('returns true for tops + bottoms + accessories', () => {
+    assert.ok(checkBodyGroupAmbiguity([
+      { category: 'swim_top' },
+      { category: 'underwear_bottom' },
+      { category: 'chest_pads' },
+    ]));
   });
 });

@@ -687,6 +687,9 @@ function prescribeActionClassification(intake) {
     if (item.issue === 'defect' || item.issue === 'DEFECT') {
       classified.action = 'defect';
       classified.audit = 'Defect reported';
+    } else if (item.issue === 'wrong_item' || item.issue === 'missing') {
+      classified.action = 'wrong_item';
+      classified.audit = `${item.issue === 'wrong_item' ? 'Wrong item shipped' : 'Missing item'}`;
     } else if (item.resolved_size) {
       classified.action = 'exchange_confirmed';
       classified.audit = `Already confirmed: ${item.size} → ${item.resolved_size}`;
@@ -758,6 +761,9 @@ function prescribeActionClassification(intake) {
       } else if (intake.message_type === 'defect') {
         classified.action = 'defect';
         classified.audit = 'Defect (from message type)';
+      } else if (intake.message_type === 'wrong_item_shipped' || intake.message_type === 'missing_item') {
+        classified.action = 'wrong_item';
+        classified.audit = `${intake.message_type === 'wrong_item_shipped' ? 'Wrong item shipped' : 'Missing item'} (from message type)`;
       } else if (intake.message_type === 'product_not_working') {
         classified.action = 'probe_needed';
         classified.audit = 'Product not working (from message type)';
@@ -869,7 +875,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
 
               if (chartSize === currentSize) {
                 // Chart says current size should fit — but customer says it doesn't
-                measurementNote = `Based on your measurement of ${mDisplay} the sizing chart puts you in the ${currentSize} range. The chart works for most but there can sometimes be exceptions.`;
+                measurementNote = `The chart works for most but there can sometimes be exceptions. Based on your measurement of ${mDisplay} the sizing chart puts you in the ${currentSize} range.`;
               } else if (chartSize === normalizeSize(desiredSize)) {
                 // Chart agrees with their requested size
                 measurementNote = `Based on your measurement of ${mDisplay} the ${normalizeSize(desiredSize)} looks like a good fit.`;
@@ -997,9 +1003,13 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // Customer described the problem but didn't request a specific size
         // Confidence: "a bit tight/loose" → 1 step, auto-confirm. "too tight/loose" → offer options.
         const issueText = (intakeItem?.issue || item.issue || '').toLowerCase();
+        const fitPattern = /a bit (tight|loose|big|small|snug|large)|slightly (tight|loose|big|small|snug|large)|little bit (tight|loose|big|small|snug|large)|a little (tight|loose|big|small|snug|large)/;
         const isABit = /a bit|slightly|little bit|a little/.test(issueText) ||
-          /a bit|slightly|little bit|a little/.test((intake._latestMessage || '').toLowerCase());
-        const isNextSize = /next size|one size (up|down|smaller|bigger|larger)/.test((intake._latestMessage || '').toLowerCase());
+          fitPattern.test((intake._latestMessage || '').toLowerCase()) ||
+          fitPattern.test((intake._originalFitMessage || '').toLowerCase());
+        const nextSizePattern = /next size|one size (up|down|smaller|bigger|larger)/;
+        const isNextSize = nextSizePattern.test((intake._latestMessage || '').toLowerCase()) ||
+          nextSizePattern.test((intake._originalFitMessage || '').toLowerCase());
 
         const adjacent = getAdjacentSizes(currentSize, direction, 2, item.product);
 
@@ -1063,6 +1073,42 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             prescription.still_needed.push(`measurement for ${item.product}`);
           }
           break;
+        }
+
+        // If measurement is available, look up recommended size and use that instead of blind options
+        if (intake.measurement && !isABit && !isNextSize) {
+          const m = intake.measurement;
+          const catM = classifyProduct(item.product);
+          const isTopM = catM === 'underwear_top' || catM === 'swim_top';
+          const isOnepieceM = catM === 'onepiece';
+          const isSwimM = catM === 'swim_bottom' || catM === 'swim_top';
+          const isKidsM = NUMERIC_SIZES.includes(normalizeSize(item.size));
+          let chartCategory;
+          if (isOnepieceM) chartCategory = isKidsM ? 'kids_onepiece' : 'adult_onepiece';
+          else if (isTopM) chartCategory = isKidsM ? 'kids_tops' : 'adult_tops';
+          else if (isSwimM) chartCategory = isKidsM ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
+          else chartCategory = isKidsM ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
+          const measureType = isTopM ? 'chest' : 'waist';
+          const mUnit = m.unit === 'cm' ? 'cm' : 'inches';
+          const nick = getProductNickname(item.product);
+          try {
+            const supabase = getSupabaseClient();
+            const { data: sizeMatches } = await supabase.rpc('find_size_by_measurement', {
+              p_chart_category: chartCategory,
+              p_measurement_type: measureType,
+              p_value: m.value,
+              p_unit: mUnit,
+            });
+            if (sizeMatches && sizeMatches.length > 0) {
+              const recommendedSize = sizeMatches[0].size_label;
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
+              rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${mUnit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              rx.audit = `Measurement available — lookup: ${m.value} ${mUnit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
+              prescription.still_needed.push(`size_confirmation for ${item.product}`);
+              break;
+            }
+          } catch (e) { /* measurement lookup failed — fall through to options */ }
         }
 
         // Build size options with cumulative fabric deltas
@@ -1421,8 +1467,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
       case 'style_switch': {
         // Determine recommendation based on product type + size system
         const sizeList = item.size ? getSizeList(normalizeSize(item.size), item.product) : null;
-        // Kids = numeric size system. Letter sizes are always adult.
-        const isKids = sizeList && !LETTER_SIZES.includes(normalizeSize(item.size));
+        // Kids = numeric size system, but size 16 is the youth/adult boundary — treat as adult
+        const normSize = normalizeSize(item.size);
+        const isKids = sizeList && !LETTER_SIZES.includes(normSize) && normSize !== '16';
         const productCategory = classifyProduct(item.product);
         const isSwim = productCategory === 'swim_bottom' || productCategory === 'swim_top';
 
@@ -1437,28 +1484,52 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           // Adult underwear: check config for additional style-switch targets
           const configTargets = Object.values(_activeProducts)
             .filter(p => p.styleSwitch?.isTarget && p.styleSwitch.forCategories?.includes('underwear_bottom'));
-          if (configTargets.length > 0) {
-            const names = ['Sassy', ...configTargets.map(t => t.nickname)];
-            recommendation = names.join(' or the ');
-            link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
-          } else {
-            recommendation = 'Sassy';
-            link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
-          }
+          recommendation = 'Sassy';
+          link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
         }
 
-        rx.state = 'AWAITING_STYLE_CONFIRMATION';
-        const hasHave = recommendation.endsWith('s') ? 'have' : 'has';
-        const thatThem = recommendation.endsWith('s') ? 'them' : 'that';
-        rx.response_text = `The ${recommendation} ${hasHave} a larger leg opening which may work better. Would you like to try ${thatThem} instead? ${link}`;
-        rx.recommendation = { product: recommendation, link };
-        // Store the pending style switch on the intake item so confirmation uses the new product
-        const intakeItemStyle = intake.items.find(ii => ii.product === item.product);
-        if (intakeItemStyle) {
-          intakeItemStyle._pendingStyleSwitch = recommendation;
+        // Check if the recommendation is the same product they already have
+        const currentNick = getProductNickname(item.product);
+        const isSameProduct = currentNick && recommendation.toLowerCase().includes(currentNick.toLowerCase());
+
+        // Check if customer confirmed waist is fine — if not, ask for measurement too
+        const msgStyle = (intake._latestMessage || '').toLowerCase();
+        const waistConfirmed = /waist.*(fine|good|ok|fits|perfect|great)|fits.*waist/.test(msgStyle);
+        const thirdPartyMeasure = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
+        const measureAsk = waistConfirmed ? '' : `if you send me ${thirdPartyMeasure} waist measurement around the belly and just under the belly button I can make sure the sizing is right.`;
+
+        if (isSameProduct) {
+          // Already on the widest leg opening product — offer sizing up, and adult alternative if near boundary
+          rx.state = 'AWAITING_SIZE_CONFIRMATION';
+          const nearAdultBoundary = !isSwim && isKids === false && (normSize === '14' || normSize === '16');
+          // Also check: youth product at size 14+ should offer adult alternative
+          const isYouthNearBoundary = !isSwim && normSize === '14' && !LETTER_SIZES.includes(normSize);
+          const numericToAdult = { '10': 'XXS', '11': 'XXS+', '12': 'XS', '13': 'XS+', '14': 'S', '16': 'M' };
+          const adultEquiv = numericToAdult[normSize] || null;
+          const adultAlt = (nearAdultBoundary || isYouthNearBoundary) && adultEquiv
+            ? ` Or you could try the Sassy in size ${adultEquiv} which is the equivalent in our adult line and has a different cut — https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear`
+            : '';
+          rx.response_text = `The ${currentNick} already has the widest leg opening in our range. Sizing up would give more room in the legs.${adultAlt}${measureAsk ? ' ' + measureAsk.charAt(0).toUpperCase() + measureAsk.slice(1) : ''}`;
+          rx.audit = `Tight legs on ${currentNick} — already widest leg opening, suggesting size up${adultAlt ? ' + adult alternative' : ''}`;
+          prescription.still_needed.push(`size_confirmation for ${item.product}`);
+        } else {
+          rx.state = 'AWAITING_STYLE_CONFIRMATION';
+          const hasHave = recommendation.endsWith('s') ? 'have' : 'has';
+          const thatThem = recommendation.endsWith('s') ? 'them' : 'that';
+          // When switching from youth to adult product, mention the equivalent size
+          const numToAdult = { '10': 'XXS', '11': 'XXS+', '12': 'XS', '13': 'XS+', '14': 'S', '16': 'M' };
+          const equivSize = NUMERIC_SIZES.includes(normSize) && !isKids ? numToAdult[normSize] : null;
+          const sizeNote = equivSize ? ` in size ${equivSize}` : '';
+          rx.response_text = `The ${recommendation}${sizeNote} ${hasHave} a larger leg opening which may work better. Would you like to try ${thatThem} instead? ${link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+          rx.recommendation = { product: recommendation, link };
+          // Store the pending style switch on the intake item so confirmation uses the new product
+          const intakeItemStyle = intake.items.find(ii => ii.product === item.product);
+          if (intakeItemStyle) {
+            intakeItemStyle._pendingStyleSwitch = recommendation;
+          }
+          rx.audit = `Tight legs → ${recommendation} (${isKids ? 'kids' : 'adult'}, ${isSwim ? 'swim' : 'underwear'})`;
+          prescription.still_needed.push(`style_confirmation for ${item.product}`);
         }
-        rx.audit = `Tight legs → ${recommendation} (${isKids ? 'kids' : 'adult'}, ${isSwim ? 'swim' : 'underwear'})`;
-        prescription.still_needed.push(`style_confirmation for ${item.product}`);
         break;
       }
 
@@ -1479,30 +1550,23 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
       }
 
       case 'defect': {
-        // Check order history for pattern
-        const sameTypeCount = (context.orderHistory || []).filter(o =>
-          o.lineItems?.some(li =>
-            li.title?.toLowerCase().includes(item.product?.toLowerCase()) &&
-            li.variantTitle?.includes(item.size)
-          )
-        ).length;
-
-        if (sameTypeCount > 1) {
-          // Multiple items same size — likely genuine defect
-          rx.state = 'AWAITING_PHOTO';
-          rx.response_text = `Could you send a photo of the issue? We'd like to forward it to our supplier so they can address the quality issue. I'll send a replacement right away.`;
-          rx.defect_likely_genuine = true;
-          rx.audit = `Defect: ${sameTypeCount} orders with same product+size → likely genuine. Ask photo, send replacement.`;
-        } else {
-          // Only item — might be wearing too tight
-          rx.state = 'AWAITING_MEASUREMENT_AND_PHOTO';
-          rx.response_text = `Could you send a photo? We'd like to forward it to our supplier. Also, just to make sure we send the right size for the replacement, could you send your ${item.product?.toLowerCase().match(/bra|top/) ? 'chest' : 'waist'} measurement?`;
-          rx.defect_likely_genuine = false;
-          rx.audit = `Defect: only item in this size → check if wearing too tight. Ask photo + measurement.`;
-        }
-        // Defects: customer keeps original, no donation routing
+        const defectNick = getProductNickname(item.product);
+        rx.state = 'ESCALATE_TO_HUMAN';
+        rx.response_text = `So sorry about that! Could you send a photo of the issue? I'd like to forward it to our supplier so they can look into it.`;
         rx.skip_donation = true;
+        rx.route_to_human = true;
+        rx.audit = `Defect: apologize + ask photo + route to human`;
         prescription.still_needed.push(`photo for ${item.product}`);
+        break;
+      }
+
+      case 'wrong_item': {
+        const wrongNick = getProductNickname(item.product);
+        rx.state = 'ESCALATE_TO_HUMAN';
+        rx.response_text = `So sorry about that! I'll get the correct ${wrongNick} sent out to you right away.`;
+        rx.skip_donation = true;
+        rx.route_to_human = true;
+        rx.audit = `Wrong item/missing: apologize + send replacement + route to human`;
         break;
       }
 
@@ -1541,10 +1605,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           if (isOnepieceReturn) {
             // One-piece: offer to check sizing with measurements
             rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the one-piece? If it's a fit issue, feel free to send ${thirdPartyPossessive || 'the '}waist measurement around the belly just under the belly button and ${thirdPartyPossessive || ''}height — I can check the sizing and we can always send out a new size. And if the one-piece isn't the right fit we can always find an alternative that works.`;
-          } else if (isThirdParty) {
-            rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${nick}? Was it a sizing issue or something else?`;
           } else {
-            rx.response_text = `Can you let me know what didn't work out with the ${nick}? Was it a sizing issue or something else?`;
+            rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the ${nick}? If it's a sizing issue I can help find the right size, or if the style isn't quite right we can always find an alternative that works.`;
           }
           rx.refund_eligible = eligible;
           rx.audit = `Return requested — eligible: ${eligible}. Probing what didn't work before offering swap.`;
@@ -1698,7 +1760,7 @@ async function prescribeDonationRouting(intake, context) {
     return {
       phase: 'donation_routing',
       type: 'local_no_partner',
-      response_text: `${programExplanation} Feel free to donate locally to any organization that supports the gender-diverse community. Do you know of any LGBTQ+ organizations in your area we could partner with?`,
+      response_text: `${programExplanation} Feel free to donate locally. Do you know of any LGBTQ+ organizations in your area we could partner with?`,
       audit: `No partners in ${country} — local donation + ask for org referral`,
     };
   }
@@ -1707,7 +1769,7 @@ async function prescribeDonationRouting(intake, context) {
     return {
       phase: 'donation_routing',
       type: 'local_single',
-      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally to any organization that supports the gender-diverse community.`,
+      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally.`,
       audit: `Single item in ${country} — local donation (not worth shipping to partner)`,
     };
   }
@@ -1749,7 +1811,7 @@ async function prescribeDonationRouting(intake, context) {
     phase: 'donation_routing',
     type: 'partner',
     partner,
-    response_text: `${programExplanation} Since you have multiple items, you can donate to ${partner.name} at ${partner.address}. They ${partner.description.toLowerCase()} ${washReminder}`,
+    response_text: `${programExplanation} You can donate to ${partner.name} at ${partner.address}. They ${partner.description.toLowerCase()} ${washReminder}`,
     audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${partner.donations_routed} previous donations`,
   };
 }

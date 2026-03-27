@@ -184,7 +184,7 @@ IMPORTANT:
 - For names: ONLY extract if they explicitly introduce themselves. "Hi Jamie" is addressing the agent, not their name.
 - For sizes: normalize to catalog format (M not Medium, 1X not XL, 14 not fourteen).
 - For items: if they say "underwear" without a product name, put "underwear" as product. If "bikini bottom" put that. Be specific.
-- For issue: "too small/tight/snug" = close_fit_tight. "too big/loose/baggy/sags/bunches/bunching/not tight enough" = close_fit_loose. If the waist fits fine but the product is loose/bunching elsewhere (front, legs, etc.), that's still close_fit_loose — the overall garment is too big even if the waist is OK. "way too big/completely wrong" = way_off. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction). "doesn't hide/doesn't conceal/can still see/still visible/not flat/doesn't flatten/shows through" = expectation_mismatch (the customer expected flattening but RUBIES shapes, not flattens). "doesn't work" WITHOUT specifics = product_not_working (we need to probe further). IMPORTANT: If customer says "not working/shaping not working" AND also gives a fit clue like "too loose" or "too tight", use product_not_working_loose or product_not_working_tight — this means they understand the product but think the fit is causing the issue.
+- For issue: "a bit tight/slightly tight/snug" = close_fit_tight. "too small/too tight" = close_fit_tight. "a bit loose/slightly loose" = close_fit_loose. "too big/too loose/baggy/sags/bunches/bunching/not tight enough" = close_fit_loose. If the waist fits fine but the product is loose/bunching elsewhere (front, legs, etc.), that's still close_fit_loose — the overall garment is too big even if the waist is OK. "WAY too big/WAY too small/much too small/much too big/completely wrong/totally wrong size/not even close" = way_off — use this when the customer emphasizes severity with "way", "much", "completely", "totally", or says it's for someone else and it's clearly the wrong size range. "ripped/hole/seam/broken strap" = defect. "doesn't fit/not the right fit/fit issue" WITHOUT specifying tight or loose = doesnt_fit (NOT close_fit_tight or close_fit_loose — we need to ask direction). "doesn't hide/doesn't conceal/can still see/still visible/not flat/doesn't flatten/shows through" = expectation_mismatch (the customer expected flattening but RUBIES shapes, not flattens). "doesn't work" WITHOUT specifics = product_not_working (we need to probe further). IMPORTANT: If customer says "not working/shaping not working" AND also gives a fit clue like "too loose" or "too tight", use product_not_working_loose or product_not_working_tight — this means they understand the product but think the fit is causing the issue.
 - EXCLUSIONS: If the customer says "just the X" or "only the X" or "not the Y" or "the Y fits fine", ONLY include the items they want to exchange. Do NOT include items they explicitly said are fine or excluded. For example "just the AJ, the Ruby fits fine" means ONLY the AJ goes in items — do NOT include the Ruby.
 - When confirming a size, only apply it to the items the customer is actually exchanging. If they say "1X for the AJ" don't apply 1X to other products.
 - RETURNS: "I want to return", "can I return", "I'd like to send back", "return for a refund", "not her style", "wasn't for me" → for the SPECIFIC item being returned, set issue = "refund_request". If the ENTIRE message is about returning (no exchanges), also set message_type = "refund". But if the message is mixed (some items exchanging, some returning), set message_type = "exchange" and use issue = "refund_request" on the individual return items. A "return" means the customer wants their money back, not an exchange. Don't confuse with "exchange" or "swap".
@@ -252,8 +252,30 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   // is the swap resolution, not a new exchange request
   const hasPendingSwap = intake.items.some(i => i._pendingTrySizeSwap && !i.resolved_size);
   if (parsed.items?.length && !hasPendingSwap) {
+    // Clear body group clarification flag if customer is now specifying items
+    if (intake._needsItemClarification) {
+      const preservedIssue = intake._preservedIssue;
+      const preservedMessage = intake._preservedMessage;
+      delete intake._needsItemClarification;
+      delete intake._preservedIssue;
+      delete intake._preservedMessage;
+      // Apply the preserved issue to newly added items if they don't have a specific one
+      if (preservedIssue) intake._applyIssueToNewItems = preservedIssue;
+      // Restore the original message so isABit/confidence check works
+      if (preservedMessage) intake._originalFitMessage = preservedMessage;
+    }
     for (const aiItem of parsed.items) {
-      const existing = intake.items.find(i => i.product?.toLowerCase() === aiItem.product?.toLowerCase());
+      const aiProdLower = (aiItem.product || '').toLowerCase();
+      const existing = intake.items.find(i => {
+        const existingLower = (i.product || '').toLowerCase();
+        // Exact match, or one contains the other, or both share a nickname
+        if (existingLower === aiProdLower) return true;
+        if (existingLower.includes(aiProdLower) || aiProdLower.includes(existingLower)) return true;
+        const existingNick = require('../decisionTree').getProductNickname(i.product)?.toLowerCase();
+        const aiNick = require('../decisionTree').getProductNickname(aiItem.product)?.toLowerCase();
+        if (existingNick && aiNick && existingNick === aiNick) return true;
+        return false;
+      });
       if (existing) {
         if (!existing.size && aiItem.size) existing.size = normalizeSize(aiItem.size);
         if (!existing.color && aiItem.color) existing.color = aiItem.color;
@@ -275,12 +297,32 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
           product: aiItem.product,
           size: aiItem.size ? normalizeSize(aiItem.size) : null,
           color: aiItem.color || null,
-          issue: aiItem.issue && aiItem.issue !== 'unclear' ? aiItem.issue : (intake.issue_type || null),
+          issue: aiItem.issue && aiItem.issue !== 'unclear' ? aiItem.issue : (intake._applyIssueToNewItems || intake.issue_type || null),
           desired_size: aiItem.desired_size ? normalizeSize(aiItem.desired_size) : null,
           resolved_size: null, // Let the decision tree handle confirmation (checks intermediates)
           resolved_product: aiItem.desired_product || null,
           _variant_modifier: desiredMod || sizeMod || null,
         });
+      }
+    }
+  }
+
+  // When parser returns no items but the message clarifies fit direction,
+  // apply it to any unresolved item with a vague issue (doesnt_fit, product_not_working, etc.)
+  if ((!parsed.items || parsed.items.length === 0) && intake.items.length > 0) {
+    const msgLower = (messageText || '').toLowerCase();
+    let clarifiedIssue = null;
+    if (/too tight|too small|too snug|waist.*tight|tight.*waist/.test(msgLower)) clarifiedIssue = 'close_fit_tight';
+    else if (/too loose|too big|too large|waist.*loose|loose.*waist|baggy|bunching/.test(msgLower)) clarifiedIssue = 'close_fit_loose';
+    else if (/a bit tight|slightly tight|little tight/.test(msgLower)) clarifiedIssue = 'close_fit_tight';
+    else if (/a bit loose|slightly loose|little loose/.test(msgLower)) clarifiedIssue = 'close_fit_loose';
+
+    if (clarifiedIssue) {
+      const vagueIssues = new Set(['doesnt_fit', 'product_not_working', 'unclear', 'none']);
+      for (const item of intake.items) {
+        if (!item.resolved_size && vagueIssues.has(item.issue)) {
+          item.issue = clarifiedIssue;
+        }
       }
     }
   }
@@ -619,6 +661,36 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         }
       }
       intake.items.push(...itemsToAdd);
+    }
+  }
+
+  // STEP 3e: Body group ambiguity check
+  // When customer says "these" or "everything" without specifying products, and the order
+  // has items across different body groups (tops vs bottoms), ask which items they mean.
+  // Auto-assume all only when items are in the same body group.
+  const { classifyProduct: classifyProd } = require('../decisionTree');
+  if (!existingIntake && intake.items.length > 1 && !intake._bodyGroupConfirmed) {
+    const ACCESSORY_CATEGORIES = new Set(['accessory', 'chest_pads', null, undefined]);
+    const nonAccessoryItems = intake.items.filter(i => {
+      const cat = classifyProd(i.product);
+      return !ACCESSORY_CATEGORIES.has(cat);
+    });
+    if (nonAccessoryItems.length > 1) {
+      const bodyGroups = new Set();
+      for (const item of nonAccessoryItems) {
+        const cat = classifyProd(item.product) || '';
+        if (cat.includes('top') || cat.includes('bra')) bodyGroups.add('top');
+        else if (cat === 'onepiece') bodyGroups.add('onepiece');
+        else bodyGroups.add('bottom'); // underwear_bottom, swim_bottom
+      }
+      if (bodyGroups.size > 1) {
+        // Multiple body groups — preserve issue context but clear items to ask which ones
+        const preservedIssue = nonAccessoryItems[0]?.issue || intake.issue_type;
+        intake.items = [];
+        intake._needsItemClarification = true;
+        intake._preservedIssue = preservedIssue;
+        intake._preservedMessage = intake._latestMessage;
+      }
     }
   }
 
