@@ -1154,11 +1154,84 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.audit = `Measurement lookup: ${m.value} ${unit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
             } else {
-              rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              const measureLoc2 = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
-              rx.response_text = `The measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check? It should be measured ${measureLoc2}.`;
-              rx.audit = `Measurement lookup: ${m.value} ${unit} in ${chartCategory} — no match found`;
-              prescription.still_needed.push(`measurement for ${item.product}`);
+              // No match in current product's chart — check if measurement fits a different
+              // size system (e.g. youth product but adult measurement, or vice versa).
+              // Try the alternate chart (kids↔adult) for the same product type.
+              const altChartCategory = isKidsM
+                ? chartCategory.replace('kids_', 'adult_')
+                : chartCategory.replace('adult_', 'kids_');
+              let altMatch = null;
+              try {
+                const { data: altMatches } = await supabase.rpc('find_size_by_measurement', {
+                  p_chart_category: altChartCategory,
+                  p_measurement_type: measureType,
+                  p_value: m.value,
+                  p_unit: unit,
+                });
+                if (altMatches?.length) altMatch = altMatches[0];
+              } catch (e) { /* alt chart lookup failed */ }
+
+              if (altMatch) {
+                // Measurement matches the other size system — recommend switching product
+                const altIsAdult = altChartCategory.startsWith('adult_');
+                const altSizeLabel = altMatch.size_label;
+
+                // Find the right adult/youth product to recommend
+                // Look for an active product in the same general category with the right size system
+                const currentBodyType = isTopM ? 'top' : 'bottom';
+                const altProducts = Object.values(_activeProducts).filter(p => {
+                  if (altIsAdult) {
+                    // Need an adult product — one that has letter sizes
+                    return (currentBodyType === 'bottom'
+                      ? (p.category === 'underwear_bottom' || p.category === 'swim_bottom')
+                      : (p.category === 'underwear_top' || p.category === 'swim_top'))
+                      && LETTER_SIZES.includes(normalizeSize(altSizeLabel));
+                  } else {
+                    // Need a youth product — one that has numeric sizes
+                    return (currentBodyType === 'bottom'
+                      ? (p.category === 'underwear_bottom')
+                      : (p.category === 'underwear_top'))
+                      && NUMERIC_SIZES.includes(normalizeSize(altSizeLabel));
+                  }
+                });
+
+                // Default recommendation per category
+                const categoryDefaults = {
+                  'underwear_bottom': 'AJ',
+                  'underwear_top': 'Brooke',
+                  'swim_bottom': 'Ruby',
+                  'swim_top': 'Mia',
+                  'onepiece': 'Sky',
+                };
+                const itemCat = catM || (currentBodyType === 'bottom' ? 'underwear_bottom' : 'underwear_top');
+                const altCat = altIsAdult
+                  ? itemCat.replace('kids_', '').replace(/^swim_/, 'underwear_') // kids swim → adult underwear
+                  : itemCat;
+                const defaultNick = categoryDefaults[altCat] || categoryDefaults[itemCat];
+                const recommendedProduct = (defaultNick && altProducts.find(p => p.nickname === defaultNick))
+                  || altProducts[0];
+                const recName = recommendedProduct?.nickname || (altIsAdult ? 'adult underwear' : 'youth underwear');
+                const mDisplay = unit === 'inches' ? `${m.value}"` : `${m.value} ${unit}`;
+
+                rx.state = 'AWAITING_SIZE_CONFIRMATION';
+                // Count how many items of this product are being exchanged
+                const sameProductCount = intake.items.filter(i => i.product === item.product).length;
+                const qtyText = sameProductCount > 1 ? `${sameProductCount} pairs` : 'one';
+                const productContext = isKidsM
+                  ? `The ${nick} is actually our youth line — based on your measurement of ${mDisplay}, I'd recommend our ${recName} in size ${altSizeLabel} instead.`
+                  : `Based on your measurement of ${mDisplay}, I'd recommend the ${recName} in size ${altSizeLabel}.`;
+                rx.response_text = `${productContext} I'll send ${qtyText} out as an exchange.`;
+                rx._product_switch = { from: nick, to: recName, size: altSizeLabel };
+                rx.audit = `Measurement ${m.value} ${unit} doesn't match ${chartCategory} — matches ${altChartCategory} → ${altSizeLabel}. Recommending product switch: ${nick} → ${recName}`;
+                prescription.still_needed.push(`size_confirmation for ${item.product}`);
+              } else {
+                // Doesn't match either chart — ask to re-measure
+                rx.state = 'AWAITING_SIZE_CONFIRMATION';
+                const measureLoc2 = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
+                rx.response_text = `The measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check? It should be measured ${measureLoc2}.`;
+                rx.audit = `Measurement lookup: ${m.value} ${unit} — no match in ${chartCategory} or ${altChartCategory}`;
+                prescription.still_needed.push(`measurement for ${item.product}`);
+              }
             }
           } catch (e) {
             rx.state = 'AWAITING_SIZE_CONFIRMATION';

@@ -575,6 +575,53 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     }
   }
 
+  // STEP 3c: Multi-size expansion
+  // When customer ordered the same product in multiple sizes and says ALL are affected
+  // (e.g. "both are too small"), expand into one intake item per size.
+  if (intake.items.length >= 1 && targetOrder) {
+    const latestMsg = (intake._latestMessage || '').toLowerCase();
+    const allAffected = /both|all|neither|too small|too big|way too|don't fit|dont fit/i.test(latestMsg);
+
+    if (allAffected) {
+      const itemsToAdd = [];
+      for (const intakeItem of intake.items) {
+        if (!intakeItem.product) continue;
+        const intakeProdLower = intakeItem.product.toLowerCase();
+        const intakeNick = require('../decisionTree').getProductNickname(intakeItem.product)?.toLowerCase();
+
+        // Find all order line items for this product in DIFFERENT sizes
+        for (const oi of orderLineItems) {
+          const oiNick = require('../decisionTree').getProductNickname(oi.title)?.toLowerCase();
+          const oiTitleLower = (oi.title || '').toLowerCase();
+          const isSameProduct = (intakeNick && oiNick && intakeNick === oiNick)
+            || (intakeProdLower.length > 2 && oiTitleLower.includes(intakeProdLower));
+          if (!isSameProduct) continue;
+
+          const oiSize = oi._skuSize;
+          if (!oiSize || oiSize === normalizeSize(intakeItem.size)) continue;
+
+          const alreadyExists = intake.items.some(i =>
+            i.product === intakeItem.product && normalizeSize(i.size) === oiSize
+          ) || itemsToAdd.some(i => i.product === intakeItem.product && normalizeSize(i.size) === oiSize);
+
+          if (!alreadyExists) {
+            itemsToAdd.push({
+              product: intakeItem.product,
+              size: oiSize,
+              color: intakeItem.color,
+              issue: intakeItem.issue,
+              desired_size: null,
+              resolved_size: null,
+              resolved_product: null,
+              _variant_modifier: null,
+            });
+          }
+        }
+      }
+      intake.items.push(...itemsToAdd);
+    }
+  }
+
   intake.status = computeIntakeStatus(intake);
 
   // STEP 4: Walk the decision tree
