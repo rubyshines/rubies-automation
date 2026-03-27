@@ -402,9 +402,10 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
           from_product: unresolved.product,
         });
         delete unresolved._pendingStyleSwitch;
-      } else if (parsed.confirmed_size) {
-        const resolvedSize = normalizeSize(parsed.confirmed_size);
+      } else if (parsed.confirmed_size || unresolved._pendingSize) {
+        const resolvedSize = normalizeSize(parsed.confirmed_size || unresolved._pendingSize);
         unresolved.resolved_size = resolvedSize;
+        delete unresolved._pendingSize;
         intake.resolution_sizes.push({ product: unresolved.product, from_size: unresolved.size, to_size: resolvedSize });
       }
     }

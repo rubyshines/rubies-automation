@@ -1104,6 +1104,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
               const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
               rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${mUnit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              if (intakeItem) intakeItem._pendingSize = recommendedSize;
               rx.audit = `Measurement available — lookup: ${m.value} ${mUnit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
               break;
@@ -1197,6 +1198,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
               const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
               rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${unit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              const intakeItemM = intake.items.find(i => i.product === item.product);
+              if (intakeItemM) intakeItemM._pendingSize = recommendedSize;
               rx.audit = `Measurement lookup: ${m.value} ${unit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
             } else {
