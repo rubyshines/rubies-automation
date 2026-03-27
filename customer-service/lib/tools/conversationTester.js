@@ -92,22 +92,6 @@ async function composeAgentResponse(s, previousResponses) {
     return toIdx > fromIdx ? 'up' : toIdx < fromIdx ? 'down' : 'same';
   }
 
-  // Check between-sizes: only when one product exchanged and another in same size+body group kept
-  function checkBetweenSizes(item) {
-    if (resolvedItems.length !== 1) return false;
-    const sameSize = normalizeSize(item.size);
-    const cat = classifyProd(item.product);
-    const bodyGroup = (cat === 'underwear_top' || cat === 'swim_top') ? 'tops' : 'bottoms';
-    const itemProdLower = (item.product || '').toLowerCase();
-    return orderItems.some(oi => {
-      const oiSize = oi.sku ? normalizeSize(oi.sku.split('-').pop()) : null;
-      const oiCat = classifyProd(oi.title);
-      const oiBodyGroup = (oiCat === 'underwear_top' || oiCat === 'swim_top') ? 'tops' : 'bottoms';
-      return oiSize === sameSize && oiBodyGroup === bodyGroup
-        && !oi.title?.toLowerCase().includes(itemProdLower.split(' ')[0]);
-    });
-  }
-
   // Group prescription items by state type
   const exchangeConfirmed = []; // items with resolved_size (ready for order)
   const refundConfirmed = [];   // REFUND_CONFIRMED
@@ -151,17 +135,15 @@ async function composeAgentResponse(s, previousResponses) {
     const nick = getProductNickname(ri.product);
     const dir = getSizeDirection(ri);
     const isSelfDiag = item.self_diagnosed;
-    const isBetween = checkBetweenSizes(ri);
 
     let text;
-    if (isSelfDiag && dir === 'down') {
+    // Prefer the tree's response_text if it has one (e.g. measurement note + delta)
+    if (item.response_text) {
+      text = item.response_text;
+    } else if (isSelfDiag && dir === 'down') {
       text = `You're right, if it's too loose the shaping won't work as well. The next size down should work better.`;
     } else if (isSelfDiag && dir === 'up') {
       text = `You're right, if it's too tight the shaping won't sit comfortably. The next size up should work better.`;
-    } else if (isBetween && dir === 'up') {
-      text = `That's interesting — our sizing is usually consistent across products, so it's possible you're right between sizes. The ${ri.resolved_size} should give ${youHer} a bit more room which should help.`;
-    } else if (isBetween && dir === 'down') {
-      text = `That's interesting — our sizing is usually consistent across products, so it's possible you're right between sizes. The ${ri.resolved_size} should be snugger which should help.`;
     } else if (dir === 'down') {
       text = `For the ${nick}, going one size down sounds right — the ${ri.resolved_size} will be snugger overall.`;
     } else if (dir === 'up') {
@@ -263,6 +245,21 @@ async function composeAgentResponse(s, previousResponses) {
     response += '\n\n' + s.prescription.crossover_note;
   }
 
+  // Multi-item flags — ask about other items in the same size
+  const multiItemFlags = (s.prescription.flags || []).filter(f => f.includes('Would you like to exchange'));
+  if (multiItemFlags.length > 0) {
+    // Extract product names from flags and combine into one question
+    const flagProducts = multiItemFlags.map(f => {
+      const match = f.match(/also has (.+?) in size/);
+      return match ? match[1] : null;
+    }).filter(Boolean);
+    if (flagProducts.length > 0) {
+      const productList = flagProducts.length === 1 ? flagProducts[0]
+        : flagProducts.slice(0, -1).join(', ') + ' and ' + flagProducts[flagProducts.length - 1];
+      response += `\n\nI also see you have ${productList} in the same size — would you like to exchange those too?`;
+    }
+  }
+
   // Donation (combine all returned items)
   if (s.prescription.donation?.text) {
     response += '\n\n' + s.prescription.donation.text;
@@ -298,13 +295,32 @@ async function polishResponse(rawResponse, structured, previousResponses) {
       }
     }
 
+    // Pull tone samples from structured data to ground the voice
+    let toneContext = '';
+    const toneSample = structured.tone_sample;
+    if (toneSample) {
+      toneContext = `\nVOICE REFERENCE — this is how the founder Jamie actually writes to customers. Match this tone:\n> "${toneSample.message}"\n`;
+    }
+
+    // Also pull a few more samples if available (the advisor only fetches 1, but we can get more)
+    try {
+      const supabase = require('../../../shared/supabaseClient').getSupabaseClient();
+      const { data: extraSamples } = await supabase.rpc('get_tone_samples', { p_situation: 'sizing_recommendation', p_limit: 3 });
+      if (extraSamples?.length) {
+        toneContext += '\nMORE EXAMPLES of Jamie\'s actual writing:\n';
+        for (const s of extraSamples.slice(0, 3)) {
+          toneContext += `> "${s.agent_message.substring(0, 200)}"\n`;
+        }
+      }
+    } catch (e) { /* tone table may not exist */ }
+
     const result = await _polishClient.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 500,
       messages: [{
         role: 'user',
         content: `You are polishing a customer service response for RUBIES, a gender-affirming underwear brand. The response was composed by a deterministic system and needs to read naturally while preserving ALL factual content.
-${conversationContext}
+${conversationContext}${toneContext}
 CUSTOMER MESSAGE:
 ${customerMessage}
 
@@ -313,12 +329,13 @@ ${rawResponse}
 
 RULES:
 - Preserve EVERY fact: product names, sizes, prices, addresses, donation partner details
+- NEVER rephrase or reinterpret sizing statements, measurements, or size chart references. If the draft says "the sizing chart puts you in the M range" do NOT change that to "you're between sizes" or any other interpretation. Keep the exact sizing claim.
 - Fix grammar errors
 - Make it flow as one natural message — no awkward paragraph breaks between exchange and refund sections
-- Keep it concise and warm — RUBIES voice is playful, respectful, confident, approachable
-- If the customer said something kind about RUBIES (compliments, "love what you're doing", "keep up the good work", etc.), acknowledge it warmly and briefly even if the draft didn't. This is the ONE exception to adding content.
+- Match Jamie's voice from the examples above. He's warm and direct — no corporate-speak, no AI-sounding phrases like "is the move", "absolutely", "I'd be happy to", "great choice"
+- If the customer said something kind about RUBIES, acknowledge it warmly and briefly even if the draft didn't. This is the ONE exception to adding content.
 - Otherwise do NOT add new information, suggestions, or questions not in the draft
-- NEVER remove order confirmations ("created an exchange order for X"), refund confirmations ("I'll process the return"), or donation info. These are actionable — the customer needs to know what was done.
+- NEVER remove order confirmations, refund confirmations, or donation info — these are actionable
 - Do NOT remove sizing explanations or crossover notes
 - Do NOT add a sign-off (no "Take care", no signature)
 - Do NOT use emojis
@@ -375,7 +392,7 @@ async function handleTestConversation({ customer_email, messages, order_number }
         customerInfo = `${c.email || customer_email} | ${c.country || '?'}`;
         if (c.address) {
           const a = c.address;
-          customerInfo += `\nAddress: ${[a.address1, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}`;
+          customerInfo += `\nAddress: ${[a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}`;
         }
         if (s.order) {
           orderInfo = `Order ${s.order.name} (${s.order.date}):\n`;
@@ -529,7 +546,7 @@ async function handleTestConversation({ customer_email, messages, order_number }
     md += `Customer: ${customer_email}${intake?.name ? ' (' + intake.name + ')' : ''}\n`;
     if (hasExchanges && orderSimulation.address) {
       const a = orderSimulation.address;
-      md += `Ship to: ${[a.address1, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}\n`;
+      md += `Ship to: ${[a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}\n`;
     }
     md += '\n';
     if (hasExchanges) {
@@ -554,7 +571,7 @@ async function handleTestConversation({ customer_email, messages, order_number }
     md += `Customer: ${orderSimulation.customer}${orderSimulation.name ? ' (' + orderSimulation.name + ')' : ''}\n`;
     if (orderSimulation.address) {
       const a = orderSimulation.address;
-      md += `Ship to: ${[a.address1, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}\n`;
+      md += `Ship to: ${[a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ')}\n`;
     }
     md += '\n';
     for (const item of orderSimulation.items) {

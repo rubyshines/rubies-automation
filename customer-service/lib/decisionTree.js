@@ -12,69 +12,66 @@
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const path = require('path');
-const fs = require('fs');
 
 // ---------------------------------------------------------------------------
-// Product config — load from products.config.json (active entries only)
+// Product maps — populated by initCsConfig() from Supabase at server startup.
+// Empty until init is called. Do NOT hardcode products here.
+// Use: npm run cs-manage-product  to add/edit products.
 // ---------------------------------------------------------------------------
 
-function loadProductConfig() {
-  try {
-    const configPath = path.join(__dirname, '..', 'products.config.json');
-    const raw = fs.readFileSync(configPath, 'utf8');
-    const all = JSON.parse(raw);
-    return Object.fromEntries(
-      Object.entries(all).filter(([_, v]) => v.status === 'active')
-    );
-  } catch { return {}; }
-}
+const PRODUCT_NICKNAMES = {};
+const PRODUCT_CATEGORIES = {};
+const PRODUCT_SIZE_OVERRIDES = {};
+let _activeProducts = {};
 
-const _activeProducts = loadProductConfig();
+/**
+ * Load product CS config from Supabase product_cs_config table.
+ * Must be called once at server startup before any exchange operations.
+ * Populates PRODUCT_NICKNAMES, PRODUCT_CATEGORIES, PRODUCT_SIZE_OVERRIDES.
+ */
+async function initCsConfig() {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc('get_cs_product_config');
+  if (error) throw new Error(`[DecisionTree] Failed to load CS config: ${error.message}`);
+  if (!data || data.length === 0) {
+    console.error('[DecisionTree] WARNING: No products in product_cs_config. Run: npm run cs-seed-cs-config');
+    return;
+  }
 
-// ---------------------------------------------------------------------------
-// Product nicknames — short names for customer-facing messages
-// ---------------------------------------------------------------------------
+  // Clear and repopulate (mutate in place to preserve exported references)
+  for (const k of Object.keys(PRODUCT_NICKNAMES)) delete PRODUCT_NICKNAMES[k];
+  for (const k of Object.keys(PRODUCT_CATEGORIES)) delete PRODUCT_CATEGORIES[k];
+  for (const k of Object.keys(PRODUCT_SIZE_OVERRIDES)) delete PRODUCT_SIZE_OVERRIDES[k];
+  for (const k of Object.keys(_activeProducts)) delete _activeProducts[k];
 
-const PRODUCT_NICKNAMES = {
-  'THE AJ NO-TUCK SHAPING UNDERWEAR': 'AJ',
-  'THE AVA SEAMLESS SHAPING BRA': 'Ava',
-  'THE BROOKE SHAPING BRA': 'Brooke',
-  'THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR': 'Charlie',
-  'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM': 'Cheeky',
-  'THE FLO SHAPING DANCE UNDERWEAR': 'Flo',
-  'THE MIA HALTER BIKINI TOP': 'Mia',
-  'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM': 'Ruby',
-  'THE SASSY NO-TUCK SHAPING UNDERWEAR': 'Sassy',
-  'THE SERENA NO-TUCK SHAPING SHORTY SHORT': 'Serena',
-  'THE SKY NO-TUCK SHAPING ONE-PIECE': 'Sky',
-  'THE STELLA HIGH WAISTED SHAPING BIKINI BOTTOM': 'Stella',
-  'THE SUNNY QUEENY TANKINI': 'Queeny',
-  'MAGICAL SHAPING GEL CHEST PADS': 'Magical Chest Pads',
-  'RUBIES SHAPING CHEST PADS': 'Chest Pads',
-  'NO-TUCK SHAPING UNDERWEAR': 'No-Tuck Underwear',
-  'EVERY GIRL DESERVES TO SHINE ADULT TEE': 'Adult Tee',
-  'THE RUBIES BIKINI SET - BIKINI BOTTOM + BIKINI TOP': 'Bikini Set',
-  'THE RUBIES MATCHING SET - UNDERWEAR + BRA': 'Matching Set',
-  'THE RUBIES SHAPING BUNDLE - 3 AJ UNDERWEAR + 1 BIKINI BOTTOM': 'Shaping Bundle',
-  'RUBIES GIFT CARD': 'Gift Card',
-  'PROGRESS PRIDE EARRINGS': 'Pride Earrings',
-  'PROGRESS PRIDE FLAG': 'Pride Flag',
-  'PROGRESS PRIDE PINS': 'Pride Pins',
-};
+  for (const row of data) {
+    _activeProducts[row.product_handle] = {
+      nickname: row.nickname,
+      category: row.category,
+      keywords: row.keywords,
+      deltaWording: row.delta_wording,
+      sizes: row.sizes_override,
+      styleSwitch: row.style_switch,
+    };
 
-// Merge active config products into nicknames.
-// Config only has nickname + keywords (title lives in Shopify).
-// We register the nickname so getProductNickname's THE [NAME] fallback finds it.
-for (const [key, cfg] of Object.entries(_activeProducts)) {
-  // Register all keyword variations so includes-matching works
-  for (const kw of cfg.keywords || [key]) {
-    const upper = `THE ${kw.toUpperCase()}`;
-    // Only add if not already covered by a static entry
-    if (!Object.keys(PRODUCT_NICKNAMES).some(k => k.includes(upper))) {
-      PRODUCT_NICKNAMES[upper] = cfg.nickname;
+    // Populate nickname lookup (keyword-based for fuzzy matching)
+    for (const kw of row.keywords) {
+      // Register multiple prefix patterns so includes-matching works with Shopify titles
+      PRODUCT_NICKNAMES[`THE ${kw.toUpperCase()}`] = row.nickname;
+      PRODUCT_NICKNAMES[`RUBIES ${kw.toUpperCase()}`] = row.nickname;
+      PRODUCT_NICKNAMES[kw.toUpperCase()] = row.nickname;
+      PRODUCT_CATEGORIES[kw] = row.category;
+    }
+
+    // Per-product size overrides (only when non-standard)
+    if (row.sizes_override?.length) {
+      for (const kw of row.keywords) {
+        PRODUCT_SIZE_OVERRIDES[kw] = row.sizes_override;
+      }
     }
   }
+
+  console.error(`[DecisionTree] Loaded ${data.length} products from product_cs_config`);
 }
 
 /**
@@ -147,66 +144,15 @@ const CHEST_PAD_MAP = {
 const ODD_HALF_SIZES = new Set(['7', '9', '11', '13', 'XXS+', 'XS+']);
 
 // ── Product category classification ────────────────────────────────────────
-// Categories determine which size system a product uses.
-// Add new products here instead of matching by regex.
-//
-// Size systems:
+// PRODUCT_CATEGORIES is populated by initCsConfig() from Supabase.
+// Categories determine which size system a product uses:
 //   swim_bottom: kids = even+odd (4-16), adult = letter with plus (XXS+ XS+)
 //   swim_top:    kids = even only (4-16), adult = letter no plus
 //   underwear_bottom: kids = even only (4-16), adult = letter no plus
 //   underwear_top:    kids = even only (6-16), adult = letter no plus
-//   onepiece:    kids = even+odd (4-16), adult = letter with plus (+ Tall variants)
+//   onepiece:    kids = even+odd (4-16), adult = letter with plus
+//   chest_pads:  S, M, L only
 //   accessory:   no sizing rules
-//
-// Derived from actual Shopify catalog (2026-03-25):
-//   Ruby, Stella, Cheeky bikini bottoms, Serena shorts → swim_bottom
-//   Mia halter top, Sunny Queeny tankini → swim_top
-//   AJ, Charlie, Sassy, Flo → underwear_bottom
-//   Brooke bra, Ava bra → underwear_top
-//   Sky one-piece → onepiece
-
-const PRODUCT_CATEGORIES = {
-  // Swim bottoms (even+odd numeric, letter with plus sizes)
-  'ruby':     'swim_bottom',
-  'stella':   'swim_bottom',
-  'cheeky':   'swim_bottom',
-  'serena':   'swim_bottom',
-  'genesis':  'swim_bottom',
-  // Swim tops (even numeric only, letter no plus)
-  'mia':      'swim_top',
-  'queeny':   'swim_top',
-  'sunny':    'swim_top',
-  'tankini':  'swim_top',
-  // Underwear bottoms (even numeric only, letter no plus)
-  'aj':       'underwear_bottom',
-  'charlie':  'underwear_bottom',
-  'sassy':    'underwear_bottom',
-  'flo':      'underwear_bottom',
-  // Underwear tops (even numeric only, letter no plus)
-  'brooke':   'underwear_top',
-  'ava':      'underwear_top',
-  // One-piece (even+odd numeric, letter with plus, tall variants)
-  'sky':      'onepiece',
-  'one-piece': 'onepiece',
-  // Chest pads (sized by bra/top size: S=Youth 6-10/Adult XXS, M=Youth 12-16/Adult XS-L, L=Adult 1X-4X)
-  'chest pad': 'chest_pads',
-  'pad':       'chest_pads',
-  // Accessories (not sizeable)
-  'gift card': 'accessory',
-  'earring':  'accessory',
-  'pins':     'accessory',
-  'flag':     'accessory',
-  'tee':      'accessory',
-  'bundle':   'accessory',
-  'set':      'accessory',
-};
-
-// Merge active config products into categories
-for (const cfg of Object.values(_activeProducts)) {
-  for (const kw of cfg.keywords || []) {
-    PRODUCT_CATEGORIES[kw] = cfg.category;
-  }
-}
 
 function classifyProduct(productName) {
   if (!productName) return null;
@@ -224,20 +170,46 @@ const FULL_NUMERIC_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 // Which categories use letter sizes with plus (XXS+, XS+)?
 const PLUS_LETTER_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 
-// Per-product size overrides (from config — for products with non-standard ranges)
-const PRODUCT_SIZE_OVERRIDES = {};
-for (const cfg of Object.values(_activeProducts)) {
-  if (cfg.sizes && cfg.sizes.length > 0) {
-    for (const kw of cfg.keywords || []) {
-      PRODUCT_SIZE_OVERRIDES[kw] = cfg.sizes;
+/**
+ * Parse a size string into base size + variant modifier (e.g. "L Tall" → { base: "L", modifier: "Tall" }).
+ * Handles: "LT", "L Tall", "L TALL", "MT", "M Tall", "2X Tall", "S Regular", etc.
+ */
+function parseSizeVariant(size) {
+  if (!size) return { base: null, modifier: null };
+  const s = size.toString().trim();
+  // Match patterns like "LT", "MT", "2XT" (single letter T suffix on known sizes)
+  const codedMatch = s.match(/^(\d{0,1}X?[SMLX]{0,2}\+?)T$/i);
+  if (codedMatch) {
+    const base = codedMatch[1].toUpperCase();
+    // Make sure the base is a real size (not just random letters ending in T)
+    const normalized = SIZE_ALIASES[base] || base;
+    if (LETTER_SIZES.includes(normalized) || NUMERIC_SIZES.includes(normalized)) {
+      return { base: normalized, modifier: 'Tall' };
     }
   }
+  // Match "L Tall", "M Regular", "2X Tall", etc.
+  const spaceMatch = s.match(/^(.+?)\s+(Tall|Regular|Long)$/i);
+  if (spaceMatch) {
+    return { base: spaceMatch[1].trim().toUpperCase(), modifier: spaceMatch[2].charAt(0).toUpperCase() + spaceMatch[2].slice(1).toLowerCase() };
+  }
+  return { base: s, modifier: null };
 }
 
 function normalizeSize(size) {
   if (!size) return null;
-  const s = size.toString().trim().toUpperCase();
+  const { base, modifier } = parseSizeVariant(size);
+  if (!base) return null;
+  const s = base.toUpperCase();
   return SIZE_ALIASES[s] || s;
+}
+
+/**
+ * Extract the variant modifier (Tall/Regular) from a size string, if any.
+ * Returns null if no modifier present.
+ */
+function getSizeModifier(size) {
+  if (!size) return null;
+  return parseSizeVariant(size).modifier;
 }
 
 function getSizeList(size, productName) {
@@ -287,6 +259,28 @@ function getAdjacentSizes(currentSize, direction, count = 2, productName) {
     }
   }
   return results;
+}
+
+/**
+ * Find sizes between fromSize and toSize (exclusive of both endpoints).
+ * Returns [] if there are no intermediates (e.g. even-only products going 10→12).
+ */
+function getIntermediateSizes(fromSize, toSize, productName) {
+  const from = normalizeSize(fromSize);
+  const to = normalizeSize(toSize);
+  const list = getSizeList(from, productName);
+  if (!list || !list.includes(to)) return [];
+
+  const fromIdx = list.indexOf(from);
+  const toIdx = list.indexOf(to);
+  if (Math.abs(fromIdx - toIdx) <= 1) return []; // adjacent, no intermediates
+
+  const step = toIdx > fromIdx ? 1 : -1;
+  const result = [];
+  for (let i = fromIdx + step; i !== toIdx; i += step) {
+    result.push(list[i]);
+  }
+  return result;
 }
 
 function getGradingDelta(fromSize, toSize) {
@@ -564,14 +558,20 @@ function prescribeOrderIdentification(intake, context) {
       const normalizedSize = normalizeSize(intakeItem.size);
       const intakePC = classifyProduct(intakeItem.product);
       const intakeBodyGroup = (intakePC === 'accessory' || intakePC === 'chest_pads') ? 'accessory'
-        : (intakePC === 'underwear_top' || intakePC === 'swim_top') ? 'tops'
-        : 'bottoms';
+        : intakePC === 'onepiece' ? 'onepiece'
+        : intakePC === 'swim_bottom' ? 'swim_bottoms'
+        : intakePC === 'swim_top' ? 'swim_tops'
+        : intakePC === 'underwear_top' ? 'underwear_tops'
+        : 'underwear_bottoms';
 
       for (const oi of orderItems) {
         const oiPC = classifyProduct(oi.title);
         const oiBodyGroup = (oiPC === 'accessory' || oiPC === 'chest_pads') ? 'accessory'
-          : (oiPC === 'underwear_top' || oiPC === 'swim_top') ? 'tops'
-          : 'bottoms';
+          : oiPC === 'onepiece' ? 'onepiece'
+          : oiPC === 'swim_bottom' ? 'swim_bottoms'
+          : oiPC === 'swim_top' ? 'swim_tops'
+          : oiPC === 'underwear_top' ? 'underwear_tops'
+          : 'underwear_bottoms';
         if (intakeBodyGroup !== oiBodyGroup) continue; // Different body group
         if (intakeBodyGroup === 'accessory') continue; // Never flag accessories for multi-item exchange
 
@@ -580,10 +580,13 @@ function prescribeOrderIdentification(intake, context) {
         if (oiSize !== normalizedSize) continue; // Different size
 
         // Is this the SAME product (including different colors)?
-        // Use word-level matching: all significant words in intake product appear in order title
+        // Check nickname match first (most reliable), then fall back to word-level matching
+        const intakeNick = getProductNickname(intakeItem.product)?.toLowerCase();
+        const oiNickSame = getProductNickname(oi.title)?.toLowerCase();
         const intakeWords = (intakeItem.product || '').toLowerCase().split(/\s+/).filter(w => w.length > 1 && w !== 'the');
         const oiTitleLower = (oi.title || '').toLowerCase();
-        const isSameProduct = intakeWords.length > 0 && intakeWords.every(w => oiTitleLower.includes(w));
+        const isSameProduct = (intakeNick && oiNickSame && intakeNick === oiNickSame)
+          || (intakeWords.length > 0 && intakeWords.every(w => oiTitleLower.includes(w)));
 
         if (isSameProduct) {
           // Same product, same size — assume customer means all of them
@@ -604,13 +607,14 @@ function prescribeOrderIdentification(intake, context) {
               || iProd.includes(oiNick || '')
               || iNick === oiNick;
           });
-          if (!alreadyTracked) {
+          // Don't flag if customer explicitly compared products (they're already aware)
+          if (!alreadyTracked && !intake._crossProductComparison) {
             prescription.actions.push({
               type: 'multi_item_flag',
               text: `Order also has ${getProductNickname(oi.title)} in size ${oiSize} — ask: "Would you like to exchange that one too?"`,
             });
             prescription.audit.push(`Multi-item flag: ${oi.title} size ${oiSize} (different product, same size + category)`);
-            break; // Only flag once per category
+            // Don't break — flag all untracked items in the same body group
           }
         }
       }
@@ -728,6 +732,11 @@ function prescribeActionClassification(intake) {
     } else if (item.issue === 'tight_legs') {
       classified.action = 'style_switch';
       classified.audit = 'Tight legs — recommend alternative style';
+    } else if (item.issue === 'too_short' || item.issue === 'too_long') {
+      // One-piece height variant issue — Regular ↔ Tall
+      classified.action = 'height_variant_check';
+      classified.heightDirection = item.issue === 'too_short' ? 'tall' : 'regular';
+      classified.audit = `One-piece ${item.issue === 'too_short' ? 'too short → check if Tall needed' : 'too long → check if Regular needed'}`;
     } else if (item.issue === 'onepiece_fit') {
       classified.action = 'onepiece_check';
       classified.audit = 'One-piece fit — need waist + height';
@@ -830,19 +839,137 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // Check if customer already requested a specific size
         const intakeItem = intake.items.find(i => i.product === item.product);
         const desiredSize = intakeItem?.resolved_size || intakeItem?.desired_size;
-
         if (desiredSize) {
+          // If customer provided a measurement, cross-reference with the size chart
+          let measurementNote = null;
+          if (intake.measurement && intake.measurement.value) {
+            const mVal = intake.measurement.value;
+            const mUnit = intake.measurement.unit === 'cm' ? 'cm' : 'inches';
+            const isKidsM = NUMERIC_SIZES.includes(currentSize);
+            const isTopM = itemCategory === 'underwear_top' || itemCategory === 'swim_top';
+            const isOnepieceM = itemCategory === 'onepiece';
+            const isSwimM = itemCategory === 'swim_bottom' || itemCategory === 'swim_top';
+            let chartCat;
+            if (isOnepieceM) chartCat = isKidsM ? 'kids_onepiece' : 'adult_onepiece';
+            else if (isTopM) chartCat = isKidsM ? 'kids_tops' : 'adult_tops';
+            else if (isSwimM) chartCat = isKidsM ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
+            else chartCat = isKidsM ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
+            const measureType = isTopM ? 'chest' : 'waist';
+
+            try {
+              const supabase = getSupabaseClient();
+              const { data: sizeMatches } = await supabase.rpc('find_size_by_measurement', {
+                p_chart_category: chartCat,
+                p_measurement_type: measureType,
+                p_value: mVal,
+                p_unit: mUnit,
+              });
+              const chartSize = sizeMatches?.[0]?.size_label || null;
+              const mDisplay = mUnit === 'inches' ? `${mVal}"` : `${mVal} cm`;
+
+              if (chartSize === currentSize) {
+                // Chart says current size should fit — but customer says it doesn't
+                measurementNote = `Based on your measurement of ${mDisplay} the sizing chart puts you in the ${currentSize} range. The chart works for most but there can sometimes be exceptions.`;
+              } else if (chartSize === normalizeSize(desiredSize)) {
+                // Chart agrees with their requested size
+                measurementNote = `Based on your measurement of ${mDisplay} the ${normalizeSize(desiredSize)} looks like a good fit.`;
+              } else if (chartSize) {
+                // Chart suggests a different size
+                measurementNote = `Based on your measurement of ${mDisplay} the chart suggests a size ${chartSize}.`;
+              }
+            } catch (e) { /* chart lookup failed — continue without note */ }
+          }
+
           // Customer asked for a specific size — check if delta is ≤2" (confident) or >2" (confirm)
           const delta = getCumulativeDelta(currentSize, normalizeSize(desiredSize));
           if (delta && delta.inches <= 2) {
-            // Small jump (≤1 even size) — process immediately
-            rx.state = 'CONFIRMED';
-            if (intakeItem && !intakeItem.resolved_size) intakeItem.resolved_size = normalizeSize(desiredSize);
-            if (!intake.resolution_sizes.some(r => r.product === item.product)) {
-              intake.resolution_sizes.push({ product: item.product, from_size: currentSize, to_size: normalizeSize(desiredSize) });
+            // Check if this product has half-steps (swim_bottom, onepiece).
+            // These products have more size options (odd sizes, plus sizes) so we always
+            // present options and confirm — even for adjacent sizes — because the customer
+            // may not know about nearby alternatives.
+            const hasHalfSteps = FULL_NUMERIC_CATEGORIES.has(itemCategory) || PLUS_LETTER_CATEGORIES.has(itemCategory);
+
+            if (hasHalfSteps) {
+              // Half-step product — present the requested size + one more in the same direction
+              const intermediates = getIntermediateSizes(currentSize, normalizeSize(desiredSize), item.product);
+              const beyondDesired = getAdjacentSizes(normalizeSize(desiredSize), direction, 1, item.product);
+              const allOptions = [...intermediates, normalizeSize(desiredSize), ...beyondDesired];
+              // Deduplicate and cap at 2 options max
+              const seen = new Set();
+              const uniqueOptions = allOptions.filter(s => { if (seen.has(s)) return false; seen.add(s); return true; }).slice(0, 2);
+
+              // Preserve variant modifier (Tall/Regular) for one-pieces
+              const variantMod = getSizeModifier(desiredSize) || getSizeModifier(item.size) || intakeItem?._variant_modifier || null;
+              const modSuffix = variantMod ? ` ${variantMod}` : '';
+              const currentDisplay = `${currentSize}${modSuffix}`;
+
+              const optionDetails = uniqueOptions.map(s => {
+                const d = getCumulativeDelta(currentSize, s) || { inches: 1, cm: 2.5 };
+                const unit = useInches ? `${d.inches}"` : `${d.cm} cm`;
+                const more = direction === 'up' ? 'more' : 'less';
+                const sizeDisplay = `${s}${modSuffix}`;
+                let description;
+                switch (productType) {
+                  case 'bra': description = `which has the bra band ${unit} ${direction === 'up' ? 'longer' : 'shorter'} than the ${currentDisplay}`; break;
+                  case 'bikini_top': description = `which has the bikini top band ${unit} ${direction === 'up' ? 'longer' : 'shorter'} than the ${currentDisplay}`; break;
+                  case 'top': description = `which has ${unit} ${more} fabric around the torso compared to the ${currentDisplay}`; break;
+                  default: description = `which has ${unit} ${more} fabric around the waist compared to the ${currentDisplay}`; break;
+                }
+                return { size: s, delta: d, formatted: `${sizeDisplay} ${description}` };
+              });
+
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.options = optionDetails;
+
+              // For swim/onepiece, suggest measurement when there's any sizing uncertainty
+              // "too big/small", "close fit", or "way off" — fit is critical for swimwear
+              const issueText = (intakeItem?.issue || '').toLowerCase();
+              const isUncertain = /too_loose|too_tight|close_fit_loose|close_fit_tight|way_off/.test(issueText);
+              const measureType = (productType === 'bra' || productType === 'bikini_top' || productType === 'top') ? 'chest' : 'waist';
+              const measureLocation = measureType === 'waist' ? 'around the belly and just under the belly button' : 'around the chest where a bra band would sit';
+              const isOnepiece = itemCategory === 'onepiece';
+              const heightAsk = isOnepiece ? ' and your height' : '';
+              const heightReason = isOnepiece ? ' and whether Regular or Tall would work best' : '';
+              const thirdPartyMeasure = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : 'the ';
+              const measureAsk = isUncertain
+                ? ` If you send me ${thirdPartyMeasure}measurement ${measureLocation}${heightAsk} I can double check the sizing${heightReason}.`
+                : (isOnepiece ? ` If you send me ${thirdPartyMeasure}height I can also confirm whether Regular or Tall is the right fit.` : '');
+
+              // Bridge: acknowledge the customer's requested size and explain why we're showing options
+              const requestedIsFirst = uniqueOptions[0] === normalizeSize(desiredSize);
+              const desiredDisplay = `${normalizeSize(desiredSize)}${modSuffix}`;
+              const bridge = requestedIsFirst
+                ? ''
+                : `Since we have half sizes, there are a couple of options close to the ${desiredDisplay} you asked about. `;
+              const measurePre = measurementNote ? `${measurementNote} ` : '';
+              // Don't ask for measurement again if they already provided one
+              const finalMeasureAsk = intake.measurement ? '' : measureAsk;
+              rx.response_text = `${measurePre}${bridge}The ${optionDetails.map(o => o.formatted).join(', and the ')}. Which would you prefer?${finalMeasureAsk}`;
+              rx.audit = `Specific size requested: ${currentSize} → ${desiredSize} (${delta.inches}" delta, ≤2" — half-step product, presenting options: ${uniqueOptions.join(', ')}${measurementNote ? ' + measurement note' : ''}${isUncertain && !intake.measurement ? ' + measurement ask' : ''})`;
+              prescription.still_needed.push(`size_confirmation for ${item.product}`);
+            } else {
+              // No half-steps (underwear/tops) — single step, auto-confirm with delta as FYI
+              rx.state = 'CONFIRMED';
+              if (intakeItem && !intakeItem.resolved_size) intakeItem.resolved_size = normalizeSize(desiredSize);
+              if (!intake.resolution_sizes.some(r => r.product === item.product)) {
+                intake.resolution_sizes.push({ product: item.product, from_size: currentSize, to_size: normalizeSize(desiredSize) });
+              }
+              const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
+              let deltaAside;
+              switch (productType) {
+                case 'bra': deltaAside = `the bra band will be ${unit} ${direction === 'up' ? 'longer' : 'shorter'} than the ${currentSize}`; break;
+                case 'bikini_top': deltaAside = `the bikini top band will be ${unit} ${direction === 'up' ? 'longer' : 'shorter'} than the ${currentSize}`; break;
+                case 'top': deltaAside = `that's ${unit} ${direction === 'up' ? 'more' : 'less'} fabric around the torso compared to the ${currentSize}`; break;
+                default: deltaAside = `that's ${unit} ${direction === 'up' ? 'more' : 'less'} fabric around the waist compared to the ${currentSize}`; break;
+              }
+              // Build the FYI text for the auto-confirmed exchange
+              const deltaDesc = `${unit} ${direction === 'up' ? 'more' : 'less'} fabric around the waist compared to the ${currentSize}`;
+              const fyi = [];
+              if (measurementNote) fyi.push(measurementNote);
+              fyi.push(`The ${normalizeSize(desiredSize)} has ${deltaDesc}.`);
+              rx.response_text = fyi.join(' ');
+              rx.audit = `Specific size requested: ${currentSize} → ${desiredSize} (${delta.inches}" delta, ≤2", no half-steps — auto-confirmed${measurementNote ? ', measurement note included' : ''})`;
             }
-            rx.response_text = null;
-            rx.audit = `Specific size requested: ${currentSize} → ${desiredSize} (${delta.inches}" delta, ≤2" — auto-confirmed)`;
           } else if (delta) {
             // Big jump (>2") — confirm with fabric delta
             const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
@@ -947,10 +1074,10 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const more = direction === 'up' ? 'more' : 'less';
           let description;
           switch (productType) {
-            case 'bra': description = `which has the bra band ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
-            case 'bikini_top': description = `which has the bikini top band ${unit} ${direction === 'up' ? 'longer' : 'shorter'}`; break;
-            case 'top': description = `which has ${unit} ${more} fabric around the torso`; break;
-            default: description = `which has ${unit} ${more} fabric around the waist`; break;
+            case 'bra': description = `which has the bra band ${unit} ${direction === 'up' ? 'longer' : 'shorter'} than the ${currentSize}`; break;
+            case 'bikini_top': description = `which has the bikini top band ${unit} ${direction === 'up' ? 'longer' : 'shorter'} than the ${currentSize}`; break;
+            case 'top': description = `which has ${unit} ${more} fabric around the torso compared to the ${currentSize}`; break;
+            default: description = `which has ${unit} ${more} fabric around the waist compared to the ${currentSize}`; break;
           }
           return { size: s, delta, formatted: `${s} ${description}` };
         });
@@ -971,13 +1098,19 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           rx.state = 'AWAITING_SIZE_CONFIRMATION';
           rx.options = optionDetails;
 
+          // For one-pieces, also ask for height to confirm Regular vs Tall
+          const isOnepieceOpt = itemCategory === 'onepiece';
+          const heightNote = isOnepieceOpt
+            ? ` If you send me ${isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : 'your '}height I can also confirm whether Regular or Tall is the right fit.`
+            : '';
+
           if (adjacent.length === 1) {
-            rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted} — shall I set that up?`;
+            rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted} — shall I set that up?${heightNote}`;
           } else {
-            rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted}, or ${optionDetails[1].formatted}. Which sounds better?`;
+            rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted}, or ${optionDetails[1].formatted}. Which sounds better?${heightNote}`;
           }
 
-          rx.audit = `Close fit ${direction}: ${currentSize} → ${adjacent.join(' or ')} | offered with fabric delta, awaiting confirmation`;
+          rx.audit = `Close fit ${direction}: ${currentSize} → ${adjacent.join(' or ')} | offered with fabric delta, awaiting confirmation${isOnepieceOpt ? ' + height ask' : ''}`;
           prescription.still_needed.push(`size_confirmation for ${item.product}`);
         }
         break;
@@ -1039,8 +1172,12 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const unit = useInches ? 'inches' : 'cm';
           const measureLocation = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
           const thirdPartyPrefix = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
-          rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation} I can help recommend the right size.`;
-          rx.audit = `Way off — asking for ${measureType} measurement`;
+          const catWayOff = classifyProduct(item.product);
+          const isOnepieceWayOff = catWayOff === 'onepiece';
+          const heightAskWayOff = isOnepieceWayOff ? ' and your height' : '';
+          const heightReasonWayOff = isOnepieceWayOff ? ' and whether Regular or Tall would work best' : '';
+          rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation}${heightAskWayOff} I can help recommend the right size${heightReasonWayOff}.`;
+          rx.audit = `Way off — asking for ${measureType} measurement${isOnepieceWayOff ? ' + height' : ''}`;
           prescription.still_needed.push(`measurement for ${item.product}`);
         }
         break;
@@ -1077,6 +1214,134 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         rx.response_text = `If ${theyRef} ${theyRef === 'she' ? 'is' : 'are'} feeling the shaping is not working it's often due to two reasons: either the fit is off or there is a mismatch of expectations.\n\nIn terms of the fit, unlike "tucking" bottoms they are intended to be worn comfortably. Not too tight or too loose. If you send me ${measureAsk} around the belly and just under the belly button I can double check the sizing.\n\nIn terms of expectations, our shaping bottoms are meant to reshape the front area to create a feminine mound. This is in contrast to "tucking" or "gaffing" underwear which completely flattens the area. This is why our shaping bottoms are very comfortable and can be worn for all activities.\n\nUltimately ${comfortRef} so let me know what ${theyRef === 'she' ? 'she' : 'you'} would like to do next. I'd be happy to send out another size to try.`;
         rx.audit = 'Expectation mismatch — two-branch explanation (fit vs expectations)';
         prescription.still_needed.push(`decision for ${item.product}`);
+        break;
+      }
+
+      case 'height_variant_check': {
+        // One-piece height variant issue: too short → need Tall, too long → need Regular
+        // Ask for height + waist so we can make a complete recommendation
+        const heightNick = getProductNickname(item.product);
+        const heightIntakeItem = intake.items.find(i => i.product === item.product);
+        const currentMod = heightIntakeItem?._variant_modifier || null;
+        const targetMod = item.heightDirection === 'tall' ? 'Tall' : 'Regular';
+
+        if (intake.height_measurement && intake.measurement) {
+          // We have both measurements — look up the right size + variant
+          const waistSize = normalizeSize(item.size);
+          const isKidsH = NUMERIC_SIZES.includes(waistSize);
+          const chartCat = isKidsH ? 'kids_onepiece' : 'adult_onepiece';
+
+          try {
+            const supabase = getSupabaseClient();
+            // Look up waist size
+            const { data: waistMatches } = await supabase.rpc('find_size_by_measurement', {
+              p_chart_category: chartCat,
+              p_measurement_type: 'waist',
+              p_value: intake.measurement.value,
+              p_unit: intake.measurement.unit === 'cm' ? 'cm' : 'inches',
+            });
+            const recommendedWaist = waistMatches?.[0]?.size_label || waistSize;
+
+            // Look up height variant for the recommended waist size
+            const { data: heightEntries } = await supabase
+              .from('size_charts')
+              .select('size_label, notes, min_inches, max_inches, min_cm, max_cm')
+              .eq('chart_category', chartCat)
+              .eq('measurement_type', 'height')
+              .eq('size_label', recommendedWaist);
+
+            const tallEntry = heightEntries?.find(e => e.notes === 'Tall');
+            const regEntry = heightEntries?.find(e => e.notes === 'Regular');
+            const heightVal = intake.height_measurement.value;
+            const heightUnit = intake.height_measurement.unit === 'cm' ? 'cm' : 'inches';
+            const heightInInches = heightUnit === 'cm' ? heightVal / 2.54 : heightVal;
+
+            // Check height against the recommended waist size first, then try adjacent sizes
+            let recommendedVariant = null;
+            let heightMatchSize = recommendedWaist;
+
+            if (tallEntry && heightInInches >= tallEntry.min_inches && heightInInches <= tallEntry.max_inches) {
+              recommendedVariant = 'Tall';
+            } else if (regEntry && heightInInches >= regEntry.min_inches && heightInInches <= regEntry.max_inches) {
+              recommendedVariant = 'Regular';
+            }
+
+            // If height doesn't match at the waist size, check adjacent sizes (±1)
+            if (!recommendedVariant) {
+              const waistList = getSizeList(recommendedWaist, item.product);
+              const waistIdx = waistList?.indexOf(recommendedWaist) ?? -1;
+              const adjacentSizes = [];
+              if (waistIdx > 0) adjacentSizes.push(waistList[waistIdx - 1]);
+              if (waistIdx < (waistList?.length || 0) - 1) adjacentSizes.push(waistList[waistIdx + 1]);
+
+              for (const adjSize of adjacentSizes) {
+                const { data: adjHeightEntries } = await supabase
+                  .from('size_charts')
+                  .select('size_label, notes, min_inches, max_inches')
+                  .eq('chart_category', chartCat)
+                  .eq('measurement_type', 'height')
+                  .eq('size_label', adjSize);
+
+                const adjTall = adjHeightEntries?.find(e => e.notes === 'Tall');
+                const adjReg = adjHeightEntries?.find(e => e.notes === 'Regular');
+                if (adjTall && heightInInches >= adjTall.min_inches && heightInInches <= adjTall.max_inches) {
+                  recommendedVariant = 'Tall';
+                  heightMatchSize = adjSize;
+                  break;
+                } else if (adjReg && heightInInches >= adjReg.min_inches && heightInInches <= adjReg.max_inches) {
+                  recommendedVariant = 'Regular';
+                  heightMatchSize = adjSize;
+                  break;
+                }
+              }
+            }
+
+            if (recommendedVariant && heightMatchSize === recommendedWaist) {
+              // Same waist, just variant swap (or same variant confirmed)
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.response_text = `Based on your measurements, the ${recommendedWaist} ${recommendedVariant} should be the right fit. Shall I set that up?`;
+              rx.audit = `Height check: ${waistSize} ${currentMod || 'Regular'} → ${recommendedWaist} ${recommendedVariant} (measurement-based)`;
+            } else if (recommendedVariant) {
+              // Height matches at a different size — check distance
+              const waistList = getSizeList(waistSize, item.product);
+              const currentIdx = waistList?.indexOf(recommendedWaist) ?? -1;
+              const heightIdx = waistList?.indexOf(heightMatchSize) ?? -1;
+              const sizeDiff = Math.abs(currentIdx - heightIdx);
+
+              if (sizeDiff <= 1) {
+                // Can size up/down 1 for the height — wiggle room in the waist
+                const delta = getCumulativeDelta(recommendedWaist, heightMatchSize);
+                const unit = useInches ? `${delta?.inches || 2}"` : `${delta?.cm || 5} cm`;
+                const moreOrLess = heightIdx > currentIdx ? 'more' : 'less';
+                rx.state = 'AWAITING_SIZE_CONFIRMATION';
+                rx.response_text = `Based on your measurements, the ${heightMatchSize} ${recommendedVariant} would be the best fit for your height. The waist will have ${unit} ${moreOrLess} fabric compared to the ${recommendedWaist}, but there's some wiggle room in the bottoms so it should work well. Shall I set that up?`;
+                rx.audit = `Height check: waist→${recommendedWaist} but height→${heightMatchSize} ${recommendedVariant} (1 size ${moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
+              } else {
+                // Ratio too far off — suggest separates
+                rx.state = 'AWAITING_DECISION';
+                rx.response_text = `Based on your measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini set (top + bottom) would let you pick the right size for each — would you like to explore that option?`;
+                rx.audit = `Height check: waist→${recommendedWaist} but height→${heightMatchSize} ${recommendedVariant} (${sizeDiff} sizes apart) — suggesting separates`;
+              }
+            } else {
+              // Height outside all ranges — suggest separates
+              rx.state = 'AWAITING_DECISION';
+              rx.response_text = `Based on your height, the one-piece might not be the ideal fit. A bikini set (top + bottom) would give you more flexibility on sizing — would you like to explore that option?`;
+              rx.audit = `Height check: height ${heightVal} ${heightUnit} outside all chart ranges — suggesting separates`;
+            }
+          } catch (e) {
+            rx.state = 'AWAITING_SIZE_CONFIRMATION';
+            rx.response_text = `Shall I set up the exchange for the ${heightNick} in ${waistSize} ${targetMod}?`;
+            rx.audit = `Height check: measurement lookup failed (${e.message}) — confirming requested variant`;
+          }
+          prescription.still_needed.push(`size_confirmation for ${item.product}`);
+        } else {
+          // Need measurements — ask for both height and waist
+          rx.state = 'AWAITING_MEASUREMENT';
+          const thirdPartyPrefix = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
+          rx.response_text = `For the one-piece, if you send me ${thirdPartyPrefix}height and the measurement around the belly just under the belly button, I can recommend the right size and whether Regular or Tall would work best.`;
+          rx.audit = `Height variant issue (${item.heightDirection}) — asking for height + waist measurements`;
+          prescription.still_needed.push(`height_and_waist for ${item.product}`);
+        }
         break;
       }
 
@@ -1191,13 +1456,34 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           rx.response_text = `No problem at all! I'll process the return for the ${nick}.`;
           rx.refund_eligible = eligible;
           rx.audit = `Refund confirmed — customer declined exchange offer. Eligible: ${eligible}.`;
+        } else if (!intake._returnProbed?.[item.product]) {
+          // First time — probe what didn't work before offering swap
+          // If we understand the issue, we might be able to fix it with a size/style change
+          rx.state = 'AWAITING_CLARIFICATION';
+          const returnCat = classifyProduct(item.product);
+          const isOnepieceReturn = returnCat === 'onepiece';
+          const thirdPartyWho = isThirdParty ? `for your ${intake.third_party_label || 'child'} ` : '';
+          const thirdPartyPossessive = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
+
+          if (isOnepieceReturn) {
+            // One-piece: offer to check sizing with measurements
+            rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the one-piece? If it's a fit issue, feel free to send ${thirdPartyPossessive || 'the '}waist measurement around the belly just under the belly button and ${thirdPartyPossessive || ''}height — I can check the sizing and we can always send out a new size. And if the one-piece isn't the right fit we can always find an alternative that works.`;
+          } else if (isThirdParty) {
+            rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${nick}? Was it a sizing issue or something else?`;
+          } else {
+            rx.response_text = `Can you let me know what didn't work out with the ${nick}? Was it a sizing issue or something else?`;
+          }
+          rx.refund_eligible = eligible;
+          rx.audit = `Return requested — eligible: ${eligible}. Probing what didn't work before offering swap.`;
+          if (!intake._returnProbed) intake._returnProbed = {};
+          intake._returnProbed[item.product] = true;
+          prescription.still_needed.push(`return_reason for ${item.product}`);
         } else {
-          // First time — offer a free exchange
+          // Already probed — now offer the free exchange
           rx.state = 'AWAITING_DECISION';
           rx.response_text = `Would you like to swap the ${nick} for something else from our catalog? We'd ship it out for free — could be a different style or color. Totally up to you though — if you'd prefer a refund we can do that too.`;
           rx.refund_eligible = eligible;
           rx.audit = `Return requested — eligible: ${eligible}. Offering free exchange before refund.`;
-          // Track that we offered for this specific product
           if (!intake._exchangeOffered) intake._exchangeOffered = {};
           intake._exchangeOffered[item.product] = true;
           if (intakeItemRef) intakeItemRef._pendingTrySizeSwap = true;
@@ -1480,6 +1766,24 @@ async function walkTree(intake, context) {
           self_diagnosed: item.self_diagnosed || false,
         });
       }
+      // Add measurement note as separate response part (fires even when item is auto-confirmed)
+      if (item._measurement_note) {
+        result.response_parts.push({
+          type: 'measurement_note',
+          priority: 3, // before delta — sets context
+          text: item._measurement_note,
+          product: item.product,
+        });
+      }
+      // Add delta FYI as separate response part (fires even when item is auto-confirmed)
+      if (item._delta_aside) {
+        result.response_parts.push({
+          type: 'delta_aside',
+          priority: 4,
+          text: item._delta_aside,
+          product: item.product,
+        });
+      }
       // Add crossover note as separate response part (fires even when item is auto-confirmed)
       if (item._crossover_note) {
         result.response_parts.push({
@@ -1505,7 +1809,11 @@ async function walkTree(intake, context) {
   const allConfirmed = intake.items.length > 0 && intake.items.every(i =>
     i.resolved_size || i.issue === 'defect' || refundConfirmedProducts.has(i.product)
   );
-  if (allConfirmed) {
+  // Hold order creation if multi-item flags are pending — wait for customer to respond
+  // about the other items before creating the order
+  const hasMultiItemFlags = result.response_parts.some(p => p.type === 'multi_item_flag');
+  const multiItemAnswered = intake._multiItemAnswered || false;
+  if (allConfirmed && (!hasMultiItemFlags || multiItemAnswered)) {
     const phase5 = prescribeOrderCreation(intake);
     if (phase5) {
       result.response_parts.push({ type: 'create_order', priority: 5, text: phase5.response_text, items: phase5.items });
@@ -1531,7 +1839,7 @@ async function walkTree(intake, context) {
   }
 
   // Determine overall status
-  if (result.still_needed.length === 0 && allConfirmed) {
+  if (result.still_needed.length === 0 && allConfirmed && (!hasMultiItemFlags || multiItemAnswered)) {
     result.status = 'ready';
   } else if (intake.items.length > 0) {
     result.status = 'needs_info';
@@ -1568,7 +1876,11 @@ module.exports = {
   getGradingDelta,
   formatDelta,
   getCumulativeDelta,
-  // Config-driven products
+  getIntermediateSizes,
+  parseSizeVariant,
+  getSizeModifier,
+  // Config-driven products (populated by initCsConfig)
+  initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
 };

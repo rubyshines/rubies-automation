@@ -13,6 +13,27 @@ const assert = require('node:assert/strict');
 // ---------------------------------------------------------------------------
 const supabaseModulePath = require.resolve('../../shared/supabaseClient');
 const mockSupabaseData = { partners: [], sizeMatches: [] };
+
+// Mock product CS config data (normally loaded from product_cs_config table)
+const mockCsConfig = [
+  { product_handle: 'the-aj-no-tuck-shaping-underwear', nickname: 'AJ', category: 'underwear_bottom', keywords: ['aj'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-ava-seamless-shaping-bra', nickname: 'Ava', category: 'underwear_top', keywords: ['ava'], delta_wording: 'bra', sizes_override: null, style_switch: null },
+  { product_handle: 'the-brooke-shaping-bra', nickname: 'Brooke', category: 'underwear_top', keywords: ['brooke'], delta_wording: 'bra', sizes_override: null, style_switch: null },
+  { product_handle: 'the-charlie-no-tuck-extra-cute-shaping-underwear', nickname: 'Charlie', category: 'underwear_bottom', keywords: ['charlie'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-cheeky-no-tuck-shaping-bikini-bottom', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-flo-shaping-dance-underwear', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-mia-halter-bikini-top', nickname: 'Mia', category: 'swim_top', keywords: ['mia'], delta_wording: 'bikini_top', sizes_override: null, style_switch: null },
+  { product_handle: 'the-ruby-no-tuck-shaping-bikini-bottom', nickname: 'Ruby', category: 'swim_bottom', keywords: ['ruby'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-sassy-no-tuck-shaping-underwear', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'] } },
+  { product_handle: 'the-serena-no-tuck-shaping-shorty-short', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-sky-no-tuck-shaping-one-piece', nickname: 'Sky', category: 'onepiece', keywords: ['sky', 'one-piece'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-stella-high-waisted-shaping-bikini-bottom', nickname: 'Stella', category: 'swim_bottom', keywords: ['stella'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-sunny-queeny-tankini', nickname: 'Queeny', category: 'swim_top', keywords: ['queeny', 'sunny', 'tankini'], delta_wording: 'top', sizes_override: null, style_switch: null },
+  { product_handle: 'the-naomi-gaff-extra-strength-shaping-underwear', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom', sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'], style_switch: { isTarget: true, forCategories: ['underwear_bottom'] } },
+  { product_handle: 'rubies-shaping-chest-pads', nickname: 'Chest Pads', category: 'chest_pads', keywords: ['pad'], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: 'rubies-gift-card', nickname: 'Gift Card', category: 'accessory', keywords: ['gift card'], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: 'progress-pride-pins', nickname: 'Pride Pins', category: 'accessory', keywords: ['pins'], delta_wording: null, sizes_override: null, style_switch: null },
+];
 require.cache[supabaseModulePath] = {
   id: supabaseModulePath,
   filename: supabaseModulePath,
@@ -26,7 +47,10 @@ require.cache[supabaseModulePath] = {
           }),
         }),
       }),
-      rpc: () => Promise.resolve({ data: mockSupabaseData.sizeMatches }),
+      rpc: (fn) => {
+        if (fn === 'get_cs_product_config') return Promise.resolve({ data: mockCsConfig, error: null });
+        return Promise.resolve({ data: mockSupabaseData.sizeMatches });
+      },
     }),
     upsert: () => Promise.resolve(),
   },
@@ -53,9 +77,20 @@ const {
   getGradingDelta,
   formatDelta,
   getCumulativeDelta,
+  getIntermediateSizes,
+  parseSizeVariant,
+  getSizeModifier,
+  initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
 } = require('../lib/decisionTree');
+
+// ---------------------------------------------------------------------------
+// Initialize CS config from mock Supabase before tests run
+// ---------------------------------------------------------------------------
+before(async () => {
+  await initCsConfig();
+});
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1096,9 +1131,22 @@ describe('prescribeSizingResolution', () => {
   });
 
   describe('refund', () => {
-    it('offers exchange first on initial refund request', async () => {
+    it('probes what went wrong on initial refund request', async () => {
       const intake = makeIntake({
         items: [makeItem({ issue: 'refund_request' })],
+      });
+      const classified = [makeClassified({ action: 'refund' })];
+      const ctx = makeContext({ targetOrder: makeOrder() });
+      const result = await prescribeSizingResolution(classified, intake, ctx);
+      assert.equal(result.items[0].state, 'AWAITING_CLARIFICATION');
+      assert.ok(result.items[0].response_text.includes('what didn'));
+      assert.ok(intake._returnProbed['THE AJ NO-TUCK SHAPING UNDERWEAR']);
+    });
+
+    it('offers exchange after probing', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'refund_request' })],
+        _returnProbed: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
       });
       const classified = [makeClassified({ action: 'refund' })];
       const ctx = makeContext({ targetOrder: makeOrder() });
@@ -1111,6 +1159,7 @@ describe('prescribeSizingResolution', () => {
     it('confirms refund when exchange already offered', async () => {
       const intake = makeIntake({
         items: [makeItem({ issue: 'refund_request' })],
+        _returnProbed: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
         _exchangeOffered: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
       });
       const classified = [makeClassified({ action: 'refund' })];
@@ -1370,6 +1419,156 @@ describe('walkTree', () => {
       );
     }
   });
+
+  // ── End-to-end scenario tests ──
+  // These test the full chain: intake → all phases → status + response_parts + still_needed
+
+  it('swim bottom: desired size → presents half-step options, holds for confirmation, includes measurement ask', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
+      _latestMessage: 'too big, can I get a 10',
+    });
+    const order = makeOrder({
+      lineItems: [{ title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / 11', quantity: 2, sku: 'RUBY-BLK-11' }],
+    });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    // Should NOT be ready — waiting for size confirmation
+    assert.equal(result.status, 'needs_info');
+    assert.equal(intake.items[0].resolved_size, null);
+    // Should have item_action with options
+    const itemAction = result.response_parts.find(p => p.type === 'item_action');
+    assert.ok(itemAction);
+    assert.equal(itemAction.state, 'AWAITING_SIZE_CONFIRMATION');
+    assert.ok(itemAction.options);
+    assert.ok(itemAction.options.length <= 2);
+    // Options should reference the current size
+    assert.ok(itemAction.options[0].formatted.includes('compared to the 11'));
+    // Should include measurement ask
+    assert.ok(itemAction.text.includes('measurement'));
+  });
+
+  it('underwear: desired size → auto-confirms with measurement note + delta, creates order', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: 'M' }];
+    const intake = makeIntake({
+      name: 'Vera',
+      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
+      measurement: { value: 31, unit: 'inches', body_part: 'waist' },
+      _latestMessage: 'too tight, waist is 31 inches, want a large',
+    });
+    const order = makeOrder({
+      lineItems: [{ title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', variantTitle: 'Pink / M', quantity: 1, sku: 'HLA-PNK-M' }],
+    });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    assert.equal(result.status, 'ready');
+    assert.equal(intake.items[0].resolved_size, 'L');
+    // Should have measurement note in response parts
+    const measureNote = result.response_parts.find(p => p.type === 'item_action' && p.text?.includes('sizing chart'));
+    assert.ok(measureNote, 'Should include measurement note');
+    assert.ok(measureNote.text.includes('exceptions'));
+    assert.ok(measureNote.text.includes('compared to the M'));
+    mockSupabaseData.sizeMatches = [];
+  });
+
+  it('swim + underwear mixed order: exchanging underwear does NOT flag swim items', async () => {
+    const intake = makeIntake({
+      name: 'Vera',
+      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight' })],
+      _latestMessage: 'a bit tight',
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', variantTitle: 'Pink / M', quantity: 1, sku: 'HLA-PNK-M' },
+        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+      ],
+    });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    // Should auto-confirm (underwear, "a bit tight")
+    assert.equal(result.status, 'ready');
+    // Should NOT have multi-item flags (swim ≠ underwear body group)
+    const multiFlags = result.response_parts.filter(p => p.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 0);
+  });
+
+  it('swim order with multiple swim products: flags other swim items and holds order', async () => {
+    const intake = makeIntake({
+      name: 'Test',
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight', resolved_size: 'L' })],
+      _latestMessage: 'a bit tight',
+      resolution_sizes: [{ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', from_size: 'M', to_size: 'L' }],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+        { title: 'THE STELLA HIGH WAISTED SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'STL-BLK-M' },
+      ],
+    });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    // Multi-item flag should fire (both swim bottoms)
+    const multiFlags = result.response_parts.filter(p => p.type === 'multi_item_flag');
+    assert.ok(multiFlags.length > 0, 'Should flag Stella');
+    // Should hold order — needs_info, not ready
+    assert.equal(result.status, 'needs_info');
+  });
+
+  it('one-piece return: probes with measurement offer and alternative mention', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'refund_request' })],
+      _latestMessage: 'want to return the one-piece, not comfortable',
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / L', quantity: 1, sku: 'SKY2-BLK-L' },
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / L', quantity: 1, sku: 'RUBY-BLK-L' },
+      ],
+    });
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    assert.equal(result.status, 'needs_info');
+    // Should probe — not offer swap yet
+    const itemAction = result.response_parts.find(p => p.type === 'item_action');
+    assert.equal(itemAction.state, 'AWAITING_CLARIFICATION');
+    assert.ok(itemAction.text.includes('one-piece'));
+    assert.ok(itemAction.text.includes('height'));
+    assert.ok(itemAction.text.includes('alternative'));
+    // Should NOT flag the Ruby (one-piece ≠ swim_bottom body group)
+    const multiFlags = result.response_parts.filter(p => p.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 0);
+  });
+
+  it('one-piece doesnt fit → asks two-part question (waist + top)', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', issue: 'doesnt_fit' })],
+      _latestMessage: 'the one-piece doesnt fit right',
+    });
+    const order = makeOrder({
+      lineItems: [{ title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / M', quantity: 1, sku: 'SKY2-BLK-M' }],
+    });
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    assert.equal(result.status, 'needs_info');
+    const itemAction = result.response_parts.find(p => p.type === 'item_action');
+    assert.ok(itemAction.text.includes('waist'));
+    assert.ok(itemAction.text.includes('top'));
+  });
+
+  it('one-piece too_short → asks for height + waist', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_short' })],
+      _latestMessage: 'the one-piece is too short',
+    });
+    const order = makeOrder({
+      lineItems: [{ title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / L', quantity: 1, sku: 'SKY2-BLK-L' }],
+    });
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    assert.equal(result.status, 'needs_info');
+    const itemAction = result.response_parts.find(p => p.type === 'item_action');
+    assert.equal(itemAction.state, 'AWAITING_MEASUREMENT');
+    assert.ok(itemAction.text.includes('height'));
+    assert.ok(itemAction.text.includes('belly'));
+  });
 });
 
 // ============================================================================
@@ -1378,8 +1577,9 @@ describe('walkTree', () => {
 
 describe('Config-driven products', () => {
   it('Naomi is loaded as active product', () => {
-    assert.ok(_activeProducts.naomi, 'Naomi should be in active products');
-    assert.equal(_activeProducts.naomi.status, 'active');
+    const naomi = _activeProducts['the-naomi-gaff-extra-strength-shaping-underwear'];
+    assert.ok(naomi, 'Naomi should be in active products');
+    assert.equal(naomi.nickname, 'Naomi');
   });
 
   it('Naomi nickname is registered', () => {
@@ -1454,5 +1654,366 @@ describe('Config-driven products', () => {
     const result = await prescribeSizingResolution(classified, intake, makeContext());
     assert.ok(result.items[0].response_text.includes('Naomi'));
     assert.ok(result.items[0].response_text.includes('Sassy'));
+  });
+});
+
+// ============================================================================
+// Tier 4b: Swimwear — half-step sizing
+// ============================================================================
+
+describe('Half-step products (swim/onepiece) — desired size', () => {
+  it('swim bottom: always presents options even for adjacent size (11→10)', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
+      _latestMessage: 'too big, can I get a 10',
+    });
+    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', direction: 'down' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
+    assert.ok(result.items[0].options.length <= 2);
+  });
+
+  it('swim bottom: caps options at 2 max (9→7 shows 8 and 7, not 6)', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SERENA NO-TUCK SHAPING SHORTY SHORT', size: '9', issue: 'too_loose', desired_size: '7' })],
+      _latestMessage: 'too loose, want size 7',
+    });
+    const classified = [makeClassified({ product: 'THE SERENA NO-TUCK SHAPING SHORTY SHORT', size: '9', direction: 'down' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.equal(result.items[0].options.length, 2);
+    assert.equal(result.items[0].options[0].size, '8');
+    assert.equal(result.items[0].options[1].size, '7');
+  });
+
+  it('swim bottom: bridge text when requested size is not first option', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '9', issue: 'too_loose', desired_size: '7' })],
+      _latestMessage: 'too loose, want 7',
+    });
+    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '9', direction: 'down' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('half sizes'));
+    assert.ok(result.items[0].response_text.includes('7'));
+  });
+
+  it('swim bottom: includes measurement ask for uncertain issue (too_loose)', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
+      _latestMessage: 'too big',
+    });
+    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', direction: 'down' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('measurement'));
+  });
+
+  it('swim bottom: skips measurement ask when measurement already provided', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
+      _latestMessage: 'too big, waist is 24 inches',
+      measurement: { value: 24, unit: 'inches', body_part: 'waist' },
+    });
+    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', direction: 'down' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(!result.items[0].response_text.includes('send me'));
+  });
+
+  it('underwear: auto-confirms desired size (no half-steps)', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE AJ NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
+    });
+    const classified = [makeClassified({ product: 'THE AJ NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.equal(result.items[0].state, 'CONFIRMED');
+    assert.equal(intake.items[0].resolved_size, 'L');
+  });
+
+  it('underwear: auto-confirm includes delta FYI with reference size', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
+    });
+    const classified = [makeClassified({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('compared to the M'));
+  });
+
+  it('options include "compared to" reference size', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'too_tight', desired_size: 'L' })],
+      _latestMessage: 'too tight want L',
+    });
+    const classified = [makeClassified({ product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].options[0].formatted.includes('compared to the M'));
+  });
+});
+
+describe('Measurement cross-reference with desired size', () => {
+  it('notes when chart matches current size (exceptions phrasing)', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: 'M' }];
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
+      measurement: { value: 31, unit: 'inches', body_part: 'waist' },
+    });
+    const classified = [makeClassified({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('sizing chart puts you in the M range'));
+    assert.ok(result.items[0].response_text.includes('exceptions'));
+    mockSupabaseData.sizeMatches = [];
+  });
+
+  it('notes when chart agrees with requested size', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: 'L' }];
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
+      measurement: { value: 33, unit: 'inches', body_part: 'waist' },
+    });
+    const classified = [makeClassified({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('looks like a good fit'));
+    mockSupabaseData.sizeMatches = [];
+  });
+});
+
+// ============================================================================
+// Tier 4c: One-piece — height variant
+// ============================================================================
+
+describe('One-piece height variant (too_short / too_long)', () => {
+  it('classifies too_short as height_variant_check', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_short' })],
+    });
+    const result = prescribeActionClassification(intake);
+    assert.equal(result.items[0].action, 'height_variant_check');
+    assert.equal(result.items[0].heightDirection, 'tall');
+  });
+
+  it('classifies too_long as height_variant_check', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_long' })],
+    });
+    const result = prescribeActionClassification(intake);
+    assert.equal(result.items[0].action, 'height_variant_check');
+    assert.equal(result.items[0].heightDirection, 'regular');
+  });
+
+  it('asks for height + waist when no measurements', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_short' })],
+    });
+    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', action: 'height_variant_check', heightDirection: 'tall' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
+    assert.ok(result.items[0].response_text.includes('height'));
+    assert.ok(result.items[0].response_text.includes('belly'));
+  });
+
+  it('one-piece "too tight" options include height ask', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', issue: 'too_tight' })],
+      _latestMessage: 'too tight',
+    });
+    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', direction: 'up' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('height'));
+  });
+
+  it('one-piece "way off" measurement ask includes height', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', issue: 'way_off' })],
+    });
+    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', action: 'sizing_exchange_measurement' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    assert.ok(result.items[0].response_text.includes('height'));
+  });
+});
+
+describe('parseSizeVariant and getSizeModifier', () => {
+  it('parses LT as L + Tall', () => {
+    const { base, modifier } = parseSizeVariant('LT');
+    assert.equal(base, 'L');
+    assert.equal(modifier, 'Tall');
+  });
+
+  it('parses MT as M + Tall', () => {
+    const { base, modifier } = parseSizeVariant('MT');
+    assert.equal(base, 'M');
+    assert.equal(modifier, 'Tall');
+  });
+
+  it('parses "L Tall" as L + Tall', () => {
+    const { base, modifier } = parseSizeVariant('L Tall');
+    assert.equal(base, 'L');
+    assert.equal(modifier, 'Tall');
+  });
+
+  it('parses "M Regular" as M + Regular', () => {
+    const { base, modifier } = parseSizeVariant('M Regular');
+    assert.equal(base, 'M');
+    assert.equal(modifier, 'Regular');
+  });
+
+  it('parses plain "L" as L + null', () => {
+    const { base, modifier } = parseSizeVariant('L');
+    assert.equal(base, 'L');
+    assert.equal(modifier, null);
+  });
+
+  it('normalizeSize strips variant modifier', () => {
+    assert.equal(normalizeSize('LT'), 'L');
+    assert.equal(normalizeSize('MT'), 'M');
+    assert.equal(normalizeSize('L Tall'), 'L');
+  });
+
+  it('getSizeModifier returns modifier', () => {
+    assert.equal(getSizeModifier('LT'), 'Tall');
+    assert.equal(getSizeModifier('L Tall'), 'Tall');
+    assert.equal(getSizeModifier('L'), null);
+  });
+});
+
+// ============================================================================
+// Multi-item flags — body groups and order hold
+// ============================================================================
+
+describe('Multi-item flags — body group separation', () => {
+  it('does NOT flag swim bottom when exchanging underwear bottom', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight' })],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', variantTitle: 'Pink / M', quantity: 1, sku: 'HLA-PNK-M' },
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+      ],
+    });
+    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
+    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 0);
+  });
+
+  it('flags same-category product (swim bottom with swim bottom)', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight' })],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
+      ],
+    });
+    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
+    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 1);
+    assert.ok(multiFlags[0].text.includes('Cheeky'));
+  });
+
+  it('does NOT flag one-piece when exchanging swim bottom', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'L', issue: 'close_fit_tight' })],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / L', quantity: 1, sku: 'RUBY-BLK-L' },
+        { title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / L', quantity: 1, sku: 'SKY2-BLK-L' },
+      ],
+    });
+    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
+    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 0);
+  });
+
+  it('suppresses flags when _crossProductComparison is set', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight' })],
+      _crossProductComparison: true,
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
+      ],
+    });
+    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
+    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 0);
+  });
+});
+
+describe('Multi-item flag holds order creation', () => {
+  it('status is needs_info when multi-item flags are pending', async () => {
+    const intake = makeIntake({
+      name: 'Test',
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight', resolved_size: 'L' })],
+      _latestMessage: 'a bit tight',
+      resolution_sizes: [{ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', from_size: 'M', to_size: 'L' }],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
+      ],
+    });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    assert.equal(result.status, 'needs_info');
+  });
+
+  it('status is ready when _multiItemAnswered is set', async () => {
+    const intake = makeIntake({
+      name: 'Test',
+      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight', resolved_size: 'L' })],
+      _latestMessage: 'a bit tight',
+      _multiItemAnswered: true,
+      resolution_sizes: [{ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', from_size: 'M', to_size: 'L' }],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
+        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
+      ],
+    });
+    mockSupabaseData.partners = [];
+    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
+    assert.equal(result.status, 'ready');
+  });
+});
+
+// ============================================================================
+// Refund probe before swap
+// ============================================================================
+
+describe('One-piece return probe', () => {
+  it('probes with measurement offer for one-piece return', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'refund_request' })],
+    });
+    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', action: 'refund' })];
+    const ctx = makeContext({ targetOrder: makeOrder() });
+    const result = await prescribeSizingResolution(classified, intake, ctx);
+    assert.equal(result.items[0].state, 'AWAITING_CLARIFICATION');
+    assert.ok(result.items[0].response_text.includes('one-piece'));
+    assert.ok(result.items[0].response_text.includes('height'));
+    assert.ok(result.items[0].response_text.includes('alternative'));
+  });
+});
+
+// ============================================================================
+// Nickname-based isSameProduct matching
+// ============================================================================
+
+describe('isSameProduct — nickname matching', () => {
+  it('matches intake "Serena Shorty Shorts" to order "THE SERENA NO-TUCK SHAPING SHORTY SHORT"', () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'Serena Shorty Shorts', size: '9', issue: 'close_fit_loose' })],
+    });
+    const order = makeOrder({
+      lineItems: [
+        { title: 'THE SERENA NO-TUCK SHAPING SHORTY SHORT', variantTitle: 'Pink / 9', quantity: 1, sku: 'SHS-PNK-9' },
+      ],
+    });
+    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
+    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
+    assert.equal(multiFlags.length, 0, 'Should not flag the same product as multi-item');
   });
 });

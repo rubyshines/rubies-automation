@@ -12,7 +12,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
-const { walkTree, normalizeSize, _activeProducts } = require('../decisionTree');
+const { walkTree, normalizeSize, getSizeModifier, _activeProducts, initCsConfig } = require('../decisionTree');
 
 // ---------------------------------------------------------------------------
 // Order analysis (still needed — tree uses this context)
@@ -167,12 +167,12 @@ Return JSON:
       "product": string — product name as close to catalog as possible,
       "size": string or null — their CURRENT size (what they have now),
       "color": string or null,
-      "issue": "close_fit_tight" | "close_fit_loose" | "doesnt_fit" | "way_off" | "product_not_working" | "product_not_working_loose" | "product_not_working_tight" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "wrong_item" | "missing" | "none" | "unclear",
+      "issue": "close_fit_tight" | "close_fit_loose" | "doesnt_fit" | "way_off" | "product_not_working" | "product_not_working_loose" | "product_not_working_tight" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "too_short" | "too_long" | "wrong_item" | "missing" | "none" | "unclear",
       "desired_size": string or null — ONLY if customer named a SPECIFIC size (e.g. "size L", "a 14"). Do NOT fill this in if they said "next size up" or "one size down" — those are directions not specific sizes.,
       "desired_product": string or null — if they want a different product
     }
   ],
-  "measurement": { "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "height" } or null,
+  "measurements": [{ "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "height" }] or [] — extract ALL measurements mentioned. Customer may give both waist and height for one-pieces.,
   "is_confirmation": boolean — is this message confirming a previous suggestion? ("yes", "sounds good", "go ahead"),
   "confirmed_size": string or null — if confirming, what size are they confirming?,
   "safety_concern": boolean — does the message indicate danger, hiding items, unsafe situation?,
@@ -261,17 +261,25 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
         // product_not_working can upgrade to expectation_mismatch, close_fit_tight, etc.
         const vagueIssues = new Set(['doesnt_fit', 'product_not_working', 'unclear', 'none', null, undefined]);
         if (vagueIssues.has(existing.issue) && aiItem.issue && !vagueIssues.has(aiItem.issue)) existing.issue = aiItem.issue;
-        if (!existing.desired_size && aiItem.desired_size) existing.desired_size = normalizeSize(aiItem.desired_size);
-        if (!existing.resolved_size && aiItem.desired_size) existing.resolved_size = normalizeSize(aiItem.desired_size);
+        if (!existing.desired_size && aiItem.desired_size) {
+          existing.desired_size = normalizeSize(aiItem.desired_size);
+          const mod = getSizeModifier(aiItem.desired_size);
+          if (mod) existing._variant_modifier = mod;
+        }
+        // Don't promote desired_size to resolved_size — let the decision tree handle it
+        // (it checks for intermediates on swim/onepiece products before confirming)
       } else {
+        const desiredMod = aiItem.desired_size ? getSizeModifier(aiItem.desired_size) : null;
+        const sizeMod = aiItem.size ? getSizeModifier(aiItem.size) : null;
         intake.items.push({
           product: aiItem.product,
           size: aiItem.size ? normalizeSize(aiItem.size) : null,
           color: aiItem.color || null,
           issue: aiItem.issue && aiItem.issue !== 'unclear' ? aiItem.issue : (intake.issue_type || null),
           desired_size: aiItem.desired_size ? normalizeSize(aiItem.desired_size) : null,
-          resolved_size: aiItem.desired_size ? normalizeSize(aiItem.desired_size) : null,
+          resolved_size: null, // Let the decision tree handle confirmation (checks intermediates)
           resolved_product: aiItem.desired_product || null,
+          _variant_modifier: desiredMod || sizeMod || null,
         });
       }
     }
@@ -286,7 +294,19 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
     }
   }
 
-  if (!intake.measurement && parsed.measurement) intake.measurement = parsed.measurement;
+  // Handle measurements — support both old single format and new array format
+  if (parsed.measurements?.length) {
+    for (const m of parsed.measurements) {
+      if (m.body_part === 'height') {
+        intake.height_measurement = m;
+      } else {
+        // waist or chest — use as primary measurement (backward compatible)
+        intake.measurement = m;
+      }
+    }
+  } else if (!intake.measurement && parsed.measurement) {
+    intake.measurement = parsed.measurement;
+  }
 
   // Try-size swap handling: customer responded to "want to swap for something else?"
   // This fires BEFORE normal confirmation handling because the customer may name a new product
@@ -320,8 +340,11 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
     }
   }
 
-  // Confirmation handling
-  if (parsed.is_confirmation && intake.items.length > 0) {
+  // Confirmation handling — only fires on subsequent messages when the tree has
+  // already presented options and is waiting for a response. On the first message,
+  // desired_size is set on the item instead and the tree handles it.
+  const hasPendingState = intake.items.some(i => !i.resolved_size && (i._pendingStyleSwitch || intake._awaitingConfirmation));
+  if (parsed.is_confirmation && intake.items.length > 0 && (hasPendingState || existingIntake)) {
     const unresolved = intake.items.find(i => !i.resolved_size);
     if (unresolved) {
       // Check for pending style switch (e.g., Ruby → Cheeky)
@@ -404,6 +427,10 @@ function computeIntakeStatus(intake) {
 // ---------------------------------------------------------------------------
 
 async function handleExchangeAdvisor({ customer_email, issue_description, order_number, intake: existingIntake }) {
+  // Ensure product config is loaded (normally done at MCP server startup, but
+  // needed for standalone/test usage too)
+  if (Object.keys(_activeProducts).length === 0) await initCsConfig();
+
   const supabase = getSupabaseClient();
 
   // STEP 0: Quick-extract order number from message BEFORE order lookup
@@ -475,14 +502,28 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
 
   // STEP 3: Extract size from SKU (deterministic) and parse message WITH order context
   const orderLineItems = (targetOrder?.lineItems || []).map(li => {
-    // SKU format: PRODUCT-COLOR-SIZE (e.g., AJ-PNK-16, MIA-BLK-S, UNW-PNK-L)
-    // The last segment is always the size
-    const skuSize = li.sku ? li.sku.split('-').pop() : null;
-    return { ...li, _skuSize: skuSize ? normalizeSize(skuSize) : null };
+    // SKU format: PRODUCT-COLOR-SIZE (e.g., AJ-PNK-16, MIA-BLK-S, SKY2-BLK-LT for L Tall)
+    // The last segment is always the size (may include variant suffix like T for Tall)
+    const rawSkuSize = li.sku ? li.sku.split('-').pop() : null;
+    return { ...li, _skuSize: rawSkuSize ? normalizeSize(rawSkuSize) : null, _rawSkuSize: rawSkuSize };
   });
   const intake = await parseExchangeIntake(issue_description, existingIntake || null, orderLineItems);
   intake._latestMessage = issue_description;
   intake.conversation_email = customer_email;
+
+  // Detect variant modifier (Tall/Regular) from order SKU for one-piece items
+  // SKU format: SKY2-BLK-LT → "LT" = L Tall, SKY2-BLK-L → "L" = L Regular
+  for (const intakeItem of intake.items) {
+    if (intakeItem._variant_modifier) continue; // already set
+    const matchedOi = orderLineItems.find(oi => {
+      const nick = require('../decisionTree').getProductNickname(oi.title)?.toLowerCase();
+      return nick && intakeItem.product?.toLowerCase().includes(nick);
+    });
+    if (matchedOi?._rawSkuSize) {
+      const mod = getSizeModifier(matchedOi._rawSkuSize);
+      if (mod) intakeItem._variant_modifier = mod;
+    }
+  }
 
   if (customer.email && customer.email.toLowerCase() !== customer_email.toLowerCase()) {
     intake.order_email = customer.email;
@@ -546,6 +587,13 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
 
   const treeResult = await walkTree(intake, treeContext);
 
+  // Mark intake as awaiting confirmation if tree presented options
+  const hasAwaitingState = treeResult.response_parts.some(p =>
+    p.type === 'item_action' && (p.state === 'AWAITING_SIZE_CONFIRMATION' || p.state === 'AWAITING_STYLE_CONFIRMATION' || p.state === 'AWAITING_DECISION')
+  );
+  if (hasAwaitingState) intake._awaitingConfirmation = true;
+  else delete intake._awaitingConfirmation;
+
   // STEP 5: Pull tone sample
   let toneSample = null;
   try {
@@ -597,6 +645,7 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
       third_party_label: intake.third_party_label,
       address: customer.defaultAddress ? {
         address1: customer.defaultAddress.address1,
+        address2: customer.defaultAddress.address2 || '',
         city: customer.defaultAddress.city,
         province: customer.defaultAddress.province,
         country: customer.defaultAddress.country,
