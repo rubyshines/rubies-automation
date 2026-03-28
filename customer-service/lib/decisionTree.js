@@ -234,11 +234,21 @@ function formatMeasurementDisplay(value, unit) {
  * @param {string} reason - 'mismatch' (waist + height too far apart) or 'height_outside' (height outside chart)
  * @param {string} measureRef - "your" or "your daughter's"
  */
-function getSeparatesText(reason, measureRef) {
+/**
+ * Get the "suggest separates" text for one-piece mismatch.
+ * @param {string} reason - 'mismatch' (waist + height too far apart) or 'height_outside' (height outside chart)
+ * @param {string} measureRef - "your" or "your daughter's"
+ * @param {boolean} isExchange - true if customer already owns the one-piece (ask if they'd consider switching)
+ */
+function getSeparatesText(reason, measureRef, isExchange = false) {
   const prefix = reason === 'mismatch'
     ? `Based on ${measureRef} waist and height, unfortunately the one-piece won't be the right fit.`
     : `Based on ${measureRef} height, unfortunately the one-piece won't be the right fit.`;
-  return `${prefix} In many cases you could consider pairing the tankini with our regular or high waisted bikini bottom. This two-piece can offer almost as much coverage as a one-piece but with a more flexible fit.`;
+  const suggestion = 'In many cases you could consider pairing the tankini with our regular or high waisted bikini bottom. This two-piece can offer almost as much coverage as a one-piece but with a more flexible fit.';
+  if (isExchange) {
+    return `${prefix} ${suggestion} Would you like to explore that option instead?`;
+  }
+  return `${prefix} ${suggestion}`;
 }
 
 function getMeasureLocation(measureType) {
@@ -1488,11 +1498,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.size} ${fit.variant} (1 size ${fit.moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
             } else if (fit.type === 'separates') {
               rx.state = 'AWAITING_DECISION';
-              rx.response_text = getSeparatesText('mismatch', 'your');
+              rx.response_text = getSeparatesText('mismatch', 'your', true);
               rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`;
             } else {
               rx.state = 'AWAITING_DECISION';
-              rx.response_text = getSeparatesText('height_outside', 'your');
+              rx.response_text = getSeparatesText('height_outside', 'your', true);
               rx.audit = `Height check: height ${heightVal} ${heightUnit} outside all chart ranges — suggesting separates`;
             }
           } catch (e) {
