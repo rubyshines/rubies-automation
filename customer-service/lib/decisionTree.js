@@ -212,6 +212,26 @@ function getSizeModifier(size) {
   return parseSizeVariant(size).modifier;
 }
 
+/**
+ * Determine the size chart category for measurement lookups.
+ * @param {string} productName - Product name or nickname
+ * @param {boolean} isKids - Whether to use kids or adult chart
+ * @returns {{ chartCategory: string, measureType: string }}
+ */
+function getChartCategory(productName, isKids) {
+  const cat = classifyProduct(productName);
+  const isTop = cat === 'underwear_top' || cat === 'swim_top';
+  const isOnepiece = cat === 'onepiece';
+  const isSwim = cat === 'swim_bottom' || cat === 'swim_top';
+  let chartCategory;
+  if (isOnepiece) chartCategory = isKids ? 'kids_onepiece' : 'adult_onepiece';
+  else if (isTop) chartCategory = isKids ? 'kids_tops' : 'adult_tops';
+  else if (isSwim) chartCategory = isKids ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
+  else chartCategory = isKids ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
+  const measureType = isTop ? 'chest' : 'waist';
+  return { chartCategory, measureType };
+}
+
 function getSizeList(size, productName) {
   const s = normalizeSize(size);
 
@@ -852,15 +872,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             const mVal = intake.measurement.value;
             const mUnit = intake.measurement.unit === 'cm' ? 'cm' : 'inches';
             const isKidsM = NUMERIC_SIZES.includes(currentSize);
-            const isTopM = itemCategory === 'underwear_top' || itemCategory === 'swim_top';
-            const isOnepieceM = itemCategory === 'onepiece';
-            const isSwimM = itemCategory === 'swim_bottom' || itemCategory === 'swim_top';
-            let chartCat;
-            if (isOnepieceM) chartCat = isKidsM ? 'kids_onepiece' : 'adult_onepiece';
-            else if (isTopM) chartCat = isKidsM ? 'kids_tops' : 'adult_tops';
-            else if (isSwimM) chartCat = isKidsM ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
-            else chartCat = isKidsM ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
-            const measureType = isTopM ? 'chest' : 'waist';
+            const { chartCategory: chartCat, measureType } = getChartCategory(item.product, isKidsM);
 
             try {
               const supabase = getSupabaseClient();
@@ -1046,7 +1058,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
                 default: desc = `+${unit} of fabric around the waist`; break;
               }
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              rx.response_text = `Size 16 is the largest youth size. The next size up moves into adult sizing — size L (${desc}). Shall I set that up?`;
+              rx.response_text = `Size 16 is the largest youth size. The next size up moves into adult sizing — size L (${desc}). Does that sound right to you?`;
               rx.audit = `Youth→adult crossover: 16 → L (confirming, lower confidence)`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
             }
@@ -1062,7 +1074,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.audit = `Adult→youth crossover: XXS → 16 (auto-confirmed, high confidence)`;
             } else {
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              rx.response_text = `XXS is the smallest adult size. The next size down moves into youth sizing — size 16. Shall I set that up?`;
+              rx.response_text = `XXS is the smallest adult size. The next size down moves into youth sizing — size 16. Does that sound right to you?`;
               rx.audit = `Adult→youth crossover: XXS → 16 (confirming, lower confidence)`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
             }
@@ -1078,17 +1090,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // If measurement is available, look up recommended size and use that instead of blind options
         if (intake.measurement && !isABit && !isNextSize) {
           const m = intake.measurement;
-          const catM = classifyProduct(item.product);
-          const isTopM = catM === 'underwear_top' || catM === 'swim_top';
-          const isOnepieceM = catM === 'onepiece';
-          const isSwimM = catM === 'swim_bottom' || catM === 'swim_top';
           const isKidsM = NUMERIC_SIZES.includes(normalizeSize(item.size));
-          let chartCategory;
-          if (isOnepieceM) chartCategory = isKidsM ? 'kids_onepiece' : 'adult_onepiece';
-          else if (isTopM) chartCategory = isKidsM ? 'kids_tops' : 'adult_tops';
-          else if (isSwimM) chartCategory = isKidsM ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
-          else chartCategory = isKidsM ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
-          const measureType = isTopM ? 'chest' : 'waist';
+          const { chartCategory, measureType } = getChartCategory(item.product, isKidsM);
           const mUnit = m.unit === 'cm' ? 'cm' : 'inches';
           const nick = getProductNickname(item.product);
           try {
@@ -1103,7 +1106,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               const recommendedSize = sizeMatches[0].size_label;
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
               const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
-              rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${mUnit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${mUnit}, I'd recommend a size ${recommendedSize} for the ${nick}. Does that sound right to you?`;
               if (intakeItem) intakeItem._pendingSize = recommendedSize;
               rx.audit = `Measurement available — lookup: ${m.value} ${mUnit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
@@ -1167,20 +1170,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         if (intake.measurement) {
           // We have measurement — look up the size from size_charts table
           const m = intake.measurement;
-          const catM = classifyProduct(item.product);
-          const isTopM = catM === 'underwear_top' || catM === 'swim_top';
-          const isOnepieceM = catM === 'onepiece';
-          const isSwimM = catM === 'swim_bottom' || catM === 'swim_top';
           const isKidsM = NUMERIC_SIZES.includes(normalizeSize(item.size));
-
-          // Determine chart category
-          let chartCategory;
-          if (isOnepieceM) chartCategory = isKidsM ? 'kids_onepiece' : 'adult_onepiece';
-          else if (isTopM) chartCategory = isKidsM ? 'kids_tops' : 'adult_tops';
-          else if (isSwimM) chartCategory = isKidsM ? 'kids_swimwear_bottoms' : 'adult_swimwear_bottoms';
-          else chartCategory = isKidsM ? 'kids_underwear_bottoms' : 'adult_underwear_bottoms';
-
-          const measureType = isTopM ? 'chest' : 'waist';
+          const { chartCategory, measureType } = getChartCategory(item.product, isKidsM);
           const unit = m.unit === 'cm' ? 'cm' : 'inches';
           const nick = getProductNickname(item.product);
 
@@ -1197,7 +1188,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               const recommendedSize = sizeMatches[0].size_label;
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
               const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
-              rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${unit}, I'd recommend a size ${recommendedSize} for the ${nick}. Shall I set that up?`;
+              rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${unit}, I'd recommend a size ${recommendedSize} for the ${nick}. Does that sound right to you?`;
               const intakeItemM = intake.items.find(i => i.product === item.product);
               if (intakeItemM) intakeItemM._pendingSize = recommendedSize;
               rx.audit = `Measurement lookup: ${m.value} ${unit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
@@ -1421,7 +1412,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             if (recommendedVariant && heightMatchSize === recommendedWaist) {
               // Same waist, just variant swap (or same variant confirmed)
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              rx.response_text = `Based on your measurements, the ${recommendedWaist} ${recommendedVariant} should be the right fit. Shall I set that up?`;
+              rx.response_text = `Based on your measurements, the ${recommendedWaist} ${recommendedVariant} should be the right fit. Does that sound right to you?`;
               rx.audit = `Height check: ${waistSize} ${currentMod || 'Regular'} → ${recommendedWaist} ${recommendedVariant} (measurement-based)`;
             } else if (recommendedVariant) {
               // Height matches at a different size — check distance
@@ -1436,7 +1427,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
                 const unit = useInches ? `${delta?.inches || 2}"` : `${delta?.cm || 5} cm`;
                 const moreOrLess = heightIdx > currentIdx ? 'more' : 'less';
                 rx.state = 'AWAITING_SIZE_CONFIRMATION';
-                rx.response_text = `Based on your measurements, the ${heightMatchSize} ${recommendedVariant} would be the best fit for your height. The waist will have ${unit} ${moreOrLess} fabric compared to the ${recommendedWaist}, but there's some wiggle room in the bottoms so it should work well. Shall I set that up?`;
+                rx.response_text = `Based on your measurements, the ${heightMatchSize} ${recommendedVariant} would be the best fit for your height. The waist will have ${unit} ${moreOrLess} fabric compared to the ${recommendedWaist}, but there's some wiggle room in the bottoms so it should work well. Does that sound right to you?`;
                 rx.audit = `Height check: waist→${recommendedWaist} but height→${heightMatchSize} ${recommendedVariant} (1 size ${moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
               } else {
                 // Ratio too far off — suggest separates
@@ -2017,6 +2008,7 @@ module.exports = {
   getIntermediateSizes,
   parseSizeVariant,
   getSizeModifier,
+  getChartCategory,
   // Config-driven products (populated by initCsConfig)
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
