@@ -535,6 +535,20 @@ async function handleTestConversation({ customer_email, messages, order_number }
       });
 
       s = result._structured;
+
+      // Shipping/non-exchange responses have a different structure — handle directly
+      if (s && !s.intake && (s.results || s.status === 'route_to_human' || s.status === 'complete' || s.error)) {
+        const agentText = result.content?.[0]?.text || '(No response)';
+        // Extract just the customer response part from the markdown
+        const customerResponseMatch = agentText.match(/\*\*Customer response:\*\*\n([\s\S]*?)(?:\n\n|$)/);
+        const cleanResponse = customerResponseMatch?.[1]?.trim() ||
+          (s.results?.[0]?.summary) ||
+          agentText.replace(/^##.*\n/gm, '').replace(/\*\*[^*]+\*\*[^\n]*/g, '').trim().split('\n').pop()?.trim() ||
+          agentText;
+        conversationLog.push({ messageNum: i + 1, customer: customerMsg, agent: cleanResponse, status: s.status || 'complete', _structured: s, items: [], name: null, pronouns: null, flags: [] });
+        continue;
+      }
+
       if (s) intake = s.intake;
 
       // Populate header from first advisor call (uses the actual order the advisor resolved)
@@ -571,16 +585,16 @@ async function handleTestConversation({ customer_email, messages, order_number }
       agent: agentResponse,
       status: s.status,
       _structured: s,
-      items: (s.intake.items || []).map(it => ({
+      items: (s.intake?.items || []).map(it => ({
         product: it.product,
         size: it.size,
         issue: it.issue,
         resolved_size: it.resolved_size,
         desired_size: it.desired_size,
       })),
-      name: s.customer.name,
-      pronouns: s.customer.pronouns,
-      flags: s.prescription.flags,
+      name: s.customer?.name,
+      pronouns: s.customer?.pronouns,
+      flags: s.prescription?.flags,
     });
   }
 

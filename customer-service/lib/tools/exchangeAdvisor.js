@@ -584,9 +584,15 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     return buildAdvisorResponse(intake, treeResult, { customer, targetOrder: null, orderLineItems: [], fulfilled: [], exchanges: [], customerCountry, isNorthAmerica, toneSample: null });
   }
 
+  // Shipping inquiry — real tracking lookup
+  if (intake.message_type === 'shipping' && !existingIntake) {
+    const shippingTools = require('./shippingLookup');
+    const shippingHandler = shippingTools.find(t => t.name === 'shipping_lookup').handler;
+    return shippingHandler({ customer_email, order_number: effectiveOrderNumber || undefined });
+  }
+
   // Future routing stubs — acknowledge + route to human
   const stubTypes = {
-    shipping: "I'll look into the shipping status for you.",
     order_modification: "I'll look into that for you.",
     product_question: "Great question!",
     wholesale: "Thanks for your interest in wholesale!",
