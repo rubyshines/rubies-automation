@@ -175,6 +175,7 @@ Return JSON:
   "measurements": [{ "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "height" }] or [] — extract ALL measurements mentioned. Customer may give both waist and height for one-pieces.,
   "is_confirmation": boolean — is this message confirming a previous suggestion? ("yes", "sounds good", "go ahead"),
   "confirmed_size": string or null — if confirming, what size are they confirming?,
+  "reference_size": { "product": string, "size": string } or null — if the customer mentions a size that fits them in another product ("I wear size 8 in the AJ"), extract it here. This helps recommend sizing for a new product.,
   "safety_concern": boolean — does the message indicate danger, hiding items, unsafe situation?,
   "positive_feedback": boolean — are they saying something nice about RUBIES?,
   "notes": string or null — anything else notable
@@ -419,6 +420,9 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
 
   if (parsed.safety_concern) intake._safety_concern = true;
   if (parsed.positive_feedback) intake._positiveFeedback = true;
+  if (parsed.reference_size && !intake._referenceSize) {
+    intake._referenceSize = { product: parsed.reference_size.product, size: normalizeSize(parsed.reference_size.size) };
+  }
   if (!intake.item_count) {
     if (intake.items.length > 1) intake.item_count = 'multiple';
     else if (intake.items.length === 1) intake.item_count = 'single';

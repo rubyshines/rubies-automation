@@ -1956,6 +1956,60 @@ async function prescribePrePurchaseSizing(intake, context) {
     const hasHeight = intake.height_measurement;
 
     if (!hasMeasurement) {
+      // Check for reference size from another product ("I wear size 8 in the AJ")
+      const ref = intake._referenceSize;
+      if (ref && ref.size) {
+        const refNick = getProductNickname(ref.product) || ref.product;
+        const refCat = classifyProduct(ref.product);
+        const targetCat = cat;
+        const refIsBottom = !refCat || refCat.includes('bottom') || refCat === 'onepiece';
+        const targetIsBottom = !targetCat || targetCat.includes('bottom') || targetCat === 'onepiece';
+        const sameBodyGroup = (refIsBottom && targetIsBottom) || (!refIsBottom && !targetIsBottom);
+
+        if (sameBodyGroup) {
+          // Check if target product has odd sizes (swim) while reference doesn't (underwear) or vice versa
+          const refSizes = getSizeList(ref.size, ref.product);
+          const targetSizes = getSizeList(ref.size, product);
+          const targetHasOddSizes = targetSizes && targetSizes.some(s => ['7', '9', '11', '13'].includes(s));
+          const refHasOddSizes = refSizes && refSizes.some(s => ['7', '9', '11', '13'].includes(s));
+
+          if (targetHasOddSizes && !refHasOddSizes) {
+            // Target has odd sizes that reference doesn't — mention half-size options
+            const refSize = normalizeSize(ref.size);
+            const sizeIdx = targetSizes?.indexOf(refSize) ?? -1;
+            const options = [];
+            if (sizeIdx > 0) {
+              const smaller = targetSizes[sizeIdx - 1];
+              const delta = getCumulativeDelta(refSize, smaller);
+              if (delta) options.push(`${smaller} which has ${formatMeasurementDisplay(delta.inches, 'inches')} less fabric around the waist`);
+            }
+            if (sizeIdx >= 0 && sizeIdx < (targetSizes?.length || 0) - 1) {
+              const larger = targetSizes[sizeIdx + 1];
+              const delta = getCumulativeDelta(refSize, larger);
+              if (delta) options.push(`${larger} which has ${formatMeasurementDisplay(delta.inches, 'inches')} more fabric around the waist`);
+            }
+            const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
+            let text = `Our sizing is consistent across bottoms, so the ${refSize} in the ${nick} would be the same fit as ${measureRef} ${refNick}.`;
+            if (options.length > 0) {
+              text += ` The ${nick} also comes in half sizes — there's a ${options.join(', or a ')} if you want to fine-tune the fit.`;
+            }
+            items.push({ state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: refSize, response_text: text });
+            audit.push(`${nick}: reference ${refNick} ${refSize} → same size, odd sizes available: ${options.length}`);
+            continue;
+          } else {
+            // Same size system — straightforward
+            const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
+            const bodyLabel = targetIsBottom ? 'bottoms' : 'tops';
+            items.push({
+              state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: normalizeSize(ref.size),
+              response_text: `Our sizing is consistent across ${bodyLabel}, so the ${normalizeSize(ref.size)} in the ${nick} should be the same fit as ${measureRef} ${refNick}.`,
+            });
+            audit.push(`${nick}: reference ${refNick} ${ref.size} → same size system, consistent`);
+            continue;
+          }
+        }
+      }
+
       const heightAsk = needsHeight ? ' and height' : '';
       still_needed.push(`${measureBodyPart} measurement for ${nick}`);
       items.push({
