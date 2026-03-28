@@ -1991,7 +1991,7 @@ async function prescribePrePurchaseSizing(intake, context) {
             const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
             let text = `Our sizing is consistent across bottoms, so the ${refSize} in the ${nick} would be the same fit as ${measureRef} ${refNick}.`;
             if (options.length > 0) {
-              text += ` The ${nick} also comes in half sizes — there's a ${options.join(', or a ')} if you want to fine-tune the fit.`;
+              text += ` The ${nick} also comes in half sizes — there's a ${options.join(', or a ')} if you'd like to go slightly smaller or larger.`;
             }
             items.push({ state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: refSize, response_text: text });
             audit.push(`${nick}: reference ${refNick} ${refSize} → same size, odd sizes available: ${options.length}`);
