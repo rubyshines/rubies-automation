@@ -287,6 +287,40 @@ async function lookupHeightVariant(chartCategory, waistSize, heightInInches, pro
   return { variant: null, size: waistSize };
 }
 
+/**
+ * Analyze one-piece fit given waist size + height. Returns recommendation:
+ * - { type: 'exact', size, variant } — waist and height agree
+ * - { type: 'wiggle', size, variant, waistSize, delta } — height needs ±1 size, waist has wiggle room
+ * - { type: 'separates', waistSize, heightSize, variant, sizeDiff } — too far apart, suggest bikini set
+ * - { type: 'height_outside_range' } — height doesn't match any chart entry
+ * @param {string} chartCategory - e.g. 'adult_onepiece'
+ * @param {string} waistSize - recommended size from waist measurement
+ * @param {number} heightInInches - customer height
+ * @param {string} productName - for adjacency lookups
+ * @param {boolean} useInches - for delta display
+ */
+async function analyzeOnepieceFit(chartCategory, waistSize, heightInInches, productName, useInches) {
+  const { variant, size: heightMatchSize } = await lookupHeightVariant(chartCategory, waistSize, heightInInches, productName);
+
+  if (variant && heightMatchSize === waistSize) {
+    return { type: 'exact', size: waistSize, variant };
+  }
+  if (variant) {
+    const waistList = getSizeList(waistSize, productName);
+    const waistIdx = waistList?.indexOf(waistSize) ?? -1;
+    const heightIdx = waistList?.indexOf(heightMatchSize) ?? -1;
+    const sizeDiff = Math.abs(waistIdx - heightIdx);
+    if (sizeDiff <= 1) {
+      const delta = getCumulativeDelta(waistSize, heightMatchSize);
+      const unit = useInches ? `${delta?.inches || 2}"` : `${delta?.cm || 5} cm`;
+      const moreOrLess = heightIdx > waistIdx ? 'more' : 'less';
+      return { type: 'wiggle', size: heightMatchSize, variant, waistSize, delta, unit, moreOrLess };
+    }
+    return { type: 'separates', waistSize, heightSize: heightMatchSize, variant, sizeDiff };
+  }
+  return { type: 'height_outside_range' };
+}
+
 function getSizeList(size, productName) {
   const s = normalizeSize(size);
 
@@ -1410,40 +1444,24 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             });
             const recommendedWaist = waistMatches?.[0]?.size_label || waistSize;
 
-            // Look up height variant using shared helper
             const heightVal = intake.height_measurement.value;
             const heightUnit = intake.height_measurement.unit === 'cm' ? 'cm' : 'inches';
             const heightInInches = heightUnit === 'cm' ? heightVal / 2.54 : heightVal;
-            const { variant: recommendedVariant, size: heightMatchSize } = await lookupHeightVariant(chartCat, recommendedWaist, heightInInches, item.product);
+            const fit = await analyzeOnepieceFit(chartCat, recommendedWaist, heightInInches, item.product, useInches);
 
-            if (recommendedVariant && heightMatchSize === recommendedWaist) {
-              // Same waist, just variant swap (or same variant confirmed)
+            if (fit.type === 'exact') {
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              rx.response_text = `Based on your measurements, the ${recommendedWaist} ${recommendedVariant} should be the right fit. Does that sound right to you?`;
-              rx.audit = `Height check: ${waistSize} ${currentMod || 'Regular'} → ${recommendedWaist} ${recommendedVariant} (measurement-based)`;
-            } else if (recommendedVariant) {
-              // Height matches at a different size — check distance
-              const waistList = getSizeList(waistSize, item.product);
-              const currentIdx = waistList?.indexOf(recommendedWaist) ?? -1;
-              const heightIdx = waistList?.indexOf(heightMatchSize) ?? -1;
-              const sizeDiff = Math.abs(currentIdx - heightIdx);
-
-              if (sizeDiff <= 1) {
-                // Can size up/down 1 for the height — wiggle room in the waist
-                const delta = getCumulativeDelta(recommendedWaist, heightMatchSize);
-                const unit = useInches ? `${delta?.inches || 2}"` : `${delta?.cm || 5} cm`;
-                const moreOrLess = heightIdx > currentIdx ? 'more' : 'less';
-                rx.state = 'AWAITING_SIZE_CONFIRMATION';
-                rx.response_text = `Based on your measurements, the ${heightMatchSize} ${recommendedVariant} would be the best fit for your height. The waist will have ${unit} ${moreOrLess} fabric compared to the ${recommendedWaist}, but there's some wiggle room in the bottoms so it should work well. Does that sound right to you?`;
-                rx.audit = `Height check: waist→${recommendedWaist} but height→${heightMatchSize} ${recommendedVariant} (1 size ${moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
-              } else {
-                // Ratio too far off — suggest separates
-                rx.state = 'AWAITING_DECISION';
-                rx.response_text = `Based on your measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini set (top + bottom) would let you pick the right size for each — would you like to explore that option?`;
-                rx.audit = `Height check: waist→${recommendedWaist} but height→${heightMatchSize} ${recommendedVariant} (${sizeDiff} sizes apart) — suggesting separates`;
-              }
+              rx.response_text = `Based on your measurements, the ${fit.size} ${fit.variant} should be the right fit. Does that sound right to you?`;
+              rx.audit = `Height check: ${waistSize} ${currentMod || 'Regular'} → ${fit.size} ${fit.variant} (measurement-based)`;
+            } else if (fit.type === 'wiggle') {
+              rx.state = 'AWAITING_SIZE_CONFIRMATION';
+              rx.response_text = `Based on your measurements, the ${fit.size} ${fit.variant} would be the best fit for your height. The waist will have ${fit.unit} ${fit.moreOrLess} fabric compared to the ${fit.waistSize}, but there's some wiggle room in the bottoms so it should work well. Does that sound right to you?`;
+              rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.size} ${fit.variant} (1 size ${fit.moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
+            } else if (fit.type === 'separates') {
+              rx.state = 'AWAITING_DECISION';
+              rx.response_text = `Based on your measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini set (top + bottom) would let you pick the right size for each — would you like to explore that option?`;
+              rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`;
             } else {
-              // Height outside all ranges — suggest separates
               rx.state = 'AWAITING_DECISION';
               rx.response_text = `Based on your height, the one-piece might not be the ideal fit. A bikini set (top + bottom) would give you more flexibility on sizing — would you like to explore that option?`;
               rx.audit = `Height check: height ${heightVal} ${heightUnit} outside all chart ranges — suggesting separates`;
@@ -1944,25 +1962,52 @@ async function prescribePrePurchaseSizing(intake, context) {
         const mDisplay = mUnit === 'inches' ? `${m.value}"` : `${m.value} cm`;
         const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
 
-        // For one-piece with height, also check Regular vs Tall
-        let variantNote = '';
+        // For one-piece with height, do full fit analysis
         if (needsHeight && hasHeight) {
           const h = intake.height_measurement;
           const heightInInches = h.unit === 'cm' ? h.value / 2.54 : h.value;
           try {
-            const { variant } = await lookupHeightVariant(chartCategory, recommendedSize, heightInInches, product);
-            if (variant) variantNote = ` ${variant}`;
-          } catch (e) { /* height lookup failed */ }
+            const fit = await analyzeOnepieceFit(chartCategory, recommendedSize, heightInInches, product, useInches);
+            if (fit.type === 'exact') {
+              items.push({
+                state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: fit.size, variant: fit.variant,
+                response_text: `Based on ${measureRef} measurements, I'd recommend a size ${fit.size} ${fit.variant} for the ${nick}.`,
+              });
+              audit.push(`${nick}: waist ${m.value} ${mUnit} → ${fit.size}, height → ${fit.variant}`);
+            } else if (fit.type === 'wiggle') {
+              items.push({
+                state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: fit.size, variant: fit.variant,
+                response_text: `Based on ${measureRef} measurements, I'd recommend a size ${fit.size} ${fit.variant} for the ${nick}. The waist will have ${fit.unit} ${fit.moreOrLess} fabric compared to the ${fit.waistSize}, but there's some wiggle room in the bottoms so it should work well.`,
+              });
+              audit.push(`${nick}: waist → ${fit.waistSize}, height → ${fit.size} ${fit.variant} (wiggle room)`);
+            } else if (fit.type === 'separates') {
+              items.push({
+                state: 'SUGGEST_SEPARATES', product: nick,
+                response_text: `Based on ${measureRef} measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini set (top + bottom) would let you pick the right size for each — would you like to explore that option?`,
+              });
+              audit.push(`${nick}: waist → ${fit.waistSize}, height → ${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`);
+            } else {
+              items.push({
+                state: 'SUGGEST_SEPARATES', product: nick,
+                response_text: `Based on ${measureRef} height, the one-piece might not be the ideal fit. A bikini set (top + bottom) would give you more flexibility on sizing — would you like to explore that option?`,
+              });
+              audit.push(`${nick}: height outside chart ranges — suggesting separates`);
+            }
+          } catch (e) {
+            // Fallback — just recommend waist size without variant
+            items.push({
+              state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize, variant: null,
+              response_text: `Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${recommendedSize} for the ${nick}.`,
+            });
+            audit.push(`${nick}: ${m.value} ${mUnit} → ${recommendedSize} (height check failed: ${e.message})`);
+          }
+        } else {
+          items.push({
+            state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize, variant: null,
+            response_text: `Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${recommendedSize} for the ${nick}.`,
+          });
+          audit.push(`${nick}: ${m.value} ${mUnit} in ${chartCategory} → ${recommendedSize}`);
         }
-
-        items.push({
-          state: 'SIZE_RECOMMENDATION',
-          product: nick,
-          recommendedSize,
-          variant: variantNote.trim() || null,
-          response_text: `Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${recommendedSize}${variantNote} for the ${nick}.`,
-        });
-        audit.push(`${nick}: ${m.value} ${mUnit} in ${chartCategory} → ${recommendedSize}${variantNote}`);
       } else {
         // No match — try alternate chart (kids↔adult)
         const altChartCategory = isKids
