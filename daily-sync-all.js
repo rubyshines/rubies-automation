@@ -53,6 +53,10 @@ const PIPELINES = [
     name: 'Conversations',
     run: () => require('./customer-service/sync/syncConversations').run(),
   },
+  {
+    name: 'Finance',
+    run: () => require('./finance/sync/syncFinance').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

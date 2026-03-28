@@ -26,7 +26,7 @@ Sizes: XS, XS+, S, M, L, 1X (XL), 2X (XXL), 3X (3XL), 4X (4XL)
 
 ### Products by Sizing Type
 - **Youth + Adult sizing:** AJ, Charlie, Brooke, Ruby (available in both)
-- **Adult sizing only:** Ava, Cheeky, Sassy
+- **Adult sizing only:** Ava, Cheeky, Sassy, Naomi (XS–2X only)
 
 ## Legacy → Current Size Conversion
 

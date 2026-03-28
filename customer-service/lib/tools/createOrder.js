@@ -80,6 +80,7 @@ async function findOrCreateCustomer({ email, first_name, last_name, phone, addre
   if (address) {
     input.addresses = [{
       address1: address.address1 || '',
+      address2: address.address2 || '',
       city: address.city || '',
       province: address.province || '',
       country: address.country || 'AU',
@@ -185,9 +186,9 @@ async function handleCreateOrder({
 
   if (customerInfo.address) {
     const a = customerInfo.address;
-    md += `**Ship to:** ${a.address1 || ''}, ${a.city || ''}, ${a.province || ''} ${a.zip || ''}, ${a.country || ''}\n`;
+    md += `**Ship to:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}\n`;
   } else if (address) {
-    md += `**Ship to:** ${address.address1 || ''}, ${address.city || ''}, ${address.province || ''} ${address.zip || ''}, ${address.country || ''}\n`;
+    md += `**Ship to:** ${[address.address1, address.address2, address.city, `${address.province || ''} ${address.zip || ''}`, address.country].filter(Boolean).join(', ')}\n`;
   }
 
   md += `\n**Items:**\n`;
@@ -243,6 +244,7 @@ async function handleCreateOrder({
   if (addr) {
     const shippingAddr = {
       address1: addr.address1 || '',
+      address2: addr.address2 || '',
       city: addr.city || '',
       province: addr.province || '',
       country: addr.country || 'AU',
@@ -290,6 +292,7 @@ const tools = [
           description: 'Shipping address (for new customers)',
           properties: {
             address1: { type: 'string' },
+            address2: { type: 'string', description: 'Apartment, suite, unit, etc.' },
             city: { type: 'string' },
             province: { type: 'string' },
             country: { type: 'string', description: 'Country code e.g. "AU", "US"' },

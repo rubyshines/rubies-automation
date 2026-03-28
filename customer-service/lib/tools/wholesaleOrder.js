@@ -357,11 +357,12 @@ const tools = [
           customerName = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email;
           if (c.defaultAddress) {
             const a = c.defaultAddress;
-            addressBlock = [a.address1, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
             shippingAddress = {
               firstName: c.firstName || '',
               lastName: c.lastName || '',
               address1: a.address1,
+              address2: a.address2 || '',
               city: a.city,
               province: a.province,
               country: a.countryCodeV2 || a.country,

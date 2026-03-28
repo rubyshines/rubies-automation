@@ -86,6 +86,7 @@ async function searchCustomers(query) {
             phone
             defaultAddress {
               address1
+              address2
               city
               province
               country
@@ -125,6 +126,9 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
               displayFinancialStatus
               displayFulfillmentStatus
               cancelledAt
+              shippingAddress {
+                address1 address2 city province country countryCodeV2 zip
+              }
               totalPriceSet { shopMoney { amount currencyCode } }
               lineItems(first: 50) {
                 edges {
@@ -172,6 +176,7 @@ async function getOrderByNumber(orderNumber) {
             }
             shippingAddress {
               address1
+              address2
               city
               province
               country
@@ -236,6 +241,9 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
             displayFinancialStatus
             displayFulfillmentStatus
             cancelledAt
+            shippingAddress {
+              address1 address2 city province country countryCodeV2 zip
+            }
             totalPriceSet { shopMoney { amount currencyCode } }
             lineItems(first: 50) {
               edges {
@@ -350,6 +358,7 @@ async function createCustomer(input) {
           phone
           defaultAddress {
             address1
+            address2
             city
             province
             country
@@ -870,6 +879,70 @@ function getAdminUrl(gid) {
   return `https://admin.shopify.com/store/${storeName}/orders/${numericId}`;
 }
 
+// --- Product creation ---
+
+/**
+ * Create a new product in Shopify (DRAFT status by default).
+ * @param {Object} input - ProductInput fields
+ * @returns {Object} Created product { id, title, handle, status }
+ */
+async function createShopifyProduct(input) {
+  const data = await shopifyGraphQL(`
+    mutation productCreate($input: ProductInput!) {
+      productCreate(input: $input) {
+        product {
+          id
+          title
+          handle
+          status
+        }
+        userErrors { field message }
+      }
+    }
+  `, { input });
+  return data.productCreate.product;
+}
+
+/**
+ * Bulk-create variants for a product.
+ * @param {string} productId - Shopify product GID
+ * @param {Array} variants - Array of { optionValues: [{name,optionName}], price, sku }
+ * @returns {Array} Created variants
+ */
+async function createProductVariants(productId, variants) {
+  const data = await shopifyGraphQL(`
+    mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkCreate(productId: $productId, variants: $variants) {
+        productVariants {
+          id
+          title
+          sku
+          price
+        }
+        userErrors { field message }
+      }
+    }
+  `, { productId, variants });
+  return data.productVariantsBulkCreate.productVariants;
+}
+
+/**
+ * Update a product's status (e.g., DRAFT → ACTIVE).
+ * @param {string} productId - Shopify product GID
+ * @param {string} status - "ACTIVE" or "DRAFT"
+ */
+async function updateProductStatus(productId, status) {
+  const data = await shopifyGraphQL(`
+    mutation productUpdate($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product { id status }
+        userErrors { field message }
+      }
+    }
+  `, { input: { id: productId, status } });
+  return data.productUpdate.product;
+}
+
 module.exports = {
   shopifyGraphQL,
   searchCustomers,
@@ -890,4 +963,7 @@ module.exports = {
   calculateRefund,
   createRefund,
   getAdminUrl,
+  createShopifyProduct,
+  createProductVariants,
+  updateProductStatus,
 };

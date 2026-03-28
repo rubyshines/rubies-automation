@@ -4,7 +4,7 @@
  * Two-phase flow: Phase 1 creates draft + shows preview, Phase 2 (confirmed=true) marks it as paid.
  */
 
-const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getAdminUrl } = require('../shopify');
+const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
 const { searchProducts } = require('../productCache');
 
 const tools = [
@@ -75,6 +75,28 @@ const tools = [
           orderName = completedOrder.order.name;
         }
 
+        // Fetch the completed order details to show full info
+        let orderDetails = '';
+        try {
+          const orderNum = (completedOrder.order?.name || orderName || '').replace('#', '');
+          if (orderNum) {
+            const details = await getOrderByNumber(orderNum);
+            const items = (details.lineItems || []).map(li =>
+              `  ${li.quantity}x ${li.title} — ${li.variantTitle || ''} (${li.sku || 'no SKU'})`
+            ).join('\n');
+            const a = details.shippingAddress;
+            const addr = a ? [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join(', ') : 'No address';
+            orderDetails = [
+              `**Customer:** ${details.customer?.name || ''} (${details.customer?.email || ''})`,
+              `**Ship to:** ${addr}`,
+              `**Items:**\n${items}`,
+              `**Note:** ${details.note || '(none)'}`,
+            ].join('\n');
+          }
+        } catch (err) {
+          orderDetails = `(Could not fetch order details: ${err.message})`;
+        }
+
         return {
           content: [{
             type: 'text',
@@ -84,7 +106,9 @@ const tools = [
               `**Order:** ${orderName}${orderAdminUrl ? ` — ${orderAdminUrl}` : ''}`,
               `**Draft:** ${completedOrder.name} — ${draftAdminUrl}`,
               '**Status:** Completed (marked as paid)',
-            ].join('\n'),
+              '',
+              orderDetails,
+            ].filter(Boolean).join('\n'),
           }],
         };
       }
@@ -112,11 +136,12 @@ const tools = [
           customerName = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email;
           if (c.defaultAddress) {
             const a = c.defaultAddress;
-            addressBlock = [a.address1, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
             shippingAddress = {
               firstName: c.firstName || '',
               lastName: c.lastName || '',
               address1: a.address1,
+              address2: a.address2 || '',
               city: a.city,
               province: a.province,
               country: a.countryCodeV2 || a.country,
@@ -133,6 +158,7 @@ const tools = [
       // Uses getCustomerFulfilledOrders which queries the top-level orders endpoint
       // with proper Shopify query filters (NOT customer.orders which doesn't support filtering).
       let originalOrderLine = '';
+      let originalOrderName = null;
       try {
         if (original_order_id) {
           // Explicit order ID provided — still validate it's fulfilled
@@ -173,6 +199,22 @@ const tools = [
           }
           const originalUrl = getAdminUrl(originalGid);
           originalOrderLine = `**Original Order:** ${match.name} — ${originalUrl}`;
+          originalOrderName = match.name;
+          // Prefer shipping address from the original order over customer default
+          if (match.shippingAddress) {
+            const a = match.shippingAddress;
+            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            shippingAddress = {
+              firstName: shippingAddress?.firstName || '',
+              lastName: shippingAddress?.lastName || '',
+              address1: a.address1,
+              address2: a.address2 || '',
+              city: a.city,
+              province: a.province,
+              country: a.countryCodeV2 || a.country,
+              zip: a.zip,
+            };
+          }
         } else {
           // Auto-find: use dedicated fulfilled-orders function (top-level orders query with proper filters)
           const fulfilledOrders = await getCustomerFulfilledOrders(customerGid, 20);
@@ -188,6 +230,22 @@ const tools = [
           const eligible = fulfilledOrders[0];
           const originalUrl = getAdminUrl(eligible.id);
           originalOrderLine = `**Original Order:** ${eligible.name} — ${originalUrl}`;
+          originalOrderName = eligible.name;
+          // Prefer shipping address from the original order over customer default
+          if (eligible.shippingAddress) {
+            const a = eligible.shippingAddress;
+            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            shippingAddress = {
+              firstName: shippingAddress?.firstName || '',
+              lastName: shippingAddress?.lastName || '',
+              address1: a.address1,
+              address2: a.address2 || '',
+              city: a.city,
+              province: a.province,
+              country: a.countryCodeV2 || a.country,
+              zip: a.zip,
+            };
+          }
         }
       } catch (err) {
         return {
@@ -217,7 +275,7 @@ const tools = [
       const draftInput = {
         customerId: customerGid,
         lineItems,
-        note: note || 'Exchange order created via CS MCP server',
+        note: (note ? `${note}${originalOrderName ? ` from order ${originalOrderName}` : ''}` : `Exchange order from ${originalOrderName || 'unknown order'} via CS MCP server`),
         shippingLine: { title: 'Free Shipping', price: '0.00' },
         tags: ['exchange', 'cs-mcp'],
       };

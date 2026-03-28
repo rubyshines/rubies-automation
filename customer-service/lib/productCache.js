@@ -107,7 +107,7 @@ function getProducts() {
  *   - "Youth Size" (numeric): 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16
  *     Used by AJ, Charlie, Brooke, Ruby bikini bottoms
  *   - "Size" (letter): XXS, XXS+, XS, XS+, S, M, L, 1X, 2X, 3X, 4X
- *     Used by Ava, Cheeky, Sassy, and newer products
+ *     Used by Ava, Cheeky, Sassy, and newer products (see products.config.json)
  *
  * Products with numeric sizing ALSO have letter sizes (XS–4X).
  * Products with letter-only sizing do NOT have numeric sizes,
