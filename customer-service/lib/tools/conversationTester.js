@@ -12,7 +12,7 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
-const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize, classifyProduct, getAdjacentSizes, getCumulativeDelta } = require('../decisionTree');
+const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('../decisionTree');
 
 // Import the advisor handler
 const advisorTools = require('./exchangeAdvisor');
@@ -33,8 +33,7 @@ async function composeAgentResponse(s, previousResponses) {
   const { classifyProduct: classifyProd } = require('../decisionTree');
 
   const forWhom = isThirdParty
-    ? (thirdPartyLabel === 'daughter' || thirdPartyLabel === 'son' || thirdPartyLabel === 'kid' || thirdPartyLabel === 'kiddo'
-      ? `for your ${thirdPartyLabel}` : `for ${thirdPartyLabel}`)
+    ? (KID_LABELS.has(thirdPartyLabel) ? `for your ${thirdPartyLabel}` : `for ${thirdPartyLabel}`)
     : 'for you';
   const youHer = isThirdParty ? 'her' : 'you';
 

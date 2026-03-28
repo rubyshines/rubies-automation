@@ -128,6 +128,7 @@ const LETTER_SIZES = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X
 const LETTER_NO_PLUS = ['XXS', 'XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const LETTER_WITH_PLUS = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const SIZE_ALIASES = { 'XL': '1X', 'XXL': '2X', '2XL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X' };
+const KID_LABELS = new Set(['daughter', 'girl', 'son', 'boy', 'kid', 'kiddo', 'child', 'kids']);
 
 // Chest pad sizing: maps bra/top size → chest pad size
 // S = Youth 6-10 / Adult XXS, M = Youth 12-16 / Adult XS-L, L = Adult 1X-4X
@@ -218,6 +219,22 @@ function getSizeModifier(size) {
  * @param {boolean} isKids - Whether to use kids or adult chart
  * @returns {{ chartCategory: string, measureType: string }}
  */
+/**
+ * Format a measurement value for display. 30 inches → '30"', 58 cm → '58 cm'
+ */
+function formatMeasurementDisplay(value, unit) {
+  return unit === 'cm' ? `${value} cm` : `${value}"`;
+}
+
+/**
+ * Get the measurement location description for a body part.
+ */
+function getMeasureLocation(measureType) {
+  return measureType === 'waist'
+    ? 'around the belly, just under the belly button'
+    : 'around the chest where a bra band would sit';
+}
+
 function getChartCategory(productName, isKids) {
   const cat = classifyProduct(productName);
   const isTop = cat === 'underwear_top' || cat === 'swim_top';
@@ -552,7 +569,7 @@ function prescribeCustomerIdentification(intake, context) {
       type: 'third_party_adapt',
       text: `Buying for ${intake.third_party_label || 'someone else'} — adapt language: "your ${intake.third_party_label || 'child'}'s comfort is most important"`,
     });
-    if (['daughter', 'girl', 'son', 'boy', 'kid', 'kiddo', 'child'].includes(intake.third_party_label)) {
+    if (KID_LABELS.has(intake.third_party_label)) {
       prescription.actions.push({
         type: 'kid_sensitivity',
         text: 'Kid: measurements only, never ask how product looks on child, extra patience',
@@ -972,7 +989,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
                 p_unit: mUnit,
               });
               const chartSize = sizeMatches?.[0]?.size_label || null;
-              const mDisplay = mUnit === 'inches' ? `${mVal}"` : `${mVal} cm`;
+              const mDisplay = formatMeasurementDisplay(mVal, mUnit);
 
               if (chartSize === currentSize) {
                 // Chart says current size should fit — but customer says it doesn't
@@ -1033,7 +1050,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               const issueText = (intakeItem?.issue || '').toLowerCase();
               const isUncertain = /too_loose|too_tight|close_fit_loose|close_fit_tight|way_off/.test(issueText);
               const measureType = (productType === 'bra' || productType === 'bikini_top' || productType === 'top') ? 'chest' : 'waist';
-              const measureLocation = measureType === 'waist' ? 'around the belly and just under the belly button' : 'around the chest where a bra band would sit';
+              const measureLocation = getMeasureLocation(measureType);
               const isOnepiece = itemCategory === 'onepiece';
               const heightAsk = isOnepiece ? ' and your height' : '';
               const heightReason = isOnepiece ? ' and whether Regular or Tall would work best' : '';
@@ -1340,7 +1357,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
                 const recommendedProduct = (defaultNick && altProducts.find(p => p.nickname === defaultNick))
                   || altProducts[0];
                 const recName = recommendedProduct?.nickname || (altIsAdult ? 'adult underwear' : 'youth underwear');
-                const mDisplay = unit === 'inches' ? `${m.value}"` : `${m.value} ${unit}`;
+                const mDisplay = formatMeasurementDisplay(m.value, unit);
 
                 rx.state = 'AWAITING_SIZE_CONFIRMATION';
                 // Count how many items of this product are being exchanged
@@ -1356,7 +1373,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               } else {
                 // Doesn't match either chart — ask to re-measure
                 rx.state = 'AWAITING_SIZE_CONFIRMATION';
-                const measureLoc2 = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
+                const measureLoc2 = getMeasureLocation(measureType);
                 rx.response_text = `The measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check? It should be measured ${measureLoc2}.`;
                 rx.audit = `Measurement lookup: ${m.value} ${unit} — no match in ${chartCategory} or ${altChartCategory}`;
                 prescription.still_needed.push(`measurement for ${item.product}`);
@@ -1372,7 +1389,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           rx.state = 'AWAITING_MEASUREMENT';
           const measureType = item.product?.toLowerCase().match(/bra|top/) ? 'chest' : 'waist';
           const unit = useInches ? 'inches' : 'cm';
-          const measureLocation = measureType === 'waist' ? 'around the belly, just under the belly button' : 'around the chest where a bra band would sit';
+          const measureLocation = getMeasureLocation(measureType);
           const thirdPartyPrefix = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
           const catWayOff = classifyProduct(item.product);
           const isOnepieceWayOff = catWayOff === 'onepiece';
@@ -1459,11 +1476,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.size} ${fit.variant} (1 size ${fit.moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
             } else if (fit.type === 'separates') {
               rx.state = 'AWAITING_DECISION';
-              rx.response_text = `Based on your measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini set (top + bottom) would let you pick the right size for each — would you like to explore that option?`;
+              rx.response_text = `Based on your measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini top and bottom would let you pick the right size for each — would you like to explore that option?`;
               rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`;
             } else {
               rx.state = 'AWAITING_DECISION';
-              rx.response_text = `Based on your height, the one-piece might not be the ideal fit. A bikini set (top + bottom) would give you more flexibility on sizing — would you like to explore that option?`;
+              rx.response_text = `Based on your height, the one-piece might not be the ideal fit. A bikini top and bottom would give you more flexibility on sizing — would you like to explore that option?`;
               rx.audit = `Height check: height ${heightVal} ${heightUnit} outside all chart ranges — suggesting separates`;
             }
           } catch (e) {
@@ -1859,8 +1876,6 @@ async function prescribeDonationRouting(intake, context) {
 // Pre-Purchase Sizing — recommends sizes for customers who haven't ordered yet
 // ---------------------------------------------------------------------------
 
-const KID_LABELS = new Set(['daughter', 'son', 'kid', 'kiddo', 'child', 'kids']);
-
 async function prescribePrePurchaseSizing(intake, context) {
   const items = [];
   const still_needed = [];
@@ -1909,9 +1924,7 @@ async function prescribePrePurchaseSizing(intake, context) {
     // Determine which measurement we need
     const needsHeight = isOnepiece;
     const measureBodyPart = isTop ? 'chest' : 'waist';
-    const measureLocation = measureBodyPart === 'waist'
-      ? 'around the belly and just under the belly button'
-      : 'around the chest where a bra band would sit';
+    const measureLocation = getMeasureLocation(measureBodyPart);
     const thirdPartyPrefix = isThirdParty ? `your ${thirdPartyLabel}'s ` : '';
 
     // Check if we have the needed measurement
@@ -1959,7 +1972,7 @@ async function prescribePrePurchaseSizing(intake, context) {
 
       if (sizeMatches && sizeMatches.length > 0) {
         const recommendedSize = sizeMatches[0].size_label;
-        const mDisplay = mUnit === 'inches' ? `${m.value}"` : `${m.value} cm`;
+        const mDisplay = formatMeasurementDisplay(m.value, mUnit);
         const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
 
         // For one-piece with height, do full fit analysis
@@ -1983,13 +1996,13 @@ async function prescribePrePurchaseSizing(intake, context) {
             } else if (fit.type === 'separates') {
               items.push({
                 state: 'SUGGEST_SEPARATES', product: nick,
-                response_text: `Based on ${measureRef} measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini set (top + bottom) would let you pick the right size for each — would you like to explore that option?`,
+                response_text: `Based on ${measureRef} measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini top and bottom would let you pick the right size for each — would you like to explore that option?`,
               });
               audit.push(`${nick}: waist → ${fit.waistSize}, height → ${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`);
             } else {
               items.push({
                 state: 'SUGGEST_SEPARATES', product: nick,
-                response_text: `Based on ${measureRef} height, the one-piece might not be the ideal fit. A bikini set (top + bottom) would give you more flexibility on sizing — would you like to explore that option?`,
+                response_text: `Based on ${measureRef} height, the one-piece might not be the ideal fit. A bikini top and bottom would give you more flexibility on sizing — would you like to explore that option?`,
               });
               audit.push(`${nick}: height outside chart ranges — suggesting separates`);
             }
@@ -2021,18 +2034,42 @@ async function prescribePrePurchaseSizing(intake, context) {
         });
         if (altMatches?.length) {
           const altSize = altMatches[0].size_label;
-          const mDisplay = mUnit === 'inches' ? `${m.value}"` : `${m.value} cm`;
+          const mDisplay = formatMeasurementDisplay(m.value, mUnit);
           const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
-          const ageNote = isKids
-            ? `Based on ${measureRef} measurement of ${mDisplay}, ${thirdPartyPrefix ? 'they would' : 'you would'} be in our adult sizing — I'd recommend a size ${altSize} for the ${nick}.`
-            : `Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${altSize} for the ${nick}.`;
-          items.push({
-            state: 'SIZE_RECOMMENDATION',
-            product: nick,
-            recommendedSize: altSize,
-            response_text: ageNote,
-          });
-          audit.push(`${nick}: ${m.value} ${mUnit} not in ${chartCategory}, found in ${altChartCategory} → ${altSize}`);
+          const agePrefix = isKids ? `${thirdPartyPrefix ? 'They would' : 'You would'} be in our adult sizing — ` : '';
+
+          // For one-piece, run height analysis on the alt chart too
+          if (needsHeight && hasHeight) {
+            const h = intake.height_measurement;
+            const heightInInches = h.unit === 'cm' ? h.value / 2.54 : h.value;
+            try {
+              const fit = await analyzeOnepieceFit(altChartCategory, altSize, heightInInches, product, useInches);
+              if (fit.type === 'exact') {
+                items.push({ state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: fit.size, variant: fit.variant,
+                  response_text: `${agePrefix}Based on ${measureRef} measurements, I'd recommend a size ${fit.size} ${fit.variant} for the ${nick}.` });
+              } else if (fit.type === 'wiggle') {
+                items.push({ state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: fit.size, variant: fit.variant,
+                  response_text: `${agePrefix}Based on ${measureRef} measurements, I'd recommend a size ${fit.size} ${fit.variant} for the ${nick}. The waist will have ${fit.unit} ${fit.moreOrLess} fabric compared to the ${fit.waistSize}, but there's some wiggle room.` });
+              } else if (fit.type === 'separates') {
+                items.push({ state: 'SUGGEST_SEPARATES', product: nick,
+                  response_text: `Based on ${measureRef} measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini top and bottom would let you pick the right size for each — would you like to explore that option?` });
+              } else {
+                items.push({ state: 'SUGGEST_SEPARATES', product: nick,
+                  response_text: `Based on ${measureRef} height, the one-piece might not be the ideal fit. A bikini top and bottom would give you more flexibility on sizing — would you like to explore that option?` });
+              }
+              audit.push(`${nick}: ${m.value} ${mUnit} in ${altChartCategory} → ${altSize}, height analysis: ${fit.type}`);
+            } catch (e) {
+              items.push({ state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: altSize,
+                response_text: `${agePrefix}Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${altSize} for the ${nick}.` });
+              audit.push(`${nick}: ${m.value} ${mUnit} in ${altChartCategory} → ${altSize} (height check failed)`);
+            }
+          } else {
+            items.push({
+              state: 'SIZE_RECOMMENDATION', product: nick, recommendedSize: altSize,
+              response_text: `${agePrefix}Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${altSize} for the ${nick}.`,
+            });
+            audit.push(`${nick}: ${m.value} ${mUnit} not in ${chartCategory}, found in ${altChartCategory} → ${altSize}`);
+          }
         } else {
           items.push({
             state: 'SIZE_UNCLEAR',
@@ -2256,6 +2293,9 @@ module.exports = {
   parseSizeVariant,
   getSizeModifier,
   getChartCategory,
+  formatMeasurementDisplay,
+  getMeasureLocation,
+  KID_LABELS,
   prescribePrePurchaseSizing,
   // Config-driven products (populated by initCsConfig)
   initCsConfig,

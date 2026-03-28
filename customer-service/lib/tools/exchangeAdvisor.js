@@ -573,7 +573,7 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
       customerCountry: customerCountry || 'US',
       isNorthAmerica: customerCountry ? ['US', 'CA'].includes(customerCountry) : true,
       orderHistory: [],
-      measurementType: intake.items.some(i => classifyProd(i.product)?.includes('top')) ? 'chest' : 'waist',
+      measurementType: intake.items.some(i => require('../decisionTree').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
       isPrePurchase: true,
     };
     const treeResult = await walkTree(intake, treeContext);
@@ -787,7 +787,7 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     customer, targetOrder, fulfilled, exchanges, all: orders,
     customerCountry, isNorthAmerica,
     orderHistory: fulfilled.slice(0, 5),
-    measurementType: intake.items.some(i => i.product?.toLowerCase().match(/bra|top/)) ? 'chest' : 'waist',
+    measurementType: intake.items.some(i => require('../decisionTree').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
   };
 
   const treeResult = await walkTree(intake, treeContext);
