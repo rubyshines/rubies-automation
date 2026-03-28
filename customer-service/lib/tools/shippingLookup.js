@@ -132,28 +132,53 @@ async function handleShippingLookup({ customer_email, order_number }) {
 
   // Step 2: Get fulfillment + tracking info
   const fulfillments = order.fulfillments || [];
-  if (fulfillments.length === 0) {
-    // Unfulfilled order — check why
-    const orderDate = new Date(order.createdAt);
-    const daysSinceOrder = Math.floor((Date.now() - orderDate.getTime()) / 86400000);
+  if (fulfillments.length === 0 || order.fulfillmentStatus === 'UNFULFILLED') {
+    // Unfulfilled order — investigate why
+    const { analyzeUnfulfilledOrder, draftUnfulfilledResponse } = require('../tracking/fulfillmentChecker');
+    try {
+      const investigation = await analyzeUnfulfilledOrder(order);
+      const customerName = customer?.firstName || order.customer?.name?.split(' ')[0] || null;
+      const draft = await draftUnfulfilledResponse(investigation, { customerName });
 
-    let statusNote;
-    if (daysSinceOrder <= 2) {
-      statusNote = `Order #${order.name} was placed ${daysSinceOrder === 0 ? 'today' : daysSinceOrder === 1 ? 'yesterday' : `${daysSinceOrder} days ago`}. It's being prepared for shipping.`;
-    } else {
-      statusNote = `Order #${order.name} was placed ${daysSinceOrder} days ago and hasn't shipped yet. This may need investigation.`;
+      let md = `## Shipping Lookup\n\n`;
+      md += `**Order:** ${order.name}\n`;
+      md += `**Status:** Unfulfilled (${investigation.businessDays} business days)\n`;
+      md += `**Severity:** ${investigation.severity.toUpperCase()}\n\n`;
+      if (investigation.issues.length > 0) {
+        md += `**Issues found:**\n`;
+        for (const issue of investigation.issues) md += `- ${issue.type}: ${issue.description}\n`;
+        md += '\n';
+      }
+      if (investigation.inventory.length > 0) {
+        md += `**Inventory check:**\n`;
+        for (const item of investigation.inventory) {
+          if (item.error) { md += `- ${item.title}: error (${item.error})\n`; continue; }
+          const status = item.isPreOrder ? '⏳ PRE-ORDER' : item.available <= 0 ? '❌ OUT OF STOCK' : `✅ ${item.available} available`;
+          md += `- ${item.title} (${item.variant}): ${status}\n`;
+        }
+        md += '\n';
+      }
+      md += `**Customer response draft:**\n${draft}\n`;
+
+      return {
+        content: [{ type: 'text', text: md }],
+        _structured: {
+          status: investigation.severity === 'urgent' ? 'needs_attention' : investigation.severity === 'attention' ? 'needs_attention' : 'processing',
+          order: order.name,
+          fulfillmentStatus: 'UNFULFILLED',
+          investigation,
+          draft,
+          results: [{ summary: draft, currentStatus: 'unfulfilled', problems: investigation.issues }],
+        },
+      };
+    } catch (e) {
+      // Fallback if investigation fails
+      const daysSinceOrder = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 86400000);
+      return {
+        content: [{ type: 'text', text: `## Shipping Lookup\n\n**Order:** ${order.name}\n**Status:** Unfulfilled (${daysSinceOrder} days)\n**Note:** Could not complete investigation: ${e.message}` }],
+        _structured: { status: 'needs_attention', order: order.name, fulfillmentStatus: 'UNFULFILLED', error: e.message },
+      };
     }
-
-    return {
-      content: [{ type: 'text', text: `## Shipping Lookup\n\n**Order:** ${order.name}\n**Status:** Unfulfilled\n**Note:** ${statusNote}` }],
-      _structured: {
-        status: daysSinceOrder > 3 ? 'needs_attention' : 'processing',
-        order: order.name,
-        fulfillmentStatus: 'UNFULFILLED',
-        daysSinceOrder,
-        note: statusNote,
-      },
-    };
   }
 
   // Step 3: For each fulfillment, scrape + analyze
