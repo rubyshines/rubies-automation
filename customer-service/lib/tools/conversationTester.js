@@ -16,7 +16,7 @@ const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize, class
 
 // Import the advisor handler
 const advisorTools = require('./exchangeAdvisor');
-const advisorHandler = advisorTools.find(t => t.name === 'exchange_advisor').handler;
+const advisorHandler = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor')).handler;
 
 // ---------------------------------------------------------------------------
 // Response composer — builds agent response from structured data
@@ -103,8 +103,12 @@ async function composeAgentResponse(s, previousResponses) {
   const needsInfo = [];         // items needing more info (questions to ask)
   const productSwaps = [];      // try-size swaps
 
+  const sizeRecommendations = []; // pre-purchase sizing
+
   for (const pi of prescriptionItems) {
-    if (pi.state === 'REFUND_CONFIRMED') {
+    if (pi.state === 'SIZE_RECOMMENDATION' || pi.state === 'NEEDS_MEASUREMENT' || pi.state === 'NEEDS_PRODUCT') {
+      sizeRecommendations.push(pi);
+    } else if (pi.state === 'REFUND_CONFIRMED') {
       refundConfirmed.push(pi);
     } else if (pi.state === 'CONFIRMED' || pi.state === 'AWAITING_DECISION') {
       // Check if it's a product swap
@@ -310,6 +314,13 @@ async function composeAgentResponse(s, previousResponses) {
     parts.push({ type: 'question', text: item.response_text });
   }
 
+  // 5. Pre-purchase size recommendations
+  if (sizeRecommendations.length > 0) {
+    for (const rec of sizeRecommendations) {
+      parts.push({ type: 'sizing', text: rec.response_text });
+    }
+  }
+
   // ── Compose final response ──
   if (parts.length === 0) {
     if (s.status === 'gathering' || !prescriptionItems.length) {
@@ -367,10 +378,16 @@ async function composeAgentResponse(s, previousResponses) {
     response += ' No need to reorder — we can handle it as an exchange.';
   }
 
+  // Add sizing recommendations (pre-purchase)
+  const sizingTexts = parts.filter(p => p.type === 'sizing').map(p => p.text);
+  if (sizingTexts.length > 0) {
+    response += sizingTexts.join(' ');
+  }
+
   // Add questions
   if (hasQuestions) {
     const questionTexts = parts.filter(p => p.type === 'question').map(p => p.text);
-    response += (hasExchanges || hasRefunds ? '\n\n' : '') + questionTexts.join(' ');
+    response += (hasExchanges || hasRefunds || sizingTexts.length > 0 ? '\n\n' : '') + questionTexts.join(' ');
   }
 
   // Crossover note
@@ -745,30 +762,30 @@ async function handleTestConversation({ customer_email, messages, order_number }
 // Tool definition
 // ---------------------------------------------------------------------------
 
-const tools = [
-  {
-    name: 'test_exchange_conversation',
-    description: [
-      'Simulate a multi-message exchange conversation. Provide a customer email and an array of customer messages.',
-      'Shows the full conversation: customer info, order context, each message/response pair, intake state,',
-      'and the exchange order that WOULD be created (simulation only — no real orders created).',
-      'Use this to test and validate the exchange decision tree.',
-    ].join(' '),
-    inputSchema: {
-      type: 'object',
-      properties: {
-        customer_email: { type: 'string', description: 'Real customer email from Shopify (used to pull order context)' },
-        messages: {
-          type: 'array',
-          description: 'Array of customer messages in order, e.g. ["the AJ is too tight", "yes size 14 please — Sarah"]',
-          items: { type: 'string' },
-        },
-        order_number: { type: 'string', description: 'Optional order number to target (e.g. "28774"). If omitted, uses most recent fulfilled order.' },
-      },
-      required: ['customer_email', 'messages'],
+const testerDescription = [
+  'Simulate a multi-message CS conversation. Provide a customer email and an array of customer messages.',
+  'Shows the full conversation: customer info, order context, each message/response pair, intake state,',
+  'and the exchange order that WOULD be created (simulation only — no real orders created).',
+  'Handles exchanges, refunds, defects, and pre-purchase sizing inquiries.',
+].join(' ');
+
+const testerSchema = {
+  type: 'object',
+  properties: {
+    customer_email: { type: 'string', description: 'Real customer email from Shopify (used to pull order context)' },
+    messages: {
+      type: 'array',
+      description: 'Array of customer messages in order, e.g. ["the AJ is too tight", "yes size 14 please — Sarah"]',
+      items: { type: 'string' },
     },
-    handler: handleTestConversation,
+    order_number: { type: 'string', description: 'Optional order number to target (e.g. "28774"). If omitted, uses most recent fulfilled order.' },
   },
+  required: ['customer_email', 'messages'],
+};
+
+const tools = [
+  { name: 'test_cs_conversation', description: testerDescription, inputSchema: testerSchema, handler: handleTestConversation },
+  { name: 'test_exchange_conversation', description: testerDescription + ' (Alias for test_cs_conversation)', inputSchema: testerSchema, handler: handleTestConversation },
 ];
 
 module.exports = tools;

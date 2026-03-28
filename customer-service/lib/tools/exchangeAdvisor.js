@@ -160,7 +160,7 @@ Return JSON:
   "buying_for": "self" | "third_party" | "unclear",
   "third_party_label": string or null — "daughter", "son", "kiddo", "partner", etc.,
   "order_number": string or null — extract order number if mentioned,
-  "message_type": "exchange" | "refund" | "defect" | "product_not_working" | "cancellation" | "missing_item" | "wrong_item_shipped" | "general_inquiry" | "unclear",
+  "message_type": "exchange" | "refund" | "defect" | "product_not_working" | "cancellation" | "missing_item" | "wrong_item_shipped" | "sizing_inquiry" | "shipping" | "order_modification" | "product_question" | "wholesale" | "positive_feedback" | "general_inquiry" | "unclear",
   "customer_intent": "exchange_same_product" | "exchange_different_product" | "refund" | "unsure" | "cancellation" | null,
   "items": [
     {
@@ -188,6 +188,12 @@ IMPORTANT:
 - EXCLUSIONS: If the customer says "just the X" or "only the X" or "not the Y" or "the Y fits fine", ONLY include the items they want to exchange. Do NOT include items they explicitly said are fine or excluded. For example "just the AJ, the Ruby fits fine" means ONLY the AJ goes in items — do NOT include the Ruby.
 - When confirming a size, only apply it to the items the customer is actually exchanging. If they say "1X for the AJ" don't apply 1X to other products.
 - RETURNS: "I want to return", "can I return", "I'd like to send back", "return for a refund", "not her style", "wasn't for me" → for the SPECIFIC item being returned, set issue = "refund_request". If the ENTIRE message is about returning (no exchanges), also set message_type = "refund". But if the message is mixed (some items exchanging, some returning), set message_type = "exchange" and use issue = "refund_request" on the individual return items. A "return" means the customer wants their money back, not an exchange. Don't confuse with "exchange" or "swap".
+- PRE-PURCHASE SIZING: "what size should I get", "what size for my daughter", "what size fits a 34 waist", "help me choose a size" → message_type = "sizing_inquiry". They have NO order yet — they want to know what size to BUY. Extract product, measurements, kid/adult context. Set item issue = "none".
+- SHIPPING: "where's my order", "tracking number", "when will it arrive", "hasn't shipped" → message_type = "shipping"
+- ORDER MODIFICATION: "can I cancel", "change my address", "add an item", "modify my order" → message_type = "order_modification"
+- PRODUCT QUESTION: "what's the difference between", "do you have X in pink", "what material", "how does it work" → message_type = "product_question"
+- WHOLESALE: "wholesale", "bulk order", "retail partner", "stock your products" → message_type = "wholesale"
+- POSITIVE FEEDBACK: "thank you", "love your products", "amazing", "my daughter is so happy" with NO issue or request → message_type = "positive_feedback"
 
 Return ONLY JSON. No explanation.`;
 
@@ -536,23 +542,90 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
 
   if (!targetOrder) targetOrder = fulfilled[0] || null;
 
-  if (!customer) {
-    return {
-      content: [{ type: 'text', text: 'No customer found for email: ' + customer_email + '. If they have an order number, ask for it — they may have ordered under a different email.' }],
-      _structured: { status: 'error', error: 'customer_not_found', intake: existingIntake || createEmptyIntake() },
-    };
-  }
-
-  // STEP 3: Extract size from SKU (deterministic) and parse message WITH order context
+  // STEP 3: Parse message + route by message type
   const orderLineItems = (targetOrder?.lineItems || []).map(li => {
-    // SKU format: PRODUCT-COLOR-SIZE (e.g., AJ-PNK-16, MIA-BLK-S, SKY2-BLK-LT for L Tall)
-    // The last segment is always the size (may include variant suffix like T for Tall)
     const rawSkuSize = li.sku ? li.sku.split('-').pop() : null;
     return { ...li, _skuSize: rawSkuSize ? normalizeSize(rawSkuSize) : null, _rawSkuSize: rawSkuSize };
   });
   const intake = await parseExchangeIntake(issue_description, existingIntake || null, orderLineItems);
   intake._latestMessage = issue_description;
   intake.conversation_email = customer_email;
+
+  // Fallback: upgrade general_inquiry to sizing_inquiry if signals present
+  if (intake.message_type === 'general_inquiry' && !effectiveOrderNumber && !existingIntake) {
+    const hasMeasurement = intake.measurement || intake.height_measurement;
+    const hasProduct = intake.items.length > 0;
+    const sizingSignals = /what size|which size|size should|size for|size would|recommend.*size|help.*size/i.test(issue_description || '');
+    if ((hasMeasurement || sizingSignals) && hasProduct) {
+      intake.message_type = 'sizing_inquiry';
+    }
+  }
+
+  // ── NON-EXCHANGE ROUTING ──
+  // Route message types that don't need order context
+
+  // Pre-purchase sizing — no order needed
+  if (intake.message_type === 'sizing_inquiry' && !effectiveOrderNumber && !existingIntake?.order_number) {
+    const { classifyProduct: classifyProd } = require('../decisionTree');
+    const treeContext = {
+      customer: customer || null,
+      targetOrder: null, fulfilled: [], exchanges: [], all: [],
+      customerCountry: customerCountry || 'US',
+      isNorthAmerica: customerCountry ? ['US', 'CA'].includes(customerCountry) : true,
+      orderHistory: [],
+      measurementType: intake.items.some(i => classifyProd(i.product)?.includes('top')) ? 'chest' : 'waist',
+      isPrePurchase: true,
+    };
+    const treeResult = await walkTree(intake, treeContext);
+    return buildAdvisorResponse(intake, treeResult, { customer, targetOrder: null, orderLineItems: [], fulfilled: [], exchanges: [], customerCountry, isNorthAmerica, toneSample: null });
+  }
+
+  // Future routing stubs — acknowledge + route to human
+  const stubTypes = {
+    shipping: "I'll look into the shipping status for you.",
+    order_modification: "I'll look into that for you.",
+    product_question: "Great question!",
+    wholesale: "Thanks for your interest in wholesale!",
+  };
+  if (stubTypes[intake.message_type] && !existingIntake) {
+    const stubText = stubTypes[intake.message_type];
+    return {
+      content: [{ type: 'text', text: `${stubText} Let me get back to you on this.` }],
+      _structured: {
+        status: 'route_to_human',
+        intake,
+        prescription: { items: [{ product: null, state: 'ROUTE_TO_HUMAN', response_text: stubText }], donation: null, crossover_note: null, still_needed: [], flags: [] },
+        customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
+        order: null,
+        exchanges: [],
+        tone_sample: null,
+        audit: [`Message type: ${intake.message_type} — routed to human`],
+      },
+    };
+  }
+
+  // Positive feedback — warm acknowledgment
+  if (intake.message_type === 'positive_feedback' && !existingIntake) {
+    return {
+      content: [{ type: 'text', text: `That's so kind of you to say — thank you! It really means a lot.` }],
+      _structured: {
+        status: 'complete',
+        intake,
+        prescription: { items: [{ product: null, state: 'ACKNOWLEDGED', response_text: "That's so kind — thank you!" }], donation: null, crossover_note: null, still_needed: [], flags: [] },
+        customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
+        order: null, exchanges: [], tone_sample: null,
+        audit: ['Positive feedback — acknowledged warmly'],
+      },
+    };
+  }
+
+  // ── EXCHANGE/REFUND/DEFECT FLOW — needs customer + order ──
+  if (!customer) {
+    return {
+      content: [{ type: 'text', text: 'No customer found for email: ' + customer_email + '. If they have an order number, ask for it — they may have ordered under a different email.' }],
+      _structured: { status: 'error', error: 'customer_not_found', intake: existingIntake || createEmptyIntake() },
+    };
+  }
 
   // Detect variant modifier (Tall/Regular) from order SKU for one-piece items
   // SKU format: SKY2-BLK-LT → "LT" = L Tall, SKY2-BLK-L → "L" = L Regular
@@ -685,12 +758,24 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         else bodyGroups.add('bottom'); // underwear_bottom, swim_bottom
       }
       if (bodyGroups.size > 1) {
-        // Multiple body groups — preserve issue context but clear items to ask which ones
-        const preservedIssue = nonAccessoryItems[0]?.issue || intake.issue_type;
-        intake.items = [];
-        intake._needsItemClarification = true;
-        intake._preservedIssue = preservedIssue;
-        intake._preservedMessage = intake._latestMessage;
+        // Check if customer was specific — different issues per item means they named each one
+        const uniqueIssues = new Set(nonAccessoryItems.map(i => i.issue).filter(Boolean));
+        const msgLower = (intake._latestMessage || '').toLowerCase();
+        const usedVagueLanguage = /everything|all of|these|they all|whole order/.test(msgLower);
+        // Customer was specific if: different issues per item, OR didn't use vague language
+        const customerWasSpecific = uniqueIssues.size > 1 || !usedVagueLanguage;
+
+        if (customerWasSpecific) {
+          // Customer named specific products with specific issues — trust it
+          intake._bodyGroupConfirmed = true;
+        } else {
+          // Vague — all same issue, all order items included — ask which ones
+          const preservedIssue = nonAccessoryItems[0]?.issue || intake.issue_type;
+          intake.items = [];
+          intake._needsItemClarification = true;
+          intake._preservedIssue = preservedIssue;
+          intake._preservedMessage = intake._latestMessage;
+        }
       }
     }
   }
@@ -882,6 +967,75 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
 }
 
 // ---------------------------------------------------------------------------
+// Build advisor response for non-exchange flows (pre-purchase, stubs)
+// ---------------------------------------------------------------------------
+
+function buildAdvisorResponse(intake, treeResult, opts) {
+  const { customer, targetOrder, orderLineItems, fulfilled, exchanges, customerCountry, isNorthAmerica, toneSample } = opts;
+  const itemActions = treeResult.response_parts.filter(p => p.type === 'item_action');
+
+  const structured = {
+    status: treeResult.status,
+    intake,
+    prescription: {
+      items: itemActions.map(a => ({
+        product: a.product,
+        state: a.state,
+        response_text: a.text,
+        options: a.options || null,
+        recommendation: a.recommendation || null,
+        skip_donation: false,
+        crossover_note: null,
+        self_diagnosed: false,
+      })),
+      donation: null,
+      crossover_note: null,
+      still_needed: treeResult.still_needed,
+      flags: [],
+    },
+    customer: {
+      email: customer?.email || intake.conversation_email,
+      country: customerCountry || null,
+      name: intake.name,
+      pronouns: intake.pronouns,
+      buying_for: intake.buying_for,
+      third_party_label: intake.third_party_label,
+      address: customer?.defaultAddress ? {
+        address1: customer.defaultAddress.address1,
+        address2: customer.defaultAddress.address2 || '',
+        city: customer.defaultAddress.city,
+        province: customer.defaultAddress.province,
+        country: customer.defaultAddress.country,
+        zip: customer.defaultAddress.zip,
+      } : null,
+    },
+    order: null,
+    exchanges: [],
+    tone_sample: toneSample ? { situation: toneSample.situation, message: toneSample.agent_message } : null,
+    audit: treeResult.audit,
+    phases_completed: treeResult.phases_completed,
+  };
+
+  // Simple markdown
+  let md = `## CS Advisor\n\n`;
+  md += `**Status:** ${treeResult.status}\n`;
+  if (customer?.email) md += `**Customer:** ${customer.email}\n`;
+  md += '\n';
+  for (const a of itemActions) {
+    md += `**${a.product || 'Sizing'}:** ${a.text}\n`;
+  }
+  if (treeResult.still_needed.length > 0) {
+    md += `\n**Still needed:** ${treeResult.still_needed.join(', ')}\n`;
+  }
+  md += '\n**Audit:**\n';
+  for (const a of treeResult.audit) md += `- ${a}\n`;
+  md += `\n### Intake State (pass back on next call)\n`;
+  md += '```json\n' + JSON.stringify(intake, null, 2) + '\n```\n';
+
+  return { content: [{ type: 'text', text: md }], _structured: structured };
+}
+
+// ---------------------------------------------------------------------------
 // Tool: log_donation_routing
 // ---------------------------------------------------------------------------
 
@@ -924,28 +1078,37 @@ async function handleLogDonationRouting({ customer_email, order_number, partner_
 // Tool definitions
 // ---------------------------------------------------------------------------
 
+const csAdvisorDescription = [
+  'Customer service advisor — call this on EVERY customer message.',
+  'Handles: exchanges, refunds, defects, pre-purchase sizing, and routes shipping/order/product questions.',
+  'Uses progressive intake: pass the intake JSON from the previous call to accumulate state across messages.',
+  'First call: parses the customer message into structured fields (items, sizes, intent, pronouns, etc.).',
+  'Subsequent calls: merges new information, never overwrites confirmed data.',
+  'Returns structured guidance + the intake JSON to pass back on the next call.',
+].join(' ');
+
+const csAdvisorSchema = {
+  type: 'object',
+  properties: {
+    customer_email: { type: 'string', description: 'Customer email address (used to find customer and orders)' },
+    issue_description: { type: 'string', description: "The customer's LATEST message (not the full conversation — just the new message)" },
+    order_number: { type: 'string', description: 'Optional order number. If omitted, auto-detects from message or uses most recent fulfilled order.' },
+    intake: { type: 'object', description: 'The intake JSON from the previous call. Pass this back to accumulate state across messages. Omit on first call.' },
+  },
+  required: ['customer_email'],
+};
+
 const tools = [
   {
+    name: 'cs_advisor',
+    description: csAdvisorDescription,
+    inputSchema: csAdvisorSchema,
+    handler: handleExchangeAdvisor,
+  },
+  {
     name: 'exchange_advisor',
-    description: [
-      'Exchange decision advisor — call this on EVERY customer message during an exchange conversation.',
-      'Uses progressive intake: pass the intake JSON from the previous call to accumulate state across messages.',
-      'First call: parses the customer message into structured fields (items, sizes, intent, pronouns, etc.).',
-      'Subsequent calls: merges new information, never overwrites confirmed data.',
-      'When intake status = "ready", all required fields are filled — create the exchange order.',
-      'When status = "needs_info", the "Still Needed" section tells you exactly what to ask.',
-      'Returns structured guidance + the intake JSON to pass back on the next call.',
-    ].join(' '),
-    inputSchema: {
-      type: 'object',
-      properties: {
-        customer_email: { type: 'string', description: 'Customer email address (used to find customer and orders)' },
-        issue_description: { type: 'string', description: "The customer's LATEST message (not the full conversation — just the new message)" },
-        order_number: { type: 'string', description: 'Optional order number. If omitted, auto-detects from message or uses most recent fulfilled order.' },
-        intake: { type: 'object', description: 'The intake JSON from the previous call. Pass this back to accumulate state across messages. Omit on first call.' },
-      },
-      required: ['customer_email'],
-    },
+    description: csAdvisorDescription + ' (Alias for cs_advisor)',
+    inputSchema: csAdvisorSchema,
     handler: handleExchangeAdvisor,
   },
   {
