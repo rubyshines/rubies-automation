@@ -229,6 +229,18 @@ function formatMeasurementDisplay(value, unit) {
 /**
  * Get the measurement location description for a body part.
  */
+/**
+ * Get the "suggest separates" text for one-piece mismatch.
+ * @param {string} reason - 'mismatch' (waist + height too far apart) or 'height_outside' (height outside chart)
+ * @param {string} measureRef - "your" or "your daughter's"
+ */
+function getSeparatesText(reason, measureRef) {
+  const prefix = reason === 'mismatch'
+    ? `Based on ${measureRef} waist and height, unfortunately the one-piece won't be the right fit.`
+    : `Based on ${measureRef} height, unfortunately the one-piece won't be the right fit.`;
+  return `${prefix} In many cases you could consider pairing the tankini with our regular or high waisted bikini bottom. This two-piece can offer almost as much coverage as a one-piece but with a more flexible fit.`;
+}
+
 function getMeasureLocation(measureType) {
   return measureType === 'waist'
     ? 'around the belly, just under the belly button'
@@ -1476,11 +1488,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.size} ${fit.variant} (1 size ${fit.moreOrLess === 'more' ? 'up' : 'down'} for height, wiggle room)`;
             } else if (fit.type === 'separates') {
               rx.state = 'AWAITING_DECISION';
-              rx.response_text = `Based on your measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini top and bottom would let you pick the right size for each — would you like to explore that option?`;
+              rx.response_text = getSeparatesText('mismatch', 'your');
               rx.audit = `Height check: waist→${fit.waistSize} but height→${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`;
             } else {
               rx.state = 'AWAITING_DECISION';
-              rx.response_text = `Based on your height, the one-piece might not be the ideal fit. A bikini top and bottom would give you more flexibility on sizing — would you like to explore that option?`;
+              rx.response_text = getSeparatesText('height_outside', 'your');
               rx.audit = `Height check: height ${heightVal} ${heightUnit} outside all chart ranges — suggesting separates`;
             }
           } catch (e) {
@@ -1996,13 +2008,13 @@ async function prescribePrePurchaseSizing(intake, context) {
             } else if (fit.type === 'separates') {
               items.push({
                 state: 'SUGGEST_SEPARATES', product: nick,
-                response_text: `Based on ${measureRef} measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini top and bottom would let you pick the right size for each — would you like to explore that option?`,
+                response_text: getSeparatesText('mismatch', measureRef),
               });
               audit.push(`${nick}: waist → ${fit.waistSize}, height → ${fit.heightSize} ${fit.variant} (${fit.sizeDiff} sizes apart) — suggesting separates`);
             } else {
               items.push({
                 state: 'SUGGEST_SEPARATES', product: nick,
-                response_text: `Based on ${measureRef} height, the one-piece might not be the ideal fit. A bikini top and bottom would give you more flexibility on sizing — would you like to explore that option?`,
+                response_text: getSeparatesText('height_outside', measureRef),
               });
               audit.push(`${nick}: height outside chart ranges — suggesting separates`);
             }
@@ -2052,10 +2064,10 @@ async function prescribePrePurchaseSizing(intake, context) {
                   response_text: `${agePrefix}Based on ${measureRef} measurements, I'd recommend a size ${fit.size} ${fit.variant} for the ${nick}. The waist will have ${fit.unit} ${fit.moreOrLess} fabric compared to the ${fit.waistSize}, but there's some wiggle room.` });
               } else if (fit.type === 'separates') {
                 items.push({ state: 'SUGGEST_SEPARATES', product: nick,
-                  response_text: `Based on ${measureRef} measurements, the one-piece might not be the best fit since the waist and height point to quite different sizes. A bikini top and bottom would let you pick the right size for each — would you like to explore that option?` });
+                  response_text: getSeparatesText('mismatch', measureRef) });
               } else {
                 items.push({ state: 'SUGGEST_SEPARATES', product: nick,
-                  response_text: `Based on ${measureRef} height, the one-piece might not be the ideal fit. A bikini top and bottom would give you more flexibility on sizing — would you like to explore that option?` });
+                  response_text: getSeparatesText('height_outside', measureRef) });
               }
               audit.push(`${nick}: ${m.value} ${mUnit} in ${altChartCategory} → ${altSize}, height analysis: ${fit.type}`);
             } catch (e) {
