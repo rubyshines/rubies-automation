@@ -38,6 +38,7 @@ const createOrderTools = require('./lib/tools/createOrder');
 const exchangeAdvisorTools = require('./lib/tools/exchangeAdvisor');
 const conversationTesterTools = require('./lib/tools/conversationTester');
 const refundOrderTools = require('./lib/tools/refundOrder');
+const shippingLookupTools = require('./lib/tools/shippingLookup');
 
 const allTools = [
   ...customerLookupTools,
@@ -62,6 +63,7 @@ const allTools = [
   ...exchangeAdvisorTools,
   ...conversationTesterTools,
   ...refundOrderTools,
+  ...shippingLookupTools,
 ];
 
 /**
@@ -92,7 +94,7 @@ function jsonSchemaToZod(prop) {
         }
         schema = z.object(shape).passthrough();
       } else {
-        schema = z.record(z.any());
+        schema = z.object({}).passthrough();
       }
       break;
     default:
@@ -137,7 +139,11 @@ async function main() {
     });
   }
 
-  // Load from Supabase (async but fast), fall back to Shopify fetch if empty
+  // Load product CS config (nicknames, categories, size overrides) from Supabase
+  const { initCsConfig } = require('./lib/decisionTree');
+  await initCsConfig();
+
+  // Load product catalog from Supabase (async but fast), fall back to Shopify fetch if empty
   const hasCache = await loadFromSupabase();
 
   // Connect transport — handshake happens immediately

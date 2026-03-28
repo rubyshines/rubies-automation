@@ -1,0 +1,314 @@
+/**
+ * Shipping Lookup MCP Tool
+ *
+ * Looks up tracking info for a customer's order, scrapes the carrier tracking
+ * page, uses AI to parse and summarize, returns a customer-friendly response.
+ *
+ * Tool: shipping_lookup
+ */
+
+const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
+const { scrapeTracking, detectCarrier } = require('../tracking/scraper');
+const { parseTrackingPage, summarizeForCustomer, detectProblems } = require('../tracking/analyzer');
+const { getSupabaseClient } = require('../../../shared/supabaseClient');
+
+// Cache TTL: 2 hours for active, 24 hours for delivered
+const ACTIVE_CACHE_MS = 2 * 60 * 60 * 1000;
+const DELIVERED_CACHE_MS = 24 * 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Check cache
+// ---------------------------------------------------------------------------
+
+async function getCachedTracking(trackingNumber) {
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from('tracking_snapshots')
+      .select('*')
+      .eq('tracking_number', trackingNumber)
+      .single();
+
+    if (!data?.scraped_at) return null;
+
+    const age = Date.now() - new Date(data.scraped_at).getTime();
+    const ttl = data.current_status === 'delivered' ? DELIVERED_CACHE_MS : ACTIVE_CACHE_MS;
+    if (age > ttl) return null; // stale
+
+    return data;
+  } catch (e) {
+    return null; // table may not exist yet
+  }
+}
+
+async function cacheTracking(trackingNumber, data) {
+  try {
+    const supabase = getSupabaseClient();
+    await supabase.from('tracking_snapshots').upsert({
+      tracking_number: trackingNumber,
+      order_number: data.orderNumber || null,
+      carrier: data.carrier,
+      tracking_url: data.trackingUrl,
+      destination_country: data.destination || null,
+      shipping_zone: data.shippingZone || null,
+      raw_events: data.events || [],
+      summary: data.summary,
+      action_draft: data.actionDraft || null,
+      current_status: data.currentStatus,
+      estimated_delivery: data.estimatedDelivery || null,
+      last_location: data.lastLocation || null,
+      local_carrier: data.localCarrier || null,
+      local_tracking_number: data.localTrackingNumber || null,
+      customs_cleared: data.customsCleared || null,
+      scraped_at: new Date().toISOString(),
+    }, { onConflict: 'tracking_number' });
+  } catch (e) {
+    // Cache write failure is non-fatal
+    console.error('[shippingLookup] Cache write failed:', e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Look up shipping zone for a country
+// ---------------------------------------------------------------------------
+
+async function getShippingZone(countryCode) {
+  if (!countryCode) return null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from('shipping_zones')
+      .select('zone, duties_prepaid')
+      .eq('country_code', countryCode)
+      .single();
+    return data?.zone || null;
+  } catch (e) {
+    // Fallback: US = us, CA = canada, known DDP countries
+    if (countryCode === 'US') return 'us';
+    if (countryCode === 'CA') return 'canada';
+    const ddpCountries = new Set(['AU', 'NZ', 'GB', 'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE']);
+    return ddpCountries.has(countryCode) ? 'ddp' : 'ddu';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main handler
+// ---------------------------------------------------------------------------
+
+async function handleShippingLookup({ customer_email, order_number }) {
+  // Step 1: Find the order
+  let order = null;
+  let customer = null;
+
+  if (order_number) {
+    const normalized = order_number.toString().replace('#', '');
+    try {
+      order = await getOrderByNumber(normalized);
+    } catch (e) { /* not found */ }
+  }
+
+  if (!order && customer_email) {
+    const customers = await searchCustomers(customer_email);
+    customer = customers[0];
+    if (customer) {
+      const result = await getCustomerOrders(customer.id, 5);
+      // Find the specific order or the most recent fulfilled one
+      if (order_number) {
+        const normalized = order_number.toString().replace('#', '');
+        order = result.orders.find(o => o.name?.replace('#', '') === normalized);
+      }
+      if (!order) {
+        order = result.orders.find(o => o.fulfillmentStatus === 'FULFILLED') || result.orders[0];
+      }
+    }
+  }
+
+  if (!order) {
+    return {
+      content: [{ type: 'text', text: 'Could not find the order. Please check the order number or customer email.' }],
+      _structured: { status: 'error', error: 'order_not_found' },
+    };
+  }
+
+  // Step 2: Get fulfillment + tracking info
+  const fulfillments = order.fulfillments || [];
+  if (fulfillments.length === 0) {
+    // Unfulfilled order — check why
+    const orderDate = new Date(order.createdAt);
+    const daysSinceOrder = Math.floor((Date.now() - orderDate.getTime()) / 86400000);
+
+    let statusNote;
+    if (daysSinceOrder <= 2) {
+      statusNote = `Order #${order.name} was placed ${daysSinceOrder === 0 ? 'today' : daysSinceOrder === 1 ? 'yesterday' : `${daysSinceOrder} days ago`}. It's being prepared for shipping.`;
+    } else {
+      statusNote = `Order #${order.name} was placed ${daysSinceOrder} days ago and hasn't shipped yet. This may need investigation.`;
+    }
+
+    return {
+      content: [{ type: 'text', text: `## Shipping Lookup\n\n**Order:** ${order.name}\n**Status:** Unfulfilled\n**Note:** ${statusNote}` }],
+      _structured: {
+        status: daysSinceOrder > 3 ? 'needs_attention' : 'processing',
+        order: order.name,
+        fulfillmentStatus: 'UNFULFILLED',
+        daysSinceOrder,
+        note: statusNote,
+      },
+    };
+  }
+
+  // Step 3: For each fulfillment, scrape + analyze
+  const results = [];
+  const destCountry = order.shippingAddress?.countryCodeV2 || order.shippingAddress?.countryCode;
+  const shippingZone = await getShippingZone(destCountry);
+
+  for (const ff of fulfillments) {
+    const trackingInfo = ff.trackingInfo?.[0] || {};
+    const trackingNumber = trackingInfo.number;
+    const trackingUrl = trackingInfo.url;
+
+    if (!trackingNumber && !trackingUrl) {
+      results.push({ status: 'no_tracking', note: 'No tracking information available for this fulfillment.' });
+      continue;
+    }
+
+    // Check cache
+    const cached = await getCachedTracking(trackingNumber);
+    if (cached) {
+      results.push({
+        carrier: cached.carrier,
+        trackingUrl: cached.tracking_url,
+        currentStatus: cached.current_status,
+        summary: cached.summary,
+        events: cached.raw_events,
+        localCarrier: cached.local_carrier,
+        fromCache: true,
+      });
+      continue;
+    }
+
+    // Scrape
+    try {
+      const scrapeResult = await scrapeTracking(trackingUrl, trackingNumber, ff);
+      const parsed = await parseTrackingPage(scrapeResult.rawText, scrapeResult.carrier);
+
+      // Detect problems
+      const problems = detectProblems(parsed);
+
+      // Generate customer summary
+      const summary = await summarizeForCustomer(
+        { ...parsed, trackingUrl: scrapeResult.trackingUrl },
+        {
+          shippingZone,
+          customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null,
+          orderNumber: order.name?.replace('#', ''),
+        }
+      );
+
+      const result = {
+        carrier: scrapeResult.carrier,
+        trackingUrl: scrapeResult.trackingUrl,
+        trackingNumber,
+        currentStatus: parsed.current_status,
+        statusDescription: parsed.status_description,
+        estimatedDelivery: parsed.estimated_delivery,
+        lastLocation: parsed.last_location,
+        localCarrier: parsed.local_carrier,
+        localTrackingNumber: parsed.local_tracking_number,
+        customsCleared: parsed.customs_cleared,
+        events: parsed.events,
+        summary,
+        problems,
+        shippingZone,
+      };
+
+      // Cache
+      await cacheTracking(trackingNumber, {
+        orderNumber: parseInt(order.name?.replace('#', ''), 10) || null,
+        carrier: scrapeResult.carrier,
+        trackingUrl: scrapeResult.trackingUrl,
+        destination: parsed.destination,
+        shippingZone,
+        events: parsed.events,
+        summary,
+        currentStatus: parsed.current_status,
+        estimatedDelivery: parsed.estimated_delivery,
+        lastLocation: parsed.last_location,
+        localCarrier: parsed.local_carrier,
+        localTrackingNumber: parsed.local_tracking_number,
+        customsCleared: parsed.customs_cleared,
+      });
+
+      results.push(result);
+    } catch (e) {
+      results.push({
+        carrier: detectCarrier(trackingUrl),
+        trackingUrl,
+        trackingNumber,
+        currentStatus: 'unknown',
+        summary: `You can track your package at: ${trackingUrl}`,
+        error: e.message,
+      });
+    }
+  }
+
+  // Build output
+  const primary = results[0] || {};
+  const hasProblems = results.some(r => r.problems?.length > 0);
+
+  let md = `## Shipping Lookup\n\n`;
+  md += `**Order:** ${order.name}\n`;
+  md += `**Destination:** ${order.shippingAddress?.city || '?'}, ${destCountry || '?'}`;
+  if (shippingZone) md += ` (${shippingZone.toUpperCase()})`;
+  md += '\n';
+
+  for (const r of results) {
+    md += `\n**Carrier:** ${r.carrier || 'unknown'}`;
+    if (r.localCarrier) md += ` → ${r.localCarrier}`;
+    md += '\n';
+    md += `**Status:** ${r.currentStatus || 'unknown'}`;
+    if (r.statusDescription) md += ` — ${r.statusDescription}`;
+    md += '\n';
+    if (r.trackingUrl) md += `**Tracking:** ${r.trackingUrl}\n`;
+    if (r.fromCache) md += '*(cached)*\n';
+    if (r.problems?.length) {
+      for (const p of r.problems) md += `**⚠️ ${p.severity.toUpperCase()}:** ${p.description}\n`;
+    }
+    md += `\n**Customer response:**\n${r.summary || 'No summary available.'}\n`;
+  }
+
+  return {
+    content: [{ type: 'text', text: md }],
+    _structured: {
+      status: hasProblems ? 'needs_attention' : primary.currentStatus || 'unknown',
+      order: order.name,
+      results,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tool definition
+// ---------------------------------------------------------------------------
+
+const tools = [
+  {
+    name: 'shipping_lookup',
+    description: [
+      'Look up shipping/tracking status for a customer order.',
+      'Scrapes the carrier tracking page, uses AI to parse and summarize.',
+      'Returns a customer-friendly response with status, location, and tracking link.',
+      'Supports Passport (international), OnTrac, and USPS (basic status).',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer_email: { type: 'string', description: 'Customer email address' },
+        order_number: { type: 'string', description: 'Order number (e.g. "29276"). If omitted, uses most recent order.' },
+      },
+      required: ['customer_email'],
+    },
+    handler: handleShippingLookup,
+  },
+];
+
+module.exports = tools;

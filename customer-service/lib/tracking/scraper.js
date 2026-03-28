@@ -54,27 +54,17 @@ async function fetchTrackingPage(url) {
 }
 
 // ---------------------------------------------------------------------------
-// Puppeteer fetch (USPS — needs JS rendering)
+// USPS — no scraping available (anti-bot protection). Use Shopify fulfillment
+// status as fallback. Returns a text summary from what Shopify knows.
 // ---------------------------------------------------------------------------
 
-async function fetchWithPuppeteer(url) {
-  const puppeteer = require('puppeteer');
-  let browser;
-  try {
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-    });
-    const page = await browser.newPage();
-    await page.setUserAgent(BROWSER_HEADERS['User-Agent']);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
-    // Wait for tracking content to render
-    await page.waitForSelector('.tb-step, .delivery-status, .track-bar-container', { timeout: 10000 }).catch(() => {});
-    const text = await page.evaluate(() => document.body.innerText);
-    return text;
-  } finally {
-    if (browser) await browser.close();
-  }
+function buildUSPSFallbackText(trackingNumber, shopifyFulfillment) {
+  const status = shopifyFulfillment?.status || 'unknown';
+  const lines = [`USPS Tracking: ${trackingNumber}`];
+  lines.push(`Shopify fulfillment status: ${status}`);
+  if (shopifyFulfillment?.createdAt) lines.push(`Shipped: ${shopifyFulfillment.createdAt.split('T')[0]}`);
+  lines.push(`Track at: https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`);
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +75,10 @@ async function fetchWithPuppeteer(url) {
  * Fetch raw text from a carrier tracking page.
  * @param {string} trackingUrl - Full tracking URL
  * @param {string} trackingNumber - Tracking number
+ * @param {Object} [shopifyFulfillment] - Shopify fulfillment data (used as fallback for USPS)
  * @returns {Promise<{ carrier: string, trackingUrl: string, rawText: string }>}
  */
-async function scrapeTracking(trackingUrl, trackingNumber) {
+async function scrapeTracking(trackingUrl, trackingNumber, shopifyFulfillment) {
   const carrier = detectCarrier(trackingUrl);
   let rawText;
 
@@ -99,7 +90,8 @@ async function scrapeTracking(trackingUrl, trackingNumber) {
       rawText = await fetchTrackingPage(`https://www.ontrac.com/tracking/?number=${trackingNumber}`);
       break;
     case 'usps':
-      rawText = await fetchWithPuppeteer(trackingUrl);
+      // USPS has anti-bot protection — use Shopify fulfillment status as fallback
+      rawText = buildUSPSFallbackText(trackingNumber, shopifyFulfillment);
       break;
     default:
       rawText = `Track your package at: ${trackingUrl}`;
@@ -116,6 +108,6 @@ module.exports = {
   scrapeTracking,
   detectCarrier,
   fetchTrackingPage,
-  fetchWithPuppeteer,
+  buildUSPSFallbackText,
   htmlToText,
 };
