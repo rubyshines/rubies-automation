@@ -57,6 +57,10 @@ const PIPELINES = [
     name: 'Finance',
     run: () => require('./finance/sync/syncFinance').run(),
   },
+  {
+    name: 'Shipping Zones',
+    run: () => require('./customer-service/sync/syncShippingZones').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------
