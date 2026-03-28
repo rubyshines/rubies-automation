@@ -1829,6 +1829,184 @@ async function prescribeDonationRouting(intake, context) {
  *     isNorthAmerica, orderHistory }
  * @returns {Object} Full prescription with per-item actions + audit trail
  */
+
+// ---------------------------------------------------------------------------
+// Pre-Purchase Sizing — recommends sizes for customers who haven't ordered yet
+// ---------------------------------------------------------------------------
+
+const KID_LABELS = new Set(['daughter', 'son', 'kid', 'kiddo', 'child', 'kids']);
+
+async function prescribePrePurchaseSizing(intake, context) {
+  const items = [];
+  const still_needed = [];
+  const audit = [];
+  const useInches = context.isNorthAmerica !== false;
+  const isThirdParty = intake.buying_for === 'third_party';
+  const thirdPartyLabel = intake.third_party_label || 'child';
+
+  // If no products specified, ask which product
+  if (intake.items.length === 0) {
+    still_needed.push('which product');
+    items.push({
+      state: 'NEEDS_PRODUCT',
+      response_text: 'Which product are you looking at? We have underwear (AJ, Charlie, Sassy), bikini bottoms (Ruby, Stella), bras (Brooke), swim shorts (Serena), and the Sky one-piece.',
+    });
+    audit.push('No product specified — asking');
+    return { items, still_needed, audit };
+  }
+
+  for (const intakeItem of intake.items) {
+    const product = intakeItem.product;
+    const nick = getProductNickname(product) || product;
+    const cat = classifyProduct(product);
+    const isTop = cat === 'underwear_top' || cat === 'swim_top';
+    const isOnepiece = cat === 'onepiece';
+
+    // Determine kid vs adult
+    const isKidContext = isThirdParty && KID_LABELS.has(thirdPartyLabel);
+    let isKids;
+    if (intake.measurement) {
+      const waistVal = intake.measurement.value;
+      const waistUnit = intake.measurement.unit;
+      const waistInches = waistUnit === 'cm' ? waistVal / 2.54 : waistVal;
+      if (waistInches < 28) isKids = true;
+      else if (waistInches >= 32) isKids = false;
+      else isKids = isKidContext; // 28-32" overlap — use context, default to kid if buying for child
+    } else {
+      isKids = isKidContext;
+    }
+
+    // Determine which measurement we need
+    const needsHeight = isOnepiece;
+    const measureBodyPart = isTop ? 'chest' : 'waist';
+    const measureLocation = measureBodyPart === 'waist'
+      ? 'around the belly and just under the belly button'
+      : 'around the chest where a bra band would sit';
+    const thirdPartyPrefix = isThirdParty ? `your ${thirdPartyLabel}'s ` : '';
+
+    // Check if we have the needed measurement
+    const hasMeasurement = measureBodyPart === 'chest'
+      ? intake.measurement?.body_part === 'chest'
+      : intake.measurement;
+    const hasHeight = intake.height_measurement;
+
+    if (!hasMeasurement) {
+      const heightAsk = needsHeight ? ' and height' : '';
+      still_needed.push(`${measureBodyPart} measurement for ${nick}`);
+      items.push({
+        state: 'NEEDS_MEASUREMENT',
+        product: nick,
+        response_text: `If you send me ${thirdPartyPrefix}the measurement ${measureLocation}${heightAsk} I can recommend the right size for the ${nick}.`,
+      });
+      audit.push(`${nick}: no measurement — asking for ${measureBodyPart}${needsHeight ? ' + height' : ''}`);
+      continue;
+    }
+
+    if (needsHeight && !hasHeight) {
+      still_needed.push(`height for ${nick}`);
+      items.push({
+        state: 'NEEDS_MEASUREMENT',
+        product: nick,
+        response_text: `For the one-piece, if you also send me ${thirdPartyPrefix}height I can recommend the right size and whether Regular or Tall would work best.`,
+      });
+      audit.push(`${nick}: have waist but need height for one-piece`);
+      continue;
+    }
+
+    // Look up size from measurement
+    const m = intake.measurement;
+    const { chartCategory, measureType } = getChartCategory(product, isKids);
+    const mUnit = m.unit === 'cm' ? 'cm' : 'inches';
+
+    try {
+      const supabase = getSupabaseClient();
+      const { data: sizeMatches } = await supabase.rpc('find_size_by_measurement', {
+        p_chart_category: chartCategory,
+        p_measurement_type: measureType,
+        p_value: m.value,
+        p_unit: mUnit,
+      });
+
+      if (sizeMatches && sizeMatches.length > 0) {
+        const recommendedSize = sizeMatches[0].size_label;
+        const mDisplay = mUnit === 'inches' ? `${m.value}"` : `${m.value} cm`;
+        const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
+
+        // For one-piece with height, also check Regular vs Tall
+        let variantNote = '';
+        if (needsHeight && hasHeight) {
+          const h = intake.height_measurement;
+          try {
+            const { data: heightMatches } = await supabase.rpc('find_size_by_measurement', {
+              p_chart_category: chartCategory,
+              p_measurement_type: 'height',
+              p_value: h.value,
+              p_unit: h.unit === 'cm' ? 'cm' : 'inches',
+            });
+            if (heightMatches?.length) {
+              const heightSize = heightMatches[0].size_label;
+              const mod = getSizeModifier(heightSize);
+              if (mod) variantNote = ` in ${mod}`;
+            }
+          } catch (e) { /* height lookup failed */ }
+        }
+
+        items.push({
+          state: 'SIZE_RECOMMENDATION',
+          product: nick,
+          recommendedSize,
+          variant: variantNote.trim() || null,
+          response_text: `Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${recommendedSize}${variantNote} for the ${nick}.`,
+        });
+        audit.push(`${nick}: ${m.value} ${mUnit} in ${chartCategory} → ${recommendedSize}${variantNote}`);
+      } else {
+        // No match — try alternate chart (kids↔adult)
+        const altChartCategory = isKids
+          ? chartCategory.replace('kids_', 'adult_')
+          : chartCategory.replace('adult_', 'kids_');
+        const { data: altMatches } = await supabase.rpc('find_size_by_measurement', {
+          p_chart_category: altChartCategory,
+          p_measurement_type: measureType,
+          p_value: m.value,
+          p_unit: mUnit,
+        });
+        if (altMatches?.length) {
+          const altSize = altMatches[0].size_label;
+          const mDisplay = mUnit === 'inches' ? `${m.value}"` : `${m.value} cm`;
+          const measureRef = isThirdParty ? `your ${thirdPartyLabel}'s` : 'your';
+          const ageNote = isKids
+            ? `Based on ${measureRef} measurement of ${mDisplay}, ${thirdPartyPrefix ? 'they would' : 'you would'} be in our adult sizing — I'd recommend a size ${altSize} for the ${nick}.`
+            : `Based on ${measureRef} measurement of ${mDisplay}, I'd recommend a size ${altSize} for the ${nick}.`;
+          items.push({
+            state: 'SIZE_RECOMMENDATION',
+            product: nick,
+            recommendedSize: altSize,
+            response_text: ageNote,
+          });
+          audit.push(`${nick}: ${m.value} ${mUnit} not in ${chartCategory}, found in ${altChartCategory} → ${altSize}`);
+        } else {
+          items.push({
+            state: 'SIZE_UNCLEAR',
+            product: nick,
+            response_text: `I wasn't able to find an exact size match for ${m.value} ${mUnit} in the ${nick}. Could you double check the measurement ${measureLocation}?`,
+          });
+          audit.push(`${nick}: ${m.value} ${mUnit} — no match in ${chartCategory} or ${altChartCategory}`);
+          still_needed.push(`measurement confirmation for ${nick}`);
+        }
+      }
+    } catch (e) {
+      items.push({
+        state: 'SIZE_UNCLEAR',
+        product: nick,
+        response_text: `I'd recommend checking our size guide for the ${nick} — https://rubyshines.com/pages/size-guide`,
+      });
+      audit.push(`${nick}: measurement lookup failed (${e.message})`);
+    }
+  }
+
+  return { items, still_needed, audit };
+}
+
 async function walkTree(intake, context) {
   const result = {
     // The prescription — what to say/do
@@ -1850,6 +2028,26 @@ async function walkTree(intake, context) {
     return result;
   }
   result.phases_completed.push('safety_check');
+
+  // Pre-purchase sizing — skip order/item phases, go straight to sizing
+  if (context.isPrePurchase) {
+    // Phase 1 still runs for name/pronoun detection
+    const phase1 = prescribeCustomerIdentification(intake, context);
+    result.audit.push(...phase1.audit.map(a => `[Phase 1] ${a}`));
+    result.phases_completed.push('identify_customer');
+
+    const prePurchase = await prescribePrePurchaseSizing(intake, context);
+    result.response_parts.push(...prePurchase.items.map(a => ({
+      type: 'item_action', priority: 4, product: a.product,
+      text: a.response_text, state: a.state, options: a.options || null,
+      recommendation: a.recommendedSize || null,
+    })));
+    result.audit.push(...prePurchase.audit.map(a => `[Pre-purchase] ${a}`));
+    result.still_needed.push(...prePurchase.still_needed);
+    result.phases_completed.push('pre_purchase_sizing');
+    result.status = prePurchase.still_needed.length === 0 ? 'ready' : 'needs_info';
+    return result;
+  }
 
   // Phase 1: Customer identification
   const phase1 = prescribeCustomerIdentification(intake, context);
@@ -2009,6 +2207,7 @@ module.exports = {
   parseSizeVariant,
   getSizeModifier,
   getChartCategory,
+  prescribePrePurchaseSizing,
   // Config-driven products (populated by initCsConfig)
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,

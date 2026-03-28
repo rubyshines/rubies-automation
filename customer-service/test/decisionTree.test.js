@@ -80,6 +80,8 @@ const {
   getIntermediateSizes,
   parseSizeVariant,
   getSizeModifier,
+  getChartCategory,
+  prescribePrePurchaseSizing,
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
@@ -2194,5 +2196,146 @@ describe('body group ambiguity check', () => {
       { category: 'underwear_bottom' },
       { category: 'chest_pads' },
     ]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getChartCategory helper
+// ---------------------------------------------------------------------------
+describe('getChartCategory', () => {
+  it('returns kids_underwear_bottoms for AJ with isKids=true', () => {
+    const { chartCategory, measureType } = getChartCategory('AJ', true);
+    assert.equal(chartCategory, 'kids_underwear_bottoms');
+    assert.equal(measureType, 'waist');
+  });
+
+  it('returns adult_underwear_bottoms for Sassy with isKids=false', () => {
+    const { chartCategory, measureType } = getChartCategory('Sassy', false);
+    assert.equal(chartCategory, 'adult_underwear_bottoms');
+    assert.equal(measureType, 'waist');
+  });
+
+  it('returns kids_tops for Brooke Bra with isKids=true', () => {
+    const { chartCategory, measureType } = getChartCategory('THE BROOKE SHAPING BRA', true);
+    assert.equal(chartCategory, 'kids_tops');
+    assert.equal(measureType, 'chest');
+  });
+
+  it('returns adult_swimwear_bottoms for Ruby with isKids=false', () => {
+    const { chartCategory, measureType } = getChartCategory('Ruby', false);
+    assert.equal(chartCategory, 'adult_swimwear_bottoms');
+    assert.equal(measureType, 'waist');
+  });
+
+  it('returns kids_onepiece for Sky with isKids=true', () => {
+    const { chartCategory, measureType } = getChartCategory('Sky One-Piece', true);
+    assert.equal(chartCategory, 'kids_onepiece');
+    assert.equal(measureType, 'waist');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pre-purchase sizing
+// ---------------------------------------------------------------------------
+describe('prescribePrePurchaseSizing', () => {
+  it('asks for measurement when none provided', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
+      buying_for: 'self',
+    });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.equal(result.items[0].state, 'NEEDS_MEASUREMENT');
+    assert.ok(result.items[0].response_text.includes('measurement'));
+    assert.ok(result.still_needed.length > 0);
+  });
+
+  it('asks which product when no items', async () => {
+    const intake = makeIntake({ items: [] });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.equal(result.items[0].state, 'NEEDS_PRODUCT');
+    assert.ok(result.items[0].response_text.includes('Which product'));
+  });
+
+  it('recommends size from measurement (kids underwear)', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: '10' }];
+    const intake = makeIntake({
+      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
+      measurement: { value: 25, unit: 'inches', body_part: 'waist' },
+      buying_for: 'third_party',
+      third_party_label: 'daughter',
+    });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.equal(result.items[0].state, 'SIZE_RECOMMENDATION');
+    assert.equal(result.items[0].recommendedSize, '10');
+    assert.ok(result.items[0].response_text.includes('10'));
+    assert.ok(result.items[0].response_text.includes('AJ'));
+    assert.equal(result.still_needed.length, 0);
+  });
+
+  it('recommends size from measurement (adult underwear)', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: 'L' }];
+    const intake = makeIntake({
+      items: [makeItem({ product: 'Sassy', issue: 'none', size: null })],
+      measurement: { value: 34, unit: 'inches', body_part: 'waist' },
+      buying_for: 'self',
+    });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.equal(result.items[0].state, 'SIZE_RECOMMENDATION');
+    assert.equal(result.items[0].recommendedSize, 'L');
+  });
+
+  it('uses third_party_label in response text', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: '10' }];
+    const intake = makeIntake({
+      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
+      measurement: { value: 25, unit: 'inches', body_part: 'waist' },
+      buying_for: 'third_party',
+      third_party_label: 'daughter',
+    });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.ok(result.items[0].response_text.includes("your daughter's"));
+  });
+
+  it('asks for height for one-piece when only waist provided', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ product: 'Sky One-Piece', issue: 'none', size: null })],
+      measurement: { value: 30, unit: 'inches', body_part: 'waist' },
+      buying_for: 'self',
+    });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.equal(result.items[0].state, 'NEEDS_MEASUREMENT');
+    assert.ok(result.items[0].response_text.includes('height'));
+  });
+
+  it('handles multiple products in one inquiry', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: 'M' }];
+    const intake = makeIntake({
+      items: [
+        makeItem({ product: 'AJ', issue: 'none', size: null }),
+        makeItem({ product: 'Ruby', issue: 'none', size: null }),
+      ],
+      measurement: { value: 34, unit: 'inches', body_part: 'waist' },
+      buying_for: 'self',
+    });
+    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
+    assert.equal(result.items.length, 2);
+    assert.equal(result.items[0].state, 'SIZE_RECOMMENDATION');
+    assert.equal(result.items[1].state, 'SIZE_RECOMMENDATION');
+  });
+
+  it('walkTree routes to pre-purchase when context.isPrePurchase', async () => {
+    mockSupabaseData.sizeMatches = [{ size_label: '10' }];
+    const intake = makeIntake({
+      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
+      measurement: { value: 25, unit: 'inches', body_part: 'waist' },
+      buying_for: 'third_party',
+      third_party_label: 'daughter',
+    });
+    const ctx = makeContext({ isPrePurchase: true });
+    const result = await walkTree(intake, ctx);
+    assert.ok(result.phases_completed.includes('pre_purchase_sizing'));
+    const action = result.response_parts.find(p => p.type === 'item_action');
+    assert.equal(action.state, 'SIZE_RECOMMENDATION');
+    assert.ok(action.text.includes('10'));
   });
 });
