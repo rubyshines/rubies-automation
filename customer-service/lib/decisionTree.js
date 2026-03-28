@@ -232,6 +232,61 @@ function getChartCategory(productName, isKids) {
   return { chartCategory, measureType };
 }
 
+/**
+ * Look up the height variant (Regular/Tall) for a one-piece at a given waist size.
+ * Checks the recommended size first, then adjacent sizes (±1).
+ * @param {string} chartCategory - e.g. 'adult_onepiece'
+ * @param {string} waistSize - recommended waist size label
+ * @param {number} heightInInches - customer height in inches
+ * @param {string} productName - for getSizeList adjacency
+ * @returns {Promise<{variant: string|null, size: string}>}
+ */
+async function lookupHeightVariant(chartCategory, waistSize, heightInInches, productName) {
+  const supabase = getSupabaseClient();
+  // Check at the recommended waist size
+  const { data: heightEntries } = await supabase
+    .from('size_charts')
+    .select('size_label, notes, min_inches, max_inches')
+    .eq('chart_category', chartCategory)
+    .eq('measurement_type', 'height')
+    .eq('size_label', waistSize);
+
+  const tallEntry = heightEntries?.find(e => e.notes === 'Tall');
+  const regEntry = heightEntries?.find(e => e.notes === 'Regular');
+  if (tallEntry && heightInInches >= tallEntry.min_inches && heightInInches <= tallEntry.max_inches) {
+    return { variant: 'Tall', size: waistSize };
+  }
+  if (regEntry && heightInInches >= regEntry.min_inches && heightInInches <= regEntry.max_inches) {
+    return { variant: 'Regular', size: waistSize };
+  }
+
+  // Check adjacent sizes (±1)
+  const waistList = getSizeList(waistSize, productName);
+  const waistIdx = waistList?.indexOf(waistSize) ?? -1;
+  const adjacentSizes = [];
+  if (waistIdx > 0) adjacentSizes.push(waistList[waistIdx - 1]);
+  if (waistIdx < (waistList?.length || 0) - 1) adjacentSizes.push(waistList[waistIdx + 1]);
+
+  for (const adjSize of adjacentSizes) {
+    const { data: adjEntries } = await supabase
+      .from('size_charts')
+      .select('size_label, notes, min_inches, max_inches')
+      .eq('chart_category', chartCategory)
+      .eq('measurement_type', 'height')
+      .eq('size_label', adjSize);
+    const adjTall = adjEntries?.find(e => e.notes === 'Tall');
+    const adjReg = adjEntries?.find(e => e.notes === 'Regular');
+    if (adjTall && heightInInches >= adjTall.min_inches && heightInInches <= adjTall.max_inches) {
+      return { variant: 'Tall', size: adjSize };
+    }
+    if (adjReg && heightInInches >= adjReg.min_inches && heightInInches <= adjReg.max_inches) {
+      return { variant: 'Regular', size: adjSize };
+    }
+  }
+
+  return { variant: null, size: waistSize };
+}
+
 function getSizeList(size, productName) {
   const s = normalizeSize(size);
 
@@ -1355,59 +1410,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             });
             const recommendedWaist = waistMatches?.[0]?.size_label || waistSize;
 
-            // Look up height variant for the recommended waist size
-            const { data: heightEntries } = await supabase
-              .from('size_charts')
-              .select('size_label, notes, min_inches, max_inches, min_cm, max_cm')
-              .eq('chart_category', chartCat)
-              .eq('measurement_type', 'height')
-              .eq('size_label', recommendedWaist);
-
-            const tallEntry = heightEntries?.find(e => e.notes === 'Tall');
-            const regEntry = heightEntries?.find(e => e.notes === 'Regular');
+            // Look up height variant using shared helper
             const heightVal = intake.height_measurement.value;
             const heightUnit = intake.height_measurement.unit === 'cm' ? 'cm' : 'inches';
             const heightInInches = heightUnit === 'cm' ? heightVal / 2.54 : heightVal;
-
-            // Check height against the recommended waist size first, then try adjacent sizes
-            let recommendedVariant = null;
-            let heightMatchSize = recommendedWaist;
-
-            if (tallEntry && heightInInches >= tallEntry.min_inches && heightInInches <= tallEntry.max_inches) {
-              recommendedVariant = 'Tall';
-            } else if (regEntry && heightInInches >= regEntry.min_inches && heightInInches <= regEntry.max_inches) {
-              recommendedVariant = 'Regular';
-            }
-
-            // If height doesn't match at the waist size, check adjacent sizes (±1)
-            if (!recommendedVariant) {
-              const waistList = getSizeList(recommendedWaist, item.product);
-              const waistIdx = waistList?.indexOf(recommendedWaist) ?? -1;
-              const adjacentSizes = [];
-              if (waistIdx > 0) adjacentSizes.push(waistList[waistIdx - 1]);
-              if (waistIdx < (waistList?.length || 0) - 1) adjacentSizes.push(waistList[waistIdx + 1]);
-
-              for (const adjSize of adjacentSizes) {
-                const { data: adjHeightEntries } = await supabase
-                  .from('size_charts')
-                  .select('size_label, notes, min_inches, max_inches')
-                  .eq('chart_category', chartCat)
-                  .eq('measurement_type', 'height')
-                  .eq('size_label', adjSize);
-
-                const adjTall = adjHeightEntries?.find(e => e.notes === 'Tall');
-                const adjReg = adjHeightEntries?.find(e => e.notes === 'Regular');
-                if (adjTall && heightInInches >= adjTall.min_inches && heightInInches <= adjTall.max_inches) {
-                  recommendedVariant = 'Tall';
-                  heightMatchSize = adjSize;
-                  break;
-                } else if (adjReg && heightInInches >= adjReg.min_inches && heightInInches <= adjReg.max_inches) {
-                  recommendedVariant = 'Regular';
-                  heightMatchSize = adjSize;
-                  break;
-                }
-              }
-            }
+            const { variant: recommendedVariant, size: heightMatchSize } = await lookupHeightVariant(chartCat, recommendedWaist, heightInInches, item.product);
 
             if (recommendedVariant && heightMatchSize === recommendedWaist) {
               // Same waist, just variant swap (or same variant confirmed)
@@ -1869,9 +1876,14 @@ async function prescribePrePurchaseSizing(intake, context) {
       const waistVal = intake.measurement.value;
       const waistUnit = intake.measurement.unit;
       const waistInches = waistUnit === 'cm' ? waistVal / 2.54 : waistVal;
-      if (waistInches < 28) isKids = true;
+      // Also consider height — over 5'2" (62") is likely adult
+      const heightInches = intake.height_measurement
+        ? (intake.height_measurement.unit === 'cm' ? intake.height_measurement.value / 2.54 : intake.height_measurement.value)
+        : null;
+      if (heightInches && heightInches >= 62) isKids = false; // 5'2"+ = adult regardless
+      else if (waistInches < 28) isKids = true;
       else if (waistInches >= 32) isKids = false;
-      else isKids = isKidContext; // 28-32" overlap — use context, default to kid if buying for child
+      else isKids = isKidContext; // 28-32" overlap — use context
     } else {
       isKids = isKidContext;
     }
@@ -1936,18 +1948,10 @@ async function prescribePrePurchaseSizing(intake, context) {
         let variantNote = '';
         if (needsHeight && hasHeight) {
           const h = intake.height_measurement;
+          const heightInInches = h.unit === 'cm' ? h.value / 2.54 : h.value;
           try {
-            const { data: heightMatches } = await supabase.rpc('find_size_by_measurement', {
-              p_chart_category: chartCategory,
-              p_measurement_type: 'height',
-              p_value: h.value,
-              p_unit: h.unit === 'cm' ? 'cm' : 'inches',
-            });
-            if (heightMatches?.length) {
-              const heightSize = heightMatches[0].size_label;
-              const mod = getSizeModifier(heightSize);
-              if (mod) variantNote = ` in ${mod}`;
-            }
+            const { variant } = await lookupHeightVariant(chartCategory, recommendedSize, heightInInches, product);
+            if (variant) variantNote = ` ${variant}`;
           } catch (e) { /* height lookup failed */ }
         }
 
