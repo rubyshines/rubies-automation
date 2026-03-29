@@ -66,6 +66,9 @@
   <li><a href="#bundles">Bundle & Volume Strategy</a></li>
   <li><a href="#wholesale">Wholesale Pricing</a></li>
   <li><a href="#newproducts">New Product Pricing</a></li>
+  <li><a href="#shipping">Shipping Pricing Strategy</a></li>
+  <li><a href="#sales">Sale & Tiered Discount Effectiveness</a></li>
+  <li><a href="#experiments">Pricing Experiments & Feedback Loops</a></li>
   <li><a href="#implementation">Implementation Roadmap</a></li>
 </ol>
 
@@ -118,14 +121,33 @@
   <tr><td>Q1 2026</td><td class="bold">$107</td><td class="green bold">+3%</td></tr>
 </table>
 
-<h3>Discount Usage</h3>
+<h3>Discount Analysis (14,629 Orders Categorized)</h3>
+<p>The raw "58% of orders use a discount" is misleading. After categorizing every order:</p>
 <table>
-  <tr><th>Metric</th><th>Value</th></tr>
-  <tr><td>Orders with discounts (2024-2025)</td><td class="bold">58.3%</td></tr>
-  <tr><td>Total discount given (2025)</td><td>~$172K USD</td></tr>
-  <tr><td>Discount as % of revenue</td><td>~25% of gross revenue</td></tr>
+  <tr><th>Category</th><th>Orders</th><th>Avg Depth</th><th>Total $</th><th>Notes</th></tr>
+  <tr><td class="bold">Klaviyo flow codes (RUBIES-*, KL-*)</td><td>6,590 (45%)</td><td>13.6%</td><td>$113,600</td><td>Welcome, cart abandonment, winback</td></tr>
+  <tr><td>Exchange replacements (100% off)</td><td>1,455 (10%)</td><td>100%</td><td>$128,600</td><td>Not discounts — free exchanges</td></tr>
+  <tr><td>Sale events (BF, CM, Holiday, etc.)</td><td>767 (5%)</td><td>10-20%</td><td>$13,200</td><td>Conservative seasonal sales</td></tr>
+  <tr><td>Welcome / Birthday codes</td><td>561 (4%)</td><td>~10%</td><td>$6,500</td><td>Acquisition + retention</td></tr>
+  <tr><td>Volume discounts (auto)</td><td>310 (2%)</td><td>10-15%</td><td>$5,900</td><td>AJ, Ruby, Charlie volume tiers</td></tr>
+  <tr><td>Wholesale (50% / 30% off)</td><td>110 (1%)</td><td>50%/30%</td><td>$37,000</td><td>B2B — appropriate pricing</td></tr>
+  <tr><td class="green bold">No discount (full price)</td><td class="bold">4,667 (32%)</td><td>—</td><td>$379,830</td><td>Healthy full-price demand</td></tr>
 </table>
-<p>Top discount types: AJ Volume Discount (81 uses), Ruby Volume Discounts (86 uses), 20% off Bikini Top with Bottoms (36 uses), Welcome-10, Birthday-10, seasonal sale events.</p>
+
+<h4>Discount Depth Distribution (DTC only, excl. exchanges &amp; wholesale)</h4>
+<table>
+  <tr><th>Depth</th><th>Orders</th><th>% of DTC</th></tr>
+  <tr><td>No discount</td><td>4,667</td><td class="bold">35.6%</td></tr>
+  <tr><td>1-9%</td><td>974</td><td>7.4%</td></tr>
+  <tr><td>10%</td><td class="bold">3,626</td><td class="bold">27.7%</td></tr>
+  <tr><td>11-14%</td><td>483</td><td>3.7%</td></tr>
+  <tr><td>15%</td><td>1,492</td><td>11.4%</td></tr>
+  <tr><td>16-24%</td><td>1,254</td><td>9.6%</td></tr>
+  <tr><td>25%+</td><td>464</td><td>3.5%</td></tr>
+</table>
+<div class="highlight">
+  <strong>Discount strategy is already disciplined.</strong> Excluding exchanges and wholesale, the real DTC discount depth averages <strong>~13.6%</strong> — mostly Klaviyo automated flows doing their job. Sale events are conservative (10-20%, with 25% only at BF/CM top tier). The "58% discount rate" is driven by Klaviyo unique codes, not excessive discounting. <strong>No changes needed to discount strategy.</strong>
+</div>
 
 <!-- ============================================ -->
 <div class="page-break"></div>
@@ -387,8 +409,8 @@
 <p class="small">Note: February 2026 spike ($30.11 avg) may indicate a policy change or heavier Canadian shipment mix. Worth monitoring.</p>
 
 <h3>Implications for Pricing</h3>
-<div class="rec-box">
-  <strong>DDP is NOT the primary driver for price increases.</strong> At ~$27K/year, DDP costs are manageable. Adjusted gross margin is actually healthy at 72.6%. The real drivers are: (1) being significantly underpriced vs competitors (most charge $32-55 for tucking underwear), (2) the $1M CAD revenue target, and (3) building margin headroom for new product launches and wholesale growth. International pricing adjustments (+15%) are recommended to capture fair value in those markets.
+<div class="rec-box warn">
+  <strong>DDP is part of a larger shipping cost problem.</strong> DDP alone is $27K/year, but when combined with 3PL fulfillment costs (see <a href="#shipping">Section 10</a>), total shipping losses are <strong>~$56K+/year</strong>. This makes shipping the second-largest hidden cost after COGS. The price increases and shipping rate adjustments recommended in this report address both sides: higher retail prices increase per-order margin to absorb shipping costs, while rate adjustments reduce the per-order shipping loss directly.
 </div>
 
 <!-- ============================================ -->
@@ -431,10 +453,12 @@
 <p><strong>Impact:</strong> ~$20-30K USD additional revenue on ~3,000 intl orders/year, partially offsetting DDP costs.</p>
 
 <h3>C. Free Shipping Thresholds</h3>
+<p><em>See Section 10 (Shipping Pricing Strategy) for full analysis. Summary:</em></p>
 <table>
-  <tr><th>Market</th><th>Threshold</th><th>Rationale</th></tr>
-  <tr><td>US / Canada</td><td>$75 USD</td><td>Matches TomboyX; above avg underwear order ($32), encourages add-on</td></tr>
-  <tr><td>International</td><td>$125 USD</td><td>Matches TomboyX; covers most swim + underwear combos</td></tr>
+  <tr><th>Market</th><th>Current</th><th>Proposed</th><th>Rationale</th></tr>
+  <tr><td>US</td><td>$99</td><td class="bold">$99 (keep)</td><td>Working perfectly — 77% free ship rate above $99. Don't lower.</td></tr>
+  <tr><td>Canada</td><td>$96</td><td class="bold">$99 (align)</td><td>Match US. Simplify messaging. $3 difference makes no sense.</td></tr>
+  <tr><td>International</td><td>None</td><td class="bold">$125 (new)</td><td>Currently no incentive. Test with DDP countries first.</td></tr>
 </table>
 
 <!-- ============================================ -->
@@ -472,13 +496,16 @@
   <strong>Accessibility commitment preserved:</strong> With the volume discount, loyal customers buying 3+ items actually pay <em>near or below</em> current prices ($28.80 vs $28). This protects your mission of accessibility while increasing revenue from one-off and two-item buyers.
 </div>
 
-<h3>Discount Hygiene</h3>
+<h3>Discount Strategy — No Changes Needed</h3>
+<p>Your current discount approach is already well-calibrated. See <a href="#sales">Section 11</a> for full tiered sale analysis and the optimal sale framework.</p>
 <ul>
-  <li><strong>Keep:</strong> Welcome-10, Birthday-10, volume tiering (restructured above)</li>
-  <li><strong>Sunset:</strong> Deep percentage-off sales. Replace with "free item" or "free shipping" promos.</li>
-  <li><strong>For sale events:</strong> Cap at 15% sitewide, or use tiered spend-to-save (spend $100 = 10%, spend $150 = 15%)</li>
-  <li><strong>58% discount rate is high.</strong> Goal: reduce to ~40% while maintaining revenue through higher base prices</li>
+  <li><strong>Klaviyo flows (45% of orders):</strong> Automated welcome, cart abandonment, winback at ~13.6% avg. These drive acquisition and recovery — keep them.</li>
+  <li><strong>Seasonal sales (5% of orders):</strong> Conservative at 10-20%, with 25% only at top BF/CM tier. 10% flat sales drive 60-85 orders per event. Well-managed.</li>
+  <li><strong>Volume discounts (2% of orders):</strong> Your most profitable promo type — 15% AJ volume drives $179 AOV. Extend to all products.</li>
+  <li><strong>Welcome/Birthday (4% of orders):</strong> Strong acquisition + retention tools at 10%. Keep.</li>
+  <li><strong>Full-price orders (32%):</strong> Healthy demand at full price. This percentage may increase naturally after price increase.</li>
 </ul>
+<p>After the price increase, your Klaviyo flow discounts (13.6% avg) will bring customers to roughly the <em>current</em> price level — a natural transition cushion.</p>
 
 <!-- ============================================ -->
 <div class="page-break"></div>
@@ -519,7 +546,320 @@
 
 <!-- ============================================ -->
 <div class="page-break"></div>
-<h2 id="implementation">10. Implementation Roadmap</h2>
+<h2 id="shipping">10. Shipping Pricing Strategy</h2>
+
+<h3>Current Shipping Rates (from Shopify Zones)</h3>
+<table>
+  <tr><th>Zone</th><th>Countries</th><th>Standard Rate</th><th>Expedited</th><th>Free Threshold</th><th>Duties (DDP)</th></tr>
+  <tr><td class="bold">US</td><td>1</td><td>$9.00</td><td>$22.00</td><td>$99</td><td>No (domestic)</td></tr>
+  <tr><td class="bold">Canada</td><td>1</td><td>$9.35</td><td>—</td><td>$96</td><td>No (Passport DDP)</td></tr>
+  <tr><td class="bold">DDP (intl)</td><td>31</td><td>$12.00</td><td>—</td><td>None</td><td>Yes — RUBIES pays</td></tr>
+  <tr><td>DDU (rest of world)</td><td>204</td><td>$12.00</td><td>—</td><td>None</td><td>No — customer pays</td></tr>
+</table>
+
+<h3>What You Actually Collect vs. What You Spend</h3>
+<p><em>Source: 20,584 orders with 3PL cost data (freight charges from Think Logistics + Nitro invoices, matched to local order files). This is your REAL cost to fulfill — not just DDP.</em></p>
+
+<h4>Full Cost Breakdown (3PL Packing + Carrier Freight + DDP Duties)</h4>
+<table>
+  <tr><th>Metric</th><th>US</th><th>Canada</th><th>International</th><th>Total</th></tr>
+  <tr><td>Orders with cost data</td><td>14,910</td><td>2,501</td><td>3,173</td><td>20,584</td></tr>
+  <tr><td>Paid shipping / Free shipping</td><td>8,881 / 6,029</td><td>1,446 / 1,055</td><td>2,632 / 541</td><td>12,959 / 7,625</td></tr>
+  <tr><td>Customer paid (total)</td><td>$82,253</td><td>$11,222</td><td>$36,167</td><td>$129,642</td></tr>
+  <tr><td>Your 3PL freight cost</td><td class="red">$98,121</td><td class="red">$22,269</td><td class="red">$49,189</td><td class="red">$169,580</td></tr>
+  <tr><td>Your 3PL packing cost</td><td>$11,507</td><td>$1,818</td><td>$2,998</td><td>$16,323</td></tr>
+  <tr><td class="bold">Your total fulfillment cost</td><td class="bold">$109,629</td><td class="bold">$24,088</td><td class="bold">$52,187</td><td class="bold red">$185,904</td></tr>
+  <tr><td>DDP duties (additional, intl only)</td><td>—</td><td>~$10,700/yr</td><td>~$16,700/yr</td><td>~$27,400/yr</td></tr>
+  <tr style="font-weight:700;background:#fff3f9"><td>NET (customer pays minus your cost)</td><td class="red bold">-$27,376</td><td class="red bold">-$12,865</td><td class="red bold">-$16,020</td><td class="red bold">-$56,261</td></tr>
+</table>
+
+<h4>Per-Order Economics</h4>
+<table>
+  <tr><th>Metric</th><th>US</th><th>Canada</th><th>International</th></tr>
+  <tr><td>Avg customer pays per order</td><td>$5.52</td><td>$4.49</td><td>$11.40</td></tr>
+  <tr><td>Avg your cost per order (3PL + freight)</td><td class="red">$7.35</td><td class="red">$9.63</td><td class="red">$16.45</td></tr>
+  <tr><td>Avg DDP per order (intl only)</td><td>—</td><td>$10.97</td><td>$13-36</td></tr>
+  <tr style="font-weight:700"><td>Net per order</td><td class="red bold">-$1.84</td><td class="red bold">-$5.14</td><td class="red bold">-$5.05</td></tr>
+  <tr><td class="small">Net per order incl. DDP</td><td>-$1.84</td><td class="red">-$16.11</td><td class="red">-$18–$41</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>Shipping is a loss in EVERY zone — including the US.</strong> You lose $1.84 per US order, $5.14 per Canadian order, and $5.05+ per international order — <strong>before DDP</strong>. Total shipping loss: <strong>~$56K</strong> across 20,584 orders analyzed. Adding DDP brings the international loss much higher. The $9 you charge US customers doesn't cover the ~$7.35 avg fulfillment cost, because 40% of US orders get free shipping.
+  <br><br>
+  <strong>Data gaps:</strong> 2025-2026 Nitro Logistics costs are partially missing (Nitro API integration needed). These numbers are primarily from Think Logistics (2022-2024) + partial Nitro data (2025). Nitro's per-order costs appear higher (avg $9.84 USD for US in 2025 vs Think's $7.20 equiv) — the real current loss may be worse.
+</div>
+
+<h4>Shipping Cost Trend by Year (US Orders)</h4>
+<table>
+  <tr><th>Year</th><th>Orders</th><th>Avg Freight (CAD)</th><th>Avg Freight (USD est)</th><th>Source</th></tr>
+  <tr><td>2021</td><td>299</td><td>$6.48</td><td>$4.70</td><td>Think Logistics</td></tr>
+  <tr><td>2022</td><td>3,285</td><td>$7.95</td><td>$5.76</td><td>Think Logistics</td></tr>
+  <tr><td>2023</td><td>2,996</td><td>$8.87</td><td>$6.43</td><td>Think Logistics</td></tr>
+  <tr><td>2024</td><td>4,534</td><td>$9.95</td><td>$7.21</td><td>Think Logistics</td></tr>
+  <tr><td class="bold">2025</td><td class="bold">3,796</td><td colspan="2" class="bold">Avg $9.84 USD (3PL total)</td><td class="bold">Nitro Logistics</td></tr>
+</table>
+<p class="small">US fulfillment costs rising ~15%/year. Carrier rates increase annually; Nitro's model is different (lower packing fee but higher per-order shipping). The $9 customer shipping charge hasn't kept pace.</p>
+
+<h3>Free Shipping Threshold Behavior (All 28,465 Orders)</h3>
+<table>
+  <tr><th>Subtotal Range</th><th>Orders</th><th>% of Total</th><th>% Getting Free Shipping</th><th>Insight</th></tr>
+  <tr><td>&lt;$28</td><td>5,612</td><td>19.7%</td><td>63.1%</td><td>Mostly $0 exchange orders</td></tr>
+  <tr><td>$28-49</td><td>5,263</td><td>18.5%</td><td class="red">1.0%</td><td>Single-item buyers — nearly all pay shipping</td></tr>
+  <tr><td>$50-74</td><td>4,696</td><td>16.5%</td><td class="red">6.3%</td><td>2-item buyers — still paying shipping</td></tr>
+  <tr><td>$75-98</td><td>4,516</td><td>15.9%</td><td>7.4%</td><td>Just below threshold — these are persuadable</td></tr>
+  <tr><td class="bold">$99-124</td><td class="bold">3,850</td><td class="bold">13.5%</td><td class="green bold">76.9%</td><td>Threshold is working — big jump at $99</td></tr>
+  <tr><td>$125-149</td><td>1,767</td><td>6.2%</td><td class="green">81.3%</td><td>Above threshold — stays free</td></tr>
+  <tr><td>$150+</td><td>2,761</td><td>9.7%</td><td class="green">78.2%</td><td>High-value customers</td></tr>
+</table>
+
+<h3>The AOV Effect of Free Shipping</h3>
+<div class="two-col">
+  <div>
+    <div class="metric-box"><div class="value">$148</div><div class="label">AOV — Free Shipping Orders</div></div>
+  </div>
+  <div>
+    <div class="metric-box"><div class="value">$76</div><div class="label">AOV — Paid Shipping Orders</div></div>
+  </div>
+</div>
+<p>Free shipping orders are <strong>nearly 2x the AOV</strong>. This isn't just because bigger orders qualify — it's because the threshold actively motivates customers to add items. The 4,516 orders in the $75-98 range (only 7.4% getting free shipping) represent the biggest opportunity.</p>
+
+<h3>Shipping Pricing Recommendations</h3>
+
+<h4>A. Keep US Threshold at $99 — But Acknowledge the Real Cost</h4>
+<div class="rec-box warn">
+  <strong>The $99 threshold drives behavior</strong> — free shipping jumps from 7.4% to 76.9% at $99 — but it costs you money. Every free-shipping US order costs you ~$7.35 with zero recovery. With 6,029 free US orders in the dataset, that's ~<strong>$44K in unrecovered fulfillment costs</strong>. The threshold is still the right move (it drives 2x AOV), but you should know the true cost. <strong>Do not lower it.</strong> The price increase (+$4/item) effectively offsets the per-order shipping loss.
+</div>
+
+<h4>B. Add an International Free Shipping Threshold: $125</h4>
+<div class="rec-box action">
+  <strong>Currently: no free shipping threshold for DDP/DDU zones.</strong> Every international customer pays $12 regardless of cart size. Adding a $125 threshold would:
+  <ul>
+    <li>Incentivize add-ons (a $48 bikini + $42 bra = $90 → add a $32 underwear to hit $122, close to threshold)</li>
+    <li>Offset DDP losses: a $125+ international order with $20 DDP cost still has $90+ margin after COGS + DDP + shipping</li>
+    <li>Match TomboyX's international free shipping threshold</li>
+  </ul>
+  <strong>Estimated cost:</strong> ~$8-12K/year in forgone shipping revenue on high-value intl orders<br>
+  <strong>Estimated gain:</strong> +$15-25K from higher intl AOV + better conversion
+</div>
+
+<h4>C. Raise Canada Threshold to $99 (Match US)</h4>
+<div class="rec-box">
+  <strong>Currently $96.</strong> The $3 difference makes no sense and complicates messaging. Raise to $99 to match the US. Canada free shipping costs you more (DDP adds $10.97/order), so a consistent threshold is the right balance. Canadian AOV is already $80.83 — close to threshold.
+</div>
+
+<h4>D. Raise International Flat Rate to $15-16</h4>
+<div class="rec-box warn">
+  <strong>Your $12 flat rate loses ~$5 per order before DDP.</strong> Your actual intl fulfillment cost averages $16.45/order — the $12 charge doesn't even cover the carrier postage, let alone packing or DDP. A $15-16 flat rate is still competitive (TomboyX charges $12-15 intl) and reduces the per-order loss from $5.05 to ~$1-2. <strong>Pair this with the $125 free shipping threshold</strong> so it doesn't hurt conversion on larger orders.
+</div>
+
+<h4>E. Consider Raising US Rate to $10-11</h4>
+<div class="rec-box warn">
+  <strong>The $9 US rate was set when fulfillment cost ~$5-6/order.</strong> In 2024, your avg US fulfillment cost hit $7.21. With Nitro in 2025 it's ~$9.84. At $9 you're losing money on every paid-shipping US order too. Raising to $10-11 is a small change customers won't notice, but across ~8,800 paid-shipping US orders it recaptures $9-18K/year.
+</div>
+
+<h4>Shipping Rate Summary (Proposed)</h4>
+<table>
+  <tr><th>Zone</th><th>Current Rate</th><th>Proposed Rate</th><th>Free Threshold</th><th>Your Avg Cost</th><th>Change</th></tr>
+  <tr><td>US Standard</td><td>$9.00</td><td class="bold">$10.50</td><td>$99 (keep)</td><td>$9.84</td><td>+$1.50 — closes gap with Nitro costs</td></tr>
+  <tr><td>US Expedited</td><td>$22.00</td><td class="bold">$24.00</td><td>—</td><td>—</td><td>+$2 — keeps premium positioning</td></tr>
+  <tr><td>Canada</td><td>$9.35</td><td class="bold">$11.00</td><td>$99 (was $96)</td><td>$14.01</td><td>+$1.65 rate + align threshold</td></tr>
+  <tr><td>DDP International</td><td>$12.00</td><td class="bold">$15.00</td><td>$125 (new)</td><td>$16.45+DDP</td><td>+$3 rate, add free threshold</td></tr>
+  <tr><td>DDU International</td><td>$12.00</td><td class="bold">$15.00</td><td>$125 (new)</td><td>$16.45</td><td>+$3 rate, add free threshold</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>Shipping is currently a $56K+ annual loss.</strong> These changes reduce (not eliminate) the gap:
+  <ul>
+    <li>US rate increase ($9→$10.50): recaptures ~<strong>$13K/year</strong> across ~8,800 paid orders</li>
+    <li>Canada rate increase ($9.35→$11): recaptures ~<strong>$2.4K/year</strong></li>
+    <li>Intl rate increase ($12→$15): recaptures ~<strong>$8K/year</strong> across ~2,600 paid orders</li>
+    <li>Intl free shipping threshold ($125): +$15-25K from AOV lift, -$8-12K from free shipping costs</li>
+  </ul>
+  <strong>Estimated total recovery: $30-48K/year</strong> — cuts the shipping loss roughly in half. The remaining gap is absorbed by product margin (83-90%) which can support it. Price increases (+$4/item) also help: a 3-item order at new prices generates an extra $12 margin that more than covers the $7 shipping cost.
+  <br><br>
+  <strong>Data gap:</strong> 2025-2026 Nitro costs are partially missing. Once Nitro API integration is complete, revisit these numbers — Nitro's per-order costs appear higher than Think Logistics, so the current loss may be larger.
+</div>
+
+<!-- ============================================ -->
+<div class="page-break"></div>
+<h2 id="sales">11. Sale & Tiered Discount Effectiveness</h2>
+
+<h3>Black Friday / Cyber Monday 2025 — Tiered Results</h3>
+<p><em>Your BF/CM 2025 used a tiered structure: 15% / 20% / 25% based on cart value. Here's how each tier performed:</em></p>
+
+<h4>Black Friday 2025 (November)</h4>
+<table>
+  <tr><th>Tier</th><th>Orders</th><th>Avg Subtotal</th><th>Avg Discount</th><th>Avg Paid</th><th>Discount Rate</th></tr>
+  <tr><td>15% off</td><td>138</td><td>$64.39</td><td>$9.54</td><td>$54.85</td><td>11.3%</td></tr>
+  <tr><td>20% off</td><td>138</td><td>$117.34</td><td>$29.12</td><td>$88.22</td><td>19.3%</td></tr>
+  <tr><td class="bold">25% off</td><td class="bold">28</td><td class="bold">$260.73</td><td>$86.73</td><td class="bold">$173.99</td><td>24.4%</td></tr>
+  <tr style="font-weight:700;background:#faf5f8"><td>Total BF</td><td>304</td><td>—</td><td>—</td><td>$34,632</td><td>—</td></tr>
+</table>
+
+<h4>Cyber Monday 2025 (December)</h4>
+<table>
+  <tr><th>Tier</th><th>Orders</th><th>Avg Subtotal</th><th>Avg Discount</th><th>Avg Paid</th><th>Discount Rate</th></tr>
+  <tr><td>15% off</td><td>50</td><td>$61.87</td><td>$9.78</td><td>$52.09</td><td>12.3%</td></tr>
+  <tr><td>20% off</td><td>51</td><td>$121.22</td><td>$33.99</td><td>$87.23</td><td>21.5%</td></tr>
+  <tr><td class="bold">25% off</td><td class="bold">10</td><td class="bold">$243.73</td><td>$86.28</td><td class="bold">$157.45</td><td>25.6%</td></tr>
+  <tr style="font-weight:700;background:#faf5f8"><td>Total CM</td><td>111</td><td>—</td><td>—</td><td>$12,351</td><td>—</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>The tiered structure works — but the top tier is barely used.</strong> Only 28 orders (9%) reached 25% on BF, and 10 (9%) on CM. The 20% tier is the real workhorse — equal orders to 15% but with nearly double the subtotal ($117 vs $64). The revenue "given up" to tiers beyond a flat 15% was only <strong>~$1,540</strong> across BF — a trivial amount for the AOV lift the 20% tier generates.
+</div>
+
+<h3>Other Sale Events (2025-2026)</h3>
+<table>
+  <tr><th>Sale Event</th><th>Orders</th><th>Avg Subtotal</th><th>Avg Discount</th><th>Total Revenue</th><th>Discount Depth</th></tr>
+  <tr><td>10% Holiday Sale (Dec-Jan)</td><td>233</td><td>$85.28</td><td>$9.00</td><td>$21,532</td><td>8.9%</td></tr>
+  <tr><td>10% Valentine's Day (Feb)</td><td>85</td><td>$79.42</td><td>$7.94</td><td>$7,942</td><td>8.5%</td></tr>
+  <tr><td>10% Trans Week of Visibility (Mar)</td><td>71</td><td>$95.97</td><td>$9.84</td><td>$6,814</td><td>9.3%</td></tr>
+  <tr><td>10% Spooky Sale (Oct)</td><td>60</td><td>$92.60</td><td>$9.26</td><td>$6,183</td><td>8.2%</td></tr>
+</table>
+
+<div class="rec-box">
+  <strong>Your 10% flat sales are consistent performers:</strong> ~$85-96 avg subtotal, 8-9% effective discount. These aren't deep enough to erode margins (10% off a $32 underwear = $3.20 given up on an $27+ margin product). <strong>Keep running these quarterly.</strong>
+</div>
+
+<h3>Volume Discounts — The Hidden AOV Driver</h3>
+<p><em>Active since October 2025 on AJ, Charlie, and Ruby. Automatic discounts triggered by quantity in cart.</em></p>
+<table>
+  <tr><th>Product</th><th>Tier</th><th>Orders</th><th>Avg Order Value</th><th>Avg Discount</th><th>AOV Lift vs 1-item</th></tr>
+  <tr><td rowspan="2">AJ Underwear</td><td>10% (2-3 items)</td><td>92</td><td>$116.59</td><td>$12.44</td><td class="green">+$44 vs avg $72</td></tr>
+  <tr><td class="bold">15% (4+ items)</td><td class="bold">124</td><td class="bold">$178.88</td><td>$28.42</td><td class="green bold">+$107 vs avg $72</td></tr>
+  <tr><td rowspan="2">Charlie Underwear</td><td>10% (2-3 items)</td><td>62</td><td>$124.09</td><td>$11.21</td><td class="green">+$52</td></tr>
+  <tr><td class="bold">15% (4+ items)</td><td class="bold">50</td><td class="bold">$207.61</td><td>$30.97</td><td class="green bold">+$136</td></tr>
+  <tr><td>Ruby Bikini</td><td>10% (2+ items)</td><td>55</td><td>$149.19</td><td>$13.02</td><td class="green">+$61</td></tr>
+  <tr style="font-weight:700;background:#faf5f8"><td colspan="2">Total volume discount orders</td><td>383</td><td>$155 avg</td><td>$19 avg</td><td>—</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>Volume discounts are your most profitable promotion type.</strong> The 15% AJ tier drives $179 AOV — that's 2.5x a non-volume AJ order. Even after the discount, these orders contribute significantly more margin: a 4-pack at $179 minus $28 discount minus $19 COGS = <strong>$132 gross margin</strong> vs. a single AJ at $28 minus $5 COGS = $23. Volume buyers are 5.7x more profitable per order.
+</div>
+
+<h3>How to Structure the Right Sale</h3>
+
+<h4>Sale Framework (Based on Your Data)</h4>
+<table>
+  <tr><th>Sale Type</th><th>When</th><th>Structure</th><th>Why It Works</th></tr>
+  <tr><td class="bold">Quarterly 10% Sale</td><td>4x/year (Valentine's, Pride, Back-to-School, Spooky)</td><td>Flat 10% sitewide, 3-5 days</td><td>Drives 60-85 orders/event, <9% effective discount, doesn't train customers to wait</td></tr>
+  <tr><td class="bold">BF/CM Tiered Sale</td><td>1x/year (November)</td><td>15% / 20% / 25% by cart value</td><td>Rewards bigger carts. 20% tier does the heavy lifting. Cap 25% at high threshold.</td></tr>
+  <tr><td class="bold">Volume Discounts</td><td>Always-on</td><td>10% (2-3 items), 15% (4+)</td><td>Your most profitable promo. $155 avg order. Extend to ALL products.</td></tr>
+  <tr><td class="bold green">Community Sale (NEW)</td><td>1-2x/year (Trans Day of Visibility, Pride)</td><td>10% + donate 5% to partner org</td><td>Aligns with brand values. Customers feel good, you build community.</td></tr>
+  <tr><td class="red">Flash Sale / Deep Discount</td><td>Never</td><td>Don't go above 25% except clearance</td><td>Erodes brand. Competitors doing 40-80% off are distressed (Urbody, Carmen Liu).</td></tr>
+</table>
+
+<h4>Optimal BF/CM Tier Thresholds (Post Price Increase)</h4>
+<table>
+  <tr><th>Tier</th><th>Cart Minimum</th><th>Discount</th><th>Typical Cart</th><th>Customer Pays</th></tr>
+  <tr><td>Base</td><td>Any order</td><td>15%</td><td>1 underwear ($32)</td><td>$27.20</td></tr>
+  <tr><td class="bold">Sweet Spot</td><td>$100+</td><td class="bold">20%</td><td>2 underwear + 1 bikini ($112)</td><td class="bold">$89.60</td></tr>
+  <tr><td>Premium</td><td>$200+</td><td>25%</td><td>3 underwear + 1 bikini + 1 bra ($138+)</td><td>$150+</td></tr>
+</table>
+<p class="small">Raise the 25% threshold from current level to $200+ (post price increase). This ensures the top tier is reserved for genuinely large carts, not just 2 swim items.</p>
+
+<div class="rec-box">
+  <strong>The golden rule of RUBIES sales:</strong> Your base margin is 83-90%. A 15% sale still leaves you with 68-75% margin. A 25% sale still leaves 58-65%. Even your deepest discount is more profitable than most DTC brands at full price. <strong>You have room to be generous without hurting the business.</strong> The constraint isn't margin — it's training customers to wait for sales. Keep deep discounts rare (BF/CM only) and use always-on volume discounts for multi-buyers.
+</div>
+
+<!-- ============================================ -->
+<div class="page-break"></div>
+<h2 id="experiments">12. Pricing Experiments & Feedback Loops</h2>
+
+<h3>Why Experiment?</h3>
+<p>You have strong instincts and data, but some pricing questions can only be answered by testing. The goal: make small, reversible changes, measure the impact, and iterate. Never bet the whole business on one price point.</p>
+
+<h3>Experiment 1: International Free Shipping Threshold</h3>
+<table>
+  <tr><th>Element</th><th>Details</th></tr>
+  <tr><td class="bold">Hypothesis</td><td>Adding a $125 free shipping threshold for intl orders will increase intl AOV by 15-20% without reducing conversion</td></tr>
+  <tr><td>Test</td><td>Enable $125 free shipping for DDP countries. Keep DDU at flat $14 (no free threshold) as control.</td></tr>
+  <tr><td>Duration</td><td>8 weeks minimum (need ~200+ intl orders per group for significance)</td></tr>
+  <tr><td>Metrics</td><td>Intl AOV, intl conversion rate, intl cart abandonment rate, items per order</td></tr>
+  <tr><td>Success criteria</td><td>AOV increase > 12% AND conversion doesn't drop > 5%</td></tr>
+  <tr><td>Rollback trigger</td><td>Conversion drops > 10% in first 2 weeks → revert immediately</td></tr>
+</table>
+
+<h3>Experiment 2: Price Increase Phasing</h3>
+<table>
+  <tr><th>Element</th><th>Details</th></tr>
+  <tr><td class="bold">Hypothesis</td><td>A phased price increase (half now, half in 3 months) produces the same annual revenue as all-at-once, with less risk</td></tr>
+  <tr><td>Test</td><td>Raise AJ/Charlie/Sassy by $2 now (to $30/31). Monitor for 6 weeks. Then raise the remaining $2 (to $32/33).</td></tr>
+  <tr><td>Duration</td><td>6 weeks per phase (12 weeks total)</td></tr>
+  <tr><td>Metrics</td><td>Conversion rate, orders/day, revenue/day, customer complaints, review mentions of price</td></tr>
+  <tr><td>Success criteria</td><td>Orders/day doesn't decline > 5% after Phase 1 → proceed to Phase 2</td></tr>
+  <tr><td>Alternative</td><td>If phasing feels too slow: implement all at once. Your data strongly suggests customers are price-insensitive (price never mentioned in 1,886 reviews).</td></tr>
+</table>
+
+<h3>Experiment 3: Bundle vs. Volume Discount AOV Competition</h3>
+<table>
+  <tr><th>Element</th><th>Details</th></tr>
+  <tr><td class="bold">Hypothesis</td><td>Curated bundles convert better than volume discounts for new customers, but volume discounts drive higher AOV for repeat buyers</td></tr>
+  <tr><td>Test</td><td>Track bundle purchases vs. volume discount triggers. Segment by new vs. returning customer.</td></tr>
+  <tr><td>Duration</td><td>Ongoing (measure quarterly)</td></tr>
+  <tr><td>Metrics</td><td>Bundle attach rate, volume discount trigger rate, AOV by segment, repeat purchase rate</td></tr>
+  <tr><td>Action</td><td>If bundles outperform for new customers → feature bundles prominently on landing pages and welcome emails</td></tr>
+</table>
+
+<h3>Building the Feedback Loop</h3>
+<p>Pricing is never "set and forget." Here's the system to build:</p>
+
+<h4>Weekly Pulse (Automated — 5 min review)</h4>
+<ul>
+  <li><strong>Orders/day trend</strong> — watch for drops after any price change (pull from Shopify via daily sync)</li>
+  <li><strong>AOV trend</strong> — should increase with price raises; flat or declining = problem signal</li>
+  <li><strong>Conversion rate</strong> — Shopify analytics; any drop > 10% sustained over 7 days = investigate</li>
+  <li><strong>Cart abandonment rate</strong> — if it spikes after price change, the new price may be hitting a psychological barrier</li>
+</ul>
+
+<h4>Monthly Deep Dive (Manual — 30 min)</h4>
+<table>
+  <tr><th>Metric</th><th>Source</th><th>What to Look For</th></tr>
+  <tr><td>Revenue per visitor</td><td>Shopify Analytics</td><td>Should increase with price raise even if conversion dips slightly</td></tr>
+  <tr><td>Free shipping qualification rate</td><td>Supabase orders table</td><td>% of orders above threshold — if it drops, threshold may be too high</td></tr>
+  <tr><td>Discount code usage</td><td>Supabase orders table</td><td>If welcome code redemption drops, new price + 10% may be over tolerance</td></tr>
+  <tr><td>Volume discount trigger rate</td><td>Supabase orders table</td><td>Should increase as single-item price goes up (incentive to buy more)</td></tr>
+  <tr><td>Intl order share</td><td>Supabase orders table</td><td>Watch for drops in specific countries after intl price increase</td></tr>
+  <tr><td>Customer complaints</td><td>Gorgias / CS conversations</td><td>Any price-related complaints? (Currently zero in 1,886 reviews)</td></tr>
+</table>
+
+<h4>Quarterly Review (Coincides with Seasonal Sales)</h4>
+<ul>
+  <li>Compare each quarter to prior year quarter (not prior quarter — seasonality matters)</li>
+  <li>Evaluate each experiment's results and decide: scale, iterate, or revert</li>
+  <li>Update competitor pricing scan (especially TomboyX, UNTAG, Origami)</li>
+  <li>Review DDP costs from Passport invoices — adjust intl pricing if costs change</li>
+  <li>Check volume discount effectiveness — adjust tier thresholds if AOV behavior shifts</li>
+</ul>
+
+<h4>Annual Review (January — Already Recommended)</h4>
+<ul>
+  <li>Full pricing review against COGS, competition, and market conditions</li>
+  <li>Implement 2-5% annual price increase where justified</li>
+  <li>Refresh bundle structure based on product launches and seasonal mix</li>
+  <li>Set sale calendar for the year ahead</li>
+</ul>
+
+<div class="rec-box action">
+  <strong>Automate what you can.</strong> Your daily-sync-all pipeline already pulls Shopify orders into Supabase. Building a weekly pricing pulse dashboard is straightforward: query AOV, orders/day, free shipping rate, and volume discount triggers from the orders table. Flag anomalies automatically via SendGrid. The data infrastructure is already in place — the feedback loop just needs a query and an alert threshold.
+</div>
+
+<h3>Key Signals to Watch After Price Increase</h3>
+<table>
+  <tr><th>Signal</th><th>Healthy Range</th><th>Warning</th><th>Action if Warning</th></tr>
+  <tr><td>Daily orders</td><td>Within 10% of baseline</td><td class="red">Down >15% for 7+ days</td><td>Check if seasonal or price-driven; consider reverting one product</td></tr>
+  <tr><td>AOV (USD)</td><td class="green">$107+ (should rise)</td><td>Flat or declining</td><td>Customers buying fewer items per order to offset higher prices</td></tr>
+  <tr><td>Conversion rate</td><td>Within 0.5% of baseline</td><td class="red">Down >1% sustained</td><td>Review checkout funnel; check if specific products are affected</td></tr>
+  <tr><td>Welcome code redemption</td><td>Stable or growing</td><td>Sharp decline</td><td>New visitors may be more price sensitive; consider 15% welcome</td></tr>
+  <tr><td>Volume discount usage</td><td class="green">Rising (ideal outcome)</td><td>Flat</td><td>Promote volume discounts more prominently on product pages</td></tr>
+  <tr><td>Review sentiment</td><td>No price mentions</td><td class="red">Price complaints appearing</td><td>First time ever — investigate which product/segment</td></tr>
+  <tr><td>Intl order share</td><td>~30% of revenue</td><td>Dropping below 25%</td><td>Intl pricing may be too aggressive; try 10% instead of 15%</td></tr>
+</table>
+
+<!-- ============================================ -->
+<div class="page-break"></div>
+<h2 id="implementation">13. Implementation Roadmap</h2>
 
 <h3>Projected Revenue Impact</h3>
 <table>
@@ -529,10 +869,11 @@
   <tr><td>Bundles & AOV improvements</td><td>+$15-25K</td><td>+$20-34K</td></tr>
   <tr><td>Wholesale growth (5% &rarr; 10%)</td><td>+$35-45K</td><td>+$48-62K</td></tr>
   <tr><td>SEO blog content (5 posts)</td><td>+$10-20K</td><td>+$14-27K</td></tr>
+  <tr><td>Shipping rate increases (US/CA/intl) + intl threshold</td><td>+$30-48K</td><td>+$41-66K</td></tr>
   <tr><td>DDP cost already low (~$27K/yr)</td><td>No action needed</td><td>Structural advantage vs competitors</td></tr>
-  <tr style="font-weight:700;background:#f0fff4"><td>Total potential uplift</td><td>+$150-200K</td><td>+$205-274K</td></tr>
+  <tr style="font-weight:700;background:#f0fff4"><td>Total potential uplift</td><td>+$180-248K</td><td>+$246-340K</td></tr>
   <tr style="font-weight:700;background:#f0fff4"><td>2025 baseline (QBO)</td><td>—</td><td>$897K</td></tr>
-  <tr style="font-weight:700;background:#f0fff4"><td>Projected 2026</td><td>—</td><td class="green bold">$1.10-1.17M</td></tr>
+  <tr style="font-weight:700;background:#f0fff4"><td>Projected 2026</td><td>—</td><td class="green bold">$1.14-1.24M</td></tr>
 </table>
 
 <h3>Timeline</h3>
@@ -542,16 +883,31 @@
   <tr><td class="bold">April 1</td><td>Raise all core product prices per table above</td><td><span class="tag">Price</span></td></tr>
   <tr><td class="bold">April 1</td><td>Update existing bundle prices to reflect new retail</td><td><span class="tag">Bundles</span></td></tr>
   <tr><td class="bold">April 1</td><td>Set up Shopify Markets international pricing (+15% UK/EU/AU)</td><td><span class="tag orange-tag">International</span></td></tr>
+  <tr><td class="bold">April 1</td><td>Raise shipping rates: US $9→$10.50, CA $9.35→$11, Intl $12→$15. Align CA threshold to $99.</td><td><span class="tag orange-tag">Shipping</span></td></tr>
   <tr><td class="bold">April 15</td><td>Launch Everyday 3-Pack and First Time Bundle</td><td><span class="tag">Bundles</span></td></tr>
-  <tr><td class="bold">May 1</td><td>Set free shipping thresholds ($75 US, $125 intl)</td><td><span class="tag orange-tag">AOV</span></td></tr>
+  <tr><td class="bold">May 1</td><td>Add $125 intl free shipping threshold (DDP countries first as test)</td><td><span class="tag orange-tag">Shipping</span></td></tr>
   <tr><td class="bold">May 1</td><td>Launch Swim Starter Kit and Full Swim Set bundles (pre-summer)</td><td><span class="tag">Bundles</span></td></tr>
   <tr><td class="bold">May</td><td>Publish first 2 blog posts (target: "comfortable underwear trans woman")</td><td><span class="tag green-tag">SEO</span></td></tr>
-  <tr><td class="bold">June</td><td>Standardize volume discounts (5%/10%/15% tiers)</td><td><span class="tag">Volume</span></td></tr>
+  <tr><td class="bold">June</td><td>Standardize volume discounts (10%/15% tiers) across all products</td><td><span class="tag">Volume</span></td></tr>
   <tr><td class="bold">June</td><td>Launch Kids Starter Pack bundle</td><td><span class="tag">Bundles</span></td></tr>
+  <tr><td class="bold">June</td><td>8-week review: intl free shipping experiment results. Scale or revert.</td><td><span class="tag orange-tag">Experiment</span></td></tr>
   <tr><td class="bold">Q3</td><td>Price new products (sports bra, gaff, tank top) at recommended levels</td><td><span class="tag">New Products</span></td></tr>
   <tr><td class="bold">Q3</td><td>Sign 3-5 new wholesale accounts</td><td><span class="tag orange-tag">Wholesale</span></td></tr>
-  <tr><td class="bold">Ongoing</td><td>Reduce discount usage from 58% to ~40% of orders</td><td><span class="tag">Margin</span></td></tr>
+  <tr><td class="bold">Ongoing</td><td>Weekly pricing pulse: AOV, orders/day, free shipping rate, volume discount triggers</td><td><span class="tag green-tag">Feedback</span></td></tr>
+  <tr><td class="bold">Ongoing</td><td>Quarterly sale calendar: 10% seasonal (4x/yr) + BF/CM tiered (1x/yr)</td><td><span class="tag">Discounts</span></td></tr>
+  <tr><td class="bold">Jan 2027</td><td>Annual price review: 2-5% increase based on COGS trends + competitor scan</td><td><span class="tag">Price</span></td></tr>
 </table>
+
+<h3>Annual Price Review Process</h3>
+<p>Establish a yearly pricing review (January, before spring/summer peak):</p>
+<ul>
+  <li><strong>Frequency:</strong> Every January — review and adjust prices for the year ahead</li>
+  <li><strong>Default increase:</strong> 2-5% to keep pace with inflation and COGS changes</li>
+  <li><strong>No announcement needed:</strong> Just update prices. Customers rarely notice small incremental increases.</li>
+  <li><strong>Inputs to review:</strong> COGS trends, competitor pricing (re-scan annually), Passport DDP costs, conversion rate by product, customer feedback</li>
+  <li><strong>Your competitors do this:</strong> LeoLines raised prices enough that Sock Drawer Heroes dropped them. UNTAG and Origami have both increased over the past 2 years.</li>
+  <li><strong>This initial increase (~12%) is a catch-up</strong> after years of never raising prices. Future annual increases of 2-5% will be much less noticeable.</li>
+</ul>
 
 <h3>Key Risks</h3>
 <table>
@@ -564,7 +920,7 @@
 
 <br><br>
 <p class="small" style="text-align:center; border-top: 1px solid #ddd; padding-top: 12px;">
-  RUBIES Pricing Strategy 2026 | Prepared March 28, 2026 | Data: QBO, Shopify (14,629 orders), Google Search Console, Klaviyo, Judge.me (1,886 reviews) | Competitor research: TomboyX, Origami Customs, gc2b, LeoLines, Carmen Liu, Urbody, UNTAG | Passport invoice data: 1,235 shipments
+  RUBIES Pricing Strategy 2026 | Prepared March 28, 2026 | Data: QBO, Shopify (28,465 orders), Google Search Console, Klaviyo, Judge.me (1,886 reviews), Shopify Shipping Zones (237 countries) | Competitor research: TomboyX, Origami Customs, gc2b, LeoLines, Carmen Liu, Urbody, UNTAG | Passport invoice data: 1,235 shipments | Discount analysis: 415 BF/CM tiered orders, 383 volume discount orders, 449 seasonal sale orders
 </p>
 
 </body>

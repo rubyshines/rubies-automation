@@ -19,3 +19,11 @@ service-account-key.json
 # Local history (Cursor, editors, etc.)
 .history/
 customer-service/product-cache.json
+
+# Local data/reports — keep locally, don't push
+email-intelligence/
+exchange-tree-*.json
+exchange-rules-review.csv
+
+# Claude Code local settings
+.claude/settings.local.json
