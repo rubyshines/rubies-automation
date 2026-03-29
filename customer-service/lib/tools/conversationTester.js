@@ -208,7 +208,13 @@ async function composeAgentResponse(s, previousResponses) {
     const categoryGroups = new Map();
     for (const item of sizingItems) {
       const cat = classifyProduct(item.product) || 'other';
-      const catLabel = cat.includes('swim') ? 'bikini bottoms' : cat.includes('top') ? 'tops' : 'underwear';
+      let catLabel;
+      if (cat === 'swim_top') catLabel = 'bikini top';
+      else if (cat === 'swim_bottom') catLabel = 'bikini bottoms';
+      else if (cat === 'underwear_top') catLabel = 'bra';
+      else if (cat === 'onepiece') catLabel = 'one-piece';
+      else if (cat === 'underwear_bottom') catLabel = 'underwear';
+      else catLabel = 'other';
       if (!categoryGroups.has(catLabel)) categoryGroups.set(catLabel, []);
       categoryGroups.get(catLabel).push(item);
     }
@@ -240,11 +246,15 @@ async function composeAgentResponse(s, previousResponses) {
       }
 
       const nick = getProductNickname(items[0].product);
+      const isTopCat = catLabel === 'bikini top' || catLabel === 'bra';
+      const bodyDesc = isTopCat ? (catLabel === 'bra' ? 'bra band' : 'bikini top band') : 'fabric around the waist';
       const optionTexts = adjacent.map(s => {
         const delta = getCumulativeDelta(refSize, s) || { inches: 2, cm: 5 };
         const unit = useInches ? `${delta.inches}"` : `${delta.cm} cm`;
-        const more = direction === 'up' ? 'more' : 'less';
-        return `${s} which has ${unit} ${more} fabric around the waist compared to the ${refSize}`;
+        const more = direction === 'up' ? (isTopCat ? 'longer' : 'more') : (isTopCat ? 'shorter' : 'less');
+        return isTopCat
+          ? `${s} which has the ${bodyDesc} ${unit} ${more} than the ${refSize}`
+          : `${s} which has ${unit} ${more} ${bodyDesc} compared to the ${refSize}`;
       });
 
       const sizeNote = sizes.length > 1 ? ` in size ${refSize}` : ` from ${refSize}`;
