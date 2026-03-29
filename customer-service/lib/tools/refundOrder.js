@@ -15,7 +15,7 @@ const tools = [
       'Phase 2 (confirmed=true): executes the refund, returning funds to the original payment method.',
       'IMPORTANT: You MUST present the Phase 1 preview to the user and receive explicit confirmation before calling Phase 2.',
       'Provide items as an array of { sku, quantity } or { line_item_id, quantity } to refund.',
-      'Optionally send a notification email to the customer.',
+      'A notification email is always sent to the customer.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -40,10 +40,6 @@ const tools = [
           type: 'string',
           description: 'Optional note for the refund',
         },
-        notify_customer: {
-          type: 'boolean',
-          description: 'Send refund notification email to customer (default: false)',
-        },
         confirmed: {
           type: 'boolean',
           description: 'Set to true to execute the refund (phase 2). Requires phase 1 to have been run first.',
@@ -56,7 +52,7 @@ const tools = [
       },
       required: ['order_number'],
     },
-    handler: async ({ order_number, items, note, notify_customer, confirmed, _refund_data }) => {
+    handler: async ({ order_number, items, note, confirmed, _refund_data }) => {
       // --- Phase 2: Execute the refund ---
       if (confirmed && _refund_data) {
         const refundInput = {
@@ -64,7 +60,7 @@ const tools = [
           currency: _refund_data.currency || 'USD',
           refundLineItems: _refund_data.refund_line_items,
           transactions: _refund_data.transactions.map(t => ({ ...t, orderId: _refund_data.order_id })),
-          notify: notify_customer || false,
+          notify: true,
         };
         if (note) refundInput.note = note;
 
@@ -87,7 +83,7 @@ const tools = [
               '',
               `**Order:** ${_refund_data.order_name} — ${getAdminUrl(_refund_data.order_id)}`,
               `**Refunded:** ${totalRefunded} ${currency}`,
-              `**Notification:** ${notify_customer ? 'Sent' : 'Not sent'}`,
+              `**Notification:** Sent`,
               '',
               '**Items refunded:**',
               itemLines,
