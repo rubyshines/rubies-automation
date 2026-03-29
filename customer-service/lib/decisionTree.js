@@ -1652,25 +1652,42 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           rx.refund_eligible = eligible;
           rx.audit = `Refund confirmed — customer declined exchange offer. Eligible: ${eligible}.`;
         } else if (!intake._returnProbed?.[item.product]) {
-          // First time — probe what didn't work before offering swap
-          // If we understand the issue, we might be able to fix it with a size/style change
-          rx.state = 'AWAITING_CLARIFICATION';
-          const returnCat = classifyProduct(item.product);
-          const isOnepieceReturn = returnCat === 'onepiece';
-          const thirdPartyWho = isThirdParty ? `for your ${intake.third_party_label || 'child'} ` : '';
-          const thirdPartyPossessive = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
+          // Check if customer already gave a reason (style, preference, etc.)
+          const intakeIssue = (intakeItemRef?.issue || '').toLowerCase();
+          const latestMsg = (intake._latestMessage || '').toLowerCase();
+          const hasStyleReason = /didn't like|don't like|not .* style|wasn't .* style|not for me|not for her|not for him|didn't suit|doesn't suit|prefer|not what .* expected/.test(latestMsg);
+          const hasReason = hasStyleReason || /refund_request/.test(intakeIssue) && hasStyleReason;
 
-          if (isOnepieceReturn) {
-            // One-piece: offer to check sizing with measurements
-            rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the one-piece? If it's a fit issue, feel free to send ${thirdPartyPossessive || 'the '}waist measurement around the belly just under the belly button and ${thirdPartyPossessive || ''}height — I can check the sizing and we can always send out a new size. And if the one-piece isn't the right fit we can always find an alternative that works.`;
+          if (hasReason) {
+            // Customer already explained — skip probe, go straight to exchange offer
+            rx.state = 'AWAITING_DECISION';
+            rx.response_text = `No problem! Is there anything else from our catalog you'd like to exchange the ${nick} for? We'd ship it out for free. If you'd prefer a refund we can do that too.`;
+            rx.refund_eligible = eligible;
+            rx.audit = `Return requested — eligible: ${eligible}. Reason given ("${hasStyleReason ? 'style' : 'preference'}"), skipping probe, offering exchange.`;
+            if (!intake._returnProbed) intake._returnProbed = {};
+            intake._returnProbed[item.product] = true;
+            if (!intake._exchangeOffered) intake._exchangeOffered = {};
+            intake._exchangeOffered[item.product] = true;
+            prescription.still_needed.push(`return_decision for ${item.product}`);
           } else {
-            rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the ${nick}? If it's a sizing issue I can help find the right size, or if the style isn't quite right we can always find an alternative that works.`;
+            // No reason given — probe what didn't work
+            rx.state = 'AWAITING_CLARIFICATION';
+            const returnCat = classifyProduct(item.product);
+            const isOnepieceReturn = returnCat === 'onepiece';
+            const thirdPartyWho = isThirdParty ? `for your ${intake.third_party_label || 'child'} ` : '';
+            const thirdPartyPossessive = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
+
+            if (isOnepieceReturn) {
+              rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the one-piece? If it's a fit issue, feel free to send ${thirdPartyPossessive || 'the '}waist measurement around the belly just under the belly button and ${thirdPartyPossessive || ''}height — I can check the sizing and we can always send out a new size. And if the one-piece isn't the right fit we can always find an alternative that works.`;
+            } else {
+              rx.response_text = `Can you let me know what didn't work out ${thirdPartyWho}with the ${nick}? If it's a sizing issue I can help find the right size, or if the style isn't quite right we can always find an alternative that works.`;
+            }
+            rx.refund_eligible = eligible;
+            rx.audit = `Return requested — eligible: ${eligible}. Probing what didn't work before offering swap.`;
+            if (!intake._returnProbed) intake._returnProbed = {};
+            intake._returnProbed[item.product] = true;
+            prescription.still_needed.push(`return_reason for ${item.product}`);
           }
-          rx.refund_eligible = eligible;
-          rx.audit = `Return requested — eligible: ${eligible}. Probing what didn't work before offering swap.`;
-          if (!intake._returnProbed) intake._returnProbed = {};
-          intake._returnProbed[item.product] = true;
-          prescription.still_needed.push(`return_reason for ${item.product}`);
         } else {
           // Already probed — now offer the free exchange
           rx.state = 'AWAITING_DECISION';
