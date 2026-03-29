@@ -259,10 +259,27 @@ async function composeAgentResponse(s, previousResponses) {
 
       const sizeNote = sizes.length > 1 ? ` in size ${refSize}` : ` from ${refSize}`;
       const dirWord = direction === 'up' ? 'up' : 'down';
-      groupTexts.push(`The next size ${dirWord} for the ${catLabel}${sizeNote} is ${optionTexts.join(', or ')}.`);
+      // Store with a key so we can merge identical options across categories
+      const optionsKey = `${refSize}→${adjacent.join(',')}`;
+      groupTexts.push({ catLabel, sizeNote, dirWord, optionTexts, optionsKey, isTopCat });
     }
 
-    let groupedText = groupTexts.join(' ') + ` Which sounds better${forWhom}?`;
+    // Merge categories with identical options (same ref size + same adjacent sizes)
+    const mergedTexts = [];
+    const seen = new Map(); // optionsKey → index in mergedTexts
+    for (const g of groupTexts) {
+      if (!g.isTopCat && seen.has(g.optionsKey)) {
+        // Same options as an existing bottom group — merge the labels
+        const existing = mergedTexts[seen.get(g.optionsKey)];
+        existing.catLabel += ` and ${g.catLabel}`;
+      } else {
+        seen.set(g.optionsKey, mergedTexts.length);
+        mergedTexts.push({ ...g });
+      }
+    }
+    let groupedText = mergedTexts.map(g =>
+      `The next size ${g.dirWord} for the ${g.catLabel}${g.sizeNote} is ${g.optionTexts.join(', or ')}.`
+    ).join(' ') + ` Which sounds better${forWhom}?`;
 
     // Add measurement ask for "too tight/loose" (not "a bit")
     const anyIssue = sizingItems[0]._intake?.issue || '';
