@@ -37,7 +37,13 @@
     "finance-auth": "node finance/lib/oauthManager.js --auth",
     "finance-sync": "node finance/sync/syncFinance.js",
     "finance-backfill": "node finance/sync/backfillHistory.js",
-    "finance-weekly-digest": "node finance/alerts/weeklyDigest.js"
+    "finance-weekly-digest": "node finance/alerts/weeklyDigest.js",
+    "gmail-backfill": "node email-intelligence/sync/backfillGmail.js",
+    "gmail-review": "node email-intelligence/sync/backfillGmail.js --review",
+    "gmail-summarize": "node email-intelligence/sync/backfillGmail.js --summarize",
+    "gmail-discover": "node email-intelligence/discover-inbox.js",
+    "b2b-sync": "node email-intelligence/sync/syncB2bContacts.js",
+    "unfulfilled-report": "node reports/unfulfilled-orders-report.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
