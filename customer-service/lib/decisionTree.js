@@ -1828,6 +1828,45 @@ async function prescribeDonationRouting(intake, context) {
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
 
+  // Format donation address into multi-line block with RUBIES Returns header
+  function formatDonationText(programExplanation, partner, washReminder) {
+    // Parse address: "624 NE 3rd St, McMinnville, OR 97128" → multi-line
+    // Format: street\ncity, state zip
+    const addrParts = partner.address.split(',').map(s => s.trim());
+    let streetLine, cityLine;
+    if (addrParts.length >= 3) {
+      // "624 NE 3rd St", "McMinnville", "OR 97128"
+      streetLine = addrParts[0];
+      cityLine = addrParts.slice(1).join(', '); // "McMinnville, OR 97128"
+    } else if (addrParts.length === 2) {
+      streetLine = addrParts[0];
+      cityLine = addrParts[1];
+    } else {
+      streetLine = partner.address;
+      cityLine = '';
+    }
+
+    const addressBlock = [
+      'RUBIES Returns',
+      `c/o ${partner.name}`,
+      streetLine,
+      cityLine,
+    ].filter(Boolean).join('\n');
+
+    const lines = [
+      programExplanation,
+      '',
+      addressBlock,
+      '',
+      `They ${partner.description.toLowerCase()} ${washReminder}`,
+      '',
+      'Your return will be greatly appreciated by someone in our community.',
+      '',
+      'Take care,',
+    ];
+    return lines.join('\n');
+  }
+
   const programExplanation = 'We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs.';
   const washReminder = 'Please wash any items that have been worn or tried on before donating.';
 
@@ -1886,7 +1925,7 @@ async function prescribeDonationRouting(intake, context) {
     phase: 'donation_routing',
     type: 'partner',
     partner,
-    response_text: `${programExplanation} You can donate to ${partner.name} at ${partner.address}. They ${partner.description.toLowerCase()} ${washReminder}`,
+    response_text: formatDonationText(programExplanation, partner, washReminder),
     audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${partner.donations_routed} previous donations`,
   };
 }

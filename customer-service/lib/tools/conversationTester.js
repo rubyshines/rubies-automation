@@ -155,7 +155,9 @@ async function composeAgentResponse(s, previousResponses) {
     } else if (dir === 'down') {
       text = `For the ${nick}, going one size down sounds right — the ${ri.resolved_size} will be snugger overall.`;
     } else if (dir === 'up') {
-      text = `For the ${nick}, the ${ri.resolved_size} will give ${youHer} a bit more room which should be a better fit.`;
+      const delta = getCumulativeDelta(ri.size, ri.resolved_size);
+      const roomDesc = delta && delta.inches <= 1 ? 'a bit more room' : 'more room';
+      text = `For the ${nick}, the ${ri.resolved_size} will give ${youHer} ${roomDesc} which should be a better fit.`;
     }
 
     if (text) {
@@ -515,8 +517,9 @@ RULES:
 - NEVER remove order confirmations, refund confirmations, or donation info — these are actionable
 - Do NOT remove sizing explanations or crossover notes
 - Do NOT remove offers of help (e.g. "I can help find the right size" or "we can find an alternative")
-- Do NOT add a sign-off (no "Take care", no signature)
+- Do NOT add a sign-off UNLESS the draft already has one (like "Take care,")
 - Do NOT use emojis
+- NEVER rearrange the donation/return section. If the draft has an address block (RUBIES Returns / c/o ...), keep it EXACTLY as written including line breaks and ordering. The address block, description, "Your return will be greatly appreciated" line, and "Take care," sign-off must stay in the exact order from the draft.
 ${customerName ? `- Customer name: ${customerName}` : '- No customer name detected — use "Hi!" not a name'}
 ${isThirdParty ? `- This is a third-party purchase for their ${thirdPartyLabel} — use appropriate pronouns` : ''}
 
