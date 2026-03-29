@@ -31,7 +31,10 @@ async function run() {
   const hasGorgias = process.env.GORGIAS_DOMAIN && process.env.GORGIAS_API_KEY && process.env.GORGIAS_EMAIL;
 
   if (!hasGorgias) {
-    console.log('  Gorgias env vars not set, skipping ticket import');
+    const missing = ['GORGIAS_DOMAIN', 'GORGIAS_API_KEY', 'GORGIAS_EMAIL'].filter(k => !process.env[k]);
+    console.warn(`  ⚠ ${missing.join(', ')} not set — skipping Gorgias import`);
+    hadError = true;
+    lastError = `${missing.join(', ')} not set`;
   } else {
     try {
       // Derive since from latest conversation (high-water mark)
@@ -84,7 +87,9 @@ async function run() {
   const hasVoyage = !!process.env.VOYAGE_API_KEY;
 
   if (!hasVoyage) {
-    console.log('  VOYAGE_API_KEY not set, skipping embedding');
+    console.warn('  ⚠ VOYAGE_API_KEY not set — skipping embedding');
+    hadError = true;
+    lastError = lastError || 'VOYAGE_API_KEY not set';
   } else {
     try {
       const { getSupabaseClient } = require('../../shared/supabaseClient');
