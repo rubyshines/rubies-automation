@@ -132,6 +132,38 @@ RETURNS TABLE (
 $$ LANGUAGE sql STABLE;
 
 -- ---------------------------------------------------------------------------
+-- Passport claims — exception tracking + reimbursement workflow
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS passport_claims (
+  id SERIAL PRIMARY KEY,
+  order_number INTEGER NOT NULL UNIQUE,
+  tracking_number TEXT,
+  country_code TEXT,
+  destination TEXT,                         -- "Calgary, AB, CA"
+  customer_email TEXT,
+  shipping_zone TEXT,                       -- ddp, ddu, canada
+
+  -- Claim details
+  status TEXT NOT NULL DEFAULT 'open',      -- open | delivered | lost | resolved
+  claim_reason TEXT,                        -- likely_lost | exception | returned | customs_hold
+  emailed_at TIMESTAMPTZ,                   -- when Passport support was notified
+  customer_customs_notified_at TIMESTAMPTZ, -- when customer was emailed about customs hold
+
+  -- Financials (for reimbursement tracking)
+  shipping_fee_usd NUMERIC,
+  ddp_total_usd NUMERIC,
+
+  -- Resolution
+  resolution TEXT,
+  resolution_date TIMESTAMPTZ,
+
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pc_status ON passport_claims(status);
+CREATE INDEX IF NOT EXISTS idx_pc_order ON passport_claims(order_number);
+
+-- ---------------------------------------------------------------------------
 -- RPC: get_passport_leg_stats — international intermediary transit times
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_passport_leg_stats(

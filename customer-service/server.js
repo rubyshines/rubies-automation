@@ -41,6 +41,7 @@ const refundOrderTools = require('./lib/tools/refundOrder');
 const shippingLookupTools = require('./lib/tools/shippingLookup');
 const orderNotesTools = require('./lib/tools/orderNotes');
 const deliveryEstimateTools = require('./lib/tools/deliveryEstimate');
+const passportClaimsTools = require('./lib/tools/passportClaims');
 const editOrderTools = require('./lib/tools/editOrder');
 
 const allTools = [
@@ -69,6 +70,7 @@ const allTools = [
   ...shippingLookupTools,
   ...orderNotesTools,
   ...deliveryEstimateTools,
+  ...passportClaimsTools,
   ...editOrderTools,
 ];
 
