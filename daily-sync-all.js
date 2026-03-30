@@ -65,6 +65,14 @@ const PIPELINES = [
     name: 'Fulfillment Costs',
     run: () => require('./finance/sync-nitro-bills').run(),
   },
+  {
+    name: 'Delivery Times',
+    run: () => require('./customer-service/sync/syncDeliveryTimes').run(),
+  },
+  {
+    name: 'Shipping Alerts',
+    run: () => require('./customer-service/alerts/dailyShippingAlerts').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

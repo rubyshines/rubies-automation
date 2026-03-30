@@ -48,7 +48,9 @@
     "dashboard": "node customer-service/dashboard/server.js",
     "cs-seed-shipping-regions": "node customer-service/sync/seedShippingRegions.js",
     "cs-sync-delivery-times": "node customer-service/sync/syncDeliveryTimes.js",
-    "cs-delivery-digest": "node customer-service/alerts/weeklyDeliveryDigest.js"
+    "cs-sync-passport-delivery": "node customer-service/sync/syncPassportDelivery.js",
+    "cs-delivery-digest": "node customer-service/alerts/weeklyDeliveryDigest.js",
+    "cs-shipping-alerts": "node customer-service/alerts/dailyShippingAlerts.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

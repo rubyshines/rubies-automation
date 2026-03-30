@@ -1,0 +1,168 @@
+/**
+ * Deterministic Passport tracking page parser.
+ *
+ * Parses the text content of a Passport tracking page without AI ($0 cost).
+ * Returns { parse_failed: true } if the page format is unrecognized,
+ * so callers can flag it for review or fall back to Sonnet.
+ */
+
+const MONTHS = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
+const DATE_RE = new RegExp(`(${MONTHS})\\s+(\\d{1,2})\\s+(\\d{1,2}:\\d{2})`, 'g');
+
+/**
+ * Parse a Passport tracking page text into structured data.
+ * Same output shape as analyzer.parseTrackingPage().
+ */
+function parsePassportPage(text) {
+  if (!text || text.length < 100 || !/passport/i.test(text)) {
+    return { current_status: 'unknown', parse_failed: true, events: [] };
+  }
+
+  try {
+    return doParse(text);
+  } catch (e) {
+    return { current_status: 'unknown', parse_failed: true, parse_error: e.message, events: [] };
+  }
+}
+
+function doParse(text) {
+  const header = text.substring(0, 600);
+
+  // --- Status ---
+  let currentStatus = 'unknown';
+  if (/\bDelivered\b/.test(header)) currentStatus = 'delivered';
+  else if (/\bOut for Delivery\b/i.test(header)) currentStatus = 'out_for_delivery';
+  else if (/\bIn transit\b/i.test(header)) currentStatus = 'in_transit';
+  else if (/\bEstimated delivery\b/i.test(header)) currentStatus = 'in_transit';
+  else if (/\bException\b|\bAlert\b/i.test(header)) currentStatus = 'exception';
+  else if (/\bReturn(?:ed)?\s+to\s+Sender\b/i.test(header)) currentStatus = 'returned';
+  else if (/\bPassport does not have\b/i.test(header)) currentStatus = 'pre_transit';
+
+  // --- Destination ---
+  const destMatch = text.match(/To:\s*(.+?)(?:\n|Order|Trying)/);
+  const destination = destMatch ? destMatch[1].trim() : null;
+
+  // --- Local carrier ---
+  const localCarrierMatch = text.match(/Your local delivery\s+([A-Za-z][\w\s&.-]*?)(?:\s+[A-Z0-9]{6,}|\s+Rate|\n)/);
+  let localCarrier = localCarrierMatch ? localCarrierMatch[1].trim() : null;
+  // Clean up: remove trailing tracking number fragments
+  if (localCarrier && localCarrier.length > 30) localCarrier = localCarrier.split(/\s+/).slice(0, 3).join(' ');
+
+  // --- Customs cleared ---
+  const customsCleared = /All clear|passed customs|Customs cleared/i.test(text);
+
+  // --- Estimated delivery ---
+  const etaMatch = text.match(new RegExp(`Estimated delivery\\s*(?:date)?\\s*([A-Z][a-z]+\\s+(?:${MONTHS})\\s+\\d{1,2}(?:\\s*[-–]\\s*[A-Z][a-z]+\\s+(?:${MONTHS})\\s+\\d{1,2})?)`, 'i'));
+  const estimatedDelivery = etaMatch ? etaMatch[1].trim() : null;
+
+  // --- Events ---
+  // Strategy: find the "Previous status updates" section and parse date-stamped entries
+  const eventsSection = text.substring(text.indexOf('Current Status'));
+  const events = parseEvents(eventsSection);
+
+  // --- Status description ---
+  let statusDescription = null;
+  const deliveredDateMatch = header.match(new RegExp(`Delivered\\s+(${MONTHS})\\s+(\\d{1,2})`));
+  if (currentStatus === 'delivered' && deliveredDateMatch) {
+    statusDescription = `Delivered ${deliveredDateMatch[1]} ${deliveredDateMatch[2]}`;
+  } else if (currentStatus === 'in_transit' && events.length > 0) {
+    statusDescription = `In transit — ${events[0].location || 'unknown location'}`;
+  }
+
+  return {
+    current_status: currentStatus,
+    status_description: statusDescription,
+    estimated_delivery: estimatedDelivery,
+    last_location: events.length > 0 ? events[0].location : null,
+    destination,
+    local_carrier: localCarrier,
+    local_tracking_number: null,
+    customs_cleared: customsCleared,
+    events,
+    parse_failed: false,
+  };
+}
+
+/**
+ * Parse events from the tracking section.
+ * Events on Passport pages follow this pattern in the text:
+ *   "Description text\nMon DD HH:MM\nLOCATION, CC"
+ *
+ * We find all date stamps and extract the description before and location after each.
+ */
+function parseEvents(section) {
+  if (!section) return [];
+
+  const events = [];
+  const dateMatches = [...section.matchAll(DATE_RE)];
+
+  for (let i = 0; i < dateMatches.length; i++) {
+    const match = dateMatches[i];
+    const month = match[1];
+    const day = match[2];
+    const time = match[3];
+
+    // Description: text between previous date's end (or section start) and this date
+    const prevEnd = i > 0 ? dateMatches[i - 1].index + dateMatches[i - 1][0].length : 0;
+    const beforeText = section.substring(prevEnd, match.index);
+    const description = extractDescription(beforeText);
+
+    // Location: text between this date and the next description/date
+    const afterStart = match.index + match[0].length;
+    const nextStart = i < dateMatches.length - 1 ? dateMatches[i + 1].index : section.length;
+    const afterText = section.substring(afterStart, nextStart);
+    const location = extractLocation(afterText);
+
+    // Skip junk events (feedback forms, navigation text)
+    if (isJunkEvent(description)) continue;
+
+    // Build ISO timestamp
+    const year = new Date().getFullYear();
+    const dateStr = `${month} ${day}, ${year} ${time}`;
+    const d = new Date(dateStr);
+    const timestamp = !isNaN(d) ? d.toISOString() : null;
+
+    events.push({
+      date: `${month} ${day}`,
+      time,
+      description: description || 'Status update',
+      location: location || '',
+      ...(timestamp && { timestamp }),
+    });
+  }
+
+  return events;
+}
+
+function extractDescription(text) {
+  // Get the last meaningful line before the date
+  const lines = text.split(/\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 3 && l.length < 200)
+    .filter(l => !isJunkLine(l));
+
+  return lines.length > 0 ? lines[lines.length - 1] : '';
+}
+
+function extractLocation(text) {
+  // First line after the date that looks like a location (CAPS with commas)
+  const lines = text.split(/\n/).map(l => l.trim()).filter(l => l);
+  for (const line of lines.slice(0, 2)) {
+    // Location lines are typically: "CITY, STATE, CC" or "CITY, CC"
+    if (/^[A-Z].*,/.test(line) && line.length < 80) {
+      return line.replace(/[^A-Za-z0-9\s,.()-]/g, '').trim();
+    }
+  }
+  return '';
+}
+
+function isJunkLine(line) {
+  return /Rate our|How would|shipping experience|Thank you|feedback|SHOP NOW|Follow us|social media|Subscribe|email|I mistyped|notified|Going global|Clear|Contact us|Need help|Still have|Current Status|Previous status/i.test(line);
+}
+
+function isJunkEvent(desc) {
+  if (!desc) return true;
+  return /Rate our|How would|shipping experience|Thank you|feedback|SHOP NOW|Follow us|Subscribe|mistyped|Get notified|Contact us/i.test(desc);
+}
+
+module.exports = { parsePassportPage };

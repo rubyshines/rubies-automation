@@ -151,8 +151,10 @@ async function syncOrders({ since, full } = {}) {
       const fulfillments = (o.fulfillments || []).map(f => ({
         status: f.status,
         createdAt: f.createdAt,
+        deliveredAt: f.deliveredAt || null,
         trackingNumber: f.trackingInfo?.[0]?.number || null,
         trackingUrl: f.trackingInfo?.[0]?.url || null,
+        locationId: f.location?.legacyResourceId || null,
       }));
 
       // --- Upsert order ---

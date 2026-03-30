@@ -201,6 +201,8 @@ async function getOrderByNumber(orderNumber) {
             }
             fulfillments {
               status
+              createdAt
+              deliveredAt
               trackingInfo { number url }
             }
             note
@@ -622,7 +624,9 @@ async function fetchOrdersForSync(since = null, cursor = null) {
             fulfillments {
               status
               createdAt
+              deliveredAt
               trackingInfo { number url }
+              location { legacyResourceId }
             }
 
             # --- Line items ---
@@ -848,6 +852,275 @@ async function createRefund(input) {
   return refund;
 }
 
+// --- Order Edit mutations ---
+
+/**
+ * Fetch an order with full discount data needed for editing.
+ * Returns discount applications, per-line-item discount allocations, variant IDs, and line item IDs.
+ */
+async function getOrderForEdit(orderNumber) {
+  const normalized = normalizeOrderNumber(orderNumber);
+  const data = await shopifyGraphQL(`
+    query getOrderForEdit($query: String!) {
+      orders(first: 1, query: $query) {
+        edges {
+          node {
+            id
+            name
+            createdAt
+            displayFinancialStatus
+            displayFulfillmentStatus
+            cancelledAt
+            customer {
+              id
+              firstName
+              lastName
+              email
+            }
+            shippingAddress {
+              address1 address2 city province country countryCodeV2 zip
+            }
+            totalPriceSet { shopMoney { amount currencyCode } }
+            subtotalPriceSet { shopMoney { amount currencyCode } }
+            currentTotalPriceSet { shopMoney { amount currencyCode } }
+            discountCodes
+            discountApplications(first: 10) {
+              edges {
+                node {
+                  allocationMethod
+                  targetType
+                  value {
+                    ... on MoneyV2 { amount currencyCode }
+                    ... on PricingPercentageValue { percentage }
+                  }
+                  ... on DiscountCodeApplication { code }
+                  ... on AutomaticDiscountApplication { title }
+                  ... on ScriptDiscountApplication { title }
+                  ... on ManualDiscountApplication { title }
+                }
+              }
+            }
+            lineItems(first: 50) {
+              edges {
+                node {
+                  id
+                  title
+                  variantTitle
+                  quantity
+                  sku
+                  originalUnitPriceSet { shopMoney { amount currencyCode } }
+                  variant { id title price }
+                  discountAllocations {
+                    allocatedAmountSet { shopMoney { amount currencyCode } }
+                    discountApplication {
+                      allocationMethod
+                      targetType
+                      value {
+                        ... on MoneyV2 { amount currencyCode }
+                        ... on PricingPercentageValue { percentage }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            fulfillments { status }
+            note
+            tags
+          }
+        }
+      }
+    }
+  `, { query: `name:${normalized}` });
+  const order = data.orders.edges[0]?.node;
+  if (!order) throw new Error(`Order not found: ${orderNumber}`);
+  return {
+    ...order,
+    lineItems: order.lineItems.edges.map(e => e.node),
+    discountApplications: (order.discountApplications?.edges || []).map(e => e.node),
+  };
+}
+
+/**
+ * Begin an order edit session. Returns the calculatedOrder (edit session).
+ */
+async function orderEditBegin(orderId) {
+  const gid = normalizeGid(orderId, 'Order');
+  const data = await shopifyGraphQL(`
+    mutation orderEditBegin($id: ID!) {
+      orderEditBegin(id: $id) {
+        calculatedOrder {
+          id
+          lineItems(first: 50) {
+            edges {
+              node {
+                id
+                title
+                variantTitle
+                quantity
+                sku
+                variant { id }
+                calculatedDiscountAllocations {
+                  allocatedAmountSet { shopMoney { amount currencyCode } }
+                }
+              }
+            }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { id: gid });
+  const calc = data.orderEditBegin.calculatedOrder;
+  calc.lineItems = calc.lineItems.edges.map(e => e.node);
+  return calc;
+}
+
+/**
+ * Set line item quantity in an edit session (0 to remove).
+ */
+async function orderEditSetQuantity(calculatedOrderId, lineItemId, quantity) {
+  const data = await shopifyGraphQL(`
+    mutation orderEditSetQuantity($id: ID!, $lineItemId: ID!, $quantity: Int!) {
+      orderEditSetQuantity(id: $id, lineItemId: $lineItemId, restock: true, quantity: $quantity) {
+        calculatedOrder {
+          id
+          addedLineItems(first: 50) {
+            edges {
+              node {
+                id
+                title
+                variantTitle
+                quantity
+                calculatedDiscountAllocations {
+                  allocatedAmountSet { shopMoney { amount currencyCode } }
+                }
+              }
+            }
+          }
+        }
+        calculatedLineItem {
+          id
+          quantity
+        }
+        userErrors { field message }
+      }
+    }
+  `, { id: calculatedOrderId, lineItemId, quantity });
+  return data.orderEditSetQuantity;
+}
+
+/**
+ * Add a variant to an edit session. Returns the new calculatedLineItem.
+ */
+async function orderEditAddVariant(calculatedOrderId, variantId, quantity) {
+  const gid = normalizeGid(variantId, 'ProductVariant');
+  const data = await shopifyGraphQL(`
+    mutation orderEditAddVariant($id: ID!, $variantId: ID!, $quantity: Int!) {
+      orderEditAddVariant(id: $id, variantId: $variantId, quantity: $quantity) {
+        calculatedOrder {
+          id
+          addedLineItems(first: 50) {
+            edges {
+              node {
+                id
+                title
+                variantTitle
+                quantity
+                calculatedDiscountAllocations {
+                  allocatedAmountSet { shopMoney { amount currencyCode } }
+                }
+              }
+            }
+          }
+        }
+        calculatedLineItem {
+          id
+          title
+          variantTitle
+          quantity
+          originalUnitPriceSet { shopMoney { amount currencyCode } }
+          calculatedDiscountAllocations {
+            allocatedAmountSet { shopMoney { amount currencyCode } }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { id: calculatedOrderId, variantId: gid, quantity });
+  return data.orderEditAddVariant;
+}
+
+/**
+ * Add a line item discount in an edit session.
+ * @param {string} calculatedOrderId
+ * @param {string} lineItemId - calculatedLineItem ID
+ * @param {{ description: string, percentValue?: number, fixedValue?: { amount: string, currencyCode: string } }} discount
+ */
+async function orderEditAddLineItemDiscount(calculatedOrderId, lineItemId, discount) {
+  const data = await shopifyGraphQL(`
+    mutation orderEditAddDiscount($id: ID!, $lineItemId: ID!, $discount: OrderEditAppliedDiscountInput!) {
+      orderEditAddLineItemDiscount(id: $id, lineItemId: $lineItemId, discount: $discount) {
+        calculatedOrder { id }
+        calculatedLineItem {
+          id
+          calculatedDiscountAllocations {
+            allocatedAmountSet { shopMoney { amount currencyCode } }
+          }
+        }
+        addedDiscountStagedChange {
+          id
+          value {
+            ... on MoneyV2 { amount currencyCode }
+            ... on PricingPercentageValue { percentage }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { id: calculatedOrderId, lineItemId, discount });
+  return data.orderEditAddLineItemDiscount;
+}
+
+/**
+ * Commit a staged order edit. Returns the final order.
+ */
+async function orderEditCommit(calculatedOrderId, staffNote) {
+  const variables = { id: calculatedOrderId, notifyCustomer: false };
+  if (staffNote) variables.staffNote = staffNote;
+  const data = await shopifyGraphQL(`
+    mutation orderEditCommit($id: ID!, $notifyCustomer: Boolean, $staffNote: String) {
+      orderEditCommit(id: $id, notifyCustomer: $notifyCustomer, staffNote: $staffNote) {
+        order {
+          id
+          name
+          totalPriceSet { shopMoney { amount currencyCode } }
+          currentTotalPriceSet { shopMoney { amount currencyCode } }
+          displayFinancialStatus
+        }
+        userErrors { field message }
+      }
+    }
+  `, variables);
+  return data.orderEditCommit.order;
+}
+
+/**
+ * Send an invoice email for an order's outstanding balance.
+ */
+async function sendOrderInvoice(orderId) {
+  const gid = normalizeGid(orderId, 'Order');
+  const data = await shopifyGraphQL(`
+    mutation orderInvoiceSend($id: ID!) {
+      orderInvoiceSend(id: $id) {
+        order { id name }
+        userErrors { field message }
+      }
+    }
+  `, { id: gid });
+  return data.orderInvoiceSend.order;
+}
+
 // --- Helpers ---
 
 function normalizeOrderNumber(input) {
@@ -966,4 +1239,12 @@ module.exports = {
   createShopifyProduct,
   createProductVariants,
   updateProductStatus,
+  // Order Edit API
+  getOrderForEdit,
+  orderEditBegin,
+  orderEditSetQuantity,
+  orderEditAddVariant,
+  orderEditAddLineItemDiscount,
+  orderEditCommit,
+  sendOrderInvoice,
 };
