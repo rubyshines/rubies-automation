@@ -443,8 +443,12 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     if (snap?.raw_events) {
       const actionDesc = detectActionRequired(snap.raw_events);
       if (actionDesc) {
-        alert.issues.push(`Action required: ${actionDesc}`);
-        alert.severity = 'high';
+        // Don't flag customs hold if customs already cleared
+        const isCustomsHold = /held.*customs|customs.*payment|customs.*hold/i.test(actionDesc);
+        if (!isCustomsHold || !snap.customs_cleared) {
+          alert.issues.push(`Action required: ${actionDesc}`);
+          alert.severity = 'high';
+        }
       }
     }
     if (shopifyEvt?.actionRequired) {
@@ -472,10 +476,8 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     if (bizDays !== null && bizDays > window.max) {
       if (staleDays === null) {
         // No tracking data at all — don't flag, we can't confirm it's stuck
-        // (hourly Passport scraper will fill this in over time)
       } else if (staleDays <= 4) {
-        // Tracking updated in last ~3 business days — still moving, not stuck
-        alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max}) — tracking still updating`);
+        // Tracking updated in last ~3 business days — still moving, don't flag
       } else {
         // Overdue AND tracking is stale — flag it
         alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max})`);
