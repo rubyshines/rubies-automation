@@ -298,6 +298,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   cutoffDate.setDate(cutoffDate.getDate() - 45);
   const cutoff = cutoffDate.toISOString();
 
+  // All current fulfillment goes through Nitro — include all fulfilled, undelivered orders
   let allOrders = [];
   let offset = 0;
   while (true) {
@@ -315,48 +316,9 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     offset += orders.length;
 
     for (const o of orders) {
-      const ff = o.fulfillments || [];
-      const hasDeliveredAt = ff.some(f => f.deliveredAt);
-      if (hasDeliveredAt) continue;
-
-      // Check Nitro by locationId in fulfillments JSONB
-      const isNitroByLocation = ff.some(f => String(f.locationId) === NITRO_LOCATION_ID);
-      if (isNitroByLocation) {
-        allOrders.push(o);
-        continue;
-      }
-
-      // Fallback: mark for cost-table check (orders before locationId was synced)
-      o._needsCostCheck = true;
-      allOrders.push(o);
+      const hasDeliveredAt = (o.fulfillments || []).some(f => f.deliveredAt);
+      if (!hasDeliveredAt) allOrders.push(o);
     }
-  }
-
-  // Fallback Nitro check via order_fulfillment_costs for orders without locationId
-  const needsCostCheck = allOrders.filter(o => o._needsCostCheck);
-  if (needsCostCheck.length > 0) {
-    const nums = needsCostCheck.map(o => o.order_number);
-    const nitroCostSet = new Set();
-    for (let i = 0; i < nums.length; i += 500) {
-      const batch = nums.slice(i, i + 500);
-      const { data: costs } = await supabase
-        .from('order_fulfillment_costs')
-        .select('order_number')
-        .eq('fulfillment_provider', 'nitro')
-        .in('order_number', batch);
-      for (const c of (costs || [])) nitroCostSet.add(c.order_number);
-    }
-    // Remove non-Nitro orders — but assume recent orders (no cost data yet) are Nitro
-    // since all current fulfillment goes through Nitro
-    allOrders = allOrders.filter(o => {
-      if (!o._needsCostCheck) return true;
-      if (nitroCostSet.has(o.order_number)) return true;
-      // No cost data — assume Nitro if fulfilled recently (cost sync hasn't caught up)
-      const fulfilledDate = new Date(o.fulfilled_at);
-      const threeMonthsAgo = new Date();
-      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-      return fulfilledDate > threeMonthsAgo;
-    });
   }
 
   console.log(`Found ${allOrders.length} in-transit Nitro orders`);
