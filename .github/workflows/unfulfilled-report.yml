@@ -2,7 +2,7 @@ name: RUBIES Unfulfilled Orders Report
 
 on:
   schedule:
-    - cron: '0 13 * * 1-5' # 13:00 UTC = 9am EDT / 8am EST, weekdays only
+    - cron: '0 10 * * *' # 10:00 UTC = 6am EDT / 5am EST
   workflow_dispatch:
 
 jobs:
