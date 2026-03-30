@@ -475,8 +475,9 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
     // --- Overdue (but only if tracking hasn't updated recently) ---
     if (bizDays !== null && bizDays > window.max) {
-      // If tracking updated in last 5 days, it's still moving — lower priority
-      if (staleDays !== null && staleDays <= 5) {
+      // If tracking updated in last 3 business days, it's still moving — lower priority
+      // (using calendar days as proxy — 3 business days ≈ 4-5 calendar days)
+      if (staleDays !== null && staleDays <= 4) {
         alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max}) — tracking still updating`);
         // Don't upgrade severity — it's moving
       } else {
