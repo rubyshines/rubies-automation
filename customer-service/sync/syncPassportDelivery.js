@@ -159,7 +159,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
       // 2. Quick check: if already scraped with a known status and page still doesn't
       //    say "delivered", skip parse — just bump scraped_at ($0)
       const existing = existingSnapshots[order.tracking_number];
-      const textSaysDelivered = /delivered|has arrived/i.test(rawText);
+      const textSaysDelivered = /delivered|has arrived|returned to shipper|returned to sender/i.test(rawText);
       if (existing && existing.status !== 'unknown' && !textSaysDelivered) {
         // Still in transit — just update timestamp, no AI needed
         await supabase.from('tracking_snapshots')

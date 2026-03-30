@@ -473,10 +473,16 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       if (alert.severity !== 'high') alert.severity = 'medium';
     }
 
-    // --- Overdue ---
+    // --- Overdue (but only if tracking hasn't updated recently) ---
     if (bizDays !== null && bizDays > window.max) {
-      alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max})`);
-      if (alert.severity === 'info') alert.severity = 'medium';
+      // If tracking updated in last 5 days, it's still moving — lower priority
+      if (staleDays !== null && staleDays <= 5) {
+        alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max}) — tracking still updating`);
+        // Don't upgrade severity — it's moving
+      } else {
+        alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max})`);
+        if (alert.severity === 'info') alert.severity = 'medium';
+      }
     }
 
     // --- Customs hold ---

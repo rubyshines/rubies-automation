@@ -26,16 +26,20 @@ function parsePassportPage(text) {
 }
 
 function doParse(text) {
-  const header = text.substring(0, 600);
+  const header = text.substring(0, 800);
 
   // --- Status ---
   let currentStatus = 'unknown';
   if (/\bDelivered\b/.test(header)) currentStatus = 'delivered';
-  else if (/\bOut for Delivery\b/i.test(header)) currentStatus = 'out_for_delivery';
-  else if (/\bIn transit\b/i.test(header)) currentStatus = 'in_transit';
-  else if (/\bEstimated delivery\b/i.test(header)) currentStatus = 'in_transit';
-  else if (/\bException\b|\bAlert\b/i.test(header)) currentStatus = 'exception';
+  else if (/\bReturn(?:ed)?\s+to\s+Shipper\b/i.test(header)) currentStatus = 'returned';
   else if (/\bReturn(?:ed)?\s+to\s+Sender\b/i.test(header)) currentStatus = 'returned';
+  else if (/\bShipment\s+Returned\b/i.test(header)) currentStatus = 'returned';
+  else if (/\bOut for Delivery\b/i.test(header)) currentStatus = 'out_for_delivery';
+  else if (/\bException\b|\bAlert\b/i.test(header)) currentStatus = 'exception';
+  else if (/\bDelivery not completed\b/i.test(header)) currentStatus = 'exception';
+  else if (/\bIn transit\b/i.test(header)) currentStatus = 'in_transit';
+  else if (/\bCustoms cleared\b/i.test(header)) currentStatus = 'in_transit';
+  else if (/\bEstimated delivery\b/i.test(header)) currentStatus = 'in_transit';
   else if (/\bPassport does not have\b/i.test(header)) currentStatus = 'pre_transit';
 
   // --- Destination ---
