@@ -117,7 +117,7 @@ async function run() {
       // Check Gorgias: has the customer replied since we sent?
       const messages = await gorgias.getTicketMessages(stale.gorgias_ticket_id);
       const customerRepliedAfterSend = messages.some(m =>
-        (m.source?.type === 'customer' || m.sender?.type === 'customer')
+        (m.from_agent === false)
         && new Date(m.created_datetime) > new Date(stale.sent_at)
       );
 
@@ -190,7 +190,7 @@ async function run() {
 
     // Find latest customer message
     const customerMessages = messages.filter(m =>
-      m.source?.type === 'customer' || m.sender?.type === 'customer'
+      m.from_agent === false
     );
     if (!customerMessages.length) { ticketsSkipped++; return; }
 
@@ -199,8 +199,7 @@ async function run() {
 
     // Check if latest message is already from agent (no response needed)
     const latestMsg = messages[messages.length - 1];
-    const latestIsAgent = latestMsg.source?.type !== 'customer' && latestMsg.sender?.type !== 'customer'
-      && latestMsg.channel !== 'internal-note';
+    const latestIsAgent = latestMsg.from_agent === true;
     if (latestIsAgent) {
       // Check for bypass: agent replied on a ticket with pending draft
       await detectBypass(supabase, ticketId, messages);
@@ -388,10 +387,7 @@ async function detectBypass(supabase, ticketId, messages) {
   if (!pendingDrafts?.length) return;
 
   // Find agent messages after the draft was created
-  const agentMessages = messages.filter(m =>
-    (m.source?.type !== 'customer' && m.sender?.type !== 'customer')
-    && m.channel !== 'internal-note'
-  );
+  const agentMessages = messages.filter(m => m.from_agent === true);
 
   for (const draft of pendingDrafts) {
     const agentReplyAfterDraft = agentMessages.find(m =>

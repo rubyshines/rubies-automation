@@ -150,7 +150,7 @@ async function addInternalNote(ticketId, noteText) {
  */
 let _tagCache = null;
 async function addTicketTag(ticketId, tagName) {
-  if (!_tagCache) _tagCache = await getTags({ limit: 300 });
+  if (!_tagCache) _tagCache = await getTags({ limit: 100 });
   let tag = _tagCache.find(t => t.name === tagName);
   if (!tag) {
     tag = await apiFetch('/tags', {
@@ -159,9 +159,14 @@ async function addTicketTag(ticketId, tagName) {
     });
     _tagCache.push(tag);
   }
-  return apiFetch(`/tickets/${ticketId}/tags`, {
-    method: 'POST',
-    body: JSON.stringify({ tag_id: tag.id }),
+  // Gorgias requires updating the ticket's tags array via PUT /tickets/{id}
+  const ticket = await getTicket(ticketId);
+  const currentTags = (ticket.tags || []).map(t => ({ id: t.id }));
+  if (currentTags.some(t => t.id === tag.id)) return ticket; // already tagged
+  currentTags.push({ id: tag.id });
+  return apiFetch(`/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ tags: currentTags }),
   });
 }
 
