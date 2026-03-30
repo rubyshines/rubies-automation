@@ -156,11 +156,11 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
         order.tracking_number,
       );
 
-      // 2. Quick check: if already scraped and page still doesn't say "delivered",
-      //    skip Sonnet — just bump scraped_at (costs $0, saves ~$0.002 per order)
+      // 2. Quick check: if already scraped with a known status and page still doesn't
+      //    say "delivered", skip parse — just bump scraped_at ($0)
       const existing = existingSnapshots[order.tracking_number];
       const textSaysDelivered = /delivered|has arrived/i.test(rawText);
-      if (existing && !textSaysDelivered) {
+      if (existing && existing.status !== 'unknown' && !textSaysDelivered) {
         // Still in transit — just update timestamp, no AI needed
         await supabase.from('tracking_snapshots')
           .update({ scraped_at: new Date().toISOString() })
