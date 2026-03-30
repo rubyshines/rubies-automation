@@ -32,6 +32,7 @@
     "cs-extract-tone": "node customer-service/import/extractToneSamples.js",
     "cs-seed-size-charts": "node customer-service/import/seedSizeCharts.js",
     "test:decision-tree": "node --test customer-service/test/decisionTree.test.js",
+    "test:drafter": "node --test customer-service/test/drafterSystem.test.js",
     "cs-manage-product": "node customer-service/tools/addProduct.js",
     "cs-seed-cs-config": "node customer-service/import/seedCsConfig.js",
     "finance-auth": "node finance/lib/oauthManager.js --auth",
