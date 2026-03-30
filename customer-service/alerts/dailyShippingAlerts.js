@@ -30,6 +30,7 @@ if (!process.env.SUPABASE_URL) {
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
+const { shopifyGraphQL } = require('../lib/shopify');
 
 const SHOPIFY_STORE = 'rubies-active-wear';
 const NITRO_LOCATION_ID = '105921249558';
@@ -174,6 +175,117 @@ function shopifyAdminUrl(shopifyOrderId) {
 }
 
 // ---------------------------------------------------------------------------
+// Shopify fulfillment events (for US orders without tracking snapshots)
+// ---------------------------------------------------------------------------
+
+const SHOPIFY_EVENT_ACTION_PATTERNS = [
+  /delivery attempt.*fail/i,
+  /notice left/i,
+  /return(?:ed)? to sender/i,
+  /addressee.*unknown/i,
+  /address.*incorrect/i,
+  /refused/i,
+  /undeliverable/i,
+  /unclaimed/i,
+  /insufficient address/i,
+  /no such/i,
+];
+
+/**
+ * Fetch fulfillment events from Shopify for a batch of orders.
+ * Returns map: orderNumber -> { status, events[], lastEvent, daysSinceLastEvent }
+ */
+async function fetchShopifyFulfillmentEvents(orderNumbers) {
+  const eventMap = {};
+  const BATCH = 10;
+
+  for (let i = 0; i < orderNumbers.length; i += BATCH) {
+    const batch = orderNumbers.slice(i, i + BATCH);
+    const nameQuery = batch.map(n => 'name:#' + n).join(' OR ');
+
+    try {
+      const data = await shopifyGraphQL(`{
+        orders(first: ${BATCH}, query: "${nameQuery}") {
+          edges {
+            node {
+              name
+              fulfillments {
+                status
+                deliveredAt
+                trackingInfo { company }
+                events(first: 10, sortKey: HAPPENED_AT, reverse: true) {
+                  edges {
+                    node {
+                      happenedAt
+                      status
+                      message
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`);
+
+      for (const edge of data.orders.edges) {
+        const orderNum = parseInt(edge.node.name.replace('#', ''));
+        const fulfillment = edge.node.fulfillments?.[0];
+        if (!fulfillment) continue;
+
+        const events = (fulfillment.events?.edges || []).map(e => e.node);
+        const carrier = fulfillment.trackingInfo?.[0]?.company || '?';
+
+        // Convert to same format as tracking_snapshots
+        let lastEventDays = null;
+        if (events.length > 0) {
+          const latest = new Date(events[0].happenedAt);
+          lastEventDays = Math.floor((Date.now() - latest.getTime()) / 86400000);
+        }
+
+        // Map Shopify status to our status format
+        let currentStatus = 'unknown';
+        if (fulfillment.deliveredAt) currentStatus = 'delivered';
+        else if (events.length > 0) {
+          const latestStatus = events[0].status;
+          if (latestStatus === 'OUT_FOR_DELIVERY') currentStatus = 'out_for_delivery';
+          else if (latestStatus === 'IN_TRANSIT') currentStatus = 'in_transit';
+          else if (latestStatus === 'CONFIRMED') currentStatus = 'pre_transit';
+          else if (latestStatus === 'FAILURE') currentStatus = 'exception';
+          else if (latestStatus === 'ATTEMPTED_DELIVERY') currentStatus = 'exception';
+          else currentStatus = 'in_transit';
+        }
+
+        // Check for action-required events
+        let actionRequired = null;
+        for (const ev of events.slice(0, 5)) {
+          const msg = ev.message || '';
+          for (const pattern of SHOPIFY_EVENT_ACTION_PATTERNS) {
+            if (pattern.test(msg)) { actionRequired = msg; break; }
+          }
+          if (actionRequired) break;
+        }
+
+        eventMap[orderNum] = {
+          carrier,
+          currentStatus,
+          events,
+          lastEventDays,
+          actionRequired,
+          lastEventDesc: events.length > 0
+            ? `${events[0].happenedAt?.split('T')[0]}: ${events[0].message || events[0].status}`
+            : null,
+        };
+      }
+    } catch (e) {
+      console.warn(`  Warning: failed to fetch Shopify events for batch: ${e.message}`);
+    }
+  }
+
+  return eventMap;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -243,6 +355,13 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     // Table may not exist yet — continue without notes
   }
 
+  // Fetch Shopify fulfillment events for orders without tracking snapshots
+  const ordersNeedingShopifyEvents = orderNums.filter(n => !snapMap[n]);
+  console.log(`Fetching Shopify events for ${ordersNeedingShopifyEvents.length} orders without tracking snapshots...`);
+  const shopifyEventMap = ordersNeedingShopifyEvents.length > 0
+    ? await fetchShopifyFulfillmentEvents(ordersNeedingShopifyEvents)
+    : {};
+
   // Get line items for context
   const itemMap = {};
   for (let i = 0; i < orderNums.length; i += 500) {
@@ -266,9 +385,22 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     const bizDays = businessDaysSince(order.fulfilled_at);
     const calDays = calendarDaysSince(order.fulfilled_at);
     const snap = snapMap[order.order_number];
+    const shopifyEvt = shopifyEventMap[order.order_number];
+
+    // Skip if delivered (from snapshot or Shopify events)
+    if (snap?.current_status === 'delivered') continue;
+    if (shopifyEvt?.currentStatus === 'delivered') continue;
 
     // Get tracking URL from fulfillments
     const trackingFulfillment = (order.fulfillments || []).find(f => f.trackingUrl);
+    const isPassport = (trackingFulfillment?.trackingUrl || '').includes('passport');
+
+    // Determine carrier and status from best available source
+    const carrierName = snap?.carrier || shopifyEvt?.carrier || (isPassport ? 'passport' : '?');
+    const currentStatus = snap?.current_status || shopifyEvt?.currentStatus || 'unknown';
+    const lastEvent = snap?.raw_events
+      ? lastEventDescription(snap.raw_events)
+      : shopifyEvt?.lastEventDesc || null;
 
     const alert = {
       order_number: order.order_number,
@@ -285,13 +417,13 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       zone,
       business_days: bizDays,
       calendar_days: calDays,
-      carrier: snap?.carrier || trackingFulfillment?.trackingUrl?.includes('passport') ? 'passport' : '?',
+      carrier: carrierName,
       local_carrier: snap?.local_carrier || null,
       tracking_url: trackingFulfillment?.trackingUrl || null,
       tracking_number: trackingFulfillment?.trackingNumber || null,
-      status: snap?.current_status || 'unknown',
+      status: currentStatus,
       last_location: snap?.last_location || null,
-      last_event: snap?.raw_events ? lastEventDescription(snap.raw_events) : null,
+      last_event: lastEvent,
       customs_cleared: snap?.customs_cleared,
       items: (itemMap[order.order_number] || []).map(li => {
         const qty = li.quantity > 1 ? `${li.quantity}x ` : '';
@@ -301,17 +433,18 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       severity: 'info',
     };
 
-    // Check: exception or returned
-    if (snap?.current_status === 'exception') {
-      alert.issues.push('Carrier reported an exception');
+    // --- Exception / returned checks (from either source) ---
+    if (currentStatus === 'exception') {
+      const msg = shopifyEvt?.events?.[0]?.message || 'Carrier reported an exception';
+      alert.issues.push(`Exception: ${msg}`);
       alert.severity = 'high';
     }
-    if (snap?.current_status === 'returned') {
+    if (currentStatus === 'returned') {
       alert.issues.push('Package being returned to sender');
       alert.severity = 'high';
     }
 
-    // Check: action required in events
+    // --- Action required (from tracking snapshots or Shopify events) ---
     if (snap?.raw_events) {
       const actionDesc = detectActionRequired(snap.raw_events);
       if (actionDesc) {
@@ -319,36 +452,40 @@ async function checkShippingDelays({ showResolved = false } = {}) {
         alert.severity = 'high';
       }
     }
-
-    // Check: stale tracking
-    if (snap?.raw_events) {
-      const staleDays = daysSinceLastEvent(snap.raw_events);
-      if (staleDays !== null && staleDays >= 14) {
-        alert.issues.push(`No tracking update in ${staleDays} days — likely lost`);
-        alert.severity = 'high';
-      } else if (staleDays !== null && staleDays >= 7) {
-        alert.issues.push(`No tracking update in ${staleDays} days`);
-        if (alert.severity !== 'high') alert.severity = 'medium';
-      }
+    if (shopifyEvt?.actionRequired) {
+      alert.issues.push(`Action required: ${shopifyEvt.actionRequired}`);
+      alert.severity = 'high';
     }
 
-    // Check: overdue
+    // --- Stale tracking (from either source) ---
+    let staleDays = null;
+    if (snap?.raw_events) {
+      staleDays = daysSinceLastEvent(snap.raw_events);
+    } else if (shopifyEvt?.lastEventDays != null) {
+      staleDays = shopifyEvt.lastEventDays;
+    }
+
+    if (staleDays !== null && staleDays >= 14) {
+      alert.issues.push(`No tracking update in ${staleDays} days — likely lost`);
+      alert.severity = 'high';
+    } else if (staleDays !== null && staleDays >= 7) {
+      alert.issues.push(`No tracking update in ${staleDays} days`);
+      if (alert.severity !== 'high') alert.severity = 'medium';
+    }
+
+    // --- Overdue ---
     if (bizDays !== null && bizDays > window.max) {
       alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max})`);
       if (alert.severity === 'info') alert.severity = 'medium';
     }
 
-    // Check: customs hold
+    // --- Customs hold ---
     if (snap?.customs_cleared === false && bizDays > 10 && zone !== 'us') {
       alert.issues.push(`Customs not cleared after ${bizDays} business days`);
       if (alert.severity === 'info') alert.severity = 'medium';
     }
 
-    // Skip if tracking snapshot already shows delivered (backfill hasn't patched order yet)
-    if (snap?.current_status === 'delivered') continue;
-
     if (alert.issues.length > 0) {
-      // Attach note if exists
       alert.note = noteMap[order.order_number] || null;
       alerts.push(alert);
     }
