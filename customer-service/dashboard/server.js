@@ -114,7 +114,18 @@ async function apiSendDraft(id, body) {
     turn_number: draft.turn_number,
   });
 
-  return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id };
+  // If the tree reached 'ready' and action was executed, unassign from AI Bot (resolved)
+  const isResolved = draft.advisor_status === 'ready' && draft.action_executed_at;
+  if (isResolved) {
+    try {
+      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+      await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
+    } catch (err) {
+      console.warn(`[dashboard] Could not unassign resolved ticket: ${err.message}`);
+    }
+  }
+
+  return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, resolved: isResolved };
 }
 
 async function apiExecuteAction(id) {

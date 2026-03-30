@@ -20,6 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
     loadQueue();
     loadStats();
   }, 30000);
+
+  // Autosave draft edits + notes to localStorage
+  document.getElementById('draft-editor').addEventListener('input', () => {
+    if (currentDraftId) localStorage.setItem(`draft-${currentDraftId}`, document.getElementById('draft-editor').value);
+  });
+  document.getElementById('draft-notes').addEventListener('input', () => {
+    if (currentDraftId) localStorage.setItem(`notes-${currentDraftId}`, document.getElementById('draft-notes').value);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -128,13 +136,15 @@ function renderDetail(d) {
     .map(m => `
       <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
         <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${formatTime(m.created_at)}</div>
-        ${esc(m.body)}
+        <div class="msg-body">${esc(m.body).replace(/\n/g, '<br>')}</div>
       </div>
     `).join('');
 
-  // Draft editor
-  document.getElementById('draft-editor').value = d.draft_response;
-  document.getElementById('draft-notes').value = '';
+  // Draft editor — restore autosaved edits if any
+  const savedDraft = localStorage.getItem(`draft-${d.id}`);
+  const savedNotes = localStorage.getItem(`notes-${d.id}`);
+  document.getElementById('draft-editor').value = savedDraft || d.draft_response;
+  document.getElementById('draft-notes').value = savedNotes || '';
 
   // Confidence + status badges
   const confEl = document.getElementById('detail-confidence');

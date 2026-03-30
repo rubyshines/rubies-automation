@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RUBIES CS Draft Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -53,7 +56,8 @@
                 <button id="btn-execute" class="btn btn-action" onclick="executeAction()">Execute Action</button>
                 <div id="action-result" style="display:none"></div>
               </div>
-              <textarea id="draft-notes" placeholder="Optional training notes (e.g. 'wrong size recommendation', 'tone too formal')" rows="2"></textarea>
+              <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
+              <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
               <div class="btn-row">
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft()">Send Reply</button>
                 <button id="btn-release" class="btn btn-secondary" onclick="releaseDraft()">Release to Gorgias</button>

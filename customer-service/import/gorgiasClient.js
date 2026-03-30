@@ -118,12 +118,22 @@ async function getTicket(ticketId) {
  */
 async function createTicketReply(ticketId, { body_html, body_text }) {
   const html = body_html || `<p>${(body_text || '').replace(/\n/g, '<br>')}</p>`;
+  // Look up sender info from the ticket
+  const ticket = await getTicket(ticketId);
+  const senderEmail = process.env.GORGIAS_SENDER_EMAIL || 'care@rubyshines.com';
+  const senderName = process.env.GORGIAS_SENDER_NAME || 'RUBIES Customer Care';
   return apiFetch(`/tickets/${ticketId}/messages`, {
     method: 'POST',
     body: JSON.stringify({
       channel: 'email',
       via: 'api',
-      source: { type: 'email', to: [], from: {} },
+      from_agent: true,
+      sender: { id: ticket.assignee_user?.id || undefined },
+      source: {
+        type: 'email',
+        from: { name: senderName, address: senderEmail },
+        to: [{ name: ticket.customer?.name || '', address: ticket.customer?.email || '' }],
+      },
       body_html: html,
       body_text: body_text || '',
     }),
