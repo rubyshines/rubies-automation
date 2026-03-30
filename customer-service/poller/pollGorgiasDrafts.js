@@ -103,15 +103,81 @@ async function run() {
     await gorgias.delay(500); // rate limit
   }
 
-  // 4. Update high-water mark
+  // 4. Check for stale conversations needing follow-up (sent >3 days ago, no customer reply)
+  let followUpsCreated = 0;
+  const { data: staleDrafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at')
+    .eq('status', 'sent')
+    .lt('sent_at', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
+    .is('follow_up_draft_id', null);
+
+  for (const stale of (staleDrafts || [])) {
+    try {
+      // Check Gorgias: has the customer replied since we sent?
+      const messages = await gorgias.getTicketMessages(stale.gorgias_ticket_id);
+      const customerRepliedAfterSend = messages.some(m =>
+        (m.source?.type === 'customer' || m.sender?.type === 'customer')
+        && new Date(m.created_datetime) > new Date(stale.sent_at)
+      );
+
+      if (customerRepliedAfterSend) continue; // Customer replied, poller will handle it normally
+
+      // Check if we already created a follow-up for this ticket
+      const { data: existingFollowUp } = await supabase
+        .from('cs_ai_drafts')
+        .select('id')
+        .eq('gorgias_ticket_id', stale.gorgias_ticket_id)
+        .eq('message_type', 'follow_up')
+        .eq('status', 'pending')
+        .single();
+
+      if (existingFollowUp) continue;
+
+      const greeting = stale.customer_name ? `Hi ${stale.customer_name}` : 'Hi there';
+      const followUpText = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.`;
+
+      const { data: newDraft } = await supabase
+        .from('cs_ai_drafts')
+        .insert({
+          gorgias_ticket_id: stale.gorgias_ticket_id,
+          gorgias_message_id: 0, // No customer message triggered this
+          customer_email: stale.customer_email,
+          customer_name: stale.customer_name,
+          order_number: stale.order_number,
+          draft_response: followUpText,
+          structured_output: { status: 'follow_up', reason: '3-day no-reply' },
+          audit_trail: ['[Follow-up] No customer reply 3+ days after agent response'],
+          confidence: 'high',
+          advisor_status: 'follow_up',
+          message_type: 'follow_up',
+          status: 'pending',
+          previous_draft_id: stale.id,
+        })
+        .select('id')
+        .single();
+
+      // Link the follow-up back to the original draft
+      if (newDraft) {
+        await supabase.from('cs_ai_drafts').update({ follow_up_draft_id: newDraft.id }).eq('id', stale.id);
+        followUpsCreated++;
+        console.log(`[poller] Follow-up draft created for ticket ${stale.gorgias_ticket_id} (${stale.customer_name || stale.customer_email})`);
+      }
+    } catch (err) {
+      console.error(`[poller] Follow-up error for ticket ${stale.gorgias_ticket_id}: ${err.message}`);
+    }
+    await gorgias.delay(500);
+  }
+
+  // 5. Update high-water mark
   await supabase
     .from('cs_poller_state')
     .upsert({ id: 'gorgias_drafter', last_poll_at: new Date().toISOString(), updated_at: new Date().toISOString() });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[poller] Done in ${elapsed}s — ${ticketsProcessed} processed, ${draftsCreated} drafts created, ${ticketsSkipped} skipped`);
+  console.log(`[poller] Done in ${elapsed}s — ${ticketsProcessed} processed, ${draftsCreated} drafts created, ${followUpsCreated} follow-ups, ${ticketsSkipped} skipped`);
 
-  return { ticketsProcessed, draftsCreated, ticketsSkipped, elapsed };
+  return { ticketsProcessed, draftsCreated, followUpsCreated, ticketsSkipped, elapsed };
 
   // --- inner functions ---
 

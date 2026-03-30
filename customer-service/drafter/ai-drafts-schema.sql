@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS cs_ai_drafts (
   action_result           jsonb,                         -- {draft_order_id, draft_order_url, refund_id, ...}
   action_executed_at      timestamptz,
 
+  -- Follow-up tracking (3-day no-reply)
+  follow_up_draft_id      bigint REFERENCES cs_ai_drafts(id),
+
   -- Multi-turn tracking
   turn_number             integer DEFAULT 1,
   previous_draft_id       bigint REFERENCES cs_ai_drafts(id),
