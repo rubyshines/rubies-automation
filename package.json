@@ -43,7 +43,12 @@
     "gmail-summarize": "node email-intelligence/sync/backfillGmail.js --summarize",
     "gmail-discover": "node email-intelligence/discover-inbox.js",
     "b2b-sync": "node email-intelligence/sync/syncB2bContacts.js",
-    "unfulfilled-report": "node reports/unfulfilled-orders-report.js"
+    "unfulfilled-report": "node reports/unfulfilled-orders-report.js",
+    "cs-poll-drafts": "node customer-service/poller/pollGorgiasDrafts.js",
+    "dashboard": "node customer-service/dashboard/server.js",
+    "cs-seed-shipping-regions": "node customer-service/sync/seedShippingRegions.js",
+    "cs-sync-delivery-times": "node customer-service/sync/syncDeliveryTimes.js",
+    "cs-delivery-digest": "node customer-service/alerts/weeklyDeliveryDigest.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RUBIES CS Draft Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>RUBIES CS Drafts</h1>
+    <div id="stats-bar">
+      <span id="stat-pending" class="stat">-- pending</span>
+      <span id="stat-rate" class="stat">-- acceptance</span>
+      <span id="stat-edit" class="stat">-- avg edit</span>
+      <span id="stat-last-poll" class="stat">last poll: --</span>
+      <button id="btn-poll" onclick="triggerPoll()">Poll Now</button>
+    </div>
+    <nav>
+      <button class="tab active" data-tab="queue" onclick="switchTab('queue')">Queue</button>
+      <button class="tab" data-tab="history" onclick="switchTab('history')">History</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Queue panel (split: list + detail) -->
+    <div id="panel-queue" class="panel">
+      <div id="queue-list" class="sidebar">
+        <div id="queue-items"></div>
+      </div>
+      <div id="draft-detail" class="detail">
+        <div id="detail-placeholder">Select a draft to review</div>
+        <div id="detail-content" style="display:none">
+          <!-- Customer info -->
+          <div id="detail-header" class="detail-section">
+            <div id="detail-customer"></div>
+            <div id="detail-order"></div>
+          </div>
+
+          <!-- Conversation thread -->
+          <details id="detail-conversation" class="detail-section" open>
+            <summary>Conversation</summary>
+            <div id="conversation-thread"></div>
+          </details>
+
+          <!-- AI Draft (editable) -->
+          <div id="detail-draft" class="detail-section">
+            <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span></h3>
+            <textarea id="draft-editor" rows="8"></textarea>
+            <div id="draft-actions">
+              <div id="action-panel" style="display:none">
+                <div id="action-prescription"></div>
+                <button id="btn-execute" class="btn btn-action" onclick="executeAction()">Execute Action</button>
+                <div id="action-result" style="display:none"></div>
+              </div>
+              <textarea id="draft-notes" placeholder="Optional training notes (e.g. 'wrong size recommendation', 'tone too formal')" rows="2"></textarea>
+              <div class="btn-row">
+                <button id="btn-send" class="btn btn-primary" onclick="sendDraft()">Send Reply</button>
+                <button id="btn-release" class="btn btn-secondary" onclick="releaseDraft()">Release to Gorgias</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Decision Path -->
+          <details id="detail-audit" class="detail-section">
+            <summary>Decision Path</summary>
+            <div id="audit-trail"></div>
+          </details>
+
+          <!-- Context -->
+          <details id="detail-context" class="detail-section">
+            <summary>Context</summary>
+            <div id="context-content"></div>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <!-- History panel -->
+    <div id="panel-history" class="panel" style="display:none">
+      <table id="history-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Customer</th>
+            <th>Order</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Edit Dist</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

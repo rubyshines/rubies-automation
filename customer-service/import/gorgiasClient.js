@@ -1,5 +1,5 @@
 /**
- * Gorgias REST API client for importing customer service tickets.
+ * Gorgias REST API client — read + write operations.
  *
  * Auth: HTTP Basic (email:api_key) or Bearer token.
  * Base URL: https://{domain}.gorgias.com/api
@@ -104,6 +104,102 @@ async function getTags({ limit = 100 } = {}) {
   return result.data || [];
 }
 
+// ─── Write operations ────────────────────────────────────────
+
+/**
+ * Fetch a single ticket by ID.
+ */
+async function getTicket(ticketId) {
+  return apiFetch(`/tickets/${ticketId}`);
+}
+
+/**
+ * Create a reply message on a ticket (sent to customer via email).
+ */
+async function createTicketReply(ticketId, { body_html, body_text }) {
+  const html = body_html || `<p>${(body_text || '').replace(/\n/g, '<br>')}</p>`;
+  return apiFetch(`/tickets/${ticketId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      channel: 'email',
+      via: 'api',
+      source: { type: 'email', to: [], from: {} },
+      body_html: html,
+      body_text: body_text || '',
+    }),
+  });
+}
+
+/**
+ * Add an internal note to a ticket (not visible to customer).
+ */
+async function addInternalNote(ticketId, noteText) {
+  return apiFetch(`/tickets/${ticketId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      channel: 'internal-note',
+      via: 'api',
+      body_text: noteText,
+      body_html: `<p>${noteText.replace(/\n/g, '<br>')}</p>`,
+    }),
+  });
+}
+
+/**
+ * Add a tag to a ticket. Creates the tag if it doesn't exist.
+ */
+let _tagCache = null;
+async function addTicketTag(ticketId, tagName) {
+  if (!_tagCache) _tagCache = await getTags({ limit: 300 });
+  let tag = _tagCache.find(t => t.name === tagName);
+  if (!tag) {
+    tag = await apiFetch('/tags', {
+      method: 'POST',
+      body: JSON.stringify({ name: tagName }),
+    });
+    _tagCache.push(tag);
+  }
+  return apiFetch(`/tickets/${ticketId}/tags`, {
+    method: 'POST',
+    body: JSON.stringify({ tag_id: tag.id }),
+  });
+}
+
+/**
+ * Assign a ticket to a user (or unassign by passing null).
+ */
+async function assignTicket(ticketId, userId) {
+  return apiFetch(`/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      assignee_user: userId ? { id: userId } : null,
+    }),
+  });
+}
+
+/**
+ * List team members. Cached after first call.
+ */
+let _usersCache = null;
+async function getUsers() {
+  if (_usersCache) return _usersCache;
+  const result = await apiFetch('/users?limit=100');
+  _usersCache = result.data || [];
+  return _usersCache;
+}
+
+/**
+ * Find a user by name (case-insensitive partial match).
+ */
+async function findUser(nameQuery) {
+  const users = await getUsers();
+  const q = nameQuery.toLowerCase();
+  return users.find(u => (u.name || '').toLowerCase().includes(q)
+    || (u.email || '').toLowerCase().includes(q));
+}
+
+// ─── Utilities ───────────────────────────────────────────────
+
 /**
  * Strip HTML tags and decode entities — simple version for message bodies.
  */
@@ -131,10 +227,20 @@ function delay(ms) {
 }
 
 module.exports = {
+  // Read
   getTickets,
+  getTicket,
   getTicketMessages,
   getMacros,
   getTags,
+  getUsers,
+  findUser,
+  // Write
+  createTicketReply,
+  addInternalNote,
+  addTicketTag,
+  assignTicket,
+  // Utilities
   stripHtml,
   delay,
 };
