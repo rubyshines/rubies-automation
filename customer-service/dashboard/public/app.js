@@ -2,12 +2,17 @@
 
 let currentDraftId = null;
 let currentDraft = null;
+let knownDraftIds = new Set();
 
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Request notification permission on first load
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
   loadQueue();
   loadStats();
   // Auto-refresh every 30s
@@ -39,6 +44,15 @@ async function loadQueue() {
   try {
     const drafts = await api('/api/drafts?status=pending');
     const container = document.getElementById('queue-items');
+
+    // Detect new drafts and send desktop notification
+    if (knownDraftIds.size > 0) {
+      const newDrafts = drafts.filter(d => !knownDraftIds.has(d.id));
+      if (newDrafts.length > 0) {
+        notifyNewDrafts(newDrafts);
+      }
+    }
+    knownDraftIds = new Set(drafts.map(d => d.id));
 
     if (!drafts.length) {
       container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">No pending drafts</div>';
@@ -353,6 +367,16 @@ function formatTime(dateStr) {
   return new Date(dateStr).toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
+}
+
+function notifyNewDrafts(drafts) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  for (const d of drafts) {
+    const title = d.message_type === 'follow_up' ? 'Follow-up needed' : 'New CS draft ready';
+    const body = `${d.customer_name || d.customer_email} — ${d.message_type || 'exchange'} (${d.confidence})`;
+    const n = new Notification(title, { body, tag: `draft-${d.id}` });
+    n.onclick = () => { window.focus(); selectDraft(d.id); n.close(); };
+  }
 }
 
 function formatAddress(a) {
