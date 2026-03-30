@@ -678,13 +678,13 @@ if (require.main === module) {
     const opts = parseArgs();
     const supabase = getSupabaseClient();
 
-    // Handle note/resolve/unresolve action
+    // Handle note/resolve/unresolve action — then exit (no report/email)
     if (opts.noteAction) {
       await handleNoteAction(supabase, opts.noteAction);
-      console.log('');
+      return;
     }
 
-    // Run the alert check
+    // Run the alert check + send email
     const result = await checkShippingDelays({ showResolved: opts.showResolved });
     const { subject, html } = formatAlertHtml(result);
     console.log(`\n${result.summary}`);
