@@ -316,14 +316,47 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
     for (const o of orders) {
       const ff = o.fulfillments || [];
-      const isNitro = ff.some(f => String(f.locationId) === NITRO_LOCATION_ID);
-      if (!isNitro) continue;
-
       const hasDeliveredAt = ff.some(f => f.deliveredAt);
       if (hasDeliveredAt) continue;
 
+      // Check Nitro by locationId in fulfillments JSONB
+      const isNitroByLocation = ff.some(f => String(f.locationId) === NITRO_LOCATION_ID);
+      if (isNitroByLocation) {
+        allOrders.push(o);
+        continue;
+      }
+
+      // Fallback: mark for cost-table check (orders before locationId was synced)
+      o._needsCostCheck = true;
       allOrders.push(o);
     }
+  }
+
+  // Fallback Nitro check via order_fulfillment_costs for orders without locationId
+  const needsCostCheck = allOrders.filter(o => o._needsCostCheck);
+  if (needsCostCheck.length > 0) {
+    const nums = needsCostCheck.map(o => o.order_number);
+    const nitroCostSet = new Set();
+    for (let i = 0; i < nums.length; i += 500) {
+      const batch = nums.slice(i, i + 500);
+      const { data: costs } = await supabase
+        .from('order_fulfillment_costs')
+        .select('order_number')
+        .eq('fulfillment_provider', 'nitro')
+        .in('order_number', batch);
+      for (const c of (costs || [])) nitroCostSet.add(c.order_number);
+    }
+    // Remove non-Nitro orders — but assume recent orders (no cost data yet) are Nitro
+    // since all current fulfillment goes through Nitro
+    allOrders = allOrders.filter(o => {
+      if (!o._needsCostCheck) return true;
+      if (nitroCostSet.has(o.order_number)) return true;
+      // No cost data — assume Nitro if fulfilled recently (cost sync hasn't caught up)
+      const fulfilledDate = new Date(o.fulfilled_at);
+      const threeMonthsAgo = new Date();
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      return fulfilledDate > threeMonthsAgo;
+    });
   }
 
   console.log(`Found ${allOrders.length} in-transit Nitro orders`);
@@ -473,14 +506,16 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       if (alert.severity !== 'high') alert.severity = 'medium';
     }
 
-    // --- Overdue (but only if tracking hasn't updated recently) ---
+    // --- Overdue (but only if we have tracking data to confirm it's stuck) ---
     if (bizDays !== null && bizDays > window.max) {
-      // If tracking updated in last 3 business days, it's still moving — lower priority
-      // (using calendar days as proxy — 3 business days ≈ 4-5 calendar days)
-      if (staleDays !== null && staleDays <= 4) {
+      if (staleDays === null) {
+        // No tracking data at all — don't flag, we can't confirm it's stuck
+        // (hourly Passport scraper will fill this in over time)
+      } else if (staleDays <= 4) {
+        // Tracking updated in last ~3 business days — still moving, not stuck
         alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max}) — tracking still updating`);
-        // Don't upgrade severity — it's moving
       } else {
+        // Overdue AND tracking is stale — flag it
         alert.issues.push(`${bizDays} business days in transit (expected ${window.min}–${window.max})`);
         if (alert.severity === 'info') alert.severity = 'medium';
       }
