@@ -59,7 +59,8 @@
               <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
               <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
               <div class="btn-row">
-                <button id="btn-send" class="btn btn-primary" onclick="sendDraft()">Send Reply</button>
+                <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send Reply</button>
+                <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
                 <button id="btn-release" class="btn btn-secondary" onclick="releaseDraft()">Release to Gorgias</button>
               </div>
             </div>

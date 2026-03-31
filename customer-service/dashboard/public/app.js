@@ -218,22 +218,27 @@ function renderDetail(d) {
 // Actions
 // ---------------------------------------------------------------------------
 
-async function sendDraft() {
+async function sendDraft(afterAction) {
   if (!currentDraftId) return;
 
   const response = document.getElementById('draft-editor').value;
   const notes = document.getElementById('draft-notes').value || undefined;
 
-  const btn = document.getElementById('btn-send');
-  btn.disabled = true;
+  const btn = afterAction === 'close' ? document.getElementById('btn-send-close') : document.getElementById('btn-send');
+  document.getElementById('btn-send').disabled = true;
+  document.getElementById('btn-send-close').disabled = true;
   btn.textContent = 'Sending...';
 
   try {
     const result = await api(`/api/drafts/${currentDraftId}/send`, {
       method: 'POST',
-      body: { response, notes },
+      body: { response, notes, after: afterAction },
     });
-    btn.textContent = `Sent (edit dist: ${(result.edit_distance * 100).toFixed(0)}%)`;
+    const label = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
+    btn.textContent = `${label} (${(result.edit_distance * 100).toFixed(0)}% edit)`;
+    // Clear autosave
+    localStorage.removeItem(`draft-${currentDraftId}`);
+    localStorage.removeItem(`notes-${currentDraftId}`);
     setTimeout(() => {
       currentDraftId = null;
       currentDraft = null;
@@ -243,8 +248,9 @@ async function sendDraft() {
       loadStats();
     }, 1500);
   } catch (err) {
-    btn.textContent = 'Send Failed';
-    btn.disabled = false;
+    btn.textContent = afterAction === 'close' ? 'Send & Close' : 'Send Reply';
+    document.getElementById('btn-send').disabled = false;
+    document.getElementById('btn-send-close').disabled = false;
     alert('Send failed: ' + err.message);
   }
 }
@@ -393,70 +399,75 @@ function notifyNewDrafts(drafts) {
 }
 
 /**
- * Detect forwarded/quoted content in email HTML and wrap it in a collapsible toggle.
- * Patterns: "Begin forwarded message:", "---------- Forwarded message",
- * "On [date], [name] wrote:", Gmail blockquotes, <blockquote type="cite">
+ * Process email HTML: strip reply quotes, collapse forwarded messages.
+ * Uses DOM parsing for reliable handling of nested HTML.
  */
 function collapseQuotedContent(html) {
   if (!html) return html;
 
-  // Pattern 1: <blockquote type="cite"> — wrap all consecutive cite blockquotes
-  // Split at the first blockquote[type=cite] and collapse everything after
-  const citeMatch = html.match(/(<blockquote[^>]*type=["']cite["'][^>]*>)/i);
-  if (citeMatch) {
-    const idx = html.indexOf(citeMatch[0]);
-    // Walk backwards to include "Begin forwarded message:" or "On ... wrote:" text
-    const before = html.substring(0, idx);
-    const triggerPatterns = [
-      /Begin forwarded message:\s*(<br\s*\/?>|\s)*/i,
-      /-{5,}\s*Forwarded message\s*-{5,}\s*(<br\s*\/?>|\s)*/i,
-      /On\s.{10,80}\swrote:\s*(<br\s*\/?>|\s)*/i,
-      /Sent from .{5,40}\s*(<br\s*\/?>|\s)*/i,
-    ];
-    let splitIdx = idx;
-    for (const pat of triggerPatterns) {
-      const m = before.match(pat);
-      if (m) {
-        const patIdx = before.lastIndexOf(m[0]);
-        if (patIdx >= 0 && patIdx < splitIdx) splitIdx = patIdx;
-      }
+  const container = document.createElement('div');
+  container.innerHTML = html;
+
+  // Walk all text nodes to find split points
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let splitNode = null;
+  let splitType = null; // 'forward' or 'reply'
+
+  while (walker.nextNode()) {
+    const text = walker.currentNode.textContent;
+    if (/Begin forwarded message:/i.test(text) || /-{5,}\s*Forwarded message/i.test(text)) {
+      splitNode = walker.currentNode;
+      splitType = 'forward';
+      break;
     }
-    const mainContent = html.substring(0, splitIdx);
-    const quotedContent = html.substring(splitIdx);
-    if (quotedContent.length > 100) {
-      return mainContent + buildToggle(quotedContent);
+    if (/On\s(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d).{10,80}\swrote:/i.test(text)) {
+      splitNode = walker.currentNode;
+      splitType = 'reply';
+      break;
     }
   }
 
-  // Pattern 2: text-based markers without blockquote tags
-  const textMarkers = [
-    { re: /Begin forwarded message:\s*(<br\s*\/?>|\n)*/i, label: 'forwarded message' },
-    { re: /-{5,}\s*Forwarded message\s*-{5,}/i, label: 'forwarded message' },
-    { re: /On\s(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d).{10,80}\swrote:/i, label: 'quoted reply' },
-  ];
-  for (const { re, label } of textMarkers) {
-    const m = html.match(re);
-    if (m) {
-      const idx = html.indexOf(m[0]);
-      const mainContent = html.substring(0, idx);
-      const quotedContent = html.substring(idx);
-      if (quotedContent.length > 100 && mainContent.length > 20) {
-        return mainContent + buildToggle(quotedContent, label);
-      }
+  // Also check for blockquote[type=cite] without text markers
+  if (!splitNode) {
+    const cite = container.querySelector('blockquote[type="cite"]');
+    if (cite) {
+      splitNode = cite;
+      splitType = 'reply'; // default to reply for unmarked blockquotes
     }
   }
 
-  return html;
-}
+  if (!splitNode) return html;
 
-function buildToggle(content, label) {
-  const id = 'qt-' + Math.random().toString(36).substring(2, 8);
-  return `<div class="quoted-toggle">
+  // Find the top-level ancestor of splitNode (direct child of container)
+  let splitEl = splitNode;
+  while (splitEl.parentNode && splitEl.parentNode !== container) {
+    splitEl = splitEl.parentNode;
+  }
+
+  // Collect everything from splitEl onwards
+  const quotedNodes = [];
+  let sibling = splitEl;
+  while (sibling) {
+    quotedNodes.push(sibling);
+    sibling = sibling.nextSibling;
+  }
+
+  if (splitType === 'reply') {
+    // Strip entirely
+    for (const n of quotedNodes) n.remove();
+    return container.innerHTML;
+  }
+
+  // Forward: wrap in collapsible toggle
+  const quotedHtml = quotedNodes.map(n => n.outerHTML || n.textContent).join('');
+  for (const n of quotedNodes) n.remove();
+
+  return container.innerHTML + `<div class="quoted-toggle">
     <button class="quoted-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')" type="button">
       <span class="quoted-dots">...</span>
-      <span class="quoted-label">Show quoted content</span>
+      <span class="quoted-label">Show forwarded message</span>
     </button>
-    <div class="quoted-content">${content}</div>
+    <div class="quoted-content">${quotedHtml}</div>
   </div>`;
 }
 

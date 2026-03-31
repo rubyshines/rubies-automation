@@ -467,6 +467,12 @@ main { height: calc(100vh - 56px); }
 }
 .btn-secondary:hover { background: var(--border); color: var(--text); }
 
+.btn-close {
+  background: var(--green);
+  color: white;
+}
+.btn-close:hover { background: #116d33; }
+
 .btn-action {
   background: var(--teal);
   color: white;

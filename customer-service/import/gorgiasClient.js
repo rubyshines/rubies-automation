@@ -213,6 +213,27 @@ async function findUser(nameQuery) {
     || (u.email || '').toLowerCase().includes(q));
 }
 
+/**
+ * Snooze a ticket for a given number of days.
+ */
+async function snoozeTicket(ticketId, days = 3) {
+  const snoozeUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  return apiFetch(`/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ snooze_datetime: snoozeUntil }),
+  });
+}
+
+/**
+ * Close a ticket.
+ */
+async function closeTicket(ticketId) {
+  return apiFetch(`/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'closed' }),
+  });
+}
+
 // ─── Utilities ───────────────────────────────────────────────
 
 /**
@@ -260,6 +281,8 @@ module.exports = {
   addInternalNote,
   addTicketTag,
   assignTicket,
+  snoozeTicket,
+  closeTicket,
   // Utilities
   stripHtml,
   delay,
