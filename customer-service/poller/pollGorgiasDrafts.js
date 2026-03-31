@@ -200,9 +200,10 @@ async function run() {
     const latestCustomerMsg = customerMessages[customerMessages.length - 1];
     const latestCustomerMsgId = latestCustomerMsg.id;
 
-    // Check if latest message is already from agent (no response needed)
+    // Check if latest message is already from a real agent (not a bot auto-reply)
     const latestMsg = messages[messages.length - 1];
-    const latestIsAgent = latestMsg.from_agent === true;
+    const isBot = latestMsg.sender?.email?.endsWith('@email.gorgias.com') || latestMsg.via === 'rule';
+    const latestIsAgent = latestMsg.from_agent === true && !isBot;
     if (latestIsAgent) {
       // Check for bypass: agent replied on a ticket with pending draft
       await detectBypass(supabase, ticketId, messages);
