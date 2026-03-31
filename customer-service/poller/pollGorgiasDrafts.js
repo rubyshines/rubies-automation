@@ -80,9 +80,12 @@ async function run() {
       cursor,
       limit: 30,
       order_by: 'updated_datetime:desc',
-      since: lastPollAt.toISOString(),
     });
-    allTickets.push(...tickets);
+    // Client-side filter by updated_datetime (not created_datetime)
+    const recent = tickets.filter(t => new Date(t.updated_datetime) >= lastPollAt);
+    allTickets.push(...recent);
+    // Stop paginating if we've gone past our time window
+    if (recent.length < tickets.length) break;
     cursor = nextCursor;
     if (cursor) await gorgias.delay(500);
   } while (cursor);
@@ -262,7 +265,8 @@ async function run() {
         intake: previousIntake || undefined,
       });
     } catch (err) {
-      console.error(`[poller] Advisor error for ticket ${ticketId}: ${err.message}`);
+      console.log(`[poller] Advisor skipped ticket ${ticketId}: ${err.message}`);
+      ticketsSkipped++;
       return;
     }
 
@@ -282,9 +286,15 @@ async function run() {
     }
 
     // Compose the draft response
-    const previousResponses = []; // First turn has no previous responses from this system
-    // For multi-turn, we could load previous drafts' sent_response, but keep simple for now
-    const draftResponse = await composeAgentResponse(structured, previousResponses);
+    const previousResponses = [];
+    let draftResponse;
+    try {
+      draftResponse = await composeAgentResponse(structured, previousResponses);
+    } catch (composeErr) {
+      console.warn(`[poller] Compose failed for ticket ${ticketId}: ${composeErr.message}`);
+      ticketsSkipped++;
+      return;
+    }
 
     // Compute confidence
     const confidence = computeConfidence(structured);
