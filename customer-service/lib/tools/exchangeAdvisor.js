@@ -12,7 +12,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
-const { walkTree, normalizeSize, getSizeModifier, _activeProducts, initCsConfig } = require('../decisionTree');
+const { walkTree, normalizeSize, getSizeModifier, getMeasureLocation, _activeProducts, initCsConfig } = require('../decisionTree');
 const { buildContext, analyzeOrders } = require('../contextBuilder');
 
 // analyzeOrders() moved to contextBuilder.js — imported above
@@ -742,6 +742,71 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
   }
 
   intake.status = computeIntakeStatus(intake);
+
+  // STEP 3b: Handle style switch — customer wants different products
+  // When intent is exchange_different_product and we don't have measurements yet,
+  // ask for measurements for the new products (we need to know what to recommend)
+  if (intake.customer_intent === 'exchange_different_product' && !intake.measurement && !intake.chest_measurement) {
+    // Detect which product categories the customer wants (from desired_product or raw message)
+    const msg = (issue_description || '').toLowerCase();
+    const wantsTop = intake.items.some(i => i.desired_product && /bra|top|tankini/i.test(i.desired_product)) ||
+      /tankini|bra|top/i.test(msg);
+    const wantsBottom = intake.items.some(i => i.desired_product && /bottom|bikini|cheeky|ruby|stella/i.test(i.desired_product)) ||
+      /bikini bottom|bottom|cheeky|stella/i.test(msg);
+    const isThirdParty = intake.buying_for === 'third_party';
+    const possessive = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
+
+    // Detect if customer wants a swim top (bikini band) or underwear top (bra band)
+    const wantsSwimTop = /tankini|bikini top|mia|stella/i.test(msg);
+    const chestLocation = wantsSwimTop
+      ? 'around the chest where a bikini band would sit'
+      : 'around the chest where a bra band would sit';
+
+    let measureAsk;
+    if (wantsTop && wantsBottom) {
+      measureAsk = `${possessive} measurement ${getMeasureLocation('waist')} and ${possessive} measurement ${chestLocation}`;
+    } else if (wantsTop) {
+      measureAsk = `${possessive} measurement ${chestLocation}`;
+    } else {
+      measureAsk = `${possessive} measurement ${getMeasureLocation('waist')}`;
+    }
+
+    const responseText = `Thanks so much for sharing all of that detail. Can you send me ${measureAsk} I can help recommend a size?`;
+    const audit = [`[Style switch] Customer wants different products (intent: exchange_different_product). Asking for measurements.${wantsTop ? ' Needs chest.' : ''}${wantsBottom ? ' Needs waist.' : ''}`];
+
+    // Build response directly — bypass tree + composer since this is a special case
+    return {
+      content: [{ type: 'text', text: `## Style Switch\n\n**Customer response:**\n${responseText}` }],
+      _structured: {
+        status: 'needs_info',
+        intake,
+        prescription: {
+          items: intake.items.map(i => ({
+            product: i.product,
+            state: 'AWAITING_MEASUREMENT',
+            response_text: responseText,
+            options: null,
+            recommendation: null,
+          })),
+          donation: null,
+          crossover_note: null,
+          still_needed: ['measurements for new products'],
+          flags: [],
+        },
+        customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
+        order: targetOrder ? {
+          name: targetOrder.name,
+          date: targetOrder.createdAt?.split('T')[0],
+          items: orderLineItems.map(li => ({ title: li.title, variant: li.variantTitle, quantity: li.quantity, sku: li.sku })),
+        } : null,
+        exchanges: exchanges.slice(0, 3).map(ex => ({ name: ex.name, items: (ex.lineItems || []).map(li => li.title) })),
+        tone_sample: null,
+        audit,
+        phases_completed: ['safety_check', 'identify_customer', 'order_identification', 'style_switch'],
+        _composedResponse: responseText,
+      },
+    };
+  }
 
   // STEP 4: Walk the decision tree
   const treeContext = {

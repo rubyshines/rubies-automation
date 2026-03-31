@@ -364,6 +364,9 @@ async function run({ onProgress } = {}) {
       const routeReason = structured.results?.[0]?.summary || structured.error || 'Unhandled message type';
       draftResponse = `[AI could not draft a response — needs manual reply]\n\nRoute reason: ${routeReason}\n\nCustomer message: ${messageText}`;
       console.log(`[poller] Ticket ${ticketId} routed to human — creating training draft`);
+    } else if (structured._composedResponse) {
+      // Pre-composed response from advisor (e.g. style switch)
+      draftResponse = structured._composedResponse;
     } else {
       try {
         draftResponse = await composeAgentResponse(structured, previousResponses);
