@@ -13,9 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
-  // Restore active tab
+  // Restore active tab + test mode
   const savedTab = localStorage.getItem('activeTab');
   if (savedTab && ['queue', 'history', 'test'].includes(savedTab)) switchTab(savedTab);
+  const savedTestMode = localStorage.getItem('testMode');
+  if (savedTestMode && ['tools', 'simulator'].includes(savedTestMode)) switchTestMode(savedTestMode);
 
   loadQueue().then(async () => {
     // Restore selected draft from URL hash (only if still pending)
@@ -684,6 +686,7 @@ function switchTestMode(mode) {
   document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
   document.getElementById('test-tools-view').style.display = mode === 'tools' ? 'flex' : 'none';
   document.getElementById('simulator-view').style.display = mode === 'simulator' ? 'block' : 'none';
+  localStorage.setItem('testMode', mode);
 }
 
 // ---------------------------------------------------------------------------
