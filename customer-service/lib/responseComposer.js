@@ -108,7 +108,10 @@ async function composeAgentResponse(s, previousResponses) {
         needsInfo.push(pi);
       }
     } else if (pi.response_text) {
-      needsInfo.push(pi);
+      // Deduplicate: skip if same response_text already in needsInfo (e.g. multiple items needing same measurement)
+      if (!needsInfo.some(n => n.response_text === pi.response_text)) {
+        needsInfo.push(pi);
+      }
     }
   }
 

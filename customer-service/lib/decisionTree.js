@@ -1086,8 +1086,15 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               const heightAsk = isOnepiece ? ' and your height' : '';
               const heightReason = isOnepiece ? ' and whether Regular or Tall would work best' : '';
               const thirdPartyMeasure = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : 'the ';
+              // Check if order has both tops and bottoms — ask for both measurements
+              const allCats = new Set(classifiedItems.map(ci => classifyProduct(ci.product)).filter(Boolean));
+              const hasBoth = (allCats.has('swim_bottom') || allCats.has('underwear_bottom') || allCats.has('onepiece')) &&
+                (allCats.has('swim_top') || allCats.has('underwear_top'));
+              const bothMeasureAsk = hasBoth
+                ? `${thirdPartyMeasure}measurement ${getMeasureLocation('waist')} and the measurement ${getMeasureLocation('chest')}`
+                : `${thirdPartyMeasure}measurement ${measureLocation}`;
               const measureAsk = isUncertain
-                ? ` If you send me ${thirdPartyMeasure}measurement ${measureLocation}${heightAsk} I can double check the sizing${heightReason}.`
+                ? ` If you send me ${bothMeasureAsk}${heightAsk} I can double check the sizing${heightReason}.`
                 : (isOnepiece ? ` If you send me ${thirdPartyMeasure}height I can also confirm whether Regular or Tall is the right fit.` : '');
 
               // Bridge: acknowledge the customer's requested size and explain why we're showing options
@@ -1460,14 +1467,28 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           rx.state = 'AWAITING_MEASUREMENT';
           const measureType = item.product?.toLowerCase().match(/bra|top/) ? 'chest' : 'waist';
           const unit = useInches ? 'inches' : 'cm';
-          const measureLocation = getMeasureLocation(measureType);
           const thirdPartyPrefix = isThirdParty ? `your ${intake.third_party_label || "child"}'s ` : '';
           const catWayOff = classifyProduct(item.product);
           const isOnepieceWayOff = catWayOff === 'onepiece';
           const heightAskWayOff = isOnepieceWayOff ? ' and your height' : '';
           const heightReasonWayOff = isOnepieceWayOff ? ' and whether Regular or Tall would work best' : '';
-          rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation}${heightAskWayOff} I can help recommend the right size${heightReasonWayOff}.`;
-          rx.audit = `Way off — asking for ${measureType} measurement${isOnepieceWayOff ? ' + height' : ''}`;
+
+          // Check if order has BOTH tops and bottoms — ask for both measurements in one go
+          const allCategories = new Set(classifiedItems.map(ci => classifyProduct(ci.product)).filter(Boolean));
+          const hasBottoms = allCategories.has('swim_bottom') || allCategories.has('underwear_bottom') || allCategories.has('onepiece');
+          const hasTops = allCategories.has('swim_top') || allCategories.has('underwear_top');
+          const needsBothMeasurements = hasBottoms && hasTops;
+
+          if (needsBothMeasurements) {
+            const waistLocation = getMeasureLocation('waist');
+            const chestLocation = getMeasureLocation('chest');
+            rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${waistLocation} and the measurement ${chestLocation} I can help recommend the right size${heightReasonWayOff}.`;
+            rx.audit = `Way off — asking for BOTH waist + chest measurements (order has tops + bottoms)`;
+          } else {
+            const measureLocation = getMeasureLocation(measureType);
+            rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${measureLocation}${heightAskWayOff} I can help recommend the right size${heightReasonWayOff}.`;
+            rx.audit = `Way off — asking for ${measureType} measurement${isOnepieceWayOff ? ' + height' : ''}`;
+          }
           prescription.still_needed.push(`measurement for ${item.product}`);
         }
         break;
