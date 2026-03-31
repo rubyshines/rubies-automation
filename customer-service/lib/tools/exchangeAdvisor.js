@@ -154,7 +154,7 @@ Return JSON:
       "color": string or null,
       "issue": "close_fit_tight" | "close_fit_loose" | "doesnt_fit" | "way_off" | "product_not_working" | "product_not_working_loose" | "product_not_working_tight" | "expectation_mismatch" | "defect" | "tight_legs" | "onepiece_fit" | "too_short" | "too_long" | "wrong_item" | "missing" | "none" | "unclear",
       "desired_size": string or null — ONLY if customer named a SPECIFIC size (e.g. "size L", "a 14"). Do NOT fill this in if they said "next size up" or "one size down" — those are directions not specific sizes.,
-      "desired_product": string or null — if they want a different product
+      "desired_product": string or null — if they want a DIFFERENT product instead (style switch). E.g. customer has Sky One-Piece but says "I'd like to try the tankini instead" → desired_product = "Queeny Tankini"
     }
   ],
   "measurements": [{ "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "hips" | "height" }] or [] — extract ALL measurements mentioned with the correct body part. "waist" = around the belly just under the belly button. "hips" = around the widest part of the hips/butt. "chest" = where a bra band sits. IMPORTANT: waist and hips are DIFFERENT measurements — do not confuse them. If customer says "32 waist and 37 hips" those are two separate measurements.,
@@ -179,6 +179,11 @@ IMPORTANT:
 - ORDER MODIFICATION: "can I cancel", "change my address", "add an item", "modify my order" → message_type = "order_modification"
 - PRODUCT QUESTION: "what's the difference between", "do you have X in pink", "what material", "how does it work" → message_type = "product_question"
 - WHOLESALE: "wholesale", "bulk order", "retail partner", "stock your products" → message_type = "wholesale"
+- STYLE SWITCH: If the customer says they want to try a DIFFERENT product (not just a different size), set customer_intent = "exchange_different_product" and fill in desired_product on each item. CRITICAL: You MUST set desired_product on the items array. Examples:
+  - "I'd like to try the tankini instead of the one-piece" → items: [{ product: "Sky One-Piece", size: "L", issue: "onepiece_fit", desired_product: "Queeny Tankini", desired_size: "L" }]
+  - "She wants a tankini top and a bikini bottom instead" → items: [{ product: "Sky One-Piece", size: "L", issue: "onepiece_fit", desired_product: "Queeny Tankini", desired_size: "L" }, { product: "Sky One-Piece", size: "L", issue: "onepiece_fit", desired_product: "Stella Bikini Bottom", desired_size: "M" }]
+  - "can I swap the Ruby for the Cheeky" → items: [{ product: "Ruby", size: "10", issue: "tight_legs", desired_product: "Cheeky", desired_size: null }]
+  If they specify sizes for the new products, set desired_size. If exchanging one product for multiple new ones, create one item per desired product with the original product in "product" and each new product in "desired_product".
 - POSITIVE FEEDBACK: "thank you", "love your products", "amazing", "my daughter is so happy" with NO issue or request → message_type = "positive_feedback"
 - CONVERSATION CONTEXT: The message may include a [CONVERSATION HISTORY] section showing previous messages in the thread. Use this to understand what has already been discussed. Key rules:
   - If the conversation was already resolved (agent processed a refund/exchange) and customer is just saying "thank you" or "thanks" → message_type = "positive_feedback"
