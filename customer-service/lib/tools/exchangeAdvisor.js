@@ -157,7 +157,7 @@ Return JSON:
       "desired_product": string or null — if they want a different product
     }
   ],
-  "measurements": [{ "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "height" }] or [] — extract ALL measurements mentioned. Customer may give both waist and height for one-pieces.,
+  "measurements": [{ "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "hips" | "height" }] or [] — extract ALL measurements mentioned with the correct body part. "waist" = around the belly just under the belly button. "hips" = around the widest part of the hips/butt. "chest" = where a bra band sits. IMPORTANT: waist and hips are DIFFERENT measurements — do not confuse them. If customer says "32 waist and 37 hips" those are two separate measurements.,
   "is_confirmation": boolean — is this message confirming a previous suggestion? ("yes", "sounds good", "go ahead"),
   "confirmed_size": string or null — if confirming, what size are they confirming?,
   "reference_size": { "product": string, "size": string } or null — if the customer mentions a size that fits them in another product ("I wear size 8 in the AJ"), extract it here. This helps recommend sizing for a new product.,
@@ -337,13 +337,21 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   }
 
   // Handle measurements — support both old single format and new array format
+  // IMPORTANT: waist is the primary sizing measurement. Hips are noted but NOT used
+  // for size lookup (size charts are waist-based). Chest is stored separately for tops.
   if (parsed.measurements?.length) {
     for (const m of parsed.measurements) {
       if (m.body_part === 'height') {
         intake.height_measurement = m;
+      } else if (m.body_part === 'chest') {
+        intake.chest_measurement = m;
+      } else if (m.body_part === 'waist') {
+        intake.measurement = m; // waist = primary for size lookup
+      } else if (m.body_part === 'hips' || m.body_part === 'hip') {
+        intake.hip_measurement = m; // noted but NOT used for size lookup
       } else {
-        // waist or chest — use as primary measurement (backward compatible)
-        intake.measurement = m;
+        // Unknown body part — only use as primary if we don't already have a waist
+        if (!intake.measurement) intake.measurement = m;
       }
     }
   } else if (!intake.measurement && parsed.measurement) {
