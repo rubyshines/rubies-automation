@@ -339,20 +339,44 @@ async function releaseDraft() {
   }
 }
 
-async function triggerPoll() {
+function triggerPoll() {
   const btn = document.getElementById('btn-poll');
-  btn.textContent = 'Polling...';
   btn.disabled = true;
-  try {
-    const result = await api('/api/poll', { method: 'POST' });
-    btn.textContent = `Done (${result.draftsCreated} new)`;
-    loadQueue();
-    loadStats();
-    setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
-  } catch (err) {
+  btn.textContent = 'Fetching...';
+
+  const source = new EventSource('/api/poll/stream');
+
+  source.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    if (data.phase === 'fetched') {
+      if (data.total === 0) {
+        btn.textContent = 'No new tickets';
+      } else {
+        btn.textContent = `0/${data.total} tickets`;
+      }
+    } else if (data.phase === 'processing') {
+      const name = data.customer.split('@')[0];
+      const truncated = name.length > 12 ? name.substring(0, 12) + '...' : name;
+      btn.textContent = `${data.current}/${data.total} ${truncated}`;
+    } else if (data.phase === 'done') {
+      source.close();
+      btn.textContent = `Done (${data.draftsCreated} new)`;
+      loadQueue();
+      loadStats();
+      setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
+    } else if (data.phase === 'error') {
+      source.close();
+      btn.textContent = 'Poll Failed';
+      setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
+    }
+  };
+
+  source.onerror = () => {
+    source.close();
     btn.textContent = 'Poll Failed';
     setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -109,8 +109,11 @@ nav { display: flex; gap: 2px; }
   font-family: inherit;
   letter-spacing: -0.01em;
   transition: all 0.15s ease;
+  min-width: 90px;
+  text-align: center;
 }
-#btn-poll:hover { background: var(--accent); }
+#btn-poll:hover:not(:disabled) { background: var(--accent); }
+#btn-poll:disabled { opacity: 0.8; cursor: wait; }
 
 /* ─── Main Layout ────────────────────────────────────────── */
 

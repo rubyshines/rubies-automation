@@ -309,6 +309,28 @@ async function apiTriggerPoll() {
   return run();
 }
 
+// SSE version of poll with progress streaming
+function apiPollStream(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  const { run } = require('../poller/pollGorgiasDrafts');
+  run({
+    onProgress: (data) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    },
+  }).then((result) => {
+    res.write(`data: ${JSON.stringify({ phase: 'done', ...result })}\n\n`);
+    res.end();
+  }).catch((err) => {
+    res.write(`data: ${JSON.stringify({ phase: 'error', error: err.message })}\n\n`);
+    res.end();
+  });
+}
+
 async function apiGetHistory(query) {
   const supabase = getSupabaseClient();
   const limit = parseInt(query.get('limit') || '50', 10);
@@ -347,6 +369,11 @@ const paramRoutes = [
 async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
+
+  // SSE stream endpoint (not JSON)
+  if (pathname === '/api/poll/stream' && req.method === 'GET') {
+    return apiPollStream(req, res);
+  }
 
   // API routes
   if (pathname.startsWith('/api/')) {

@@ -52,7 +52,8 @@ async function getAiBotUserId() {
 // Core polling logic
 // ---------------------------------------------------------------------------
 
-async function run() {
+async function run({ onProgress } = {}) {
+  const emit = onProgress || (() => {});
   const supabase = getSupabaseClient();
   const startTime = Date.now();
   let draftsCreated = 0;
@@ -91,11 +92,15 @@ async function run() {
   } while (cursor);
 
   console.log(`[poller] Found ${allTickets.length} updated tickets`);
+  emit({ phase: 'fetched', total: allTickets.length });
 
   // 3. Process each ticket
   const aiBotId = await getAiBotUserId();
 
-  for (const ticket of allTickets) {
+  for (let i = 0; i < allTickets.length; i++) {
+    const ticket = allTickets[i];
+    const customer = ticket.customer?.email || ticket.customer?.name || `#${ticket.id}`;
+    emit({ phase: 'processing', current: i + 1, total: allTickets.length, customer });
     try {
       await processTicket(supabase, ticket, aiBotId);
       ticketsProcessed++;
@@ -103,7 +108,7 @@ async function run() {
       console.error(`[poller] Error processing ticket ${ticket.id}: ${err.message}`);
       ticketsSkipped++;
     }
-    await gorgias.delay(500); // rate limit
+    await gorgias.delay(500);
   }
 
   // 4. Check for stale conversations needing follow-up (sent >3 days ago, no customer reply)
@@ -180,7 +185,9 @@ async function run() {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`[poller] Done in ${elapsed}s — ${ticketsProcessed} processed, ${draftsCreated} drafts created, ${followUpsCreated} follow-ups, ${ticketsSkipped} skipped`);
 
-  return { ticketsProcessed, draftsCreated, followUpsCreated, ticketsSkipped, elapsed };
+  const result = { ticketsProcessed, draftsCreated, followUpsCreated, ticketsSkipped, elapsed };
+  emit({ phase: 'done', ...result });
+  return result;
 
   // --- inner functions ---
 
