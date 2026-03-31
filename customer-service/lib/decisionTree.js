@@ -251,10 +251,12 @@ function getSeparatesText(reason, measureRef, isExchange = false) {
   return `${prefix} ${suggestion}`;
 }
 
-function getMeasureLocation(measureType) {
-  return measureType === 'waist'
-    ? 'around the belly, just under the belly button'
-    : 'around the chest where a bra band would sit';
+function getMeasureLocation(measureType, product) {
+  if (measureType === 'waist') return 'around the belly, just under the belly button';
+  // Use product category to determine "bra band" vs "bikini band"
+  const cat = product ? classifyProduct(product) : null;
+  if (cat === 'swim_top') return 'around the chest where a bikini band would sit';
+  return 'around the chest where a bra band would sit';
 }
 
 function getChartCategory(productName, isKids) {
@@ -1081,7 +1083,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               const issueText = (intakeItem?.issue || '').toLowerCase();
               const isUncertain = /too_loose|too_tight|close_fit_loose|close_fit_tight|way_off/.test(issueText);
               const measureType = (productType === 'bra' || productType === 'bikini_top' || productType === 'top') ? 'chest' : 'waist';
-              const measureLocation = getMeasureLocation(measureType);
+              const measureLocation = getMeasureLocation(measureType, item.product);
               const isOnepiece = itemCategory === 'onepiece';
               const heightAsk = isOnepiece ? ' and your height' : '';
               const heightReason = isOnepiece ? ' and whether Regular or Tall would work best' : '';
@@ -1090,8 +1092,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               const allCats = new Set(classifiedItems.map(ci => classifyProduct(ci.product)).filter(Boolean));
               const hasBoth = (allCats.has('swim_bottom') || allCats.has('underwear_bottom') || allCats.has('onepiece')) &&
                 (allCats.has('swim_top') || allCats.has('underwear_top'));
+              const topProd = hasBoth ? classifiedItems.find(ci => { const c = classifyProduct(ci.product); return c === 'swim_top' || c === 'underwear_top'; }) : null;
               const bothMeasureAsk = hasBoth
-                ? `${thirdPartyMeasure}measurement ${getMeasureLocation('waist')} and the measurement ${getMeasureLocation('chest')}`
+                ? `${thirdPartyMeasure}measurement ${getMeasureLocation('waist')} and the measurement ${getMeasureLocation('chest', topProd?.product)}`
                 : `${thirdPartyMeasure}measurement ${measureLocation}`;
               const measureAsk = isUncertain
                 ? ` If you send me ${bothMeasureAsk}${heightAsk} I can double check the sizing${heightReason}.`
@@ -1451,7 +1454,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               } else {
                 // Doesn't match either chart — ask to re-measure
                 rx.state = 'AWAITING_SIZE_CONFIRMATION';
-                const measureLoc2 = getMeasureLocation(measureType);
+                const measureLoc2 = getMeasureLocation(measureType, item.product);
                 rx.response_text = `The measurement of ${m.value} ${unit} doesn't fall exactly in our size chart for the ${nick}. Could you double-check? It should be measured ${measureLoc2}.`;
                 rx.audit = `Measurement lookup: ${m.value} ${unit} — no match in ${chartCategory} or ${altChartCategory}`;
                 prescription.still_needed.push(`measurement for ${item.product}`);
@@ -1480,8 +1483,10 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const needsBothMeasurements = hasBottoms && hasTops;
 
           if (needsBothMeasurements) {
+            // Find the actual top product to get correct wording (bra band vs bikini band)
+            const topProduct = classifiedItems.find(ci => { const c = classifyProduct(ci.product); return c === 'swim_top' || c === 'underwear_top'; });
             const waistLocation = getMeasureLocation('waist');
-            const chestLocation = getMeasureLocation('chest');
+            const chestLocation = getMeasureLocation('chest', topProduct?.product);
             rx.response_text = `If you send me ${thirdPartyPrefix ? thirdPartyPrefix : 'the '}measurement ${waistLocation} and the measurement ${chestLocation} I can help recommend the right size${heightReasonWayOff}.`;
             rx.audit = `Way off — asking for BOTH waist + chest measurements (order has tops + bottoms)`;
           } else {
