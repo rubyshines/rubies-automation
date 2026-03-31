@@ -302,7 +302,7 @@ async function run() {
     // Build conversation history snapshot
     const conversationHistory = messages.map(m => ({
       id: m.id,
-      sender: m.source?.type || m.sender?.type || 'unknown',
+      sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
       body: gorgias.stripHtml(m.body_html || m.body_text || ''),
       created_at: m.created_datetime,
       channel: m.channel,
