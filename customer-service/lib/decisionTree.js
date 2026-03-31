@@ -1231,12 +1231,24 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               p_unit: mUnit,
             });
             if (sizeMatches && sizeMatches.length > 0) {
-              const recommendedSize = sizeMatches[0].size_label;
+              let recommendedSize = sizeMatches[0].size_label;
+
+              // If the recommended size is the SAME as what they already have and it doesn't fit,
+              // bump one size in the direction of the issue (tight → size up, loose → size down)
+              if (normalizeSize(recommendedSize) === normalizeSize(currentSize)) {
+                const issueDirection = /tight|small|digging/.test(intakeItem?.issue || '') ? 'up' : 'down';
+                const adjSizes = getAdjacentSizes(currentSize, issueDirection, 1, item.product);
+                if (adjSizes.length > 0) {
+                  recommendedSize = adjSizes[0];
+                  rx.audit = `Measurement lookup → ${sizeMatches[0].size_label} but customer already has ${currentSize} and it's too ${issueDirection === 'up' ? 'tight' : 'loose'} → bumping to ${recommendedSize}`;
+                }
+              }
+
               rx.state = 'AWAITING_SIZE_CONFIRMATION';
               const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
               rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${mUnit}, I'd recommend a size ${recommendedSize} for the ${nick}. Does that sound right to you?`;
               if (intakeItem) intakeItem._pendingSize = recommendedSize;
-              rx.audit = `Measurement available — lookup: ${m.value} ${mUnit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
+              if (!rx.audit) rx.audit = `Measurement available — lookup: ${m.value} ${mUnit} ${measureType} in ${chartCategory} → ${recommendedSize}`;
               prescription.still_needed.push(`size_confirmation for ${item.product}`);
               break;
             }
