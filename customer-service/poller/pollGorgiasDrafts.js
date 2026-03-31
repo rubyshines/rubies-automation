@@ -296,6 +296,9 @@ async function run() {
       return;
     }
 
+    // Format: ensure paragraph breaks and add signature if missing
+    draftResponse = formatDraftResponse(draftResponse, structured);
+
     // Compute confidence
     const confidence = computeConfidence(structured);
 
@@ -370,6 +373,46 @@ async function run() {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Draft formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Add paragraph breaks and signature to draft response.
+ * Jamie's style: greeting, body paragraphs, sign-off + signature on separate lines.
+ */
+function formatDraftResponse(text, structured) {
+  if (!text) return text;
+
+  // Don't re-format if already has clear paragraph structure
+  const hasMultipleNewlines = (text.match(/\n\n/g) || []).length >= 2;
+  if (hasMultipleNewlines) {
+    // Just ensure signature exists
+    return ensureSignature(text, structured);
+  }
+
+  // Split into sentences and rebuild with paragraph breaks
+  // Greeting line (Hi X, / Thanks X!) should be its own paragraph
+  let formatted = text;
+  formatted = formatted.replace(/^((?:Hi|Hey|Thanks|Hello)[^.!?]*[.!?])\s+/i, '$1\n\n');
+
+  // Add signature if missing
+  formatted = ensureSignature(formatted, structured);
+
+  return formatted;
+}
+
+function ensureSignature(text, structured) {
+  // Check if signature already present
+  if (/Jamie Alexander/i.test(text)) return text;
+
+  // Determine sign-off: "Talk soon" if needs_info/gathering (expecting reply), "Take care" if ready/complete
+  const isAwaiting = structured?.status === 'needs_info' || structured?.status === 'gathering';
+  const signOff = isAwaiting ? 'Talk soon,' : 'Take care,';
+
+  return text.trimEnd() + '\n\n' + signOff + '\nJamie Alexander, RUBIES Founder';
 }
 
 // ---------------------------------------------------------------------------
