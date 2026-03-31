@@ -13,7 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
-  loadQueue();
+  loadQueue().then(() => {
+    // Restore selected draft from URL hash
+    const hashId = parseInt(location.hash.replace('#draft-', ''));
+    if (hashId) selectDraft(hashId);
+  });
   loadStats();
   // Auto-refresh every 30s
   setInterval(() => {
@@ -84,6 +88,7 @@ async function loadQueue() {
 
 async function selectDraft(id) {
   currentDraftId = id;
+  location.hash = `draft-${id}`;
 
   // Highlight in queue
   document.querySelectorAll('.queue-item').forEach(el => el.classList.remove('active'));
@@ -242,6 +247,7 @@ async function sendDraft(afterAction) {
     setTimeout(() => {
       currentDraftId = null;
       currentDraft = null;
+      location.hash = '';
       document.getElementById('detail-placeholder').style.display = 'flex';
       document.getElementById('detail-content').style.display = 'none';
       loadQueue();
