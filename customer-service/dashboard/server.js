@@ -99,11 +99,15 @@ async function apiSendDraft(id, body) {
     gorgias_reply_message_id: replyResult?.id || null,
   }).eq('id', id);
 
-  // Log feedback
+  // Post-send action: snooze (default) or close
+  const afterAction = body.after || 'snooze';
+
+  // Log feedback (include which button was clicked)
+  const baseAction = editDist < 0.05 ? 'sent' : 'edited';
   await supabase.from('cs_ai_feedback_log').insert({
     draft_id: id,
     gorgias_ticket_id: draft.gorgias_ticket_id,
-    action: editDist < 0.05 ? 'sent' : 'edited',
+    action: `${baseAction}_${afterAction}`,
     original_response: draft.draft_response,
     final_response: finalResponse,
     edit_distance: editDist,
@@ -113,9 +117,6 @@ async function apiSendDraft(id, body) {
     message_type: draft.message_type,
     turn_number: draft.turn_number,
   });
-
-  // Post-send action: snooze (default) or close
-  const afterAction = body.after || 'snooze';
   try {
     if (afterAction === 'close') {
       await gorgias.closeTicket(draft.gorgias_ticket_id);
