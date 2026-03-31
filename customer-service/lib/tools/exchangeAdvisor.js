@@ -531,8 +531,37 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     return buildAdvisorResponse(intake, treeResult, { customer, targetOrder: null, orderLineItems: [], fulfilled: [], exchanges: [], customerCountry, isNorthAmerica, toneSample: null });
   }
 
-  // Shipping inquiry — real tracking lookup (pass context to avoid re-lookup + thread message)
+  // Shipping inquiry — sub-classify: tracking vs info
   if (intake.message_type === 'shipping' && !existingIntake) {
+    const msg = (issue_description || '').toLowerCase();
+    const isTrackingQuestion = effectiveOrderNumber
+      || /where.?s my (order|package)|tracking|hasn.?t (shipped|arrived)|not (received|delivered|arrived)|still (waiting|in transit)|delivery (date|status)|when will (it|my)/i.test(msg);
+    const isInfoQuestion = /do you (ship|deliver)|ship to|shipping (cost|rate|fee|charge|price)|how much.*(ship|deliver)|how long.*(ship|deliver|take)|deliver.* to|can (i|you) ship/i.test(msg);
+
+    // Duties reimbursement — customer was charged import fees
+    const isDutiesQuestion = /dut(y|ies)|customs|import (cost|fee|tax|charge)|aduana|inklaring|douane|zoll/i.test(msg)
+      && /paid|charged|pay|reimburse|refund|receipt|comprobante/i.test(msg);
+
+    if (isDutiesQuestion) {
+      const { handleDutiesInquiry } = require('./shippingInfo');
+      return handleDutiesInquiry({
+        customer_email,
+        issue_description,
+        _context: { customer, order: targetOrder, customerMessage: issue_description, intake, customerCountry },
+      });
+    }
+
+    if (isInfoQuestion && !isTrackingQuestion) {
+      // Pre-purchase shipping info (rates, countries, delivery times)
+      const { handleShippingInfo } = require('./shippingInfo');
+      return handleShippingInfo({
+        customer_email,
+        issue_description,
+        _context: { customer, customerMessage: issue_description, intake },
+      });
+    }
+
+    // Default: tracking lookup
     const shippingTools = require('./shippingLookup');
     const shippingHandler = shippingTools.find(t => t.name === 'shipping_lookup').handler;
     return shippingHandler({

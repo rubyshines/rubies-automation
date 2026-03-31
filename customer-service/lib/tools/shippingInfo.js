@@ -1,0 +1,396 @@
+/**
+ * Shipping Info Handler
+ *
+ * Answers pre-purchase shipping questions:
+ * - "Do you ship to [country]?"
+ * - "How much is shipping to [country]?"
+ * - "How long does shipping take?"
+ * - "Do I have to pay customs/duties?"
+ *
+ * Deterministic lookup from shipping_zones + delivery stats.
+ * AI only for light tone polish.
+ */
+
+const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { addBusinessDays } = require('../../../shared/businessDays');
+
+// ---------------------------------------------------------------------------
+// Country detection — extract country from customer message
+// ---------------------------------------------------------------------------
+
+const COUNTRY_ALIASES = {
+  'uk': 'GB', 'united kingdom': 'GB', 'england': 'GB', 'britain': 'GB', 'scotland': 'GB', 'wales': 'GB',
+  'us': 'US', 'usa': 'US', 'united states': 'US', 'america': 'US', 'states': 'US',
+  'canada': 'CA',
+  'australia': 'AU', 'aus': 'AU', 'oz': 'AU',
+  'new zealand': 'NZ', 'nz': 'NZ',
+  'germany': 'DE', 'deutschland': 'DE',
+  'france': 'FR',
+  'netherlands': 'NL', 'holland': 'NL',
+  'denmark': 'DK', 'danmark': 'DK',
+  'sweden': 'SE', 'sverige': 'SE',
+  'norway': 'NO', 'norge': 'NO',
+  'finland': 'FI', 'suomi': 'FI',
+  'ireland': 'IE',
+  'spain': 'ES', 'españa': 'ES',
+  'italy': 'IT', 'italia': 'IT',
+  'portugal': 'PT',
+  'poland': 'PL', 'polska': 'PL',
+  'switzerland': 'CH', 'schweiz': 'CH', 'suisse': 'CH',
+  'austria': 'AT', 'österreich': 'AT',
+  'belgium': 'BE', 'belgique': 'BE',
+  'israel': 'IL',
+  'mexico': 'MX', 'méxico': 'MX',
+  'japan': 'JP',
+  'south korea': 'KR', 'korea': 'KR',
+  'india': 'IN',
+  'brazil': 'BR', 'brasil': 'BR',
+  'uruguay': 'UY',
+  'iceland': 'IS',
+  'czech republic': 'CZ', 'czechia': 'CZ',
+  'greece': 'GR',
+  'hungary': 'HU',
+  'romania': 'RO',
+  'croatia': 'HR',
+  'singapore': 'SG',
+  'taiwan': 'TW',
+  'hong kong': 'HK',
+  'philippines': 'PH',
+  'thailand': 'TH',
+  'south africa': 'ZA',
+  'chile': 'CL',
+  'colombia': 'CO',
+  'argentina': 'AR',
+  'peru': 'PE',
+};
+
+/**
+ * Try to extract a country from the customer's message.
+ * Returns { code, name } or null.
+ */
+async function detectCountry(message) {
+  if (!message) return null;
+  const lower = message.toLowerCase();
+
+  // Check aliases first (handles "UK", "US", etc.)
+  for (const [alias, code] of Object.entries(COUNTRY_ALIASES)) {
+    // Word boundary match to avoid "used" matching "us"
+    const re = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (re.test(lower)) {
+      const supabase = getSupabaseClient();
+      const { data } = await supabase.from('shipping_zones').select('country_name').eq('country_code', code).single();
+      return { code, name: data?.country_name || alias };
+    }
+  }
+
+  // Try matching against all country names in shipping_zones
+  const supabase = getSupabaseClient();
+  const { data: zones } = await supabase.from('shipping_zones').select('country_code, country_name');
+  if (zones) {
+    for (const z of zones) {
+      if (z.country_name && lower.includes(z.country_name.toLowerCase())) {
+        return { code: z.country_code, name: z.country_name };
+      }
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Delivery time estimates
+// ---------------------------------------------------------------------------
+
+// Policy defaults (business days)
+const DELIVERY_ESTIMATES = {
+  us:     { standard: '2-6 business days', expedited: '2-3 business days' },
+  canada: { standard: '5-8 business days', expedited: '3-4 business days' },
+  ddp:    { standard: '5-10 business days', expedited: '3-6 business days' },
+  ddu:    { standard: '5-10 business days', expedited: '3-6 business days' },
+};
+
+// ---------------------------------------------------------------------------
+// Detect what the customer is asking about
+// ---------------------------------------------------------------------------
+
+function detectIntent(message) {
+  if (!message) return { availability: true };
+  const msg = message.toLowerCase();
+  return {
+    availability: /do you (ship|deliver)|ship to|can (i|you) (ship|send|order)|deliver.* to/i.test(msg),
+    cost: /how much|cost|charge|rate|fee|price|shipping.*\$/i.test(msg),
+    time: /how long|when|time|days|fast|quick|take to/i.test(msg),
+    duties: /dut(y|ies)|customs|tax|import|aduana|additional (fee|charge|cost)/i.test(msg),
+    expedited: /expedit|express|fast|rush|overnight|next day|urgent/i.test(msg),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Build response — only answer what's asked
+// ---------------------------------------------------------------------------
+
+function buildShippingInfoResponse(zone, country, context) {
+  const { customerName, customerMessage } = context || {};
+  const greeting = customerName ? `Hi ${customerName}` : 'Hi';
+  const parts = [];
+  const intent = detectIntent(customerMessage);
+  let needsHumanFollowUp = false;
+
+  // Handle overnight/expedited questions specifically
+  if (intent.expedited) {
+    if (zone?.zone === 'us' && zone?.expedited_rate) {
+      parts.push(`${greeting}, we offer expedited shipping within the US for $${zone.expedited_rate} ${zone.currency} which typically takes 2-3 business days.`);
+      if (/overnight|next day/i.test(customerMessage || '')) {
+        parts.push(`We don't offer overnight but if you let me know the latest date you need to receive it I can see what we can do.`);
+        needsHumanFollowUp = true;
+      }
+    } else {
+      parts.push(`${greeting}, we offer expedited shipping within the US.`);
+      parts.push(`Let me know what country you are shipping to and the latest date you need to receive it and I can look into it.`);
+      needsHumanFollowUp = true;
+    }
+    return { text: parts.join(' '), resolved: !needsHumanFollowUp, needsHumanFollowUp };
+  }
+
+  // No country detected
+  if (!zone) {
+    parts.push(`${greeting}, yes we ship to most countries worldwide.`);
+    if (intent.cost) parts.push(`Standard international shipping is $12 USD.`);
+    parts.push(`Let me know which country and I can give you more specific info.`);
+    return { text: parts.join(' '), resolved: true, needsHumanFollowUp: false };
+  }
+
+  const countryName = country?.name || 'there';
+
+  // If nothing specific asked, they're just asking availability — keep it simple
+  const nothingSpecific = !intent.cost && !intent.time && !intent.duties;
+
+  // Availability (always include if they asked or if it's the only question)
+  if (intent.availability || nothingSpecific) {
+    // US customers know we ship there — say where we ship FROM instead
+    if (zone.zone === 'us') {
+      parts.push(`${greeting}, yes we ship from Portland, Oregon.`);
+    } else {
+      parts.push(`${greeting}, yes we ship to ${countryName}.`);
+    }
+  } else {
+    parts.push(greeting + '!');
+  }
+
+  // Cost — only if asked
+  if (intent.cost || nothingSpecific) {
+    if (zone.free_shipping_threshold > 0) {
+      parts.push(`Shipping is $${zone.standard_rate} ${zone.currency}, and free on orders over $${zone.free_shipping_threshold} ${zone.currency}.`);
+    } else {
+      parts.push(`Shipping is $${zone.standard_rate} ${zone.currency}.`);
+    }
+  }
+
+  // Delivery time — only if asked
+  if (intent.time) {
+    const estimates = DELIVERY_ESTIMATES[zone.zone] || DELIVERY_ESTIMATES.ddu;
+    parts.push(`Standard delivery typically takes ${estimates.standard}.`);
+  }
+
+  // Duties — include if asked OR if DDP (good news worth sharing) OR if DDU and they asked about cost/availability
+  if (intent.duties || zone.duties_prepaid || (zone.zone === 'ddu' && (intent.cost || nothingSpecific))) {
+    if (zone.duties_prepaid) {
+      parts.push(`The pricing includes all taxes and duties so there will be no additional fees once you place the order.`);
+    } else if (zone.zone === 'ddu') {
+      parts.push(`There may be customs duties charged on delivery — the amount depends on your local customs authority and we unfortunately can't predict what they will be.`);
+    }
+  }
+
+  return { text: parts.join(' '), resolved: true, needsHumanFollowUp: false };
+}
+
+// ---------------------------------------------------------------------------
+// Main handler
+// ---------------------------------------------------------------------------
+
+async function handleShippingInfo({ customer_email, issue_description, _context }) {
+  const customerMessage = issue_description || _context?.customerMessage || '';
+  const customerName = _context?.intake?.name || _context?.customer?.firstName || null;
+
+  // Detect which country they're asking about
+  const country = await detectCountry(customerMessage);
+
+  // Look up zone data
+  let zone = null;
+  if (country) {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase.from('shipping_zones').select('*').eq('country_code', country.code).single();
+    zone = data;
+  }
+
+  const { text, needsHumanFollowUp } = buildShippingInfoResponse(zone, country, { customerName, customerMessage });
+
+  // Light AI polish if customer message present
+  let polished = text;
+  if (customerMessage) {
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const ai = new Anthropic();
+      const response = await ai.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: `Lightly smooth this customer service response so it reads naturally. Jamie (RUBIES founder) is warm and direct.
+
+DRAFT:
+${text}
+
+CUSTOMER MESSAGE:
+"${customerMessage}"
+
+RULES:
+- Keep ALL facts, rates, and policy details EXACTLY as written — change nothing substantive
+- Only smooth awkward phrasing or combine choppy sentences
+- Do NOT add emotional commentary
+- Do NOT add a sign-off
+- If the draft already reads fine, return it unchanged
+- Return ONLY the response`,
+        }],
+      });
+      polished = response.content[0]?.text || text;
+    } catch (e) {
+      polished = text;
+    }
+  }
+
+  let md = `## Shipping Info\n\n`;
+  if (country) {
+    md += `**Country:** ${country.name} (${country.code})\n`;
+    md += `**Zone:** ${zone?.zone || 'unknown'}\n`;
+    md += `**Rate:** $${zone?.standard_rate || '?'} ${zone?.currency || 'USD'}`;
+    if (zone?.free_shipping_threshold > 0) md += ` (free over $${zone.free_shipping_threshold})`;
+    md += '\n';
+    md += `**Duties prepaid:** ${zone?.duties_prepaid ? 'Yes' : 'No'}\n`;
+  } else {
+    md += `**Country:** Could not detect from message\n`;
+  }
+  md += `\n**Customer response:**\n${polished}\n`;
+
+  return {
+    content: [{ type: 'text', text: md }],
+    _structured: {
+      status: needsHumanFollowUp ? 'needs_attention' : 'resolved',
+      intake: _context?.intake || null,
+      country: country || null,
+      zone: zone?.zone || null,
+      response: polished,
+      rawResponse: text,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Duties reimbursement handler
+// ---------------------------------------------------------------------------
+
+function buildDutiesResponse(zone, context) {
+  const { customerName } = context || {};
+  const greeting = customerName ? `Hi ${customerName}` : 'Hi';
+  const parts = [];
+
+  if (zone?.duties_prepaid) {
+    // DDP country — we cover duties, reimburse if charged
+    parts.push(`${greeting}, yes we do reimburse the cost of duties that are charged on international orders.`);
+    parts.push(`Please go ahead and pay the bill so you can receive your package, then send us the receipt and we will refund the amount.`);
+    return { text: parts.join(' '), needsHumanFollowUp: false };
+  }
+
+  // DDU country — we don't cover duties
+  parts.push(`${greeting}, unfortunately we are unable to cover the cost of duties for your country.`);
+  parts.push(`These are charged by your local customs authority and are outside of our control.`);
+  return { text: parts.join(' '), needsHumanFollowUp: false };
+}
+
+async function handleDutiesInquiry({ customer_email, issue_description, _context }) {
+  const customerMessage = issue_description || _context?.customerMessage || '';
+  const customerName = _context?.intake?.name || _context?.customer?.firstName || null;
+  const customerCountry = _context?.customerCountry || null;
+
+  // Try to find their zone from their account country or message
+  let zone = null;
+  let country = null;
+
+  if (customerCountry) {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase.from('shipping_zones').select('*').eq('country_code', customerCountry).single();
+    zone = data;
+    country = { code: customerCountry, name: data?.country_name || customerCountry };
+  }
+
+  if (!zone) {
+    // Try detecting from message
+    country = await detectCountry(customerMessage);
+    if (country) {
+      const supabase = getSupabaseClient();
+      const { data } = await supabase.from('shipping_zones').select('*').eq('country_code', country.code).single();
+      zone = data;
+    }
+  }
+
+  const { text, needsHumanFollowUp } = buildDutiesResponse(zone, { customerName, customerMessage });
+
+  // Light AI polish
+  let polished = text;
+  if (customerMessage) {
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const ai = new Anthropic();
+      const response = await ai.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: `Lightly smooth this customer service response so it reads naturally. Jamie (RUBIES founder) is warm and direct. If the customer wrote in a language other than English, respond in their language.
+
+DRAFT:
+${text}
+
+CUSTOMER MESSAGE:
+"${customerMessage}"
+
+RULES:
+- Keep ALL facts and policy details EXACTLY as written
+- Only smooth phrasing
+- If customer wrote in Spanish, French, Dutch, etc. — translate the response to their language
+- Do NOT add a sign-off
+- Return ONLY the response`,
+        }],
+      });
+      polished = response.content[0]?.text || text;
+    } catch (e) {
+      polished = text;
+    }
+  }
+
+  let md = `## Duties Inquiry\n\n`;
+  md += `**Country:** ${country?.name || 'unknown'} (${country?.code || '?'})\n`;
+  md += `**DDP (duties prepaid):** ${zone?.duties_prepaid ? 'Yes — reimburse' : 'No — customer pays'}\n`;
+  md += `\n**Customer response:**\n${polished}\n`;
+
+  return {
+    content: [{ type: 'text', text: md }],
+    _structured: {
+      status: needsHumanFollowUp ? 'needs_attention' : 'resolved',
+      intake: _context?.intake || null,
+      country: country || null,
+      zone: zone?.zone || null,
+      dutiesPrepaid: zone?.duties_prepaid || false,
+      response: polished,
+      rawResponse: text,
+    },
+  };
+}
+
+module.exports = {
+  handleShippingInfo,
+  handleDutiesInquiry,
+  buildShippingInfoResponse,
+  buildDutiesResponse,
+  detectCountry,
+};
