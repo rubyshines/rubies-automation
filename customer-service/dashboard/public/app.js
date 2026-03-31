@@ -201,7 +201,7 @@ function renderDetail(d) {
     document.getElementById('action-prescription').innerHTML = prescriptionHtml;
     document.getElementById('action-result').style.display = 'none';
     document.getElementById('btn-execute').disabled = false;
-    document.getElementById('btn-send').disabled = true; // Must execute first
+    document.getElementById('btn-send').disabled = false;
   } else if (d.action_type && d.action_executed_at) {
     actionPanel.style.display = 'block';
     document.getElementById('action-prescription').innerHTML = '<strong>Action executed</strong>';
