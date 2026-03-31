@@ -192,9 +192,30 @@ async function composeAgentResponse(s, previousResponses) {
     }
   }
 
-  if (sizingItems.length > 1) {
+  // Check if any sizing items have "between sizes" response text from measurement lookup
+  // If so, combine them directly instead of rebuilding with fabric deltas
+  const betweenSizesItems = sizingItems.filter(i => i.response_text?.includes('in between'));
+  const regularSizingItems = sizingItems.filter(i => !i.response_text?.includes('in between'));
+
+  if (betweenSizesItems.length > 0) {
+    // Combine between-sizes texts, deduplicating by product
+    const seen = new Set();
+    const betweenTexts = [];
+    for (const item of betweenSizesItems) {
+      const nick = getProductNickname(item.product);
+      if (seen.has(nick)) continue;
+      seen.add(nick);
+      betweenTexts.push(item.response_text);
+    }
+    const combined = betweenTexts.join(' ') + ' Let me know which you would like for each and I can set up a new order for you.';
+    parts.push({ type: 'question', text: combined });
+  }
+
+  // Process remaining sizing items normally
+  const sizingItemsToProcess = regularSizingItems;
+  if (sizingItemsToProcess.length > 1) {
     const categoryGroups = new Map();
-    for (const item of sizingItems) {
+    for (const item of sizingItemsToProcess) {
       const cat = classifyProduct(item.product) || 'other';
       let catLabel;
       if (cat === 'swim_top') catLabel = 'bikini top';
@@ -272,7 +293,7 @@ async function composeAgentResponse(s, previousResponses) {
 
     parts.push({ type: 'question', text: groupedText });
   } else {
-    for (const item of sizingItems) {
+    for (const item of sizingItemsToProcess) {
       parts.push({ type: 'question', text: item.response_text });
     }
   }
