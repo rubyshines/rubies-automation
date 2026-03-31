@@ -1235,8 +1235,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         }
 
         // If measurement is available, look up recommended size and use that instead of blind options
-        if (intake.measurement && !isABit && !isNextSize) {
-          const m = intake.measurement;
+        // Use chest measurement for tops, waist measurement for bottoms
+        const isTopProduct = productType === 'bra' || productType === 'bikini_top' || productType === 'top';
+        const relevantMeasurement = isTopProduct ? (intake.chest_measurement || intake.measurement) : intake.measurement;
+        if (relevantMeasurement && !isABit && !isNextSize) {
+          const m = relevantMeasurement;
           const isKidsM = NUMERIC_SIZES.includes(normalizeSize(item.size));
           const { chartCategory, measureType } = getChartCategory(item.product, isKidsM);
           const mUnit = m.unit === 'cm' ? 'cm' : 'inches';
@@ -1250,6 +1253,19 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
               p_unit: mUnit,
             });
             if (sizeMatches && sizeMatches.length > 0) {
+              // If measurement falls exactly between two sizes, present both options
+              if (sizeMatches.length >= 2 && sizeMatches[0].size_label !== sizeMatches[1].size_label) {
+                const size1 = sizeMatches[0].size_label;
+                const size2 = sizeMatches[1].size_label;
+                rx.state = 'AWAITING_SIZE_CONFIRMATION';
+                rx.options = [{ size: size1 }, { size: size2 }];
+                rx.response_text = `For the ${nick} you are in between a size ${size1} and ${size2}. Let me know which you would like.`;
+                if (intakeItem) intakeItem._pendingSize = size1; // default to first
+                rx.audit = `Measurement ${m.value} ${mUnit} is between ${size1} and ${size2} — asking customer to choose`;
+                prescription.still_needed.push(`size_confirmation for ${item.product}`);
+                break;
+              }
+
               let recommendedSize = sizeMatches[0].size_label;
 
               // If the recommended size is the SAME as what they already have and it doesn't fit,
