@@ -96,3 +96,21 @@ CREATE TABLE IF NOT EXISTS cs_ai_feedback_log (
 CREATE INDEX IF NOT EXISTS idx_feedback_action ON cs_ai_feedback_log (action);
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON cs_ai_feedback_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_message_type ON cs_ai_feedback_log (message_type);
+
+-- ============================================================
+-- 4. Simulator sessions (interactive training)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cs_simulator_sessions (
+  id                      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  source_conversation_id  text,
+  customer_email          text NOT NULL,
+  order_number            text,
+  order_context           jsonb,
+  customer_context        jsonb,
+  turns                   jsonb NOT NULL DEFAULT '[]',
+  status                  text DEFAULT 'in_progress',
+  created_at              timestamptz DEFAULT now(),
+  completed_at            timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_sim_sessions_created ON cs_simulator_sessions (created_at DESC);

@@ -597,6 +597,156 @@ main { height: calc(100vh - 56px); }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
+/* ─── Test Mode Bar ──────────────────────────────────────── */
+
+.test-mode-bar {
+  display: flex;
+  gap: 2px;
+  padding: 8px 24px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.test-mode {
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 8px 18px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+}
+.test-mode.active {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+.test-mode:hover:not(.active) { color: var(--text-secondary); }
+
+/* ─── Simulator ──────────────────────────────────────────── */
+
+.sim-layout {
+  display: flex;
+  height: calc(100vh - 56px - 44px);
+  overflow: hidden;
+}
+
+.sim-sidebar {
+  width: 300px;
+  min-width: 300px;
+  padding: 16px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sim-main {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+#sim-thread { flex: 1; }
+
+.sim-turn {
+  margin-bottom: 20px;
+  border-left: 3px solid var(--border);
+  padding-left: 16px;
+}
+
+.sim-turn.locked { opacity: 0.65; }
+.sim-turn.locked .sim-turn-label { color: var(--text-tertiary); }
+
+.sim-turn-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.sim-customer-msg {
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+}
+
+.sim-ai-response {
+  background: var(--teal-soft);
+  border: 1px solid #c6e6df;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.sim-editor {
+  width: 100%;
+  background: var(--surface-inset);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.sim-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.sim-notes {
+  width: 100%;
+  background: var(--surface-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: none;
+  margin-top: 8px;
+}
+
+.sim-turn-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.sim-turn-notes { font-size: 11px; color: var(--teal); font-style: italic; margin-top: 4px; }
+.sim-turn-edited { font-size: 10px; color: var(--yellow); font-weight: 600; margin-left: 8px; }
+
+.sim-next-input {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
+.sim-spinner {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
 /* ─── Test Panel ─────────────────────────────────────────── */
 
 .test-layout {

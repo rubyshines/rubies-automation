@@ -670,6 +670,273 @@ function clearTest() {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Test mode switcher
+// ---------------------------------------------------------------------------
+
+function switchTestMode(mode) {
+  document.querySelectorAll('.test-mode').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
+  document.getElementById('test-tools-view').style.display = mode === 'tools' ? 'flex' : 'none';
+  document.getElementById('simulator-view').style.display = mode === 'simulator' ? 'block' : 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Conversation Simulator
+// ---------------------------------------------------------------------------
+
+const sim = {
+  active: false,
+  conversationId: null,
+  customerEmail: null,
+  orderNumber: null,
+  orderContext: null,
+  customerContext: null,
+  intake: null,
+  turns: [],
+  previousResponses: [],
+};
+
+async function simLoadRandom() {
+  const btn = document.getElementById('sim-load-btn');
+  const loading = document.getElementById('sim-loading');
+  btn.disabled = true;
+  loading.style.display = 'block';
+  loading.textContent = 'Loading conversation...';
+
+  try {
+    const data = await api('/api/simulator/random');
+
+    sim.active = true;
+    sim.conversationId = data.conversation?.id;
+    sim.customerEmail = data.conversation?.customer_email;
+    sim.orderNumber = data.conversation?.order_number;
+    sim.orderContext = data.orderContext;
+    sim.customerContext = data.customerContext;
+    sim.intake = null;
+    sim.turns = [];
+    sim.previousResponses = [];
+
+    // Render context sidebar
+    const ci = sim.customerContext || {};
+    document.getElementById('sim-customer-info').innerHTML = `
+      <div>${esc(ci.name || 'Unknown')} (${esc(ci.pronouns || 'they/them')})</div>
+      <div>${esc(ci.email || sim.customerEmail)}</div>
+      <div>${esc(ci.country || '?')}</div>
+      ${ci.address ? `<div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">${formatAddress(ci.address)}</div>` : ''}
+    `;
+
+    const order = sim.orderContext;
+    if (order) {
+      const items = (order.items || []).map(i =>
+        `${i.quantity}x ${esc(i.title)} - ${esc(i.variant)} (SKU: ${esc(i.sku || 'n/a')})`
+      ).join('<br>');
+      document.getElementById('sim-order-info').innerHTML = `
+        <div>${esc(order.name)} (${esc(order.date)})</div>
+        <div style="font-size:12px;margin-top:4px">${items}</div>
+      `;
+    } else {
+      document.getElementById('sim-order-info').innerHTML = 'No order found';
+    }
+
+    document.getElementById('sim-source-info').textContent = `Source: ${data.conversation?.subject || sim.conversationId}`;
+
+    // Switch to active view
+    document.getElementById('sim-idle').style.display = 'none';
+    document.getElementById('sim-active').style.display = 'flex';
+
+    // Run first turn with the real customer message
+    await simRunTurn(data.firstMessage);
+
+  } catch (err) {
+    loading.textContent = 'Failed: ' + err.message;
+    btn.disabled = false;
+  }
+}
+
+async function simRunTurn(customerMessage) {
+  const thread = document.getElementById('sim-thread');
+  const controls = document.getElementById('sim-controls');
+  const turnNum = sim.turns.length + 1;
+
+  // Show customer message in thread
+  thread.innerHTML += `
+    <div class="sim-turn" id="sim-turn-${turnNum}">
+      <div class="sim-turn-label">Turn ${turnNum} - Customer</div>
+      <div class="sim-customer-msg">${esc(customerMessage)}</div>
+      <div class="sim-spinner">AI is thinking...</div>
+    </div>
+  `;
+  thread.scrollTop = thread.scrollHeight;
+
+  // Call advisor
+  try {
+    const result = await api('/api/simulator/turn', {
+      method: 'POST',
+      body: {
+        customer_email: sim.customerEmail,
+        issue_description: customerMessage,
+        order_number: sim.orderNumber,
+        intake: sim.intake,
+        previous_responses: sim.previousResponses,
+      },
+    });
+
+    // Remove spinner, show editable response
+    const turnEl = document.getElementById(`sim-turn-${turnNum}`);
+    turnEl.querySelector('.sim-spinner').remove();
+
+    const status = result.structured?.status || '?';
+    const badgeClass = status === 'ready' ? 'badge-high' : status === 'needs_info' ? 'badge-medium' : 'badge-low';
+
+    turnEl.innerHTML += `
+      <div class="sim-turn-label" style="margin-top:12px">Agent Response <span class="badge ${badgeClass}">${status}</span></div>
+      <textarea class="sim-editor" id="sim-editor-${turnNum}" rows="6">${esc(result.ai_response || '')}</textarea>
+      <label class="label" style="margin-top:8px;display:block">Notes</label>
+      <textarea class="sim-notes" id="sim-notes-${turnNum}" rows="2" placeholder="Training notes for this turn"></textarea>
+      <details style="margin-top:8px">
+        <summary style="font-size:11px;color:var(--text-tertiary);cursor:pointer">Audit trail</summary>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;margin-top:4px">${esc((result.structured?.audit || []).join('\n'))}</div>
+      </details>
+    `;
+
+    controls.innerHTML = `
+      <div class="sim-turn-actions">
+        <button class="btn btn-primary" onclick="simAcceptTurn(${turnNum}, '${esc(customerMessage).replace(/'/g, "\\'")}')">Accept</button>
+        <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
+      </div>
+    `;
+
+    // Store current state for accept
+    sim._currentResult = result;
+    sim._currentCustomerMsg = customerMessage;
+
+    thread.scrollTop = thread.scrollHeight;
+
+  } catch (err) {
+    const turnEl = document.getElementById(`sim-turn-${turnNum}`);
+    turnEl.querySelector('.sim-spinner').textContent = 'Error: ' + err.message;
+  }
+}
+
+function simAcceptTurn(turnNum, customerMessage) {
+  const editedResponse = document.getElementById(`sim-editor-${turnNum}`).value;
+  const notes = document.getElementById(`sim-notes-${turnNum}`).value;
+  const originalResponse = sim._currentResult?.ai_response || '';
+  const structured = sim._currentResult?.structured;
+
+  // Store turn
+  sim.turns.push({
+    turn_number: turnNum,
+    customer_message: sim._currentCustomerMsg,
+    original_ai_response: originalResponse,
+    edited_ai_response: editedResponse,
+    notes: notes || null,
+    structured_output: structured,
+    accepted_at: new Date().toISOString(),
+  });
+
+  // Update state
+  sim.intake = structured?.intake || sim.intake;
+  sim.previousResponses.push(editedResponse);
+
+  // Lock the turn
+  const turnEl = document.getElementById(`sim-turn-${turnNum}`);
+  turnEl.classList.add('locked');
+  const editor = turnEl.querySelector('.sim-editor');
+  const notesEl = turnEl.querySelector('.sim-notes');
+  if (editor) {
+    const wasEdited = editedResponse !== originalResponse;
+    editor.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'sim-ai-response',
+      textContent: editedResponse,
+    }));
+    if (wasEdited) {
+      turnEl.innerHTML += '<span class="sim-turn-edited">edited</span>';
+    }
+  }
+  if (notesEl && notes) {
+    notesEl.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'sim-turn-notes',
+      textContent: notes,
+    }));
+  } else if (notesEl) {
+    notesEl.remove();
+  }
+
+  // Show next customer input
+  const controls = document.getElementById('sim-controls');
+  if (structured?.status === 'ready') {
+    controls.innerHTML = `
+      <div class="sim-next-input">
+        <p style="color:var(--green);font-weight:600;margin-bottom:8px">Exchange resolved! Enter another customer message or end the session.</p>
+        <textarea class="sim-editor" id="sim-next-msg" rows="3" placeholder="Type the next customer message..."></textarea>
+        <div class="sim-turn-actions">
+          <button class="btn btn-primary" onclick="simSendNext()">Send</button>
+          <button class="btn btn-close" onclick="simEndSession()">Finish Session</button>
+        </div>
+      </div>
+    `;
+  } else {
+    controls.innerHTML = `
+      <div class="sim-next-input">
+        <label class="label">Next Customer Message</label>
+        <textarea class="sim-editor" id="sim-next-msg" rows="3" placeholder="Type the next customer message..."></textarea>
+        <div class="sim-turn-actions">
+          <button class="btn btn-primary" onclick="simSendNext()">Send</button>
+          <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
+        </div>
+      </div>
+    `;
+  }
+
+  document.getElementById('sim-next-msg')?.focus();
+}
+
+function simSendNext() {
+  const msg = document.getElementById('sim-next-msg')?.value?.trim();
+  if (!msg) return alert('Enter a customer message');
+  document.getElementById('sim-controls').innerHTML = '';
+  simRunTurn(msg);
+}
+
+async function simEndSession() {
+  if (sim.turns.length > 0) {
+    try {
+      await api('/api/simulator/save', {
+        method: 'POST',
+        body: {
+          source_conversation_id: sim.conversationId,
+          customer_email: sim.customerEmail,
+          order_number: sim.orderNumber,
+          order_context: sim.orderContext,
+          customer_context: sim.customerContext,
+          turns: sim.turns,
+          status: 'completed',
+        },
+      });
+    } catch (err) {
+      console.error('Failed to save session:', err);
+    }
+  }
+
+  // Reset
+  sim.active = false;
+  sim.turns = [];
+  sim.intake = null;
+  sim.previousResponses = [];
+  document.getElementById('sim-active').style.display = 'none';
+  document.getElementById('sim-idle').style.display = 'block';
+  document.getElementById('sim-load-btn').disabled = false;
+  document.getElementById('sim-loading').style.display = 'none';
+  document.getElementById('sim-thread').innerHTML = '';
+  document.getElementById('sim-controls').innerHTML = '';
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function formatAddress(a) {
   if (!a) return '';
   return [a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ');

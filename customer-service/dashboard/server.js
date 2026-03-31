@@ -432,6 +432,128 @@ async function apiReplayTicket(body) {
   return { ticket_id, customer_email: customerEmail, turns };
 }
 
+// ---------------------------------------------------------------------------
+// Simulator endpoints
+// ---------------------------------------------------------------------------
+
+async function apiSimulatorRandom() {
+  const supabase = getSupabaseClient();
+
+  // Pick a random exchange conversation that has order numbers
+  const { data: convos } = await supabase
+    .from('cs_conversations')
+    .select('id, customer_email, order_numbers, subject, summary, message_count')
+    .or('category.eq.exchange_return,tags.cs.{RETURN/EXCHANGE}')
+    .not('order_numbers', 'is', null)
+    .gt('message_count', 1)
+    .limit(100);
+
+  if (!convos?.length) throw new Error('No exchange conversations found');
+  const convo = convos[Math.floor(Math.random() * convos.length)];
+
+  // Load messages
+  const { data: messages } = await supabase
+    .from('cs_messages')
+    .select('id, sender_type, body_text, created_at')
+    .eq('conversation_id', convo.id)
+    .order('created_at', { ascending: true });
+
+  const customerMessages = (messages || [])
+    .filter(m => m.sender_type === 'customer')
+    .map(m => ({ body: m.body_text, created_at: m.created_at }));
+
+  if (!customerMessages.length) throw new Error('No customer messages in this conversation');
+
+  // Get order details from Shopify
+  const orderNumber = convo.order_numbers?.[0];
+  let orderContext = null;
+  let customerContext = null;
+
+  try {
+    const advisorTools = require('../lib/tools/exchangeAdvisor');
+    const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
+    const result = await advisor.handler({
+      customer_email: convo.customer_email,
+      issue_description: customerMessages[0].body,
+      order_number: orderNumber,
+    });
+    const s = result._structured;
+    if (s) {
+      orderContext = s.order;
+      customerContext = {
+        email: s.customer?.email,
+        name: s.customer?.name,
+        pronouns: s.customer?.pronouns,
+        country: s.customer?.country,
+        address: s.customer?.address,
+      };
+    }
+  } catch (e) {
+    // Order lookup failed — continue without it
+  }
+
+  return {
+    conversation: { id: convo.id, subject: convo.subject, summary: convo.summary, customer_email: convo.customer_email, order_number: orderNumber },
+    firstMessage: customerMessages[0].body,
+    orderContext,
+    customerContext,
+  };
+}
+
+async function apiSimulatorTurn(body) {
+  const { customer_email, issue_description, order_number, intake, previous_responses } = body;
+  if (!customer_email || !issue_description) throw new Error('Provide customer_email and issue_description');
+
+  const advisorTools = require('../lib/tools/exchangeAdvisor');
+  const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
+
+  const result = await advisor.handler({
+    customer_email,
+    issue_description,
+    order_number: order_number || undefined,
+    intake: intake || undefined,
+  });
+
+  const s = result._structured;
+  let aiResponse = s?._composedResponse || '';
+  if (!aiResponse && s) {
+    try {
+      const { composeAgentResponse } = require('../lib/responseComposer');
+      aiResponse = await composeAgentResponse(s, previous_responses || []);
+    } catch (e) {
+      aiResponse = `[Compose error: ${e.message}]`;
+    }
+  }
+
+  return {
+    ai_response: aiResponse,
+    structured: s,
+  };
+}
+
+async function apiSimulatorSave(body) {
+  const supabase = getSupabaseClient();
+  const { source_conversation_id, customer_email, order_number, order_context, customer_context, turns, status } = body;
+
+  const { data, error } = await supabase
+    .from('cs_simulator_sessions')
+    .insert({
+      source_conversation_id,
+      customer_email: customer_email || 'unknown',
+      order_number,
+      order_context,
+      customer_context,
+      turns: turns || [],
+      status: status || 'completed',
+      completed_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return { id: data.id };
+}
+
 async function apiTriggerPoll() {
   const { run } = require('../poller/pollGorgiasDrafts');
   return run();
@@ -494,6 +616,9 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
+  { method: 'GET', pattern: /^\/api\/simulator\/random$/, handler: () => apiSimulatorRandom() },
+  { method: 'POST', pattern: /^\/api\/simulator\/turn$/, handler: (body) => apiSimulatorTurn(body) },
+  { method: 'POST', pattern: /^\/api\/simulator\/save$/, handler: (body) => apiSimulatorSave(body) },
 ];
 
 async function handleRequest(req, res) {

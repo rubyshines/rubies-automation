@@ -102,7 +102,14 @@
     </div>
     <!-- Test panel -->
     <div id="panel-test" class="panel" style="display:none">
-      <div class="test-layout">
+      <!-- Mode switcher -->
+      <div class="test-mode-bar">
+        <button class="test-mode active" data-mode="tools" onclick="switchTestMode('tools')">Test Tools</button>
+        <button class="test-mode" data-mode="simulator" onclick="switchTestMode('simulator')">Simulator</button>
+      </div>
+
+      <!-- Test tools view -->
+      <div id="test-tools-view" class="test-layout">
         <!-- Test input -->
         <div class="test-input-section">
           <div class="detail-section">
@@ -144,6 +151,37 @@
             Run a test or replay a conversation to see results
           </div>
           <div id="test-results" style="display:none"></div>
+        </div>
+      </div>
+
+      <!-- Simulator view -->
+      <div id="simulator-view" style="display:none">
+        <!-- Idle state -->
+        <div id="sim-idle" style="text-align:center;padding:80px 24px">
+          <h3 style="font-size:18px;margin-bottom:8px">Conversation Simulator</h3>
+          <p style="color:var(--text-secondary);margin-bottom:24px">Load a real exchange conversation and walk through it turn by turn.</p>
+          <button class="btn btn-primary" onclick="simLoadRandom()" id="sim-load-btn">Load Random Exchange</button>
+          <div id="sim-loading" style="display:none;margin-top:16px;color:var(--text-tertiary)">Loading conversation...</div>
+        </div>
+
+        <!-- Active session -->
+        <div id="sim-active" style="display:none" class="sim-layout">
+          <div class="sim-sidebar">
+            <div class="detail-section">
+              <div class="label">Customer</div>
+              <div id="sim-customer-info"></div>
+            </div>
+            <div class="detail-section">
+              <div class="label">Order</div>
+              <div id="sim-order-info"></div>
+            </div>
+            <div id="sim-source-info" style="font-size:11px;color:var(--text-tertiary);margin-top:12px"></div>
+            <button class="btn btn-dismiss" onclick="simEndSession()" style="margin-top:16px;width:100%">End Session</button>
+          </div>
+          <div class="sim-main">
+            <div id="sim-thread"></div>
+            <div id="sim-controls"></div>
+          </div>
         </div>
       </div>
     </div>
