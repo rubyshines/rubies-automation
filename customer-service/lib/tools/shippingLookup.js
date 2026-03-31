@@ -7,10 +7,10 @@
  * Tool: shipping_lookup
  */
 
-const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
 const { scrapeTracking, detectCarrier } = require('../tracking/scraper');
 const { parseTrackingPage, summarizeForCustomer, detectProblems } = require('../tracking/analyzer');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { buildContext } = require('../contextBuilder');
 
 // Cache TTL: 2 hours for active, 24 hours for delivered
 const ACTIVE_CACHE_MS = 2 * 60 * 60 * 1000;
@@ -95,32 +95,21 @@ async function getShippingZone(countryCode) {
 // Main handler
 // ---------------------------------------------------------------------------
 
-async function handleShippingLookup({ customer_email, order_number }) {
-  // Step 1: Find the order
+async function handleShippingLookup({ customer_email, order_number, _context }) {
+  // _context is passed internally from the advisor (skip re-lookup).
+  // When called as standalone MCP tool, _context is undefined — use buildContext.
   let order = null;
   let customer = null;
+  let customerMessage = null;
 
-  if (order_number) {
-    const normalized = order_number.toString().replace('#', '');
-    try {
-      order = await getOrderByNumber(normalized);
-    } catch (e) { /* not found */ }
-  }
-
-  if (!order && customer_email) {
-    const customers = await searchCustomers(customer_email);
-    customer = customers[0];
-    if (customer) {
-      const result = await getCustomerOrders(customer.id, 5);
-      // Find the specific order or the most recent fulfilled one
-      if (order_number) {
-        const normalized = order_number.toString().replace('#', '');
-        order = result.orders.find(o => o.name?.replace('#', '') === normalized);
-      }
-      if (!order) {
-        order = result.orders.find(o => o.fulfillmentStatus === 'FULFILLED') || result.orders[0];
-      }
-    }
+  if (_context) {
+    order = _context.order;
+    customer = _context.customer;
+    customerMessage = _context.customerMessage || null;
+  } else {
+    const ctx = await buildContext({ customer_email, order_number });
+    order = ctx.targetOrder;
+    customer = ctx.customer;
   }
 
   if (!order) {
@@ -128,6 +117,16 @@ async function handleShippingLookup({ customer_email, order_number }) {
       content: [{ type: 'text', text: 'Could not find the order. Please check the order number or customer email.' }],
       _structured: { status: 'error', error: 'order_not_found' },
     };
+  }
+
+  // Ensure we have fulfillment details — order lists from getCustomerOrders
+  // don't include fulfillments, so re-fetch the full order if needed.
+  if (!order.fulfillments && order.name) {
+    const { getOrderByNumber } = require('../shopify');
+    try {
+      const fullOrder = await getOrderByNumber(order.name.replace('#', ''));
+      if (fullOrder) order = fullOrder;
+    } catch (e) { /* continue with what we have */ }
   }
 
   // Step 2: Get fulfillment + tracking info
@@ -138,7 +137,7 @@ async function handleShippingLookup({ customer_email, order_number }) {
     try {
       const investigation = await analyzeUnfulfilledOrder(order);
       const customerName = customer?.firstName || order.customer?.name?.split(' ')[0] || null;
-      const draft = await draftUnfulfilledResponse(investigation, { customerName });
+      const draft = await draftUnfulfilledResponse(investigation, { customerName, customerMessage });
 
       let md = `## Shipping Lookup\n\n`;
       md += `**Order:** ${order.name}\n`;
@@ -184,12 +183,29 @@ async function handleShippingLookup({ customer_email, order_number }) {
   // Step 3: For each fulfillment, scrape + analyze
   const results = [];
   const destCountry = order.shippingAddress?.countryCodeV2 || order.shippingAddress?.countryCode;
+  const destProvince = order.shippingAddress?.provinceCode || order.shippingAddress?.province || null;
   const shippingZone = await getShippingZone(destCountry);
+
+  // Look up region from province (for granular delivery window)
+  let destRegion = null;
+  if (destProvince && destCountry) {
+    try {
+      const supabase = getSupabaseClient();
+      const { data: regionRow } = await supabase
+        .from('shipping_regions')
+        .select('region')
+        .eq('country_code', destCountry)
+        .eq('province_code', destProvince)
+        .single();
+      destRegion = regionRow?.region || null;
+    } catch (e) { /* no region mapping */ }
+  }
 
   for (const ff of fulfillments) {
     const trackingInfo = ff.trackingInfo?.[0] || {};
     const trackingNumber = trackingInfo.number;
     const trackingUrl = trackingInfo.url;
+    const shipDate = ff.createdAt?.split('T')[0] || null;
 
     if (!trackingNumber && !trackingUrl) {
       results.push({ status: 'no_tracking', note: 'No tracking information available for this fulfillment.' });
@@ -199,11 +215,21 @@ async function handleShippingLookup({ customer_email, order_number }) {
     // Check cache
     const cached = await getCachedTracking(trackingNumber);
     if (cached) {
+      // If we have the customer's message, re-summarize with it (cheap AI call, no re-scrape)
+      let summary = cached.summary;
+      if (customerMessage) {
+        try {
+          summary = await summarizeForCustomer(
+            { current_status: cached.current_status, events: cached.raw_events, trackingUrl: cached.tracking_url, local_carrier: cached.local_carrier },
+            { shippingZone, countryCode: destCountry, provinceCode: destProvince, region: destRegion, customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null, orderNumber: order.name?.replace('#', ''), customerMessage, shipDate }
+          );
+        } catch (e) { /* fall back to cached summary */ }
+      }
       results.push({
         carrier: cached.carrier,
         trackingUrl: cached.tracking_url,
         currentStatus: cached.current_status,
-        summary: cached.summary,
+        summary,
         events: cached.raw_events,
         localCarrier: cached.local_carrier,
         fromCache: true,
@@ -224,8 +250,13 @@ async function handleShippingLookup({ customer_email, order_number }) {
         { ...parsed, trackingUrl: scrapeResult.trackingUrl },
         {
           shippingZone,
+          countryCode: destCountry,
+          provinceCode: destProvince,
+          region: destRegion,
           customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null,
           orderNumber: order.name?.replace('#', ''),
+          customerMessage,
+          shipDate,
         }
       );
 

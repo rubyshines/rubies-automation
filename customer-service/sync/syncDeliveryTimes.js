@@ -24,6 +24,7 @@
 if (!process.env.SUPABASE_URL) require('dotenv').config();
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { businessDaysBetween } = require('../../shared/businessDays');
 
 const NITRO_LOCATION_ID = '105921249558';
 
@@ -36,15 +37,7 @@ const MIN_TRANSIT_DAYS = { us: 1, canada: 2, ddp: 3, ddu: 3 };
 // ---------------------------------------------------------------------------
 
 function businessDays(start, end) {
-  let count = 0;
-  const d = new Date(start);
-  const endDate = new Date(end);
-  while (d < endDate) {
-    const day = d.getDay();
-    if (day !== 0 && day !== 6) count++;
-    d.setDate(d.getDate() + 1);
-  }
-  return count;
+  return businessDaysBetween(start, end);
 }
 
 function calendarDays(start, end) {

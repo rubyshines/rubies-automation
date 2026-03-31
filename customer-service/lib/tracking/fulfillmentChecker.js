@@ -12,6 +12,8 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const Anthropic = require('@anthropic-ai/sdk');
+const { addBusinessDays, businessDaysBetween } = require('../../../shared/businessDays');
+const { relativeDay } = require('./analyzer');
 
 let _client = null;
 function getAI() {
@@ -90,15 +92,7 @@ async function analyzeUnfulfilledOrder(order) {
   const orderDate = new Date(order.createdAt);
   const now = new Date();
   const daysSinceOrder = Math.floor((now - orderDate) / 86400000);
-
-  // Count business days (rough — skip weekends)
-  let businessDays = 0;
-  const d = new Date(orderDate);
-  while (d < now) {
-    d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) businessDays++;
-  }
+  const businessDays = businessDaysBetween(orderDate, now);
 
   const investigation = {
     orderNumber: order.name,
@@ -152,11 +146,12 @@ async function analyzeUnfulfilledOrder(order) {
   }
 
   // Determine severity
+  // SLA: orders ship within 1 business day. 2 biz days = leeway. Beyond that = flag.
   if (investigation.hasOutOfStockItems) {
     investigation.severity = 'urgent';
   } else if (investigation.hasPreOrderItems) {
     investigation.severity = 'attention';
-  } else if (businessDays > 5) {
+  } else if (businessDays > 3) {
     investigation.severity = 'urgent';
     investigation.issues.push({
       type: 'stuck',
@@ -166,7 +161,7 @@ async function analyzeUnfulfilledOrder(order) {
     investigation.severity = 'attention';
     investigation.issues.push({
       type: 'slow',
-      description: `Order placed ${businessDays} business days ago — slightly delayed.`,
+      description: `Order placed ${businessDays} business days ago — should have shipped by now.`,
     });
   }
 
@@ -174,60 +169,131 @@ async function analyzeUnfulfilledOrder(order) {
 }
 
 // ---------------------------------------------------------------------------
-// Draft customer response using Sonnet
+// Deterministic unfulfilled response builder
 // ---------------------------------------------------------------------------
 
-async function draftUnfulfilledResponse(investigation, context) {
-  const { customerName, isThirdParty, thirdPartyLabel } = context || {};
+function buildUnfulfilledResponse(investigation, context) {
+  const { customerName } = context || {};
+  const name = customerName || null;
+  const greeting = name ? `Hi ${name}` : 'Hi';
+  const parts = [];
+  let needsHumanFollowUp = false;
 
-  // Find available alternatives for out-of-stock items
-  let alternativeInfo = '';
+  // Find alternatives for out-of-stock items
+  const alternatives = {};
   if (investigation.hasOutOfStockItems) {
-    const outOfStockItems = investigation.issues.filter(i => i.type === 'out_of_stock');
-    for (const item of outOfStockItems) {
-      // Check what colors/variants ARE in stock for the same product
+    for (const issue of investigation.issues.filter(i => i.type === 'out_of_stock')) {
       const inStock = investigation.inventory.filter(inv =>
-        inv.title === item.item && inv.available > 0 && !inv.error
+        inv.title === issue.item && inv.available > 0 && !inv.error
       );
-      if (inStock.length > 0) {
-        alternativeInfo += `\nIn stock alternatives for ${item.item}: ${inStock.map(i => `${i.variant} (${i.available} available)`).join(', ')}`;
-      }
+      if (inStock.length > 0) alternatives[issue.item] = inStock;
     }
   }
 
-  const ai = getAI();
-  const response = await ai.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 500,
-    messages: [{
-      role: 'user',
-      content: `You are drafting a customer service response for RUBIES, a gender-affirming underwear brand. An order hasn't shipped yet and you need to explain why.
+  if (investigation.hasPreOrderItems) {
+    // Pre-order
+    const preOrderItems = investigation.issues.filter(i => i.type === 'pre_order');
+    parts.push(`${greeting}, when you placed your order you would have seen a message that ${preOrderItems.length === 1 ? preOrderItems[0].item + ' is' : 'some items are'} a pre-order.`);
+    parts.push(`We're still waiting for inventory to arrive at our warehouse.`);
+    parts.push(`If you'd prefer not to wait, just let me know and I can process a refund.`);
+    needsHumanFollowUp = true;
 
-INVESTIGATION RESULTS:
-${JSON.stringify(investigation, null, 2)}
-${alternativeInfo ? `\nAVAILABLE ALTERNATIVES:${alternativeInfo}` : ''}
+  } else if (investigation.hasOutOfStockItems) {
+    // Out of stock
+    const oosItems = investigation.issues.filter(i => i.type === 'out_of_stock');
+    parts.push(`${greeting}, I'm sorry for the delay.`);
+    for (const item of oosItems) {
+      parts.push(`Our warehouse was packing up your order and they let me know the ${item.item} ${item.variant} is out of stock. It seems our website was out of sync with our inventory.`);
+      if (alternatives[item.item]) {
+        const altList = alternatives[item.item].map(a => a.variant).join(', ');
+        parts.push(`We do have ${altList} in stock if you'd like to swap.`);
+      }
+    }
+    if (Object.keys(alternatives).length === 0) {
+      parts.push(`Would you like me to refund the order, or wait until we restock?`);
+    }
+    needsHumanFollowUp = true;
 
-${customerName ? `Customer name: ${customerName}` : 'No customer name — use "Hi!"'}
-${isThirdParty ? `Buying for: ${thirdPartyLabel}` : ''}
+  } else if (investigation.isPartiallyFulfilled) {
+    // Partial fulfillment
+    parts.push(`${greeting}, part of your order has already shipped but some items are still being sorted out.`);
+    parts.push(`I'm looking into the remaining items and will get back to you.`);
+    needsHumanFollowUp = true;
+
+  } else if (investigation.businessDays <= 2) {
+    // Normal processing (within SLA + leeway)
+    const shipDate = addBusinessDays(new Date(), 1);
+    const day = relativeDay(shipDate);
+    const shipPhrase = (day === 'today' || day === 'tomorrow') ? day : `by ${day}`;
+    parts.push(`${greeting}, your order is being prepared and should ship ${shipPhrase}.`);
+    parts.push(`You'll get a shipping confirmation email with tracking once it's on its way.`);
+
+  } else if (investigation.businessDays <= 3) {
+    // Slightly delayed (past 1-day SLA + leeway)
+    const shipDate = addBusinessDays(new Date(), 1);
+    const day = relativeDay(shipDate);
+    const shipPhrase = (day === 'today' || day === 'tomorrow') ? day : `by ${day}`;
+    parts.push(`${greeting}, I'm sorry your order is taking a bit longer than usual to ship.`);
+    parts.push(`I'm looking into it and expect it will go out ${shipPhrase}.`);
+    needsHumanFollowUp = true;
+
+  } else {
+    // Stuck — 3+ business days, should have shipped by now
+    parts.push(`${greeting}, I'm sorry for the delay with your order.`);
+    parts.push(`I will look into this and get back to you soon.`);
+    needsHumanFollowUp = true;
+  }
+
+  const prefix = needsHumanFollowUp && investigation.severity === 'urgent' ? 'ACTION REQUIRED — ' : '';
+  return { text: prefix + parts.join(' '), needsHumanFollowUp };
+}
+
+// ---------------------------------------------------------------------------
+// Draft unfulfilled response — deterministic + light AI polish
+// ---------------------------------------------------------------------------
+
+async function draftUnfulfilledResponse(investigation, context) {
+  const { customerMessage } = context || {};
+  const { text, needsHumanFollowUp } = buildUnfulfilledResponse(investigation, context);
+
+  // If no customer message, deterministic response is good enough
+  if (!customerMessage) return text;
+
+  // Light AI polish — smooth phrasing only, no added content
+  try {
+    const ai = getAI();
+    const response = await ai.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 400,
+      messages: [{
+        role: 'user',
+        content: `Lightly smooth this customer service response so it reads naturally. Jamie (RUBIES founder) is warm and direct.
+
+DRAFT:
+${text}
+
+CUSTOMER MESSAGE:
+"${customerMessage}"
 
 RULES:
-- Be warm and direct — match Jamie's tone (RUBIES founder)
-- If pre-order: let them know it's a pre-order item and give any estimated date if available. Ask if they want to keep waiting or prefer a refund.
-- If out of stock: apologize sincerely. Say "Our warehouse was packing up your order and they let me know the [product] [color] is out of stock. It seems our website was out of sync with our inventory." Suggest an alternative color/variant if available. If no alternatives, offer a refund.
-- If just slow (< 3 business days): reassure them it's being prepared
-- If stuck (> 5 business days): apologize and say you're looking into it
-- If partially fulfilled: explain some items shipped and the rest are being sorted out
+- Keep ALL facts, dates, links, and offers EXACTLY as written — change nothing substantive
+- Only smooth awkward phrasing or combine choppy sentences
+- Do NOT add emotional commentary ("that's frustrating", "I understand how you feel", etc.)
+- Do NOT add filler or padding — shorter is better
 - Do NOT add a sign-off
-- If severity is "urgent", prefix with "ACTION REQUIRED — " (this flags it for human review)
-- Return ONLY the response text`,
-    }],
-  });
-
-  return response.content[0]?.text || "I'm looking into the status of your order and will get back to you shortly.";
+- If the draft already reads fine, return it unchanged
+- Return ONLY the response`,
+      }],
+    });
+    return response.content[0]?.text || text;
+  } catch (e) {
+    return text;
+  }
 }
 
 module.exports = {
   checkInventory,
   analyzeUnfulfilledOrder,
+  buildUnfulfilledResponse,
   draftUnfulfilledResponse,
 };
