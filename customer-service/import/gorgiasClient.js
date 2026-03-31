@@ -223,6 +223,8 @@ function stripHtml(html) {
   return html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|tr|li|h[1-6])>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -230,7 +232,10 @@ function stripHtml(html) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
+    .replace(/&#160;/g, ' ')
+    .replace(/[ \t]+/g, ' ')          // collapse horizontal whitespace only
+    .replace(/\n /g, '\n')            // trim leading space after newline
+    .replace(/\n{3,}/g, '\n\n')       // max 2 consecutive newlines
     .trim();
 }
 

@@ -136,7 +136,7 @@ function renderDetail(d) {
     .map(m => `
       <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
         <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${formatTime(m.created_at)}</div>
-        <div class="msg-body">${esc(m.body).replace(/\n/g, '<br>')}</div>
+        <div class="msg-body">${m.body_html || esc(m.body).replace(/\n/g, '<br>')}</div>
       </div>
     `).join('');
 

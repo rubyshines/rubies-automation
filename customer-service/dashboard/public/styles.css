@@ -281,8 +281,14 @@ main { height: calc(100vh - 56px); }
 
 .msg-body {
   word-break: break-word;
-  white-space: pre-line;
+  overflow: hidden;
 }
+
+.msg-body img { max-width: 100%; height: auto; border-radius: 4px; }
+.msg-body table { font-size: 12px; border-collapse: collapse; }
+.msg-body td, .msg-body th { padding: 2px 6px; }
+.msg-body blockquote { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; color: var(--text-secondary); }
+.msg-body a { color: var(--teal); }
 
 /* ─── Draft Editor ───────────────────────────────────────── */
 
