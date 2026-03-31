@@ -13,10 +13,19 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
-  loadQueue().then(() => {
-    // Restore selected draft from URL hash
+  loadQueue().then(async () => {
+    // Restore selected draft from URL hash (only if still pending)
     const hashId = parseInt(location.hash.replace('#draft-', ''));
-    if (hashId) selectDraft(hashId);
+    if (hashId) {
+      try {
+        const draft = await api(`/api/drafts/${hashId}`);
+        if (draft.status === 'pending') {
+          selectDraft(hashId);
+        } else {
+          location.hash = '';
+        }
+      } catch { location.hash = ''; }
+    }
   });
   loadStats();
   // Auto-refresh every 30s
