@@ -438,38 +438,33 @@ async function apiReplayTicket(body) {
 
 async function apiSimulatorRandom() {
   const supabase = getSupabaseClient();
+  const gorgiasClient = require('../import/gorgiasClient');
 
-  // Pick a random exchange conversation that has order numbers
+  // Pick a random exchange conversation from Supabase (for ticket IDs + metadata)
   const { data: convos } = await supabase
     .from('cs_conversations')
-    .select('id, customer_email, order_numbers, subject, summary, message_count')
+    .select('id, customer_email, order_numbers, subject, summary, message_count, source_id')
     .or('category.eq.exchange_return,tags.cs.{RETURN/EXCHANGE}')
     .not('order_numbers', 'is', null)
-    .gt('message_count', 1)
+    .gt('message_count', 2)
     .limit(100);
 
   if (!convos?.length) throw new Error('No exchange conversations found');
   const convo = convos[Math.floor(Math.random() * convos.length)];
 
-  // Load messages
-  const { data: messages } = await supabase
-    .from('cs_messages')
-    .select('id, sender_type, body_text, created_at')
-    .eq('conversation_id', convo.id)
-    .order('created_at', { ascending: true });
+  // Load messages from Gorgias API (has correct from_agent + stripped_text)
+  const ticketId = convo.source_id || convo.id.replace('gorgias:', '');
+  const messages = await gorgiasClient.getTicketMessages(ticketId);
 
-  // sender_type is unreliable (Gorgias import bug — all marked as 'agent')
-  // Detect customers by sender_name not matching known agent names
-  const agentNames = /RUBIES|Jamie Alexander|Gorgias Bot|care@rubyshines|Customer Care/i;
-
-  // Build the first customer turn: all consecutive customer messages before the first real agent reply
-  // (chatbot interactions produce multiple short messages that should be one turn)
+  // Build first customer turn: all customer messages before the first real agent reply
   const firstTurnParts = [];
-  for (const m of (messages || [])) {
-    const isAgent = agentNames.test(m.sender_name || '');
-    if (isAgent && firstTurnParts.length > 0) break; // first agent reply = end of turn 1
-    if (!isAgent && m.body_text?.trim()) {
-      firstTurnParts.push(m.body_text.trim());
+  for (const m of messages) {
+    const isBot = m.sender?.email?.endsWith('@email.gorgias.com') || m.via === 'rule';
+    const isRealAgent = m.from_agent === true && !isBot;
+    if (isRealAgent && firstTurnParts.length > 0) break;
+    if (m.from_agent === false) {
+      const body = gorgiasClient.stripHtml(m.stripped_text || m.body_text || '').trim();
+      if (body) firstTurnParts.push(body);
     }
   }
 
