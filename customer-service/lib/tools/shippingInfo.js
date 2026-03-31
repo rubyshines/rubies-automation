@@ -529,12 +529,80 @@ async function handleAddressChange({ customer_email, issue_description, _context
   };
 }
 
+// ---------------------------------------------------------------------------
+// Shipping speed change handler (upgrade/downgrade expedited)
+// ---------------------------------------------------------------------------
+
+function buildShippingSpeedResponse(order, context) {
+  const { customerName, customerMessage } = context || {};
+  const greeting = customerName ? `Hi ${customerName}` : 'Hi';
+  const parts = [];
+
+  if (!order) {
+    parts.push(`${greeting}, can you let me know your order number so I can look into this?`);
+    return { text: parts.join(' '), needsHumanFollowUp: true };
+  }
+
+  const isFulfilled = order.displayFulfillmentStatus === 'FULFILLED'
+    || (order.fulfillments && order.fulfillments.length > 0);
+
+  if (isFulfilled) {
+    parts.push(`${greeting}, unfortunately your order has already shipped so we can't change the shipping speed.`);
+    return { text: parts.join(' '), needsHumanFollowUp: false };
+  }
+
+  const wantsDowngrade = /downgrade|normal|standard|slower|change.*from.*expedit|don.?t need.*fast/i.test(customerMessage || '');
+  const wantsUpgrade = /upgrade|expedit|express|fast|rush|need.*sooner|speed.*up/i.test(customerMessage || '');
+
+  if (wantsDowngrade) {
+    parts.push(`${greeting}, no problem — I'll update the shipping speed and refund you the difference.`);
+  } else if (wantsUpgrade) {
+    parts.push(`${greeting}, I can upgrade your order to expedited shipping. I'll get that updated and let you know once it's done.`);
+  } else {
+    parts.push(`${greeting}, I'll look into the shipping on your order and get back to you.`);
+  }
+
+  return { text: parts.join(' '), needsHumanFollowUp: true };
+}
+
+async function handleShippingSpeedChange({ customer_email, issue_description, _context }) {
+  const customerMessage = issue_description || _context?.customerMessage || '';
+  const customerName = _context?.intake?.name || _context?.customer?.firstName || null;
+  const order = _context?.order || null;
+
+  const { text, needsHumanFollowUp } = buildShippingSpeedResponse(order, { customerName, customerMessage });
+
+  const isFulfilled = order && (order.displayFulfillmentStatus === 'FULFILLED'
+    || (order.fulfillments && order.fulfillments.length > 0));
+
+  let md = `## Shipping Speed Change\n\n`;
+  if (order) {
+    md += `**Order:** ${order.name}\n`;
+    md += `**Status:** ${isFulfilled ? 'SHIPPED — cannot change' : 'UNFULFILLED — can update'}\n`;
+  }
+  md += `\n**Customer response:**\n${text}\n`;
+
+  return {
+    content: [{ type: 'text', text: md }],
+    _structured: {
+      status: needsHumanFollowUp ? 'needs_attention' : 'resolved',
+      intake: _context?.intake || null,
+      order: order?.name || null,
+      fulfilled: isFulfilled || false,
+      response: text,
+      rawResponse: text,
+    },
+  };
+}
+
 module.exports = {
   handleShippingInfo,
   handleDutiesInquiry,
   handleAddressChange,
+  handleShippingSpeedChange,
   buildShippingInfoResponse,
   buildDutiesResponse,
   buildAddressChangeResponse,
+  buildShippingSpeedResponse,
   detectCountry,
 };

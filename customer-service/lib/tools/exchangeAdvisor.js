@@ -584,6 +584,17 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         _context: { customer, order: targetOrder, customerMessage: issue_description, intake },
       });
     }
+
+    const isShippingSpeedChange = /expedit|express|fast|rush|overnight|upgrade.*ship|downgrade.*ship|change.*shipping (speed|method)|normal ship|standard ship|slower ship/i.test(msg);
+
+    if (isShippingSpeedChange) {
+      const { handleShippingSpeedChange } = require('./shippingInfo');
+      return handleShippingSpeedChange({
+        customer_email,
+        issue_description,
+        _context: { customer, order: targetOrder, customerMessage: issue_description, intake },
+      });
+    }
   }
 
   // Future routing stubs — acknowledge + route to human
