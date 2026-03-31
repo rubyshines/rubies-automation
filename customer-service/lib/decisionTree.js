@@ -958,7 +958,44 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
     }
   }
 
+  // Consolidate multi-size purchases: when the same product appears in multiple sizes
+  // and the customer says "too tight," only process the largest size (recommend up from there).
+  // If "too loose," only process the smallest size (recommend down from there).
+  const skipItems = new Set();
+  const productSizeGroups = {};
+  for (let idx = 0; idx < classifiedItems.length; idx++) {
+    const ci = classifiedItems[idx];
+    const nick = getProductNickname(ci.product)?.toLowerCase() || ci.product?.toLowerCase();
+    if (!productSizeGroups[nick]) productSizeGroups[nick] = [];
+    productSizeGroups[nick].push({ idx, size: ci.size, issue: ci.issue });
+  }
+  for (const [nick, group] of Object.entries(productSizeGroups)) {
+    if (group.length <= 1) continue;
+    // Multiple sizes of same product — keep only the most relevant one
+    const latestMsg = (intake._latestMessage || '').toLowerCase();
+    const isTight = group.some(g => /tight|small/.test(g.issue || '')) || /too tight|too small/i.test(latestMsg);
+    const sizeList = getSizeList(group[0].size, classifiedItems[group[0].idx].product);
+    if (sizeList) {
+      const sorted = group.sort((a, b) => {
+        const idxA = sizeList.indexOf(normalizeSize(a.size));
+        const idxB = sizeList.indexOf(normalizeSize(b.size));
+        return idxA - idxB;
+      });
+      // Keep the largest if tight (recommend up), smallest if loose (recommend down)
+      const keepIdx = isTight ? sorted[sorted.length - 1].idx : sorted[0].idx;
+      for (const g of group) {
+        if (g.idx !== keepIdx) skipItems.add(g.idx);
+      }
+      prescription.audit.push(`Multi-size ${nick}: keeping ${classifiedItems[keepIdx].size} (${isTight ? 'largest' : 'smallest'}), skipping others`);
+    }
+  }
+
   for (const item of classifiedItems) {
+    // Skip consolidated multi-size items
+    if (skipItems.has(classifiedItems.indexOf(item))) {
+      continue;
+    }
+
     const rx = {
       product: item.product,
       size: item.size,
