@@ -330,6 +330,40 @@ async function closeNoReply() {
   }
 }
 
+async function trainDraft() {
+  if (!currentDraftId) return;
+
+  const response = document.getElementById('draft-editor').value;
+  const notes = document.getElementById('draft-notes').value || undefined;
+
+  const btn = document.getElementById('btn-train');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    await api(`/api/drafts/${currentDraftId}/train`, {
+      method: 'POST',
+      body: { response, notes },
+    });
+    btn.textContent = 'Trained';
+    localStorage.removeItem(`draft-${currentDraftId}`);
+    localStorage.removeItem(`notes-${currentDraftId}`);
+    setTimeout(() => {
+      currentDraftId = null;
+      currentDraft = null;
+      location.hash = '';
+      document.getElementById('detail-placeholder').style.display = 'flex';
+      document.getElementById('detail-content').style.display = 'none';
+      loadQueue();
+      loadStats();
+    }, 1500);
+  } catch (err) {
+    btn.textContent = 'Train';
+    btn.disabled = false;
+    alert('Train failed: ' + err.message);
+  }
+}
+
 async function releaseDraft() {
   if (!currentDraftId) return;
   const notes = document.getElementById('draft-notes').value || undefined;

@@ -231,6 +231,54 @@ async function apiCloseDraft(id, body) {
   return { success: true };
 }
 
+async function apiTrainDraft(id, body) {
+  const supabase = getSupabaseClient();
+
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  const finalResponse = body.response || draft.draft_response;
+  const notes = body.notes || null;
+  const editDist = computeEditDistance(draft.draft_response, finalResponse);
+
+  // Mark draft as trained (not sent — ticket stays in Gorgias as-is)
+  await supabase.from('cs_ai_drafts').update({
+    status: 'sent',
+    sent_response: finalResponse,
+    edit_distance: editDist,
+    feedback_notes: notes,
+    reviewed_at: new Date().toISOString(),
+  }).eq('id', id);
+
+  // Log as training data
+  await supabase.from('cs_ai_feedback_log').insert({
+    draft_id: id,
+    gorgias_ticket_id: draft.gorgias_ticket_id,
+    action: 'trained',
+    original_response: draft.draft_response,
+    final_response: finalResponse,
+    edit_distance: editDist,
+    feedback_notes: notes,
+    advisor_status: draft.advisor_status,
+    confidence: draft.confidence,
+    message_type: draft.message_type,
+    turn_number: draft.turn_number,
+  });
+
+  // Release ticket back to Gorgias (unassign from AI Bot)
+  try {
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+  } catch (err) {
+    console.warn(`[dashboard] Could not unassign ticket: ${err.message}`);
+  }
+
+  return { success: true, edit_distance: editDist };
+}
+
 async function apiReleaseDraft(id, body) {
   const supabase = getSupabaseClient();
 
@@ -620,6 +668,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/send$/, handler: (body, id) => apiSendDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute$/, handler: (body, id) => apiExecuteAction(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/train$/, handler: (body, id) => apiTrainDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
