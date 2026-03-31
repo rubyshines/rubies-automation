@@ -129,7 +129,7 @@ async function apiSendDraft(id, body) {
     console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
   }
 
-  return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, resolved: isResolved };
+  return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, after: afterAction };
 }
 
 async function apiExecuteAction(id) {
