@@ -377,10 +377,7 @@ async function run({ onProgress } = {}) {
       }
     }
 
-    // Format: ensure paragraph breaks and add signature (skip for placeholders)
-    if (!routeToHuman && !draftResponse.startsWith('[AI')) {
-      draftResponse = formatDraftResponse(draftResponse, structured);
-    }
+    // Formatting + signature now handled inside composeAgentResponse (responseComposer.js)
 
     // Compute confidence
     const confidence = routeToHuman ? 'low' : computeConfidence(structured);

@@ -437,7 +437,40 @@ async function composeAgentResponse(s, previousResponses) {
   // AI tone pass
   response = await polishResponse(response, s, previousResponses);
 
+  // Format: ensure paragraph breaks + signature
+  response = formatResponse(response, s);
+
   return response;
+}
+
+// ---------------------------------------------------------------------------
+// formatResponse — ensure paragraph breaks + signature on every response
+// ---------------------------------------------------------------------------
+
+function formatResponse(text, structured) {
+  if (!text || text.startsWith('[AI')) return text;
+
+  // Don't re-format if already has clear paragraph structure
+  const hasMultipleNewlines = (text.match(/\n\n/g) || []).length >= 2;
+  if (hasMultipleNewlines) {
+    return ensureSignature(text, structured);
+  }
+
+  // Greeting line should be its own paragraph
+  let formatted = text;
+  formatted = formatted.replace(/^((?:Hi|Hey|Thanks|Hello)[^.!?]*[.!?])\s+/i, '$1\n\n');
+
+  return ensureSignature(formatted, structured);
+}
+
+function ensureSignature(text, structured) {
+  if (/Jamie Alexander/i.test(text)) return text;
+
+  // "Talk soon" if expecting reply, "Take care" if resolved/complete
+  const isAwaiting = structured?.status === 'needs_info' || structured?.status === 'gathering';
+  const signOff = isAwaiting ? 'Talk soon,' : 'Take care,';
+
+  return text.trimEnd() + '\n\n' + signOff + '\nJamie Alexander, RUBIES Founder';
 }
 
 // ---------------------------------------------------------------------------

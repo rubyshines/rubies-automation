@@ -461,9 +461,23 @@ async function apiSimulatorRandom() {
   // sender_type is unreliable (Gorgias import bug — all marked as 'agent')
   // Detect customers by sender_name not matching known agent names
   const agentNames = /RUBIES|Jamie Alexander|Gorgias Bot|care@rubyshines|Customer Care/i;
-  const customerMessages = (messages || [])
-    .filter(m => !agentNames.test(m.sender_name || '') && m.body_text?.trim())
-    .map(m => ({ body: m.body_text, created_at: m.created_at }));
+
+  // Group consecutive customer messages into single turns
+  // (chatbot interactions produce multiple short messages that should be one turn)
+  const customerMessages = [];
+  let currentGroup = [];
+  for (const m of (messages || [])) {
+    const isCustomer = !agentNames.test(m.sender_name || '') && m.body_text?.trim();
+    if (isCustomer) {
+      currentGroup.push(m.body_text.trim());
+    } else if (currentGroup.length > 0) {
+      customerMessages.push({ body: currentGroup.join('\n'), created_at: m.created_at });
+      currentGroup = [];
+    }
+  }
+  if (currentGroup.length > 0) {
+    customerMessages.push({ body: currentGroup.join('\n'), created_at: (messages || []).at(-1)?.created_at });
+  }
 
   if (!customerMessages.length) throw new Error('No customer messages in this conversation');
 
