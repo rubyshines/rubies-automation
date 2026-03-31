@@ -458,8 +458,11 @@ async function apiSimulatorRandom() {
     .eq('conversation_id', convo.id)
     .order('created_at', { ascending: true });
 
+  // sender_type is unreliable (Gorgias import bug — all marked as 'agent')
+  // Detect customers by sender_name not matching known agent names
+  const agentNames = /RUBIES|Jamie Alexander|Gorgias Bot|care@rubyshines|Customer Care/i;
   const customerMessages = (messages || [])
-    .filter(m => m.sender_type === 'customer')
+    .filter(m => !agentNames.test(m.sender_name || '') && m.body_text?.trim())
     .map(m => ({ body: m.body_text, created_at: m.created_at }));
 
   if (!customerMessages.length) throw new Error('No customer messages in this conversation');
