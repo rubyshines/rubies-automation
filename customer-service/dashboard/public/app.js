@@ -13,6 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
+  // Restore active tab
+  const savedTab = localStorage.getItem('activeTab');
+  if (savedTab && ['queue', 'history', 'test'].includes(savedTab)) switchTab(savedTab);
+
   loadQueue().then(async () => {
     // Restore selected draft from URL hash (only if still pending)
     const hashId = parseInt(location.hash.replace('#draft-', ''));
@@ -55,6 +59,7 @@ function switchTab(tab) {
   document.getElementById('panel-history').style.display = tab === 'history' ? 'block' : 'none';
   document.getElementById('panel-test').style.display = tab === 'test' ? 'block' : 'none';
 
+  localStorage.setItem('activeTab', tab);
   if (tab === 'history') loadHistory();
 }
 
