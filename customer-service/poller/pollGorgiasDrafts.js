@@ -200,6 +200,9 @@ async function run() {
     const latestCustomerMsg = customerMessages[customerMessages.length - 1];
     const latestCustomerMsgId = latestCustomerMsg.id;
 
+    // Skip if ticket is currently closed (but will be picked up if customer reopens it)
+    if (ticket.status === 'closed') { ticketsSkipped++; return; }
+
     // Check if latest message is already from a real agent (not a bot auto-reply)
     const latestMsg = messages[messages.length - 1];
     const isBot = latestMsg.sender?.email?.endsWith('@email.gorgias.com') || latestMsg.via === 'rule';
@@ -266,7 +269,9 @@ async function run() {
         intake: previousIntake || undefined,
       });
     } catch (err) {
-      console.log(`[poller] Advisor skipped ticket ${ticketId}: ${err.message}`);
+      // Advisor crashed (likely missing Shopify customer) — skip, don't create junk draft
+      // TODO: fix null safety in exchangeAdvisor.js so this doesn't crash
+      console.log(`[poller] Advisor error on ticket ${ticketId}: ${err.message}`);
       ticketsSkipped++;
       return;
     }
@@ -293,8 +298,9 @@ async function run() {
       try {
         draftResponse = await composeAgentResponse(structured, previousResponses);
       } catch (composeErr) {
-        draftResponse = `[AI draft failed: ${composeErr.message}]\n\nCustomer message: ${messageText}`;
-        console.warn(`[poller] Compose failed for ticket ${ticketId}: ${composeErr.message} — creating training draft`);
+        console.warn(`[poller] Compose failed for ticket ${ticketId}: ${composeErr.message}`);
+        ticketsSkipped++;
+        return;
       }
     }
 
