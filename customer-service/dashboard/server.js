@@ -462,24 +462,19 @@ async function apiSimulatorRandom() {
   // Detect customers by sender_name not matching known agent names
   const agentNames = /RUBIES|Jamie Alexander|Gorgias Bot|care@rubyshines|Customer Care/i;
 
-  // Group consecutive customer messages into single turns
+  // Build the first customer turn: all consecutive customer messages before the first real agent reply
   // (chatbot interactions produce multiple short messages that should be one turn)
-  const customerMessages = [];
-  let currentGroup = [];
+  const firstTurnParts = [];
   for (const m of (messages || [])) {
-    const isCustomer = !agentNames.test(m.sender_name || '') && m.body_text?.trim();
-    if (isCustomer) {
-      currentGroup.push(m.body_text.trim());
-    } else if (currentGroup.length > 0) {
-      customerMessages.push({ body: currentGroup.join('\n'), created_at: m.created_at });
-      currentGroup = [];
+    const isAgent = agentNames.test(m.sender_name || '');
+    if (isAgent && firstTurnParts.length > 0) break; // first agent reply = end of turn 1
+    if (!isAgent && m.body_text?.trim()) {
+      firstTurnParts.push(m.body_text.trim());
     }
   }
-  if (currentGroup.length > 0) {
-    customerMessages.push({ body: currentGroup.join('\n'), created_at: (messages || []).at(-1)?.created_at });
-  }
 
-  if (!customerMessages.length) throw new Error('No customer messages in this conversation');
+  if (!firstTurnParts.length) throw new Error('No customer messages in this conversation');
+  const firstMessage = firstTurnParts.join('\n');
 
   // Get order details from Shopify
   const orderNumber = convo.order_numbers?.[0];
@@ -491,7 +486,7 @@ async function apiSimulatorRandom() {
     const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
     const result = await advisor.handler({
       customer_email: convo.customer_email,
-      issue_description: customerMessages[0].body,
+      issue_description: firstMessage,
       order_number: orderNumber,
     });
     const s = result._structured;
@@ -511,7 +506,7 @@ async function apiSimulatorRandom() {
 
   return {
     conversation: { id: convo.id, subject: convo.subject, summary: convo.summary, customer_email: convo.customer_email, order_number: orderNumber },
-    firstMessage: customerMessages[0].body,
+    firstMessage,
     orderContext,
     customerContext,
   };
