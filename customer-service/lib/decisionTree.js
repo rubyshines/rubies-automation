@@ -1133,7 +1133,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           } else {
             // Can't calculate delta (different size systems?) — confirm
             rx.state = 'AWAITING_SIZE_CONFIRMATION';
-            rx.response_text = `You'd like to go from ${currentSize} to ${desiredSize} — shall I set that up?`;
+            rx.response_text = `You'd like to go from ${currentSize} to ${desiredSize} — does that sound right to you?`;
             rx.audit = `Specific size requested: ${currentSize} → ${desiredSize} (could not calculate delta — confirming)`;
             prescription.still_needed.push(`size_confirmation for ${item.product}`);
           }
@@ -1283,7 +1283,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             : '';
 
           if (adjacent.length === 1) {
-            rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted} — shall I set that up?${heightNote}`;
+            rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted} — does that sound right to you?${heightNote}`;
           } else {
             rx.response_text = `The next size ${direction} is ${optionDetails[0].formatted}, or ${optionDetails[1].formatted}. Which sounds better?${heightNote}`;
           }
@@ -1428,9 +1428,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         rx.state = 'AWAITING_CLARIFICATION';
         const probeNick = getProductNickname(item.product);
         if (isThirdParty) {
-          rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${probeNick}?`;
+          rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${probeNick} in case I can help with another size or recommend another product?`;
         } else {
-          rx.response_text = `Can you let me know what didn't work out with the ${probeNick}?`;
+          rx.response_text = `Can you let me know what didn't work out with the ${probeNick} in case I can help with another size or recommend another product?`;
         }
         rx.audit = 'Product not working — probing before deciding path';
         prescription.still_needed.push(`clarification for ${item.product}`);
@@ -1728,9 +1728,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         rx.state = 'AWAITING_CLARIFICATION';
         const clarNick = getProductNickname(item.product) || 'item';
         if (isThirdParty) {
-          rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${clarNick}?`;
+          rx.response_text = `Can you let me know what didn't work out for your ${intake.third_party_label || 'child'} with the ${clarNick} in case I can help with another size or recommend another product?`;
         } else {
-          rx.response_text = `Can you let me know what didn't work out with the ${clarNick}?`;
+          rx.response_text = `Can you let me know what didn't work out with the ${clarNick} in case I can help with another size or recommend another product?`;
         }
         rx.audit = 'Unclear issue — asking for clarification';
         prescription.still_needed.push(`clarification for ${item.product || 'item'}`);

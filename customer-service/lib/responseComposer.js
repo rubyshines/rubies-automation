@@ -307,7 +307,7 @@ async function composeAgentResponse(s, previousResponses) {
     const recText = recParts.length === 1 ? recParts[0]
       : recParts.slice(0, -1).join(', ') + ' and ' + recParts[recParts.length - 1];
     const basedOn = mDisplay ? `Based on ${measureRef} measurement of ${mDisplay}, ` : '';
-    parts.push({ type: 'question', text: `${basedOn}I'd recommend ${recText}. Shall I set that up?` });
+    parts.push({ type: 'question', text: `${basedOn}I'd recommend ${recText}. Does that sound right to you?` });
   }
 
   for (const item of otherQuestions) {
@@ -324,7 +324,7 @@ async function composeAgentResponse(s, previousResponses) {
   // ── Compose final response ──
   if (parts.length === 0) {
     if (s.status === 'gathering' || !prescriptionItems.length) {
-      return greeting + "Can you let me know what didn't work out?";
+      return greeting + "Can you let me know what didn't work out in case I can help you with another size or recommend another product?";
     }
     return greeting + (s.prescription.still_needed.length > 0
       ? 'Could you provide: ' + s.prescription.still_needed.join(', ') + '?'
@@ -481,7 +481,13 @@ RULES:
 - Do NOT remove offers of help (e.g. "I can help find the right size" or "we can find an alternative")
 - Do NOT add a sign-off UNLESS the draft already has one (like "Take care,")
 - Do NOT use emojis
+- NEVER use emdashes (—). Use periods or commas instead. Emdashes read as AI-generated.
+- NEVER say "Shall I set that up?" — say "Does that sound right to you?" instead
+- If the customer mentions dysphoria, body image distress, or safety concerns, be EXTRA gentle. Don't ask directly about fit details. Instead say something like "Are you able to tell me anything about the fit in case I can help with another size or recommend another product?"
 - NEVER rearrange the donation/return section. If the draft has an address block (RUBIES Returns / c/o ...), keep it EXACTLY as written including line breaks and ordering. The address block, description, "Your return will be greatly appreciated" line, and "Take care," sign-off must stay in the exact order from the draft.
+- When asking about measurements, ALWAYS ask for BOTH: waist measurement (around the belly, just under the belly button) AND chest measurement (where a bra/bikini band would sit). Never ask for just one.
+- When customer says they emailed before or are following up, acknowledge: "Sorry I must have missed your previous email."
+- When asking what didn't work, always add context: "in case I can help you with another size or recommend another product"
 ${customerName ? `- Customer name: ${customerName}` : '- No customer name detected — use "Hi!" not a name'}
 ${isThirdParty ? `- This is a third-party purchase for their ${thirdPartyLabel} — use appropriate pronouns` : ''}
 
