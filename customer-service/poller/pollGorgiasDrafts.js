@@ -315,13 +315,17 @@ async function run({ onProgress } = {}) {
     }
 
     // Build conversation context from all previous messages
-    // This gives the AI parser full context about what's been discussed
     const conversationContext = buildConversationContext(messages, latestCustomerMsg.id);
 
-    // Combine context + latest message for the advisor
-    const issueDescription = conversationContext
-      ? `[CONVERSATION HISTORY]\n${conversationContext}\n\n[LATEST CUSTOMER MESSAGE]\n${messageText}`
-      : messageText;
+    // Enrich with structured data from previous drafts (if any)
+    const previousDraftContext = await buildPreviousDraftContext(supabase, ticketId);
+
+    // Combine context + previous processing + latest message
+    const contextParts = [];
+    if (conversationContext) contextParts.push(`[CONVERSATION HISTORY]\n${conversationContext}`);
+    if (previousDraftContext) contextParts.push(`[PREVIOUS AI PROCESSING]\n${previousDraftContext}`);
+    contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
+    const issueDescription = contextParts.join('\n\n');
 
     // Run through CS advisor
     console.log(`[poller] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
@@ -449,6 +453,69 @@ async function run({ onProgress } = {}) {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Previous draft context builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build structured context from previous AI drafts for this ticket.
+ * This tells the AI what was already discussed, decided, and sent.
+ */
+async function buildPreviousDraftContext(supabase, ticketId) {
+  const { data: prevDrafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('draft_response, sent_response, structured_output, advisor_status, action_type, action_result, status, feedback_notes')
+    .eq('gorgias_ticket_id', ticketId)
+    .neq('status', 'superseded')
+    .order('created_at', { ascending: true });
+
+  if (!prevDrafts?.length) return null;
+
+  const lines = [];
+  for (const d of prevDrafts) {
+    const s = d.structured_output || {};
+    const items = s.intake?.items || [];
+    const status = d.advisor_status || 'unknown';
+
+    let summary = `Turn (status: ${status})`;
+
+    // What items were identified
+    if (items.length > 0) {
+      const itemDescs = items.map(i => {
+        let desc = `${i.product || '?'} size ${i.size || '?'}`;
+        if (i.issue) desc += ` (${i.issue})`;
+        if (i.resolved_size) desc += ` → resolved to ${i.resolved_size}`;
+        return desc;
+      });
+      summary += ` | Items: ${itemDescs.join(', ')}`;
+    }
+
+    // What measurements were collected
+    if (s.intake?.measurement) summary += ` | Waist: ${s.intake.measurement.value}${s.intake.measurement.unit === 'cm' ? 'cm' : '"'}`;
+    if (s.intake?.chest_measurement) summary += ` | Chest: ${s.intake.chest_measurement.value}${s.intake.chest_measurement.unit === 'cm' ? 'cm' : '"'}`;
+
+    // What action was taken
+    if (d.action_type) summary += ` | Action: ${d.action_type}`;
+    if (d.action_result) summary += ' (executed)';
+
+    // What was actually sent
+    if (d.status === 'sent' && d.sent_response) {
+      const sentPreview = d.sent_response.substring(0, 200);
+      summary += `\nAgent sent: ${sentPreview}`;
+    }
+
+    // Donation info already provided?
+    const donationMentioned = (d.sent_response || d.draft_response || '').toLowerCase();
+    if (donationMentioned.includes('donate') || donationMentioned.includes('rubies returns')) {
+      summary += '\n[Donation/return info was already provided to customer]';
+    }
+
+    lines.push(summary);
+  }
+
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------

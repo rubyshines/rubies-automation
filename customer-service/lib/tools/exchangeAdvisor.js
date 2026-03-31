@@ -185,6 +185,7 @@ IMPORTANT:
   - If the customer already explained the issue in previous messages and is now confirming or insisting → set is_confirmation = true or capture their intent accurately
   - If the agent already asked about sizing and the customer is providing measurements → extract the measurements
   - If the customer says they "emailed before" or "following up" → note this in "notes" field
+  - A [PREVIOUS AI PROCESSING] section may show what was already parsed, decided, and sent in earlier turns. Use this to avoid re-asking questions or re-recommending sizes. If donation info was already provided, don't repeat it.
   - Focus on the [LATEST CUSTOMER MESSAGE] for the actual request, but use history for context
   - NEVER ask the customer to repeat information they already provided in the conversation history
   - If the customer already confirmed they want a return/refund in previous messages, set customer_intent = "refund" and message_type = "refund"
