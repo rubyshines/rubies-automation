@@ -947,6 +947,15 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
   const isThirdParty = intake.buying_for === 'third_party';
   const useInches = context.isNorthAmerica;
 
+  // Detect repeat exchanges — customer already received an exchange for this product before
+  const previousExchangeProducts = new Set();
+  for (const ex of (context.exchanges || [])) {
+    for (const li of (ex.lineItems || ex.items || [])) {
+      const title = (li.title || li).toLowerCase();
+      previousExchangeProducts.add(title);
+    }
+  }
+
   for (const item of classifiedItems) {
     const rx = {
       product: item.product,
@@ -1246,10 +1255,21 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
                 }
               }
 
-              rx.state = 'AWAITING_SIZE_CONFIRMATION';
-              if (isSizeChartException) {
-                rx.response_text = `Sorry to hear the ${currentSize} didn't work out. The sizing chart works for most but there can be exceptions. I'd recommend a size ${recommendedSize} for the ${nick}. Does that sound right to you?`;
+              // Check if this is a repeat exchange — auto-confirm instead of asking
+              const isRepeatExchange = isSizeChartException || previousExchangeProducts.has(item.product?.toLowerCase()) ||
+                [...previousExchangeProducts].some(p => p.includes((getProductNickname(item.product) || '').toLowerCase()));
+
+              if (isRepeatExchange || isSizeChartException) {
+                // Auto-confirm — don't ask, just do it
+                rx.state = 'CONFIRMED';
+                if (intakeItem) intakeItem.resolved_size = recommendedSize;
+                if (!intake.resolution_sizes.some(r => r.product === item.product)) {
+                  intake.resolution_sizes.push({ product: item.product, from_size: currentSize, to_size: recommendedSize });
+                }
+                rx.response_text = `Sorry to hear the ${currentSize} didn't work out. The sizing chart works for most but there can be exceptions. I'm going to send over a size ${recommendedSize} for the ${nick}.`;
+                rx.audit = (rx.audit || `Measurement → ${recommendedSize}`) + ` (repeat exchange — auto-confirmed)`;
               } else {
+                rx.state = 'AWAITING_SIZE_CONFIRMATION';
                 const measureRef = isThirdParty ? `your ${intake.third_party_label || "child"}'s` : 'the';
                 rx.response_text = `Based on ${measureRef} measurement of ${m.value} ${mUnit}, I'd recommend a size ${recommendedSize} for the ${nick}. Does that sound right to you?`;
               }
@@ -1289,6 +1309,17 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           }
           rx.response_text = null; // Will be handled by order creation
           rx.audit = `High confidence ("${isABit ? 'a bit' : 'next size'}") — auto-confirmed: ${currentSize} → ${next} (${delta.inches}" delta)`;
+        } else if (previousExchangeProducts.has(item.product?.toLowerCase()) ||
+          [...previousExchangeProducts].some(p => p.includes((getProductNickname(item.product) || '').toLowerCase()))) {
+          // Repeat exchange — auto-confirm the next size, don't ask
+          const next = adjacent[0];
+          rx.state = 'CONFIRMED';
+          if (intakeItem) intakeItem.resolved_size = next;
+          if (!intake.resolution_sizes.some(r => r.product === item.product)) {
+            intake.resolution_sizes.push({ product: item.product, from_size: currentSize, to_size: next });
+          }
+          rx.response_text = `Sorry to hear the ${currentSize} didn't work out. The sizing chart works for most but there can be exceptions. I'm going to send over a size ${next} for the ${nick}.`;
+          rx.audit = `Repeat exchange — auto-confirmed: ${currentSize} → ${next}`;
         } else {
           // Lower confidence — offer options, ask to confirm
           rx.state = 'AWAITING_SIZE_CONFIRMATION';
