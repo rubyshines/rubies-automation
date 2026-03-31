@@ -595,14 +595,70 @@ async function handleShippingSpeedChange({ customer_email, issue_description, _c
   };
 }
 
-module.exports = {
-  handleShippingInfo,
-  handleDutiesInquiry,
-  handleAddressChange,
-  handleShippingSpeedChange,
-  buildShippingInfoResponse,
-  buildDutiesResponse,
-  buildAddressChangeResponse,
-  buildShippingSpeedResponse,
-  detectCountry,
-};
+// ---------------------------------------------------------------------------
+// MCP Tool definition
+// ---------------------------------------------------------------------------
+
+const tools = [
+  {
+    name: 'shipping_info',
+    description: [
+      'Answer shipping questions: availability, rates, delivery times, duties, address changes, speed changes.',
+      'Routes internally based on the question type.',
+      'Use cs_advisor for full conversation flow — this tool is for direct lookups.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer_email: { type: 'string', description: 'Customer email (used to find orders for address/speed changes)' },
+        question: { type: 'string', description: 'The customer\'s shipping question' },
+        order_number: { type: 'string', description: 'Order number (for address/speed changes)' },
+      },
+      required: ['question'],
+    },
+    handler: async ({ customer_email, question, order_number }) => {
+      // Build minimal context
+      let customer = null;
+      let order = null;
+      if (customer_email || order_number) {
+        const { buildContext } = require('../contextBuilder');
+        const ctx = await buildContext({ customer_email, order_number });
+        customer = ctx.customer;
+        order = ctx.targetOrder;
+      }
+
+      const msg = (question || '').toLowerCase();
+
+      // Route by question type
+      const isDuties = /dut(y|ies)|customs|import (cost|fee|tax|charge)|aduana/i.test(msg) && /paid|charged|pay|reimburse|refund|receipt/i.test(msg);
+      const isAddress = /address|wrong (city|zip|street|house)|shipped to.*(old|wrong)/i.test(msg);
+      const isSpeed = /expedit|express|fast|rush|overnight|upgrade.*ship|downgrade.*ship|change.*shipping/i.test(msg);
+
+      if (isDuties) {
+        return handleDutiesInquiry({ customer_email, issue_description: question, _context: { customer, order, customerMessage: question, intake: {}, customerCountry: customer?.defaultAddress?.countryCodeV2 } });
+      }
+      if (isAddress) {
+        return handleAddressChange({ customer_email, issue_description: question, _context: { customer, order, customerMessage: question, intake: {} } });
+      }
+      if (isSpeed) {
+        return handleShippingSpeedChange({ customer_email, issue_description: question, _context: { customer, order, customerMessage: question, intake: {} } });
+      }
+
+      // Default: shipping info (availability, cost, time)
+      return handleShippingInfo({ customer_email, issue_description: question, _context: { customer, customerMessage: question, intake: {} } });
+    },
+  },
+];
+
+// Export both as tool array (for server.js) and named functions (for internal routing)
+tools.handleShippingInfo = handleShippingInfo;
+tools.handleDutiesInquiry = handleDutiesInquiry;
+tools.handleAddressChange = handleAddressChange;
+tools.handleShippingSpeedChange = handleShippingSpeedChange;
+tools.buildShippingInfoResponse = buildShippingInfoResponse;
+tools.buildDutiesResponse = buildDutiesResponse;
+tools.buildAddressChangeResponse = buildAddressChangeResponse;
+tools.buildShippingSpeedResponse = buildShippingSpeedResponse;
+tools.detectCountry = detectCountry;
+
+module.exports = tools;
