@@ -477,6 +477,13 @@ main { height: calc(100vh - 56px); }
 }
 .btn-close:hover { background: #116d33; }
 
+.btn-dismiss {
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+}
+.btn-dismiss:hover { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+
 .btn-action {
   background: var(--teal);
   color: white;
@@ -501,6 +508,7 @@ main { height: calc(100vh - 56px); }
 .badge-ready { background: var(--green-bg); color: var(--green); }
 .badge-needs_info { background: var(--yellow-bg); color: var(--yellow); }
 .badge-gathering { background: var(--surface-inset); color: var(--text-tertiary); }
+.badge-route_to_human { background: #fce4ec; color: #c62828; }
 .badge-follow_up { background: #ede9fe; color: #6d28d9; }
 
 /* ─── Audit Trail ────────────────────────────────────────── */

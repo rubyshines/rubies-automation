@@ -195,6 +195,41 @@ async function apiExecuteAction(id) {
   return results;
 }
 
+async function apiCloseDraft(id, body) {
+  const supabase = getSupabaseClient();
+
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts')
+    .select('gorgias_ticket_id')
+    .eq('id', id)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  // Close ticket + unassign from AI Bot
+  try {
+    await gorgias.closeTicket(draft.gorgias_ticket_id);
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+  } catch (err) {
+    console.warn(`[dashboard] Could not close/unassign ticket: ${err.message}`);
+  }
+
+  await supabase.from('cs_ai_drafts').update({
+    status: 'sent',
+    feedback_notes: body.notes || 'Closed without reply',
+    reviewed_at: new Date().toISOString(),
+    sent_at: new Date().toISOString(),
+  }).eq('id', id);
+
+  await supabase.from('cs_ai_feedback_log').insert({
+    draft_id: id,
+    gorgias_ticket_id: draft.gorgias_ticket_id,
+    action: 'closed_no_reply',
+    feedback_notes: body.notes || null,
+  });
+
+  return { success: true };
+}
+
 async function apiReleaseDraft(id, body) {
   const supabase = getSupabaseClient();
 
@@ -305,6 +340,7 @@ const paramRoutes = [
   { method: 'GET', pattern: /^\/api\/drafts\/(\d+)$/, handler: (_, id) => apiGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/send$/, handler: (body, id) => apiSendDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute$/, handler: (body, id) => apiExecuteAction(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
 ];
 

@@ -290,6 +290,35 @@ async function executeAction() {
   }
 }
 
+async function closeNoReply() {
+  if (!currentDraftId) return;
+  const notes = document.getElementById('draft-notes').value || undefined;
+
+  const btn = document.getElementById('btn-close-only');
+  btn.disabled = true;
+  btn.textContent = 'Closing...';
+
+  try {
+    await api(`/api/drafts/${currentDraftId}/close`, {
+      method: 'POST',
+      body: { notes },
+    });
+    localStorage.removeItem(`draft-${currentDraftId}`);
+    localStorage.removeItem(`notes-${currentDraftId}`);
+    currentDraftId = null;
+    currentDraft = null;
+    location.hash = '';
+    document.getElementById('detail-placeholder').style.display = 'flex';
+    document.getElementById('detail-content').style.display = 'none';
+    loadQueue();
+    loadStats();
+  } catch (err) {
+    btn.textContent = 'Close';
+    btn.disabled = false;
+    alert('Close failed: ' + err.message);
+  }
+}
+
 async function releaseDraft() {
   if (!currentDraftId) return;
   const notes = document.getElementById('draft-notes').value || undefined;

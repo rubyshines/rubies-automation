@@ -277,31 +277,34 @@ async function run() {
       return;
     }
 
-    // Check if AI can handle this type
+    // Check if AI can handle this type or if it needs manual response
     const routeToHuman = structured.status === 'route_to_human'
       || (structured.error && !structured.intake);
-    if (routeToHuman) {
-      console.log(`[poller] Ticket ${ticketId} routed to human — skipping`);
-      ticketsSkipped++;
-      return;
-    }
 
-    // Compose the draft response
+    // Compose the draft response (or placeholder for route-to-human)
     const previousResponses = [];
     let draftResponse;
-    try {
-      draftResponse = await composeAgentResponse(structured, previousResponses);
-    } catch (composeErr) {
-      console.warn(`[poller] Compose failed for ticket ${ticketId}: ${composeErr.message}`);
-      ticketsSkipped++;
-      return;
+    if (routeToHuman) {
+      // Can't auto-draft — create placeholder for training data capture
+      const routeReason = structured.results?.[0]?.summary || structured.error || 'Unhandled message type';
+      draftResponse = `[AI could not draft a response — needs manual reply]\n\nRoute reason: ${routeReason}\n\nCustomer message: ${messageText}`;
+      console.log(`[poller] Ticket ${ticketId} routed to human — creating training draft`);
+    } else {
+      try {
+        draftResponse = await composeAgentResponse(structured, previousResponses);
+      } catch (composeErr) {
+        draftResponse = `[AI draft failed: ${composeErr.message}]\n\nCustomer message: ${messageText}`;
+        console.warn(`[poller] Compose failed for ticket ${ticketId}: ${composeErr.message} — creating training draft`);
+      }
     }
 
-    // Format: ensure paragraph breaks and add signature if missing
-    draftResponse = formatDraftResponse(draftResponse, structured);
+    // Format: ensure paragraph breaks and add signature (skip for placeholders)
+    if (!routeToHuman && !draftResponse.startsWith('[AI')) {
+      draftResponse = formatDraftResponse(draftResponse, structured);
+    }
 
     // Compute confidence
-    const confidence = computeConfidence(structured);
+    const confidence = routeToHuman ? 'low' : computeConfidence(structured);
 
     // Build conversation history snapshot
     const conversationHistory = messages.map(m => ({
