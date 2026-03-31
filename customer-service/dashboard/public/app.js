@@ -133,12 +133,15 @@ function renderDetail(d) {
   const history = d.conversation_history || [];
   document.getElementById('conversation-thread').innerHTML = history
     .filter(m => m.channel !== 'internal-note')
-    .map(m => `
-      <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
-        <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${formatTime(m.created_at)}</div>
-        <div class="msg-body">${m.body_html || esc(m.body).replace(/\n/g, '<br>')}</div>
-      </div>
-    `).join('');
+    .map(m => {
+      const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
+      const processed = collapseQuotedContent(rawHtml);
+      return `
+        <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
+          <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${formatTime(m.created_at)}</div>
+          <div class="msg-body">${processed}</div>
+        </div>`;
+    }).join('');
 
   // Draft editor — restore autosaved edits if any
   const savedDraft = localStorage.getItem(`draft-${d.id}`);
@@ -387,6 +390,74 @@ function notifyNewDrafts(drafts) {
     const n = new Notification(title, { body, tag: `draft-${d.id}` });
     n.onclick = () => { window.focus(); selectDraft(d.id); n.close(); };
   }
+}
+
+/**
+ * Detect forwarded/quoted content in email HTML and wrap it in a collapsible toggle.
+ * Patterns: "Begin forwarded message:", "---------- Forwarded message",
+ * "On [date], [name] wrote:", Gmail blockquotes, <blockquote type="cite">
+ */
+function collapseQuotedContent(html) {
+  if (!html) return html;
+
+  // Pattern 1: <blockquote type="cite"> — wrap all consecutive cite blockquotes
+  // Split at the first blockquote[type=cite] and collapse everything after
+  const citeMatch = html.match(/(<blockquote[^>]*type=["']cite["'][^>]*>)/i);
+  if (citeMatch) {
+    const idx = html.indexOf(citeMatch[0]);
+    // Walk backwards to include "Begin forwarded message:" or "On ... wrote:" text
+    const before = html.substring(0, idx);
+    const triggerPatterns = [
+      /Begin forwarded message:\s*(<br\s*\/?>|\s)*/i,
+      /-{5,}\s*Forwarded message\s*-{5,}\s*(<br\s*\/?>|\s)*/i,
+      /On\s.{10,80}\swrote:\s*(<br\s*\/?>|\s)*/i,
+      /Sent from .{5,40}\s*(<br\s*\/?>|\s)*/i,
+    ];
+    let splitIdx = idx;
+    for (const pat of triggerPatterns) {
+      const m = before.match(pat);
+      if (m) {
+        const patIdx = before.lastIndexOf(m[0]);
+        if (patIdx >= 0 && patIdx < splitIdx) splitIdx = patIdx;
+      }
+    }
+    const mainContent = html.substring(0, splitIdx);
+    const quotedContent = html.substring(splitIdx);
+    if (quotedContent.length > 100) {
+      return mainContent + buildToggle(quotedContent);
+    }
+  }
+
+  // Pattern 2: text-based markers without blockquote tags
+  const textMarkers = [
+    { re: /Begin forwarded message:\s*(<br\s*\/?>|\n)*/i, label: 'forwarded message' },
+    { re: /-{5,}\s*Forwarded message\s*-{5,}/i, label: 'forwarded message' },
+    { re: /On\s(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d).{10,80}\swrote:/i, label: 'quoted reply' },
+  ];
+  for (const { re, label } of textMarkers) {
+    const m = html.match(re);
+    if (m) {
+      const idx = html.indexOf(m[0]);
+      const mainContent = html.substring(0, idx);
+      const quotedContent = html.substring(idx);
+      if (quotedContent.length > 100 && mainContent.length > 20) {
+        return mainContent + buildToggle(quotedContent, label);
+      }
+    }
+  }
+
+  return html;
+}
+
+function buildToggle(content, label) {
+  const id = 'qt-' + Math.random().toString(36).substring(2, 8);
+  return `<div class="quoted-toggle">
+    <button class="quoted-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')" type="button">
+      <span class="quoted-dots">...</span>
+      <span class="quoted-label">Show quoted content</span>
+    </button>
+    <div class="quoted-content">${content}</div>
+  </div>`;
 }
 
 function formatAddress(a) {

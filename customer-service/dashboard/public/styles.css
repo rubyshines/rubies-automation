@@ -284,6 +284,61 @@ main { height: calc(100vh - 56px); }
   overflow: hidden;
 }
 
+/* Quoted/forwarded content collapse */
+.quoted-toggle {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.quoted-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  transition: all 0.15s ease;
+}
+
+.quoted-toggle-btn:hover {
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
+}
+
+.quoted-dots {
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.quoted-content {
+  display: none;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--surface-inset);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--border-strong);
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.quoted-toggle.expanded .quoted-content { display: block; }
+
+.quoted-toggle.expanded .quoted-label { display: none; }
+.quoted-toggle.expanded .quoted-dots::after { content: 'Hide'; font-weight: 500; letter-spacing: normal; font-size: 11px; margin-left: 2px; }
+.quoted-toggle.expanded .quoted-dots { letter-spacing: normal; }
+
 .msg-body img { max-width: 100%; height: auto; border-radius: 4px; }
 .msg-body table { font-size: 12px; border-collapse: collapse; }
 .msg-body td, .msg-body th { padding: 2px 6px; }
