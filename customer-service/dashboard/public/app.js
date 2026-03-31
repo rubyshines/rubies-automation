@@ -53,6 +53,7 @@ function switchTab(tab) {
 
   document.getElementById('panel-queue').style.display = tab === 'queue' ? 'flex' : 'none';
   document.getElementById('panel-history').style.display = tab === 'history' ? 'block' : 'none';
+  document.getElementById('panel-test').style.display = tab === 'test' ? 'block' : 'none';
 
   if (tab === 'history') loadHistory();
 }
@@ -563,6 +564,111 @@ function collapseQuotedContent(html) {
     <div class="quoted-content">${quotedHtml}</div>
   </div>`;
 }
+
+// ---------------------------------------------------------------------------
+// Test tab
+// ---------------------------------------------------------------------------
+
+async function runTest() {
+  const email = document.getElementById('test-email').value.trim();
+  const order = document.getElementById('test-order').value.trim() || undefined;
+  const rawMessages = document.getElementById('test-messages').value.trim();
+  if (!email || !rawMessages) return alert('Enter customer email and at least one message');
+
+  const messages = rawMessages.split('\n').filter(l => l.trim());
+
+  document.getElementById('test-placeholder').style.display = 'none';
+  document.getElementById('test-results').style.display = 'block';
+  document.getElementById('test-results').innerHTML = '<div class="test-summary"><h3>Running test...</h3></div>';
+
+  try {
+    const result = await api('/api/test', {
+      method: 'POST',
+      body: { customer_email: email, messages, order_number: order },
+    });
+    renderTestResults(result.turns, null);
+  } catch (err) {
+    document.getElementById('test-results').innerHTML = `<div class="test-summary" style="color:var(--red)">Test failed: ${esc(err.message)}</div>`;
+  }
+}
+
+async function replayTicket() {
+  const ticketId = document.getElementById('test-ticket-id').value.trim();
+  if (!ticketId) return alert('Enter a Gorgias ticket ID');
+
+  document.getElementById('test-placeholder').style.display = 'none';
+  document.getElementById('test-results').style.display = 'block';
+  document.getElementById('test-results').innerHTML = '<div class="test-summary"><h3>Replaying ticket...</h3></div>';
+
+  try {
+    const result = await api('/api/replay', {
+      method: 'POST',
+      body: { ticket_id: parseInt(ticketId) },
+    });
+    renderTestResults(result.turns, result.customer_email);
+  } catch (err) {
+    document.getElementById('test-results').innerHTML = `<div class="test-summary" style="color:var(--red)">Replay failed: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderTestResults(turns, customerEmail) {
+  const container = document.getElementById('test-results');
+  let html = '';
+
+  if (customerEmail) {
+    html += `<div class="test-summary"><h3>Replay: ${esc(customerEmail)}</h3><p>${turns.length} turns</p></div>`;
+  }
+
+  for (let i = 0; i < turns.length; i++) {
+    const t = turns[i];
+    const hasActual = t.actual_response != null;
+
+    html += `<div class="test-turn">`;
+    html += `<div class="test-turn-header">Turn ${i + 1} <span class="badge badge-${t.status || 'gathering'}" style="margin-left:8px">${t.status || '?'}</span></div>`;
+    html += `<div class="test-customer-msg">${esc(t.customer_message)}</div>`;
+    html += `<div class="test-turn-body">`;
+
+    // AI response
+    html += `<div class="test-turn-side">`;
+    html += `<div class="test-side-label">AI Draft</div>`;
+    html += esc(t.ai_response || '(no response)').replace(/\n/g, '<br>');
+    html += `</div>`;
+
+    // Actual response (only in replay mode)
+    if (hasActual) {
+      html += `<div class="test-turn-side">`;
+      html += `<div class="test-side-label">Jamie's Actual Reply</div>`;
+      html += esc(t.actual_response).replace(/\n/g, '<br>');
+      html += `</div>`;
+    }
+
+    html += `</div>`; // end turn-body
+
+    // Audit trail (collapsed)
+    if (t.audit?.length) {
+      html += `<details class="test-audit"><summary style="cursor:pointer;font-weight:600">Audit (${t.audit.length} steps)</summary>`;
+      html += esc(t.audit.join('\n'));
+      html += `</details>`;
+    }
+
+    html += `</div>`; // end test-turn
+  }
+
+  container.innerHTML = html;
+}
+
+function clearTest() {
+  document.getElementById('test-email').value = '';
+  document.getElementById('test-order').value = '';
+  document.getElementById('test-messages').value = '';
+  document.getElementById('test-ticket-id').value = '';
+  document.getElementById('test-placeholder').style.display = 'block';
+  document.getElementById('test-results').style.display = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function formatAddress(a) {
   if (!a) return '';

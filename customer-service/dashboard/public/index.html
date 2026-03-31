@@ -22,6 +22,7 @@
     <nav>
       <button class="tab active" data-tab="queue" onclick="switchTab('queue')">Queue</button>
       <button class="tab" data-tab="history" onclick="switchTab('history')">History</button>
+      <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
     </nav>
   </header>
 
@@ -98,6 +99,53 @@
         </thead>
         <tbody id="history-body"></tbody>
       </table>
+    </div>
+    <!-- Test panel -->
+    <div id="panel-test" class="panel" style="display:none">
+      <div class="test-layout">
+        <!-- Test input -->
+        <div class="test-input-section">
+          <div class="detail-section">
+            <h3 style="margin-bottom:12px">Test Scenario</h3>
+            <div style="display:flex;gap:12px;margin-bottom:12px">
+              <div style="flex:1">
+                <label class="label">Customer Email</label>
+                <input id="test-email" type="email" placeholder="customer@example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+              </div>
+              <div style="flex:1">
+                <label class="label">Order # (optional)</label>
+                <input id="test-order" type="text" placeholder="e.g. 29238" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+              </div>
+            </div>
+            <label class="label">Customer Messages (one per line, or paste a conversation)</label>
+            <textarea id="test-messages" rows="4" placeholder="the AJ is too tight around the waist&#10;yes size 14 please" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset);resize:vertical"></textarea>
+            <div class="btn-row" style="margin-top:10px">
+              <button class="btn btn-primary" onclick="runTest()">Run Test</button>
+              <button class="btn btn-secondary" onclick="clearTest()">Clear</button>
+            </div>
+          </div>
+
+          <!-- Replay section -->
+          <div class="detail-section">
+            <h3 style="margin-bottom:12px">Replay Gorgias Conversation</h3>
+            <div style="display:flex;gap:12px;align-items:end">
+              <div style="flex:1">
+                <label class="label">Gorgias Ticket ID</label>
+                <input id="test-ticket-id" type="text" placeholder="e.g. 90842753" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+              </div>
+              <button class="btn btn-action" onclick="replayTicket()">Replay</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Test results -->
+        <div class="test-results-section">
+          <div id="test-placeholder" class="detail-section" style="text-align:center;color:var(--text-tertiary);padding:40px">
+            Run a test or replay a conversation to see results
+          </div>
+          <div id="test-results" style="display:none"></div>
+        </div>
+      </div>
     </div>
   </main>
 

@@ -305,6 +305,133 @@ async function apiGetStats() {
   };
 }
 
+async function apiRunTest(body) {
+  const { customer_email, messages, order_number } = body;
+  if (!customer_email || !messages?.length) throw new Error('Provide customer_email and messages array');
+
+  // Use the conversation tester handler directly
+  const testerTools = require('../lib/tools/conversationTester');
+  const tester = testerTools.find(t => t.name === 'test_cs_conversation');
+  const result = await tester.handler({ customer_email, messages, order_number });
+
+  // Also get the raw structured data for each turn by running advisor directly
+  const advisorTools = require('../lib/tools/exchangeAdvisor');
+  const advisor = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor'));
+
+  const turns = [];
+  let intake = null;
+  for (const msg of messages) {
+    try {
+      const advResult = await advisor.handler({
+        customer_email,
+        issue_description: msg,
+        order_number: order_number || undefined,
+        intake,
+      });
+      const s = advResult._structured;
+      if (s) intake = s.intake;
+
+      const { composeAgentResponse } = require('../lib/responseComposer');
+      let draft = '';
+      try {
+        const prevResponses = turns.map(t => t.ai_response).filter(Boolean);
+        draft = await composeAgentResponse(s, prevResponses);
+      } catch (e) {
+        draft = `[Compose error: ${e.message}]`;
+      }
+
+      turns.push({
+        customer_message: msg,
+        ai_response: draft,
+        status: s?.status,
+        confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+        audit: s?.audit || [],
+        intake: s?.intake,
+        prescription: s?.prescription,
+      });
+    } catch (e) {
+      turns.push({
+        customer_message: msg,
+        ai_response: `[Error: ${e.message}]`,
+        status: 'error',
+        confidence: 'low',
+        audit: [],
+      });
+    }
+  }
+
+  return { turns, tester_output: result.content?.[0]?.text };
+}
+
+async function apiReplayTicket(body) {
+  const { ticket_id } = body;
+  if (!ticket_id) throw new Error('Provide ticket_id');
+
+  const gorgiasClient = require('../import/gorgiasClient');
+  const ticket = await gorgiasClient.getTicket(ticket_id);
+  const messages = await gorgiasClient.getTicketMessages(ticket_id);
+  const customerEmail = ticket.customer?.email;
+  if (!customerEmail) throw new Error('No customer email on ticket');
+
+  // Extract customer messages in order
+  const customerMsgs = messages
+    .filter(m => m.from_agent === false)
+    .map(m => gorgiasClient.stripHtml(m.stripped_text || m.body_text || ''));
+
+  // Extract agent (Jamie's) actual responses
+  const agentMsgs = messages
+    .filter(m => m.from_agent === true && !m.sender?.email?.endsWith('@email.gorgias.com'))
+    .map(m => gorgiasClient.stripHtml(m.stripped_text || m.body_text || ''));
+
+  // Run the AI on each customer message
+  const advisorTools = require('../lib/tools/exchangeAdvisor');
+  const advisor = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor'));
+
+  const turns = [];
+  let intake = null;
+  for (let i = 0; i < customerMsgs.length; i++) {
+    const msg = customerMsgs[i];
+    const actualReply = agentMsgs[i] || null;
+
+    try {
+      const advResult = await advisor.handler({
+        customer_email: customerEmail,
+        issue_description: msg,
+        intake,
+      });
+      const s = advResult._structured;
+      if (s) intake = s.intake;
+
+      const { composeAgentResponse } = require('../lib/responseComposer');
+      let draft = '';
+      try {
+        const prevResponses = turns.map(t => t.ai_response).filter(Boolean);
+        draft = await composeAgentResponse(s, prevResponses);
+      } catch (e) {
+        draft = `[Compose error: ${e.message}]`;
+      }
+
+      turns.push({
+        customer_message: msg,
+        ai_response: draft,
+        actual_response: actualReply,
+        status: s?.status,
+        audit: s?.audit || [],
+      });
+    } catch (e) {
+      turns.push({
+        customer_message: msg,
+        ai_response: `[Error: ${e.message}]`,
+        actual_response: actualReply,
+        status: 'error',
+        audit: [],
+      });
+    }
+  }
+
+  return { ticket_id, customer_email: customerEmail, turns };
+}
+
 async function apiTriggerPoll() {
   const { run } = require('../poller/pollGorgiasDrafts');
   return run();
@@ -365,6 +492,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute$/, handler: (body, id) => apiExecuteAction(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
+  { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
 ];
 
 async function handleRequest(req, res) {
