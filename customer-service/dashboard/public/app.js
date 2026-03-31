@@ -330,6 +330,38 @@ async function closeNoReply() {
   }
 }
 
+async function refreshDraft() {
+  if (!currentDraftId) return;
+
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled = true;
+  btn.textContent = 'Regenerating...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/refresh`, { method: 'POST', body: {} });
+    document.getElementById('draft-editor').value = result.draft_response;
+    localStorage.setItem(`draft-${currentDraftId}`, result.draft_response);
+
+    if (result.structured?.status) {
+      const conf = result.structured.status === 'ready' ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
+      document.getElementById('detail-confidence').textContent = conf;
+      document.getElementById('detail-confidence').className = `badge badge-${conf}`;
+      document.getElementById('detail-status-badge').textContent = result.structured.status;
+      document.getElementById('detail-status-badge').className = `badge badge-${result.structured.status}`;
+    }
+    if (result.structured?.audit) {
+      document.getElementById('audit-trail').textContent = result.structured.audit.join('\n');
+    }
+
+    btn.textContent = 'Refreshed';
+    setTimeout(() => { btn.textContent = 'Refresh'; btn.disabled = false; }, 2000);
+  } catch (err) {
+    btn.textContent = 'Refresh';
+    btn.disabled = false;
+    alert('Refresh failed: ' + err.message);
+  }
+}
+
 async function trainDraft() {
   if (!currentDraftId) return;
 
@@ -346,17 +378,7 @@ async function trainDraft() {
       body: { response, notes },
     });
     btn.textContent = 'Trained';
-    localStorage.removeItem(`draft-${currentDraftId}`);
-    localStorage.removeItem(`notes-${currentDraftId}`);
-    setTimeout(() => {
-      currentDraftId = null;
-      currentDraft = null;
-      location.hash = '';
-      document.getElementById('detail-placeholder').style.display = 'flex';
-      document.getElementById('detail-content').style.display = 'none';
-      loadQueue();
-      loadStats();
-    }, 1500);
+    setTimeout(() => { btn.textContent = 'Train'; btn.disabled = false; }, 2000);
   } catch (err) {
     btn.textContent = 'Train';
     btn.disabled = false;

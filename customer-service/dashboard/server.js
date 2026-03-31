@@ -245,11 +245,8 @@ async function apiTrainDraft(id, body) {
   const notes = body.notes || null;
   const editDist = computeEditDistance(draft.draft_response, finalResponse);
 
-  // Mark draft as trained (not sent — ticket stays in Gorgias as-is)
+  // Keep draft as pending — Train just logs training data, draft stays in queue for Refresh
   await supabase.from('cs_ai_drafts').update({
-    status: 'sent',
-    sent_response: finalResponse,
-    edit_distance: editDist,
     feedback_notes: notes,
     reviewed_at: new Date().toISOString(),
   }).eq('id', id);
@@ -269,14 +266,69 @@ async function apiTrainDraft(id, body) {
     turn_number: draft.turn_number,
   });
 
-  // Release ticket back to Gorgias (unassign from AI Bot)
-  try {
-    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-  } catch (err) {
-    console.warn(`[dashboard] Could not unassign ticket: ${err.message}`);
-  }
+  // Ticket stays assigned to AI Bot — Train is just for capturing data, not releasing
 
   return { success: true, edit_distance: editDist };
+}
+
+async function apiRefreshDraft(id) {
+  const supabase = getSupabaseClient();
+  const gorgiasClient = require('../import/gorgiasClient');
+
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  // Re-fetch messages from Gorgias and re-run advisor
+  const messages = await gorgiasClient.getTicketMessages(draft.gorgias_ticket_id);
+  const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+  if (!lastCustomer) throw new Error('No customer message found');
+
+  const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
+
+  // Build conversation context (same as poller)
+  const { buildConversationContext } = require('../poller/pollGorgiasDrafts');
+  let contextParts = [];
+  if (typeof buildConversationContext === 'function') {
+    const ctx = buildConversationContext(messages, lastCustomer.id);
+    if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
+  }
+  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
+  const issueDescription = contextParts.join('\n\n');
+
+  // Run advisor
+  const advisorTools = require('../lib/tools/exchangeAdvisor');
+  const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
+  const result = await advisor.handler({
+    customer_email: draft.customer_email,
+    issue_description: issueDescription,
+    intake: draft.intake_state || undefined,
+  });
+
+  const s = result._structured;
+  let newDraft = s?._composedResponse || '';
+  if (!newDraft && s) {
+    try {
+      const { composeAgentResponse } = require('../lib/responseComposer');
+      newDraft = await composeAgentResponse(s, []);
+    } catch (e) {
+      newDraft = `[Compose error: ${e.message}]`;
+    }
+  }
+
+  // Update the draft in Supabase
+  await supabase.from('cs_ai_drafts').update({
+    draft_response: newDraft,
+    structured_output: s,
+    audit_trail: s?.audit || [],
+    advisor_status: s?.status,
+    confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+  }).eq('id', id);
+
+  return { draft_response: newDraft, structured: s };
 }
 
 async function apiReleaseDraft(id, body) {
@@ -669,6 +721,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute$/, handler: (body, id) => apiExecuteAction(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/train$/, handler: (body, id) => apiTrainDraft(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
