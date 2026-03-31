@@ -571,6 +571,21 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     });
   }
 
+  // Order modification — sub-classify address changes vs other mods
+  if (intake.message_type === 'order_modification' && !existingIntake) {
+    const msg = (issue_description || '').toLowerCase();
+    const isAddressChange = /address|wrong (city|zip|street|house)|shipped to.*(old|wrong|incorrect)|forgot.*(apartment|apt|unit|suite|house number|number)/i.test(msg);
+
+    if (isAddressChange) {
+      const { handleAddressChange } = require('./shippingInfo');
+      return handleAddressChange({
+        customer_email,
+        issue_description,
+        _context: { customer, order: targetOrder, customerMessage: issue_description, intake },
+      });
+    }
+  }
+
   // Future routing stubs — acknowledge + route to human
   const stubTypes = {
     order_modification: "I'll look into that for you.",

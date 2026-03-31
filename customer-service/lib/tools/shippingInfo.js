@@ -387,10 +387,154 @@ RULES:
   };
 }
 
+// ---------------------------------------------------------------------------
+// Address change handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect if the customer provided a new address in their message.
+ */
+function hasNewAddress(message) {
+  if (!message) return false;
+  // Look for patterns like street numbers, zip codes, city/state combos
+  return /\d{2,5}\s+\w+\s+(st|street|ave|avenue|rd|road|dr|drive|ln|lane|blvd|way|ct|court|pl|place)\b/i.test(message)
+    || /\b\d{5}(-\d{4})?\b/.test(message) // US zip
+    || /\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b/i.test(message); // Canadian postal
+}
+
+/**
+ * Address change decision tree:
+ *
+ * FULFILLED:
+ *   → Can't change. Ask if they have access to old address. Kick to human.
+ *
+ * UNFULFILLED + IN PROGRESS at warehouse:
+ *   → "We'll try to update it but it may be too late." Kick to human.
+ *
+ * UNFULFILLED + NOT in progress:
+ *   + Customer provided new address → "I'll update it on your order." Kick to human to do the update.
+ *   + Customer did NOT provide address → Put warehouse hold + ask for address.
+ */
+function buildAddressChangeResponse(order, context) {
+  const { customerName, customerMessage, warehouseStatus } = context || {};
+  const greeting = customerName ? `Hi ${customerName}` : 'Hi';
+  const parts = [];
+  let action = 'ask_human'; // ask_human, hold_placed, update_pending
+
+  const isFulfilled = order?.displayFulfillmentStatus === 'FULFILLED'
+    || (order?.fulfillments && order.fulfillments.length > 0);
+
+  if (!order) {
+    parts.push(`${greeting}, can you let me know your order number so I can look into this?`);
+    return { text: parts.join(' '), needsHumanFollowUp: true, action: 'need_order_number' };
+  }
+
+  if (isFulfilled) {
+    // Post-shipment — can't change
+    parts.push(`${greeting}, unfortunately once a package has shipped we can't change the shipping address.`);
+    const mentionsOldAddress = /old address|moved|wrong address|incorrect address|shipped to.*(old|wrong)/i.test(customerMessage || '');
+    if (mentionsOldAddress) {
+      parts.push(`Do you still have access to that address? If not, let me know your correct address and I'll send out another package.`);
+    } else {
+      parts.push(`Let me know your correct address and I'll send out another package.`);
+    }
+    action = 'ask_human';
+  } else if (warehouseStatus === 'in_progress') {
+    // Unfulfilled but already being picked/packed
+    parts.push(`${greeting}, I can see your order is already being prepared at our warehouse. I'll try to update the address but it may be too late.`);
+    if (hasNewAddress(customerMessage)) {
+      parts.push(`I'll do my best to get it changed.`);
+    } else {
+      parts.push(`Can you let me know the correct address and I'll do my best to get it changed?`);
+    }
+    action = 'ask_human';
+  } else {
+    // Unfulfilled, not in progress — we can update
+    if (hasNewAddress(customerMessage)) {
+      parts.push(`${greeting}, no problem — I'll update the address on your order.`);
+      action = 'update_pending';
+    } else {
+      parts.push(`${greeting}, no problem — I've put a hold on your order so it doesn't ship until we sort this out.`);
+      parts.push(`Can you let me know the correct address?`);
+      action = 'hold_placed';
+    }
+  }
+
+  return { text: parts.join(' '), needsHumanFollowUp: true, action };
+}
+
+async function handleAddressChange({ customer_email, issue_description, _context }) {
+  const customerMessage = issue_description || _context?.customerMessage || '';
+  const customerName = _context?.intake?.name || _context?.customer?.firstName || null;
+  const order = _context?.order || null;
+
+  const isFulfilled = order && (order.displayFulfillmentStatus === 'FULFILLED'
+    || (order.fulfillments && order.fulfillments.length > 0));
+
+  // Check Warehance status for unfulfilled orders
+  let warehouseStatus = null;
+  let whOrder = null;
+  if (order && !isFulfilled) {
+    try {
+      const { fetchOrderByNumber, setWarehouseHold } = require('../../../reports/lib/warehanceClient');
+      const orderNum = order.name?.replace('#', '');
+      whOrder = await fetchOrderByNumber(orderNum);
+      if (whOrder) {
+        warehouseStatus = whOrder.fulfillment_status || null; // 'unfulfilled', 'in_progress', etc.
+      }
+    } catch (e) {
+      // Warehance unavailable — proceed without it
+    }
+  }
+
+  const { text, needsHumanFollowUp, action } = buildAddressChangeResponse(order, { customerName, customerMessage, warehouseStatus });
+
+  // If action is hold_placed, actually place the hold
+  if (action === 'hold_placed' && whOrder?.id) {
+    try {
+      const { setWarehouseHold } = require('../../../reports/lib/warehanceClient');
+      await setWarehouseHold(whOrder.id);
+    } catch (e) {
+      // Hold failed — still send the response, Jamie will handle manually
+    }
+  }
+
+  let md = `## Address Change Request\n\n`;
+  if (order) {
+    md += `**Order:** ${order.name}\n`;
+    md += `**Status:** ${isFulfilled ? 'SHIPPED' : 'UNFULFILLED'}`;
+    if (warehouseStatus) md += ` (warehouse: ${warehouseStatus})`;
+    md += '\n';
+    if (action === 'hold_placed') md += `**Hold placed:** Yes — warehouse hold set to prevent shipping\n`;
+    if (order.shippingAddress) {
+      const addr = order.shippingAddress;
+      md += `**Current address:** ${addr.address1 || ''}${addr.address2 ? ', ' + addr.address2 : ''}, ${addr.city || ''} ${addr.provinceCode || ''} ${addr.zip || ''} ${addr.countryCodeV2 || ''}\n`;
+    }
+  }
+  md += `**Action:** ${action}\n`;
+  md += `\n**Customer response:**\n${text}\n`;
+
+  return {
+    content: [{ type: 'text', text: md }],
+    _structured: {
+      status: 'needs_attention',
+      intake: _context?.intake || null,
+      order: order?.name || null,
+      fulfilled: isFulfilled || false,
+      warehouseStatus,
+      action,
+      response: text,
+      rawResponse: text,
+    },
+  };
+}
+
 module.exports = {
   handleShippingInfo,
   handleDutiesInquiry,
+  handleAddressChange,
   buildShippingInfoResponse,
   buildDutiesResponse,
+  buildAddressChangeResponse,
   detectCountry,
 };
