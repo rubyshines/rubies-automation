@@ -16,8 +16,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Restore active tab + test mode
   const savedTab = localStorage.getItem('activeTab');
   if (savedTab && ['queue', 'history', 'test'].includes(savedTab)) switchTab(savedTab);
-  const savedTestMode = localStorage.getItem('testMode');
-  if (savedTestMode && ['tools', 'simulator'].includes(savedTestMode)) switchTestMode(savedTestMode);
+  const savedTestMode = localStorage.getItem('testMode') || 'simulator';
+  switchTestMode(savedTestMode);
+
+  // Restore simulator session if active
+  if (simRestore()) simRenderRestoredSession();
 
   loadQueue().then(async () => {
     // Restore selected draft from URL hash (only if still pending)
@@ -693,7 +696,7 @@ function switchTestMode(mode) {
 // Conversation Simulator
 // ---------------------------------------------------------------------------
 
-const sim = {
+let sim = {
   active: false,
   conversationId: null,
   customerEmail: null,
@@ -704,6 +707,79 @@ const sim = {
   turns: [],
   previousResponses: [],
 };
+
+function simSave() {
+  localStorage.setItem('simState', JSON.stringify(sim));
+}
+
+function simRestore() {
+  try {
+    const saved = localStorage.getItem('simState');
+    if (!saved) return false;
+    const s = JSON.parse(saved);
+    if (!s.active) return false;
+    Object.assign(sim, s);
+    return true;
+  } catch { return false; }
+}
+
+function simRenderRestoredSession() {
+  // Render context sidebar
+  const ci = sim.customerContext || {};
+  document.getElementById('sim-customer-info').innerHTML = `
+    <div>${esc(ci.name || 'Unknown')} (${esc(ci.pronouns || 'they/them')})</div>
+    <div>${esc(ci.email || sim.customerEmail)}</div>
+    <div>${esc(ci.country || '?')}</div>
+    ${ci.address ? `<div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">${formatAddress(ci.address)}</div>` : ''}
+  `;
+  const order = sim.orderContext;
+  if (order) {
+    const items = (order.items || []).map(i =>
+      `${i.quantity}x ${esc(i.title)} - ${esc(i.variant)} (SKU: ${esc(i.sku || 'n/a')})`
+    ).join('<br>');
+    document.getElementById('sim-order-info').innerHTML = `
+      <div>${esc(order.name)} (${esc(order.date)})</div>
+      <div style="font-size:12px;margin-top:4px">${items}</div>
+    `;
+  } else {
+    document.getElementById('sim-order-info').innerHTML = 'No order found';
+  }
+  document.getElementById('sim-source-info').textContent = `Source: ${sim.conversationId || '?'}`;
+
+  // Switch to active view
+  document.getElementById('sim-idle').style.display = 'none';
+  document.getElementById('sim-active').style.display = 'flex';
+
+  // Render locked turns
+  const thread = document.getElementById('sim-thread');
+  thread.innerHTML = '';
+  for (const t of sim.turns) {
+    const wasEdited = t.edited_ai_response !== t.original_ai_response;
+    thread.innerHTML += `
+      <div class="sim-turn locked">
+        <div class="sim-turn-label">Turn ${t.turn_number} - Customer</div>
+        <div class="sim-customer-msg">${esc(t.customer_message)}</div>
+        <div class="sim-turn-label" style="margin-top:12px">Agent Response</div>
+        <div class="sim-ai-response">${esc(t.edited_ai_response)}</div>
+        ${wasEdited ? '<span class="sim-turn-edited">edited</span>' : ''}
+        ${t.notes ? `<div class="sim-turn-notes">${esc(t.notes)}</div>` : ''}
+      </div>
+    `;
+  }
+
+  // Show next customer input
+  const controls = document.getElementById('sim-controls');
+  controls.innerHTML = `
+    <div class="sim-next-input">
+      <label class="label">Next Customer Message</label>
+      <textarea class="sim-editor" id="sim-next-msg" rows="3" placeholder="Type the next customer message..."></textarea>
+      <div class="sim-turn-actions">
+        <button class="btn btn-primary" onclick="simSendNext()">Send</button>
+        <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
+      </div>
+    </div>
+  `;
+}
 
 async function simLoadRandom() {
   const btn = document.getElementById('sim-load-btn');
@@ -810,7 +886,7 @@ async function simRunTurn(customerMessage) {
 
     controls.innerHTML = `
       <div class="sim-turn-actions">
-        <button class="btn btn-primary" onclick="simAcceptTurn(${turnNum}, '${esc(customerMessage).replace(/'/g, "\\'")}')">Accept</button>
+        <button class="btn btn-primary" onclick="simAcceptTurn(${turnNum})">Accept</button>
         <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
       </div>
     `;
@@ -827,7 +903,7 @@ async function simRunTurn(customerMessage) {
   }
 }
 
-function simAcceptTurn(turnNum, customerMessage) {
+function simAcceptTurn(turnNum) {
   const editedResponse = document.getElementById(`sim-editor-${turnNum}`).value;
   const notes = document.getElementById(`sim-notes-${turnNum}`).value;
   const originalResponse = sim._currentResult?.ai_response || '';
@@ -847,6 +923,7 @@ function simAcceptTurn(turnNum, customerMessage) {
   // Update state
   sim.intake = structured?.intake || sim.intake;
   sim.previousResponses.push(editedResponse);
+  simSave();
 
   // Lock the turn
   const turnEl = document.getElementById(`sim-turn-${turnNum}`);
@@ -932,6 +1009,7 @@ async function simEndSession() {
   sim.active = false;
   sim.turns = [];
   sim.intake = null;
+  localStorage.removeItem('simState');
   sim.previousResponses = [];
   document.getElementById('sim-active').style.display = 'none';
   document.getElementById('sim-idle').style.display = 'block';
