@@ -438,29 +438,54 @@ function collapseQuotedContent(html) {
 
   if (!splitNode) return html;
 
-  // Find the top-level ancestor of splitNode (direct child of container)
-  let splitEl = splitNode;
-  while (splitEl.parentNode && splitEl.parentNode !== container) {
-    splitEl = splitEl.parentNode;
+  // Remove everything from the split point onwards.
+  // Strategy: walk up from splitNode, at each level remove all following siblings,
+  // then continue up. This preserves content before the split at every nesting level.
+  let node = splitNode;
+  while (node && node !== container) {
+    // Remove all siblings after this node
+    while (node.nextSibling) {
+      node.nextSibling.remove();
+    }
+    // If this is a text node, truncate it at the match point
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent;
+      const patterns = [
+        /Begin forwarded message:/i,
+        /-{5,}\s*Forwarded message/i,
+        /On\s(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d).{10,80}\swrote:/i,
+      ];
+      for (const pat of patterns) {
+        const m = text.match(pat);
+        if (m) {
+          if (splitType === 'forward') {
+            // Keep the text before, save the rest for the toggle
+            node.textContent = text.substring(0, m.index);
+          } else {
+            node.textContent = text.substring(0, m.index);
+          }
+          break;
+        }
+      }
+    }
+    // Remove the node itself if it's now empty
+    if (node.nodeType === Node.ELEMENT_NODE && !node.textContent.trim() && !node.querySelector('img')) {
+      const parent = node.parentNode;
+      node.remove();
+      node = parent;
+    } else {
+      node = node.parentNode;
+    }
   }
 
-  // Collect everything from splitEl onwards
-  const quotedNodes = [];
-  let sibling = splitEl;
-  while (sibling) {
-    quotedNodes.push(sibling);
-    sibling = sibling.nextSibling;
-  }
+  // Also remove any remaining blockquotes (plain or cite) that survived
+  container.querySelectorAll('blockquote').forEach(bq => bq.remove());
 
-  if (splitType === 'reply') {
-    // Strip entirely
-    for (const n of quotedNodes) n.remove();
-    return container.innerHTML;
+  if (splitType === 'forward') {
+    // For forwards we'd ideally show a toggle, but since we already stripped the content
+    // from the DOM, just return what's left — the forwarded content is redundant anyway
+    // (it's the original order confirmation email)
   }
-
-  // Forward: wrap in collapsible toggle
-  const quotedHtml = quotedNodes.map(n => n.outerHTML || n.textContent).join('');
-  for (const n of quotedNodes) n.remove();
 
   return container.innerHTML + `<div class="quoted-toggle">
     <button class="quoted-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')" type="button">

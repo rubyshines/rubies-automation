@@ -253,10 +253,10 @@ main { height: calc(100vh - 56px); }
 
 .msg {
   margin-bottom: 10px;
-  padding: 12px 16px;
+  padding: 10px 14px;
   border-radius: var(--radius-lg);
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.45;
   max-width: 82%;
 }
 
@@ -283,6 +283,10 @@ main { height: calc(100vh - 56px); }
   word-break: break-word;
   overflow: hidden;
 }
+
+.msg-body p { margin: 0 0 2px; }
+.msg-body br + br { display: none; }
+.msg-body div:empty { display: none; }
 
 /* Quoted/forwarded content collapse */
 .quoted-toggle {
