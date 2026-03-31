@@ -260,9 +260,68 @@ async function run({ onProgress } = {}) {
         .eq('status', 'pending');
     }
 
-    // Extract message text
-    const messageText = gorgias.stripHtml(latestCustomerMsg.body_html || latestCustomerMsg.body_text || '');
+    // Extract message text (use stripped version for cleaner input)
+    const messageText = gorgias.stripHtml(latestCustomerMsg.stripped_text || latestCustomerMsg.body_text || '');
     if (!messageText.trim()) { ticketsSkipped++; return; }
+
+    // Quick detection: if the last customer message is just "thank you" / "thanks"
+    // and the previous message was from an agent, this is a resolved conversation
+    const isThankYou = /^\s*(thanks?(\s+you)?|thank\s+you|thx|ty|appreciate\s+it)[\s!.]*$/i.test(messageText);
+    const prevAgentMsg = [...messages].reverse().find(m => m.from_agent === true && !m.sender?.email?.endsWith('@email.gorgias.com') && m.id !== latestCustomerMsg.id);
+    if (isThankYou && prevAgentMsg) {
+      // Auto-generate a "you're welcome" draft
+      const customerName = ticket.customer?.name?.split(' ')[0] || null;
+      const greeting = customerName ? `You're welcome, ${customerName}!` : "You're welcome!";
+      const draftResponse = `${greeting}\n\nTake care,\nJamie Alexander, RUBIES Founder`;
+
+      const conversationHistory = messages.map(m => ({
+        id: m.id,
+        sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
+        body_html: m.stripped_html || m.body_html || null,
+        body: gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || ''),
+        created_at: m.created_datetime,
+        channel: m.channel,
+      }));
+
+      await supabase.from('cs_ai_drafts').insert({
+        gorgias_ticket_id: ticketId,
+        gorgias_message_id: latestCustomerMsgId,
+        customer_email: customerEmail,
+        customer_name: ticket.customer?.name || null,
+        order_number: null,
+        draft_response: draftResponse,
+        structured_output: { status: 'complete', reason: 'thank_you_response' },
+        intake_state: previousIntake,
+        audit_trail: ['[Quick detect] Customer said thank you after agent reply — auto "you\'re welcome"'],
+        confidence: 'high',
+        advisor_status: 'complete',
+        message_type: 'positive_feedback',
+        conversation_history: conversationHistory,
+        turn_number: turnNumber,
+        previous_draft_id: previousDraftId,
+      });
+      draftsCreated++;
+      console.log(`[poller] Thank-you draft created for ticket ${ticketId}`);
+
+      if (aiBotId) {
+        try {
+          await gorgias.assignTicket(ticketId, aiBotId);
+          await gorgias.addTicketTag(ticketId, 'ai-draft');
+        } catch (err) {
+          console.warn(`[poller] Could not assign/tag ticket ${ticketId}: ${err.message}`);
+        }
+      }
+      return;
+    }
+
+    // Build conversation context from all previous messages
+    // This gives the AI parser full context about what's been discussed
+    const conversationContext = buildConversationContext(messages, latestCustomerMsg.id);
+
+    // Combine context + latest message for the advisor
+    const issueDescription = conversationContext
+      ? `[CONVERSATION HISTORY]\n${conversationContext}\n\n[LATEST CUSTOMER MESSAGE]\n${messageText}`
+      : messageText;
 
     // Run through CS advisor
     console.log(`[poller] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
@@ -272,7 +331,7 @@ async function run({ onProgress } = {}) {
     try {
       result = await advisorHandler({
         customer_email: customerEmail,
-        issue_description: messageText,
+        issue_description: issueDescription,
         intake: previousIntake || undefined,
       });
     } catch (err) {
@@ -390,6 +449,42 @@ async function run({ onProgress } = {}) {
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Conversation context builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a summary of all previous messages in a Gorgias ticket
+ * (excluding the latest customer message which is handled separately).
+ * This gives the AI parser context about what's been discussed.
+ */
+function buildConversationContext(messages, latestMsgId) {
+  // Filter out internal notes and the latest message itself
+  const previousMsgs = messages.filter(m =>
+    m.id !== latestMsgId && m.channel !== 'internal-note'
+  );
+
+  if (previousMsgs.length === 0) return null;
+
+  // Build a compact summary — truncate each message to keep total under 3000 chars
+  const maxPerMsg = Math.min(400, Math.floor(3000 / previousMsgs.length));
+  const lines = [];
+
+  for (const m of previousMsgs) {
+    const sender = m.from_agent === false ? 'Customer' : 'Agent';
+    const isBot = m.sender?.email?.endsWith('@email.gorgias.com') || m.via === 'rule';
+    if (isBot) continue; // Skip bot auto-replies
+
+    const body = gorgias.stripHtml(m.stripped_text || m.body_text || '').trim();
+    if (!body) continue;
+
+    const truncated = body.length > maxPerMsg ? body.substring(0, maxPerMsg) + '...' : body;
+    lines.push(`${sender}: ${truncated}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : null;
 }
 
 // ---------------------------------------------------------------------------

@@ -13,24 +13,9 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
 const { walkTree, normalizeSize, getSizeModifier, _activeProducts, initCsConfig } = require('../decisionTree');
+const { buildContext, analyzeOrders } = require('../contextBuilder');
 
-// ---------------------------------------------------------------------------
-// Order analysis (still needed — tree uses this context)
-// ---------------------------------------------------------------------------
-
-function analyzeOrders(orders) {
-  const fulfilled = orders.filter(o =>
-    o.displayFulfillmentStatus === 'FULFILLED' &&
-    !o.cancelledAt &&
-    o.displayFinancialStatus !== 'REFUNDED'
-  );
-  const exchanges = orders.filter(o =>
-    !o.cancelledAt &&
-    o.displayFulfillmentStatus !== 'FULFILLED' &&
-    parseFloat(o.totalPriceSet?.shopMoney?.amount || '999') === 0
-  );
-  return { fulfilled, exchanges, all: orders };
-}
+// analyzeOrders() moved to contextBuilder.js — imported above
 
 // ---------------------------------------------------------------------------
 // Name & pronoun detection (used by regex fallback only)
@@ -195,6 +180,14 @@ IMPORTANT:
 - PRODUCT QUESTION: "what's the difference between", "do you have X in pink", "what material", "how does it work" → message_type = "product_question"
 - WHOLESALE: "wholesale", "bulk order", "retail partner", "stock your products" → message_type = "wholesale"
 - POSITIVE FEEDBACK: "thank you", "love your products", "amazing", "my daughter is so happy" with NO issue or request → message_type = "positive_feedback"
+- CONVERSATION CONTEXT: The message may include a [CONVERSATION HISTORY] section showing previous messages in the thread. Use this to understand what has already been discussed. Key rules:
+  - If the conversation was already resolved (agent processed a refund/exchange) and customer is just saying "thank you" or "thanks" → message_type = "positive_feedback"
+  - If the customer already explained the issue in previous messages and is now confirming or insisting → set is_confirmation = true or capture their intent accurately
+  - If the agent already asked about sizing and the customer is providing measurements → extract the measurements
+  - If the customer says they "emailed before" or "following up" → note this in "notes" field
+  - Focus on the [LATEST CUSTOMER MESSAGE] for the actual request, but use history for context
+  - NEVER ask the customer to repeat information they already provided in the conversation history
+  - If the customer already confirmed they want a return/refund in previous messages, set customer_intent = "refund" and message_type = "refund"
 
 Return ONLY JSON. No explanation.`;
 
@@ -486,71 +479,11 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
 
   const supabase = getSupabaseClient();
 
-  // STEP 0: Quick-extract order number from message BEFORE order lookup
-  // This is a simple regex — not AI. We need it before we know which order to pull.
-  let messageOrderNumber = null;
-  if (issue_description) {
-    const orderMatch = issue_description.match(/#\s*(\d{4,6})\b/) || issue_description.match(/order\s*#?\s*(\d{4,6})\b/i);
-    if (orderMatch) {
-      const num = parseInt(orderMatch[1], 10);
-      if (num >= 1000 && num <= 999999) messageOrderNumber = orderMatch[1];
-    }
-  }
-
-  // STEP 1: Find customer
-  let customers = await searchCustomers(customer_email);
-  let customer = customers[0] || null;
-  let customerGid = customer?.id;
-  let customerCountry = customer?.defaultAddress?.countryCodeV2 || customer?.defaultAddress?.country || null;
-  let isNorthAmerica = ['US', 'CA'].includes(customerCountry);
-
-  // STEP 2: Find orders + target order
-  let orders = [];
-  if (customer) {
-    try {
-      const result = await getCustomerOrders(customerGid, 20);
-      orders = result.orders;
-    } catch (err) { /* handled below */ }
-  }
-
-  const { fulfilled, exchanges, all } = analyzeOrders(orders);
-  let targetOrder = null;
-  // Priority: explicit param > message extraction > previous intake > auto-detect
-  const effectiveOrderNumber = order_number || messageOrderNumber || existingIntake?.order_number || null;
-
-  if (effectiveOrderNumber) {
-    const normalized = effectiveOrderNumber.toString().replace('#', '');
-    targetOrder = all.find(o => o.name?.replace('#', '') === normalized);
-
-    if (!targetOrder) {
-      try {
-        const orderResult = await getOrderByNumber(effectiveOrderNumber);
-        if (orderResult) {
-          targetOrder = orderResult;
-          const orderCustomerEmail = orderResult.customer?.email;
-          if (orderCustomerEmail && orderCustomerEmail.toLowerCase() !== customer_email.toLowerCase()) {
-            const orderCustomers = await searchCustomers(orderCustomerEmail);
-            if (orderCustomers.length) {
-              customer = orderCustomers[0];
-              customerGid = customer.id;
-              customerCountry = customer.defaultAddress?.countryCodeV2 || customer.defaultAddress?.country || null;
-              isNorthAmerica = ['US', 'CA'].includes(customerCountry);
-              const result = await getCustomerOrders(customerGid, 20);
-              orders = result.orders;
-            }
-          }
-        }
-      } catch (err) { /* order not found */ }
-    }
-  }
-
-  if (!targetOrder) targetOrder = fulfilled[0] || null;
+  // STEPS 0-2: Build shared context (customer + order lookup)
+  const ctx = await buildContext({ customer_email, order_number, issue_description, existingIntake });
+  let { customer, customerGid, customerCountry, isNorthAmerica, orders, fulfilled, exchanges, all, targetOrder, orderLineItems, effectiveOrderNumber } = ctx;
 
   // STEP 3: Parse message + route by message type
-  const orderLineItems = (targetOrder?.lineItems || []).map(li => {
-    const rawSkuSize = li.sku ? li.sku.split('-').pop() : null;
-    return { ...li, _skuSize: rawSkuSize ? normalizeSize(rawSkuSize) : null, _rawSkuSize: rawSkuSize };
-  });
   const intake = await parseExchangeIntake(issue_description, existingIntake || null, orderLineItems);
   intake._latestMessage = issue_description;
   intake.conversation_email = customer_email;
@@ -584,11 +517,15 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     return buildAdvisorResponse(intake, treeResult, { customer, targetOrder: null, orderLineItems: [], fulfilled: [], exchanges: [], customerCountry, isNorthAmerica, toneSample: null });
   }
 
-  // Shipping inquiry — real tracking lookup
+  // Shipping inquiry — real tracking lookup (pass context to avoid re-lookup + thread message)
   if (intake.message_type === 'shipping' && !existingIntake) {
     const shippingTools = require('./shippingLookup');
     const shippingHandler = shippingTools.find(t => t.name === 'shipping_lookup').handler;
-    return shippingHandler({ customer_email, order_number: effectiveOrderNumber || undefined });
+    return shippingHandler({
+      customer_email,
+      order_number: effectiveOrderNumber || undefined,
+      _context: { customer, order: targetOrder, orders, customerMessage: issue_description, intake },
+    });
   }
 
   // Future routing stubs — acknowledge + route to human
