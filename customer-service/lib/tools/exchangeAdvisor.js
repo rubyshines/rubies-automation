@@ -145,7 +145,8 @@ Return JSON:
   "buying_for": "self" | "third_party" | "unclear",
   "third_party_label": string or null — "daughter", "son", "kiddo", "partner", etc.,
   "order_number": string or null — extract order number if mentioned,
-  "message_type": "exchange" | "refund" | "defect" | "product_not_working" | "cancellation" | "missing_item" | "wrong_item_shipped" | "sizing_inquiry" | "shipping" | "order_modification" | "product_question" | "wholesale" | "positive_feedback" | "general_inquiry" | "unclear",
+  "message_type": "exchange" | "refund" | "defect" | "product_not_working" | "cancellation" | "missing_item" | "wrong_item_shipped" | "sizing_inquiry" | "shipping" | "order_modification" | "product_question" | "wholesale" | "closing" | "return_shipped" | "general_inquiry",
+  "sentiment": "kind_words" | "grateful" | "frustrated" | "neutral" | null,
   "customer_intent": "exchange_same_product" | "exchange_different_product" | "refund" | "unsure" | "cancellation" | null,
   "items": [
     {
@@ -162,7 +163,7 @@ Return JSON:
   "confirmed_size": string or null — if confirming, what size are they confirming?,
   "reference_size": { "product": string, "size": string } or null — if the customer mentions a size that fits them in another product ("I wear size 8 in the AJ"), extract it here. This helps recommend sizing for a new product.,
   "safety_concern": boolean — does the message indicate danger, hiding items, unsafe situation?,
-  "positive_feedback": boolean — are they saying something nice about RUBIES?,
+  "positive_feedback": boolean — DEPRECATED, use sentiment field instead. Keep for backward compatibility.,
   "notes": string or null — anything else notable
 }
 
@@ -184,7 +185,15 @@ IMPORTANT:
   - "She wants a tankini top and a bikini bottom instead" → items: [{ product: "Sky One-Piece", size: "L", issue: "onepiece_fit", desired_product: "Queeny Tankini", desired_size: "L" }, { product: "Sky One-Piece", size: "L", issue: "onepiece_fit", desired_product: "Stella Bikini Bottom", desired_size: "M" }]
   - "can I swap the Ruby for the Cheeky" → items: [{ product: "Ruby", size: "10", issue: "tight_legs", desired_product: "Cheeky", desired_size: null }]
   If they specify sizes for the new products, set desired_size. If exchanging one product for multiple new ones, create one item per desired product with the original product in "product" and each new product in "desired_product".
-- POSITIVE FEEDBACK: "thank you", "love your products", "amazing", "my daughter is so happy" with NO issue or request → message_type = "positive_feedback"
+- CLOSING: Customer wrapping up a conversation — "thank you!", "sounds good", "no worries", "thanks for the refund" → message_type = "closing"
+- RETURN SHIPPED: Customer confirming they sent items back — "I shipped them to the address", "dropped them off at the donation center", "sent them today" → message_type = "return_shipped"
+- SENTIMENT: Set the "sentiment" field based on the customer's tone:
+  - "kind_words": customer praises RUBIES or the community work ("I love your business", "thank you for supporting trans girls", "what you do is amazing")
+  - "grateful": customer thanking for help/action ("thanks for the refund", "appreciate your help")
+  - "frustrated": customer expressing disappointment ("this is the second time", "really disappointed", "not working at all")
+  - "neutral": just transactional, no strong emotion
+  - null: can't determine
+  - NOTE: sentiment is INDEPENDENT of message_type. A "closing" message can have "kind_words" sentiment. An "exchange" message can have "frustrated" sentiment.
 - CONVERSATION CONTEXT: The message may include a [CONVERSATION HISTORY] section showing previous messages in the thread. Use this to understand what has already been discussed. Key rules:
   - If the conversation was already resolved (agent processed a refund/exchange) and customer is just saying "thank you" or "thanks" → message_type = "positive_feedback"
   - If the customer already explained the issue in previous messages and is now confirming or insisting → set is_confirmation = true or capture their intent accurately
@@ -252,6 +261,7 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
   if (!intake.order_number && parsed.order_number) intake.order_number = parsed.order_number;
   if (!intake.message_type && parsed.message_type && parsed.message_type !== 'unclear') intake.message_type = parsed.message_type;
   if (!intake.customer_intent && parsed.customer_intent) intake.customer_intent = parsed.customer_intent;
+  if (parsed.sentiment) intake.sentiment = parsed.sentiment;
 
   // Items
   // If a try-size swap is pending, don't add new items — the customer's product choice
@@ -624,16 +634,36 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
   }
 
   // Positive feedback — warm acknowledgment
-  if (intake.message_type === 'positive_feedback' && !existingIntake) {
+  // Closing messages — customer wrapping up or confirming return shipment
+  if ((intake.message_type === 'closing' || intake.message_type === 'positive_feedback') && !existingIntake) {
+    const hasKindWords = intake.sentiment === 'kind_words';
+    const responseText = hasKindWords
+      ? "Thanks so much for your kind words!"
+      : "Thanks so much!";
     return {
-      content: [{ type: 'text', text: `That's so kind of you to say — thank you! It really means a lot.` }],
+      content: [{ type: 'text', text: responseText }],
       _structured: {
-        status: 'complete',
-        intake,
-        prescription: { items: [{ product: null, state: 'ACKNOWLEDGED', response_text: "That's so kind — thank you!" }], donation: null, crossover_note: null, still_needed: [], flags: [] },
+        status: 'complete', intake,
+        prescription: { items: [{ product: null, state: 'ACKNOWLEDGED', response_text: responseText }], donation: null, crossover_note: null, still_needed: [], flags: [] },
         customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
         order: null, exchanges: [], tone_sample: null,
-        audit: ['Positive feedback — acknowledged warmly'],
+        audit: [hasKindWords ? 'Closing with kind words — acknowledged warmly' : 'Closing — brief acknowledgment'],
+        _composedResponse: responseText,
+      },
+    };
+  }
+
+  if (intake.message_type === 'return_shipped' && !existingIntake) {
+    const responseText = "Thanks so much for sending those back!";
+    return {
+      content: [{ type: 'text', text: responseText }],
+      _structured: {
+        status: 'complete', intake,
+        prescription: { items: [{ product: null, state: 'ACKNOWLEDGED', response_text: responseText }], donation: null, crossover_note: null, still_needed: [], flags: [] },
+        customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
+        order: null, exchanges: [], tone_sample: null,
+        audit: ['Return shipped — customer confirmed items sent back'],
+        _composedResponse: responseText,
       },
     };
   }

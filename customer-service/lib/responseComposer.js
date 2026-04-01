@@ -30,13 +30,10 @@ async function composeAgentResponse(s, previousResponses) {
     : 'for you';
   const youHer = isThirdParty ? 'her' : 'you';
 
-  // Positive feedback acknowledgment
-  const hasFeedback = s.audit?.some(a => /positive feedback/i.test(a));
+  // Kind words acknowledgment — only when customer praised RUBIES (sentiment, not just politeness)
   let feedbackLine = '';
-  if (hasFeedback && isThirdParty) {
-    feedbackLine = `So lovely to hear you've been with RUBIES for so long! `;
-  } else if (hasFeedback) {
-    feedbackLine = `So glad you love RUBIES! `;
+  if (s.intake?.sentiment === 'kind_words') {
+    feedbackLine = `Thanks so much for your kind words. `;
   }
 
   // Item clarification needed — ask which items (only if no items have been identified yet)
