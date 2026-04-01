@@ -1,0 +1,585 @@
+#!/usr/bin/env node
+
+/**
+ * RUBIES Daily Order Alerts
+ *
+ * Unified report combining unfulfilled orders + shipping delays into a single
+ * daily email. Always sends (even on quiet days).
+ *
+ * Unfulfilled: warehouse holds, out of stock, pre-order, address auto-resolution
+ * Shipping: Passport claims, customs holds, stale tracking, exceptions
+ *
+ * CLI:
+ *   --note ORDER "text"           Add a note to an order alert
+ *   --resolve ORDER "text"        Resolve (hide from alerts)
+ *   --unresolve ORDER "text"      Unresolve
+ *   --claim-delivered ORDER "text" Mark Passport claim as delivered
+ *   --claim-lost ORDER "text"     Mark claim as lost (need reimbursement)
+ *   --claim-resolved ORDER "text"  Mark claim as resolved (reimbursed/written off)
+ *   --claim-note ORDER "text"     Add note to claim
+ *   --show-resolved               Include resolved in report
+ *   --json                        Output JSON
+ *
+ * Usage:
+ *   node reports/dailyOrderAlerts.js
+ *   npm run daily-order-alerts
+ */
+
+const path = require('path');
+if (!process.env.SUPABASE_URL) {
+  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
+}
+
+const { getSupabaseClient } = require('../shared/supabaseClient');
+const { getSendgridClient } = require('../shared/sendgridClient');
+const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
+const { checkShippingDelays } = require('./lib/shippingDelays');
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const opts = { showResolved: false, json: false, action: null };
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--show-resolved') {
+      opts.showResolved = true;
+    } else if (args[i] === '--json') {
+      opts.json = true;
+    } else if (['--note', '--resolve', '--unresolve'].includes(args[i]) && args[i + 1] && args[i + 2]) {
+      opts.action = { type: args[i].replace('--', ''), orderNumber: parseInt(args[i + 1], 10), text: args[i + 2] };
+      i += 2;
+    } else if (['--claim-delivered', '--claim-lost', '--claim-resolved', '--claim-note'].includes(args[i]) && args[i + 1]) {
+      const claimStatus = args[i].replace('--claim-', '');
+      opts.action = { type: 'claim', claimStatus, orderNumber: parseInt(args[i + 1], 10), text: args[i + 2] || '' };
+      i += 2;
+    }
+  }
+  return opts;
+}
+
+async function handleAction(supabase, action) {
+  if (action.type === 'claim') {
+    const { claimStatus, orderNumber, text } = action;
+    if (claimStatus === 'note') {
+      const today = new Date().toISOString().split('T')[0];
+      const { data: claim } = await supabase.from('passport_claims').select('resolution').eq('order_number', orderNumber).maybeSingle();
+      if (!claim) { console.log(`No claim found for #${orderNumber}`); return; }
+      const updated = claim.resolution ? `${claim.resolution}\n[${today}] ${text}` : `[${today}] ${text}`;
+      await supabase.from('passport_claims').update({ resolution: updated }).eq('order_number', orderNumber);
+      console.log(`Note added to claim #${orderNumber}: "${text}"`);
+    } else {
+      await supabase.from('passport_claims').update({
+        status: claimStatus === 'resolved' ? 'resolved' : claimStatus,
+        resolution: text || null,
+        resolution_date: new Date().toISOString(),
+      }).eq('order_number', orderNumber);
+      console.log(`Claim #${orderNumber} -> ${claimStatus}: "${text}"`);
+    }
+  } else {
+    const resolved = action.type === 'resolve' ? true : action.type === 'unresolve' ? false : null;
+    const row = {
+      order_number: action.orderNumber,
+      note: action.text,
+      author: 'operator',
+      alert_type: 'unfulfilled', // default; shipping delays also use this table now
+    };
+    if (resolved !== null) row.resolved = resolved;
+    else row.resolved = false;
+
+    const { error } = await supabase.from('order_alert_notes').insert(row);
+    if (error) {
+      console.error(`Failed to save note for #${action.orderNumber}: ${error.message}`);
+    } else {
+      const tag = action.type === 'resolve' ? ' (resolved)' : action.type === 'unresolve' ? ' (re-opened)' : '';
+      console.log(`Note saved for #${action.orderNumber}${tag}: "${action.text}"`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTML email formatting
+// ---------------------------------------------------------------------------
+
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function shortProductName(title) {
+  if (!title) return '';
+  return title
+    .replace(/^THE\s+/i, '')
+    .replace(/\s+SHAPING\s+/i, ' ')
+    .replace(/\s+EXTRA CUTE\s+/i, ' ')
+    .replace(/\s+EXTRA STRENGTH\s+/i, ' ')
+    .replace(/\s+HIGH WAISTED\s+/i, ' ')
+    .replace(/\s+SEAMLESS\s+/i, ' ')
+    .replace(/MAGICAL SHAPING GEL CHEST PADS/i, 'Gel Chest Pads');
+}
+
+const SHOPIFY_STORE = 'rubies-active-wear';
+function shopifyAdminUrl(shopifyOrderId) {
+  if (!shopifyOrderId) return null;
+  const numericId = String(shopifyOrderId).replace(/.*\//, '');
+  return `https://admin.shopify.com/store/${SHOPIFY_STORE}/orders/${numericId}`;
+}
+
+// ---------------------------------------------------------------------------
+// Unfulfilled order row (for combined email)
+// ---------------------------------------------------------------------------
+
+function unfulfilledRow(r) {
+  const severityColor = { urgent: '#dc2626', attention: '#f59e0b', normal: '#22c55e', info: '#6366f1', auto_resolved: '#0891b2' };
+  const date = r.order.created_at?.split('T')[0] || '?';
+  const email = r.order.customer_email || '?';
+  const itemLines = (r.order.order_line_items || [])
+    .map(li => {
+      const qty = li.quantity > 1 ? `${li.quantity} x ` : '';
+      return `${qty}${esc(shortProductName(li.title))}${li.variant_title ? ' / ' + esc(li.variant_title) : ''}`;
+    });
+  const color = severityColor[r.classification.severity] || '#6b7280';
+  const reasonLabel = r.classification.reason.replace(/_/g, ' ');
+
+  let links = `<a href="${esc(r.shopifyUrl)}" style="color:#2563eb;text-decoration:none;">Shopify</a>`;
+  if (r.warehanceUrl) {
+    links += ` &middot; <a href="${esc(r.warehanceUrl)}" style="color:#2563eb;text-decoration:none;">Warehance</a>`;
+  }
+
+  let noteHtml = '';
+  if (r.note) {
+    const noteDate = r.note.created_at?.split('T')[0] || '?';
+    const tag = r.note.resolved ? ' <span style="color:#22c55e;">[RESOLVED]</span>' : '';
+    noteHtml = `<br><span style="color:#6b7280;font-size:12px;white-space:normal;">Note [${esc(noteDate)}]: ${esc(r.note.note)} -- ${esc(r.note.author)}${tag}</span>`;
+  }
+
+  return `<tr style="border-bottom:1px solid #e5e7eb;">
+    <td style="padding:6px 10px;font-weight:bold;vertical-align:top;">#${r.order.order_number}<br><span style="font-weight:normal;font-size:11px;color:#6b7280;">${links}</span></td>
+    <td style="padding:6px 10px;vertical-align:top;font-size:13px;">${esc(date)}</td>
+    <td style="padding:6px 10px;vertical-align:top;">${r.businessDays}bd</td>
+    <td style="padding:6px 10px;vertical-align:top;"><span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${esc(reasonLabel)}</span><br><span style="color:#9ca3af;font-size:10px;">unfulfilled</span></td>
+    <td style="padding:6px 10px;font-size:13px;vertical-align:top;">${esc(email)}</td>
+    <td style="padding:6px 10px;font-size:13px;vertical-align:top;">
+      ${itemLines.join('<br>')}
+      ${r.classification.detail ? `<br><span style="color:#6b7280;font-size:12px;white-space:normal;">${esc(r.classification.detail)}</span>` : ''}
+      ${noteHtml}
+    </td>
+  </tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Shipping alert row (for combined email)
+// ---------------------------------------------------------------------------
+
+function shippingRow(a, overrideColor, overrideLabel) {
+  const severityColor = { high: '#dc2626', medium: '#f59e0b', claim_open: '#0891b2', claim_lost: '#dc2626' };
+  const severityLabel = { high: 'urgent', medium: 'delayed', claim_open: 'claim open', claim_lost: 'lost' };
+  const color = overrideColor || severityColor[a.severity] || '#6b7280';
+  const label = overrideLabel || severityLabel[a.severity] || a.severity;
+
+  const shopifyUrl = shopifyAdminUrl(a.shopify_order_id);
+  let links = '';
+  if (shopifyUrl) links += `<a href="${esc(shopifyUrl)}" style="color:#2563eb;text-decoration:none;">Shopify</a>`;
+  if (a.tracking_url) {
+    if (links) links += ' &middot; ';
+    links += `<a href="${esc(a.tracking_url)}" style="color:#2563eb;text-decoration:none;">Track</a>`;
+  }
+
+  const carrierText = [a.carrier, a.local_carrier].filter(Boolean).join(' \u2192 ');
+  const issuesHtml = a.issues.map(i => `<span style="color:${color};">\u25B8 ${esc(i)}</span>`).join('<br>');
+  const lastEventHtml = a.last_event ? `<br><span style="color:#6b7280;font-size:11px;">Last: ${esc(a.last_event)}</span>` : '';
+
+  let noteHtml = '';
+  if (a.note) {
+    const bg = a.note.resolved ? '#f0fdf4' : '#fffbeb';
+    const border = a.note.resolved ? '#22c55e' : '#f59e0b';
+    const textColor = a.note.resolved ? '#166534' : '#92400e';
+    const tag = a.note.resolved ? ' [RESOLVED]' : '';
+    noteHtml = `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:${bg};border-left:3px solid ${border};font-size:11px;color:${textColor};">Note: ${esc(a.note.note)}${tag}</span>`;
+  }
+  if (a.claim?.customer_customs_notified_at) {
+    const notifiedDate = a.claim.customer_customs_notified_at.split('T')[0];
+    noteHtml += `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:#f0fdfa;border-left:3px solid #0891b2;font-size:11px;color:#0891b2;">Customer emailed about customs: ${esc(notifiedDate)}</span>`;
+  }
+  if (a.claim?.emailed_at) {
+    const claimDate = a.claim.emailed_at.split('T')[0];
+    noteHtml += `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:#f0fdfa;border-left:3px solid #0891b2;font-size:11px;color:#0891b2;">Passport notified: ${esc(claimDate)}</span>`;
+  }
+  if (a.claim?.resolution) {
+    noteHtml += `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:#f0fdf4;border-left:3px solid #22c55e;font-size:11px;color:#166534;">Claim: ${esc(a.claim.resolution)}</span>`;
+  }
+
+  return `<tr style="border-bottom:1px solid #e5e7eb;">
+    <td style="padding:6px 10px;font-weight:bold;vertical-align:top;">#${a.order_number}<br><span style="font-weight:normal;font-size:11px;color:#6b7280;">${links}</span></td>
+    <td style="padding:6px 10px;vertical-align:top;font-size:13px;">${esc(a.ship_date || '?')}</td>
+    <td style="padding:6px 10px;vertical-align:top;">${a.business_days}bd</td>
+    <td style="padding:6px 10px;vertical-align:top;"><span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${esc(label)}</span><br><span style="color:#9ca3af;font-size:10px;">in transit &middot; ${esc(carrierText || '?')}</span></td>
+    <td style="padding:6px 10px;vertical-align:top;font-size:13px;">${esc(a.customer_email || '?')}<br><span style="color:#6b7280;font-size:12px;">${esc(a.destination)}</span></td>
+    <td style="padding:6px 10px;vertical-align:top;font-size:12px;">${issuesHtml}${lastEventHtml}${noteHtml}</td>
+  </tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Combined HTML email
+// ---------------------------------------------------------------------------
+
+function formatCombinedHtml(unfulfilled, shipping, opts) {
+  const today = new Date().toISOString().split('T')[0];
+  const uf = unfulfilled;
+  const sh = shipping;
+
+  // --- Unfulfilled buckets ---
+  const preOrders = uf.results.filter(r => r.isPreOrder);
+  const ufResolved = uf.results.filter(r => !r.isPreOrder && r.note?.resolved);
+  const ufActionable = uf.results.filter(r => !r.isPreOrder && !r.note?.resolved);
+  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
+  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
+  const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
+  const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
+  const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
+  const ufAttention = ufRest.filter(r => r.classification.severity === 'attention');
+  const ufNormal = ufRest.filter(r => r.classification.severity === 'normal');
+
+  // --- Shipping buckets ---
+  const shUrgent = sh.urgentNonPassport || [];
+  const shPassportPending = sh.passportPending || [];
+  const shPassportLost = sh.passportLost || [];
+  const shDelayed = sh.delayed || [];
+  const shResolved = sh.resolved || [];
+
+  // --- Table header ---
+  const tableHeader = `<tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
+    <th style="padding:6px 10px;text-align:left;">Order</th>
+    <th style="padding:6px 10px;text-align:left;">Date</th>
+    <th style="padding:6px 10px;text-align:left;">Age</th>
+    <th style="padding:6px 10px;text-align:left;">Status</th>
+    <th style="padding:6px 10px;text-align:left;">Customer</th>
+    <th style="padding:6px 10px;text-align:left;">Details</th>
+  </tr>`;
+
+  function section(title, color, rows) {
+    if (!rows.length) return '';
+    return `
+      <h3 style="margin:24px 0 8px;color:${color};">${esc(title)} (${rows.length})</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        ${tableHeader}
+        ${rows.join('\n')}
+      </table>`;
+  }
+
+  // --- Build sections ---
+  // 1. Urgent (unfulfilled + shipping)
+  const urgentRows = [
+    ...ufUrgent.map(r => unfulfilledRow(r)),
+    ...shUrgent.map(a => shippingRow(a)),
+  ];
+
+  // 2. Passport Claims
+  const passportPendingRows = shPassportPending.map(a => shippingRow(a, '#0891b2', 'claim open'));
+  const passportLostRows = shPassportLost.map(a => shippingRow(a, '#dc2626', 'lost'));
+
+  // 3. Attention (unfulfilled + shipping delayed)
+  const attentionRows = [
+    ...ufAttention.map(r => unfulfilledRow(r)),
+    ...shDelayed.map(a => shippingRow(a)),
+  ];
+
+  // 4. Auto-Resolved
+  const autoResolvedRows = ufAutoResolved.map(r => unfulfilledRow(r));
+
+  // 5. Waiting on Response (unfulfilled only — shipping notes are inline)
+  const waitingRows = ufWaiting.map(r => unfulfilledRow(r));
+
+  // 6. Pre-Orders
+  const preOrderRows = preOrders.map(r => unfulfilledRow(r));
+
+  // --- Stock issues table ---
+  let stockHtml = '';
+  if (uf.stockIssues.size > 0) {
+    stockHtml = `
+      <h3 style="margin:24px 0 8px;color:#dc2626;">Stock Issues</h3>
+      <table style="width:100%;border-collapse:collapse;font-family:monospace,monospace;font-size:13px;">
+        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
+          <th style="padding:8px;text-align:left;">SKU</th>
+          <th style="padding:8px;text-align:left;">Product</th>
+          <th style="padding:8px;text-align:left;">Variant</th>
+          <th style="padding:8px;text-align:right;">Inventory</th>
+          <th style="padding:8px;text-align:right;">Orders Waiting</th>
+        </tr>
+        ${[...uf.stockIssues.values()].map(s => `
+          <tr style="border-bottom:1px solid #e5e7eb;">
+            <td style="padding:8px;">${esc(s.sku)}</td>
+            <td style="padding:8px;">${esc(s.product)}</td>
+            <td style="padding:8px;">${esc(s.variant)}</td>
+            <td style="padding:8px;text-align:right;color:#dc2626;font-weight:bold;">${s.inventory}</td>
+            <td style="padding:8px;text-align:right;">${s.ordersWaiting}</td>
+          </tr>
+        `).join('')}
+      </table>`;
+  }
+
+  // --- Resolved sections ---
+  let resolvedHtml = '';
+  const totalResolved = ufResolved.length + (sh.resolvedCount || 0);
+  if (opts.showResolved && (ufResolved.length > 0 || shResolved.length > 0)) {
+    const resolvedRows = [
+      ...ufResolved.map(r => unfulfilledRow(r)),
+      ...shResolved.map(a => shippingRow(a, '#9ca3af', 'resolved')),
+    ];
+    resolvedHtml = section('Resolved', '#9ca3af', resolvedRows);
+  } else if (totalResolved > 0) {
+    resolvedHtml = `<p style="color:#9ca3af;margin-top:16px;">${totalResolved} resolved (use --show-resolved to see details)</p>`;
+  }
+
+  // --- Counts ---
+  const totalIssues = urgentRows.length + passportPendingRows.length + passportLostRows.length + attentionRows.length;
+  const hasUrgent = urgentRows.length > 0 || passportLostRows.length > 0;
+  const hasErrors = (uf.errors?.length || 0) > 0;
+
+  // --- Subject line ---
+  let statusEmoji;
+  if (hasErrors) statusEmoji = '\u274c';
+  else if (totalIssues === 0) statusEmoji = '\u2705';
+  else if (hasUrgent) statusEmoji = '\u26a0\ufe0f';
+  else statusEmoji = '\uD83D\uDCE6';
+
+  const subjectParts = [`Daily Order Alerts \u2014 ${today}`];
+  if (totalIssues > 0) {
+    subjectParts.push(`${totalIssues} need attention`);
+    if (urgentRows.length > 0) subjectParts.push(`${urgentRows.length} urgent`);
+    if (passportPendingRows.length > 0) subjectParts.push(`${passportPendingRows.length} Passport claims`);
+  } else {
+    subjectParts.push('all clear');
+  }
+  const subject = `${statusEmoji} ${subjectParts.join(' \u2014 ')}`;
+
+  // --- Summary line ---
+  const summaryParts = [
+    `Unfulfilled: ${uf.summary.total}`,
+    `In transit: ${sh.totalInTransit}`,
+  ];
+  if (urgentRows.length) summaryParts.push(`<strong style="color:#dc2626;">Urgent: ${urgentRows.length}</strong>`);
+  if (passportPendingRows.length) summaryParts.push(`<span style="color:#0891b2;">Passport claims: ${passportPendingRows.length}</span>`);
+  if (passportLostRows.length) summaryParts.push(`<strong style="color:#dc2626;">Lost: ${passportLostRows.length}</strong>`);
+  if (attentionRows.length) summaryParts.push(`<span style="color:#f59e0b;">Attention: ${attentionRows.length}</span>`);
+  if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
+  if (waitingRows.length) summaryParts.push(`Waiting: ${waitingRows.length}`);
+  if (ufNormal.length) summaryParts.push(`Normal: ${ufNormal.length}`);
+  if (preOrders.length) summaryParts.push(`Pre-order: ${preOrders.length}`);
+  if (totalResolved) summaryParts.push(`Resolved: ${totalResolved}`);
+
+  // --- All clear message ---
+  let allClearHtml = '';
+  if (totalIssues === 0 && autoResolvedRows.length === 0) {
+    allClearHtml = `<p style="color:#22c55e;font-weight:bold;font-size:16px;margin:24px 0;">All clear \u2014 no issues detected.</p>`;
+  }
+
+  // --- Errors ---
+  let errorsHtml = '';
+  if (uf.errors?.length > 0) {
+    errorsHtml = `
+      <h3 style="margin:24px 0 8px;color:#dc2626;">Errors</h3>
+      <ul style="font-size:13px;color:#dc2626;">
+        ${uf.errors.map(e => `<li>${esc(e)}</li>`).join('\n')}
+      </ul>`;
+  }
+
+  const html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:1000px;margin:0 auto;">
+      <h2 style="margin-bottom:4px;">Daily Order Alerts \u2014 ${today}</h2>
+      <p style="color:#6b7280;margin-top:0;">${summaryParts.join(' &middot; ')}</p>
+
+      ${allClearHtml}
+      ${section('Urgent', '#dc2626', urgentRows)}
+      ${section('Passport Claims \u2014 Pending', '#0891b2', passportPendingRows)}
+      ${section('Passport Claims \u2014 Lost', '#dc2626', passportLostRows)}
+      ${section('Attention', '#f59e0b', attentionRows)}
+      ${stockHtml}
+      ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
+      ${section('Waiting on Response', '#f97316', waitingRows)}
+      ${section('Pre-Order', '#6366f1', preOrderRows)}
+      ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
+      ${resolvedHtml}
+      ${errorsHtml}
+    </div>`;
+
+  return { subject, html, totalIssues };
+}
+
+// ---------------------------------------------------------------------------
+// Console output
+// ---------------------------------------------------------------------------
+
+function formatConsole(unfulfilled, shipping, opts) {
+  const today = new Date().toISOString().split('T')[0];
+  const uf = unfulfilled;
+  const sh = shipping;
+  const lines = [];
+
+  lines.push(`\n=== RUBIES Daily Order Alerts -- ${today} ===\n`);
+  lines.push(`Unfulfilled: ${uf.summary.total} | In transit: ${sh.totalInTransit}`);
+  lines.push(`Urgent: ${uf.summary.urgent + (sh.urgentNonPassport?.length || 0)} | Attention: ${uf.summary.attention + (sh.delayed?.length || 0)} | Passport claims: ${(sh.passportPending?.length || 0) + (sh.passportLost?.length || 0)}\n`);
+
+  function printUnfulfilledSection(title, orders) {
+    if (!orders.length) return;
+    lines.push(`\n--- ${title} (${orders.length}) ---`);
+    for (const r of orders) {
+      const date = r.order.created_at?.split('T')[0] || '?';
+      const email = (r.order.customer_email || '?').padEnd(30);
+      const reason = r.classification.reason.padEnd(20);
+      const items = (r.order.order_line_items || [])
+        .map(li => `${li.title}${li.variant_title ? ' / ' + li.variant_title : ''}`)
+        .join(', ');
+      const truncItems = items.length > 60 ? items.slice(0, 57) + '...' : items;
+      lines.push(`#${String(r.order.order_number).padEnd(7)} ${date}  ${String(r.businessDays) + 'bd'}  ${email} ${reason} [unfulfilled] ${truncItems}`);
+      if (r.classification.detail) lines.push(`  Detail: ${r.classification.detail}`);
+      if (r.note) {
+        const noteDate = r.note.created_at?.split('T')[0] || '?';
+        const resolvedTag = r.note.resolved ? ' [RESOLVED]' : '';
+        lines.push(`  Note [${noteDate}]: ${r.note.note} -- ${r.note.author}${resolvedTag}`);
+      }
+    }
+  }
+
+  function printShippingSection(title, alerts) {
+    if (!alerts.length) return;
+    lines.push(`\n--- ${title} (${alerts.length}) ---`);
+    for (const a of alerts) {
+      lines.push(`#${String(a.order_number).padEnd(7)} ${a.ship_date || '?'}  ${a.business_days}bd  ${(a.customer_email || '?').padEnd(30)} ${a.carrier.padEnd(12)} [in transit] ${a.destination}`);
+      for (const i of a.issues) lines.push(`  - ${i}`);
+      if (a.last_event) lines.push(`  Last: ${a.last_event}`);
+      if (a.note) lines.push(`  Note: ${a.note.note} (${a.note.created_at?.split('T')[0]})`);
+    }
+  }
+
+  // Unfulfilled sections
+  const ufActionable = uf.results.filter(r => !r.isPreOrder && !r.note?.resolved);
+  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
+  const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
+  const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
+  const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
+  const ufAttention = ufRest.filter(r => r.classification.severity === 'attention');
+  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
+  const preOrders = uf.results.filter(r => r.isPreOrder);
+
+  // Combined urgent
+  printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
+  printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
+  printShippingSection('PASSPORT CLAIMS - PENDING', sh.passportPending || []);
+  printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
+  printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
+  printShippingSection('DELAYED (shipping)', sh.delayed || []);
+  printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
+  printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
+  printUnfulfilledSection('PRE-ORDER', preOrders);
+
+  if (opts.showResolved) {
+    const ufResolved = uf.results.filter(r => !r.isPreOrder && r.note?.resolved);
+    printUnfulfilledSection('RESOLVED (unfulfilled)', ufResolved);
+    printShippingSection('RESOLVED (shipping)', sh.resolved || []);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+async function run() {
+  const opts = parseArgs();
+  const supabase = getSupabaseClient();
+
+  // Handle CLI action
+  if (opts.action) {
+    await handleAction(supabase, opts.action);
+    console.log('');
+  }
+
+  console.log('RUBIES Daily Order Alerts -- fetching data...\n');
+
+  // Run both analyses
+  const [unfulfilled, shipping] = await Promise.all([
+    checkUnfulfilledOrders(),
+    checkShippingDelays({ showResolved: opts.showResolved }),
+  ]);
+
+  // Console output
+  if (opts.json) {
+    const jsonOutput = {
+      unfulfilled: unfulfilled.results.map(r => ({
+        order_number: r.order.order_number,
+        created_at: r.order.created_at,
+        customer_email: r.order.customer_email,
+        business_days: r.businessDays,
+        is_pre_order: r.isPreOrder,
+        classification: r.classification,
+        note: r.note,
+        alert_type: 'unfulfilled',
+        items: (r.order.order_line_items || []).map(li => ({
+          title: li.title, variant: li.variant_title, sku: li.sku, quantity: li.quantity,
+        })),
+      })),
+      shipping: (shipping.alerts || []).map(a => ({
+        order_number: a.order_number,
+        ship_date: a.ship_date,
+        customer_email: a.customer_email,
+        business_days: a.business_days,
+        destination: a.destination,
+        carrier: a.carrier,
+        severity: a.severity,
+        issues: a.issues,
+        claim: a.claim,
+        note: a.note,
+        alert_type: 'shipping',
+      })),
+    };
+    console.log(JSON.stringify(jsonOutput, null, 2));
+  } else {
+    console.log(formatConsole(unfulfilled, shipping, opts));
+  }
+
+  // Email — always send
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts);
+
+  const sgMail = getSendgridClient();
+  if (sgMail) {
+    try {
+      await sgMail.send({
+        to: 'jamie@rubyshines.com',
+        from: 'pipeline@rubyshines.com',
+        subject,
+        html,
+        trackingSettings: { clickTracking: { enable: false, enableText: false } },
+      });
+      console.log('Email sent to jamie@rubyshines.com');
+    } catch (err) {
+      console.error('Failed to send email:', err.message);
+    }
+  }
+
+  // Pipeline-compatible return
+  const shippingAlertCount = (shipping.urgentNonPassport?.length || 0) + (shipping.passportPending?.length || 0)
+    + (shipping.passportLost?.length || 0) + (shipping.delayed?.length || 0);
+  const detail = `${unfulfilled.summary.total} unfulfilled (${unfulfilled.summary.urgent + unfulfilled.summary.attention} need attention), ${shippingAlertCount} shipping alerts, ${shipping.totalInTransit} in transit`;
+
+  return {
+    sources: {
+      order_alerts: {
+        success: true,
+        rowsWritten: totalIssues,
+        detail,
+      },
+    },
+    status: 'ok',
+  };
+}
+
+module.exports = { run, checkUnfulfilledOrders, checkShippingDelays };
+
+if (require.main === module) {
+  run().catch(err => {
+    console.error('FATAL:', err.message);
+    process.exit(1);
+  });
+}

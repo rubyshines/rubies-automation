@@ -13,11 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
-  // Restore active tab + test mode
+  // Restore active tab + sim type
   const savedTab = localStorage.getItem('activeTab');
   if (savedTab && ['queue', 'history', 'test'].includes(savedTab)) switchTab(savedTab);
-  const savedTestMode = localStorage.getItem('testMode') || 'simulator';
-  switchTestMode(savedTestMode);
+  simRestoreType();
 
   // Restore simulator session if active
   if (simRestore()) simRenderRestoredSession();
@@ -42,6 +41,19 @@ document.addEventListener('DOMContentLoaded', () => {
     loadQueue();
     loadStats();
   }, 30000);
+
+  // Esc key returns to queue
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && currentDraftId && document.getElementById('sidebar-context').style.display !== 'none') {
+      // Don't intercept Esc if user is typing in a textarea/input
+      const tag = document.activeElement?.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT') {
+        document.activeElement.blur();
+        return;
+      }
+      showSidebarQueue();
+    }
+  });
 
   // Autosave draft edits + notes to localStorage
   document.getElementById('draft-editor').addEventListener('input', () => {
@@ -106,6 +118,21 @@ async function loadQueue() {
   }
 }
 
+function showSidebarContext() {
+  document.getElementById('sidebar-queue').style.display = 'none';
+  document.getElementById('sidebar-context').style.display = 'flex';
+}
+
+function showSidebarQueue() {
+  document.getElementById('sidebar-context').style.display = 'none';
+  document.getElementById('sidebar-queue').style.display = 'block';
+}
+
+function updateBackButton() {
+  const count = document.querySelectorAll('.queue-item').length;
+  document.getElementById('sidebar-back-count').textContent = `Back to queue (${count})`;
+}
+
 async function selectDraft(id) {
   currentDraftId = id;
   location.hash = `draft-${id}`;
@@ -120,6 +147,8 @@ async function selectDraft(id) {
   try {
     currentDraft = await api(`/api/drafts/${id}`);
     renderDetail(currentDraft);
+    updateBackButton();
+    showSidebarContext();
   } catch (err) {
     console.error('Failed to load draft:', err);
   }
@@ -129,30 +158,36 @@ function renderDetail(d) {
   document.getElementById('detail-placeholder').style.display = 'none';
   document.getElementById('detail-content').style.display = 'block';
 
-  // Customer info
+  // Render basic customer info immediately from draft snapshot
   const ctx = d.customer_context || {};
-  document.getElementById('detail-customer').innerHTML = `
-    <div class="label">Customer</div>
-    <div>${esc(ctx.name || 'Unknown')} (${esc(ctx.pronouns || 'they/them')})</div>
-    <div>${esc(ctx.email || d.customer_email)}</div>
-    <div>${esc(ctx.country || '?')}${ctx.buying_for === 'third_party' ? ' | Third-party purchase' : ''}</div>
-    ${ctx.address ? `<div style="margin-top:4px;font-size:12px;color:var(--text-dim)">${formatAddress(ctx.address)}</div>` : ''}
+  document.getElementById('customer-card').innerHTML = `
+    <div>
+      <span class="customer-name">${esc(ctx.name || 'Unknown')}</span>
+      <span class="customer-pronouns">(${esc(ctx.pronouns || 'they/them')})</span>
+      ${ctx.buying_for === 'third_party' ? ' <span class="badge badge-muted">Third-party</span>' : ''}
+    </div>
+    <div class="customer-contact">
+      <span>${esc(ctx.email || d.customer_email)}</span>
+    </div>
+    ${ctx.address ? `<div class="customer-address">${formatAddress(ctx.address)}</div>` : ''}
+    <div class="ltv-stats" id="ltv-stats"><span style="color:var(--text-tertiary);font-size:12px">Loading stats...</span></div>
   `;
 
-  // Order info
+  // Render basic order info from draft snapshot (will be enriched by loadCustomerContext)
   const order = d.order_context;
   if (order) {
-    const items = (order.items || []).map(i =>
-      `${i.quantity}x ${esc(i.title)} - ${esc(i.variant)} (SKU: ${esc(i.sku || 'n/a')})`
-    ).join('<br>');
-    document.getElementById('detail-order').innerHTML = `
-      <div class="label">Order</div>
-      <div>${esc(order.name)} (${esc(order.date)})</div>
-      <div style="font-size:12px;margin-top:4px">${items}</div>
-    `;
+    document.getElementById('ticket-order').innerHTML = renderOrderCard(order.name, order.date, order.items, null, null, null, null);
   } else {
-    document.getElementById('detail-order').innerHTML = '<div class="label">Order</div><div>No order found</div>';
+    document.getElementById('ticket-order').innerHTML = '<div style="font-size:13px;color:var(--text-tertiary)">No order associated</div>';
   }
+
+  // Hide other orders + past tickets until context loads
+  document.getElementById('other-orders-section').style.display = 'none';
+  document.getElementById('past-tickets-section').style.display = 'none';
+
+  // Async: load enriched customer context (strip # from order number)
+  const orderNum = d.order_number ? String(d.order_number).replace('#', '') : null;
+  loadCustomerContext(d.customer_email, orderNum);
 
   // Conversation thread
   const history = d.conversation_history || [];
@@ -163,7 +198,7 @@ function renderDetail(d) {
       const processed = collapseQuotedContent(rawHtml);
       return `
         <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
-          <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${formatTime(m.created_at)}</div>
+          <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${timeAgo(m.created_at, 'long')}</div>
           <div class="msg-body">${processed}</div>
         </div>`;
     }).join('');
@@ -183,36 +218,8 @@ function renderDetail(d) {
   statusEl.textContent = d.advisor_status;
   statusEl.className = `badge badge-${d.advisor_status}`;
 
-  // Action panel (show if tree is ready with actions)
-  const actionPanel = document.getElementById('action-panel');
-  if (d.action_type && !d.action_executed_at) {
-    actionPanel.style.display = 'block';
-    const structured = d.structured_output || {};
-    const items = (structured.intake?.items || []).filter(i => i.resolved_size);
-    const refundItems = (structured.prescription?.items || []).filter(i => i.state === 'REFUND_CONFIRMED');
-
-    let prescriptionHtml = '<strong>Prescription:</strong><br>';
-    for (const i of items) {
-      prescriptionHtml += `Exchange: ${esc(i.product)} ${esc(i.size)} -> ${esc(i.resolved_size)}<br>`;
-    }
-    for (const i of refundItems) {
-      prescriptionHtml += `Refund: ${esc(i.product)}<br>`;
-    }
-    document.getElementById('action-prescription').innerHTML = prescriptionHtml;
-    document.getElementById('action-result').style.display = 'none';
-    document.getElementById('btn-execute').disabled = false;
-    document.getElementById('btn-send').disabled = false;
-  } else if (d.action_type && d.action_executed_at) {
-    actionPanel.style.display = 'block';
-    document.getElementById('action-prescription').innerHTML = '<strong>Action executed</strong>';
-    document.getElementById('action-result').style.display = 'block';
-    document.getElementById('action-result').textContent = JSON.stringify(d.action_result, null, 2);
-    document.getElementById('btn-execute').disabled = true;
-    document.getElementById('btn-send').disabled = false;
-  } else {
-    actionPanel.style.display = 'none';
-    document.getElementById('btn-send').disabled = false;
-  }
+  // Action panel — intent-specific UIs
+  renderActionPanel(d);
 
   // Audit trail
   const audit = d.audit_trail || [];
@@ -237,6 +244,515 @@ function renderDetail(d) {
 
   // Re-highlight queue
   loadQueue();
+}
+
+// ---------------------------------------------------------------------------
+// Customer Context (async enrichment)
+// ---------------------------------------------------------------------------
+
+function countryFlag(code) {
+  if (!code || code.length !== 2) return '';
+  return String.fromCodePoint(...code.toUpperCase().split('').map(c => 0x1F1A5 + c.charCodeAt(0)));
+}
+
+function shopifyAdminUrl(shopifyOrderId) {
+  if (!shopifyOrderId) return null;
+  // Extract numeric ID from GID if needed
+  const numId = String(shopifyOrderId).replace(/^gid:\/\/shopify\/Order\//, '');
+  return `https://admin.shopify.com/store/rubies-active-wear/orders/${numId}`;
+}
+
+async function loadCustomerContext(email, orderNumber) {
+  try {
+    const params = orderNumber ? `?order=${orderNumber}` : '';
+    const ctx = await api(`/api/customer/${encodeURIComponent(email)}/context${params}`);
+
+    // Update customer card with enriched data
+    const c = ctx.customer;
+    const l = ctx.ltv;
+    const flag = countryFlag(ctx.ticket_order?.shipping_address?.countryCodeV2 || ctx.customer?.address?.countryCodeV2);
+
+    document.getElementById('customer-card').innerHTML = `
+      <div>
+        <span class="customer-name">${esc(c.name)}</span>
+        ${c.phone ? `<span style="color:var(--text-secondary);font-size:12px;margin-left:8px">${esc(c.phone)}</span>` : ''}
+      </div>
+      <div class="customer-contact">
+        <span>${esc(c.email)}</span>
+        ${c.address ? `<span>${flag} ${formatAddress(c.address)}</span>` : ''}
+      </div>
+      <div class="ltv-stats">
+        <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.total_spent || 0).toFixed(0)}</span><span class="ltv-stat-label">spent (${l.currency})</span></div>
+        <div class="ltv-stat"><span class="ltv-stat-value">${l.order_count || 0}</span><span class="ltv-stat-label">orders${l.exchange_count ? ` (${l.exchange_count} exch)` : ''}</span></div>
+        <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.avg_order_value || 0).toFixed(0)}</span><span class="ltv-stat-label">avg order</span></div>
+        ${l.days_since_last != null ? `<div class="ltv-stat"><span class="ltv-stat-value">${l.days_since_last}d</span><span class="ltv-stat-label">since last</span></div>` : ''}
+      </div>
+    `;
+
+    // Update ticket order with full detail + links
+    const to = ctx.ticket_order;
+    if (to) {
+      let linksHtml = '';
+      const shopifyUrl = shopifyAdminUrl(to.shopify_order_id);
+      if (shopifyUrl) linksHtml += `<a href="${shopifyUrl}" target="_blank" class="order-link">Shopify</a>`;
+      if (to.warehance_url) linksHtml += `<a href="${to.warehance_url}" target="_blank" class="order-link">Warehance</a>`;
+      if (to.tracking_url) linksHtml += `<a href="${to.tracking_url}" target="_blank" class="order-link order-link-tracking">Tracking</a>`;
+
+      document.getElementById('ticket-order').innerHTML = renderOrderCard(
+        `#${to.order_number}`, to.created_at, to.items,
+        to.fulfillment_status, to.total, to.currency, linksHtml
+      );
+    }
+
+    // Render other orders as compact expandable rows with load more
+    if (ctx.other_orders?.length) {
+      document.getElementById('other-orders-section').style.display = '';
+      // Store all orders for load-more
+      window._otherOrders = ctx.other_orders;
+      renderOtherOrders(5);
+    }
+
+    // Render past tickets
+    if (ctx.past_tickets?.length) {
+      document.getElementById('past-tickets-section').style.display = '';
+      document.getElementById('past-tickets-count').textContent = ctx.past_tickets.length;
+      document.getElementById('past-tickets-list').innerHTML = ctx.past_tickets.map(t => {
+        const categoryClass = getCategoryClass(t.category);
+        const resIcon = t.resolution_successful === true ? '<span class="resolution-icon" style="color:var(--green)">&#10003;</span>'
+          : t.resolution_successful === false ? '<span class="resolution-icon" style="color:var(--red)">&#10007;</span>'
+          : '<span class="resolution-icon" style="color:var(--text-tertiary)">-</span>';
+        return `<div class="ticket-entry" onclick="this.querySelector('.ticket-entry-detail')?.classList.toggle('hidden')">
+          <div class="ticket-entry-header">
+            <span class="ticket-entry-date">${timeAgo(t.created_at)}</span>
+            <span class="category-badge ${categoryClass}">${esc(t.category || 'general')}</span>
+            ${t.ai_processed ? '<span class="badge-ai">AI</span>' : ''}
+            <span class="ticket-entry-summary">${esc(t.subject || t.summary || '')}</span>
+            ${resIcon}
+          </div>
+          ${t.summary ? `<div class="ticket-entry-detail hidden" style="display:none">${esc(t.summary)}</div>` : ''}
+        </div>`;
+      }).join('');
+
+      // Wire up expand/collapse
+      document.querySelectorAll('.ticket-entry').forEach(el => {
+        el.style.cursor = 'pointer';
+        el.onclick = () => {
+          const detail = el.querySelector('.ticket-entry-detail');
+          if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+        };
+      });
+    }
+
+  } catch (err) {
+    console.warn('Failed to load customer context:', err);
+    document.getElementById('ltv-stats').innerHTML = `<span style="color:var(--text-tertiary);font-size:11px">Context unavailable</span>`;
+  }
+}
+
+function renderOtherOrders(showCount) {
+  const orders = window._otherOrders || [];
+  const total = orders.length;
+  const visible = orders.slice(0, showCount);
+
+  document.getElementById('other-orders-count').textContent = `${Math.min(showCount, total)} of ${total}`;
+
+  let html = visible.map(o => {
+    const shopUrl = shopifyAdminUrl(o.shopify_order_id);
+    const isExchange = parseFloat(o.total) === 0;
+    const statusLower = (o.fulfillment_status || '').toLowerCase();
+    const statusColor = statusLower === 'fulfilled' ? 'var(--green)' : statusLower === 'unfulfilled' ? 'var(--yellow)' : 'var(--text-tertiary)';
+    const amountStr = isExchange ? '<span class="past-order-exchange">Exch</span>' : `$${Number(o.total).toFixed(0)}`;
+
+    const itemsHtml = (o.items || []).map(i =>
+      `<div class="past-order-item">
+        <span class="past-order-item-qty">${i.quantity}x</span>
+        <span class="past-order-item-name">${esc(i.title)}${i.variant ? ` <span class="past-order-item-variant">${esc(i.variant)}</span>` : ''}</span>
+        ${i.price != null ? `<span class="past-order-item-price">$${Number(i.price).toFixed(0)}</span>` : ''}
+      </div>`
+    ).join('');
+
+    // Build links row for expanded view
+    let orderLinks = '';
+    if (shopUrl) orderLinks += `<a href="${shopUrl}" target="_blank" class="order-link order-link-sm">Shopify</a>`;
+    if (o.tracking_url) orderLinks += `<a href="${o.tracking_url}" target="_blank" class="order-link order-link-sm order-link-tracking">Tracking</a>`;
+
+    return `<details class="past-order-card">
+      <summary class="past-order-summary">
+        <span class="past-order-num">${shopUrl ? `<a href="${shopUrl}" target="_blank" onclick="event.stopPropagation()">#${o.order_number}</a>` : `#${o.order_number}`}</span>
+        <span class="past-order-date">${timeAgo(o.created_at, 'short')}</span>
+        <span class="past-order-amount">${amountStr}</span>
+        <span class="past-order-status" style="color:${statusColor}">${esc(statusLower)}</span>
+      </summary>
+      <div class="past-order-items">
+        ${itemsHtml || '<span style="color:var(--text-tertiary);font-size:11px">No items</span>'}
+        ${orderLinks ? `<div class="past-order-links">${orderLinks}</div>` : ''}
+      </div>
+    </details>`;
+  }).join('');
+
+  if (showCount < total) {
+    const remaining = total - showCount;
+    html += `<button class="past-order-load-more" onclick="renderOtherOrders(${showCount + 5})">Show ${Math.min(remaining, 5)} more order${remaining > 1 ? 's' : ''}</button>`;
+  }
+
+  document.getElementById('other-orders-list').innerHTML = html;
+}
+
+function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml) {
+  const statusColor = !fulfillmentStatus ? 'var(--text-tertiary)'
+    : fulfillmentStatus.toLowerCase() === 'fulfilled' ? 'var(--green)'
+    : fulfillmentStatus.toLowerCase() === 'unfulfilled' ? 'var(--yellow)'
+    : 'var(--text-secondary)';
+
+  const itemsHtml = (items || []).map(i => {
+    const price = i.price != null ? `$${Number(i.price).toFixed(2)}` : '';
+    const itemTotal = (i.price != null && i.quantity > 1) ? `$${(Number(i.price) * i.quantity).toFixed(2)}` : price;
+    return `<tr class="order-item-row">
+      <td class="order-item-qty">${i.quantity}x</td>
+      <td class="order-item-name">${esc(i.title)}${i.variant ? ` <span class="order-item-variant">${esc(i.variant)}</span>` : ''}</td>
+      <td class="order-item-sku">${esc(i.sku || '')}</td>
+      <td class="order-item-price">${itemTotal}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="ticket-order-header">
+      <span class="ticket-order-title">Order ${esc(name)}</span>
+      <span style="margin-left:8px;font-size:12px;color:var(--text-secondary)">${date ? timeAgo(date) : ''}</span>
+      ${fulfillmentStatus ? `<span class="ticket-order-status" style="margin-left:8px;color:${statusColor}">${esc(fulfillmentStatus)}</span>` : ''}
+    </div>
+    <table class="order-items-table">${itemsHtml}</table>
+    ${total != null ? `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>` : ''}
+    ${linksHtml ? `<div class="order-links" style="margin-top:8px">${linksHtml}</div>` : ''}
+  `;
+}
+
+function getCategoryClass(category) {
+  if (!category) return 'category-general';
+  if (category.includes('exchange') || category.includes('return')) return 'category-exchange';
+  if (category.includes('shipping')) return 'category-shipping';
+  if (category.includes('sizing')) return 'category-sizing';
+  if (category.includes('product')) return 'category-product';
+  if (category.includes('order')) return 'category-order';
+  return 'category-general';
+}
+
+// ---------------------------------------------------------------------------
+// Action Panel — intent-specific UIs
+// ---------------------------------------------------------------------------
+
+function renderActionPanel(draft) {
+  const panel = document.getElementById('action-panel');
+  const headerEl = document.getElementById('action-header');
+  const detailsEl = document.getElementById('action-details');
+  const buttonsEl = document.getElementById('action-buttons');
+  const previewEl = document.getElementById('action-preview');
+  const resultEl = document.getElementById('action-result');
+
+  // Reset
+  previewEl.style.display = 'none';
+  resultEl.style.display = 'none';
+  headerEl.innerHTML = '';
+  detailsEl.innerHTML = '';
+  buttonsEl.innerHTML = '';
+
+  document.getElementById('btn-send').disabled = false;
+
+  // Determine action type
+  const actionType = draft.action_type || '';
+  const messageType = draft.message_type || '';
+
+  if (!actionType && !['exchange', 'refund', 'order_modification'].includes(messageType)) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+
+  // Already executed?
+  if (draft.action_executed_at) {
+    renderCompletedAction(draft);
+    return;
+  }
+
+  if (actionType.includes('exchange') || messageType === 'exchange') {
+    renderExchangeAction(draft);
+  } else if (actionType.includes('refund') || messageType === 'refund') {
+    renderRefundAction(draft);
+  } else if (messageType === 'order_modification') {
+    renderEditOrderAction(draft);
+  } else {
+    // Generic fallback
+    headerEl.textContent = 'Action Required';
+    detailsEl.textContent = `Type: ${actionType || messageType}`;
+    panel.style.display = 'none';
+  }
+}
+
+function renderExchangeAction(draft) {
+  const headerEl = document.getElementById('action-header');
+  const detailsEl = document.getElementById('action-details');
+  const buttonsEl = document.getElementById('action-buttons');
+
+  headerEl.textContent = 'Exchange';
+
+  const structured = draft.structured_output || {};
+  const items = (structured.intake?.items || []).filter(i => i.resolved_size);
+  const prescriptionItems = structured.prescription?.items || [];
+
+  if (items.length === 0) {
+    detailsEl.innerHTML = '<span style="color:var(--text-secondary)">No exchange items resolved yet</span>';
+    return;
+  }
+
+  let html = '';
+  for (const item of items) {
+    const pItem = prescriptionItems.find(p => p.product === item.product);
+    const fabricDelta = pItem?.fabric_delta || '';
+    html += `<div class="action-item-card">
+      <strong>${esc(item.resolved_product || item.product)}</strong>:
+      ${esc(item.size)} <span class="size-arrow">${esc(item.resolved_size)}</span>
+      ${fabricDelta ? `<span class="fabric-delta">${esc(fabricDelta)}</span>` : ''}
+    </div>`;
+  }
+
+  // Donation routing
+  if (structured.prescription?.donation) {
+    html += `<div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">
+      <strong>Donation:</strong> ${esc(structured.prescription.donation.text || structured.prescription.donation.type || '')}
+    </div>`;
+  }
+
+  detailsEl.innerHTML = html;
+  buttonsEl.innerHTML = `<button class="btn btn-action" onclick="executeExchangePhase1()">Create Exchange Draft</button>`;
+}
+
+function renderRefundAction(draft) {
+  const headerEl = document.getElementById('action-header');
+  const detailsEl = document.getElementById('action-details');
+  const buttonsEl = document.getElementById('action-buttons');
+
+  headerEl.textContent = 'Refund';
+
+  const structured = draft.structured_output || {};
+  const refundItems = (structured.prescription?.items || []).filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
+  const intakeItems = (structured.intake?.items || []).filter(i => i.product);
+
+  const itemsToShow = refundItems.length ? refundItems : intakeItems;
+
+  let html = '';
+  for (const item of itemsToShow) {
+    html += `<div class="action-item-card">
+      <strong>${esc(item.product)}</strong> ${item.size ? `- ${esc(item.size)}` : ''}
+    </div>`;
+  }
+
+  detailsEl.innerHTML = html || '<span style="color:var(--text-secondary)">Refund requested</span>';
+  buttonsEl.innerHTML = `<button class="btn btn-action" onclick="executeRefundPhase1()">Calculate Refund</button>`;
+}
+
+function renderEditOrderAction(draft) {
+  const headerEl = document.getElementById('action-header');
+  const detailsEl = document.getElementById('action-details');
+  const buttonsEl = document.getElementById('action-buttons');
+
+  headerEl.textContent = 'Order Edit';
+  detailsEl.innerHTML = '<span style="color:var(--text-secondary)">Order modification requested</span>';
+  buttonsEl.innerHTML = `<button class="btn btn-action" onclick="executeEditPhase1()">Stage Edit</button>`;
+}
+
+function renderCompletedAction(draft) {
+  const headerEl = document.getElementById('action-header');
+  const detailsEl = document.getElementById('action-details');
+  const resultEl = document.getElementById('action-result');
+
+  headerEl.textContent = 'Action Completed';
+  detailsEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Action executed ${timeAgo(draft.action_executed_at)}</div>`;
+
+  if (draft.action_result) {
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `<pre style="font-family:'JetBrains Mono',monospace;font-size:11px;white-space:pre-wrap;margin:0">${esc(JSON.stringify(draft.action_result, null, 2))}</pre>`;
+  }
+}
+
+// Two-phase exchange execution
+async function executeExchangePhase1() {
+  if (!currentDraftId) return;
+  const btn = document.querySelector('#action-buttons .btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating draft...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/execute/exchange`, { method: 'POST', body: {} });
+    const previewEl = document.getElementById('action-preview');
+    previewEl.style.display = 'block';
+
+    // Parse the result - the exchange tool returns markdown text in content
+    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
+
+    let html = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(text)}</div>`;
+
+    // Add Shopify link if we can extract it
+    const adminMatch = text.match(/https:\/\/admin\.shopify\.com\/[^\s)]+/);
+    if (adminMatch) {
+      html += `<div style="margin-top:8px"><a href="${adminMatch[0]}" target="_blank" class="order-link">View in Shopify</a></div>`;
+    }
+
+    html += `<div style="margin-top:12px">
+      <button class="btn btn-action" onclick="executeExchangePhase2()">Confirm & Complete</button>
+      <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('action-preview').style.display='none'">Cancel</button>
+    </div>`;
+
+    previewEl.innerHTML = html;
+    btn.textContent = 'Draft Created';
+  } catch (err) {
+    btn.textContent = 'Create Exchange Draft';
+    btn.disabled = false;
+    alert('Exchange Phase 1 failed: ' + err.message);
+  }
+}
+
+async function executeExchangePhase2() {
+  if (!currentDraftId) return;
+  const previewEl = document.getElementById('action-preview');
+  const btns = previewEl.querySelectorAll('.btn');
+  btns.forEach(b => { b.disabled = true; });
+  btns[0].textContent = 'Completing...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/execute/exchange`, { method: 'POST', body: { confirmed: true } });
+    const resultEl = document.getElementById('action-result');
+    resultEl.style.display = 'block';
+
+    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
+    resultEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Exchange completed</div>
+      <div style="margin-top:8px;font-size:12px;white-space:pre-wrap">${esc(text)}</div>`;
+
+    previewEl.style.display = 'none';
+    document.getElementById('action-buttons').innerHTML = '';
+    document.getElementById('action-header').textContent = 'Exchange Completed';
+  } catch (err) {
+    btns.forEach(b => { b.disabled = false; });
+    btns[0].textContent = 'Confirm & Complete';
+    alert('Exchange Phase 2 failed: ' + err.message);
+  }
+}
+
+// Two-phase refund execution
+async function executeRefundPhase1() {
+  if (!currentDraftId) return;
+  const btn = document.querySelector('#action-buttons .btn');
+  btn.disabled = true;
+  btn.textContent = 'Calculating...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/execute/refund`, { method: 'POST', body: {} });
+    const previewEl = document.getElementById('action-preview');
+    previewEl.style.display = 'block';
+
+    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
+
+    // Try to extract refund amount
+    const amountMatch = text.match(/\$[\d,.]+/);
+
+    let html = '';
+    if (amountMatch) {
+      html += `<div class="refund-amount">${amountMatch[0]} refund</div>`;
+    }
+    html += `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(text)}</div>`;
+    html += `<div style="margin-top:12px">
+      <button class="btn btn-action" onclick="executeRefundPhase2()">Process Refund</button>
+      <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('action-preview').style.display='none'">Cancel</button>
+    </div>`;
+
+    previewEl.innerHTML = html;
+    btn.textContent = 'Calculated';
+  } catch (err) {
+    btn.textContent = 'Calculate Refund';
+    btn.disabled = false;
+    alert('Refund Phase 1 failed: ' + err.message);
+  }
+}
+
+async function executeRefundPhase2() {
+  if (!currentDraftId) return;
+  const previewEl = document.getElementById('action-preview');
+  const btns = previewEl.querySelectorAll('.btn');
+  btns.forEach(b => { b.disabled = true; });
+  btns[0].textContent = 'Processing...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/execute/refund`, { method: 'POST', body: { confirmed: true } });
+    const resultEl = document.getElementById('action-result');
+    resultEl.style.display = 'block';
+
+    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
+    resultEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Refund processed</div>
+      <div style="margin-top:8px;font-size:12px;white-space:pre-wrap">${esc(text)}</div>`;
+
+    previewEl.style.display = 'none';
+    document.getElementById('action-buttons').innerHTML = '';
+    document.getElementById('action-header').textContent = 'Refund Completed';
+  } catch (err) {
+    btns.forEach(b => { b.disabled = false; });
+    btns[0].textContent = 'Process Refund';
+    alert('Refund Phase 2 failed: ' + err.message);
+  }
+}
+
+// Two-phase edit execution
+async function executeEditPhase1() {
+  if (!currentDraftId) return;
+  const btn = document.querySelector('#action-buttons .btn');
+  btn.disabled = true;
+  btn.textContent = 'Staging edit...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/execute/edit`, { method: 'POST', body: {} });
+    const previewEl = document.getElementById('action-preview');
+    previewEl.style.display = 'block';
+
+    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
+
+    let html = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(text)}</div>`;
+    html += `<div style="margin-top:12px">
+      <button class="btn btn-action" onclick="executeEditPhase2()">Commit Edit</button>
+      <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('action-preview').style.display='none'">Cancel</button>
+    </div>`;
+
+    previewEl.innerHTML = html;
+    btn.textContent = 'Edit Staged';
+  } catch (err) {
+    btn.textContent = 'Stage Edit';
+    btn.disabled = false;
+    alert('Edit Phase 1 failed: ' + err.message);
+  }
+}
+
+async function executeEditPhase2() {
+  if (!currentDraftId) return;
+  const previewEl = document.getElementById('action-preview');
+  const btns = previewEl.querySelectorAll('.btn');
+  btns.forEach(b => { b.disabled = true; });
+  btns[0].textContent = 'Committing...';
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/execute/edit`, { method: 'POST', body: { confirmed: true } });
+    const resultEl = document.getElementById('action-result');
+    resultEl.style.display = 'block';
+
+    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
+    resultEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Edit committed</div>
+      <div style="margin-top:8px;font-size:12px;white-space:pre-wrap">${esc(text)}</div>`;
+
+    previewEl.style.display = 'none';
+    document.getElementById('action-buttons').innerHTML = '';
+    document.getElementById('action-header').textContent = 'Edit Completed';
+  } catch (err) {
+    btns.forEach(b => { b.disabled = false; });
+    btns[0].textContent = 'Commit Edit';
+    alert('Edit Phase 2 failed: ' + err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +786,7 @@ async function sendDraft(afterAction) {
       location.hash = '';
       document.getElementById('detail-placeholder').style.display = 'flex';
       document.getElementById('detail-content').style.display = 'none';
+      showSidebarQueue();
       loadQueue();
       loadStats();
     }, 1500);
@@ -278,26 +795,6 @@ async function sendDraft(afterAction) {
     document.getElementById('btn-send').disabled = false;
     document.getElementById('btn-send-close').disabled = false;
     alert('Send failed: ' + err.message);
-  }
-}
-
-async function executeAction() {
-  if (!currentDraftId) return;
-
-  const btn = document.getElementById('btn-execute');
-  btn.disabled = true;
-  btn.textContent = 'Executing...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute`, { method: 'POST', body: {} });
-    document.getElementById('action-result').style.display = 'block';
-    document.getElementById('action-result').textContent = JSON.stringify(result, null, 2);
-    btn.textContent = 'Executed';
-    document.getElementById('btn-send').disabled = false; // Now allow send
-  } catch (err) {
-    btn.textContent = 'Execute Failed';
-    btn.disabled = false;
-    alert('Execute failed: ' + err.message);
   }
 }
 
@@ -406,6 +903,27 @@ async function releaseDraft() {
   }
 }
 
+async function deleteDraft() {
+  if (!currentDraftId) return;
+  if (!confirm('Are you sure you want to delete this draft? This cannot be undone.')) return;
+
+  try {
+    await api(`/api/drafts/${currentDraftId}/delete`, { method: 'POST', body: {} });
+    localStorage.removeItem(`draft-${currentDraftId}`);
+    localStorage.removeItem(`notes-${currentDraftId}`);
+    currentDraftId = null;
+    currentDraft = null;
+    location.hash = '';
+    document.getElementById('detail-placeholder').style.display = 'flex';
+    document.getElementById('detail-content').style.display = 'none';
+    showSidebarQueue();
+    loadQueue();
+    loadStats();
+  } catch (err) {
+    alert('Delete failed: ' + err.message);
+  }
+}
+
 function triggerPoll() {
   const btn = document.getElementById('btn-poll');
   btn.disabled = true;
@@ -506,14 +1024,45 @@ function esc(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function timeAgo(dateStr) {
+function timeAgo(dateStr, mode) {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(mins / 60);
+  const days = Math.floor(hours / 24);
+  const months = Math.floor(days / 30.44);
+  const years = Math.floor(days / 365.25);
+
+  if (mode === 'short') {
+    // Compact: "4d", "3mo 12d", "1y 2mo"
+    if (mins < 1) return 'now';
+    if (mins < 60) return `${mins}m`;
+    if (hours < 24) return `${hours}h`;
+    if (days < 31) return `${days}d`;
+    if (years >= 1) {
+      const remMonths = Math.floor((days - years * 365.25) / 30.44);
+      return remMonths > 0 ? `${years}y ${remMonths}mo` : `${years}y`;
+    }
+    const remDays = days - Math.floor(months * 30.44);
+    return remDays > 0 ? `${months}mo ${remDays}d` : `${months}mo`;
+  }
+
+  if (mode === 'long') {
+    // Readable: "3 days ago", "2 months ago"
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+    if (days < 31) return days === 1 ? '1 day ago' : `${days} days ago`;
+    if (years >= 1) return years === 1 ? '1 year ago' : `${years} years ago`;
+    return months === 1 ? '1 month ago' : `${months} months ago`;
+  }
+
+  // Default (medium): "5m ago", "3d ago", "2mo ago", "1y ago"
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (days < 31) return `${days}d ago`;
+  if (years >= 1) return `${years}y ago`;
+  return `${months}mo ago`;
 }
 
 function formatTime(dateStr) {
@@ -643,7 +1192,6 @@ async function runTest() {
 
   const messages = rawMessages.split('\n').filter(l => l.trim());
 
-  document.getElementById('test-placeholder').style.display = 'none';
   document.getElementById('test-results').style.display = 'block';
   document.getElementById('test-results').innerHTML = '<div class="test-summary"><h3>Running test...</h3></div>';
 
@@ -662,7 +1210,6 @@ async function replayTicket() {
   const ticketId = document.getElementById('test-ticket-id').value.trim();
   if (!ticketId) return alert('Enter a Gorgias ticket ID');
 
-  document.getElementById('test-placeholder').style.display = 'none';
   document.getElementById('test-results').style.display = 'block';
   document.getElementById('test-results').innerHTML = '<div class="test-summary"><h3>Replaying ticket...</h3></div>';
 
@@ -728,7 +1275,6 @@ function clearTest() {
   document.getElementById('test-order').value = '';
   document.getElementById('test-messages').value = '';
   document.getElementById('test-ticket-id').value = '';
-  document.getElementById('test-placeholder').style.display = 'block';
   document.getElementById('test-results').style.display = 'none';
 }
 
@@ -737,20 +1283,30 @@ function clearTest() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Test mode switcher
-// ---------------------------------------------------------------------------
-
-function switchTestMode(mode) {
-  document.querySelectorAll('.test-mode').forEach(b => b.classList.remove('active'));
-  document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
-  document.getElementById('test-tools-view').style.display = mode === 'tools' ? 'flex' : 'none';
-  document.getElementById('simulator-view').style.display = mode === 'simulator' ? 'block' : 'none';
-  localStorage.setItem('testMode', mode);
-}
-
-// ---------------------------------------------------------------------------
 // Conversation Simulator
 // ---------------------------------------------------------------------------
+
+let simSelectedType = localStorage.getItem('simType') || 'exchange';
+
+function simSelectType(btn) {
+  document.querySelectorAll('.sim-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  simSelectedType = btn.dataset.type;
+  localStorage.setItem('simType', simSelectedType);
+}
+
+// Restore saved type on load
+function simRestoreType() {
+  const saved = localStorage.getItem('simType');
+  if (saved) {
+    const btn = document.querySelector(`.sim-type-btn[data-type="${saved}"]`);
+    if (btn) {
+      document.querySelectorAll('.sim-type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      simSelectedType = saved;
+    }
+  }
+}
 
 let sim = {
   active: false,
@@ -779,6 +1335,62 @@ function simRestore() {
   } catch { return false; }
 }
 
+async function loadSimulatorContext(email, orderNumber) {
+  try {
+    const params = orderNumber ? `?order=${orderNumber}` : '';
+    const ctx = await api(`/api/customer/${encodeURIComponent(email)}/context${params}`);
+
+    // LTV stats
+    const l = ctx.ltv;
+    document.getElementById('sim-ltv-stats').innerHTML = `
+      <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.total_spent || 0).toFixed(0)}</span><span class="ltv-stat-label">spent</span></div>
+      <div class="ltv-stat"><span class="ltv-stat-value">${l.order_count || 0}</span><span class="ltv-stat-label">orders</span></div>
+      <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.avg_order_value || 0).toFixed(0)}</span><span class="ltv-stat-label">avg</span></div>
+    `;
+
+    // Order links (Shopify + Warehance)
+    if (ctx.ticket_order) {
+      let linksHtml = '';
+      const shopUrl = shopifyAdminUrl(ctx.ticket_order.shopify_order_id);
+      if (shopUrl) linksHtml += `<a href="${shopUrl}" target="_blank" class="order-link">Shopify</a>`;
+      if (ctx.ticket_order.warehance_url) linksHtml += `<a href="${esc(ctx.ticket_order.warehance_url)}" target="_blank" class="order-link">Warehance</a>`;
+      document.getElementById('sim-order-links').innerHTML = linksHtml;
+    }
+
+    // Past tickets
+    if (ctx.past_tickets?.length) {
+      const section = document.getElementById('sim-past-tickets');
+      section.style.display = '';
+      document.getElementById('sim-tickets-count').textContent = ctx.past_tickets.length;
+      document.getElementById('sim-tickets-list').innerHTML = ctx.past_tickets.map(t => {
+        const categoryClass = getCategoryClass(t.category);
+        const resIcon = t.resolution_successful === true ? '<span class="resolution-icon" style="color:var(--green)">&#10003;</span>'
+          : t.resolution_successful === false ? '<span class="resolution-icon" style="color:var(--red)">&#10007;</span>'
+          : '<span class="resolution-icon" style="color:var(--text-tertiary)">-</span>';
+        return `<div class="ticket-entry">
+          <div class="ticket-entry-header">
+            <span class="ticket-entry-date">${timeAgo(t.created_at)}</span>
+            <span class="category-badge ${categoryClass}">${esc(t.category || 'general')}</span>
+            ${t.ai_processed ? '<span class="badge-ai">AI</span>' : ''}
+            ${resIcon}
+          </div>
+          ${t.summary ? `<div class="ticket-entry-detail" style="display:none;margin-top:4px;font-size:11px;color:var(--text-secondary)">${esc(t.summary)}</div>` : ''}
+        </div>`;
+      }).join('');
+
+      document.querySelectorAll('#sim-tickets-list .ticket-entry').forEach(el => {
+        el.style.cursor = 'pointer';
+        el.onclick = () => {
+          const detail = el.querySelector('.ticket-entry-detail');
+          if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+        };
+      });
+    }
+  } catch (err) {
+    console.warn('Failed to load simulator context:', err);
+  }
+}
+
 function simRenderRestoredSession() {
   // Render context sidebar
   const ci = sim.customerContext || {};
@@ -801,6 +1413,9 @@ function simRenderRestoredSession() {
     document.getElementById('sim-order-info').innerHTML = 'No order found';
   }
   document.getElementById('sim-source-info').textContent = `Source: ${sim.conversationId || '?'}`;
+
+  // Async: load enriched context
+  loadSimulatorContext(sim.customerEmail, sim.orderNumber);
 
   // Switch to active view
   document.getElementById('sim-idle').style.display = 'none';
@@ -845,7 +1460,7 @@ async function simLoadRandom() {
   loading.textContent = 'Loading conversation...';
 
   try {
-    const data = await api('/api/simulator/random');
+    const data = await api(`/api/simulator/random?category=${simSelectedType}`);
 
     sim.active = true;
     sim.conversationId = data.conversation?.id;
@@ -884,6 +1499,9 @@ async function simLoadRandom() {
     // Switch to active view
     document.getElementById('sim-idle').style.display = 'none';
     document.getElementById('sim-active').style.display = 'flex';
+
+    // Async: load enriched context (LTV, order links, past tickets)
+    loadSimulatorContext(sim.customerEmail, sim.orderNumber);
 
     // Run first turn with the real customer message
     await simRunTurn(data.firstMessage);
@@ -1073,6 +1691,10 @@ async function simEndSession() {
   document.getElementById('sim-loading').style.display = 'none';
   document.getElementById('sim-thread').innerHTML = '';
   document.getElementById('sim-controls').innerHTML = '';
+  document.getElementById('sim-ltv-stats').innerHTML = '';
+  document.getElementById('sim-order-links').innerHTML = '';
+  document.getElementById('sim-past-tickets').style.display = 'none';
+  document.getElementById('sim-tickets-list').innerHTML = '';
 }
 
 // ---------------------------------------------------------------------------

@@ -185,11 +185,12 @@ async function resolveAddressHolds(supabase, heldOrders, whOrdersMap) {
 
       // Log note
       if (result.autoResolved) {
-        await supabase.from('unfulfilled_order_notes').insert({
+        await supabase.from('order_alert_notes').insert({
           order_number: order.order_number,
           note: `Auto-resolved: ${result.reason}`,
           resolved: false, // Keep visible for review
           author: 'auto',
+          alert_type: 'unfulfilled',
         });
       }
 
@@ -225,11 +226,12 @@ async function resolveAddressHolds(supabase, heldOrders, whOrdersMap) {
           }
 
           if (result.autoResolved) {
-            await supabase.from('unfulfilled_order_notes').insert({
+            await supabase.from('order_alert_notes').insert({
               order_number: order.order_number,
               note: `Auto-resolved: ${result.reason}`,
               resolved: false,
               author: 'auto',
+              alert_type: 'unfulfilled',
             });
           }
         } else {

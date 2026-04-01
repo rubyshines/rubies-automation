@@ -5,7 +5,7 @@
  */
 
 const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
-const { searchProducts } = require('../productCache');
+const { searchProducts, getVariantBySku, getSiblingVariant } = require('../productCache');
 
 const tools = [
   {
@@ -30,12 +30,14 @@ const tools = [
         },
         items: {
           type: 'array',
-          description: 'Items to include in the exchange (required for phase 1)',
+          description: 'Items to include in the exchange (required for phase 1). Prefer sku over query for accuracy. Use sku + target_size for size exchanges.',
           items: {
             type: 'object',
             properties: {
-              variant_id: { type: 'string', description: 'Shopify variant ID (if known)' },
-              query: { type: 'string', description: 'Product search query (if variant_id not known)' },
+              variant_id: { type: 'string', description: 'Shopify variant ID (if known — most precise)' },
+              sku: { type: 'string', description: 'SKU from the original order (e.g. "RJL-PNK-8"). For exact replacements, pass just sku. For size exchanges, pass sku + target_size.' },
+              target_size: { type: 'string', description: 'Target size for size exchanges (e.g. "10", "L", "2X"). Used with sku to find the same product in a different size.' },
+              query: { type: 'string', description: 'Product search query (fallback if variant_id and sku not available)' },
               quantity: { type: 'number', description: 'Quantity (default: 1)' },
             },
           },
@@ -324,6 +326,7 @@ async function resolveItems(items) {
     const quantity = item.quantity || 1;
 
     if (item.variant_id) {
+      // Most precise — direct variant ID
       resolved.push({
         variantId: normalizeGid(item.variant_id, 'ProductVariant'),
         productTitle: '(by ID)',
@@ -331,10 +334,37 @@ async function resolveItems(items) {
         sku: null,
         quantity,
       });
+    } else if (item.sku && item.target_size) {
+      // Size exchange — find same product, different size
+      const sibling = getSiblingVariant(item.sku, item.target_size);
+      if (!sibling) {
+        return { error: `Could not find size "${item.target_size}" for SKU "${item.sku}". Check that the size exists for this product.` };
+      }
+      resolved.push({
+        variantId: sibling.variantId,
+        productTitle: sibling.productTitle,
+        variantTitle: sibling.variantTitle,
+        sku: sibling.sku,
+        quantity,
+      });
+    } else if (item.sku) {
+      // Exact replacement — look up by SKU directly
+      const variant = getVariantBySku(item.sku);
+      if (!variant) {
+        return { error: `SKU "${item.sku}" not found in product catalog. It may be discontinued or misspelled.` };
+      }
+      resolved.push({
+        variantId: variant.variantId,
+        productTitle: variant.productTitle,
+        variantTitle: variant.variantTitle,
+        sku: variant.sku,
+        quantity,
+      });
     } else if (item.query) {
+      // Fallback — fuzzy search (least precise)
       const results = searchProducts(item.query);
       if (results.length === 0) {
-        return { error: `No products found matching "${item.query}". Try a different search.` };
+        return { error: `No products found matching "${item.query}". Try a different search or use the SKU from the original order.` };
       }
       const best = results[0];
       resolved.push({
@@ -345,7 +375,7 @@ async function resolveItems(items) {
         quantity,
       });
     } else {
-      return { error: 'Each item must have either variant_id or query' };
+      return { error: 'Each item must have variant_id, sku, or query' };
     }
   }
 

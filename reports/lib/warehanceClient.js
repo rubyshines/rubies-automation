@@ -111,6 +111,29 @@ async function releaseAddressHold(warehanceOrderId) {
 }
 
 /**
+ * Place a warehouse hold on a Warehance order (prevents fulfillment).
+ */
+async function setWarehouseHold(warehanceOrderId) {
+  return apiPatch(`/orders/${warehanceOrderId}`, { warehouse_hold: true });
+}
+
+/**
+ * Release the warehouse hold on a Warehance order.
+ */
+async function releaseWarehouseHold(warehanceOrderId) {
+  return apiPatch(`/orders/${warehanceOrderId}`, { warehouse_hold: false });
+}
+
+/**
+ * Update the shipping method on a Warehance order.
+ * @param {number|string} warehanceOrderId
+ * @param {number} shippingMethodId — ID from /shipping-methods endpoint
+ */
+async function updateShippingMethod(warehanceOrderId, shippingMethodId) {
+  return apiPatch(`/orders/${warehanceOrderId}`, { shipping_method_id: shippingMethodId });
+}
+
+/**
  * Cancel an order in Warehance (e.g., already fulfilled in Shopify, nothing to ship).
  */
 async function cancelOrder(warehanceOrderId) {
@@ -144,6 +167,9 @@ module.exports = {
   fetchOrderByNumber,
   getHoldReasons,
   releaseAddressHold,
+  setWarehouseHold,
+  releaseWarehouseHold,
+  updateShippingMethod,
   cancelOrder,
   warehanceOrderUrl,
 };

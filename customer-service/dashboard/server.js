@@ -18,6 +18,7 @@ if (!process.env.SUPABASE_URL) {
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const gorgias = require('../import/gorgiasClient');
+const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
 
 const PORT = process.env.DASHBOARD_PORT || 3847;
 const STATIC_DIR = path.join(__dirname, 'public');
@@ -366,6 +367,35 @@ async function apiReleaseDraft(id, body) {
   return { success: true };
 }
 
+async function apiDeleteDraft(id) {
+  const supabase = getSupabaseClient();
+
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts')
+    .select('gorgias_ticket_id')
+    .eq('id', id)
+    .single();
+  if (fetchErr) throw fetchErr;
+
+  // Unassign from AI Bot so ticket goes back to inbox
+  if (draft.gorgias_ticket_id) {
+    try {
+      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+    } catch (err) {
+      console.warn(`[dashboard] Could not unassign ticket on delete: ${err.message}`);
+    }
+  }
+
+  // Delete the draft
+  const { error: delErr } = await supabase
+    .from('cs_ai_drafts')
+    .delete()
+    .eq('id', id);
+  if (delErr) throw delErr;
+
+  return { success: true };
+}
+
 async function apiGetStats() {
   const supabase = getSupabaseClient();
 
@@ -536,20 +566,40 @@ async function apiReplayTicket(body) {
 // Simulator endpoints
 // ---------------------------------------------------------------------------
 
-async function apiSimulatorRandom() {
+async function apiSimulatorRandom(category) {
   const supabase = getSupabaseClient();
   const gorgiasClient = require('../import/gorgiasClient');
 
-  // Pick a random exchange conversation from Supabase (for ticket IDs + metadata)
-  const { data: convos } = await supabase
+  // Category-to-filter mapping
+  const categoryFilters = {
+    exchange: 'category.eq.exchange_return,tags.cs.{RETURN/EXCHANGE}',
+    sizing: 'category.eq.sizing_fit,tags.cs.{SIZING}',
+    shipping: 'category.eq.shipping,tags.cs.{SHIPPING}',
+    order_status: 'category.eq.order_status,tags.cs.{ORDER STATUS}',
+    product: 'category.eq.product_info,tags.cs.{PRODUCT}',
+    general: 'category.eq.general',
+    payment: 'category.eq.payment',
+  };
+
+  const filterType = category || 'exchange';
+  const orFilter = categoryFilters[filterType] || categoryFilters.exchange;
+
+  // Pick a random conversation from Supabase matching the category
+  let q = supabase
     .from('cs_conversations')
-    .select('id, customer_email, order_numbers, subject, summary, message_count, source_id')
-    .or('category.eq.exchange_return,tags.cs.{RETURN/EXCHANGE}')
-    .not('order_numbers', 'is', null)
+    .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+    .or(orFilter)
     .gt('message_count', 2)
     .limit(100);
 
-  if (!convos?.length) throw new Error('No exchange conversations found');
+  // Only require order_numbers for exchange/sizing (others may not have orders)
+  if (['exchange', 'sizing'].includes(filterType)) {
+    q = q.not('order_numbers', 'is', null);
+  }
+
+  const { data: convos } = await q;
+
+  if (!convos?.length) throw new Error(`No ${filterType} conversations found`);
   const convo = convos[Math.floor(Math.random() * convos.length)];
 
   // Load messages from Gorgias API (has correct from_agent + stripped_text)
@@ -704,6 +754,358 @@ async function apiGetHistory(query) {
 }
 
 // ---------------------------------------------------------------------------
+// Two-phase execute endpoints
+// ---------------------------------------------------------------------------
+
+async function apiExecuteExchange(id, body) {
+  const supabase = getSupabaseClient();
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts').select('*').eq('id', id).single();
+  if (fetchErr) throw fetchErr;
+
+  const exchangeTools = require('../lib/tools/exchangeOrder');
+  const exchangeHandler = exchangeTools.find(t => t.name === 'create_exchange_order')?.handler;
+  if (!exchangeHandler) throw new Error('Exchange tool not found');
+
+  if (body.confirmed) {
+    // Phase 2: complete the draft order
+    const prevResult = draft.action_result;
+    if (!prevResult?.draft_order_id) throw new Error('No draft_order_id from Phase 1');
+
+    const result = await exchangeHandler({
+      customer_id: prevResult.customer_id,
+      confirmed: true,
+      draft_order_id: prevResult.draft_order_id,
+    });
+
+    await supabase.from('cs_ai_drafts').update({
+      action_result: { ...prevResult, phase: 'completed', phase2: result },
+      action_executed_at: new Date().toISOString(),
+    }).eq('id', id);
+
+    return result;
+  }
+
+  // Phase 1: create draft order preview
+  const { searchCustomers } = require('../lib/shopify');
+  const customers = await searchCustomers(draft.customer_email);
+  const customer = customers?.[0];
+  if (!customer) throw new Error(`Customer not found: ${draft.customer_email}`);
+
+  const structured = draft.structured_output || {};
+  const items = (structured.intake?.items || []).filter(i => i.resolved_size);
+  if (!items.length) throw new Error('No exchange items resolved');
+
+  const result = await exchangeHandler({
+    customer_id: customer.id,
+    items: items.map(i => ({
+      sku: i._orderSku || undefined,
+      target_size: i.resolved_size,
+      query: (!i._orderSku) ? `${i.resolved_product || i.product} ${i.resolved_size}` : undefined,
+      quantity: i._orderQty || 1,
+    })),
+    note: `Exchange via CS Dashboard (draft #${id})`,
+  });
+
+  // Extract draft_order_id from result text
+  const resultText = result.content?.[0]?.text || '';
+  const draftIdMatch = resultText.match(/gid:\/\/shopify\/DraftOrder\/(\d+)/);
+  const draftOrderId = draftIdMatch ? `gid://shopify/DraftOrder/${draftIdMatch[1]}` : null;
+
+  await supabase.from('cs_ai_drafts').update({
+    action_result: { phase: 'preview', customer_id: customer.id, draft_order_id: draftOrderId, preview: resultText },
+  }).eq('id', id);
+
+  return result;
+}
+
+async function apiExecuteRefund(id, body) {
+  const supabase = getSupabaseClient();
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts').select('*').eq('id', id).single();
+  if (fetchErr) throw fetchErr;
+
+  const refundTools = require('../lib/tools/refundOrder');
+  const refundHandler = refundTools.find(t => t.name === 'refund_order')?.handler;
+  if (!refundHandler) throw new Error('Refund tool not found');
+
+  if (body.confirmed) {
+    // Phase 2: execute the refund
+    const prevResult = draft.action_result;
+    if (!prevResult?._refund_data) throw new Error('No refund data from Phase 1');
+
+    const result = await refundHandler({
+      order_number: String(draft.order_number),
+      confirmed: true,
+      _refund_data: prevResult._refund_data,
+    });
+
+    await supabase.from('cs_ai_drafts').update({
+      action_result: { ...prevResult, phase: 'completed', phase2: result },
+      action_executed_at: new Date().toISOString(),
+    }).eq('id', id);
+
+    return result;
+  }
+
+  // Phase 1: calculate refund
+  const structured = draft.structured_output || {};
+  const refundItems = (structured.prescription?.items || [])
+    .filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
+  const intakeItems = (structured.intake?.items || []).filter(i => i.product);
+  const itemsForRefund = refundItems.length ? refundItems : intakeItems;
+
+  const result = await refundHandler({
+    order_number: String(draft.order_number),
+    items: itemsForRefund.map(i => ({
+      sku: i._orderSku || i.sku || undefined,
+      quantity: i._orderQty || i.quantity || 1,
+    })).filter(i => i.sku),
+    note: `Refund via CS Dashboard (draft #${id})`,
+  });
+
+  // Extract _refund_data from the result (the handler stores it in the response)
+  const resultText = result.content?.[0]?.text || '';
+  // The refund handler returns _refund_data in a structured way — look for it
+  const refundData = result._refund_data || null;
+
+  await supabase.from('cs_ai_drafts').update({
+    action_result: { phase: 'preview', _refund_data: refundData, preview: resultText },
+  }).eq('id', id);
+
+  return result;
+}
+
+async function apiExecuteEdit(id, body) {
+  const supabase = getSupabaseClient();
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts').select('*').eq('id', id).single();
+  if (fetchErr) throw fetchErr;
+
+  const editTools = require('../lib/tools/editOrder');
+  const editHandler = editTools.find(t => t.name === 'edit_order')?.handler;
+  if (!editHandler) throw new Error('Edit order tool not found');
+
+  if (body.confirmed) {
+    // Phase 2: commit the edit (pending edits stored server-side in editOrder.js)
+    const result = await editHandler({
+      order_number: String(draft.order_number),
+      confirmed: true,
+    });
+
+    const prevResult = draft.action_result || {};
+    await supabase.from('cs_ai_drafts').update({
+      action_result: { ...prevResult, phase: 'completed', phase2: result },
+      action_executed_at: new Date().toISOString(),
+    }).eq('id', id);
+
+    return result;
+  }
+
+  // Phase 1: stage the edit
+  const structured = draft.structured_output || {};
+  // Extract swap items from structured output - these would come from order_modification intent
+  const swapItems = structured.prescription?.swap_items || [];
+
+  const result = await editHandler({
+    order_number: String(draft.order_number),
+    swap_items: swapItems,
+    note: `Edit via CS Dashboard (draft #${id})`,
+  });
+
+  const resultText = result.content?.[0]?.text || '';
+  await supabase.from('cs_ai_drafts').update({
+    action_result: { phase: 'preview', preview: resultText },
+  }).eq('id', id);
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function extractTrackingUrl(fulfillments) {
+  if (!fulfillments || !Array.isArray(fulfillments)) return null;
+  for (const f of fulfillments) {
+    if (f.tracking_url) return f.tracking_url;
+    if (f.tracking_urls?.length) return f.tracking_urls[0];
+    // Shopify GraphQL format
+    if (f.trackingInfo?.length) {
+      const ti = f.trackingInfo[0];
+      if (ti.url) return ti.url;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Customer context
+// ---------------------------------------------------------------------------
+
+async function apiGetCustomerContext(email, orderNumber) {
+  const supabase = getSupabaseClient();
+
+  // Run all queries in parallel
+  const [customerRes, ordersRes, ticketsRes, aiDraftsRes, warehanceRes] = await Promise.all([
+    // 1. Customer profile
+    supabase
+      .from('customers')
+      .select('email, first_name, last_name, phone, default_address, total_orders, total_spent, total_spent_currency, tags, note, first_order_at, last_order_at')
+      .eq('email', email)
+      .single(),
+
+    // 2. Recent orders
+    supabase
+      .from('orders')
+      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, shop_currency, shipping_address, note, tags, fulfillments')
+      .eq('customer_email', email)
+      .order('created_at', { ascending: false })
+      .limit(10),
+
+    // 3. Past CS conversations
+    supabase
+      .from('cs_conversations')
+      .select('id, source_id, customer_email, subject, summary, category, resolution_successful, resolution_type, message_count, created_at, resolved_at')
+      .eq('customer_email', email)
+      .order('created_at', { ascending: false })
+      .limit(10),
+
+    // 5. AI drafts for this customer (to flag AI-processed tickets)
+    supabase
+      .from('cs_ai_drafts')
+      .select('gorgias_ticket_id, message_type, confidence, advisor_status')
+      .eq('customer_email', email)
+      .not('gorgias_ticket_id', 'is', null),
+
+    // 6. Warehance order (for unfulfilled orders)
+    orderNumber
+      ? fetchOrderByNumber(orderNumber).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  // Build customer object
+  const cust = customerRes.data;
+  const customer = cust ? {
+    email: cust.email,
+    name: [cust.first_name, cust.last_name].filter(Boolean).join(' ') || cust.email,
+    phone: cust.phone,
+    address: cust.default_address,
+    tags: cust.tags,
+    note: cust.note,
+  } : { email, name: email };
+
+  // Build LTV stats
+  const allOrders = ordersRes.data || [];
+  const exchangeCount = allOrders.filter(o => parseFloat(o.total_price) === 0).length;
+  const paidOrders = allOrders.filter(o => parseFloat(o.total_price) > 0);
+  const totalSpent = cust?.total_spent || paidOrders.reduce((sum, o) => sum + parseFloat(o.total_price || 0), 0);
+  const avgOrder = paidOrders.length > 0 ? totalSpent / paidOrders.length : 0;
+  const daysSinceLast = cust?.last_order_at
+    ? Math.floor((Date.now() - new Date(cust.last_order_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+
+  const ltv = {
+    total_spent: totalSpent,
+    currency: cust?.total_spent_currency || allOrders[0]?.shop_currency || 'CAD',
+    order_count: cust?.total_orders || allOrders.length,
+    exchange_count: exchangeCount,
+    avg_order_value: Math.round(avgOrder * 100) / 100,
+    first_order: cust?.first_order_at,
+    last_order: cust?.last_order_at,
+    days_since_last: daysSinceLast,
+  };
+
+  // Build ticket order (the order this ticket is about)
+  let ticketOrder = null;
+  const orderNum = orderNumber ? parseInt(String(orderNumber).replace('#', '')) : null;
+  if (orderNum) {
+    const matchedOrder = allOrders.find(o => o.order_number === orderNum);
+    if (matchedOrder) {
+      // Fetch line items for this specific order
+      const { data: items } = await supabase
+        .from('order_line_items')
+        .select('title, variant_title, sku, quantity, unit_price, unit_price_currency')
+        .eq('shopify_order_id', matchedOrder.shopify_order_id);
+
+      const trackingUrl = extractTrackingUrl(matchedOrder.fulfillments);
+      ticketOrder = {
+        order_number: matchedOrder.order_number,
+        created_at: matchedOrder.created_at,
+        total: matchedOrder.total_price,
+        currency: matchedOrder.shop_currency,
+        fulfillment_status: matchedOrder.fulfillment_status,
+        financial_status: matchedOrder.financial_status,
+        shopify_order_id: matchedOrder.shopify_order_id,
+        shipping_address: matchedOrder.shipping_address,
+        warehance_url: warehanceRes ? warehanceOrderUrl(warehanceRes) : null,
+        tracking_url: trackingUrl,
+        items: (items || []).map(i => ({
+          title: i.title,
+          variant: i.variant_title,
+          sku: i.sku,
+          quantity: i.quantity,
+          price: i.unit_price,
+          currency: i.unit_price_currency,
+        })),
+      };
+    }
+  }
+
+  // Build all orders list (sorted by date, includes ticket's order)
+  const otherOrdersRaw = allOrders;
+
+  // Batch-fetch line items for other orders (first 10)
+  let otherLineItems = {};
+  if (otherOrdersRaw.length) {
+    const otherIds = otherOrdersRaw.slice(0, 10).map(o => o.shopify_order_id);
+    const { data: allItems } = await supabase
+      .from('order_line_items')
+      .select('shopify_order_id, title, variant_title, sku, quantity, unit_price, unit_price_currency')
+      .in('shopify_order_id', otherIds);
+    for (const item of (allItems || [])) {
+      if (!otherLineItems[item.shopify_order_id]) otherLineItems[item.shopify_order_id] = [];
+      otherLineItems[item.shopify_order_id].push(item);
+    }
+  }
+
+  const otherOrders = otherOrdersRaw.map(o => ({
+    order_number: o.order_number,
+    created_at: o.created_at,
+    total: o.total_price,
+    currency: o.shop_currency,
+    fulfillment_status: o.fulfillment_status,
+    financial_status: o.financial_status,
+    shopify_order_id: o.shopify_order_id,
+    tracking_url: extractTrackingUrl(o.fulfillments),
+    items: (otherLineItems[o.shopify_order_id] || []).map(i => ({
+      title: i.title,
+      variant: i.variant_title,
+      sku: i.sku,
+      quantity: i.quantity,
+      price: i.unit_price,
+    })),
+  }));
+
+  // Build past tickets with AI-processed flag
+  const aiTicketIds = new Set((aiDraftsRes.data || []).map(d => String(d.gorgias_ticket_id)));
+  const pastTickets = (ticketsRes.data || []).map(t => ({
+    id: t.id,
+    created_at: t.created_at,
+    resolved_at: t.resolved_at,
+    category: t.category,
+    subject: t.subject,
+    summary: t.summary,
+    resolution_successful: t.resolution_successful,
+    resolution_type: t.resolution_type,
+    message_count: t.message_count,
+    ai_processed: aiTicketIds.has(String(t.source_id)),
+  }));
+
+  return { customer, ltv, ticket_order: ticketOrder, other_orders: otherOrders, past_tickets: pastTickets };
+}
+
+// ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
 
@@ -716,16 +1118,27 @@ const routes = {
 
 // Routes with path params
 const paramRoutes = [
+  { method: 'GET', pattern: /^\/api\/customer\/([^/]+)\/context$/, handler: (_, email, req) => {
+    const url = new URL(req.url, 'http://localhost');
+    return apiGetCustomerContext(decodeURIComponent(email), url.searchParams.get('order'));
+  }},
   { method: 'GET', pattern: /^\/api\/drafts\/(\d+)$/, handler: (_, id) => apiGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/send$/, handler: (body, id) => apiSendDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute$/, handler: (body, id) => apiExecuteAction(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/exchange$/, handler: (body, id) => apiExecuteExchange(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/refund$/, handler: (body, id) => apiExecuteRefund(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/train$/, handler: (body, id) => apiTrainDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/delete$/, handler: (_, id) => apiDeleteDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
-  { method: 'GET', pattern: /^\/api\/simulator\/random$/, handler: () => apiSimulatorRandom() },
+  { method: 'GET', pattern: /^\/api\/simulator\/random$/, handler: (_, __, req) => {
+    const url = new URL(req.url, 'http://localhost');
+    return apiSimulatorRandom(url.searchParams.get('category'));
+  }},
   { method: 'POST', pattern: /^\/api\/simulator\/turn$/, handler: (body) => apiSimulatorTurn(body) },
   { method: 'POST', pattern: /^\/api\/simulator\/save$/, handler: (body) => apiSimulatorSave(body) },
 ];
@@ -762,7 +1175,7 @@ async function handleRequest(req, res) {
           if (req.method === 'POST') {
             body = await readBody(req);
           }
-          const result = await route.handler(body, match[1]);
+          const result = await route.handler(body, match[1], req);
           res.writeHead(200);
           res.end(JSON.stringify(result));
           return;

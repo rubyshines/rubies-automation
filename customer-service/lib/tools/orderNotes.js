@@ -9,7 +9,13 @@
  */
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
-const { fetchOrderByNumber, releaseAddressHold } = require('../../../reports/lib/warehanceClient');
+const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
+
+// Warehance shipping method IDs (from /shipping-methods endpoint)
+const US_SHIPPING_METHODS = {
+  standard: { id: 231185182253, name: 'US Standard Shipping (2-7 bus days)' },
+  expedited: { id: 231185182258, name: 'US Expedited Shipping (2-3 bus days)' },
+};
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -18,12 +24,13 @@ const { fetchOrderByNumber, releaseAddressHold } = require('../../../reports/lib
 async function handleAddNote({ order_number, note, author }) {
   const supabase = getSupabaseClient();
   const { error } = await supabase
-    .from('unfulfilled_order_notes')
+    .from('order_alert_notes')
     .insert({
       order_number,
       note,
       resolved: false,
       author: author || 'operator',
+      alert_type: 'unfulfilled',
     });
 
   if (error) {
@@ -33,7 +40,7 @@ async function handleAddNote({ order_number, note, author }) {
   return {
     content: [{
       type: 'text',
-      text: `Note added to order #${order_number}:\n> ${note}\n\nThis order will appear in the "Waiting on Response" section of the next unfulfilled orders report.`,
+      text: `Note added to order #${order_number}:\n> ${note}\n\nThis order will appear in the "Waiting on Response" section of the daily order alerts.`,
     }],
   };
 }
@@ -41,12 +48,13 @@ async function handleAddNote({ order_number, note, author }) {
 async function handleResolve({ order_number, reason, author }) {
   const supabase = getSupabaseClient();
   const { error } = await supabase
-    .from('unfulfilled_order_notes')
+    .from('order_alert_notes')
     .insert({
       order_number,
       note: reason,
       resolved: true,
       author: author || 'operator',
+      alert_type: 'unfulfilled',
     });
 
   if (error) {
@@ -56,7 +64,7 @@ async function handleResolve({ order_number, reason, author }) {
   return {
     content: [{
       type: 'text',
-      text: `Order #${order_number} marked as **resolved**:\n> ${reason}\n\nThis order will be hidden from the main report and shown in the "Resolved" section.`,
+      text: `Order #${order_number} marked as **resolved**:\n> ${reason}\n\nThis order will be hidden from the main alerts and shown in the "Resolved" section.`,
     }],
   };
 }
@@ -64,12 +72,13 @@ async function handleResolve({ order_number, reason, author }) {
 async function handleUnresolve({ order_number, reason, author }) {
   const supabase = getSupabaseClient();
   const { error } = await supabase
-    .from('unfulfilled_order_notes')
+    .from('order_alert_notes')
     .insert({
       order_number,
       note: reason,
       resolved: false,
       author: author || 'operator',
+      alert_type: 'unfulfilled',
     });
 
   if (error) {
@@ -79,7 +88,7 @@ async function handleUnresolve({ order_number, reason, author }) {
   return {
     content: [{
       type: 'text',
-      text: `Order #${order_number} **re-opened**:\n> ${reason}\n\nThis order will reappear in the main unfulfilled orders report.`,
+      text: `Order #${order_number} **re-opened**:\n> ${reason}\n\nThis order will reappear in the daily order alerts.`,
     }],
   };
 }
@@ -87,7 +96,7 @@ async function handleUnresolve({ order_number, reason, author }) {
 async function handleGetNotes({ order_number }) {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
-    .from('unfulfilled_order_notes')
+    .from('order_alert_notes')
     .select('*')
     .eq('order_number', order_number)
     .order('created_at', { ascending: false });
@@ -141,11 +150,12 @@ async function handleReleaseAddressHold({ order_number, reason }) {
   }
 
   // Log a note
-  await supabase.from('unfulfilled_order_notes').insert({
+  await supabase.from('order_alert_notes').insert({
     order_number,
     note: `Address hold released: ${reason}`,
     resolved: true,
     author: 'operator',
+    alert_type: 'unfulfilled',
   });
 
   const whUrl = `https://staging.warehance.com/orders/${whOrder.id}?orderId=${whOrder.id}`;
@@ -158,6 +168,175 @@ async function handleReleaseAddressHold({ order_number, reason }) {
   };
 }
 
+async function handleWarehouseHold({ order_number, reason }) {
+  const supabase = getSupabaseClient();
+
+  let whOrder;
+  try {
+    whOrder = await fetchOrderByNumber(String(order_number));
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to look up order in Warehance: ${err.message}` }], isError: true };
+  }
+
+  const whUrl = whOrder ? warehanceOrderUrl(whOrder) : null;
+
+  if (!whOrder) {
+    return { content: [{ type: 'text', text: `Order #${order_number} not found in Warehance.` }], isError: true };
+  }
+
+  if (whOrder.fulfillment_status === 'in_progress') {
+    return {
+      content: [{
+        type: 'text',
+        text: `**Cannot place warehouse hold** — order #${order_number} is already **in progress** (being picked/packed by the 3PL). Contact the warehouse directly to intervene.\n\nWarehance: ${whUrl}`,
+      }],
+      isError: true,
+    };
+  }
+
+  if (whOrder.warehouse_hold) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Order #${order_number} already has a **warehouse hold**.\n\nWarehance: ${whUrl}`,
+      }],
+    };
+  }
+
+  try {
+    await setWarehouseHold(whOrder.id);
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to set warehouse hold: ${err.message}\n\nWarehance: ${whUrl}` }], isError: true };
+  }
+
+  await supabase.from('order_alert_notes').insert({
+    order_number,
+    note: `Warehouse hold placed: ${reason}`,
+    resolved: false,
+    author: 'operator',
+    alert_type: 'unfulfilled',
+  });
+
+  return {
+    content: [{
+      type: 'text',
+      text: `**Warehouse hold placed** on order #${order_number}\n\nReason: ${reason}\n\nWarehance: ${whUrl}\n\nThe order is now on hold and will not be shipped until the hold is released.`,
+    }],
+  };
+}
+
+async function handleReleaseWarehouseHold({ order_number, reason }) {
+  const supabase = getSupabaseClient();
+
+  let whOrder;
+  try {
+    whOrder = await fetchOrderByNumber(String(order_number));
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to look up order in Warehance: ${err.message}` }], isError: true };
+  }
+
+  const whUrl = whOrder ? warehanceOrderUrl(whOrder) : null;
+
+  if (!whOrder) {
+    return { content: [{ type: 'text', text: `Order #${order_number} not found in Warehance.` }], isError: true };
+  }
+
+  if (!whOrder.warehouse_hold) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Order #${order_number} does not have a warehouse hold.\n\nWarehance: ${whUrl}`,
+      }],
+    };
+  }
+
+  try {
+    await releaseWarehouseHold(whOrder.id);
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to release warehouse hold: ${err.message}\n\nWarehance: ${whUrl}` }], isError: true };
+  }
+
+  await supabase.from('order_alert_notes').insert({
+    order_number,
+    note: `Warehouse hold released: ${reason}`,
+    resolved: true,
+    author: 'operator',
+    alert_type: 'unfulfilled',
+  });
+
+  return {
+    content: [{
+      type: 'text',
+      text: `**Warehouse hold released** on order #${order_number}\n\nReason: ${reason}\n\nWarehance: ${whUrl}\n\nThe order should now proceed to fulfillment.`,
+    }],
+  };
+}
+
+async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
+  const supabase = getSupabaseClient();
+  const method = US_SHIPPING_METHODS[speed];
+
+  if (!method) {
+    return { content: [{ type: 'text', text: `Invalid speed "${speed}". Use "standard" or "expedited".` }], isError: true };
+  }
+
+  let whOrder;
+  try {
+    whOrder = await fetchOrderByNumber(String(order_number));
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to look up order in Warehance: ${err.message}` }], isError: true };
+  }
+
+  const whUrl = whOrder ? warehanceOrderUrl(whOrder) : null;
+
+  if (!whOrder) {
+    return { content: [{ type: 'text', text: `Order #${order_number} not found in Warehance.` }], isError: true };
+  }
+
+  // US orders only
+  const countryCode = whOrder.ship_to_address?.country_code;
+  if (countryCode !== 'US') {
+    return {
+      content: [{
+        type: 'text',
+        text: `**Cannot update shipping speed** — order #${order_number} is shipping to ${countryCode || 'unknown'}, not US. This tool only supports US orders.\n\nWarehance: ${whUrl}`,
+      }],
+      isError: true,
+    };
+  }
+
+  if (whOrder.fulfillment_status === 'in_progress') {
+    return {
+      content: [{
+        type: 'text',
+        text: `**Cannot update shipping speed** — order #${order_number} is already **in progress** (being picked/packed). Contact the warehouse directly.\n\nWarehance: ${whUrl}`,
+      }],
+      isError: true,
+    };
+  }
+
+  try {
+    await updateShippingMethod(whOrder.id, method.id);
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to update shipping method: ${err.message}\n\nWarehance: ${whUrl}` }], isError: true };
+  }
+
+  await supabase.from('order_alert_notes').insert({
+    order_number,
+    note: `Shipping updated to ${method.name}: ${reason}`,
+    resolved: false,
+    author: 'operator',
+    alert_type: 'unfulfilled',
+  });
+
+  return {
+    content: [{
+      type: 'text',
+      text: `**Shipping speed updated** on order #${order_number}\n\n**New method:** ${method.name}\nReason: ${reason}\n\nWarehance: ${whUrl}`,
+    }],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
@@ -165,7 +344,7 @@ async function handleReleaseAddressHold({ order_number, reason }) {
 const tools = [
   {
     name: 'add_order_note',
-    description: 'Add a note to an unfulfilled order (e.g., "waiting for customer response"). Orders with active notes appear in the "Waiting on Response" section of the unfulfilled orders report.',
+    description: 'Add a note to an unfulfilled order (e.g., "waiting for customer response"). Orders with active notes appear in the "Waiting on Response" section of the daily order alerts.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -179,7 +358,7 @@ const tools = [
   },
   {
     name: 'resolve_order',
-    description: 'Mark an unfulfilled order as resolved. Resolved orders are hidden from the main report and shown in a separate "Resolved" section. Use when an issue has been handled and the order no longer needs attention.',
+    description: 'Mark an unfulfilled order as resolved. Resolved orders are hidden from the main daily order alerts and shown in a separate "Resolved" section. Use when an issue has been handled and the order no longer needs attention.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -193,7 +372,7 @@ const tools = [
   },
   {
     name: 'unresolve_order',
-    description: 'Re-open a previously resolved order so it appears in the main unfulfilled orders report again.',
+    description: 'Re-open a previously resolved order so it appears in the daily order alerts again.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,7 +386,7 @@ const tools = [
   },
   {
     name: 'get_order_notes',
-    description: 'View all notes and resolution history for an unfulfilled order.',
+    description: 'View all notes and resolution history for an order.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -229,6 +408,46 @@ const tools = [
       required: ['order_number', 'reason'],
     },
     handler: handleReleaseAddressHold,
+  },
+  {
+    name: 'warehouse_hold',
+    description: 'Place a warehouse hold on an unfulfilled order in Warehance to prevent shipment while resolving a customer issue. Cannot be used if the order is already in_progress (being picked/packed). Always shows a link to the order in Warehance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'number', description: 'Order number (e.g., 29444)' },
+        reason: { type: 'string', description: 'Why the hold is being placed (e.g., "Customer requested address change", "Exchange in progress")' },
+      },
+      required: ['order_number', 'reason'],
+    },
+    handler: handleWarehouseHold,
+  },
+  {
+    name: 'release_warehouse_hold',
+    description: 'Release a warehouse hold on an order in Warehance, allowing it to proceed to fulfillment. Use after a customer issue has been resolved.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'number', description: 'Order number (e.g., 29444)' },
+        reason: { type: 'string', description: 'Why the hold is being released (e.g., "Address updated, ready to ship", "Exchange resolved")' },
+      },
+      required: ['order_number', 'reason'],
+    },
+    handler: handleReleaseWarehouseHold,
+  },
+  {
+    name: 'update_shipping_speed',
+    description: 'Update the shipping speed on an unfulfilled US order in Warehance. Options: "expedited" (US Expedited 2-3 bus days) or "standard" (US Standard 2-7 bus days). Only works for US orders that are not yet in progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'number', description: 'Order number (e.g., 29444)' },
+        speed: { type: 'string', enum: ['expedited', 'standard'], description: 'Shipping speed: "expedited" (2-3 bus days) or "standard" (2-7 bus days)' },
+        reason: { type: 'string', description: 'Why the shipping speed is being changed (e.g., "Customer paid for upgrade", "Compensating for delay")' },
+      },
+      required: ['order_number', 'speed', 'reason'],
+    },
+    handler: handleUpdateShippingSpeed,
   },
 ];
 

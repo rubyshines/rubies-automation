@@ -136,11 +136,12 @@ async function handleShippingDelayResolve({ order_number, action, note }) {
 
   const resolved = action === 'resolve';
 
-  await supabase.from('shipping_delay_notes').insert({
+  await supabase.from('order_alert_notes').insert({
     order_number,
     note,
     resolved,
     author: 'operator',
+    alert_type: 'shipping',
   });
 
   const verb = action === 'resolve' ? 'Resolved' : action === 'unresolve' ? 'Unresolved' : 'Note added to';
@@ -153,7 +154,7 @@ async function handleShippingDelayResolve({ order_number, action, note }) {
 
 async function handleShippingDelayList({ show_resolved }) {
   // Import and run the check (reuse the existing logic)
-  const { checkShippingDelays } = require('../../alerts/dailyShippingAlerts');
+  const { checkShippingDelays } = require('../../../reports/lib/shippingDelays');
   const result = await checkShippingDelays({ showResolved: show_resolved || false });
 
   if (result.alerts.length === 0 && (result.resolvedCount || 0) === 0) {
@@ -229,7 +230,7 @@ module.exports = [
   },
   {
     name: 'shipping_delay_resolve',
-    description: 'Resolve, unresolve, or add a note to a shipping delay alert. Resolved delays are hidden from the daily alert email.',
+    description: 'Resolve, unresolve, or add a note to a shipping delay alert. Resolved delays are hidden from the daily order alerts.',
     inputSchema: {
       type: 'object',
       properties: {

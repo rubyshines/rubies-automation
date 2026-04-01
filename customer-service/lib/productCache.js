@@ -115,6 +115,9 @@ function getProducts() {
  */
 const SIZE_ALIASES = {
   'xl': '1x', 'xxl': '2x', '3xl': '3x', '4xl': '4x', '5xl': '5x',
+  // Tall size SKU suffixes → variant option values
+  'st': 's tall', 'mt': 'm tall', 'lt': 'l tall',
+  'xlt': '1x tall', '2xlt': '2x tall', '3xlt': '3x tall',
 };
 
 const NUMERIC_TO_LETTER = {
@@ -125,6 +128,8 @@ const KNOWN_SIZES = new Set([
   '4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16',
   'xxs', 'xxs+', 'xs', 'xs+', 's', 'm', 'l', '1x', '2x', '3x', '4x', '5x',
   'xl', 'xxl', '3xl', '4xl', '5xl',
+  // Tall sizes (SKU suffixes)
+  'st', 'mt', 'lt', 'xlt', '2xlt', '3xlt',
 ]);
 
 function normalizeSize(s) {
@@ -197,10 +202,13 @@ function searchProducts(query) {
         if (searchableText.includes(token)) {
           matched++;
           score += 10;
-          // Bonus for exact word match
-          if (searchableText.split(/\s+/).includes(token)) score += 5;
-          // Bonus for SKU match
-          if (skuText.includes(token)) score += 10;
+          // Bonus for exact word match in product title (stronger signal than SKU substring)
+          const titleWords = productText.split(/\s+/);
+          if (titleWords.includes(token)) score += 10;
+          // Bonus for exact word match anywhere
+          else if (searchableText.split(/\s+/).includes(token)) score += 5;
+          // SKU bonus only for full SKU match (not substring — avoids "ruby" matching SKU "RUBY-PNK-8")
+          if (skuText === token || skuText.startsWith(token + '-')) score += 10;
         } else {
           // Partial match (token is substring of a word)
           const words = searchableText.split(/\s+/);
@@ -290,9 +298,79 @@ function getVariantById(variantGid) {
   return null;
 }
 
+/**
+ * Look up a variant by exact SKU. Returns null if not found.
+ */
+function getVariantBySku(sku) {
+  if (!sku) return null;
+  const normalSku = sku.trim().toUpperCase();
+  for (const product of cachedProducts) {
+    for (const variant of product.variants) {
+      if ((variant.sku || '').trim().toUpperCase() === normalSku) {
+        return {
+          productId: product.id,
+          productTitle: product.title,
+          variantId: variant.id,
+          variantTitle: variant.title,
+          sku: variant.sku,
+          price: variant.price,
+          inventoryQuantity: variant.inventoryQuantity,
+          options: variant.selectedOptions,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Given a SKU, find a sibling variant in the same product with a different size.
+ * Used for size exchanges ("one size up/down").
+ * Returns null if the SKU or target size isn't found.
+ */
+function getSiblingVariant(sku, targetSize) {
+  if (!sku || !targetSize) return null;
+  const normalSku = sku.trim().toUpperCase();
+  const normalTarget = normalizeSize(targetSize);
+
+  for (const product of cachedProducts) {
+    const match = product.variants.find(v => (v.sku || '').trim().toUpperCase() === normalSku);
+    if (!match) continue;
+
+    // Found the product — now find the variant with the target size
+    for (const variant of product.variants) {
+      const variantSize = getVariantSize(variant);
+      if (!variantSize) continue;
+
+      // Match the color from the original variant
+      const originalColor = (match.selectedOptions || []).find(o => o.name.toLowerCase() === 'color')?.value?.toLowerCase();
+      const variantColor = (variant.selectedOptions || []).find(o => o.name.toLowerCase() === 'color')?.value?.toLowerCase();
+
+      if (originalColor && variantColor && originalColor !== variantColor) continue;
+
+      if (variantSize === normalTarget) {
+        return {
+          productId: product.id,
+          productTitle: product.title,
+          variantId: variant.id,
+          variantTitle: variant.title,
+          sku: variant.sku,
+          price: variant.price,
+          inventoryQuantity: variant.inventoryQuantity,
+          options: variant.selectedOptions,
+        };
+      }
+    }
+
+    // If we found the product but not the size, return null (don't search other products)
+    return null;
+  }
+  return null;
+}
+
 function getCacheAgeHours() {
   if (!cacheTimestamp) return Infinity;
   return (Date.now() - new Date(cacheTimestamp).getTime()) / (1000 * 60 * 60);
 }
 
-module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getCacheAgeHours };
+module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getSiblingVariant, getCacheAgeHours };

@@ -29,17 +29,34 @@
   <main>
     <!-- Queue panel (split: list + detail) -->
     <div id="panel-queue" class="panel">
-      <div id="queue-list" class="sidebar">
-        <div id="queue-items"></div>
+      <div class="sidebar">
+        <!-- View 1: Queue list -->
+        <div id="sidebar-queue">
+          <div id="queue-items"></div>
+        </div>
+        <!-- View 2: Customer context (when draft selected) -->
+        <div id="sidebar-context" style="display:none">
+          <button class="sidebar-back" onclick="showSidebarQueue()">
+            <span class="sidebar-back-arrow">&larr;</span>
+            <span id="sidebar-back-count"></span>
+          </button>
+          <div class="sidebar-context-inner">
+            <div id="customer-card"></div>
+            <div id="ticket-order"></div>
+            <div id="other-orders-section" style="display:none">
+              <div class="context-section-label">Order History <span id="other-orders-count" class="badge badge-muted"></span></div>
+              <div id="other-orders-list"></div>
+            </div>
+            <details id="past-tickets-section" style="display:none">
+              <summary>Past Tickets <span id="past-tickets-count" class="badge badge-muted"></span></summary>
+              <div id="past-tickets-list"></div>
+            </details>
+          </div>
+        </div>
       </div>
       <div id="draft-detail" class="detail">
         <div id="detail-placeholder">Select a draft to review</div>
         <div id="detail-content" style="display:none">
-          <!-- Customer info -->
-          <div id="detail-header" class="detail-section">
-            <div id="detail-customer"></div>
-            <div id="detail-order"></div>
-          </div>
 
           <!-- Conversation thread -->
           <details id="detail-conversation" class="detail-section" open>
@@ -53,8 +70,10 @@
             <textarea id="draft-editor" rows="8"></textarea>
             <div id="draft-actions">
               <div id="action-panel" style="display:none">
-                <div id="action-prescription"></div>
-                <button id="btn-execute" class="btn btn-action" onclick="executeAction()">Execute Action</button>
+                <div id="action-header"></div>
+                <div id="action-details"></div>
+                <div id="action-buttons"></div>
+                <div id="action-preview" style="display:none"></div>
                 <div id="action-result" style="display:none"></div>
               </div>
               <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
@@ -66,6 +85,7 @@
                 <button id="btn-train" class="btn btn-train" onclick="trainDraft()">Train</button>
                 <button id="btn-refresh" class="btn btn-secondary" onclick="refreshDraft()">Refresh</button>
                 <button id="btn-release" class="btn btn-secondary" onclick="releaseDraft()">Release to Gorgias</button>
+                <button id="btn-delete" class="btn btn-dismiss" onclick="deleteDraft()">Delete</button>
               </div>
             </div>
           </div>
@@ -102,69 +122,66 @@
         <tbody id="history-body"></tbody>
       </table>
     </div>
-    <!-- Test panel -->
+    <!-- Test panel (unified: simulator + manual test + replay) -->
     <div id="panel-test" class="panel" style="display:none">
-      <!-- Mode switcher -->
-      <div class="test-mode-bar">
-        <button class="test-mode active" data-mode="tools" onclick="switchTestMode('tools')">Test Tools</button>
-        <button class="test-mode" data-mode="simulator" onclick="switchTestMode('simulator')">Simulator</button>
+      <!-- Idle state -->
+      <div id="sim-idle" style="padding:48px 24px;max-width:640px;margin:0 auto">
+        <h3 style="font-size:18px;margin-bottom:6px;text-align:center">Conversation Simulator</h3>
+        <p style="color:var(--text-secondary);margin-bottom:20px;text-align:center">Load a real conversation or create a manual test scenario.</p>
+
+        <!-- Message type picker -->
+        <div class="context-section-label" style="border:none;padding:0;margin-bottom:8px">Message Type</div>
+        <div id="sim-type-picker" class="sim-type-picker" style="justify-content:flex-start">
+          <button class="sim-type-btn active" data-type="exchange" onclick="simSelectType(this)">Exchange</button>
+          <button class="sim-type-btn" data-type="sizing" onclick="simSelectType(this)">Sizing</button>
+          <button class="sim-type-btn" data-type="shipping" onclick="simSelectType(this)">Shipping</button>
+          <button class="sim-type-btn" data-type="order_status" onclick="simSelectType(this)">Order Status</button>
+          <button class="sim-type-btn" data-type="product" onclick="simSelectType(this)">Product</button>
+          <button class="sim-type-btn" data-type="payment" onclick="simSelectType(this)">Payment</button>
+          <button class="sim-type-btn" data-type="general" onclick="simSelectType(this)">General</button>
+        </div>
+
+        <div style="display:flex;gap:12px;margin-top:20px">
+          <button class="btn btn-primary" onclick="simLoadRandom()" id="sim-load-btn" style="flex:1">Load Random Conversation</button>
+        </div>
+        <div id="sim-loading" style="display:none;margin-top:16px;color:var(--text-tertiary);text-align:center">Loading conversation...</div>
+
+        <!-- Manual test -->
+        <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border)">
+          <div class="context-section-label" style="border:none;padding:0;margin-bottom:10px">Manual Test</div>
+          <div style="display:flex;gap:12px;margin-bottom:10px">
+            <div style="flex:1">
+              <label class="label">Customer Email</label>
+              <input id="test-email" type="email" placeholder="customer@example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+            </div>
+            <div style="flex:1">
+              <label class="label">Order # (optional)</label>
+              <input id="test-order" type="text" placeholder="e.g. 29238" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+            </div>
+          </div>
+          <label class="label">Customer Messages (one per line)</label>
+          <textarea id="test-messages" rows="3" placeholder="the AJ is too tight around the waist&#10;yes size 14 please" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset);resize:vertical"></textarea>
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-primary" onclick="runTest()">Run Test</button>
+            <button class="btn btn-secondary" onclick="clearTest()">Clear</button>
+          </div>
+        </div>
+
+        <!-- Replay -->
+        <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border)">
+          <div class="context-section-label" style="border:none;padding:0;margin-bottom:10px">Replay Gorgias Ticket</div>
+          <div style="display:flex;gap:12px;align-items:end">
+            <div style="flex:1">
+              <label class="label">Ticket ID</label>
+              <input id="test-ticket-id" type="text" placeholder="e.g. 90842753" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+            </div>
+            <button class="btn btn-action" onclick="replayTicket()">Replay</button>
+          </div>
+        </div>
+
+        <!-- Test results (shown inline below) -->
+        <div id="test-results" style="display:none;margin-top:24px"></div>
       </div>
-
-      <!-- Test tools view -->
-      <div id="test-tools-view" class="test-layout">
-        <!-- Test input -->
-        <div class="test-input-section">
-          <div class="detail-section">
-            <h3 style="margin-bottom:12px">Test Scenario</h3>
-            <div style="display:flex;gap:12px;margin-bottom:12px">
-              <div style="flex:1">
-                <label class="label">Customer Email</label>
-                <input id="test-email" type="email" placeholder="customer@example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-              </div>
-              <div style="flex:1">
-                <label class="label">Order # (optional)</label>
-                <input id="test-order" type="text" placeholder="e.g. 29238" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-              </div>
-            </div>
-            <label class="label">Customer Messages (one per line, or paste a conversation)</label>
-            <textarea id="test-messages" rows="4" placeholder="the AJ is too tight around the waist&#10;yes size 14 please" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset);resize:vertical"></textarea>
-            <div class="btn-row" style="margin-top:10px">
-              <button class="btn btn-primary" onclick="runTest()">Run Test</button>
-              <button class="btn btn-secondary" onclick="clearTest()">Clear</button>
-            </div>
-          </div>
-
-          <!-- Replay section -->
-          <div class="detail-section">
-            <h3 style="margin-bottom:12px">Replay Gorgias Conversation</h3>
-            <div style="display:flex;gap:12px;align-items:end">
-              <div style="flex:1">
-                <label class="label">Gorgias Ticket ID</label>
-                <input id="test-ticket-id" type="text" placeholder="e.g. 90842753" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-              </div>
-              <button class="btn btn-action" onclick="replayTicket()">Replay</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Test results -->
-        <div class="test-results-section">
-          <div id="test-placeholder" class="detail-section" style="text-align:center;color:var(--text-tertiary);padding:40px">
-            Run a test or replay a conversation to see results
-          </div>
-          <div id="test-results" style="display:none"></div>
-        </div>
-      </div>
-
-      <!-- Simulator view -->
-      <div id="simulator-view" style="display:none">
-        <!-- Idle state -->
-        <div id="sim-idle" style="text-align:center;padding:80px 24px">
-          <h3 style="font-size:18px;margin-bottom:8px">Conversation Simulator</h3>
-          <p style="color:var(--text-secondary);margin-bottom:24px">Load a real exchange conversation and walk through it turn by turn.</p>
-          <button class="btn btn-primary" onclick="simLoadRandom()" id="sim-load-btn">Load Random Exchange</button>
-          <div id="sim-loading" style="display:none;margin-top:16px;color:var(--text-tertiary)">Loading conversation...</div>
-        </div>
 
         <!-- Active session -->
         <div id="sim-active" style="display:none" class="sim-layout">
@@ -172,11 +189,17 @@
             <div class="detail-section">
               <div class="label">Customer</div>
               <div id="sim-customer-info"></div>
+              <div id="sim-ltv-stats" class="ltv-stats" style="margin-top:8px"></div>
             </div>
             <div class="detail-section">
               <div class="label">Order</div>
               <div id="sim-order-info"></div>
+              <div id="sim-order-links" class="order-links" style="margin-top:8px"></div>
             </div>
+            <details id="sim-past-tickets" style="display:none;margin-top:12px" class="detail-section">
+              <summary>Past Tickets <span id="sim-tickets-count" class="badge badge-muted"></span></summary>
+              <div id="sim-tickets-list"></div>
+            </details>
             <div id="sim-source-info" style="font-size:11px;color:var(--text-tertiary);margin-top:12px"></div>
             <button class="btn btn-dismiss" onclick="simEndSession()" style="margin-top:16px;width:100%">End Session</button>
           </div>

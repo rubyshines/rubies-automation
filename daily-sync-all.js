@@ -70,8 +70,8 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncDeliveryTimes').run(),
   },
   {
-    name: 'Shipping Alerts',
-    run: () => require('./customer-service/alerts/dailyShippingAlerts').run(),
+    name: 'Order Alerts',
+    run: () => require('./reports/dailyOrderAlerts').run(),
   },
 ];
 
