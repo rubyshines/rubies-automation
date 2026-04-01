@@ -799,9 +799,60 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
   intake.status = computeIntakeStatus(intake);
 
   // STEP 3b: Handle style switch — customer wants different products
-  // When intent is exchange_different_product and we don't have measurements yet,
-  // ask for measurements for the new products (we need to know what to recommend)
-  if (intake.customer_intent === 'exchange_different_product' && !intake.measurement && !intake.chest_measurement) {
+  // If no sizing issue mentioned, assume same size and auto-confirm the swap.
+  // Only ask for measurements if there's a sizing issue too.
+  if (intake.customer_intent === 'exchange_different_product') {
+    const hasSizingIssue = intake.items.some(i => i.issue && i.issue !== 'none' && i.issue !== 'unclear' && i.issue !== null);
+
+    if (!hasSizingIssue) {
+      // Straight product swap at same size — auto-confirm and respond directly
+      for (const item of intake.items) {
+        if (!item.resolved_size) item.resolved_size = item.desired_size || item.size;
+        if (item.desired_product && !item.resolved_product) item.resolved_product = item.desired_product;
+      }
+
+      // Detect the swap details for the response
+      const swapDescs = intake.items.map(i => {
+        const fromNick = require('../decisionTree').getProductNickname(i.product) || i.product;
+        const toNick = require('../decisionTree').getProductNickname(i.resolved_product || i.product) || i.resolved_product || i.product;
+        return `the ${fromNick} for a ${toNick} in size ${i.resolved_size}`;
+      });
+      const swapText = swapDescs.join(' and ');
+      const responseText = `No problem. I went ahead and swapped ${swapText} for you.`;
+      const audit = [`[Style switch] Straight product swap, no sizing issue. Auto-confirmed: ${swapText}`];
+
+      return {
+        content: [{ type: 'text', text: `## Product Swap\n\n**Customer response:**\n${responseText}` }],
+        _structured: {
+          status: 'ready',
+          intake,
+          prescription: {
+            items: intake.items.map(i => ({
+              product: i.product,
+              state: 'CONFIRMED',
+              response_text: responseText,
+              options: null,
+              recommendation: null,
+            })),
+            donation: null,
+            crossover_note: null,
+            still_needed: [],
+            flags: [],
+          },
+          customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
+          order: targetOrder ? {
+            name: targetOrder.name,
+            date: targetOrder.createdAt?.split('T')[0],
+            items: orderLineItems.map(li => ({ title: li.title, variant: li.variantTitle, quantity: li.quantity, sku: li.sku })),
+          } : null,
+          exchanges: exchanges.slice(0, 3).map(ex => ({ name: ex.name, items: (ex.lineItems || []).map(li => li.title) })),
+          tone_sample: null,
+          audit,
+          phases_completed: ['safety_check', 'identify_customer', 'order_identification', 'style_switch', 'order_creation'],
+          _composedResponse: responseText,
+        },
+      };
+    } else if (!intake.measurement && !intake.chest_measurement) {
     // Detect which product categories the customer wants (from desired_product or raw message)
     const msg = (issue_description || '').toLowerCase();
     const wantsTop = intake.items.some(i => i.desired_product && /bra|top|tankini/i.test(i.desired_product)) ||
@@ -861,7 +912,8 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         _composedResponse: responseText,
       },
     };
-  }
+    } // end else if (has sizing issue + no measurements)
+  } // end if (exchange_different_product)
 
   // STEP 4: Walk the decision tree
   const treeContext = {
