@@ -602,6 +602,9 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
     order_modification: "I'll look into that for you.",
     product_question: "Great question!",
     wholesale: "Thanks for your interest in wholesale!",
+    wrong_item_shipped: "I'm sorry about that mix-up! Let me look into this and get the right items sent over.",
+    missing_item: "I'm sorry to hear that. Let me look into this right away.",
+    cancellation: "I'll look into that for you.",
   };
   if (stubTypes[intake.message_type] && !existingIntake) {
     const stubText = stubTypes[intake.message_type];
