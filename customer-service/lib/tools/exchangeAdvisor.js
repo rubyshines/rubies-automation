@@ -946,7 +946,76 @@ async function handleExchangeAdvisor({ customer_email, issue_description, order_
         _composedResponse: responseText,
       },
     };
-    } // end else if (has sizing issue + no measurements)
+    } else {
+      // Has sizing issue AND measurements available — look up sizes for the new products
+      const msg = (issue_description || '').toLowerCase();
+      const wantsTop = intake.items.some(i => i.desired_product && /bra|top|tankini/i.test(i.desired_product)) ||
+        /tankini|bra|top/i.test(msg);
+      const wantsBottom = intake.items.some(i => i.desired_product && /bottom|bikini|cheeky|ruby|stella/i.test(i.desired_product)) ||
+        /bikini bottom|bottom|cheeky|stella|ruby/i.test(msg);
+      const isThirdParty = intake.buying_for === 'third_party';
+      const thirdPartyRef = isThirdParty ? `your ${intake.third_party_label || "child"}` : 'you';
+
+      // Look up sizes from measurements
+      const supabaseForLookup = getSupabaseClient();
+      const recommendations = [];
+
+      if (wantsBottom && intake.measurement) {
+        try {
+          const { data: matches } = await supabaseForLookup.rpc('find_size_by_measurement', {
+            p_chart_category: 'adult_swimwear_bottoms',
+            p_measurement_type: 'waist',
+            p_value: intake.measurement.value,
+            p_unit: intake.measurement.unit === 'cm' ? 'cm' : 'inches',
+          });
+          if (matches?.length >= 2) {
+            recommendations.push(`For the bikini bottom ${thirdPartyRef} ${isThirdParty ? 'is' : 'are'} between a size ${matches[0].size_label} and ${matches[1].size_label}`);
+          } else if (matches?.length === 1) {
+            recommendations.push(`For the bikini bottom I'd recommend a size ${matches[0].size_label}`);
+          }
+        } catch (e) { /* lookup failed */ }
+      }
+
+      if (wantsTop && (intake.chest_measurement || intake.measurement)) {
+        const chestM = intake.chest_measurement || intake.measurement;
+        try {
+          const { data: matches } = await supabaseForLookup.rpc('find_size_by_measurement', {
+            p_chart_category: 'adult_tops',
+            p_measurement_type: 'chest',
+            p_value: chestM.value,
+            p_unit: chestM.unit === 'cm' ? 'cm' : 'inches',
+          });
+          if (matches?.length >= 2) {
+            recommendations.push(`for the top would be between a ${matches[0].size_label} and ${matches[1].size_label}`);
+          } else if (matches?.length === 1) {
+            recommendations.push(`for the top I'd recommend a ${matches[0].size_label}`);
+          }
+        } catch (e) { /* lookup failed */ }
+      }
+
+      if (recommendations.length > 0) {
+        const recText = recommendations.join(' and ');
+        const responseText = `Based on the measurements, ${recText}. Let me know which ${thirdPartyRef} would like and I can set up a new order.`;
+        const audit = [`[Style switch + measurements] ${recText}`];
+
+        return {
+          content: [{ type: 'text', text: responseText }],
+          _structured: {
+            status: 'needs_info', intake,
+            prescription: {
+              items: intake.items.map(i => ({ product: i.product, state: 'AWAITING_SIZE_CONFIRMATION', response_text: responseText, options: null, recommendation: null })),
+              donation: null, crossover_note: null, still_needed: ['size confirmation for new products'], flags: [],
+            },
+            customer: { email: customer_email, name: intake.name, pronouns: intake.pronouns, buying_for: intake.buying_for, third_party_label: intake.third_party_label, country: customerCountry, address: customer?.defaultAddress },
+            order: targetOrder ? { name: targetOrder.name, date: targetOrder.createdAt?.split('T')[0], items: orderLineItems.map(li => ({ title: li.title, variant: li.variantTitle, quantity: li.quantity, sku: li.sku })) } : null,
+            exchanges: exchanges.slice(0, 3).map(ex => ({ name: ex.name, items: (ex.lineItems || []).map(li => li.title) })),
+            tone_sample: null, audit, phases_completed: ['safety_check', 'identify_customer', 'order_identification', 'style_switch', 'sizing'],
+            _composedResponse: responseText,
+          },
+        };
+      }
+      // If lookup failed, fall through to the tree
+    } // end else (has measurements)
   } // end if (exchange_different_product)
 
   // STEP 4: Walk the decision tree
