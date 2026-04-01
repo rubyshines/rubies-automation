@@ -127,7 +127,10 @@ const NUMERIC_FULL = ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16
 const LETTER_SIZES = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const LETTER_NO_PLUS = ['XXS', 'XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
 const LETTER_WITH_PLUS = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
-const SIZE_ALIASES = { 'XL': '1X', 'XXL': '2X', '2XL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X' };
+const SIZE_ALIASES = {
+  'XL': '1X', 'XXL': '2X', '2XL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X',
+  'XS1': 'XS+', 'XXS1': 'XXS+',  // SKU barcode format: + replaced with 1
+};
 const KID_LABELS = new Set(['daughter', 'girl', 'son', 'boy', 'kid', 'kiddo', 'child', 'kids']);
 
 // Chest pad sizing: maps bra/top size → chest pad size
@@ -973,7 +976,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
     if (group.length <= 1) continue;
     // Multiple sizes of same product — keep only the most relevant one
     const latestMsg = (intake._latestMessage || '').toLowerCase();
-    const isTight = group.some(g => /tight|small/.test(g.issue || '')) || /too tight|too small/i.test(latestMsg);
+    const isTight = group.some(g => /tight|small/.test(g.issue || '')) || /too tight|too small|larger size|size up|bigger/i.test(latestMsg);
+    const isLoose = !isTight && (group.some(g => /loose|big/.test(g.issue || '')) || /too loose|too big|smaller size|size down/i.test(latestMsg));
     const sizeList = getSizeList(group[0].size, classifiedItems[group[0].idx].product);
     if (sizeList) {
       const sorted = group.sort((a, b) => {

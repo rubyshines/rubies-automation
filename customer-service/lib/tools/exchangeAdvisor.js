@@ -159,8 +159,8 @@ Return JSON:
     }
   ],
   "measurements": [{ "value": number, "unit": "inches" | "cm", "body_part": "waist" | "chest" | "hips" | "height" }] or [] — extract ALL measurements mentioned with the correct body part. "waist" = around the belly just under the belly button. "hips" = around the widest part of the hips/butt. "chest" = where a bra band sits. IMPORTANT: waist and hips are DIFFERENT measurements — do not confuse them. If customer says "32 waist and 37 hips" those are two separate measurements.,
-  "is_confirmation": boolean — is this message confirming a previous suggestion? ("yes", "sounds good", "go ahead"),
-  "confirmed_size": string or null — if confirming, what size are they confirming?,
+  "is_confirmation": boolean — is this message confirming a previous suggestion or picking from options offered? Examples: "yes", "sounds good", "go ahead", "the M please", "2 mediums and 2 larges", "let's go with the 1X". If the CONVERSATION HISTORY shows the agent offered size options and this message picks one, set is_confirmation = true.,
+  "confirmed_size": string or null — if confirming, what size are they confirming? If they picked from options, put the size here. If multiple sizes mentioned (e.g. "2 mediums and 2 larges"), put the first one here and note the others in "notes".,
   "reference_size": { "product": string, "size": string } or null — if the customer mentions a size that fits them in another product ("I wear size 8 in the AJ"), extract it here. This helps recommend sizing for a new product.,
   "safety_concern": boolean — does the message indicate danger, hiding items, unsafe situation?,
   "positive_feedback": boolean — DEPRECATED, use sentiment field instead. Keep for backward compatibility.,
