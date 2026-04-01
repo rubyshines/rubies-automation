@@ -93,6 +93,9 @@ CREATE TABLE IF NOT EXISTS cs_ai_feedback_log (
   created_at              timestamptz DEFAULT now()
 );
 
+-- status: 'new' (unreviewed) | 'addressed' (fix implemented)
+ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS status text DEFAULT 'new';
+
 CREATE INDEX IF NOT EXISTS idx_feedback_action ON cs_ai_feedback_log (action);
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON cs_ai_feedback_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_message_type ON cs_ai_feedback_log (message_type);
