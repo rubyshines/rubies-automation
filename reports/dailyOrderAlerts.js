@@ -483,6 +483,102 @@ function formatConsole(unfulfilled, shipping, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Re-scrape alerted orders for fresh tracking data
+// ---------------------------------------------------------------------------
+
+async function reScrapeAlertedOrders(shipping) {
+  const { scrapeTracking } = require('../customer-service/lib/tracking/scraper');
+  const { parseTrackingPage } = require('../customer-service/lib/tracking/analyzer');
+  const supabase = getSupabaseClient();
+
+  // Collect all alerts that need attention and have a tracking URL
+  const categories = ['urgentNonPassport', 'passportPending', 'passportLost', 'delayed'];
+  const toScrape = [];
+  for (const cat of categories) {
+    for (const alert of (shipping[cat] || [])) {
+      if (alert.tracking_url && alert.tracking_number) {
+        toScrape.push({ alert, category: cat });
+      }
+    }
+  }
+
+  if (toScrape.length === 0) return;
+  console.log(`  [Re-scrape] Refreshing tracking for ${toScrape.length} alerted orders...`);
+
+  let updated = 0;
+  let resolved = 0;
+
+  for (const { alert } of toScrape) {
+    try {
+      const scraped = await scrapeTracking(alert.tracking_url, alert.tracking_number);
+      const parsed = await parseTrackingPage(scraped.rawText, scraped.carrier);
+
+      // Update tracking_snapshots cache
+      await supabase.from('tracking_snapshots').upsert({
+        tracking_number: alert.tracking_number,
+        order_number: alert.order_number,
+        carrier: scraped.carrier,
+        tracking_url: alert.tracking_url,
+        destination_country: alert.country || null,
+        shipping_zone: alert.zone || null,
+        raw_events: parsed.events || [],
+        current_status: parsed.current_status,
+        estimated_delivery: parsed.estimated_delivery || null,
+        last_location: parsed.last_location || null,
+        local_carrier: parsed.local_carrier || null,
+        local_tracking_number: parsed.local_tracking_number || null,
+        customs_cleared: parsed.customs_cleared || null,
+        scraped_at: new Date().toISOString(),
+      }, { onConflict: 'tracking_number' });
+
+      // Check if status meaningfully changed
+      const oldStatus = alert.status;
+      const newStatus = parsed.current_status;
+      const newLastEvent = parsed.events?.[0];
+
+      if (newStatus === oldStatus && !newLastEvent) continue;
+
+      // Update alert object in place
+      alert.status = newStatus;
+      alert.last_location = parsed.last_location || alert.last_location;
+      alert.customs_cleared = parsed.customs_cleared;
+      alert.local_carrier = parsed.local_carrier || alert.local_carrier;
+      if (newLastEvent) {
+        alert.last_event = `${newLastEvent.date}: ${newLastEvent.location || ''} ${newLastEvent.description || ''}`.trim();
+      }
+
+      // If delivered, mark for removal from active alerts
+      if (newStatus === 'delivered') {
+        alert._resolved = true;
+        resolved++;
+      }
+
+      updated++;
+    } catch (err) {
+      // Non-fatal — keep the original alert data
+      console.warn(`  [Re-scrape] Failed for #${alert.order_number}: ${err.message}`);
+    }
+  }
+
+  // Remove delivered orders from all category lists and alerts
+  if (resolved > 0) {
+    const isResolved = a => a._resolved;
+    for (const cat of categories) {
+      if (shipping[cat]) {
+        shipping[cat] = shipping[cat].filter(a => !isResolved(a));
+      }
+    }
+    shipping.alerts = (shipping.alerts || []).filter(a => !isResolved(a));
+  }
+
+  if (updated > 0 || resolved > 0) {
+    console.log(`  [Re-scrape] ${updated} updated, ${resolved} now delivered`);
+  } else {
+    console.log(`  [Re-scrape] No changes detected`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -503,6 +599,9 @@ async function run() {
     checkUnfulfilledOrders(),
     checkShippingDelays({ showResolved: opts.showResolved }),
   ]);
+
+  // Re-scrape delayed/urgent orders for fresh tracking data
+  await reScrapeAlertedOrders(shipping);
 
   // Console output
   if (opts.json) {

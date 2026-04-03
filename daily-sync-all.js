@@ -124,7 +124,8 @@ async function main() {
 
     const duration = Date.now() - start;
     const rows = sumRows(result);
-    const status = result?.status || 'failure';
+    const rawStatus = result?.status || 'failure';
+    const status = rawStatus === 'ok' ? 'success' : rawStatus;
 
     if (status === 'failure') anyFailure = true;
 

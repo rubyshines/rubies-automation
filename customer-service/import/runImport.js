@@ -69,6 +69,28 @@ async function importGorgias({ since, limit }) {
       break;
     }
 
+    // Pre-create stub customer records so FK constraint doesn't block import
+    const stubs = [];
+    for (const t of tickets) {
+      const email = (t.customer?.email || '').toLowerCase().trim();
+      if (email && email.includes('@')) {
+        const name = t.customer?.name || '';
+        const parts = name.includes(' ') ? name.split(' ') : [name, ''];
+        stubs.push({
+          email,
+          first_name: parts[0] || null,
+          last_name: parts.slice(1).join(' ') || null,
+          synced_at: new Date().toISOString(),
+        });
+      }
+    }
+    if (stubs.length) {
+      const { error: stubErr } = await supabase
+        .from('customers')
+        .upsert(stubs, { onConflict: 'email', ignoreDuplicates: true });
+      if (stubErr) console.warn(`[Import] Customer stub error: ${stubErr.message}`);
+    }
+
     for (const ticket of tickets) {
       try {
         // Fetch messages for this ticket
