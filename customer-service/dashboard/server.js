@@ -19,6 +19,20 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
+const { autoLinkProducts } = require('../lib/autoLinker');
+const Anthropic = require('@anthropic-ai/sdk');
+
+// Product config for auto-linking (loaded at startup)
+let _productConfig = [];
+async function loadProductConfig() {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('product_cs_config')
+    .select('product_handle, nickname, category, keywords');
+  if (error) { console.warn('[dashboard] Failed to load product config for auto-linker:', error.message); return; }
+  _productConfig = data || [];
+  console.log(`[dashboard] Auto-linker loaded ${_productConfig.length} products`);
+}
 
 const PORT = process.env.DASHBOARD_PORT || 3847;
 const STATIC_DIR = path.join(__dirname, 'public');
@@ -81,8 +95,10 @@ async function apiSendDraft(id, body) {
   const finalResponse = body.response || draft.draft_response;
   const notes = body.notes || null;
 
-  // Send to Gorgias
+  // Send to Gorgias (auto-link product names in HTML)
+  const bodyHtml = autoLinkProducts(finalResponse, _productConfig);
   const replyResult = await gorgias.createTicketReply(draft.gorgias_ticket_id, {
+    body_html: bodyHtml,
     body_text: finalResponse,
   });
 
@@ -374,24 +390,56 @@ async function apiDeleteDraft(id) {
     .from('cs_ai_drafts')
     .select('gorgias_ticket_id')
     .eq('id', id)
-    .single();
+    .maybeSingle();
   if (fetchErr) throw fetchErr;
+  if (!draft) return { success: true };
 
-  // Unassign from AI Bot so ticket goes back to inbox
+  // Close ticket in Gorgias so poller won't pick it up again
   if (draft.gorgias_ticket_id) {
     try {
+      await gorgias.closeTicket(draft.gorgias_ticket_id);
       await gorgias.assignTicket(draft.gorgias_ticket_id, null);
     } catch (err) {
-      console.warn(`[dashboard] Could not unassign ticket on delete: ${err.message}`);
+      console.warn(`[dashboard] Could not close ticket on delete: ${err.message}`);
     }
   }
 
-  // Delete the draft
-  const { error: delErr } = await supabase
+  // Soft-delete: mark as deleted so poller won't recreate
+  await supabase.from('cs_ai_drafts').update({
+    status: 'deleted',
+    reviewed_at: new Date().toISOString(),
+  }).eq('id', id);
+
+  return { success: true };
+}
+
+async function apiMarkSpam(id) {
+  const supabase = getSupabaseClient();
+
+  const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts')
-    .delete()
-    .eq('id', id);
-  if (delErr) throw delErr;
+    .select('gorgias_ticket_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (fetchErr) throw fetchErr;
+  if (!draft) return { success: true };
+
+  // Close ticket, tag as spam, unassign from AI Bot
+  if (draft.gorgias_ticket_id) {
+    try {
+      await gorgias.addTicketTag(draft.gorgias_ticket_id, 'spam');
+      await gorgias.closeTicket(draft.gorgias_ticket_id);
+      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+    } catch (err) {
+      console.warn(`[dashboard] Spam Gorgias actions failed: ${err.message}`);
+    }
+  }
+
+  // Soft-delete: mark as spam so poller won't recreate
+  await supabase.from('cs_ai_drafts').update({
+    status: 'spam',
+    reviewed_at: new Date().toISOString(),
+  }).eq('id', id);
 
   return { success: true };
 }
@@ -566,45 +614,65 @@ async function apiReplayTicket(body) {
 // Simulator endpoints
 // ---------------------------------------------------------------------------
 
-async function apiSimulatorRandom(category) {
+async function apiSimulatorRandom(category, ticketId) {
   const supabase = getSupabaseClient();
   const gorgiasClient = require('../import/gorgiasClient');
 
-  // Category-to-filter mapping
-  const categoryFilters = {
-    exchange: 'category.eq.exchange_return,tags.cs.{RETURN/EXCHANGE}',
-    sizing: 'category.eq.sizing_fit,tags.cs.{SIZING}',
-    shipping: 'category.eq.shipping,tags.cs.{SHIPPING}',
-    order_status: 'category.eq.order_status,tags.cs.{ORDER STATUS}',
-    product: 'category.eq.product_info,tags.cs.{PRODUCT}',
-    general: 'category.eq.general',
-    payment: 'category.eq.payment',
-  };
+  let convo;
 
-  const filterType = category || 'exchange';
-  const orFilter = categoryFilters[filterType] || categoryFilters.exchange;
+  if (ticketId) {
+    // Load a specific conversation by Gorgias ticket ID
+    const { data } = await supabase
+      .from('cs_conversations')
+      .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+      .eq('source_id', String(ticketId))
+      .single();
+    if (!data) {
+      // Try gorgias: prefix
+      const { data: data2 } = await supabase
+        .from('cs_conversations')
+        .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+        .eq('id', `gorgias:${ticketId}`)
+        .single();
+      if (!data2) throw new Error(`Conversation not found for ticket ${ticketId}`);
+      convo = data2;
+    } else {
+      convo = data;
+    }
+  } else {
+    // Category-to-filter mapping
+    const categoryFilters = {
+      exchange: 'category.eq.exchange_return,tags.cs.{RETURN/EXCHANGE}',
+      sizing: 'category.eq.sizing_fit,tags.cs.{SIZING}',
+      shipping: 'category.eq.shipping,tags.cs.{SHIPPING}',
+      order_status: 'category.eq.order_status,tags.cs.{ORDER STATUS}',
+      product: 'category.eq.product_info,tags.cs.{PRODUCT}',
+      general: 'category.eq.general',
+      payment: 'category.eq.payment',
+    };
 
-  // Pick a random conversation from Supabase matching the category
-  let q = supabase
-    .from('cs_conversations')
-    .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
-    .or(orFilter)
-    .gt('message_count', 2)
-    .limit(100);
+    const filterType = category || 'exchange';
+    const orFilter = categoryFilters[filterType] || categoryFilters.exchange;
 
-  // Only require order_numbers for exchange/sizing (others may not have orders)
-  if (['exchange', 'sizing'].includes(filterType)) {
-    q = q.not('order_numbers', 'is', null);
+    let q = supabase
+      .from('cs_conversations')
+      .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+      .or(orFilter)
+      .gt('message_count', 2)
+      .limit(100);
+
+    if (['exchange', 'sizing'].includes(filterType)) {
+      q = q.not('order_numbers', 'is', null);
+    }
+
+    const { data: convos } = await q;
+    if (!convos?.length) throw new Error(`No ${filterType} conversations found`);
+    convo = convos[Math.floor(Math.random() * convos.length)];
   }
 
-  const { data: convos } = await q;
-
-  if (!convos?.length) throw new Error(`No ${filterType} conversations found`);
-  const convo = convos[Math.floor(Math.random() * convos.length)];
-
   // Load messages from Gorgias API (has correct from_agent + stripped_text)
-  const ticketId = convo.source_id || convo.id.replace('gorgias:', '');
-  const messages = await gorgiasClient.getTicketMessages(ticketId);
+  const gorgiasTicketId = convo.source_id || convo.id.replace('gorgias:', '');
+  const messages = await gorgiasClient.getTicketMessages(gorgiasTicketId);
 
   // Build first customer turn: all customer messages before the first real agent reply
   const firstTurnParts = [];
@@ -622,7 +690,12 @@ async function apiSimulatorRandom(category) {
   const firstMessage = firstTurnParts.join('\n');
 
   // Get order details from Shopify
-  const orderNumber = convo.order_numbers?.[0];
+  // Try order_numbers array first, then extract from subject (e.g. "Order #27715 - Exchange")
+  let orderNumber = convo.order_numbers?.[0];
+  if (!orderNumber && convo.subject) {
+    const subjectMatch = convo.subject.match(/#(\d{4,6})/);
+    if (subjectMatch) orderNumber = subjectMatch[1];
+  }
   let orderContext = null;
   let customerContext = null;
 
@@ -922,6 +995,343 @@ async function apiExecuteEdit(id, body) {
 }
 
 // ---------------------------------------------------------------------------
+// Action Chat — Claude-powered tool execution via chat
+// ---------------------------------------------------------------------------
+
+let _anthropicClient = null;
+function getAnthropic() {
+  if (!_anthropicClient) _anthropicClient = new Anthropic();
+  return _anthropicClient;
+}
+
+// Tool definitions for Claude (simplified schemas matching our MCP handlers)
+const ACTION_CHAT_TOOLS = [
+  {
+    name: 'create_exchange_order',
+    description: 'Create a free exchange draft order. Returns a preview first. Call again with confirmed=true and draft_order_id to complete.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        customer_email: { type: 'string', description: 'Customer email address' },
+        items: {
+          type: 'array', description: 'Items for the exchange',
+          items: {
+            type: 'object',
+            properties: {
+              sku: { type: 'string', description: 'Original SKU (e.g. AJ-BLK-M)' },
+              target_size: { type: 'string', description: 'New size (e.g. L, XL, 14)' },
+              query: { type: 'string', description: 'Product search query if SKU unknown' },
+              quantity: { type: 'number', description: 'Quantity (default 1)' },
+            },
+          },
+        },
+        confirmed: { type: 'boolean', description: 'Set true to complete a previously created draft' },
+        draft_order_id: { type: 'string', description: 'Draft order ID from preview (required when confirmed=true)' },
+        note: { type: 'string', description: 'Note for the order' },
+      },
+      required: ['customer_email'],
+    },
+  },
+  {
+    name: 'refund_order',
+    description: 'Refund specific items on an order. Returns a preview first. Call again with confirmed=true and _refund_data to execute.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'string', description: 'Order number (e.g. "29119")' },
+        items: {
+          type: 'array', description: 'Items to refund',
+          items: {
+            type: 'object',
+            properties: {
+              sku: { type: 'string', description: 'SKU of the item' },
+              quantity: { type: 'number', description: 'Quantity to refund (default 1)' },
+            },
+          },
+        },
+        confirmed: { type: 'boolean', description: 'Set true to execute the refund' },
+        _refund_data: { type: 'object', description: 'Refund data from preview (required when confirmed=true)' },
+        note: { type: 'string', description: 'Refund note' },
+      },
+      required: ['order_number'],
+    },
+  },
+  {
+    name: 'edit_order',
+    description: 'Edit an unfulfilled order by swapping, removing, or adding line items. Returns preview first. Call again with confirmed=true to commit.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'string', description: 'Order number' },
+        swap_items: {
+          type: 'array', description: 'Items to swap/remove/add',
+          items: {
+            type: 'object',
+            properties: {
+              remove_sku: { type: 'string', description: 'SKU to remove' },
+              add_query: { type: 'string', description: 'Product search for replacement' },
+              add_quantity: { type: 'number' },
+            },
+          },
+        },
+        confirmed: { type: 'boolean', description: 'Set true to commit the edit' },
+        note: { type: 'string', description: 'Staff note' },
+      },
+      required: ['order_number'],
+    },
+  },
+];
+
+async function apiActionChat(draftId, body) {
+  const supabase = getSupabaseClient();
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts').select('*').eq('id', draftId).single();
+  if (fetchErr) throw fetchErr;
+
+  const userMessage = body.message;
+  const history = body.history || [];
+
+  // Build system prompt with context
+  const structured = draft.structured_output || {};
+  const orderItems = (structured.order?.items || [])
+    .map(i => `  - ${i.title} ${i.variant || ''} (SKU: ${i.sku}, qty: ${i.quantity})`).join('\n');
+
+  const systemPrompt = `You are an action executor for the RUBIES CS dashboard. You help the operator execute exchanges, refunds, and order edits.
+
+CONTEXT:
+- Customer: ${draft.customer_email}
+- Order: #${draft.order_number}
+- Order items:
+${orderItems || '  (no items)'}
+- Fulfillment: ${structured.order?.fulfillment_status || 'unknown'}
+
+AI ADVISOR SUGGESTION: ${draft.action_type || 'none'} — ${draft.advisor_status || ''}
+${structured.intake?.items?.length ? 'Suggested items: ' + structured.intake.items.map(i => `${i.product} ${i.size || ''} → ${i.resolved_size || '?'}`).join(', ') : ''}
+
+RULES:
+- Be concise. Show what you're about to do and ask for confirmation before executing.
+- For exchanges: call create_exchange_order with the customer_email and items array. Use SKU + target_size.
+- For refunds: call refund_order with order_number and items array.
+- For edits: call edit_order with order_number and swap_items.
+- Always show a preview first (phase 1), then ask for confirmation before completing (phase 2).
+- When the operator says "yes", "confirm", "do it", etc. — proceed with phase 2.
+- After completing an action, summarize what was done.
+- If the operator wants multiple actions (exchange + refund), do them sequentially.`;
+
+  // Build messages array
+  const messages = [...history, { role: 'user', content: userMessage }];
+
+  const client = getAnthropic();
+
+  // Run the agentic loop — keep going while Claude wants to use tools
+  let currentMessages = messages;
+  let finalResponse = '';
+  let toolResults = [];
+  const maxIterations = 10;
+
+  for (let i = 0; i < maxIterations; i++) {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      tools: ACTION_CHAT_TOOLS,
+      messages: currentMessages,
+    });
+
+    // Collect text and tool use blocks
+    const textBlocks = response.content.filter(b => b.type === 'text');
+    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+
+    if (textBlocks.length) {
+      finalResponse += textBlocks.map(b => b.text).join('\n');
+    }
+
+    // If no tool calls, we're done
+    if (toolUseBlocks.length === 0 || response.stop_reason === 'end_turn') {
+      if (toolUseBlocks.length === 0) break;
+    }
+
+    // Execute tool calls
+    const toolResultMessages = [];
+    for (const toolUse of toolUseBlocks) {
+      let result;
+      try {
+        result = await executeActionTool(toolUse.name, toolUse.input, draft);
+        toolResults.push({ tool: toolUse.name, input: toolUse.input, result });
+      } catch (err) {
+        result = { error: err.message };
+        toolResults.push({ tool: toolUse.name, input: toolUse.input, error: err.message });
+      }
+
+      toolResultMessages.push({
+        type: 'tool_result',
+        tool_use_id: toolUse.id,
+        content: typeof result === 'string' ? result : JSON.stringify(result),
+      });
+    }
+
+    // Add assistant response + tool results to messages for next iteration
+    currentMessages = [
+      ...currentMessages,
+      { role: 'assistant', content: response.content },
+      { role: 'user', content: toolResultMessages },
+    ];
+
+    // If stop_reason is end_turn and there were tool calls, continue to get final text
+    if (response.stop_reason === 'end_turn' && toolUseBlocks.length > 0) {
+      // One more iteration to get Claude's response after tool results
+      continue;
+    }
+  }
+
+  // Update draft with action results if any tools were called
+  if (toolResults.length) {
+    const prevResult = draft.action_result || {};
+    await supabase.from('cs_ai_drafts').update({
+      action_result: { ...prevResult, chat_tool_results: toolResults },
+    }).eq('id', draftId);
+  }
+
+  // Return the full conversation for the client to display
+  return {
+    response: finalResponse,
+    tool_results: toolResults,
+    // Return updated messages for the client to maintain history
+    history: currentMessages,
+  };
+}
+
+async function executeActionTool(toolName, input, draft) {
+  if (toolName === 'create_exchange_order') {
+    const exchangeTools = require('../lib/tools/exchangeOrder');
+    const handler = exchangeTools.find(t => t.name === 'create_exchange_order')?.handler;
+    if (!handler) throw new Error('Exchange tool not found');
+
+    // Resolve customer_id from email
+    if (!input.confirmed) {
+      const { searchCustomers } = require('../lib/shopify');
+      const customers = await searchCustomers(input.customer_email || draft.customer_email);
+      const customer = customers?.[0];
+      if (!customer) throw new Error(`Customer not found: ${input.customer_email || draft.customer_email}`);
+      input.customer_id = customer.id;
+    }
+
+    const result = await handler(input);
+    return result.content?.[0]?.text || JSON.stringify(result);
+  }
+
+  if (toolName === 'refund_order') {
+    const refundTools = require('../lib/tools/refundOrder');
+    const handler = refundTools.find(t => t.name === 'refund_order')?.handler;
+    if (!handler) throw new Error('Refund tool not found');
+    const result = await handler(input);
+    // Extract _refund_data if present (needed for phase 2)
+    const text = result.content?.[0]?.text || '';
+    if (result._refund_data) {
+      return JSON.stringify({ text, _refund_data: result._refund_data });
+    }
+    return text;
+  }
+
+  if (toolName === 'edit_order') {
+    const editTools = require('../lib/tools/editOrder');
+    const handler = editTools.find(t => t.name === 'edit_order')?.handler;
+    if (!handler) throw new Error('Edit tool not found');
+    const result = await handler(input);
+    return result.content?.[0]?.text || JSON.stringify(result);
+  }
+
+  throw new Error(`Unknown tool: ${toolName}`);
+}
+
+/**
+ * Standalone action chat — works without a draft (for simulator + ad-hoc use).
+ * Accepts context directly instead of looking up a draft.
+ */
+async function apiActionChatStandalone(body) {
+  const userMessage = body.message;
+  const history = body.history || [];
+  const ctx = body.context || {};
+
+  const orderItems = (ctx.order_items || [])
+    .map(i => `  - ${i.title || ''} ${i.variant || ''} (SKU: ${i.sku || '?'}, qty: ${i.quantity || 1})`).join('\n');
+
+  const systemPrompt = `You are an action executor for the RUBIES CS dashboard. You help the operator execute exchanges, refunds, and order edits.
+
+CONTEXT:
+- Customer: ${ctx.customer_email || 'unknown'}
+- Order: #${ctx.order_number || '?'}
+- Order items:
+${orderItems || '  (no items)'}
+
+RULES:
+- Be concise. Show what you're about to do and ask for confirmation before executing.
+- For exchanges: call create_exchange_order with the customer_email and items array. Use SKU + target_size.
+- For refunds: call refund_order with order_number and items array.
+- For edits: call edit_order with order_number and swap_items.
+- Always show a preview first (phase 1), then ask for confirmation before completing (phase 2).
+- When the operator says "yes", "confirm", "do it", etc. — proceed with phase 2.
+- After completing an action, summarize what was done.
+- If the operator wants multiple actions (exchange + refund), do them sequentially.`;
+
+  const messages = [...history, { role: 'user', content: userMessage }];
+  const client = getAnthropic();
+
+  let currentMessages = messages;
+  let finalResponse = '';
+  let toolResults = [];
+
+  for (let i = 0; i < 10; i++) {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: systemPrompt,
+      tools: ACTION_CHAT_TOOLS,
+      messages: currentMessages,
+    });
+
+    const textBlocks = response.content.filter(b => b.type === 'text');
+    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+
+    if (textBlocks.length) {
+      finalResponse += textBlocks.map(b => b.text).join('\n');
+    }
+
+    if (toolUseBlocks.length === 0) break;
+
+    const toolResultMessages = [];
+    for (const toolUse of toolUseBlocks) {
+      let result;
+      try {
+        result = await executeActionTool(toolUse.name, toolUse.input, { customer_email: ctx.customer_email, order_number: ctx.order_number });
+        toolResults.push({ tool: toolUse.name, input: toolUse.input, result });
+      } catch (err) {
+        result = { error: err.message };
+        toolResults.push({ tool: toolUse.name, input: toolUse.input, error: err.message });
+      }
+
+      toolResultMessages.push({
+        type: 'tool_result',
+        tool_use_id: toolUse.id,
+        content: typeof result === 'string' ? result : JSON.stringify(result),
+      });
+    }
+
+    currentMessages = [
+      ...currentMessages,
+      { role: 'assistant', content: response.content },
+      { role: 'user', content: toolResultMessages },
+    ];
+  }
+
+  return {
+    response: finalResponse,
+    tool_results: toolResults,
+    history: currentMessages,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -1077,6 +1487,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     fulfillment_status: o.fulfillment_status,
     financial_status: o.financial_status,
     shopify_order_id: o.shopify_order_id,
+    shipping_address: o.shipping_address,
     tracking_url: extractTrackingUrl(o.fulfillments),
     items: (otherLineItems[o.shopify_order_id] || []).map(i => ({
       title: i.title,
@@ -1128,16 +1539,19 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/exchange$/, handler: (body, id) => apiExecuteExchange(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/refund$/, handler: (body, id) => apiExecuteRefund(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/action-chat$/, handler: (body, id) => apiActionChat(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/action-chat$/, handler: (body) => apiActionChatStandalone(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/train$/, handler: (body, id) => apiTrainDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/delete$/, handler: (_, id) => apiDeleteDraft(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/spam$/, handler: (_, id) => apiMarkSpam(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
   { method: 'GET', pattern: /^\/api\/simulator\/random$/, handler: (_, __, req) => {
     const url = new URL(req.url, 'http://localhost');
-    return apiSimulatorRandom(url.searchParams.get('category'));
+    return apiSimulatorRandom(url.searchParams.get('category'), url.searchParams.get('ticket'));
   }},
   { method: 'POST', pattern: /^\/api\/simulator\/turn$/, handler: (body) => apiSimulatorTurn(body) },
   { method: 'POST', pattern: /^\/api\/simulator\/save$/, handler: (body) => apiSimulatorSave(body) },
@@ -1254,6 +1668,7 @@ function computeEditDistance(a, b) {
 // ---------------------------------------------------------------------------
 
 const server = http.createServer(handleRequest);
-server.listen(PORT, () => {
-  console.log(`\n  CS Draft Dashboard running at http://localhost:${PORT}\n`);
+server.listen(PORT, async () => {
+  console.log(`\n  RUBIES Care running at http://localhost:${PORT}\n`);
+  await loadProductConfig();
 });

@@ -158,6 +158,29 @@ function renderDetail(d) {
   document.getElementById('detail-placeholder').style.display = 'none';
   document.getElementById('detail-content').style.display = 'block';
 
+  // Reset all button states
+  const btnSend = document.getElementById('btn-send');
+  const btnSendClose = document.getElementById('btn-send-close');
+  const btnCloseOnly = document.getElementById('btn-close-only');
+  const btnTrain = document.getElementById('btn-train');
+  const btnRefresh = document.getElementById('btn-refresh');
+  const btnRelease = document.getElementById('btn-release');
+  const btnDelete = document.getElementById('btn-delete');
+  btnSend.textContent = 'Send Reply';
+  btnSend.disabled = false;
+  btnSendClose.textContent = 'Send & Close';
+  btnSendClose.disabled = false;
+  btnCloseOnly.textContent = 'Close';
+  btnCloseOnly.disabled = false;
+  btnTrain.textContent = 'Train';
+  btnTrain.disabled = false;
+  btnRefresh.disabled = false;
+  btnRelease.textContent = 'Release to Gorgias';
+  btnRelease.disabled = false;
+  if (btnDelete) { btnDelete.textContent = 'Delete'; btnDelete.disabled = false; }
+  const btnSpam = document.getElementById('btn-spam');
+  if (btnSpam) { btnSpam.textContent = 'Spam'; btnSpam.disabled = false; }
+
   // Render basic customer info immediately from draft snapshot
   const ctx = d.customer_context || {};
   document.getElementById('customer-card').innerHTML = `
@@ -195,7 +218,8 @@ function renderDetail(d) {
     .filter(m => m.channel !== 'internal-note')
     .map(m => {
       const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
-      const processed = collapseQuotedContent(rawHtml);
+      const cleaned = cleanMessageBody(rawHtml);
+      const processed = collapseQuotedContent(cleaned);
       return `
         <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
           <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${timeAgo(m.created_at, 'long')}</div>
@@ -300,7 +324,7 @@ async function loadCustomerContext(email, orderNumber) {
 
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
         `#${to.order_number}`, to.created_at, to.items,
-        to.fulfillment_status, to.total, to.currency, linksHtml
+        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address
       );
     }
 
@@ -384,6 +408,7 @@ function renderOtherOrders(showCount) {
         <span class="past-order-status" style="color:${statusColor}">${esc(statusLower)}</span>
       </summary>
       <div class="past-order-items">
+        ${o.shipping_address ? `<div class="past-order-address">${formatAddress(o.shipping_address)}</div>` : ''}
         ${itemsHtml || '<span style="color:var(--text-tertiary);font-size:11px">No items</span>'}
         ${orderLinks ? `<div class="past-order-links">${orderLinks}</div>` : ''}
       </div>
@@ -398,7 +423,7 @@ function renderOtherOrders(showCount) {
   document.getElementById('other-orders-list').innerHTML = html;
 }
 
-function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml) {
+function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress) {
   const statusColor = !fulfillmentStatus ? 'var(--text-tertiary)'
     : fulfillmentStatus.toLowerCase() === 'fulfilled' ? 'var(--green)'
     : fulfillmentStatus.toLowerCase() === 'unfulfilled' ? 'var(--yellow)'
@@ -415,12 +440,15 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     </tr>`;
   }).join('');
 
+  const addressHtml = shippingAddress ? `<div class="order-shipping-address">${formatAddress(shippingAddress)}</div>` : '';
+
   return `
     <div class="ticket-order-header">
       <span class="ticket-order-title">Order ${esc(name)}</span>
       <span style="margin-left:8px;font-size:12px;color:var(--text-secondary)">${date ? timeAgo(date) : ''}</span>
       ${fulfillmentStatus ? `<span class="ticket-order-status" style="margin-left:8px;color:${statusColor}">${esc(fulfillmentStatus)}</span>` : ''}
     </div>
+    ${addressHtml}
     <table class="order-items-table">${itemsHtml}</table>
     ${total != null ? `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>` : ''}
     ${linksHtml ? `<div class="order-links" style="margin-top:8px">${linksHtml}</div>` : ''}
@@ -438,8 +466,10 @@ function getCategoryClass(category) {
 }
 
 // ---------------------------------------------------------------------------
-// Action Panel — intent-specific UIs
+// Action Panel — Chat dialog with MCP tool execution
 // ---------------------------------------------------------------------------
+
+let _actionChatHistory = [];
 
 function renderActionPanel(draft) {
   const panel = document.getElementById('action-panel');
@@ -455,305 +485,216 @@ function renderActionPanel(draft) {
   headerEl.innerHTML = '';
   detailsEl.innerHTML = '';
   buttonsEl.innerHTML = '';
+  _actionChatHistory = [];
 
   document.getElementById('btn-send').disabled = false;
 
-  // Determine action type
+  // Always show the action panel — chat is useful for any draft
+  panel.style.display = 'block';
+  headerEl.textContent = 'Action';
+
+  // Build the chat UI
   const actionType = draft.action_type || '';
   const messageType = draft.message_type || '';
 
-  if (!actionType && !['exchange', 'refund', 'order_modification'].includes(messageType)) {
-    panel.style.display = 'none';
-    return;
-  }
-
-  panel.style.display = 'block';
-
-  // Already executed?
+  // Already executed? Show completed state + chat for further actions
   if (draft.action_executed_at) {
-    renderCompletedAction(draft);
-    return;
+    headerEl.textContent = 'Action Completed';
   }
 
-  if (actionType.includes('exchange') || messageType === 'exchange') {
-    renderExchangeAction(draft);
-  } else if (actionType.includes('refund') || messageType === 'refund') {
-    renderRefundAction(draft);
-  } else if (messageType === 'order_modification') {
-    renderEditOrderAction(draft);
+  // Build initial suggestion from structured output
+  const suggestion = buildActionSuggestion(draft);
+
+  detailsEl.innerHTML = `
+    <div class="action-chat-messages" id="action-chat-messages"></div>
+    <div class="action-chat-input-row">
+      <input type="text" class="action-chat-input" id="action-chat-input"
+        placeholder="e.g. exchange the AJ to size L, refund the Ruby..."
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendActionMessage()}" />
+      <button class="action-chat-send" id="action-chat-send" onclick="sendActionMessage()">Send</button>
+    </div>
+  `;
+
+  // Show initial suggestion as first assistant message
+  if (suggestion) {
+    appendChatMessage('assistant', suggestion);
+  } else if (draft.action_executed_at) {
+    appendChatMessage('assistant', `Previous action executed ${timeAgo(draft.action_executed_at)}. You can request additional actions here.`);
   } else {
-    // Generic fallback
-    headerEl.textContent = 'Action Required';
-    detailsEl.textContent = `Type: ${actionType || messageType}`;
-    panel.style.display = 'none';
+    appendChatMessage('assistant', 'No action detected. Type what you need — exchange, refund, or order edit.');
   }
+
+  buttonsEl.innerHTML = '';
 }
 
-function renderExchangeAction(draft) {
-  const headerEl = document.getElementById('action-header');
-  const detailsEl = document.getElementById('action-details');
-  const buttonsEl = document.getElementById('action-buttons');
-
-  headerEl.textContent = 'Exchange';
-
+function buildActionSuggestion(draft) {
   const structured = draft.structured_output || {};
-  const items = (structured.intake?.items || []).filter(i => i.resolved_size);
-  const prescriptionItems = structured.prescription?.items || [];
+  const actionType = draft.action_type || draft.message_type || '';
+  const items = structured.intake?.items || [];
+  const prescription = structured.prescription?.items || [];
+  const orderNum = draft.order_number || '';
 
-  if (items.length === 0) {
-    detailsEl.innerHTML = '<span style="color:var(--text-secondary)">No exchange items resolved yet</span>';
-    return;
+  if (!actionType && !items.length) return '';
+
+  let lines = [];
+
+  if (actionType.includes('exchange') || actionType === 'exchange') {
+    const exchangeItems = items.filter(i => i.resolved_size);
+    if (exchangeItems.length) {
+      lines.push(`I suggest exchanging on order #${orderNum}:`);
+      for (const i of exchangeItems) {
+        const product = i.resolved_product || i.product;
+        const sku = i._orderSku || '';
+        lines.push(`- ${product} ${i.size || ''} → size ${i.resolved_size}${sku ? ` (${sku})` : ''}`);
+      }
+      if (structured.prescription?.donation) {
+        lines.push(`\nDonation: ${structured.prescription.donation.text || structured.prescription.donation.type || ''}`);
+      }
+      lines.push('\nShall I create the exchange draft?');
+    }
   }
 
-  let html = '';
-  for (const item of items) {
-    const pItem = prescriptionItems.find(p => p.product === item.product);
-    const fabricDelta = pItem?.fabric_delta || '';
-    html += `<div class="action-item-card">
-      <strong>${esc(item.resolved_product || item.product)}</strong>:
-      ${esc(item.size)} <span class="size-arrow">${esc(item.resolved_size)}</span>
-      ${fabricDelta ? `<span class="fabric-delta">${esc(fabricDelta)}</span>` : ''}
-    </div>`;
+  if (actionType.includes('refund') || actionType === 'refund') {
+    const refundItems = prescription.filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
+    const itemsToShow = refundItems.length ? refundItems : items;
+    if (lines.length) lines.push('');
+    lines.push(`I suggest refunding on order #${orderNum}:`);
+    for (const i of itemsToShow) {
+      const sku = i._orderSku || i.sku || '';
+      lines.push(`- ${i.product} ${i.size || ''}${sku ? ` (${sku})` : ''}`);
+    }
+    lines.push('\nShall I calculate the refund?');
   }
 
-  // Donation routing
-  if (structured.prescription?.donation) {
-    html += `<div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">
-      <strong>Donation:</strong> ${esc(structured.prescription.donation.text || structured.prescription.donation.type || '')}
-    </div>`;
+  if (actionType === 'order_modification') {
+    const swaps = structured.prescription?.swap_items || [];
+    lines.push(`I suggest editing order #${orderNum}:`);
+    for (const s of swaps) {
+      lines.push(`- Remove ${s.remove_sku || '?'}, add ${s.add_query || '?'}`);
+    }
+    lines.push('\nShall I stage the edit?');
   }
 
-  detailsEl.innerHTML = html;
-  buttonsEl.innerHTML = `<button class="btn btn-action" onclick="executeExchangePhase1()">Create Exchange Draft</button>`;
+  return lines.join('\n');
 }
 
-function renderRefundAction(draft) {
-  const headerEl = document.getElementById('action-header');
-  const detailsEl = document.getElementById('action-details');
-  const buttonsEl = document.getElementById('action-buttons');
+function appendChatMessage(role, content) {
+  const container = document.getElementById('action-chat-messages');
+  if (!container) return;
 
-  headerEl.textContent = 'Refund';
+  const div = document.createElement('div');
+  div.className = `action-msg action-msg-${role}`;
+  div.textContent = content;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
 
-  const structured = draft.structured_output || {};
-  const refundItems = (structured.prescription?.items || []).filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
-  const intakeItems = (structured.intake?.items || []).filter(i => i.product);
+function appendChatThinking() {
+  const container = document.getElementById('action-chat-messages');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'action-msg action-msg-thinking';
+  div.id = 'action-chat-thinking';
+  div.textContent = 'Working...';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
 
-  const itemsToShow = refundItems.length ? refundItems : intakeItems;
+function removeChatThinking() {
+  const el = document.getElementById('action-chat-thinking');
+  if (el) el.remove();
+}
 
-  let html = '';
-  for (const item of itemsToShow) {
-    html += `<div class="action-item-card">
-      <strong>${esc(item.product)}</strong> ${item.size ? `- ${esc(item.size)}` : ''}
-    </div>`;
+async function sendActionMessage() {
+  if (!currentDraftId) return;
+
+  const input = document.getElementById('action-chat-input');
+  const sendBtn = document.getElementById('action-chat-send');
+  const message = input.value.trim();
+  if (!message) return;
+
+  // Show user message
+  appendChatMessage('user', message);
+  input.value = '';
+  input.disabled = true;
+  sendBtn.disabled = true;
+  appendChatThinking();
+
+  try {
+    const result = await api(`/api/drafts/${currentDraftId}/action-chat`, {
+      method: 'POST',
+      body: { message, history: _actionChatHistory },
+    });
+
+    removeChatThinking();
+
+    // Show assistant response
+    if (result.response) {
+      appendChatMessage('assistant', result.response);
+    }
+
+    // Show tool results in a compact format
+    if (result.tool_results?.length) {
+      for (const tr of result.tool_results) {
+        const label = tr.tool.replace(/_/g, ' ');
+        const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+        // Truncate long results
+        const display = resultText.length > 400 ? resultText.substring(0, 400) + '...' : resultText;
+        appendChatMessage('tool', `[${label}]\n${display}`);
+      }
+
+      // Auto-update draft editor with action results
+      updateDraftFromActionResults(result.tool_results);
+    }
+
+    // Update history for next message
+    _actionChatHistory = result.history || [];
+
+  } catch (err) {
+    removeChatThinking();
+    appendChatMessage('assistant', `Error: ${err.message}`);
   }
 
-  detailsEl.innerHTML = html || '<span style="color:var(--text-secondary)">Refund requested</span>';
-  buttonsEl.innerHTML = `<button class="btn btn-action" onclick="executeRefundPhase1()">Calculate Refund</button>`;
+  input.disabled = false;
+  sendBtn.disabled = false;
+  input.focus();
 }
 
-function renderEditOrderAction(draft) {
-  const headerEl = document.getElementById('action-header');
-  const detailsEl = document.getElementById('action-details');
-  const buttonsEl = document.getElementById('action-buttons');
+function updateDraftFromActionResults(toolResults) {
+  const editor = document.getElementById('draft-editor');
+  if (!editor) return;
 
-  headerEl.textContent = 'Order Edit';
-  detailsEl.innerHTML = '<span style="color:var(--text-secondary)">Order modification requested</span>';
-  buttonsEl.innerHTML = `<button class="btn btn-action" onclick="executeEditPhase1()">Stage Edit</button>`;
+  for (const tr of toolResults) {
+    const text = typeof tr.result === 'string' ? tr.result : '';
+
+    if (tr.tool === 'create_exchange_order') {
+      // Extract draft order number
+      const orderMatch = text.match(/#D\d+|Draft Order.*?#(\d+)/i);
+      const linkMatch = text.match(/https:\/\/admin\.shopify\.com\/[^\s)]+draft[^\s)]*/);
+      if (orderMatch || text.includes('completed') || text.includes('Completed')) {
+        // Don't auto-append — the operator controls the response text
+      }
+    }
+
+    if (tr.tool === 'refund_order') {
+      const amountMatch = text.match(/\$[\d,.]+/);
+      if (amountMatch && text.toLowerCase().includes('completed')) {
+        // Refund completed — operator may want to mention the amount
+      }
+    }
+  }
 }
 
+// Legacy functions kept for backwards compatibility with old drafts
 function renderCompletedAction(draft) {
-  const headerEl = document.getElementById('action-header');
-  const detailsEl = document.getElementById('action-details');
-  const resultEl = document.getElementById('action-result');
-
-  headerEl.textContent = 'Action Completed';
-  detailsEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Action executed ${timeAgo(draft.action_executed_at)}</div>`;
-
-  if (draft.action_result) {
-    resultEl.style.display = 'block';
-    resultEl.innerHTML = `<pre style="font-family:'JetBrains Mono',monospace;font-size:11px;white-space:pre-wrap;margin:0">${esc(JSON.stringify(draft.action_result, null, 2))}</pre>`;
-  }
+  renderActionPanel(draft);
 }
-
-// Two-phase exchange execution
-async function executeExchangePhase1() {
-  if (!currentDraftId) return;
-  const btn = document.querySelector('#action-buttons .btn');
-  btn.disabled = true;
-  btn.textContent = 'Creating draft...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute/exchange`, { method: 'POST', body: {} });
-    const previewEl = document.getElementById('action-preview');
-    previewEl.style.display = 'block';
-
-    // Parse the result - the exchange tool returns markdown text in content
-    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
-
-    let html = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(text)}</div>`;
-
-    // Add Shopify link if we can extract it
-    const adminMatch = text.match(/https:\/\/admin\.shopify\.com\/[^\s)]+/);
-    if (adminMatch) {
-      html += `<div style="margin-top:8px"><a href="${adminMatch[0]}" target="_blank" class="order-link">View in Shopify</a></div>`;
-    }
-
-    html += `<div style="margin-top:12px">
-      <button class="btn btn-action" onclick="executeExchangePhase2()">Confirm & Complete</button>
-      <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('action-preview').style.display='none'">Cancel</button>
-    </div>`;
-
-    previewEl.innerHTML = html;
-    btn.textContent = 'Draft Created';
-  } catch (err) {
-    btn.textContent = 'Create Exchange Draft';
-    btn.disabled = false;
-    alert('Exchange Phase 1 failed: ' + err.message);
-  }
-}
-
-async function executeExchangePhase2() {
-  if (!currentDraftId) return;
-  const previewEl = document.getElementById('action-preview');
-  const btns = previewEl.querySelectorAll('.btn');
-  btns.forEach(b => { b.disabled = true; });
-  btns[0].textContent = 'Completing...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute/exchange`, { method: 'POST', body: { confirmed: true } });
-    const resultEl = document.getElementById('action-result');
-    resultEl.style.display = 'block';
-
-    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
-    resultEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Exchange completed</div>
-      <div style="margin-top:8px;font-size:12px;white-space:pre-wrap">${esc(text)}</div>`;
-
-    previewEl.style.display = 'none';
-    document.getElementById('action-buttons').innerHTML = '';
-    document.getElementById('action-header').textContent = 'Exchange Completed';
-  } catch (err) {
-    btns.forEach(b => { b.disabled = false; });
-    btns[0].textContent = 'Confirm & Complete';
-    alert('Exchange Phase 2 failed: ' + err.message);
-  }
-}
-
-// Two-phase refund execution
-async function executeRefundPhase1() {
-  if (!currentDraftId) return;
-  const btn = document.querySelector('#action-buttons .btn');
-  btn.disabled = true;
-  btn.textContent = 'Calculating...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute/refund`, { method: 'POST', body: {} });
-    const previewEl = document.getElementById('action-preview');
-    previewEl.style.display = 'block';
-
-    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
-
-    // Try to extract refund amount
-    const amountMatch = text.match(/\$[\d,.]+/);
-
-    let html = '';
-    if (amountMatch) {
-      html += `<div class="refund-amount">${amountMatch[0]} refund</div>`;
-    }
-    html += `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(text)}</div>`;
-    html += `<div style="margin-top:12px">
-      <button class="btn btn-action" onclick="executeRefundPhase2()">Process Refund</button>
-      <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('action-preview').style.display='none'">Cancel</button>
-    </div>`;
-
-    previewEl.innerHTML = html;
-    btn.textContent = 'Calculated';
-  } catch (err) {
-    btn.textContent = 'Calculate Refund';
-    btn.disabled = false;
-    alert('Refund Phase 1 failed: ' + err.message);
-  }
-}
-
-async function executeRefundPhase2() {
-  if (!currentDraftId) return;
-  const previewEl = document.getElementById('action-preview');
-  const btns = previewEl.querySelectorAll('.btn');
-  btns.forEach(b => { b.disabled = true; });
-  btns[0].textContent = 'Processing...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute/refund`, { method: 'POST', body: { confirmed: true } });
-    const resultEl = document.getElementById('action-result');
-    resultEl.style.display = 'block';
-
-    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
-    resultEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Refund processed</div>
-      <div style="margin-top:8px;font-size:12px;white-space:pre-wrap">${esc(text)}</div>`;
-
-    previewEl.style.display = 'none';
-    document.getElementById('action-buttons').innerHTML = '';
-    document.getElementById('action-header').textContent = 'Refund Completed';
-  } catch (err) {
-    btns.forEach(b => { b.disabled = false; });
-    btns[0].textContent = 'Process Refund';
-    alert('Refund Phase 2 failed: ' + err.message);
-  }
-}
-
-// Two-phase edit execution
-async function executeEditPhase1() {
-  if (!currentDraftId) return;
-  const btn = document.querySelector('#action-buttons .btn');
-  btn.disabled = true;
-  btn.textContent = 'Staging edit...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute/edit`, { method: 'POST', body: {} });
-    const previewEl = document.getElementById('action-preview');
-    previewEl.style.display = 'block';
-
-    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
-
-    let html = `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(text)}</div>`;
-    html += `<div style="margin-top:12px">
-      <button class="btn btn-action" onclick="executeEditPhase2()">Commit Edit</button>
-      <button class="btn btn-secondary" style="margin-left:8px" onclick="document.getElementById('action-preview').style.display='none'">Cancel</button>
-    </div>`;
-
-    previewEl.innerHTML = html;
-    btn.textContent = 'Edit Staged';
-  } catch (err) {
-    btn.textContent = 'Stage Edit';
-    btn.disabled = false;
-    alert('Edit Phase 1 failed: ' + err.message);
-  }
-}
-
-async function executeEditPhase2() {
-  if (!currentDraftId) return;
-  const previewEl = document.getElementById('action-preview');
-  const btns = previewEl.querySelectorAll('.btn');
-  btns.forEach(b => { b.disabled = true; });
-  btns[0].textContent = 'Committing...';
-
-  try {
-    const result = await api(`/api/drafts/${currentDraftId}/execute/edit`, { method: 'POST', body: { confirmed: true } });
-    const resultEl = document.getElementById('action-result');
-    resultEl.style.display = 'block';
-
-    const text = result.content?.[0]?.text || JSON.stringify(result, null, 2);
-    resultEl.innerHTML = `<div class="action-confirmed-msg">&#10003; Edit committed</div>
-      <div style="margin-top:8px;font-size:12px;white-space:pre-wrap">${esc(text)}</div>`;
-
-    previewEl.style.display = 'none';
-    document.getElementById('action-buttons').innerHTML = '';
-    document.getElementById('action-header').textContent = 'Edit Completed';
-  } catch (err) {
-    btns.forEach(b => { b.disabled = false; });
-    btns[0].textContent = 'Commit Edit';
-    alert('Edit Phase 2 failed: ' + err.message);
-  }
-}
+function executeExchangePhase1() {}
+function executeExchangePhase2() {}
+function executeRefundPhase1() {}
+function executeRefundPhase2() {}
+function executeEditPhase1() {}
+function executeEditPhase2() {}
 
 // ---------------------------------------------------------------------------
 // Actions
@@ -832,7 +773,6 @@ async function refreshDraft() {
 
   const btn = document.getElementById('btn-refresh');
   btn.disabled = true;
-  btn.textContent = 'Regenerating...';
 
   try {
     const result = await api(`/api/drafts/${currentDraftId}/refresh`, { method: 'POST', body: {} });
@@ -850,10 +790,8 @@ async function refreshDraft() {
       document.getElementById('audit-trail').textContent = result.structured.audit.join('\n');
     }
 
-    btn.textContent = 'Refreshed';
-    setTimeout(() => { btn.textContent = 'Refresh'; btn.disabled = false; }, 2000);
+    btn.disabled = false;
   } catch (err) {
-    btn.textContent = 'Refresh';
     btn.disabled = false;
     alert('Refresh failed: ' + err.message);
   }
@@ -903,6 +841,27 @@ async function releaseDraft() {
   }
 }
 
+async function markSpam() {
+  if (!currentDraftId) return;
+  if (!confirm('Mark as spam? This will close the ticket in Gorgias and tag it as spam.')) return;
+
+  try {
+    await api(`/api/drafts/${currentDraftId}/spam`, { method: 'POST', body: {} });
+    localStorage.removeItem(`draft-${currentDraftId}`);
+    localStorage.removeItem(`notes-${currentDraftId}`);
+    currentDraftId = null;
+    currentDraft = null;
+    location.hash = '';
+    document.getElementById('detail-placeholder').style.display = 'flex';
+    document.getElementById('detail-content').style.display = 'none';
+    showSidebarQueue();
+    loadQueue();
+    loadStats();
+  } catch (err) {
+    alert('Spam failed: ' + err.message);
+  }
+}
+
 async function deleteDraft() {
   if (!currentDraftId) return;
   if (!confirm('Are you sure you want to delete this draft? This cannot be undone.')) return;
@@ -941,9 +900,7 @@ function triggerPoll() {
         btn.textContent = `0/${data.total} tickets`;
       }
     } else if (data.phase === 'processing') {
-      const name = data.customer.split('@')[0];
-      const truncated = name.length > 12 ? name.substring(0, 12) + '...' : name;
-      btn.textContent = `${data.current}/${data.total} ${truncated}`;
+      btn.textContent = `${data.current}/${data.total} tickets`;
     } else if (data.phase === 'done') {
       source.close();
       btn.textContent = `Done (${data.draftsCreated} new)`;
@@ -972,9 +929,7 @@ async function loadStats() {
   try {
     const s = await api('/api/stats');
     document.getElementById('stat-pending').textContent = `${s.pending} pending`;
-    document.getElementById('stat-rate').textContent = `${s.acceptanceRate} acceptance`;
-    document.getElementById('stat-edit').textContent = `${(s.avgEditDistance * 100).toFixed(0)}% avg edit`;
-    document.getElementById('stat-last-poll').textContent = s.lastPollAt ? `last poll: ${timeAgo(s.lastPollAt)}` : 'last poll: never';
+    document.getElementById('stat-last-poll').textContent = s.lastPollAt ? `polled ${timeAgo(s.lastPollAt)}` : 'never polled';
   } catch (err) {
     console.error('Stats failed:', err);
   }
@@ -1080,6 +1035,31 @@ function notifyNewDrafts(drafts) {
     const n = new Notification(title, { body, tag: `draft-${d.id}` });
     n.onclick = () => { window.focus(); selectDraft(d.id); n.close(); };
   }
+}
+
+/**
+ * Clean up Gorgias notification template text from message bodies.
+ * Strips separator lines (-----) and auto-generated order detail blocks.
+ */
+function cleanMessageBody(html) {
+  if (!html) return html;
+
+  // Remove long dash separators and everything after them (Gorgias order notification template)
+  // Matches: ----...---- followed by Order: #XXXX or Fulfillment: etc.
+  html = html.replace(/-{5,}.*$/s, '');
+  html = html.replace(/-{5,}<br\s*\/?>.*$/si, '');
+
+  // Remove "Subject: ... Message: ..." blocks from agent auto-replies
+  html = html.replace(/<strong>Subject:<\/strong>[\s\S]*$/i, '');
+  html = html.replace(/\bSubject:\s*\n.*Message:\s*\n/gi, '');
+
+  // Remove Gorgias template footers
+  html = html.replace(/The RUBIES Customer Care team\s*$/i, '');
+
+  // Clean up trailing whitespace/breaks
+  html = html.replace(/(<br\s*\/?\s*>|\s)+$/gi, '');
+
+  return html;
 }
 
 /**
@@ -1452,7 +1432,11 @@ function simRenderRestoredSession() {
   `;
 }
 
-async function simLoadRandom() {
+async function simLoadTicket(ticketId) {
+  return simLoadRandom(ticketId);
+}
+
+async function simLoadRandom(specificTicketId) {
   const btn = document.getElementById('sim-load-btn');
   const loading = document.getElementById('sim-loading');
   btn.disabled = true;
@@ -1460,7 +1444,8 @@ async function simLoadRandom() {
   loading.textContent = 'Loading conversation...';
 
   try {
-    const data = await api(`/api/simulator/random?category=${simSelectedType}`);
+    const ticketParam = specificTicketId ? `&ticket=${specificTicketId}` : '';
+    const data = await api(`/api/simulator/random?category=${simSelectedType}${ticketParam}`);
 
     sim.active = true;
     sim.conversationId = data.conversation?.id;
@@ -1502,6 +1487,9 @@ async function simLoadRandom() {
 
     // Async: load enriched context (LTV, order links, past tickets)
     loadSimulatorContext(sim.customerEmail, sim.orderNumber);
+
+    // Save session state before running first turn (survives page refresh)
+    simSave();
 
     // Run first turn with the real customer message
     await simRunTurn(data.firstMessage);
@@ -1548,7 +1536,7 @@ async function simRunTurn(customerMessage) {
     const badgeClass = status === 'ready' ? 'badge-high' : status === 'needs_info' ? 'badge-medium' : 'badge-low';
 
     turnEl.innerHTML += `
-      <div class="sim-turn-label" style="margin-top:12px">Agent Response <span class="badge ${badgeClass}">${status}</span></div>
+      <div class="sim-turn-label" style="margin-top:12px">Agent Response <span class="badge ${badgeClass}">${status}</span> <button class="btn-refresh-inline" onclick="simRegenTurn(${turnNum})" title="Regenerate response">&#8635;</button></div>
       <textarea class="sim-editor" id="sim-editor-${turnNum}" rows="6">${esc(result.ai_response || '')}</textarea>
       <label class="label" style="margin-top:8px;display:block">Notes</label>
       <textarea class="sim-notes" id="sim-notes-${turnNum}" rows="2" placeholder="Training notes for this turn"></textarea>
@@ -1560,7 +1548,7 @@ async function simRunTurn(customerMessage) {
 
     controls.innerHTML = `
       <div class="sim-turn-actions">
-        <button class="btn btn-primary" onclick="simAcceptTurn(${turnNum})">Accept</button>
+        <button class="btn btn-primary" onclick="simAcceptTurn(${turnNum})">Submit</button>
         <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
       </div>
     `;
@@ -1652,6 +1640,21 @@ function simAcceptTurn(turnNum) {
   document.getElementById('sim-next-msg')?.focus();
 }
 
+function simRegenTurn(turnNum) {
+  // Remove the current turn's response and re-run with same customer message
+  const turnEl = document.getElementById(`sim-turn-${turnNum}`);
+  if (!turnEl) return;
+  const customerMsg = sim._currentCustomerMsg;
+  if (!customerMsg) return;
+
+  // Remove the turn element and decrement
+  turnEl.remove();
+  document.getElementById('sim-controls').innerHTML = '';
+
+  // Re-run the turn
+  simRunTurn(customerMsg);
+}
+
 function simSendNext() {
   const msg = document.getElementById('sim-next-msg')?.value?.trim();
   if (!msg) return alert('Enter a customer message');
@@ -1695,6 +1698,88 @@ async function simEndSession() {
   document.getElementById('sim-order-links').innerHTML = '';
   document.getElementById('sim-past-tickets').style.display = 'none';
   document.getElementById('sim-tickets-list').innerHTML = '';
+  document.getElementById('sim-action-chat-messages').innerHTML = '';
+  _simActionChatHistory = [];
+}
+
+// ---------------------------------------------------------------------------
+// Simulator Action Chat
+// ---------------------------------------------------------------------------
+
+let _simActionChatHistory = [];
+
+function simAppendChatMessage(role, content) {
+  const container = document.getElementById('sim-action-chat-messages');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = `action-msg action-msg-${role}`;
+  div.textContent = content;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function simSendActionMessage() {
+  const input = document.getElementById('sim-action-chat-input');
+  const sendBtn = document.getElementById('sim-action-chat-send');
+  const message = input.value.trim();
+  if (!message) return;
+
+  simAppendChatMessage('user', message);
+  input.value = '';
+  input.disabled = true;
+  sendBtn.disabled = true;
+
+  // Show thinking indicator
+  const container = document.getElementById('sim-action-chat-messages');
+  const thinking = document.createElement('div');
+  thinking.className = 'action-msg action-msg-thinking';
+  thinking.id = 'sim-action-thinking';
+  thinking.textContent = 'Working...';
+  container.appendChild(thinking);
+  container.scrollTop = container.scrollHeight;
+
+  try {
+    // Build context from simulator state
+    const orderItems = sim.orderContext?.items || [];
+    const context = {
+      customer_email: sim.customerEmail,
+      order_number: sim.orderNumber,
+      order_items: orderItems,
+    };
+
+    const result = await api('/api/action-chat', {
+      method: 'POST',
+      body: { message, history: _simActionChatHistory, context },
+    });
+
+    // Remove thinking indicator
+    const thinkEl = document.getElementById('sim-action-thinking');
+    if (thinkEl) thinkEl.remove();
+
+    if (result.response) {
+      simAppendChatMessage('assistant', result.response);
+    }
+
+    if (result.tool_results?.length) {
+      for (const tr of result.tool_results) {
+        const label = tr.tool.replace(/_/g, ' ');
+        const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+        const display = resultText.length > 400 ? resultText.substring(0, 400) + '...' : resultText;
+        simAppendChatMessage('tool', `[${label}]\n${display}`);
+      }
+    }
+
+    _simActionChatHistory = result.history || [];
+
+  } catch (err) {
+    const thinkEl = document.getElementById('sim-action-thinking');
+    if (thinkEl) thinkEl.remove();
+    simAppendChatMessage('assistant', `Error: ${err.message}`);
+  }
+
+  input.disabled = false;
+  sendBtn.disabled = false;
+  input.focus();
 }
 
 // ---------------------------------------------------------------------------

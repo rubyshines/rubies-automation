@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RUBIES CS Draft Dashboard</title>
+  <title>RUBIES Care</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -11,12 +11,10 @@
 </head>
 <body>
   <header>
-    <h1>RUBIES CS Drafts</h1>
+    <h1>RUBIES Care</h1>
     <div id="stats-bar">
-      <span id="stat-pending" class="stat">-- pending</span>
-      <span id="stat-rate" class="stat">-- acceptance</span>
-      <span id="stat-edit" class="stat">-- avg edit</span>
-      <span id="stat-last-poll" class="stat">last poll: --</span>
+      <span id="stat-pending" class="stat stat-fixed">--</span>
+      <span id="stat-last-poll" class="stat stat-fixed">--</span>
       <button id="btn-poll" onclick="triggerPoll()">Poll Now</button>
     </div>
     <nav>
@@ -66,7 +64,7 @@
 
           <!-- AI Draft (editable) -->
           <div id="detail-draft" class="detail-section">
-            <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span></h3>
+            <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span> <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft()" title="Regenerate draft">&#8635;</button></h3>
             <textarea id="draft-editor" rows="8"></textarea>
             <div id="draft-actions">
               <div id="action-panel" style="display:none">
@@ -83,8 +81,8 @@
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
                 <button id="btn-close-only" class="btn btn-dismiss" onclick="closeNoReply()">Close</button>
                 <button id="btn-train" class="btn btn-train" onclick="trainDraft()">Train</button>
-                <button id="btn-refresh" class="btn btn-secondary" onclick="refreshDraft()">Refresh</button>
                 <button id="btn-release" class="btn btn-secondary" onclick="releaseDraft()">Release to Gorgias</button>
+                <button id="btn-spam" class="btn btn-dismiss" onclick="markSpam()">Spam</button>
                 <button id="btn-delete" class="btn btn-dismiss" onclick="deleteDraft()">Delete</button>
               </div>
             </div>
@@ -141,8 +139,10 @@
           <button class="sim-type-btn" data-type="general" onclick="simSelectType(this)">General</button>
         </div>
 
-        <div style="display:flex;gap:12px;margin-top:20px">
-          <button class="btn btn-primary" onclick="simLoadRandom()" id="sim-load-btn" style="flex:1">Load Random Conversation</button>
+        <div style="display:flex;gap:12px;margin-top:20px;align-items:end">
+          <button class="btn btn-primary" onclick="simLoadRandom()" id="sim-load-btn" style="flex:1">Load Random</button>
+          <input id="sim-ticket-id" type="text" placeholder="Ticket ID" style="width:120px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
+          <button class="btn btn-action" onclick="simLoadTicket(document.getElementById('sim-ticket-id').value)">Load Ticket</button>
         </div>
         <div id="sim-loading" style="display:none;margin-top:16px;color:var(--text-tertiary);text-align:center">Loading conversation...</div>
 
@@ -201,6 +201,17 @@
               <div id="sim-tickets-list"></div>
             </details>
             <div id="sim-source-info" style="font-size:11px;color:var(--text-tertiary);margin-top:12px"></div>
+            <!-- Action Chat in simulator -->
+            <div id="sim-action-panel" class="detail-section" style="margin-top:12px">
+              <div class="label">Action</div>
+              <div class="action-chat-messages" id="sim-action-chat-messages" style="max-height:200px"></div>
+              <div class="action-chat-input-row">
+                <input type="text" class="action-chat-input" id="sim-action-chat-input"
+                  placeholder="exchange, refund, edit..."
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();simSendActionMessage()}" />
+                <button class="action-chat-send" id="sim-action-chat-send" onclick="simSendActionMessage()">Send</button>
+              </div>
+            </div>
             <button class="btn btn-dismiss" onclick="simEndSession()" style="margin-top:16px;width:100%">End Session</button>
           </div>
           <div class="sim-main">
