@@ -204,15 +204,16 @@ async function fetchNotes(supabase, orderNumbers) {
 function classifyOrder(order, whOrder, inventoryInfo, bd) {
   const holds = getHoldReasons(whOrder);
 
-  if (bd < 1 && hoursSince(order.created_at) < 24) {
-    return { reason: 'recently_placed', severity: 'normal', detail: null };
-  }
-
+  // Check holds before recency filter — these need action regardless of age
   if (holds.includes('address_hold')) {
     return { reason: 'address_hold', severity: 'urgent', detail: 'Address flagged by warehouse' };
   }
   if (holds.includes('fraud_hold')) {
     return { reason: 'fraud_hold', severity: 'urgent', detail: 'Flagged for fraud review' };
+  }
+
+  if (bd < 1 && hoursSince(order.created_at) < 24) {
+    return { reason: 'recently_placed', severity: 'normal', detail: null };
   }
   if (holds.includes('payment_hold')) {
     return { reason: 'payment_hold', severity: 'attention', detail: 'Payment hold' };

@@ -292,7 +292,7 @@ async function fetchAllProducts(cursor = null) {
             descriptionHtml
             productType
             vendor
-            metafields(first: 20) {
+            metafields(first: 50) {
               edges {
                 node {
                   namespace
@@ -1216,6 +1216,24 @@ async function updateProductStatus(productId, status) {
   return data.productUpdate.product;
 }
 
+/**
+ * Update shipping address on an order.
+ */
+async function updateOrderShippingAddress(orderId, shippingAddress) {
+  const data = await shopifyGraphQL(`
+    mutation orderUpdate($input: OrderInput!) {
+      orderUpdate(input: $input) {
+        order {
+          id
+          shippingAddress { address1 address2 city province provinceCode zip country countryCodeV2 }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { input: { id: orderId, shippingAddress } });
+  return data.orderUpdate.order;
+}
+
 module.exports = {
   shopifyGraphQL,
   searchCustomers,
@@ -1247,4 +1265,5 @@ module.exports = {
   orderEditAddLineItemDiscount,
   orderEditCommit,
   sendOrderInvoice,
+  updateOrderShippingAddress,
 };
