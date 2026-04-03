@@ -13,9 +13,62 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
 const { walkTree, normalizeSize, getSizeModifier, getMeasureLocation, _activeProducts, initCsConfig } = require('../decisionTree');
+const { composeAgentResponse } = require('../responseComposer');
 const { buildContext, analyzeOrders } = require('../contextBuilder');
 
 // analyzeOrders() moved to contextBuilder.js — imported above
+
+/**
+ * Compute action_type from prescription items.
+ * Returns null, 'exchange', 'refund', or 'exchange+refund'.
+ */
+function computeActionType(structured) {
+  if (structured.status !== 'ready') return null;
+  const items = structured.prescription?.items || [];
+  const hasExchange = items.some(i => i.state === 'CONFIRMED');
+  const hasRefund = items.some(i => i.state === 'REFUND_CONFIRMED');
+  if (hasExchange && hasRefund) return 'exchange+refund';
+  if (hasExchange) return 'exchange';
+  if (hasRefund) return 'refund';
+  return null;
+}
+
+/**
+ * Compute confidence level from structured output.
+ * Returns 'high', 'medium', or 'low'.
+ */
+function computeConfidence(structured) {
+  if (structured.status === 'route_to_human' || structured.error) return 'low';
+  if (structured.status === 'ready') {
+    const allResolved = structured.prescription?.items?.every(i =>
+      i.state === 'CONFIRMED' || i.state === 'REFUND_CONFIRMED' || i.state === 'ACKNOWLEDGED'
+    );
+    return allResolved ? 'high' : 'medium';
+  }
+  if (structured.status === 'needs_info') return 'medium';
+  if (structured.status === 'complete') return 'high';
+  return 'low';
+}
+
+/**
+ * Enrich a _structured object with action_type, confidence, and composed response.
+ * Called before returning from any advisor flow.
+ */
+async function enrichStructured(structured, previousResponses) {
+  structured.action_type = computeActionType(structured);
+  structured.confidence = computeConfidence(structured);
+
+  // Compose response if not already set
+  if (!structured._composedResponse) {
+    try {
+      structured._composedResponse = await composeAgentResponse(structured, previousResponses || []);
+    } catch (e) {
+      console.error('[advisor] Response composition failed:', e.message);
+    }
+  }
+
+  return structured;
+}
 
 // ---------------------------------------------------------------------------
 // Name & pronoun detection (used by regex fallback only)
@@ -496,7 +549,16 @@ function computeIntakeStatus(intake) {
 // Main handler: exchange_advisor
 // ---------------------------------------------------------------------------
 
-async function handleExchangeAdvisor({ customer_email, issue_description, order_number, intake: existingIntake }) {
+async function handleExchangeAdvisor(params) {
+  const result = await _handleExchangeAdvisorInner(params);
+  // Enrich all returns with action_type, confidence, and composed response
+  if (result?._structured && !result._structured.confidence) {
+    await enrichStructured(result._structured);
+  }
+  return result;
+}
+
+async function _handleExchangeAdvisorInner({ customer_email, issue_description, order_number, intake: existingIntake }) {
   // Ensure product config is loaded (normally done at MCP server startup, but
   // needed for standalone/test usage too)
   if (Object.keys(_activeProducts).length === 0) await initCsConfig();

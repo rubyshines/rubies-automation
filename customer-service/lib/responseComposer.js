@@ -17,8 +17,14 @@ let _polishClient = null;
 // ---------------------------------------------------------------------------
 
 async function composeAgentResponse(s, previousResponses) {
+  if (!s) throw new Error('No structured data to compose from');
+  // Ensure top-level objects exist (may be undefined for route_to_human)
+  if (!s.customer) s.customer = {};
+  if (!s.prescription) s.prescription = { items: [] };
+  if (!s.intake) s.intake = { items: [] };
+
   const greeting = s.customer.name ? `Thanks ${s.customer.name}! ` : 'Hi! ';
-  const prescriptionItems = s.prescription.items;
+  const prescriptionItems = s.prescription.items || [];
   const allIntakeItems = s.intake.items || [];
   const resolvedItems = allIntakeItems.filter(i => i.resolved_size);
   const isThirdParty = s.customer.buying_for === 'third_party';
@@ -226,7 +232,7 @@ async function composeAgentResponse(s, previousResponses) {
     }
 
     const groupTexts = [];
-    const useInches = !s.customer?.country || s.customer.country === 'US' || s.customer.country === 'United States';
+    const useInches = !s.customer?.country || s.customer.country === 'US' || customer.country === 'United States';
     for (const [catLabel, items] of categoryGroups) {
       const issue = items[0]._intake?.issue || '';
       const direction = /loose|big/.test(issue) ? 'down' : 'up';

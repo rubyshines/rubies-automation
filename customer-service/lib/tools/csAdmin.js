@@ -243,6 +243,198 @@ const tools = [
     },
     handler: handleUpdateConversation,
   },
+  // -----------------------------------------------------------------------
+  // Tool: check_follow_ups
+  // -----------------------------------------------------------------------
+  {
+    name: 'check_follow_ups',
+    description: 'Check for stale CS conversations that need follow-up (sent >3 days ago with no customer reply). Returns a list of conversations needing follow-up drafts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days_threshold: {
+          type: 'number',
+          description: 'Days since last send before triggering follow-up (default: 3)',
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'If true, just list stale conversations without creating follow-up drafts',
+        },
+      },
+    },
+    handler: async ({ days_threshold = 3, dry_run = false }) => {
+      const supabase = getSupabaseClient();
+      const cutoff = new Date(Date.now() - days_threshold * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: staleDrafts, error } = await supabase
+        .from('cs_ai_drafts')
+        .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at')
+        .eq('status', 'sent')
+        .lt('sent_at', cutoff)
+        .is('follow_up_draft_id', null);
+
+      if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }] };
+
+      const results = [];
+      for (const stale of (staleDrafts || [])) {
+        results.push({
+          draft_id: stale.id,
+          ticket_id: stale.gorgias_ticket_id,
+          customer: stale.customer_email,
+          name: stale.customer_name,
+          sent_at: stale.sent_at,
+          days_ago: Math.round((Date.now() - new Date(stale.sent_at).getTime()) / (24 * 60 * 60 * 1000)),
+        });
+
+        if (!dry_run) {
+          const greeting = stale.customer_name ? `Hi ${stale.customer_name}` : 'Hi there';
+          const followUpText = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.\n\nTalk soon,\nJamie Alexander, RUBIES Founder`;
+
+          const { data: newDraft } = await supabase
+            .from('cs_ai_drafts')
+            .insert({
+              gorgias_ticket_id: stale.gorgias_ticket_id,
+              gorgias_message_id: 0,
+              customer_email: stale.customer_email,
+              customer_name: stale.customer_name,
+              order_number: stale.order_number,
+              draft_response: followUpText,
+              structured_output: { status: 'follow_up', reason: `${days_threshold}-day no-reply` },
+              audit_trail: [`[Follow-up] No customer reply ${days_threshold}+ days after agent response`],
+              confidence: 'high',
+              advisor_status: 'follow_up',
+              message_type: 'follow_up',
+              status: 'pending',
+              previous_draft_id: stale.id,
+            })
+            .select('id')
+            .single();
+
+          if (newDraft) {
+            await supabase.from('cs_ai_drafts').update({ follow_up_draft_id: newDraft.id }).eq('id', stale.id);
+            results[results.length - 1].follow_up_created = newDraft.id;
+          }
+        }
+      }
+
+      const summary = dry_run
+        ? `Found ${results.length} conversations needing follow-up (dry run)`
+        : `Created ${results.filter(r => r.follow_up_created).length} follow-up drafts out of ${results.length} stale conversations`;
+
+      return { content: [{ type: 'text', text: `${summary}\n\n${JSON.stringify(results, null, 2)}` }] };
+    },
+  },
+
+  // -----------------------------------------------------------------------
+  // Tool: detect_bypasses
+  // -----------------------------------------------------------------------
+  {
+    name: 'detect_bypasses',
+    description: 'Detect pending AI drafts that were bypassed (operator replied directly in Gorgias instead of using the dashboard). Marks them as sent or superseded based on edit distance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ticket_id: {
+          type: 'number',
+          description: 'Specific Gorgias ticket ID to check. If omitted, checks all pending drafts.',
+        },
+      },
+    },
+    handler: async ({ ticket_id }) => {
+      const supabase = getSupabaseClient();
+      let gorgiasClient;
+      try {
+        gorgiasClient = require('../../import/gorgiasClient');
+      } catch (e) {
+        return { content: [{ type: 'text', text: 'Error: Gorgias client not available' }] };
+      }
+
+      // Get pending drafts
+      let query = supabase.from('cs_ai_drafts').select('id, gorgias_ticket_id, draft_response, created_at').eq('status', 'pending');
+      if (ticket_id) query = query.eq('gorgias_ticket_id', ticket_id);
+      const { data: pendingDrafts, error } = await query;
+
+      if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }] };
+      if (!pendingDrafts?.length) return { content: [{ type: 'text', text: 'No pending drafts found' }] };
+
+      // Group by ticket
+      const byTicket = {};
+      for (const d of pendingDrafts) {
+        if (!byTicket[d.gorgias_ticket_id]) byTicket[d.gorgias_ticket_id] = [];
+        byTicket[d.gorgias_ticket_id].push(d);
+      }
+
+      const results = [];
+      for (const [tid, drafts] of Object.entries(byTicket)) {
+        let messages;
+        try {
+          messages = await gorgiasClient.getTicketMessages(parseInt(tid));
+        } catch (e) {
+          results.push({ ticket_id: tid, error: e.message });
+          continue;
+        }
+
+        const agentMessages = messages.filter(m => m.from_agent === true);
+
+        for (const draft of drafts) {
+          const agentReplyAfterDraft = agentMessages.find(m =>
+            new Date(m.created_datetime) > new Date(draft.created_at)
+          );
+
+          if (agentReplyAfterDraft) {
+            const sentText = gorgiasClient.stripHtml(agentReplyAfterDraft.body_html || agentReplyAfterDraft.body_text || '');
+            const editDist = _computeEditDistance(draft.draft_response, sentText);
+            const status = editDist < 0.3 ? 'sent' : 'superseded';
+
+            await supabase.from('cs_ai_drafts').update({
+              status,
+              sent_response: sentText,
+              edit_distance: editDist,
+              reviewed_at: agentReplyAfterDraft.created_datetime,
+              sent_at: agentReplyAfterDraft.created_datetime,
+            }).eq('id', draft.id);
+
+            await supabase.from('cs_ai_feedback_log').insert({
+              draft_id: draft.id,
+              gorgias_ticket_id: parseInt(tid),
+              action: editDist < 0.3 ? 'sent' : 'bypassed',
+              original_response: draft.draft_response,
+              final_response: sentText,
+              edit_distance: editDist,
+            });
+
+            results.push({ draft_id: draft.id, ticket_id: tid, status, edit_distance: editDist.toFixed(2) });
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      return { content: [{ type: 'text', text: `Checked ${pendingDrafts.length} drafts, ${results.length} bypasses detected\n\n${JSON.stringify(results, null, 2)}` }] };
+    },
+  },
 ];
+
+/**
+ * Word-level Levenshtein edit distance (0 = identical, 1 = completely different).
+ */
+function _computeEditDistance(a, b) {
+  if (!a && !b) return 0;
+  if (!a || !b) return 1;
+  const wordsA = a.toLowerCase().split(/\s+/);
+  const wordsB = b.toLowerCase().split(/\s+/);
+  const maxLen = Math.max(wordsA.length, wordsB.length);
+  if (maxLen === 0) return 0;
+  const m = wordsA.length, n = wordsB.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = wordsA[i - 1] === wordsB[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n] / maxLen;
+}
 
 module.exports = tools;

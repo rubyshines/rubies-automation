@@ -21,7 +21,6 @@ if (!process.env.SUPABASE_URL) {
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const gorgias = require('../import/gorgiasClient');
-const { composeAgentResponse } = require('../lib/responseComposer');
 
 // Lazy-load advisor to avoid circular deps at module level
 let _advisorHandler = null;
@@ -60,49 +59,128 @@ async function run({ onProgress } = {}) {
   let ticketsProcessed = 0;
   let ticketsSkipped = 0;
 
-  // 1. Get high-water mark
+  // 1. Get high-water mark for efficient scanning
   const { data: stateRow } = await supabase
     .from('cs_poller_state')
     .select('last_poll_at')
     .eq('id', 'gorgias_drafter')
-    .single();
+    .maybeSingle();
 
   const lastPollAt = stateRow?.last_poll_at
-    ? new Date(new Date(stateRow.last_poll_at).getTime() - 5 * 60 * 1000) // 5min overlap buffer
-    : new Date(Date.now() - 60 * 60 * 1000); // default: 1 hour ago
+    ? new Date(new Date(stateRow.last_poll_at).getTime() - 5 * 60 * 1000) // 5min overlap
+    : new Date(Date.now() - 24 * 60 * 60 * 1000); // default: 24hrs ago
 
-  console.log(`[poller] Polling since ${lastPollAt.toISOString()}`);
+  console.log(`[poller] Scanning since ${lastPollAt.toISOString()}...`);
 
-  // 2. Fetch recent tickets
+  // Fetch recent tickets, keep only open + unassigned or assigned to AI bot
   let cursor = null;
   const allTickets = [];
+  const seen = new Set();
   do {
     const { data: tickets, nextCursor } = await gorgias.getTickets({
       cursor,
       limit: 30,
       order_by: 'updated_datetime:desc',
     });
-    // Client-side filter by updated_datetime (not created_datetime)
+    // Stop once we pass the high-water mark
     const recent = tickets.filter(t => new Date(t.updated_datetime) >= lastPollAt);
-    allTickets.push(...recent);
-    // Stop paginating if we've gone past our time window
+    for (const t of recent) {
+      if (t.status === 'open' && !t.spam && !seen.has(t.id)) {
+        allTickets.push(t);
+        seen.add(t.id);
+      }
+    }
     if (recent.length < tickets.length) break;
     cursor = nextCursor;
     if (cursor) await gorgias.delay(500);
   } while (cursor);
 
-  console.log(`[poller] Found ${allTickets.length} updated tickets`);
+  console.log(`[poller] Found ${allTickets.length} open tickets`);
   emit({ phase: 'fetched', total: allTickets.length });
 
-  // 3. Process each ticket
+  // 3. Pre-filter using ticket list data + batch Supabase check (no Gorgias API calls)
   const aiBotId = await getAiBotUserId();
+  const ticketIds = allTickets.map(t => t.id);
 
-  for (let i = 0; i < allTickets.length; i++) {
-    const ticket = allTickets[i];
-    const customer = ticket.customer?.email || ticket.customer?.name || `#${ticket.id}`;
-    emit({ phase: 'processing', current: i + 1, total: allTickets.length, customer });
+  // Batch-check which tickets already have drafts or were spammed
+  const { data: existingDrafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('gorgias_ticket_id, gorgias_message_id, status')
+    .in('gorgias_ticket_id', ticketIds.length ? ticketIds : [0]);
+
+  const draftedMessages = {};
+  const spammedTickets = new Set();
+  for (const d of (existingDrafts || [])) {
+    if (d.status === 'spam') spammedTickets.add(d.gorgias_ticket_id);
+    if (!draftedMessages[d.gorgias_ticket_id]) draftedMessages[d.gorgias_ticket_id] = new Set();
+    draftedMessages[d.gorgias_ticket_id].add(d.gorgias_message_id);
+  }
+
+  // Build set of tickets with released drafts (don't re-draft those)
+  const releasedTickets = new Set();
+  for (const d of (existingDrafts || [])) {
+    if (d.status === 'released') releasedTickets.add(d.gorgias_ticket_id);
+  }
+
+  // Filter using only data we already have (no API calls)
+  const ticketsToProcess = allTickets.filter(t => {
+    // Only process unassigned tickets OR tickets assigned to AI bot
+    // (tickets assigned to other agents are being handled elsewhere)
+    const assigneeId = t.assignee_user?.id;
+    if (assigneeId && assigneeId !== aiBotId) {
+      console.log(`[poller] Skip ${t.id}: assigned to another agent`);
+      ticketsSkipped++;
+      return false;
+    }
+    // Assigned to AI bot with a pending draft = already in our queue
+    if (assigneeId === aiBotId && draftedMessages[t.id]?.size > 0) {
+      console.log(`[poller] Skip ${t.id}: AI bot + pending draft`);
+      ticketsSkipped++;
+      return false;
+    }
+    // Released back to Gorgias = don't re-draft
+    if (releasedTickets.has(t.id) && !assigneeId) {
+      // Only skip if unassigned (released). If AI bot re-assigned somehow, process it.
+      console.log(`[poller] Skip ${t.id}: released to Gorgias`);
+      ticketsSkipped++;
+      return false;
+    }
+    // Spammed in our system
+    if (spammedTickets.has(t.id)) {
+      console.log(`[poller] Skip ${t.id}: spammed`);
+      ticketsSkipped++;
+      return false;
+    }
+    // Gorgias spam detection (field is `spam`, not `is_spam`)
+    if (t.spam) {
+      console.log(`[poller] Skip ${t.id}: Gorgias spam`);
+      ticketsSkipped++;
+      return false;
+    }
+    // Spam-tagged
+    const tags = (t.tags || []).map(tag => (tag.name || tag).toLowerCase());
+    if (tags.includes('spam')) {
+      console.log(`[poller] Skip ${t.id}: spam tag`);
+      ticketsSkipped++;
+      return false;
+    }
+    // No customer email
+    if (!t.customer?.email) {
+      console.log(`[poller] Skip ${t.id}: no email`);
+      ticketsSkipped++;
+      return false;
+    }
+    return true;
+  });
+
+  console.log(`[poller] ${ticketsToProcess.length} to process, ${ticketsSkipped} pre-filtered`);
+
+  // 4. Process only tickets that passed all filters
+  for (let i = 0; i < ticketsToProcess.length; i++) {
+    const ticket = ticketsToProcess[i];
+    emit({ phase: 'processing', current: i + 1, total: ticketsToProcess.length });
     try {
-      await processTicket(supabase, ticket, aiBotId);
+      await processTicket(supabase, ticket, aiBotId, draftedMessages[ticket.id]);
       ticketsProcessed++;
     } catch (err) {
       console.error(`[poller] Error processing ticket ${ticket.id}: ${err.message}`);
@@ -111,70 +189,32 @@ async function run({ onProgress } = {}) {
     await gorgias.delay(500);
   }
 
-  // 4. Check for stale conversations needing follow-up (sent >3 days ago, no customer reply)
+  // 4. Check for follow-ups and bypasses via MCP tools
   let followUpsCreated = 0;
-  const { data: staleDrafts } = await supabase
-    .from('cs_ai_drafts')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at')
-    .eq('status', 'sent')
-    .lt('sent_at', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
-    .is('follow_up_draft_id', null);
-
-  for (const stale of (staleDrafts || [])) {
-    try {
-      // Check Gorgias: has the customer replied since we sent?
-      const messages = await gorgias.getTicketMessages(stale.gorgias_ticket_id);
-      const customerRepliedAfterSend = messages.some(m =>
-        (m.from_agent === false)
-        && new Date(m.created_datetime) > new Date(stale.sent_at)
-      );
-
-      if (customerRepliedAfterSend) continue; // Customer replied, poller will handle it normally
-
-      // Check if we already created a follow-up for this ticket
-      const { data: existingFollowUp } = await supabase
-        .from('cs_ai_drafts')
-        .select('id')
-        .eq('gorgias_ticket_id', stale.gorgias_ticket_id)
-        .eq('message_type', 'follow_up')
-        .eq('status', 'pending')
-        .single();
-
-      if (existingFollowUp) continue;
-
-      const greeting = stale.customer_name ? `Hi ${stale.customer_name}` : 'Hi there';
-      const followUpText = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.`;
-
-      const { data: newDraft } = await supabase
-        .from('cs_ai_drafts')
-        .insert({
-          gorgias_ticket_id: stale.gorgias_ticket_id,
-          gorgias_message_id: 0, // No customer message triggered this
-          customer_email: stale.customer_email,
-          customer_name: stale.customer_name,
-          order_number: stale.order_number,
-          draft_response: followUpText,
-          structured_output: { status: 'follow_up', reason: '3-day no-reply' },
-          audit_trail: ['[Follow-up] No customer reply 3+ days after agent response'],
-          confidence: 'high',
-          advisor_status: 'follow_up',
-          message_type: 'follow_up',
-          status: 'pending',
-          previous_draft_id: stale.id,
-        })
-        .select('id')
-        .single();
-
-      // Link the follow-up back to the original draft
-      if (newDraft) {
-        await supabase.from('cs_ai_drafts').update({ follow_up_draft_id: newDraft.id }).eq('id', stale.id);
-        followUpsCreated++;
-        console.log(`[poller] Follow-up draft created for ticket ${stale.gorgias_ticket_id} (${stale.customer_name || stale.customer_email})`);
-      }
-    } catch (err) {
-      console.error(`[poller] Follow-up error for ticket ${stale.gorgias_ticket_id}: ${err.message}`);
+  try {
+    const adminTools = require('../lib/tools/csAdmin');
+    const followUpHandler = adminTools.find(t => t.name === 'check_follow_ups')?.handler;
+    if (followUpHandler) {
+      const followUpResult = await followUpHandler({ days_threshold: 3 });
+      const text = followUpResult?.content?.[0]?.text || '';
+      const match = text.match(/Created (\d+) follow-up/);
+      followUpsCreated = match ? parseInt(match[1]) : 0;
+      if (followUpsCreated > 0) console.log(`[poller] ${followUpsCreated} follow-up drafts created`);
     }
-    await gorgias.delay(500);
+  } catch (err) {
+    console.warn(`[poller] Follow-up check failed: ${err.message}`);
+  }
+
+  try {
+    const adminTools = require('../lib/tools/csAdmin');
+    const bypassHandler = adminTools.find(t => t.name === 'detect_bypasses')?.handler;
+    if (bypassHandler) {
+      const bypassResult = await bypassHandler({});
+      const text = bypassResult?.content?.[0]?.text || '';
+      if (!text.includes('0 bypasses')) console.log(`[poller] Bypass detection: ${text.split('\n')[0]}`);
+    }
+  } catch (err) {
+    console.warn(`[poller] Bypass detection failed: ${err.message}`);
   }
 
   // 5. Update high-water mark
@@ -191,49 +231,36 @@ async function run({ onProgress } = {}) {
 
   // --- inner functions ---
 
-  async function processTicket(supabase, ticket, aiBotId) {
+  async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     const ticketId = ticket.id;
 
-    // Fetch messages
+    // Fetch messages (only called for tickets that passed pre-filter)
     const messages = await gorgias.getTicketMessages(ticketId);
     if (!messages.length) return;
 
     // Find latest customer message
-    const customerMessages = messages.filter(m =>
-      m.from_agent === false
-    );
+    const customerMessages = messages.filter(m => m.from_agent === false);
     if (!customerMessages.length) { ticketsSkipped++; return; }
 
     const latestCustomerMsg = customerMessages[customerMessages.length - 1];
     const latestCustomerMsgId = latestCustomerMsg.id;
 
-    // Skip if ticket is currently closed (but will be picked up if customer reopens it)
-    if (ticket.status === 'closed') { ticketsSkipped++; return; }
+    // Check if we already have a draft for this specific message
+    if (existingMessageIds?.has(latestCustomerMsgId)) {
+      console.log(`[poller] Skip ${ticketId}: draft exists for this message`);
+      ticketsSkipped++; return;
+    }
 
-    // Check if latest message is already from a real agent (not a bot auto-reply)
+    // Check if latest message is already from a real agent
     const latestMsg = messages[messages.length - 1];
     const isBot = latestMsg.sender?.email?.endsWith('@email.gorgias.com') || latestMsg.via === 'rule';
-    const latestIsAgent = latestMsg.from_agent === true && !isBot;
-    if (latestIsAgent) {
-      // Check for bypass: agent replied on a ticket with pending draft
-      await detectBypass(supabase, ticketId, messages);
+    if (latestMsg.from_agent === true && !isBot) {
+      console.log(`[poller] Skip ${ticketId}: agent already replied`);
       ticketsSkipped++;
       return;
     }
 
-    // Check if we already have a draft for this message
-    const { data: existingDraft } = await supabase
-      .from('cs_ai_drafts')
-      .select('id')
-      .eq('gorgias_ticket_id', ticketId)
-      .eq('gorgias_message_id', latestCustomerMsgId)
-      .single();
-
-    if (existingDraft) { ticketsSkipped++; return; }
-
-    // Get customer email from ticket
     const customerEmail = ticket.customer?.email;
-    if (!customerEmail) { ticketsSkipped++; return; }
 
     // Get previous draft's intake state for multi-turn
     let previousIntake = null;
@@ -264,70 +291,17 @@ async function run({ onProgress } = {}) {
     const messageText = gorgias.stripHtml(latestCustomerMsg.stripped_text || latestCustomerMsg.body_text || '');
     if (!messageText.trim()) { ticketsSkipped++; return; }
 
-    // Quick detection: if the last customer message is just "thank you" / "thanks"
-    // and the previous message was from an agent, this is a resolved conversation
-    const isThankYou = /^\s*(thanks?(\s+you)?|thank\s+you|thx|ty|appreciate\s+it)[\s!.]*$/i.test(messageText);
-    const prevAgentMsg = [...messages].reverse().find(m => m.from_agent === true && !m.sender?.email?.endsWith('@email.gorgias.com') && m.id !== latestCustomerMsg.id);
-    if (isThankYou && prevAgentMsg) {
-      // Auto-generate a "you're welcome" draft
-      const customerName = ticket.customer?.name?.split(' ')[0] || null;
-      const greeting = customerName ? `You're welcome, ${customerName}!` : "You're welcome!";
-      const draftResponse = `${greeting}\n\nTake care,\nJamie Alexander, RUBIES Founder`;
-
-      const conversationHistory = messages.map(m => ({
-        id: m.id,
-        sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
-        body_html: m.stripped_html || m.body_html || null,
-        body: gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || ''),
-        created_at: m.created_datetime,
-        channel: m.channel,
-      }));
-
-      await supabase.from('cs_ai_drafts').insert({
-        gorgias_ticket_id: ticketId,
-        gorgias_message_id: latestCustomerMsgId,
-        customer_email: customerEmail,
-        customer_name: ticket.customer?.name || null,
-        order_number: null,
-        draft_response: draftResponse,
-        structured_output: { status: 'complete', reason: 'thank_you_response' },
-        intake_state: previousIntake,
-        audit_trail: ['[Quick detect] Customer said thank you after agent reply — auto "you\'re welcome"'],
-        confidence: 'high',
-        advisor_status: 'complete',
-        message_type: 'positive_feedback',
-        conversation_history: conversationHistory,
-        turn_number: turnNumber,
-        previous_draft_id: previousDraftId,
-      });
-      draftsCreated++;
-      console.log(`[poller] Thank-you draft created for ticket ${ticketId}`);
-
-      if (aiBotId) {
-        try {
-          await gorgias.assignTicket(ticketId, aiBotId);
-          await gorgias.addTicketTag(ticketId, 'ai-draft');
-        } catch (err) {
-          console.warn(`[poller] Could not assign/tag ticket ${ticketId}: ${err.message}`);
-        }
-      }
-      return;
-    }
-
-    // Build conversation context from all previous messages
+    // Build conversation context from all previous messages (input preparation)
     const conversationContext = buildConversationContext(messages, latestCustomerMsg.id);
-
-    // Enrich with structured data from previous drafts (if any)
     const previousDraftContext = await buildPreviousDraftContext(supabase, ticketId);
 
-    // Combine context + previous processing + latest message
     const contextParts = [];
     if (conversationContext) contextParts.push(`[CONVERSATION HISTORY]\n${conversationContext}`);
     if (previousDraftContext) contextParts.push(`[PREVIOUS AI PROCESSING]\n${previousDraftContext}`);
     contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
     const issueDescription = contextParts.join('\n\n');
 
-    // Run through CS advisor
+    // Run through CS advisor — all intelligence lives here
     console.log(`[poller] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
     const advisorHandler = getAdvisorHandler();
 
@@ -339,8 +313,6 @@ async function run({ onProgress } = {}) {
         intake: previousIntake || undefined,
       });
     } catch (err) {
-      // Advisor crashed (likely missing Shopify customer) — skip, don't create junk draft
-      // TODO: fix null safety in exchangeAdvisor.js so this doesn't crash
       console.log(`[poller] Advisor error on ticket ${ticketId}: ${err.message}`);
       ticketsSkipped++;
       return;
@@ -352,37 +324,18 @@ async function run({ onProgress } = {}) {
       return;
     }
 
-    // Check if AI can handle this type or if it needs manual response
-    const routeToHuman = structured.status === 'route_to_human'
-      || (structured.error && !structured.intake);
-
-    // Compose the draft response (or placeholder for route-to-human)
-    const previousResponses = [];
+    // Draft response comes from advisor (composed inside the tool)
+    const routeToHuman = structured.status === 'route_to_human' || (structured.error && !structured.intake);
     let draftResponse;
-    if (routeToHuman) {
-      // Can't auto-draft — create placeholder for training data capture
+    if (routeToHuman && !structured._composedResponse) {
       const routeReason = structured.results?.[0]?.summary || structured.error || 'Unhandled message type';
       draftResponse = `[AI could not draft a response — needs manual reply]\n\nRoute reason: ${routeReason}\n\nCustomer message: ${messageText}`;
       console.log(`[poller] Ticket ${ticketId} routed to human — creating training draft`);
-    } else if (structured._composedResponse) {
-      // Pre-composed response from advisor (e.g. style switch)
-      draftResponse = structured._composedResponse;
     } else {
-      try {
-        draftResponse = await composeAgentResponse(structured, previousResponses);
-      } catch (composeErr) {
-        console.warn(`[poller] Compose failed for ticket ${ticketId}: ${composeErr.message}`);
-        ticketsSkipped++;
-        return;
-      }
+      draftResponse = structured._composedResponse || '[No response composed]';
     }
 
-    // Formatting + signature now handled inside composeAgentResponse (responseComposer.js)
-
-    // Compute confidence
-    const confidence = routeToHuman ? 'low' : computeConfidence(structured);
-
-    // Build conversation history snapshot
+    // Build conversation history snapshot (for dashboard display)
     const conversationHistory = messages.map(m => ({
       id: m.id,
       sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
@@ -392,17 +345,7 @@ async function run({ onProgress } = {}) {
       channel: m.channel,
     }));
 
-    // Determine action type from prescription
-    let actionType = null;
-    if (structured.status === 'ready') {
-      const hasExchange = structured.prescription?.items?.some(i => i.state === 'CONFIRMED');
-      const hasRefund = structured.prescription?.items?.some(i => i.state === 'REFUND_CONFIRMED');
-      if (hasExchange && hasRefund) actionType = 'exchange+refund';
-      else if (hasExchange) actionType = 'exchange';
-      else if (hasRefund) actionType = 'refund';
-    }
-
-    // Insert draft
+    // Insert draft — save advisor result verbatim, no post-processing
     const { error: insertErr } = await supabase
       .from('cs_ai_drafts')
       .insert({
@@ -417,20 +360,13 @@ async function run({ onProgress } = {}) {
         structured_output: structured,
         intake_state: structured.intake || null,
         audit_trail: structured.audit || [],
-        confidence,
+        confidence: structured.confidence || 'low',
         advisor_status: structured.status,
-        message_type: structured.intake?.items?.[0]?.issue || 'unknown',
+        message_type: structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown',
         conversation_history: conversationHistory,
         order_context: structured.order || null,
-        customer_context: {
-          email: structured.customer?.email,
-          name: structured.customer?.name,
-          pronouns: structured.customer?.pronouns,
-          country: structured.customer?.country,
-          buying_for: structured.customer?.buying_for,
-          address: structured.customer?.address,
-        },
-        action_type: actionType,
+        customer_context: structured.customer || null,
+        action_type: structured.action_type || null,
         turn_number: turnNumber,
         previous_draft_id: previousDraftId,
       });
@@ -557,132 +493,6 @@ function buildConversationContext(messages, latestMsgId) {
 // ---------------------------------------------------------------------------
 // Draft formatting
 // ---------------------------------------------------------------------------
-
-/**
- * Add paragraph breaks and signature to draft response.
- * Jamie's style: greeting, body paragraphs, sign-off + signature on separate lines.
- */
-function formatDraftResponse(text, structured) {
-  if (!text) return text;
-
-  // Don't re-format if already has clear paragraph structure
-  const hasMultipleNewlines = (text.match(/\n\n/g) || []).length >= 2;
-  if (hasMultipleNewlines) {
-    // Just ensure signature exists
-    return ensureSignature(text, structured);
-  }
-
-  // Split into sentences and rebuild with paragraph breaks
-  // Greeting line (Hi X, / Thanks X!) should be its own paragraph
-  let formatted = text;
-  formatted = formatted.replace(/^((?:Hi|Hey|Thanks|Hello)[^.!?]*[.!?])\s+/i, '$1\n\n');
-
-  // Add signature if missing
-  formatted = ensureSignature(formatted, structured);
-
-  return formatted;
-}
-
-function ensureSignature(text, structured) {
-  // Check if signature already present
-  if (/Jamie Alexander/i.test(text)) return text;
-
-  // Determine sign-off: "Talk soon" if needs_info/gathering (expecting reply), "Take care" if ready/complete
-  const isAwaiting = structured?.status === 'needs_info' || structured?.status === 'gathering';
-  const signOff = isAwaiting ? 'Talk soon,' : 'Take care,';
-
-  return text.trimEnd() + '\n\n' + signOff + '\nJamie Alexander, RUBIES Founder';
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function computeConfidence(structured) {
-  if (structured.status === 'ready') {
-    const allResolved = structured.prescription?.items?.every(i =>
-      i.state === 'CONFIRMED' || i.state === 'REFUND_CONFIRMED' || i.state === 'ACKNOWLEDGED'
-    );
-    return allResolved ? 'high' : 'medium';
-  }
-  if (structured.status === 'needs_info') return 'medium';
-  return 'low';
-}
-
-async function detectBypass(supabase, ticketId, messages) {
-  // Check if there are pending drafts for this ticket that Jamie responded to directly
-  const { data: pendingDrafts } = await supabase
-    .from('cs_ai_drafts')
-    .select('id, draft_response, created_at')
-    .eq('gorgias_ticket_id', ticketId)
-    .eq('status', 'pending');
-
-  if (!pendingDrafts?.length) return;
-
-  // Find agent messages after the draft was created
-  const agentMessages = messages.filter(m => m.from_agent === true);
-
-  for (const draft of pendingDrafts) {
-    const agentReplyAfterDraft = agentMessages.find(m =>
-      new Date(m.created_datetime) > new Date(draft.created_at)
-    );
-
-    if (agentReplyAfterDraft) {
-      const sentText = gorgias.stripHtml(agentReplyAfterDraft.body_html || agentReplyAfterDraft.body_text || '');
-      const editDist = computeEditDistance(draft.draft_response, sentText);
-
-      const status = editDist < 0.3 ? 'sent' : 'superseded';
-      await supabase.from('cs_ai_drafts').update({
-        status,
-        sent_response: sentText,
-        edit_distance: editDist,
-        reviewed_at: agentReplyAfterDraft.created_datetime,
-        sent_at: agentReplyAfterDraft.created_datetime,
-      }).eq('id', draft.id);
-
-      // Log feedback
-      await supabase.from('cs_ai_feedback_log').insert({
-        draft_id: draft.id,
-        gorgias_ticket_id: ticketId,
-        action: editDist < 0.3 ? 'sent' : 'bypassed',
-        original_response: draft.draft_response,
-        final_response: sentText,
-        edit_distance: editDist,
-      });
-
-      console.log(`[poller] Bypass detected on ticket ${ticketId} — draft ${draft.id} marked as ${status} (edit_distance: ${editDist.toFixed(2)})`);
-    }
-  }
-}
-
-/**
- * Simple normalized edit distance (0 = identical, 1 = completely different).
- * Uses Levenshtein on word tokens for reasonable speed on CS-length messages.
- */
-function computeEditDistance(a, b) {
-  if (!a && !b) return 0;
-  if (!a || !b) return 1;
-
-  const wordsA = a.toLowerCase().split(/\s+/);
-  const wordsB = b.toLowerCase().split(/\s+/);
-  const maxLen = Math.max(wordsA.length, wordsB.length);
-  if (maxLen === 0) return 0;
-
-  // Simple word-level Levenshtein
-  const m = wordsA.length;
-  const n = wordsB.length;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = wordsA[i - 1] === wordsB[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n] / maxLen;
-}
 
 // ---------------------------------------------------------------------------
 // CLI entry point

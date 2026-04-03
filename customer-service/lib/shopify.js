@@ -1086,7 +1086,7 @@ async function orderEditAddLineItemDiscount(calculatedOrderId, lineItemId, disco
  * Commit a staged order edit. Returns the final order.
  */
 async function orderEditCommit(calculatedOrderId, staffNote) {
-  const variables = { id: calculatedOrderId, notifyCustomer: false };
+  const variables = { id: calculatedOrderId, notifyCustomer: true };
   if (staffNote) variables.staffNote = staffNote;
   const data = await shopifyGraphQL(`
     mutation orderEditCommit($id: ID!, $notifyCustomer: Boolean, $staffNote: String) {
