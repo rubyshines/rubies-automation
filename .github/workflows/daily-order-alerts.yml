@@ -1,4 +1,4 @@
-name: RUBIES Unfulfilled Orders Report
+name: RUBIES Daily Order Alerts
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-unfulfilled-report:
+  run-order-alerts:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run unfulfilled orders report
+      - name: Run daily order alerts
         env:
           # Core
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -43,4 +43,4 @@ jobs:
 
           # Anthropic (Claude Vision for address classification)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: node reports/unfulfilled-orders-report.js
+        run: node reports/dailyOrderAlerts.js

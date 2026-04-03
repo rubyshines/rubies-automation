@@ -28,6 +28,20 @@ function toArray(val) {
   return [];
 }
 
+function extractRichText(val) {
+  if (!val) return null;
+  try {
+    const rt = typeof val === 'string' ? JSON.parse(val) : val;
+    if (rt.type === 'root' && rt.children) {
+      return rt.children
+        .map(c => (c.children || []).map(t => t.value || '').join(''))
+        .filter(Boolean)
+        .join(' | ');
+    }
+  } catch { /* not rich text */ }
+  return typeof val === 'string' ? val : null;
+}
+
 function mapMetafields(metafields) {
   return {
     collections: toArray(metafields.collections),
@@ -43,6 +57,10 @@ function mapMetafields(metafields) {
     discount_percent: metafields.discount_percent != null
       ? parseFloat(metafields.discount_percent)
       : null,
+    fit_description: metafields.fit_description || null,
+    best_for: metafields.best_for || null,
+    comparison_notes: metafields.comparison_notes || null,
+    materials_composition: extractRichText(metafields.materials_composition),
   };
 }
 

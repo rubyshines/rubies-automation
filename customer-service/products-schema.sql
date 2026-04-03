@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS products (
   labels              text[] DEFAULT '{}',
   discount_percent    numeric,
 
+  -- Comparison / product metadata
+  fit_description         text,
+  best_for                text,
+  comparison_notes        text,
+  materials_composition   text,
+
   synced_at           timestamptz NOT NULL DEFAULT now()
 );
 
@@ -75,6 +81,10 @@ RETURNS TABLE (
   adult_sizes         text[],
   kid_colors          text[],
   adult_colors        text[],
+  fit_description     text,
+  best_for            text,
+  comparison_notes    text,
+  materials_composition text,
   variant_count       bigint,
   total_inventory     bigint,
   min_price           numeric,
@@ -95,6 +105,10 @@ RETURNS TABLE (
     p.adult_sizes,
     p.kid_colors,
     p.adult_colors,
+    p.fit_description,
+    p.best_for,
+    p.comparison_notes,
+    p.materials_composition,
     COUNT(v.shopify_variant_id)     AS variant_count,
     COALESCE(SUM(v.inventory_quantity), 0) AS total_inventory,
     MIN(v.price)                    AS min_price,
