@@ -17,7 +17,7 @@ const API_KEY = process.env.WAREHANCE_API_KEY;
 const BASE = process.env.WAREHANCE_API_URL || 'https://api.staging.warehance.com/v1';
 const BATCH_SIZE = 200;
 
-if (!API_KEY) {
+if (!API_KEY && require.main === module) {
   console.error('Missing WAREHANCE_API_KEY in .env');
   process.exit(1);
 }
@@ -291,6 +291,10 @@ async function main() {
 
 /** Daily-sync compatible entry point */
 async function run() {
+  if (!API_KEY) {
+    console.log('  Skipping Nitro bills sync (WAREHANCE_API_KEY not set)');
+    return { sources: { 'nitro-bills': { success: true, rowsWritten: 0 } }, status: 'ok' };
+  }
   try {
     return await main();
   } catch (err) {

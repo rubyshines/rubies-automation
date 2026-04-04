@@ -56,6 +56,10 @@ jobs:
           # Voyage AI (embeddings for conversation sync)
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
 
+          # Warehance (fulfillment costs)
+          WAREHANCE_API_KEY: ${{ secrets.WAREHANCE_API_KEY }}
+          WAREHANCE_API_URL: ${{ secrets.WAREHANCE_API_URL }}
+
           # QuickBooks Online (finance)
           QBO_CLIENT_ID: ${{ secrets.QBO_CLIENT_ID }}
           QBO_CLIENT_SECRET: ${{ secrets.QBO_CLIENT_SECRET }}

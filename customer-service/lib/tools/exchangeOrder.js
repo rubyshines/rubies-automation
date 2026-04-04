@@ -259,9 +259,13 @@ const tools = [
       }
 
       // Build item summary
-      const itemLines = resolvedItems.map(r =>
-        `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} (${r.sku || 'no SKU'}) → $0.00`
-      ).join('\n');
+      const itemLines = resolvedItems.map(r => {
+        let line = `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} (${r.sku || 'no SKU'}) → $0.00`;
+        if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
+          line += `\n  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})`;
+        }
+        return line;
+      }).join('\n');
 
       // Create draft order (do NOT complete it yet — wait for confirmation)
       const lineItems = resolvedItems.map(r => ({
@@ -345,6 +349,7 @@ async function resolveItems(items) {
         productTitle: sibling.productTitle,
         variantTitle: sibling.variantTitle,
         sku: sibling.sku,
+        inventoryQuantity: sibling.inventoryQuantity,
         quantity,
       });
     } else if (item.sku) {
@@ -358,6 +363,7 @@ async function resolveItems(items) {
         productTitle: variant.productTitle,
         variantTitle: variant.variantTitle,
         sku: variant.sku,
+        inventoryQuantity: variant.inventoryQuantity,
         quantity,
       });
     } else if (item.query) {
@@ -372,6 +378,7 @@ async function resolveItems(items) {
         productTitle: best.productTitle,
         variantTitle: best.variantTitle,
         sku: best.sku,
+        inventoryQuantity: best.inventoryQuantity,
         quantity,
       });
     } else {

@@ -323,6 +323,7 @@ const tools = [
         let addTitle = null;
         let addPrice = '0';
         let addQty = 0;
+        let addInventory = undefined;
 
         if (swap.add_variant_id || swap.add_query) {
           addVariantId = swap.add_variant_id;
@@ -335,6 +336,7 @@ const tools = [
             addVariantId = bestMatch.variantId;
             addTitle = `${bestMatch.productTitle} - ${bestMatch.variantTitle}`;
             addPrice = bestMatch.price;
+            addInventory = bestMatch.inventoryQuantity;
           } else {
             addVariantId = normalizeGid(addVariantId, 'ProductVariant');
             addTitle = `Variant ${addVariantId}`;
@@ -353,6 +355,7 @@ const tools = [
           add_quantity: addQty,
           add_title: addTitle,
           add_price: addPrice,
+          add_inventory: addInventory,
           discount_percent: discountPercent,
         });
       }
@@ -502,6 +505,9 @@ const tools = [
             addPriceStr += ` (${swap.discount_description} = $${discountedAdd.toFixed(2)})`;
           }
           lines.push(`  ADD:    ${swap.add_quantity}x ${swap.add_title} — ${addPriceStr}`);
+          if (swap.add_inventory != null && swap.add_inventory < swap.add_quantity) {
+            lines.push(`  ⚠️ **INSUFFICIENT STOCK** — only ${swap.add_inventory} available (need ${swap.add_quantity})`);
+          }
         }
         lines.push('');
       }

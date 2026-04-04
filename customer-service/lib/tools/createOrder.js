@@ -42,6 +42,7 @@ async function resolveItems(items) {
         variantTitle: best.variantTitle,
         sku: best.sku,
         price: best.price,
+        inventoryQuantity: best.inventoryQuantity,
         quantity,
       });
     } else {
@@ -197,6 +198,9 @@ async function handleCreateOrder({
       md += `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} — ~~${fmtCurrency(r.unitPrice)}~~ → ${fmtCurrency(r.discountedPrice)}\n`;
     } else {
       md += `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} → ${fmtCurrency(r.unitPrice)}\n`;
+    }
+    if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
+      md += `  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})\n`;
     }
   }
 

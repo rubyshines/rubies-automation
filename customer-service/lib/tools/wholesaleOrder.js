@@ -527,6 +527,15 @@ const tools = [
         outputLines.push('');
       }
 
+      // Stock warnings
+      const stockWarnings = resolvedItems.filter(r => r.inventoryQuantity != null && r.inventoryQuantity < r.quantity);
+      if (stockWarnings.length > 0) {
+        for (const r of stockWarnings) {
+          outputLines.push(`⚠️ **INSUFFICIENT STOCK:** ${r.productTitle} - ${r.variantTitle} — only ${r.inventoryQuantity} available (need ${r.quantity})`);
+        }
+        outputLines.push('');
+      }
+
       // Summary table
       const totalUnits = resolvedItems.reduce((sum, r) => sum + r.quantity, 0);
       if (createdOrders.length > 1) {
@@ -721,6 +730,7 @@ async function resolveItems(items) {
         variantTitle: best.variantTitle,
         sku: best.sku,
         price: best.price,
+        inventoryQuantity: best.inventoryQuantity,
         quantity,
       });
     } else {

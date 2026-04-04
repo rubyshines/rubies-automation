@@ -78,6 +78,9 @@ const tools = [
         summary += `\nExchange items (free):\n`;
         for (const r of resolvedExchange) {
           summary += `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} → $0.00\n`;
+          if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
+            summary += `  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})\n`;
+          }
         }
       }
 
@@ -88,6 +91,9 @@ const tools = [
           const lineTotal = parseFloat(r.price || 0) * r.quantity;
           paidTotal += lineTotal;
           summary += `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} → $${parseFloat(r.price || 0).toFixed(2)} each = $${lineTotal.toFixed(2)}\n`;
+          if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
+            summary += `  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})\n`;
+          }
         }
         summary += `\nPaid subtotal: $${paidTotal.toFixed(2)}\n`;
       }
@@ -193,6 +199,7 @@ async function resolveItems(items) {
         variantTitle: best.variantTitle,
         sku: best.sku,
         price: best.price,
+        inventoryQuantity: best.inventoryQuantity,
         quantity,
       });
     } else {
