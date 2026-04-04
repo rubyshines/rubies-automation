@@ -198,3 +198,96 @@ AS $$
     AND (p_since IS NULL OR odt.delivered_at >= p_since)
   GROUP BY odt.country_code, odt.shipping_zone, odt.local_carrier;
 $$;
+
+-- ============================================================================
+-- MIGRATION: Add order-to-door tracking + enhanced delivery estimate RPC
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Add ordered_at + processing_days to order_delivery_times
+-- ---------------------------------------------------------------------------
+ALTER TABLE order_delivery_times
+  ADD COLUMN IF NOT EXISTS ordered_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS processing_days INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_odt_ordered ON order_delivery_times(ordered_at);
+
+-- Backfill from orders.created_at
+UPDATE order_delivery_times odt
+SET
+  ordered_at = o.created_at,
+  processing_days = EXTRACT(DAY FROM (odt.fulfilled_at - o.created_at))::INTEGER
+FROM orders o
+WHERE o.order_number = odt.order_number
+  AND odt.ordered_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- RPC: get_delivery_estimate_stats — enhanced stats with processing + transit
+-- + total order-to-door + passport legs in one call.
+-- Accepts single country, country array (sub-zone), or zone.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_delivery_estimate_stats(
+  p_country_code TEXT DEFAULT NULL,
+  p_country_codes TEXT[] DEFAULT NULL,
+  p_shipping_zone TEXT DEFAULT NULL,
+  p_since DATE DEFAULT NULL
+)
+RETURNS TABLE (
+  order_count INTEGER,
+  -- Processing time (order placed -> fulfillment)
+  processing_median NUMERIC,
+  processing_p75 NUMERIC,
+  processing_p90 NUMERIC,
+  -- Transit time (fulfillment -> delivery)
+  transit_median NUMERIC,
+  transit_p75 NUMERIC,
+  transit_p90 NUMERIC,
+  -- Total order-to-door
+  total_median NUMERIC,
+  total_p75 NUMERIC,
+  total_p90 NUMERIC,
+  -- Passport legs
+  leg1_median NUMERIC,
+  leg1_p75 NUMERIC,
+  leg2_median NUMERIC,
+  leg2_p75 NUMERIC,
+  passport_count INTEGER
+)
+LANGUAGE sql STABLE
+AS $$
+  SELECT
+    COUNT(*)::INTEGER AS order_count,
+    -- Processing (only rows with ordered_at)
+    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY odt.processing_days)
+      FILTER (WHERE odt.processing_days IS NOT NULL)::NUMERIC, 1) AS processing_median,
+    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY odt.processing_days)
+      FILTER (WHERE odt.processing_days IS NOT NULL)::NUMERIC, 1) AS processing_p75,
+    ROUND(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY odt.processing_days)
+      FILTER (WHERE odt.processing_days IS NOT NULL)::NUMERIC, 1) AS processing_p90,
+    -- Transit
+    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY odt.transit_days)::NUMERIC, 1) AS transit_median,
+    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY odt.transit_days)::NUMERIC, 1) AS transit_p75,
+    ROUND(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY odt.transit_days)::NUMERIC, 1) AS transit_p90,
+    -- Total order-to-door (processing + transit, only where ordered_at exists)
+    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY odt.processing_days + odt.transit_days)
+      FILTER (WHERE odt.processing_days IS NOT NULL)::NUMERIC, 1) AS total_median,
+    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY odt.processing_days + odt.transit_days)
+      FILTER (WHERE odt.processing_days IS NOT NULL)::NUMERIC, 1) AS total_p75,
+    ROUND(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY odt.processing_days + odt.transit_days)
+      FILTER (WHERE odt.processing_days IS NOT NULL)::NUMERIC, 1) AS total_p90,
+    -- Passport legs
+    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY odt.leg1_days)
+      FILTER (WHERE odt.leg1_days IS NOT NULL)::NUMERIC, 1) AS leg1_median,
+    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY odt.leg1_days)
+      FILTER (WHERE odt.leg1_days IS NOT NULL)::NUMERIC, 1) AS leg1_p75,
+    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY odt.leg2_days)
+      FILTER (WHERE odt.leg2_days IS NOT NULL)::NUMERIC, 1) AS leg2_median,
+    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY odt.leg2_days)
+      FILTER (WHERE odt.leg2_days IS NOT NULL)::NUMERIC, 1) AS leg2_p75,
+    COUNT(*) FILTER (WHERE odt.leg1_days IS NOT NULL)::INTEGER AS passport_count
+  FROM order_delivery_times odt
+  WHERE (p_country_code IS NULL OR odt.country_code = p_country_code)
+    AND (p_country_codes IS NULL OR odt.country_code = ANY(p_country_codes))
+    AND (p_shipping_zone IS NULL OR odt.shipping_zone = p_shipping_zone)
+    AND (p_since IS NULL OR odt.delivered_at >= p_since);
+$$;

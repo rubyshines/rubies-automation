@@ -31,6 +31,8 @@ const NITRO_LOCATION_ID = '105921249558';
 // Quality filter: max transit days by zone
 const MAX_TRANSIT_DAYS = { us: 21, canada: 30, ddp: 90, ddu: 90 };
 const MIN_TRANSIT_DAYS = { us: 1, canada: 2, ddp: 3, ddu: 3 };
+const MAX_PROCESSING_DAYS = 14;
+const MIN_PROCESSING_DAYS = 0;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,6 +125,7 @@ async function syncDeliveryTimes({ full = false } = {}) {
       .from('orders')
       .select(`
         order_number,
+        created_at,
         fulfilled_at,
         fulfillment_status,
         fulfillments,
@@ -248,6 +251,16 @@ async function syncDeliveryTimes({ full = false } = {}) {
         }
       }
 
+      // Processing time (order placed -> fulfilled)
+      let orderedAt = order.created_at || null;
+      let processingDays = null;
+      if (orderedAt) {
+        processingDays = calendarDays(orderedAt, order.fulfilled_at);
+        if (processingDays < MIN_PROCESSING_DAYS || processingDays > MAX_PROCESSING_DAYS) {
+          processingDays = null; // outlier — keep transit data, null out processing
+        }
+      }
+
       rows.push({
         order_number: order.order_number,
         country_code: countryCode,
@@ -255,8 +268,10 @@ async function syncDeliveryTimes({ full = false } = {}) {
         region,
         shipping_zone: zone,
         fulfillment_provider: 'nitro',
+        ordered_at: orderedAt,
         fulfilled_at: order.fulfilled_at,
         delivered_at: deliveredAt,
+        processing_days: processingDays,
         transit_days: transitDays,
         transit_business_days: businessDays(order.fulfilled_at, deliveredAt),
         passport_received_at: passportReceivedAt,

@@ -22,7 +22,7 @@
 if (!process.env.SUPABASE_URL) require('dotenv').config();
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { scrapeTracking } = require('../lib/tracking/scraper');
+const { scrapeTracking, closeBrowser } = require('../lib/tracking/scraper');
 const { parsePassportPage } = require('../lib/tracking/passportParser');
 let parseTrackingPage; // lazy-loaded Sonnet fallback
 
@@ -32,6 +32,26 @@ const DELAY_BETWEEN_REQUESTS_MS = 5000; // 5 seconds between scrapes
 const MAX_CONSECUTIVE_ERRORS = 5; // stop after 5 consecutive errors (rate limit likely)
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Infer a full timestamp from a yearless event date like "Jan 12 22:49".
+ * Uses the fulfillment date's year. If the resulting date is before fulfillment,
+ * it's likely the next calendar year (e.g. fulfilled Dec, delivered Jan).
+ */
+function inferTimestamp(evt, fulfilledAt) {
+  const date = (evt.date || '').trim();   // e.g. "Jan 12"
+  const time = (evt.time || '').trim();   // e.g. "22:49"
+  if (!date || !fulfilledAt) return `${date} ${time}`.trim();
+  const fulfYear = new Date(fulfilledAt).getFullYear();
+  // Format: "Jan 12, 2026 22:49"
+  let d = new Date(`${date}, ${fulfYear}${time ? ' ' + time : ''}`);
+  if (isNaN(d.getTime())) return `${date} ${time}`.trim();
+  // If the inferred date is before fulfillment, bump to next year
+  if (d < new Date(fulfilledAt)) {
+    d = new Date(`${date}, ${fulfYear + 1}${time ? ' ' + time : ''}`);
+  }
+  return d.toISOString();
+}
 
 // ---------------------------------------------------------------------------
 // Find Passport orders missing deliveredAt
@@ -233,9 +253,9 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
         const events = (parsed.events || []).slice().reverse(); // oldest first
         for (const evt of events) {
           if (/deliver/i.test(evt.description || '')) {
-            const ts = evt.timestamp || `${evt.date} ${evt.time || ''}`.trim();
+            const ts = evt.timestamp || inferTimestamp(evt, order.fulfilled_at);
             const d = new Date(ts);
-            if (!isNaN(d.getTime())) {
+            if (!isNaN(d.getTime()) && d.getFullYear() > 2020) {
               deliveredAt = d.toISOString();
               break;
             }
@@ -245,9 +265,9 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
         // Fallback: last event timestamp
         if (!deliveredAt && parsed.events?.length) {
           const lastEvent = parsed.events[0]; // most recent first
-          const ts = lastEvent.timestamp || `${lastEvent.date} ${lastEvent.time || ''}`.trim();
+          const ts = lastEvent.timestamp || inferTimestamp(lastEvent, order.fulfilled_at);
           const d = new Date(ts);
-          if (!isNaN(d.getTime())) deliveredAt = d.toISOString();
+          if (!isNaN(d.getTime()) && d.getFullYear() > 2020) deliveredAt = d.toISOString();
         }
 
         if (deliveredAt) {
@@ -269,9 +289,16 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
 
     } catch (err) {
       errors++;
-      consecutiveErrors++;
-      if (consecutiveErrors <= 2) {
-        console.error(`  Error scraping #${order.order_number} (${order.tracking_number}): ${err.message}`);
+      const isBrowserCrash = /context.*destroy|connection closed|protocol error|target closed/i.test(err.message);
+      if (isBrowserCrash) {
+        // Browser died — force recycle, don't count as consecutive
+        console.error(`  Browser crash on #${order.order_number}, recycling...`);
+        await closeBrowser();
+      } else {
+        consecutiveErrors++;
+        if (consecutiveErrors <= 2) {
+          console.error(`  Error scraping #${order.order_number} (${order.tracking_number}): ${err.message}`);
+        }
       }
     }
 
@@ -284,6 +311,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
     if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
   }
 
+  await closeBrowser();
   console.log(`Passport sync complete: ${scraped} scraped, ${delivered} delivered, ${inTransit} in transit, ${errors} errors`);
   return { scraped, delivered, inTransit, errors };
 }

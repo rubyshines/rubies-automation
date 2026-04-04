@@ -1,11 +1,11 @@
 /**
  * Tracking page scraper — fetches carrier tracking pages and returns raw text.
- * Parsing/extraction is handled by the AI analyzer, not regex.
+ * Parsing/extraction is handled by the deterministic parser or AI analyzer.
  *
  * Carriers:
- * - Passport (track.passportshipping.com) — simple HTTP fetch
+ * - Passport (track.passportshipping.com) — Puppeteer (JS-rendered page)
  * - OnTrac (www.ontrac.com) — simple HTTP fetch
- * - USPS (tools.usps.com) — requires Puppeteer (JS-rendered React app)
+ * - USPS (tools.usps.com) — Shopify fulfillment fallback (anti-bot)
  */
 
 const BROWSER_HEADERS = {
@@ -43,7 +43,7 @@ function htmlToText(html) {
 }
 
 // ---------------------------------------------------------------------------
-// Simple HTTP fetch (Passport, OnTrac)
+// Simple HTTP fetch (OnTrac)
 // ---------------------------------------------------------------------------
 
 async function fetchTrackingPage(url) {
@@ -51,6 +51,68 @@ async function fetchTrackingPage(url) {
   if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
   const html = await response.text();
   return htmlToText(html);
+}
+
+// ---------------------------------------------------------------------------
+// Puppeteer — shared browser instance for Passport
+// ---------------------------------------------------------------------------
+
+let _browser = null;
+let _pageCount = 0;
+const MAX_PAGES_PER_BROWSER = 20; // recycle browser for memory
+
+async function getBrowser() {
+  if (_browser && _pageCount < MAX_PAGES_PER_BROWSER) return _browser;
+  if (_browser) {
+    try { await _browser.close(); } catch {}
+  }
+  const puppeteer = require('puppeteer');
+  _browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  });
+  _pageCount = 0;
+  return _browser;
+}
+
+async function fetchPassportPage(trackingNumber) {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  _pageCount++;
+
+  try {
+    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+
+    await page.goto(`https://track.passportshipping.com/${trackingNumber}`, {
+      waitUntil: 'networkidle2',
+      timeout: 20000,
+    });
+
+    // Wait for tracking data to render (look for status text or events)
+    await page.waitForFunction(
+      () => document.body.innerText.includes('Delivered')
+        || document.body.innerText.includes('In transit')
+        || document.body.innerText.includes('Current Status')
+        || document.body.innerText.includes('Exception')
+        || document.body.innerText.includes('Returned')
+        || document.body.innerText.includes('Out for Delivery')
+        || document.body.innerText.includes('does not have'),
+      { timeout: 15000 },
+    ).catch(() => {}); // proceed even if timeout — page may have partial data
+
+    const text = await page.evaluate(() => document.body.innerText);
+    return text || '';
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+async function closeBrowser() {
+  if (_browser) {
+    try { await _browser.close(); } catch {}
+    _browser = null;
+    _pageCount = 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -84,13 +146,12 @@ async function scrapeTracking(trackingUrl, trackingNumber, shopifyFulfillment) {
 
   switch (carrier) {
     case 'passport':
-      rawText = await fetchTrackingPage(`https://track.passportshipping.com/${trackingNumber}`);
+      rawText = await fetchPassportPage(trackingNumber);
       break;
     case 'ontrac':
       rawText = await fetchTrackingPage(`https://www.ontrac.com/tracking/?number=${trackingNumber}`);
       break;
     case 'usps':
-      // USPS has anti-bot protection — use Shopify fulfillment status as fallback
       rawText = buildUSPSFallbackText(trackingNumber, shopifyFulfillment);
       break;
     default:
@@ -108,6 +169,8 @@ module.exports = {
   scrapeTracking,
   detectCarrier,
   fetchTrackingPage,
+  fetchPassportPage,
   buildUSPSFallbackText,
   htmlToText,
+  closeBrowser,
 };

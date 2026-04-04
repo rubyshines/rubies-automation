@@ -22,6 +22,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install Chromium for Puppeteer
+        run: npx puppeteer browsers install chrome
+
       - name: Sync Passport delivery status
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -30,4 +33,4 @@ jobs:
           SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
           SHOPIFY_API_KEY: ${{ secrets.SHOPIFY_API_KEY }}
           SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
-        run: node customer-service/sync/syncPassportDelivery.js --limit 5
+        run: node customer-service/sync/syncPassportDelivery.js --limit 20
