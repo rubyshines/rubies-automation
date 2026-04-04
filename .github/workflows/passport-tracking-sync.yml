@@ -33,4 +33,5 @@ jobs:
           SHOPIFY_STORE_URL: ${{ secrets.SHOPIFY_STORE_URL }}
           SHOPIFY_API_KEY: ${{ secrets.SHOPIFY_API_KEY }}
           SHOPIFY_PASSWORD: ${{ secrets.SHOPIFY_PASSWORD }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
         run: node customer-service/sync/syncPassportDelivery.js --limit 50

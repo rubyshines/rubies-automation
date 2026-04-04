@@ -22,6 +22,7 @@
 if (!process.env.SUPABASE_URL) require('dotenv').config();
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSendgridClient } = require('../../shared/sendgridClient');
 const { scrapeTracking, closeBrowser } = require('../lib/tracking/scraper');
 const { parsePassportPage } = require('../lib/tracking/passportParser');
 let parseTrackingPage; // lazy-loaded Sonnet fallback
@@ -312,8 +313,46 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   }
 
   await closeBrowser();
+  const result = { scraped, delivered, inTransit, errors };
   console.log(`Passport sync complete: ${scraped} scraped, ${delivered} delivered, ${inTransit} in transit, ${errors} errors`);
-  return { scraped, delivered, inTransit, errors };
+  await sendRunSummary(result, toScrape.length);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Email summary (temporary — remove when backlog is cleared)
+// ---------------------------------------------------------------------------
+
+async function sendRunSummary(result, totalQueued) {
+  const sgMail = getSendgridClient();
+  if (!sgMail) return;
+
+  const { scraped, delivered, inTransit, errors } = result;
+  const successRate = scraped > 0 ? Math.round((delivered / scraped) * 100) : 0;
+
+  const subject = `Passport Sync: ${delivered} delivered, ${inTransit} in-transit, ${errors} errors (of ${scraped})`;
+  const text = [
+    `Passport Tracking Sync Run — ${new Date().toISOString()}`,
+    '',
+    `Queued:     ${totalQueued}`,
+    `Scraped:    ${scraped}`,
+    `Delivered:  ${delivered}  (${successRate}% of scraped)`,
+    `In Transit: ${inTransit}`,
+    `Errors:     ${errors}`,
+    '',
+    `Remaining in backlog: ~${totalQueued - scraped}`,
+  ].join('\n');
+
+  try {
+    await sgMail.send({
+      to: 'jamie@rubyshines.com',
+      from: 'pipeline@rubyshines.com',
+      subject,
+      text,
+    });
+  } catch (e) {
+    console.error('Failed to send summary email:', e.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
