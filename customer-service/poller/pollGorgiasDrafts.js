@@ -22,14 +22,24 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const gorgias = require('../import/gorgiasClient');
 
-// Lazy-load advisor to avoid circular deps at module level
-let _advisorHandler = null;
+// Lazy-load advisors
+let _hybridHandler = null;
+let _treeHandler = null;
+
 function getAdvisorHandler() {
-  if (!_advisorHandler) {
-    const advisorTools = require('../lib/tools/exchangeAdvisor');
-    _advisorHandler = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor')).handler;
+  if (!_hybridHandler) {
+    const { hybridAdvisor } = require('../lib/hybridAdvisor');
+    _hybridHandler = hybridAdvisor;
   }
-  return _advisorHandler;
+  return _hybridHandler;
+}
+
+function getTreeFallback() {
+  if (!_treeHandler) {
+    const advisorTools = require('../lib/tools/exchangeAdvisor');
+    _treeHandler = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor')).handler;
+  }
+  return _treeHandler;
 }
 
 // AI Bot user ID — cached after first lookup
@@ -301,21 +311,33 @@ async function run({ onProgress } = {}) {
     contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
     const issueDescription = contextParts.join('\n\n');
 
-    // Run through CS advisor — all intelligence lives here
+    // Run through hybrid advisor (Opus) with tree fallback
     console.log(`[poller] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
-    const advisorHandler = getAdvisorHandler();
 
     let result;
+    let usedFallback = false;
     try {
+      const advisorHandler = getAdvisorHandler();
       result = await advisorHandler({
         customer_email: customerEmail,
         issue_description: issueDescription,
         intake: previousIntake || undefined,
       });
     } catch (err) {
-      console.log(`[poller] Advisor error on ticket ${ticketId}: ${err.message}`);
-      ticketsSkipped++;
-      return;
+      console.warn(`[poller] Hybrid advisor error on ticket ${ticketId}: ${err.message} — falling back to tree`);
+      try {
+        const treeFallback = getTreeFallback();
+        result = await treeFallback({
+          customer_email: customerEmail,
+          issue_description: issueDescription,
+          intake: previousIntake || undefined,
+        });
+        usedFallback = true;
+      } catch (err2) {
+        console.log(`[poller] Tree fallback also failed on ticket ${ticketId}: ${err2.message}`);
+        ticketsSkipped++;
+        return;
+      }
     }
 
     const structured = result?._structured;
@@ -323,6 +345,7 @@ async function run({ onProgress } = {}) {
       console.warn(`[poller] No structured output for ticket ${ticketId}`);
       return;
     }
+    if (usedFallback) structured.advisor_version = (structured.advisor_version || '') + '-fallback';
 
     // Draft response comes from advisor (composed inside the tool)
     const routeToHuman = structured.status === 'route_to_human' || (structured.error && !structured.intake);

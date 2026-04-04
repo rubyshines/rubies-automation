@@ -624,14 +624,14 @@ async function apiSimulatorRandom(category, ticketId) {
     // Load a specific conversation by Gorgias ticket ID
     const { data } = await supabase
       .from('cs_conversations')
-      .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+      .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category, created_at')
       .eq('source_id', String(ticketId))
       .single();
     if (!data) {
       // Try gorgias: prefix
       const { data: data2 } = await supabase
         .from('cs_conversations')
-        .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+        .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category, created_at')
         .eq('id', `gorgias:${ticketId}`)
         .single();
       if (!data2) throw new Error(`Conversation not found for ticket ${ticketId}`);
@@ -656,7 +656,7 @@ async function apiSimulatorRandom(category, ticketId) {
 
     let q = supabase
       .from('cs_conversations')
-      .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category')
+      .select('id, customer_email, order_numbers, subject, summary, message_count, source_id, category, created_at')
       .or(orFilter)
       .gt('message_count', 2)
       .limit(100);
@@ -723,7 +723,7 @@ async function apiSimulatorRandom(category, ticketId) {
   }
 
   return {
-    conversation: { id: convo.id, subject: convo.subject, summary: convo.summary, customer_email: convo.customer_email, order_number: orderNumber },
+    conversation: { id: convo.id, subject: convo.subject, summary: convo.summary, customer_email: convo.customer_email, order_number: orderNumber, created_at: convo.created_at },
     firstMessage,
     orderContext,
     customerContext,
@@ -731,29 +731,21 @@ async function apiSimulatorRandom(category, ticketId) {
 }
 
 async function apiSimulatorTurn(body) {
-  const { customer_email, issue_description, order_number, intake, previous_responses } = body;
+  const { customer_email, issue_description, order_number, intake, previous_responses, reference_date } = body;
   if (!customer_email || !issue_description) throw new Error('Provide customer_email and issue_description');
 
-  const advisorTools = require('../lib/tools/exchangeAdvisor');
-  const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
+  const { hybridAdvisor } = require('../lib/hybridAdvisor');
 
-  const result = await advisor.handler({
+  const result = await hybridAdvisor({
     customer_email,
     issue_description,
     order_number: order_number || undefined,
     intake: intake || undefined,
+    reference_date: reference_date || undefined,
   });
 
   const s = result._structured;
-  let aiResponse = s?._composedResponse || '';
-  if (!aiResponse && s) {
-    try {
-      const { composeAgentResponse } = require('../lib/responseComposer');
-      aiResponse = await composeAgentResponse(s, previous_responses || []);
-    } catch (e) {
-      aiResponse = `[Compose error: ${e.message}]`;
-    }
-  }
+  const aiResponse = s?._composedResponse || '';
 
   return {
     ai_response: aiResponse,
@@ -763,25 +755,151 @@ async function apiSimulatorTurn(body) {
 
 async function apiSimulatorSave(body) {
   const supabase = getSupabaseClient();
-  const { source_conversation_id, customer_email, order_number, order_context, customer_context, turns, status } = body;
+  const { source_conversation_id, customer_email, order_number, order_context, customer_context, turns, reference_date } = body;
 
-  const { data, error } = await supabase
-    .from('cs_simulator_sessions')
+  // Extract Gorgias ticket ID from source conversation ID (e.g. "gorgias:67811718" → 67811718)
+  const gorgiasTicketId = source_conversation_id
+    ? parseInt(String(source_conversation_id).replace('gorgias:', ''))
+    : 0;
+
+  // Supersede previous simulator drafts for the same ticket
+  if (gorgiasTicketId) {
+    await supabase
+      .from('cs_ai_drafts')
+      .update({ status: 'superseded' })
+      .eq('gorgias_ticket_id', gorgiasTicketId)
+      .eq('source', 'simulator')
+      .eq('status', 'pending');
+  }
+
+  // Save each turn as a draft in cs_ai_drafts
+  const savedIds = [];
+  let previousDraftId = null;
+
+  for (let i = 0; i < (turns || []).length; i++) {
+    const turn = turns[i];
+    const structured = turn.structured_output || {};
+
+    const { data: draft, error } = await supabase
+      .from('cs_ai_drafts')
+      .insert({
+        gorgias_ticket_id: gorgiasTicketId,
+        gorgias_message_id: -(Date.now() + i), // synthetic negative ID for simulator
+        customer_email: customer_email || 'unknown',
+        customer_name: structured.customer?.name || null,
+        customer_pronouns: structured.customer?.pronouns || null,
+        customer_country: structured.customer?.country || null,
+        order_number: structured.order?.name || order_number || null,
+        draft_response: turn.original_ai_response || '',
+        sent_response: turn.edited_ai_response || null,
+        edit_distance: turn.original_ai_response !== turn.edited_ai_response ? 1 : 0,
+        structured_output: structured,
+        intake_state: structured.intake || null,
+        audit_trail: structured.audit || [],
+        confidence: structured.confidence || 'low',
+        advisor_status: structured.status || 'unknown',
+        message_type: structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown',
+        order_context: structured.order || order_context || null,
+        customer_context: structured.customer || customer_context || null,
+        action_type: structured.action_type || null,
+        feedback_notes: turn.notes || null,
+        turn_number: turn.turn_number || (i + 1),
+        previous_draft_id: previousDraftId,
+        source: 'simulator',
+        advisor_version: structured.advisor_version || null,
+        status: 'pending',
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error(`[simulator] Save turn ${i + 1} error:`, error.message);
+      continue;
+    }
+    savedIds.push(draft.id);
+    previousDraftId = draft.id;
+  }
+
+  return { draft_ids: savedIds, count: savedIds.length };
+}
+
+async function apiSimulatorSaveTurn(body) {
+  const supabase = getSupabaseClient();
+  const { source_conversation_id, customer_email, order_number, order_context, customer_context, turn } = body;
+
+  const gorgiasTicketId = source_conversation_id
+    ? parseInt(String(source_conversation_id).replace('gorgias:', ''))
+    : 0;
+
+  // On first turn, supersede previous simulator drafts for this ticket
+  if (turn.turn_number === 1 && gorgiasTicketId) {
+    await supabase
+      .from('cs_ai_drafts')
+      .update({ status: 'superseded' })
+      .eq('gorgias_ticket_id', gorgiasTicketId)
+      .eq('source', 'simulator')
+      .eq('status', 'pending');
+  }
+
+  const structured = turn.structured_output || {};
+
+  const { data: draft, error } = await supabase
+    .from('cs_ai_drafts')
     .insert({
-      source_conversation_id,
+      gorgias_ticket_id: gorgiasTicketId,
+      gorgias_message_id: -(Date.now()),
       customer_email: customer_email || 'unknown',
-      order_number,
-      order_context,
-      customer_context,
-      turns: turns || [],
-      status: status || 'completed',
-      completed_at: new Date().toISOString(),
+      customer_name: structured.customer?.name || null,
+      customer_pronouns: structured.customer?.pronouns || null,
+      customer_country: structured.customer?.country || null,
+      order_number: structured.order?.name || order_number || null,
+      draft_response: turn.original_ai_response || '',
+      sent_response: turn.edited_ai_response || null,
+      edit_distance: turn.original_ai_response !== turn.edited_ai_response ? 1 : 0,
+      structured_output: structured,
+      intake_state: structured.intake || null,
+      audit_trail: structured.audit || [],
+      confidence: structured.confidence || 'low',
+      advisor_status: structured.status || 'unknown',
+      message_type: structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown',
+      order_context: structured.order || order_context || null,
+      customer_context: structured.customer || customer_context || null,
+      action_type: structured.action_type || null,
+      feedback_notes: turn.notes || null,
+      turn_number: turn.turn_number || 1,
+      source: 'simulator',
+      advisor_version: structured.advisor_version || null,
+      status: 'pending',
     })
     .select('id')
     .single();
 
   if (error) throw error;
-  return { id: data.id };
+  return { draft_id: draft.id };
+}
+
+async function apiSimulatorUpdateTurn(body) {
+  const supabase = getSupabaseClient();
+  const { draft_id, edited_response, notes } = body;
+  if (!draft_id) throw new Error('Provide draft_id');
+
+  const updates = { reviewed_at: new Date().toISOString() };
+  if (edited_response != null) {
+    updates.sent_response = edited_response;
+    // Compute edit distance
+    const { data: draft } = await supabase.from('cs_ai_drafts').select('draft_response').eq('id', draft_id).single();
+    if (draft?.draft_response) {
+      const orig = draft.draft_response.toLowerCase().split(/\s+/);
+      const edit = edited_response.toLowerCase().split(/\s+/);
+      const maxLen = Math.max(orig.length, edit.length);
+      updates.edit_distance = maxLen === 0 ? 0 : (orig.join(' ') === edit.join(' ') ? 0 : 1);
+    }
+  }
+  if (notes != null) updates.feedback_notes = notes;
+
+  const { error } = await supabase.from('cs_ai_drafts').update(updates).eq('id', draft_id);
+  if (error) throw error;
+  return { updated: true };
 }
 
 async function apiTriggerPoll() {
@@ -1555,6 +1673,8 @@ const paramRoutes = [
   }},
   { method: 'POST', pattern: /^\/api\/simulator\/turn$/, handler: (body) => apiSimulatorTurn(body) },
   { method: 'POST', pattern: /^\/api\/simulator\/save$/, handler: (body) => apiSimulatorSave(body) },
+  { method: 'POST', pattern: /^\/api\/simulator\/save-turn$/, handler: (body) => apiSimulatorSaveTurn(body) },
+  { method: 'POST', pattern: /^\/api\/simulator\/update-turn$/, handler: (body) => apiSimulatorUpdateTurn(body) },
 ];
 
 async function handleRequest(req, res) {

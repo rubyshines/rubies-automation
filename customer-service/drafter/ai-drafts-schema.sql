@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS cs_ai_drafts (
   turn_number             integer DEFAULT 1,
   previous_draft_id       bigint REFERENCES cs_ai_drafts(id),
 
+  -- Source + version tracking
+  source                  text DEFAULT 'poller',             -- poller | simulator | manual
+  advisor_version         text,                              -- git hash of advisor code at time of draft
+
   created_at              timestamptz DEFAULT now(),
 
   UNIQUE(gorgias_ticket_id, gorgias_message_id)

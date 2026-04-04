@@ -191,10 +191,12 @@ function parseSizeVariant(size) {
       return { base: normalized, modifier: 'Tall' };
     }
   }
-  // Match "L Tall", "M Regular", "2X Tall", etc.
+  // Match "L Tall", "M Regular", "2X Tall", "L Long", etc.
   const spaceMatch = s.match(/^(.+?)\s+(Tall|Regular|Long)$/i);
   if (spaceMatch) {
-    return { base: spaceMatch[1].trim().toUpperCase(), modifier: spaceMatch[2].charAt(0).toUpperCase() + spaceMatch[2].slice(1).toLowerCase() };
+    let modifier = spaceMatch[2].charAt(0).toUpperCase() + spaceMatch[2].slice(1).toLowerCase();
+    if (modifier === 'Long') modifier = 'Tall'; // Long = Tall in our catalog
+    return { base: spaceMatch[1].trim().toUpperCase(), modifier };
   }
   return { base: s, modifier: null };
 }
@@ -661,7 +663,7 @@ function prescribeOrderIdentification(intake, context) {
 
   // Order age check
   if (context.targetOrder?.createdAt) {
-    const days = Math.floor((Date.now() - new Date(context.targetOrder.createdAt).getTime()) / 86400000);
+    const days = Math.floor(((context.referenceDate || new Date()).getTime() - new Date(context.targetOrder.createdAt).getTime()) / 86400000);
     if (days <= 60) {
       prescription.audit.push(`Order age: ${days} days (within 60-day window)`);
     } else if (days <= 180) {
@@ -1769,7 +1771,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         // Check eligibility
         let eligible = 'unknown';
         if (context.targetOrder?.createdAt) {
-          const days = Math.floor((Date.now() - new Date(context.targetOrder.createdAt).getTime()) / 86400000);
+          const days = Math.floor(((context.referenceDate || new Date()).getTime() - new Date(context.targetOrder.createdAt).getTime()) / 86400000);
           eligible = days <= 60 ? 'yes' : days <= 180 ? 'generous' : 'escalate';
         }
 

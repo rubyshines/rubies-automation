@@ -22,6 +22,22 @@ document.addEventListener('DOMContentLoaded', () => {
   if (simRestore()) simRenderRestoredSession();
 
   loadQueue().then(async () => {
+    // Deep link: #sim-ticket-67811718 → load simulator with that ticket
+    const simTicketMatch = location.hash.match(/^#sim-ticket-(\d+)$/);
+    if (simTicketMatch) {
+      // Clear any restored session before loading the new ticket
+      sim.active = false;
+      sim.turns = [];
+      sim.intake = null;
+      sim.previousResponses = [];
+      localStorage.removeItem('simState');
+      document.getElementById('sim-thread').innerHTML = '';
+      document.getElementById('sim-controls').innerHTML = '';
+      switchTab('test');
+      simLoadTicket(simTicketMatch[1]);
+      return;
+    }
+
     // Restore selected draft from URL hash (only if still pending)
     const hashId = parseInt(location.hash.replace('#draft-', ''));
     if (hashId) {
@@ -1451,6 +1467,7 @@ async function simLoadRandom(specificTicketId) {
     sim.conversationId = data.conversation?.id;
     sim.customerEmail = data.conversation?.customer_email;
     sim.orderNumber = data.conversation?.order_number;
+    sim.referenceDate = data.conversation?.created_at || null;
     sim.orderContext = data.orderContext;
     sim.customerContext = data.customerContext;
     sim.intake = null;
@@ -1525,6 +1542,7 @@ async function simRunTurn(customerMessage) {
         order_number: sim.orderNumber,
         intake: sim.intake,
         previous_responses: sim.previousResponses,
+        reference_date: sim.referenceDate || undefined,
       },
     });
 
@@ -1553,6 +1571,32 @@ async function simRunTurn(customerMessage) {
       </div>
     `;
 
+    // Save AI response to DB immediately (before user interacts)
+    try {
+      const saveResult = await api('/api/simulator/save-turn', {
+        method: 'POST',
+        body: {
+          source_conversation_id: sim.conversationId,
+          customer_email: sim.customerEmail,
+          order_number: sim.orderNumber,
+          order_context: sim.orderContext,
+          customer_context: sim.customerContext,
+          turn: {
+            turn_number: turnNum,
+            customer_message: customerMessage,
+            original_ai_response: result.ai_response || '',
+            edited_ai_response: null,
+            notes: null,
+            structured_output: result.structured,
+          },
+          reference_date: sim.referenceDate,
+        },
+      });
+      sim._currentDraftId = saveResult.draft_id;
+    } catch (err) {
+      console.error('Failed to auto-save turn:', err);
+    }
+
     // Store current state for accept
     sim._currentResult = result;
     sim._currentCustomerMsg = customerMessage;
@@ -1565,14 +1609,13 @@ async function simRunTurn(customerMessage) {
   }
 }
 
-function simAcceptTurn(turnNum) {
+async function simAcceptTurn(turnNum) {
   const editedResponse = document.getElementById(`sim-editor-${turnNum}`).value;
   const notes = document.getElementById(`sim-notes-${turnNum}`).value;
   const originalResponse = sim._currentResult?.ai_response || '';
   const structured = sim._currentResult?.structured;
 
-  // Store turn
-  sim.turns.push({
+  const turn = {
     turn_number: turnNum,
     customer_message: sim._currentCustomerMsg,
     original_ai_response: originalResponse,
@@ -1580,7 +1623,26 @@ function simAcceptTurn(turnNum) {
     notes: notes || null,
     structured_output: structured,
     accepted_at: new Date().toISOString(),
-  });
+  };
+
+  // Store turn locally
+  sim.turns.push(turn);
+
+  // Update the already-saved draft with edited response + notes
+  if (sim._currentDraftId) {
+    try {
+      await api(`/api/simulator/update-turn`, {
+        method: 'POST',
+        body: {
+          draft_id: sim._currentDraftId,
+          edited_response: editedResponse,
+          notes: notes || null,
+        },
+      });
+    } catch (err) {
+      console.error('Failed to update turn:', err);
+    }
+  }
 
   // Update state
   sim.intake = structured?.intake || sim.intake;

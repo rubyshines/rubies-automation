@@ -10,13 +10,18 @@
  * Tools: exchange_advisor, log_donation_routing
  */
 
+const { execSync } = require('child_process');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
 const { walkTree, normalizeSize, getSizeModifier, getMeasureLocation, _activeProducts, initCsConfig } = require('../decisionTree');
 const { composeAgentResponse } = require('../responseComposer');
 const { buildContext, analyzeOrders } = require('../contextBuilder');
 
-// analyzeOrders() moved to contextBuilder.js — imported above
+// Advisor version — git hash captured at module load
+let ADVISOR_VERSION = 'unknown';
+try {
+  ADVISOR_VERSION = execSync('git rev-parse --short HEAD', { encoding: 'utf-8', timeout: 3000 }).trim();
+} catch { /* not in a git repo or git not available */ }
 
 /**
  * Compute action_type from prescription items.
@@ -57,6 +62,7 @@ function computeConfidence(structured) {
 async function enrichStructured(structured, previousResponses) {
   structured.action_type = computeActionType(structured);
   structured.confidence = computeConfidence(structured);
+  structured.advisor_version = ADVISOR_VERSION;
 
   // Compose response if not already set
   if (!structured._composedResponse) {
@@ -558,12 +564,15 @@ async function handleExchangeAdvisor(params) {
   return result;
 }
 
-async function _handleExchangeAdvisorInner({ customer_email, issue_description, order_number, intake: existingIntake }) {
+async function _handleExchangeAdvisorInner({ customer_email, issue_description, order_number, intake: existingIntake, reference_date }) {
   // Ensure product config is loaded (normally done at MCP server startup, but
   // needed for standalone/test usage too)
   if (Object.keys(_activeProducts).length === 0) await initCsConfig();
 
   const supabase = getSupabaseClient();
+
+  // Reference date for time-sensitive logic (defaults to now, overridable for simulator)
+  const refDate = reference_date ? new Date(reference_date) : new Date();
 
   // STEPS 0-2: Build shared context (customer + order lookup)
   const ctx = await buildContext({ customer_email, order_number, issue_description, existingIntake });
@@ -598,6 +607,7 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
       orderHistory: [],
       measurementType: intake.items.some(i => require('../decisionTree').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
       isPrePurchase: true,
+      referenceDate: refDate,
     };
     const treeResult = await walkTree(intake, treeContext);
     return buildAdvisorResponse(intake, treeResult, { customer, targetOrder: null, orderLineItems: [], fulfilled: [], exchanges: [], customerCountry, isNorthAmerica, toneSample: null });
@@ -1086,6 +1096,7 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
     customerCountry, isNorthAmerica,
     orderHistory: fulfilled.slice(0, 5),
     measurementType: intake.items.some(i => require('../decisionTree').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
+    referenceDate: refDate,
   };
 
   const treeResult = await walkTree(intake, treeContext);
@@ -1392,6 +1403,7 @@ const csAdvisorSchema = {
     issue_description: { type: 'string', description: "The customer's LATEST message (not the full conversation — just the new message)" },
     order_number: { type: 'string', description: 'Optional order number. If omitted, auto-detects from message or uses most recent fulfilled order.' },
     intake: { type: 'object', description: 'The intake JSON from the previous call. Pass this back to accumulate state across messages. Omit on first call.' },
+    reference_date: { type: 'string', description: 'ISO date string for time-sensitive logic (order age windows). Defaults to now. Use original conversation date when replaying historical conversations.' },
   },
   required: ['customer_email'],
 };

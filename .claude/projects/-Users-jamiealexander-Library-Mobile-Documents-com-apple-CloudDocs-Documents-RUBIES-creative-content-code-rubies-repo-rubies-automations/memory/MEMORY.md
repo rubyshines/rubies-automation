@@ -170,11 +170,17 @@ node wholesale/discover.js --contact-test --url "https://sockdrawerheroes.com"
 - [Blog Writing Guidelines](feedback_blog_writing.md) — Goals: community-first + SEO traffic. Use data to pick topics, brand voice for tone, real reviews for social proof. Register published posts in Supabase to avoid duplication.
 
 ## Feedback
-- [Architecture Principles](feedback_architecture_principles.md) — Supabase for state, files for config; no duplicate stores; MCP tools read Supabase; idempotent pipelines; singleton clients; gradual backfill; schema SQL files for every table
+- [Architecture Principles](feedback_architecture_principles.md) — MCP tools are source of truth for all business logic (same result from CLI, dashboard, or poller); Supabase for state, files for config; no duplicate stores; idempotent pipelines; singleton clients; schema SQL files for every table
 - [Never manually parse CSV data](feedback_no_manual_csv_parsing.md) — always pass raw CSV to `parse_wholesale_input`
 - [Name & Pronoun Sensitivity](feedback_name_pronoun_sensitivity.md) — Never use Shopify profile names (dead name risk). Default they/them. Detect self-vs-third-party buyer.
 - [Save plans to memory before clearing](feedback_save_plans_to_memory.md) — Plans are ephemeral; persist to memory before /clear
 - [Temp memory files need done_when](feedback_temp_memory_cleanup.md) — All WIP memory files must have verifiable cleanup conditions; proactively check and clean up
+
+## IRAP 2026 Project
+- [IRAP 2026 Proposal](project_irap_2026.md) — AI ops automation project, Lisa Borneaz (ITA), May-Dec 2026, ~$135K/$70K IRAP. Prep docs at `~/Downloads/IRAP-Meeting-Prep.html`
+
+## Webhook & Real-Time Sync Plan
+- [Webhook & Real-Time Sync Plan](project_webhook_realtime_plan.md) — Replace polling with Gorgias + Shopify inventory webhooks on Railway. Phase 3: move CS reads to Supabase.
 
 ## Dependencies
 - `@supabase/supabase-js`, `dotenv`, `googleapis`, `@google-analytics/data`
