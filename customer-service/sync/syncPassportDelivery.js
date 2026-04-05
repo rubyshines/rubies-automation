@@ -137,14 +137,16 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
           status: s.current_status,
           eventCount: Array.isArray(s.raw_events) ? s.raw_events.length : 0,
         };
+        // Skip expired pages permanently — Passport has purged them
+        if (s.current_status === 'expired') { recentSnapshots.add(s.tracking_number); continue; }
         const age = Date.now() - new Date(s.scraped_at).getTime();
         if (age < SCRAPE_COOLDOWN_MS) recentSnapshots.add(s.tracking_number);
       }
     }
 
     toScrape = candidates.filter(o => !recentSnapshots.has(o.tracking_number));
-    const skipped = candidates.length - toScrape.length;
-    if (skipped > 0) console.log(`Skipping ${skipped} orders scraped within last 24h`);
+    const skippedCount = candidates.length - toScrape.length;
+    if (skippedCount > 0) console.log(`Skipping ${skippedCount} orders (expired or scraped within 24h)`);
   }
 
   // Apply limit if set
@@ -159,6 +161,8 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   let scraped = 0;
   let delivered = 0;
   let inTransit = 0;
+  let expired = 0;    // "can't find tracking number" — page purged by Passport
+  let skipped = 0;    // quick-check: already scraped, no change
   let errors = 0;
   let consecutiveErrors = 0;
 
@@ -178,20 +182,35 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
         order.tracking_number,
       );
 
-      // 2. Quick check: if already scraped with a known status and page still doesn't
+      // 2a. Check for expired/purged tracking pages
+      if (/can.t find the tracking number/i.test(rawText) || /mistyped/i.test(rawText) && rawText.length < 400) {
+        await supabase.from('tracking_snapshots').upsert({
+          tracking_number: order.tracking_number,
+          order_number: order.order_number,
+          carrier,
+          tracking_url: order.tracking_url,
+          destination_country: order.country_code,
+          raw_text: rawText || null,
+          current_status: 'expired',
+          scraped_at: new Date().toISOString(),
+        }, { onConflict: 'tracking_number' });
+        expired++;
+        consecutiveErrors = 0;
+        if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
+        continue;
+      }
+
+      // 2b. Quick check: if already scraped with a known status and page still doesn't
       //    say "delivered", skip parse — just bump scraped_at ($0)
       const existing = existingSnapshots[order.tracking_number];
       const textSaysDelivered = /delivered|has arrived|returned to shipper|returned to sender/i.test(rawText);
       if (existing && existing.status !== 'unknown' && !textSaysDelivered) {
         // Still in transit — just update timestamp, no AI needed
         await supabase.from('tracking_snapshots')
-          .update({ scraped_at: new Date().toISOString() })
+          .update({ scraped_at: new Date().toISOString(), raw_text: rawText || null })
           .eq('tracking_number', order.tracking_number);
-        inTransit++;
+        skipped++;
         consecutiveErrors = 0;
-        if ((i + 1) % 50 === 0 || i + 1 === toScrape.length) {
-          console.log(`  Progress: ${i + 1}/${toScrape.length} — ${delivered} delivered, ${inTransit} in transit, ${errors} errors (${scraped} parsed)`);
-        }
         if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
         continue;
       }
@@ -307,7 +326,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
 
     // Progress log
     if ((i + 1) % 50 === 0 || i + 1 === toScrape.length) {
-      console.log(`  Progress: ${i + 1}/${toScrape.length} — ${delivered} delivered, ${inTransit} in transit, ${errors} errors`);
+      console.log(`  Progress: ${i + 1}/${toScrape.length} — ${delivered} delivered, ${inTransit} in transit, ${expired} expired, ${skipped} unchanged, ${errors} errors`);
     }
 
     // Rate limit
@@ -315,8 +334,8 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   }
 
   await closeBrowser();
-  const result = { scraped, delivered, inTransit, errors };
-  console.log(`Passport sync complete: ${scraped} scraped, ${delivered} delivered, ${inTransit} in transit, ${errors} errors`);
+  const result = { scraped, delivered, inTransit, expired, skipped, errors };
+  console.log(`Passport sync complete: ${scraped} parsed, ${delivered} delivered, ${inTransit} in transit, ${expired} expired, ${skipped} unchanged, ${errors} errors`);
   await sendRunSummary(result, totalEligible);
   return result;
 }
@@ -329,20 +348,23 @@ async function sendRunSummary(result, totalQueued) {
   const sgMail = getSendgridClient();
   if (!sgMail) return;
 
-  const { scraped, delivered, inTransit, errors } = result;
-  const successRate = scraped > 0 ? Math.round((delivered / scraped) * 100) : 0;
+  const { scraped, delivered, inTransit, expired, skipped, errors } = result;
+  const processed = scraped + expired + skipped;
 
-  const subject = `Passport Sync: ${delivered} delivered, ${inTransit} in-transit, ${errors} errors (of ${scraped})`;
+  const subject = `Passport Sync: ${delivered} delivered, ${expired} expired, ${inTransit} in-transit (${processed} processed)`;
   const text = [
     `Passport Tracking Sync Run — ${new Date().toISOString()}`,
     '',
-    `Queued:     ${totalQueued}`,
-    `Scraped:    ${scraped}`,
-    `Delivered:  ${delivered}  (${successRate}% of scraped)`,
-    `In Transit: ${inTransit}`,
-    `Errors:     ${errors}`,
+    `Backlog:      ${totalQueued} orders missing delivery date`,
+    `Processed:    ${processed} this run`,
     '',
-    `Remaining in backlog: ~${totalQueued - scraped}`,
+    `  Delivered:  ${delivered}  — delivery date extracted & saved`,
+    `  In Transit: ${inTransit} — still on the way`,
+    `  Expired:    ${expired}  — Passport purged the tracking page`,
+    `  Unchanged:  ${skipped}  — previously scraped, no new status`,
+    `  Errors:     ${errors}`,
+    '',
+    `Remaining:    ~${totalQueued - processed}`,
   ].join('\n');
 
   try {
