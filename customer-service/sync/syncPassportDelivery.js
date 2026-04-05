@@ -185,9 +185,11 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
 
       // 2a. Check for captcha-blocked pages (Cloudflare on datacenter IPs)
       if (/confirm you are human|captcha|challenge-platform/i.test(rawText) && rawText.length < 500) {
-        // Don't upsert — just skip. Local runs from residential IP will handle these.
         captcha++;
-        consecutiveErrors = 0;
+        if (captcha >= 3) {
+          console.log(`  Stopping early — ${captcha} CAPTCHA blocks (IP is flagged by Cloudflare). Local runs will handle these.`);
+          break;
+        }
         if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
         continue;
       }
