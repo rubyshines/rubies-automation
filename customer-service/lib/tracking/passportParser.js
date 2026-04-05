@@ -30,7 +30,7 @@ function doParse(text) {
 
   // --- Status ---
   let currentStatus = 'unknown';
-  if (/\bDelivered\b/.test(header)) currentStatus = 'delivered';
+  if (/\bdelivered\b/i.test(header)) currentStatus = 'delivered';
   else if (/\bReturn(?:ed)?\s+to\s+Shipper\b/i.test(header)) currentStatus = 'returned';
   else if (/\bReturn(?:ed)?\s+to\s+Sender\b/i.test(header)) currentStatus = 'returned';
   else if (/\bShipment\s+Returned\b/i.test(header)) currentStatus = 'returned';
@@ -41,6 +41,8 @@ function doParse(text) {
   else if (/\bCustoms cleared\b/i.test(header)) currentStatus = 'in_transit';
   else if (/\bEstimated delivery\b/i.test(header)) currentStatus = 'in_transit';
   else if (/\bPassport does not have\b/i.test(header)) currentStatus = 'pre_transit';
+  // Also check event text for delivery confirmation (backup)
+  if (currentStatus !== 'delivered' && /\bhas been delivered\b/i.test(text)) currentStatus = 'delivered';
 
   // --- Destination ---
   const destMatch = text.match(/To:\s*(.+?)(?:\n|Order|Trying)/);
@@ -66,9 +68,9 @@ function doParse(text) {
 
   // --- Status description ---
   let statusDescription = null;
-  const deliveredDateMatch = header.match(new RegExp(`Delivered\\s+(${MONTHS})\\s+(\\d{1,2})`));
+  const deliveredDateMatch = header.match(new RegExp(`(?:DELIVERED|Delivered)\\s+((?:${MONTHS}|${MONTHS.toUpperCase()})\\s+\\d{1,2})`, 'i'));
   if (currentStatus === 'delivered' && deliveredDateMatch) {
-    statusDescription = `Delivered ${deliveredDateMatch[1]} ${deliveredDateMatch[2]}`;
+    statusDescription = `Delivered ${deliveredDateMatch[1]}`;
   } else if (currentStatus === 'in_transit' && events.length > 0) {
     statusDescription = `In transit — ${events[0].location || 'unknown location'}`;
   }

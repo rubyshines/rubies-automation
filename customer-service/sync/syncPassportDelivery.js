@@ -148,6 +148,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   }
 
   // Apply limit if set
+  const totalEligible = toScrape.length;
   if (limit > 0 && toScrape.length > limit) {
     console.log(`Limiting to ${limit} orders (${toScrape.length} eligible)`);
     toScrape = toScrape.slice(0, limit);
@@ -233,6 +234,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
         destination_country: order.country_code,
         shipping_zone: shippingZone,
         raw_events: parsed.events || [],
+        raw_text: rawText || null,
         summary: parsed.status_description || null,
         current_status: parsed.current_status || 'unknown',
         estimated_delivery: parsed.estimated_delivery || null,
@@ -315,7 +317,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   await closeBrowser();
   const result = { scraped, delivered, inTransit, errors };
   console.log(`Passport sync complete: ${scraped} scraped, ${delivered} delivered, ${inTransit} in transit, ${errors} errors`);
-  await sendRunSummary(result, toScrape.length);
+  await sendRunSummary(result, totalEligible);
   return result;
 }
 

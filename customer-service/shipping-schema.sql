@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tracking_snapshots (
   local_carrier TEXT,                    -- for Passport: the last-mile carrier (Royal Mail, Australia Post, etc.)
   local_tracking_number TEXT,            -- for Passport: the local carrier tracking number
   customs_cleared BOOLEAN,              -- for international: has it cleared customs?
+  raw_text TEXT,                          -- raw scraped page text (for re-parsing without re-scraping)
   scraped_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -40,3 +41,6 @@ CREATE TABLE IF NOT EXISTS tracking_snapshots (
 CREATE INDEX IF NOT EXISTS idx_tracking_order ON tracking_snapshots(order_number);
 CREATE INDEX IF NOT EXISTS idx_tracking_status ON tracking_snapshots(current_status);
 CREATE INDEX IF NOT EXISTS idx_tracking_scraped ON tracking_snapshots(scraped_at);
+
+-- Migration: add raw_text column
+ALTER TABLE tracking_snapshots ADD COLUMN IF NOT EXISTS raw_text TEXT;
