@@ -314,6 +314,13 @@ async function scrapeOrder(supabase, order, snapMap) {
     return 'delivered';
   }
 
+  // Distinguish real in-transit from parse failures
+  const status = parsed.current_status || 'unknown';
+  if (status === 'unknown' || status === 'pre_transit') {
+    console.warn(`  #${order.order_number}: parse_error — scraped ${rawText.length} chars but status=${status}`);
+    return 'parse_error';
+  }
+
   return 'in_transit';
 }
 
@@ -369,8 +376,8 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   ];
 
   const counts = {
-    backfill: { scraped: 0, delivered: 0, inTransit: 0 },
-    updates: { scraped: 0, delivered: 0, inTransit: 0, unchanged: 0 },
+    backfill: { scraped: 0, delivered: 0, inTransit: 0, parseErrors: 0 },
+    updates: { scraped: 0, delivered: 0, inTransit: 0, unchanged: 0, parseErrors: 0 },
     expired: 0,
     captcha: 0,
     errors: 0,
@@ -413,6 +420,10 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
           counts[pool].inTransit++;
           counts[pool].scraped++;
           break;
+        case 'parse_error':
+          counts[pool].parseErrors++;
+          counts[pool].scraped++;
+          break;
       }
     } catch (err) {
       counts.errors++;
@@ -432,7 +443,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
     if ((i + 1) % 25 === 0 || i + 1 === allWork.length) {
       const b = counts.backfill;
       const u = counts.updates;
-      console.log(`  Progress: ${i + 1}/${allWork.length} — backfill: ${b.delivered}d/${b.scraped}s, updates: ${u.delivered}d/${u.scraped}s, ${counts.expired} expired, ${counts.errors} errors`);
+      console.log(`  Progress: ${i + 1}/${allWork.length} — backfill: ${b.delivered}d/${b.parseErrors}err/${b.scraped}s, updates: ${u.delivered}d/${u.parseErrors}err/${u.scraped}s, ${counts.expired} expired`);
     }
 
     if (i < allWork.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
@@ -446,8 +457,8 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   const b = counts.backfill;
   const u = counts.updates;
   console.log(`Passport sync complete:`);
-  console.log(`  Backfill: ${b.scraped} scraped, ${b.delivered} delivered, ${b.inTransit} in transit`);
-  console.log(`  Updates:  ${u.scraped} scraped, ${u.delivered} delivered, ${u.inTransit} in transit, ${u.unchanged || 0} unchanged`);
+  console.log(`  Backfill: ${b.scraped} scraped, ${b.delivered} delivered, ${b.inTransit} in transit, ${b.parseErrors} parse errors`);
+  console.log(`  Updates:  ${u.scraped} scraped, ${u.delivered} delivered, ${u.inTransit} in transit, ${u.unchanged || 0} unchanged, ${u.parseErrors} parse errors`);
   console.log(`  Expired: ${counts.expired}, CAPTCHA: ${counts.captcha}, Errors: ${counts.errors}`);
 
   const totalProcessed = b.scraped + u.scraped + counts.expired + counts.captcha;
@@ -468,26 +479,32 @@ async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipp
 
   const { backfill: b, updates: u, expired, captcha, errors } = result;
   const totalDelivered = b.delivered + u.delivered;
+  const totalParseErrors = b.parseErrors + u.parseErrors;
 
-  const subject = `Passport Sync: ${totalDelivered} delivered (${b.delivered} backfill + ${u.delivered} updates)${blocked > 0 ? `, ${blocked} blocked` : ''}`;
+  let subject = `Passport Sync: ${totalDelivered} delivered`;
+  if (totalParseErrors > 0) subject += `, ${totalParseErrors} parse errors`;
+  if (blocked > 0) subject += `, ${blocked} blocked`;
+
   const lines = [
     `Passport Tracking Sync Run — ${new Date().toISOString()}`,
     '',
-    `BACKFILL (never scraped, oldest first)`,
-    `  Pool:       ${backfillTotal} remaining`,
-    `  Scraped:    ${b.scraped}`,
-    `  Delivered:  ${b.delivered}`,
-    `  In Transit: ${b.inTransit}`,
+    `BACKFILL (oldest first)`,
+    `  Pool:         ${backfillTotal} remaining`,
+    `  Scraped:      ${b.scraped}`,
+    `  Delivered:    ${b.delivered}`,
+    `  In Transit:   ${b.inTransit}`,
+    `  Parse Errors: ${b.parseErrors}  (page scraped OK but couldn't extract status)`,
     '',
-    `UPDATES (in-transit, most stale first)`,
-    `  Pool:       ${updatesTotal} active`,
-    `  Scraped:    ${u.scraped}`,
-    `  Delivered:  ${u.delivered}`,
-    `  In Transit: ${u.inTransit}`,
-    `  Unchanged:  ${u.unchanged || 0}`,
+    `UPDATES (most stale first)`,
+    `  Pool:         ${updatesTotal} active`,
+    `  Scraped:      ${u.scraped}`,
+    `  Delivered:    ${u.delivered}`,
+    `  In Transit:   ${u.inTransit}`,
+    `  Unchanged:    ${u.unchanged || 0}`,
+    `  Parse Errors: ${u.parseErrors}`,
     '',
-    `Expired:      ${expired} (Passport purged tracking page)`,
-    `Errors:       ${errors}`,
+    `Expired:        ${expired} (Passport purged tracking page)`,
+    `Errors:         ${errors} (scrape/network failures)`,
   ];
   if (captcha > 0 || blocked > 0) {
     lines.push('');
