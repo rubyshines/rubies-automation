@@ -162,6 +162,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   let delivered = 0;
   let inTransit = 0;
   let expired = 0;    // "can't find tracking number" — page purged by Passport
+  let captcha = 0;    // Cloudflare CAPTCHA — datacenter IP blocked
   let skipped = 0;    // quick-check: already scraped, no change
   let errors = 0;
   let consecutiveErrors = 0;
@@ -182,7 +183,16 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
         order.tracking_number,
       );
 
-      // 2a. Check for expired/purged tracking pages
+      // 2a. Check for captcha-blocked pages (Cloudflare on datacenter IPs)
+      if (/confirm you are human|captcha|challenge-platform/i.test(rawText) && rawText.length < 500) {
+        // Don't upsert — just skip. Local runs from residential IP will handle these.
+        captcha++;
+        consecutiveErrors = 0;
+        if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
+        continue;
+      }
+
+      // 2b. Check for expired/purged tracking pages
       if (/can.t find the tracking number/i.test(rawText) || /mistyped/i.test(rawText) && rawText.length < 400) {
         await supabase.from('tracking_snapshots').upsert({
           tracking_number: order.tracking_number,
@@ -334,8 +344,8 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   }
 
   await closeBrowser();
-  const result = { scraped, delivered, inTransit, expired, skipped, errors };
-  console.log(`Passport sync complete: ${scraped} parsed, ${delivered} delivered, ${inTransit} in transit, ${expired} expired, ${skipped} unchanged, ${errors} errors`);
+  const result = { scraped, delivered, inTransit, expired, captcha, skipped, errors };
+  console.log(`Passport sync complete: ${scraped} parsed, ${delivered} delivered, ${inTransit} in transit, ${expired} expired, ${captcha} captcha-blocked, ${skipped} unchanged, ${errors} errors`);
   await sendRunSummary(result, totalEligible);
   return result;
 }
@@ -348,11 +358,11 @@ async function sendRunSummary(result, totalQueued) {
   const sgMail = getSendgridClient();
   if (!sgMail) return;
 
-  const { scraped, delivered, inTransit, expired, skipped, errors } = result;
-  const processed = scraped + expired + skipped;
+  const { scraped, delivered, inTransit, expired, captcha, skipped, errors } = result;
+  const processed = scraped + expired + skipped + captcha;
 
-  const subject = `Passport Sync: ${delivered} delivered, ${expired} expired, ${inTransit} in-transit (${processed} processed)`;
-  const text = [
+  const subject = `Passport Sync: ${delivered} delivered, ${inTransit} in-transit, ${expired} expired (${processed} processed)`;
+  const lines = [
     `Passport Tracking Sync Run — ${new Date().toISOString()}`,
     '',
     `Backlog:      ${totalQueued} orders missing delivery date`,
@@ -363,9 +373,12 @@ async function sendRunSummary(result, totalQueued) {
     `  Expired:    ${expired}  — Passport purged the tracking page`,
     `  Unchanged:  ${skipped}  — previously scraped, no new status`,
     `  Errors:     ${errors}`,
-    '',
-    `Remaining:    ~${totalQueued - processed}`,
-  ].join('\n');
+  ];
+  if (captcha > 0) {
+    lines.push(`  CAPTCHA:    ${captcha}  — blocked by Cloudflare (datacenter IP, local runs will catch these)`);
+  }
+  lines.push('', `Remaining:    ~${totalQueued - processed}`);
+  const text = lines.join('\n');
 
   try {
     await sgMail.send({
