@@ -440,7 +440,11 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   console.log(`  Updates:  ${u.scraped} scraped, ${u.delivered} delivered, ${u.inTransit} in transit, ${u.unchanged || 0} unchanged`);
   console.log(`  Expired: ${counts.expired}, CAPTCHA: ${counts.captcha}, Errors: ${counts.errors}`);
 
-  await sendRunSummary(result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped });
+  const totalProcessed = b.scraped + u.scraped + counts.expired + counts.captcha;
+  const totalBatch = backfillBatch.length + updateBatch.length;
+  const blocked = totalBatch - totalProcessed;
+
+  await sendRunSummary(result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped, blocked });
   return result;
 }
 
@@ -448,26 +452,25 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
 // Email summary (temporary — remove when backlog is cleared)
 // ---------------------------------------------------------------------------
 
-async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipped }) {
+async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipped, blocked }) {
   const sgMail = getSendgridClient();
   if (!sgMail) return;
 
   const { backfill: b, updates: u, expired, captcha, errors } = result;
   const totalDelivered = b.delivered + u.delivered;
-  const totalScraped = b.scraped + u.scraped;
 
-  const subject = `Passport Sync: ${totalDelivered} delivered (${b.delivered} backfill + ${u.delivered} updates), ${expired} expired`;
+  const subject = `Passport Sync: ${totalDelivered} delivered (${b.delivered} backfill + ${u.delivered} updates)${blocked > 0 ? `, ${blocked} blocked` : ''}`;
   const lines = [
     `Passport Tracking Sync Run — ${new Date().toISOString()}`,
     '',
     `BACKFILL (never scraped, oldest first)`,
-    `  Pool:       ${backfillTotal} orders`,
+    `  Pool:       ${backfillTotal} remaining`,
     `  Scraped:    ${b.scraped}`,
     `  Delivered:  ${b.delivered}`,
     `  In Transit: ${b.inTransit}`,
     '',
     `UPDATES (in-transit, most stale first)`,
-    `  Pool:       ${updatesTotal} orders`,
+    `  Pool:       ${updatesTotal} active`,
     `  Scraped:    ${u.scraped}`,
     `  Delivered:  ${u.delivered}`,
     `  In Transit: ${u.inTransit}`,
@@ -476,8 +479,12 @@ async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipp
     `Expired:      ${expired} (Passport purged tracking page)`,
     `Errors:       ${errors}`,
   ];
-  if (captcha > 0) {
-    lines.push(`CAPTCHA:      ${captcha} (Cloudflare block — local runs will catch these)`);
+  if (captcha > 0 || blocked > 0) {
+    lines.push('');
+    lines.push(`⚠ BLOCKED`);
+    if (captcha > 0) lines.push(`  CAPTCHA hits: ${captcha} (Cloudflare blocked this IP)`);
+    if (blocked > 0) lines.push(`  Not processed: ${blocked} orders skipped due to early stop`);
+    lines.push(`  These orders need a local run (residential IP) to process.`);
   }
   if (tooOldSkipped > 0) {
     lines.push(`Too old:      ${tooOldSkipped} (fulfilled >45 days ago, no longer re-checking)`);
