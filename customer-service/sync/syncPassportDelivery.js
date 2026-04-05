@@ -4,19 +4,25 @@
  * Sync Passport Delivery — batch scrape Passport tracking pages for Nitro
  * orders missing deliveredAt.
  *
- * For each undelivered Passport order:
- *   1. Scrape Passport tracking page (simple HTTP fetch)
- *   2. Parse with Sonnet to extract events + delivery status
- *   3. If delivered: patch deliveredAt into order fulfillments JSONB
- *   4. Upsert tracking_snapshots (enables Passport leg analysis)
+ * Two-pool strategy:
+ *   BACKFILL — orders never scraped before, oldest first. One-time scrape to
+ *              capture historical delivery dates regardless of age.
+ *   UPDATES  — orders previously scraped but not yet delivered, oldest scrape
+ *              first (most stale gets priority). Only re-checks orders fulfilled
+ *              within the last 45 days — older ones are presumed lost/stale.
  *
- * Skips orders already scraped within the last 24 hours (cooldown).
- * Runs incrementally — only processes orders still missing deliveredAt.
+ * Each run splits its limit between both pools (half/half by default).
+ *
+ * For each order:
+ *   1. Scrape Passport tracking page (Puppeteer)
+ *   2. Parse deterministically (fallback to Sonnet if needed)
+ *   3. If delivered: patch deliveredAt into order fulfillments JSONB
+ *   4. Upsert tracking_snapshots
  *
  * Usage:
  *   node customer-service/sync/syncPassportDelivery.js
+ *   node customer-service/sync/syncPassportDelivery.js --limit 100
  *   node customer-service/sync/syncPassportDelivery.js --full   (ignore cooldown)
- *   npm run cs-sync-passport-delivery
  */
 
 if (!process.env.SUPABASE_URL) require('dotenv').config();
@@ -29,25 +35,22 @@ let parseTrackingPage; // lazy-loaded Sonnet fallback
 
 const NITRO_LOCATION_ID = '105921249558';
 const SCRAPE_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
-const DELAY_BETWEEN_REQUESTS_MS = 5000; // 5 seconds between scrapes
-const MAX_CONSECUTIVE_ERRORS = 5; // stop after 5 consecutive errors (rate limit likely)
+const DELAY_BETWEEN_REQUESTS_MS = 5000;
+const MAX_CONSECUTIVE_ERRORS = 5;
+const UPDATE_MAX_AGE_DAYS = 45; // stop re-checking in-transit orders older than this
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 /**
  * Infer a full timestamp from a yearless event date like "Jan 12 22:49".
- * Uses the fulfillment date's year. If the resulting date is before fulfillment,
- * it's likely the next calendar year (e.g. fulfilled Dec, delivered Jan).
  */
 function inferTimestamp(evt, fulfilledAt) {
-  const date = (evt.date || '').trim();   // e.g. "Jan 12"
-  const time = (evt.time || '').trim();   // e.g. "22:49"
+  const date = (evt.date || '').trim();
+  const time = (evt.time || '').trim();
   if (!date || !fulfilledAt) return `${date} ${time}`.trim();
   const fulfYear = new Date(fulfilledAt).getFullYear();
-  // Format: "Jan 12, 2026 22:49"
   let d = new Date(`${date}, ${fulfYear}${time ? ' ' + time : ''}`);
   if (isNaN(d.getTime())) return `${date} ${time}`.trim();
-  // If the inferred date is before fulfillment, bump to next year
   if (d < new Date(fulfilledAt)) {
     d = new Date(`${date}, ${fulfYear + 1}${time ? ' ' + time : ''}`);
   }
@@ -84,7 +87,6 @@ async function findPassportOrdersMissingDelivery(supabase) {
       const hasDeliveredAt = fulfillments.some(f => f.deliveredAt);
       if (hasDeliveredAt) continue;
 
-      // Find Passport tracking info
       const passportFulfillment = fulfillments.find(f =>
         (f.trackingUrl || '').includes('passport') && f.trackingNumber
       );
@@ -105,6 +107,207 @@ async function findPassportOrdersMissingDelivery(supabase) {
 }
 
 // ---------------------------------------------------------------------------
+// Build two pools: backfill (never scraped) + updates (scraped, not delivered)
+// ---------------------------------------------------------------------------
+
+async function buildPools(supabase, candidates, full) {
+  // Load existing snapshots
+  const snapMap = {}; // tracking_number -> { scraped_at, status }
+  const trackingNumbers = candidates.map(o => o.tracking_number);
+
+  for (let i = 0; i < trackingNumbers.length; i += 500) {
+    const batch = trackingNumbers.slice(i, i + 500);
+    const { data: snapshots } = await supabase
+      .from('tracking_snapshots')
+      .select('tracking_number, scraped_at, current_status, raw_events')
+      .in('tracking_number', batch);
+
+    for (const s of (snapshots || [])) {
+      snapMap[s.tracking_number] = {
+        scrapedAt: s.scraped_at,
+        status: s.current_status,
+        eventCount: Array.isArray(s.raw_events) ? s.raw_events.length : 0,
+      };
+    }
+  }
+
+  const now = Date.now();
+  const updateCutoff = now - (UPDATE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const backfill = [];
+  const updates = [];
+  let expiredSkipped = 0;
+  let cooldownSkipped = 0;
+  let tooOldSkipped = 0;
+
+  for (const order of candidates) {
+    const snap = snapMap[order.tracking_number];
+
+    if (!snap) {
+      // Never scraped — backfill pool (oldest order first)
+      backfill.push(order);
+      continue;
+    }
+
+    // Skip expired pages permanently
+    if (snap.status === 'expired') { expiredSkipped++; continue; }
+
+    // Skip delivered (shouldn't be in candidates, but defensive)
+    if (snap.status === 'delivered') continue;
+
+    // Update pool — previously scraped, not delivered
+    // Only re-check if fulfilled within the last 45 days
+    const fulfilledAt = new Date(order.fulfilled_at).getTime();
+    if (fulfilledAt < updateCutoff) { tooOldSkipped++; continue; }
+
+    // Respect cooldown unless --full
+    if (!full) {
+      const age = now - new Date(snap.scrapedAt).getTime();
+      if (age < SCRAPE_COOLDOWN_MS) { cooldownSkipped++; continue; }
+    }
+
+    // Attach scraped_at for sorting
+    order._scrapedAt = snap.scrapedAt;
+    updates.push(order);
+  }
+
+  // Sort backfill: oldest order first (ascending order_number)
+  backfill.sort((a, b) => a.order_number - b.order_number);
+
+  // Sort updates: oldest scrape first (most stale gets priority)
+  updates.sort((a, b) => new Date(a._scrapedAt) - new Date(b._scrapedAt));
+
+  return { backfill, updates, snapMap, expiredSkipped, cooldownSkipped, tooOldSkipped };
+}
+
+// ---------------------------------------------------------------------------
+// Scrape a single order — returns result category
+// ---------------------------------------------------------------------------
+
+async function scrapeOrder(supabase, order, snapMap) {
+  const { carrier, rawText } = await scrapeTracking(
+    order.tracking_url,
+    order.tracking_number,
+  );
+
+  // Captcha check
+  if (/confirm you are human|captcha|challenge-platform/i.test(rawText) && rawText.length < 500) {
+    return 'captcha';
+  }
+
+  // Expired page check
+  if (/can.t find the tracking number/i.test(rawText) || (/mistyped/i.test(rawText) && rawText.length < 400)) {
+    await supabase.from('tracking_snapshots').upsert({
+      tracking_number: order.tracking_number,
+      order_number: order.order_number,
+      carrier,
+      tracking_url: order.tracking_url,
+      destination_country: order.country_code,
+      raw_text: rawText || null,
+      current_status: 'expired',
+      scraped_at: new Date().toISOString(),
+    }, { onConflict: 'tracking_number' });
+    return 'expired';
+  }
+
+  // Quick check for updates: if already scraped with a known status and page
+  // still doesn't say "delivered", just bump timestamp
+  const existing = snapMap[order.tracking_number];
+  const textSaysDelivered = /delivered|has arrived|returned to shipper|returned to sender/i.test(rawText);
+  if (existing && existing.status !== 'unknown' && !textSaysDelivered) {
+    await supabase.from('tracking_snapshots')
+      .update({ scraped_at: new Date().toISOString(), raw_text: rawText || null })
+      .eq('tracking_number', order.tracking_number);
+    return 'unchanged';
+  }
+
+  // Parse
+  let parsed = parsePassportPage(rawText);
+  if (parsed.parse_failed) {
+    try {
+      if (!parseTrackingPage) parseTrackingPage = require('../lib/tracking/analyzer').parseTrackingPage;
+      parsed = await parseTrackingPage(rawText, carrier);
+      console.warn(`  #${order.order_number}: deterministic parse failed, used Sonnet fallback (status: ${parsed.current_status})`);
+    } catch (aiErr) {
+      console.warn(`  #${order.order_number}: both parsers failed — ${aiErr.message}`);
+    }
+  }
+
+  // Determine shipping zone
+  let shippingZone = null;
+  const cc = order.country_code;
+  if (cc === 'US') shippingZone = 'us';
+  else if (cc === 'CA') shippingZone = 'canada';
+  else {
+    const { data: zoneRow } = await supabase
+      .from('shipping_zones')
+      .select('zone')
+      .eq('country_code', cc)
+      .maybeSingle();
+    shippingZone = zoneRow?.zone || 'ddu';
+  }
+
+  // Upsert snapshot
+  await supabase.from('tracking_snapshots').upsert({
+    tracking_number: order.tracking_number,
+    order_number: order.order_number,
+    carrier,
+    tracking_url: order.tracking_url,
+    destination_country: order.country_code,
+    shipping_zone: shippingZone,
+    raw_events: parsed.events || [],
+    raw_text: rawText || null,
+    summary: parsed.status_description || null,
+    current_status: parsed.current_status || 'unknown',
+    estimated_delivery: parsed.estimated_delivery || null,
+    last_location: parsed.last_location || null,
+    local_carrier: parsed.local_carrier || null,
+    local_tracking_number: parsed.local_tracking_number || null,
+    customs_cleared: parsed.customs_cleared || false,
+    scraped_at: new Date().toISOString(),
+  }, { onConflict: 'tracking_number' });
+
+  // If delivered, patch deliveredAt into order fulfillments
+  if (parsed.current_status === 'delivered') {
+    let deliveredAt = null;
+    const events = (parsed.events || []).slice().reverse();
+    for (const evt of events) {
+      if (/deliver/i.test(evt.description || '')) {
+        const ts = evt.timestamp || inferTimestamp(evt, order.fulfilled_at);
+        const d = new Date(ts);
+        if (!isNaN(d.getTime()) && d.getFullYear() > 2020) {
+          deliveredAt = d.toISOString();
+          break;
+        }
+      }
+    }
+
+    if (!deliveredAt && parsed.events?.length) {
+      const lastEvent = parsed.events[0];
+      const ts = lastEvent.timestamp || inferTimestamp(lastEvent, order.fulfilled_at);
+      const d = new Date(ts);
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2020) deliveredAt = d.toISOString();
+    }
+
+    if (deliveredAt) {
+      const updatedFulfillments = order.fulfillments.map(f => {
+        if (f.trackingNumber === order.tracking_number) {
+          return { ...f, deliveredAt };
+        }
+        return f;
+      });
+
+      await supabase.from('orders')
+        .update({ fulfillments: updatedFulfillments })
+        .eq('order_number', order.order_number);
+    }
+
+    return 'delivered';
+  }
+
+  return 'in_transit';
+}
+
+// ---------------------------------------------------------------------------
 // Main sync
 // ---------------------------------------------------------------------------
 
@@ -115,240 +318,129 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   const candidates = await findPassportOrdersMissingDelivery(supabase);
   console.log(`Found ${candidates.length} Passport orders without delivery confirmation`);
 
-  if (candidates.length === 0) return { scraped: 0, delivered: 0, inTransit: 0, errors: 0 };
+  if (candidates.length === 0) {
+    return { backfill: { scraped: 0, delivered: 0 }, updates: { scraped: 0, delivered: 0 }, expired: 0, captcha: 0, errors: 0 };
+  }
 
-  // Check scrape cooldown + existing snapshots for skip logic
-  let toScrape = candidates;
-  const existingSnapshots = {}; // tracking_number -> { scraped_at, current_status, raw_events_length }
+  const { backfill, updates, snapMap, expiredSkipped, cooldownSkipped, tooOldSkipped } = await buildPools(supabase, candidates, full);
 
-  if (!full) {
-    const trackingNumbers = candidates.map(o => o.tracking_number);
-    const recentSnapshots = new Set();
-    for (let i = 0; i < trackingNumbers.length; i += 500) {
-      const batch = trackingNumbers.slice(i, i + 500);
-      const { data: snapshots } = await supabase
-        .from('tracking_snapshots')
-        .select('tracking_number, scraped_at, current_status, raw_events')
-        .in('tracking_number', batch);
+  console.log(`Pools: ${backfill.length} backfill (never scraped), ${updates.length} updates (in-transit)`);
+  if (expiredSkipped) console.log(`  Skipped: ${expiredSkipped} expired`);
+  if (cooldownSkipped) console.log(`  Skipped: ${cooldownSkipped} on cooldown`);
+  if (tooOldSkipped) console.log(`  Skipped: ${tooOldSkipped} older than ${UPDATE_MAX_AGE_DAYS} days (no longer re-checking)`);
 
-      for (const s of (snapshots || [])) {
-        existingSnapshots[s.tracking_number] = {
-          scrapedAt: s.scraped_at,
-          status: s.current_status,
-          eventCount: Array.isArray(s.raw_events) ? s.raw_events.length : 0,
-        };
-        // Skip expired pages permanently — Passport has purged them
-        if (s.current_status === 'expired') { recentSnapshots.add(s.tracking_number); continue; }
-        const age = Date.now() - new Date(s.scraped_at).getTime();
-        if (age < SCRAPE_COOLDOWN_MS) recentSnapshots.add(s.tracking_number);
-      }
+  // Split limit between pools (half each, remainder to whichever has more)
+  let backfillLimit, updateLimit;
+  if (limit > 0) {
+    backfillLimit = Math.min(backfill.length, Math.ceil(limit / 2));
+    updateLimit = Math.min(updates.length, limit - backfillLimit);
+    // If one pool is smaller than its half, give the slack to the other
+    if (backfillLimit < Math.ceil(limit / 2)) {
+      updateLimit = Math.min(updates.length, limit - backfillLimit);
     }
-
-    toScrape = candidates.filter(o => !recentSnapshots.has(o.tracking_number));
-    const skippedCount = candidates.length - toScrape.length;
-    if (skippedCount > 0) console.log(`Skipping ${skippedCount} orders (expired or scraped within 24h)`);
+    if (updateLimit < Math.floor(limit / 2)) {
+      backfillLimit = Math.min(backfill.length, limit - updateLimit);
+    }
+  } else {
+    backfillLimit = backfill.length;
+    updateLimit = updates.length;
   }
 
-  // Apply limit if set
-  const totalEligible = toScrape.length;
-  if (limit > 0 && toScrape.length > limit) {
-    console.log(`Limiting to ${limit} orders (${toScrape.length} eligible)`);
-    toScrape = toScrape.slice(0, limit);
-  }
+  const backfillBatch = backfill.slice(0, backfillLimit);
+  const updateBatch = updates.slice(0, updateLimit);
 
-  console.log(`Scraping ${toScrape.length} Passport tracking pages...`);
+  console.log(`This run: ${backfillBatch.length} backfill + ${updateBatch.length} updates = ${backfillBatch.length + updateBatch.length} total`);
 
-  let scraped = 0;
-  let delivered = 0;
-  let inTransit = 0;
-  let expired = 0;    // "can't find tracking number" — page purged by Passport
-  let captcha = 0;    // Cloudflare CAPTCHA — datacenter IP blocked
-  let skipped = 0;    // quick-check: already scraped, no change
-  let errors = 0;
+  // Process both pools: updates first (recent orders, status changing),
+  // then backfill (old orders, one-time capture)
+  const allWork = [
+    ...updateBatch.map(o => ({ ...o, _pool: 'updates' })),
+    ...backfillBatch.map(o => ({ ...o, _pool: 'backfill' })),
+  ];
+
+  const counts = {
+    backfill: { scraped: 0, delivered: 0, inTransit: 0 },
+    updates: { scraped: 0, delivered: 0, inTransit: 0, unchanged: 0 },
+    expired: 0,
+    captcha: 0,
+    errors: 0,
+  };
   let consecutiveErrors = 0;
 
-  for (let i = 0; i < toScrape.length; i++) {
-    const order = toScrape[i];
+  for (let i = 0; i < allWork.length; i++) {
+    const order = allWork[i];
+    const pool = order._pool;
 
-    // Stop early if rate-limited
     if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-      console.log(`  Stopping early — ${MAX_CONSECUTIVE_ERRORS} consecutive errors (likely rate-limited). Will resume tomorrow.`);
+      console.log(`  Stopping early — ${MAX_CONSECUTIVE_ERRORS} consecutive errors.`);
       break;
     }
 
     try {
-      // 1. Scrape tracking page (HTTP only, no AI cost)
-      const { carrier, rawText } = await scrapeTracking(
-        order.tracking_url,
-        order.tracking_number,
-      );
+      const result = await scrapeOrder(supabase, order, snapMap);
+      consecutiveErrors = 0;
 
-      // 2a. Check for captcha-blocked pages (Cloudflare on datacenter IPs)
-      if (/confirm you are human|captcha|challenge-platform/i.test(rawText) && rawText.length < 500) {
-        captcha++;
-        if (captcha >= 3) {
-          console.log(`  Stopping early — ${captcha} CAPTCHA blocks (IP is flagged by Cloudflare). Local runs will handle these.`);
-          break;
-        }
-        if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
-        continue;
-      }
-
-      // 2b. Check for expired/purged tracking pages
-      if (/can.t find the tracking number/i.test(rawText) || /mistyped/i.test(rawText) && rawText.length < 400) {
-        await supabase.from('tracking_snapshots').upsert({
-          tracking_number: order.tracking_number,
-          order_number: order.order_number,
-          carrier,
-          tracking_url: order.tracking_url,
-          destination_country: order.country_code,
-          raw_text: rawText || null,
-          current_status: 'expired',
-          scraped_at: new Date().toISOString(),
-        }, { onConflict: 'tracking_number' });
-        expired++;
-        consecutiveErrors = 0;
-        if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
-        continue;
-      }
-
-      // 2b. Quick check: if already scraped with a known status and page still doesn't
-      //    say "delivered", skip parse — just bump scraped_at ($0)
-      const existing = existingSnapshots[order.tracking_number];
-      const textSaysDelivered = /delivered|has arrived|returned to shipper|returned to sender/i.test(rawText);
-      if (existing && existing.status !== 'unknown' && !textSaysDelivered) {
-        // Still in transit — just update timestamp, no AI needed
-        await supabase.from('tracking_snapshots')
-          .update({ scraped_at: new Date().toISOString(), raw_text: rawText || null })
-          .eq('tracking_number', order.tracking_number);
-        skipped++;
-        consecutiveErrors = 0;
-        if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
-        continue;
-      }
-
-      // 3. Parse deterministically (no AI cost)
-      let parsed = parsePassportPage(rawText);
-
-      // Fallback to Sonnet if deterministic parse failed
-      if (parsed.parse_failed) {
-        try {
-          if (!parseTrackingPage) parseTrackingPage = require('../lib/tracking/analyzer').parseTrackingPage;
-          parsed = await parseTrackingPage(rawText, carrier);
-          console.warn(`  #${order.order_number}: deterministic parse failed, used Sonnet fallback (status: ${parsed.current_status})`);
-        } catch (aiErr) {
-          console.warn(`  #${order.order_number}: both parsers failed — ${aiErr.message}`);
-        }
-      }
-      scraped++;
-
-      // 3. Determine shipping zone
-      let shippingZone = null;
-      const cc = order.country_code;
-      if (cc === 'US') shippingZone = 'us';
-      else if (cc === 'CA') shippingZone = 'canada';
-      else {
-        const { data: zoneRow } = await supabase
-          .from('shipping_zones')
-          .select('zone')
-          .eq('country_code', cc)
-          .maybeSingle();
-        shippingZone = zoneRow?.zone || 'ddu';
-      }
-
-      // 4. Upsert tracking snapshot
-      await supabase.from('tracking_snapshots').upsert({
-        tracking_number: order.tracking_number,
-        order_number: order.order_number,
-        carrier,
-        tracking_url: order.tracking_url,
-        destination_country: order.country_code,
-        shipping_zone: shippingZone,
-        raw_events: parsed.events || [],
-        raw_text: rawText || null,
-        summary: parsed.status_description || null,
-        current_status: parsed.current_status || 'unknown',
-        estimated_delivery: parsed.estimated_delivery || null,
-        last_location: parsed.last_location || null,
-        local_carrier: parsed.local_carrier || null,
-        local_tracking_number: parsed.local_tracking_number || null,
-        customs_cleared: parsed.customs_cleared || false,
-        scraped_at: new Date().toISOString(),
-      }, { onConflict: 'tracking_number' });
-
-      // 5. If delivered, find delivery timestamp and patch into order
-      consecutiveErrors = 0; // reset on success
-
-      if (parsed.current_status === 'delivered') {
-        delivered++;
-
-        // Find delivery event timestamp
-        let deliveredAt = null;
-        const events = (parsed.events || []).slice().reverse(); // oldest first
-        for (const evt of events) {
-          if (/deliver/i.test(evt.description || '')) {
-            const ts = evt.timestamp || inferTimestamp(evt, order.fulfilled_at);
-            const d = new Date(ts);
-            if (!isNaN(d.getTime()) && d.getFullYear() > 2020) {
-              deliveredAt = d.toISOString();
-              break;
-            }
+      switch (result) {
+        case 'captcha':
+          counts.captcha++;
+          if (counts.captcha >= 3) {
+            console.log(`  Stopping early — ${counts.captcha} CAPTCHA blocks.`);
+            i = allWork.length; // break outer loop
           }
-        }
-
-        // Fallback: last event timestamp
-        if (!deliveredAt && parsed.events?.length) {
-          const lastEvent = parsed.events[0]; // most recent first
-          const ts = lastEvent.timestamp || inferTimestamp(lastEvent, order.fulfilled_at);
-          const d = new Date(ts);
-          if (!isNaN(d.getTime()) && d.getFullYear() > 2020) deliveredAt = d.toISOString();
-        }
-
-        if (deliveredAt) {
-          // Patch deliveredAt into the fulfillments JSONB
-          const updatedFulfillments = order.fulfillments.map(f => {
-            if (f.trackingNumber === order.tracking_number) {
-              return { ...f, deliveredAt };
-            }
-            return f;
-          });
-
-          await supabase.from('orders')
-            .update({ fulfillments: updatedFulfillments })
-            .eq('order_number', order.order_number);
-        }
-      } else {
-        inTransit++;
+          break;
+        case 'expired':
+          counts.expired++;
+          break;
+        case 'unchanged':
+          counts[pool].unchanged = (counts[pool].unchanged || 0) + 1;
+          counts[pool].scraped++;
+          break;
+        case 'delivered':
+          counts[pool].delivered++;
+          counts[pool].scraped++;
+          break;
+        case 'in_transit':
+          counts[pool].inTransit++;
+          counts[pool].scraped++;
+          break;
       }
-
     } catch (err) {
-      errors++;
+      counts.errors++;
       const isBrowserCrash = /context.*destroy|connection closed|protocol error|target closed/i.test(err.message);
       if (isBrowserCrash) {
-        // Browser died — force recycle, don't count as consecutive
         console.error(`  Browser crash on #${order.order_number}, recycling...`);
         await closeBrowser();
       } else {
         consecutiveErrors++;
         if (consecutiveErrors <= 2) {
-          console.error(`  Error scraping #${order.order_number} (${order.tracking_number}): ${err.message}`);
+          console.error(`  Error scraping #${order.order_number}: ${err.message}`);
         }
       }
     }
 
     // Progress log
-    if ((i + 1) % 50 === 0 || i + 1 === toScrape.length) {
-      console.log(`  Progress: ${i + 1}/${toScrape.length} — ${delivered} delivered, ${inTransit} in transit, ${expired} expired, ${skipped} unchanged, ${errors} errors`);
+    if ((i + 1) % 25 === 0 || i + 1 === allWork.length) {
+      const b = counts.backfill;
+      const u = counts.updates;
+      console.log(`  Progress: ${i + 1}/${allWork.length} — backfill: ${b.delivered}d/${b.scraped}s, updates: ${u.delivered}d/${u.scraped}s, ${counts.expired} expired, ${counts.errors} errors`);
     }
 
-    // Rate limit
-    if (i < toScrape.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
+    if (i < allWork.length - 1) await sleep(DELAY_BETWEEN_REQUESTS_MS);
   }
 
   await closeBrowser();
-  const result = { scraped, delivered, inTransit, expired, captcha, skipped, errors };
-  console.log(`Passport sync complete: ${scraped} parsed, ${delivered} delivered, ${inTransit} in transit, ${expired} expired, ${captcha} captcha-blocked, ${skipped} unchanged, ${errors} errors`);
-  await sendRunSummary(result, totalEligible);
+
+  const totalEligible = backfill.length + updates.length;
+  const result = { backfill: counts.backfill, updates: counts.updates, expired: counts.expired, captcha: counts.captcha, errors: counts.errors };
+
+  const b = counts.backfill;
+  const u = counts.updates;
+  console.log(`Passport sync complete:`);
+  console.log(`  Backfill: ${b.scraped} scraped, ${b.delivered} delivered, ${b.inTransit} in transit`);
+  console.log(`  Updates:  ${u.scraped} scraped, ${u.delivered} delivered, ${u.inTransit} in transit, ${u.unchanged || 0} unchanged`);
+  console.log(`  Expired: ${counts.expired}, CAPTCHA: ${counts.captcha}, Errors: ${counts.errors}`);
+
+  await sendRunSummary(result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped });
   return result;
 }
 
@@ -356,30 +448,41 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
 // Email summary (temporary — remove when backlog is cleared)
 // ---------------------------------------------------------------------------
 
-async function sendRunSummary(result, totalQueued) {
+async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipped }) {
   const sgMail = getSendgridClient();
   if (!sgMail) return;
 
-  const { scraped, delivered, inTransit, expired, captcha, skipped, errors } = result;
-  const processed = scraped + expired + skipped + captcha;
+  const { backfill: b, updates: u, expired, captcha, errors } = result;
+  const totalDelivered = b.delivered + u.delivered;
+  const totalScraped = b.scraped + u.scraped;
 
-  const subject = `Passport Sync: ${delivered} delivered, ${inTransit} in-transit, ${expired} expired (${processed} processed)`;
+  const subject = `Passport Sync: ${totalDelivered} delivered (${b.delivered} backfill + ${u.delivered} updates), ${expired} expired`;
   const lines = [
     `Passport Tracking Sync Run — ${new Date().toISOString()}`,
     '',
-    `Backlog:      ${totalQueued} orders missing delivery date`,
-    `Processed:    ${processed} this run`,
+    `BACKFILL (never scraped, oldest first)`,
+    `  Pool:       ${backfillTotal} orders`,
+    `  Scraped:    ${b.scraped}`,
+    `  Delivered:  ${b.delivered}`,
+    `  In Transit: ${b.inTransit}`,
     '',
-    `  Delivered:  ${delivered}  — delivery date extracted & saved`,
-    `  In Transit: ${inTransit} — still on the way`,
-    `  Expired:    ${expired}  — Passport purged the tracking page`,
-    `  Unchanged:  ${skipped}  — previously scraped, no new status`,
-    `  Errors:     ${errors}`,
+    `UPDATES (in-transit, most stale first)`,
+    `  Pool:       ${updatesTotal} orders`,
+    `  Scraped:    ${u.scraped}`,
+    `  Delivered:  ${u.delivered}`,
+    `  In Transit: ${u.inTransit}`,
+    `  Unchanged:  ${u.unchanged || 0}`,
+    '',
+    `Expired:      ${expired} (Passport purged tracking page)`,
+    `Errors:       ${errors}`,
   ];
   if (captcha > 0) {
-    lines.push(`  CAPTCHA:    ${captcha}  — blocked by Cloudflare (datacenter IP, local runs will catch these)`);
+    lines.push(`CAPTCHA:      ${captcha} (Cloudflare block — local runs will catch these)`);
   }
-  lines.push('', `Remaining:    ~${totalQueued - processed}`);
+  if (tooOldSkipped > 0) {
+    lines.push(`Too old:      ${tooOldSkipped} (fulfilled >45 days ago, no longer re-checking)`);
+  }
+  lines.push('', `Remaining backfill: ~${backfillTotal - b.scraped - expired}`);
   const text = lines.join('\n');
 
   try {
@@ -401,12 +504,14 @@ async function sendRunSummary(result, totalQueued) {
 async function run() {
   try {
     const result = await syncPassportDelivery();
+    const totalDelivered = result.backfill.delivered + result.updates.delivered;
+    const totalScraped = result.backfill.scraped + result.updates.scraped;
     return {
       sources: {
         passport_delivery: {
           success: true,
-          rowsWritten: result.delivered,
-          detail: `${result.scraped} scraped, ${result.delivered} delivered, ${result.inTransit} in transit`,
+          rowsWritten: totalDelivered,
+          detail: `${totalScraped} scraped (${result.backfill.scraped} backfill + ${result.updates.scraped} updates), ${totalDelivered} delivered`,
         },
       },
       status: 'ok',
