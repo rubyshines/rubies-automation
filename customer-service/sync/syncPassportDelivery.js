@@ -194,8 +194,12 @@ async function scrapeOrder(supabase, order, snapMap) {
     return 'captcha';
   }
 
-  // Expired page check
-  if (/can.t find the tracking number/i.test(rawText) || (/mistyped/i.test(rawText) && rawText.length < 400)) {
+  // Expired page check — includes redirect stubs (passportglobal.com) and "can't find" pages
+  const isExpired = /can.t find the tracking number/i.test(rawText)
+    || (/mistyped/i.test(rawText) && rawText.length < 400)
+    || (/track\.passportglobal\.com/i.test(rawText) && rawText.length < 200)
+    || (rawText.length < 100 && !/delivered|in transit|current status/i.test(rawText));
+  if (isExpired) {
     await supabase.from('tracking_snapshots').upsert({
       tracking_number: order.tracking_number,
       order_number: order.order_number,
