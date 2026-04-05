@@ -31,6 +31,44 @@ const ACTION_REQUIRED_PATTERNS = [
   /refused/i, /undeliverable/i,
 ];
 
+// Patterns that indicate a package is actually held at or being checked by customs
+const CUSTOMS_HOLD_EVENT_PATTERNS = [
+  /held at customs/i,
+  /parcel is being checked by customs/i,
+  /customs clearance in progress/i,
+  /customs.*payment/i,
+  /import.*charges/i,
+];
+
+// Patterns that indicate customs has been cleared (package moved past customs)
+const CUSTOMS_CLEARED_EVENT_PATTERNS = [
+  /customs cleared/i,
+  /passed customs/i,
+  /released from customs/i,
+  /released by import customs/i,
+  /destination customs.*released/i,
+];
+
+/**
+ * Check if tracking events show the package is currently held at customs.
+ * Returns the customs hold event description if found, null otherwise.
+ * Does NOT trigger if customs has already been cleared after the hold.
+ */
+function detectCustomsHold(events) {
+  if (!events || !events.length) return null;
+  // Events are most-recent-first
+  let holdEvent = null;
+  for (const evt of events) {
+    const desc = evt.description || '';
+    // If we see a cleared event before a hold event, customs is already resolved
+    if (CUSTOMS_CLEARED_EVENT_PATTERNS.some(p => p.test(desc))) return null;
+    if (!holdEvent && CUSTOMS_HOLD_EVENT_PATTERNS.some(p => p.test(desc))) {
+      holdEvent = desc;
+    }
+  }
+  return holdEvent;
+}
+
 const SHOPIFY_EVENT_ACTION_PATTERNS = [
   /delivery attempt.*fail/i, /notice left/i, /return(?:ed)? to sender/i,
   /addressee.*unknown/i, /address.*incorrect/i, /refused/i,
@@ -278,6 +316,11 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
   const orderNums = allOrders.map(o => o.order_number);
 
+  // Load shipping zones for accurate DDP/DDU classification
+  const zoneMap = {};
+  const { data: zones } = await supabase.from('shipping_zones').select('country_code, zone');
+  for (const z of (zones || [])) zoneMap[z.country_code] = z.zone;
+
   // Load tracking snapshots
   const snapMap = {};
   for (let i = 0; i < orderNums.length; i += 500) {
@@ -335,7 +378,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   for (const order of allOrders) {
     const addr = order.shipping_address || {};
     const cc = addr.countryCode || '?';
-    const zone = cc === 'US' ? 'us' : cc === 'CA' ? 'canada' : 'ddp';
+    const zone = cc === 'US' ? 'us' : cc === 'CA' ? 'canada' : (zoneMap[cc] || 'ddu');
     const bizDays = businessDaysSince(order.fulfilled_at);
     const calDays = calendarDaysSince(order.fulfilled_at);
     const snap = snapMap[order.order_number];
@@ -439,14 +482,16 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       }
     }
 
-    // Customs hold (early warning for DDU at 5bd)
-    if (snap?.customs_cleared === false && bizDays > 5 && zone !== 'us' && isPassport) {
-      const existingClaim = claimMap[order.order_number];
-      if (!existingClaim?.customer_customs_notified_at) {
-        customsAlerts.push(alert);
-      }
-      if (bizDays > 10) {
-        alert.issues.push(`Customs not cleared after ${bizDays} business days`);
+    // Customs hold — only for DDP orders with actual customs hold event in tracking
+    // Never for DDU (customer expects to pay duties themselves)
+    if (zone === 'ddp' && isPassport && snap?.raw_events) {
+      const customsHoldEvent = detectCustomsHold(snap.raw_events);
+      if (customsHoldEvent) {
+        const existingClaim = claimMap[order.order_number];
+        if (!existingClaim?.customer_customs_notified_at) {
+          customsAlerts.push(alert);
+        }
+        alert.issues.push(`Held at customs: ${customsHoldEvent}`);
         if (alert.severity === 'info') alert.severity = 'medium';
       }
     }
