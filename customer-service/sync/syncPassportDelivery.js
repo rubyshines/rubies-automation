@@ -161,7 +161,9 @@ async function buildPools(supabase, candidates, full) {
     }
 
     // Update pool — previously scraped with real data, not delivered
-    // Only re-check if fulfilled within the last 45 days
+    // Only re-check if fulfilled within the last 45 days.
+    // (Backfill always gets one scrape regardless of age — this cutoff
+    // only stops RE-checking orders that already have good tracking data.)
     const fulfilledAt = new Date(order.fulfilled_at).getTime();
     if (fulfilledAt < updateCutoff) { tooOldSkipped++; continue; }
 
