@@ -29,6 +29,7 @@ if (!process.env.SUPABASE_URL) require('dotenv').config();
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
+const { shopifyGraphQL } = require('../lib/shopify');
 const { scrapeTracking, closeBrowser } = require('../lib/tracking/scraper');
 const { parsePassportPage } = require('../lib/tracking/passportParser');
 let parseTrackingPage; // lazy-loaded Sonnet fallback
@@ -40,6 +41,58 @@ const MAX_CONSECUTIVE_ERRORS = 5;
 const UPDATE_MAX_AGE_DAYS = 45; // stop re-checking in-transit orders older than this
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Push a DELIVERED event to Shopify so deliveredAt is set on the fulfillment.
+ * Passport doesn't do this automatically, so we do it from our scrape data.
+ */
+async function pushDeliveryToShopify(shopifyOrderId, trackingNumber, deliveredAt) {
+  if (!shopifyOrderId || !deliveredAt) return false;
+
+  try {
+    // Look up the fulfillment GID from Shopify
+    const orderResult = await shopifyGraphQL(`{
+      order(id: "${shopifyOrderId}") {
+        fulfillments {
+          id
+          deliveredAt
+          trackingInfo { number }
+        }
+      }
+    }`);
+
+    const fulfillment = (orderResult.order?.fulfillments || []).find(f =>
+      f.trackingInfo?.some(t => t.number === trackingNumber)
+    );
+    if (!fulfillment) return false;
+
+    // Skip if Shopify already has deliveredAt
+    if (fulfillment.deliveredAt) return true;
+
+    const result = await shopifyGraphQL(`
+      mutation {
+        fulfillmentEventCreate(fulfillmentEvent: {
+          fulfillmentId: "${fulfillment.id}"
+          status: DELIVERED
+          happenedAt: "${deliveredAt}"
+        }) {
+          fulfillmentEvent { id status }
+          userErrors { field message }
+        }
+      }
+    `);
+
+    const errors = result.fulfillmentEventCreate?.userErrors || [];
+    if (errors.length > 0) {
+      console.warn(`  #${trackingNumber}: Shopify event error: ${errors[0].message}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn(`  Shopify push failed for ${trackingNumber}: ${e.message}`);
+    return false;
+  }
+}
 
 /**
  * Infer a full timestamp from a yearless event date like "Jan 12 22:49".
@@ -68,7 +121,7 @@ async function findPassportOrdersMissingDelivery(supabase) {
   while (true) {
     const { data: orders, error } = await supabase
       .from('orders')
-      .select('order_number, fulfillments, shipping_address, fulfilled_at')
+      .select('order_number, shopify_order_id, fulfillments, shipping_address, fulfilled_at')
       .eq('fulfillment_status', 'FULFILLED')
       .not('fulfilled_at', 'is', null)
       .is('cancelled_at', null)
@@ -94,6 +147,7 @@ async function findPassportOrdersMissingDelivery(supabase) {
 
       allOrders.push({
         order_number: o.order_number,
+        shopify_order_id: o.shopify_order_id,
         tracking_number: passportFulfillment.trackingNumber,
         tracking_url: passportFulfillment.trackingUrl,
         fulfilled_at: o.fulfilled_at,
@@ -301,16 +355,21 @@ async function scrapeOrder(supabase, order, snapMap) {
     }
 
     if (deliveredAt) {
-      const updatedFulfillments = order.fulfillments.map(f => {
-        if (f.trackingNumber === order.tracking_number) {
-          return { ...f, deliveredAt };
-        }
-        return f;
-      });
+      // Push to Shopify first (source of truth)
+      const pushed = await pushDeliveryToShopify(order.shopify_order_id, order.tracking_number, deliveredAt);
+      if (pushed) {
+        // Patch Supabase fulfillments to match
+        const updatedFulfillments = order.fulfillments.map(f => {
+          if (f.trackingNumber === order.tracking_number) {
+            return { ...f, deliveredAt };
+          }
+          return f;
+        });
 
-      await supabase.from('orders')
-        .update({ fulfillments: updatedFulfillments })
-        .eq('order_number', order.order_number);
+        await supabase.from('orders')
+          .update({ fulfillments: updatedFulfillments })
+          .eq('order_number', order.order_number);
+      }
     }
 
     return 'delivered';
