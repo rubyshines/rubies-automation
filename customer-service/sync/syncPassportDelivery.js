@@ -154,7 +154,13 @@ async function buildPools(supabase, candidates, full) {
     // Skip delivered (shouldn't be in candidates, but defensive)
     if (snap.status === 'delivered') continue;
 
-    // Update pool — previously scraped, not delivered
+    // Bad data (unknown status, CAPTCHA, no events) — treat as backfill, needs re-scrape
+    if (snap.status === 'unknown' || (snap.status === 'pre_transit' && snap.eventCount === 0)) {
+      backfill.push(order);
+      continue;
+    }
+
+    // Update pool — previously scraped with real data, not delivered
     // Only re-check if fulfilled within the last 45 days
     const fulfilledAt = new Date(order.fulfilled_at).getTime();
     if (fulfilledAt < updateCutoff) { tooOldSkipped++; continue; }
