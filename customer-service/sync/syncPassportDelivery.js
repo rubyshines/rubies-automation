@@ -450,6 +450,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
     captcha: 0,
     errors: 0,
   };
+  const orderResults = []; // per-order results for email report
   let consecutiveErrors = 0;
 
   for (let i = 0; i < allWork.length; i++) {
@@ -464,6 +465,16 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
     try {
       const result = await scrapeOrder(supabase, order, snapMap);
       consecutiveErrors = 0;
+
+      orderResults.push({
+        order_number: order.order_number,
+        pool,
+        country: order.country_code || '?',
+        tracking: order.tracking_number,
+        fulfilled_at: order.fulfilled_at?.split('T')[0] || '?',
+        result,
+        parseOk: !['captcha', 'expired', 'parse_error'].includes(result),
+      });
 
       switch (result) {
         case 'captcha':
@@ -495,6 +506,15 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
       }
     } catch (err) {
       counts.errors++;
+      orderResults.push({
+        order_number: order.order_number,
+        pool,
+        country: order.country_code || '?',
+        tracking: order.tracking_number,
+        fulfilled_at: order.fulfilled_at?.split('T')[0] || '?',
+        result: 'error',
+        parseOk: false,
+      });
       const isBrowserCrash = /context.*destroy|connection closed|protocol error|target closed/i.test(err.message);
       if (isBrowserCrash) {
         console.error(`  Browser crash on #${order.order_number}, recycling...`);
@@ -533,7 +553,7 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   const totalBatch = backfillBatch.length + updateBatch.length;
   const blocked = totalBatch - totalProcessed;
 
-  await sendRunSummary(result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped, blocked });
+  await sendRunSummary(result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped, blocked, orderResults });
   return result;
 }
 
@@ -541,51 +561,55 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
 // Email summary (temporary — remove when backlog is cleared)
 // ---------------------------------------------------------------------------
 
-async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipped, blocked }) {
+async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipped, blocked, orderResults }) {
   const sgMail = getSendgridClient();
   if (!sgMail) return;
 
   const { backfill: b, updates: u, expired, captcha, errors } = result;
   const totalDelivered = b.delivered + u.delivered;
-  const totalParseErrors = b.parseErrors + u.parseErrors;
+  const totalParsed = orderResults.filter(r => r.parseOk).length;
+  const totalFailed = orderResults.filter(r => !r.parseOk).length;
 
-  let subject = `Passport Sync: ${totalDelivered} delivered`;
-  if (totalParseErrors > 0) subject += `, ${totalParseErrors} parse errors`;
-  if (blocked > 0) subject += `, ${blocked} blocked`;
+  const subject = `Passport Sync: ${totalParsed}/${orderResults.length} scraped OK, ${totalDelivered} delivered`;
 
-  const lines = [
-    `Passport Tracking Sync Run — ${new Date().toISOString()}`,
-    '',
-    `BACKFILL (oldest first)`,
-    `  Pool:         ${backfillTotal} remaining`,
-    `  Scraped:      ${b.scraped}`,
-    `  Delivered:    ${b.delivered}`,
-    `  In Transit:   ${b.inTransit}`,
-    `  Parse Errors: ${b.parseErrors}  (page scraped OK but couldn't extract status)`,
-    '',
-    `UPDATES (most stale first)`,
-    `  Pool:         ${updatesTotal} active`,
-    `  Scraped:      ${u.scraped}`,
-    `  Delivered:    ${u.delivered}`,
-    `  In Transit:   ${u.inTransit}`,
-    `  Unchanged:    ${u.unchanged || 0}`,
-    `  Parse Errors: ${u.parseErrors}`,
-    '',
-    `Expired:        ${expired} (Passport purged tracking page)`,
-    `Errors:         ${errors} (scrape/network failures)`,
-  ];
-  if (captcha > 0 || blocked > 0) {
-    lines.push('');
-    lines.push(`⚠ BLOCKED`);
-    if (captcha > 0) lines.push(`  CAPTCHA hits: ${captcha} (Cloudflare blocked this IP)`);
-    if (blocked > 0) lines.push(`  Not processed: ${blocked} orders skipped due to early stop`);
-    lines.push(`  These orders need a local run (residential IP) to process.`);
+  // Build per-order tables
+  const backfillRows = orderResults.filter(r => r.pool === 'backfill');
+  const updateRows = orderResults.filter(r => r.pool === 'updates');
+
+  function buildTable(rows) {
+    if (rows.length === 0) return '  (none this run)\n';
+    const header = 'Order #    Country  Order Date   Status        Parse OK';
+    const sep =    '---------- -------  ----------   -----------   --------';
+    const lines = [header, sep];
+    for (const r of rows) {
+      const num = String(r.order_number).padEnd(10);
+      const cc = (r.country || '?').padEnd(7);
+      const date = (r.fulfilled_at || '?').padEnd(12);
+      const status = r.result.padEnd(13);
+      const ok = r.parseOk ? 'Yes' : 'No';
+      lines.push(`${num} ${cc}  ${date} ${status} ${ok}`);
+    }
+    return lines.join('\n') + '\n';
   }
-  if (tooOldSkipped > 0) {
-    lines.push(`Too old:      ${tooOldSkipped} (fulfilled >45 days ago, no longer re-checking)`);
-  }
-  lines.push('', `Remaining backfill: ~${backfillTotal - b.scraped - expired}`);
-  const text = lines.join('\n');
+
+  const backfillParsed = backfillRows.filter(r => r.parseOk).length;
+  const updateParsed = updateRows.filter(r => r.parseOk).length;
+
+  const text = [
+    `Passport Tracking Sync — ${new Date().toISOString()}`,
+    '',
+    `BACKFILL (${backfillTotal} remaining, oldest first)`,
+    `${backfillRows.length} processed, ${backfillParsed} scraped OK`,
+    '',
+    buildTable(backfillRows),
+    `UPDATES (${updatesTotal} active, most stale first)`,
+    `${updateRows.length} processed, ${updateParsed} scraped OK`,
+    '',
+    buildTable(updateRows),
+    `---`,
+    `Expired: ${expired}  |  CAPTCHA: ${captcha}  |  Errors: ${errors}  |  Blocked: ${blocked}`,
+    `Remaining backfill: ~${backfillTotal - b.scraped - expired}`,
+  ].join('\n');
 
   try {
     await sgMail.send({
