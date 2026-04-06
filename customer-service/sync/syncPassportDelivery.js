@@ -578,16 +578,17 @@ async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipp
 
   function buildTable(rows) {
     if (rows.length === 0) return '  (none this run)\n';
-    const header = 'Order #    Country  Order Date   Status        Parse OK';
-    const sep =    '---------- -------  ----------   -----------   --------';
+    const header = 'Order #    Country  Order Date   Status        Parse OK  Tracking';
+    const sep =    '---------- -------  ----------   -----------   --------  --------';
     const lines = [header, sep];
     for (const r of rows) {
       const num = String(r.order_number).padEnd(10);
       const cc = (r.country || '?').padEnd(7);
       const date = (r.fulfilled_at || '?').padEnd(12);
       const status = r.result.padEnd(13);
-      const ok = r.parseOk ? 'Yes' : 'No';
-      lines.push(`${num} ${cc}  ${date} ${status} ${ok}`);
+      const ok = (r.parseOk ? 'Yes' : 'No').padEnd(9);
+      const link = `https://track.passportshipping.com/${r.tracking}`;
+      lines.push(`${num} ${cc}  ${date} ${status} ${ok} ${link}`);
     }
     return lines.join('\n') + '\n';
   }
