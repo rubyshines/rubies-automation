@@ -320,7 +320,7 @@ async function scrapeOrder(supabase, order, snapMap) {
   }
 
   // Upsert snapshot
-  await supabase.from('tracking_snapshots').upsert({
+  const { error: upsertError } = await supabase.from('tracking_snapshots').upsert({
     tracking_number: order.tracking_number,
     order_number: order.order_number,
     carrier,
@@ -331,13 +331,16 @@ async function scrapeOrder(supabase, order, snapMap) {
     raw_text: rawText || null,
     summary: parsed.status_description || null,
     current_status: parsed.current_status || 'unknown',
-    estimated_delivery: parsed.estimated_delivery || null,
+    estimated_delivery: parsed.estimated_delivery && !isNaN(new Date(parsed.estimated_delivery)) ? parsed.estimated_delivery : null,
     last_location: parsed.last_location || null,
     local_carrier: parsed.local_carrier || null,
     local_tracking_number: parsed.local_tracking_number || null,
     customs_cleared: parsed.customs_cleared || false,
     scraped_at: new Date().toISOString(),
   }, { onConflict: 'tracking_number' });
+  if (upsertError) {
+    console.error(`  #${order.order_number}: upsert failed — ${upsertError.message}`);
+  }
 
   // If delivered, patch deliveredAt into order fulfillments
   if (parsed.current_status === 'delivered') {
