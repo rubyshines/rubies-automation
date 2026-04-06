@@ -49,6 +49,13 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function pushDeliveryToShopify(shopifyOrderId, trackingNumber, deliveredAt) {
   if (!shopifyOrderId || !deliveredAt) return false;
 
+  // Skip Shopify push for deliveries older than 2 days — pushing old delivery
+  // events triggers Shopify's "Shipment delivered" notification, which would
+  // confuse customers. We still store the date in Supabase.
+  const deliveredDate = new Date(deliveredAt);
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+  if (deliveredDate < twoDaysAgo) return false;
+
   try {
     // Look up the fulfillment GID from Shopify
     const orderResult = await shopifyGraphQL(`{
@@ -355,21 +362,21 @@ async function scrapeOrder(supabase, order, snapMap) {
     }
 
     if (deliveredAt) {
-      // Push to Shopify first (source of truth)
-      const pushed = await pushDeliveryToShopify(order.shopify_order_id, order.tracking_number, deliveredAt);
-      if (pushed) {
-        // Patch Supabase fulfillments to match
-        const updatedFulfillments = order.fulfillments.map(f => {
-          if (f.trackingNumber === order.tracking_number) {
-            return { ...f, deliveredAt };
-          }
-          return f;
-        });
+      // Push to Shopify (only for recent deliveries — older ones skip to
+      // avoid triggering Shopify's "Shipment delivered" customer notification)
+      await pushDeliveryToShopify(order.shopify_order_id, order.tracking_number, deliveredAt);
 
-        await supabase.from('orders')
-          .update({ fulfillments: updatedFulfillments })
-          .eq('order_number', order.order_number);
-      }
+      // Always patch Supabase fulfillments
+      const updatedFulfillments = order.fulfillments.map(f => {
+        if (f.trackingNumber === order.tracking_number) {
+          return { ...f, deliveredAt };
+        }
+        return f;
+      });
+
+      await supabase.from('orders')
+        .update({ fulfillments: updatedFulfillments })
+        .eq('order_number', order.order_number);
     }
 
     return 'delivered';
