@@ -28,14 +28,15 @@ async function handle(payload) {
 
   // --- Quick-reject filters (same logic as poller pre-filter) ---
 
-  // Skip agent messages
-  if (message?.from_agent === true) {
+  // Skip agent messages (Gorgias templates send "True"/"False" strings)
+  const fromAgent = message?.from_agent === true || message?.from_agent === 'True' || message?.from_agent === 'true';
+  if (fromAgent) {
     console.log(`[gorgias-webhook] Skip ${ticketId}: agent message`);
     return;
   }
 
   // Skip non-open tickets
-  if (ticket.status !== 'open') {
+  if (ticket.status && ticket.status !== 'open') {
     console.log(`[gorgias-webhook] Skip ${ticketId}: status=${ticket.status}`);
     return;
   }
@@ -46,8 +47,8 @@ async function handle(payload) {
     return;
   }
 
-  // Skip spam
-  if (ticket.spam) {
+  // Skip spam (may be boolean or string from Gorgias templates)
+  if (ticket.spam === true || ticket.spam === 'True' || ticket.spam === 'true') {
     console.log(`[gorgias-webhook] Skip ${ticketId}: spam`);
     return;
   }
