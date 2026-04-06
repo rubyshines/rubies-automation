@@ -571,56 +571,89 @@ async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipp
   const { backfill: b, updates: u, expired, captcha, errors } = result;
   const totalDelivered = b.delivered + u.delivered;
   const totalParsed = orderResults.filter(r => r.parseOk).length;
-  const totalFailed = orderResults.filter(r => !r.parseOk).length;
 
   const subject = `Passport Sync: ${totalParsed}/${orderResults.length} scraped OK, ${totalDelivered} delivered`;
 
-  // Build per-order tables
   const backfillRows = orderResults.filter(r => r.pool === 'backfill');
   const updateRows = orderResults.filter(r => r.pool === 'updates');
 
-  function buildTable(rows) {
-    if (rows.length === 0) return '  (none this run)\n';
-    const header = 'Order #    Country  Order Date   Status        Parse OK  Tracking';
-    const sep =    '---------- -------  ----------   -----------   --------  --------';
-    const lines = [header, sep];
-    for (const r of rows) {
-      const num = String(r.order_number).padEnd(10);
-      const cc = (r.country || '?').padEnd(7);
-      const date = (r.fulfilled_at || '?').padEnd(12);
-      const status = r.result.padEnd(13);
-      const ok = (r.parseOk ? 'Yes' : 'No').padEnd(9);
+  const statusColor = (s) => {
+    if (s === 'delivered') return '#16a34a';
+    if (s === 'in_transit') return '#2563eb';
+    if (s === 'captcha' || s === 'error') return '#dc2626';
+    if (s === 'expired' || s === 'parse_error') return '#d97706';
+    return '#6b7280';
+  };
+
+  function buildTableHtml(rows) {
+    if (rows.length === 0) return '<p style="color:#9ca3af;font-size:13px;">None this run</p>';
+    const header = `<tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
+      <th style="padding:6px 10px;text-align:left;font-size:12px;">Order</th>
+      <th style="padding:6px 10px;text-align:left;font-size:12px;">Country</th>
+      <th style="padding:6px 10px;text-align:left;font-size:12px;">Fulfilled</th>
+      <th style="padding:6px 10px;text-align:left;font-size:12px;">Status</th>
+      <th style="padding:6px 10px;text-align:center;font-size:12px;">Parsed</th>
+      <th style="padding:6px 10px;text-align:left;font-size:12px;">Tracking</th>
+    </tr>`;
+    const trs = rows.map((r, i) => {
+      const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
       const link = `https://track.passportshipping.com/${r.tracking}`;
-      lines.push(`${num} ${cc}  ${date} ${status} ${ok} ${link}`);
-    }
-    return lines.join('\n') + '\n';
+      const check = r.parseOk ? '&#10003;' : '&#10007;';
+      const checkColor = r.parseOk ? '#16a34a' : '#dc2626';
+      return `<tr style="background:${bg};border-bottom:1px solid #e5e7eb;">
+        <td style="padding:5px 10px;font-size:13px;font-weight:600;">#${r.order_number}</td>
+        <td style="padding:5px 10px;font-size:13px;">${r.country || '?'}</td>
+        <td style="padding:5px 10px;font-size:13px;color:#6b7280;">${r.fulfilled_at || '?'}</td>
+        <td style="padding:5px 10px;font-size:13px;"><span style="color:${statusColor(r.result)};font-weight:600;">${r.result}</span></td>
+        <td style="padding:5px 10px;font-size:15px;text-align:center;color:${checkColor};">${check}</td>
+        <td style="padding:5px 10px;font-size:12px;"><a href="${link}" style="color:#2563eb;">${r.tracking}</a></td>
+      </tr>`;
+    });
+    return `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;">${header}${trs.join('')}</table>`;
   }
 
   const backfillParsed = backfillRows.filter(r => r.parseOk).length;
   const updateParsed = updateRows.filter(r => r.parseOk).length;
 
-  const text = [
-    `Passport Tracking Sync — ${new Date().toISOString()}`,
-    '',
-    `BACKFILL (${backfillTotal} remaining, oldest first)`,
-    `${backfillRows.length} processed, ${backfillParsed} scraped OK`,
-    '',
-    buildTable(backfillRows),
-    `UPDATES (${updatesTotal} active, most stale first)`,
-    `${updateRows.length} processed, ${updateParsed} scraped OK`,
-    '',
-    buildTable(updateRows),
-    `---`,
-    `Expired: ${expired}  |  CAPTCHA: ${captcha}  |  Errors: ${errors}  |  Blocked: ${blocked}`,
-    `Remaining backfill: ~${backfillTotal - b.scraped - expired}`,
-  ].join('\n');
+  // Summary badges
+  const badge = (label, value, color) =>
+    `<span style="display:inline-block;padding:4px 12px;margin:0 6px 6px 0;background:${color};color:#fff;border-radius:12px;font-size:12px;font-weight:600;">${label}: ${value}</span>`;
+
+  const badges = [
+    badge('Delivered', totalDelivered, '#16a34a'),
+    badge('In Transit', b.inTransit + u.inTransit, '#2563eb'),
+    expired > 0 ? badge('Expired', expired, '#d97706') : '',
+    captcha > 0 ? badge('CAPTCHA', captcha, '#dc2626') : '',
+    errors > 0 ? badge('Errors', errors, '#dc2626') : '',
+    blocked > 0 ? badge('Blocked', blocked, '#991b1b') : '',
+  ].filter(Boolean).join('');
+
+  const html = `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:900px;margin:0 auto;">
+  <h2 style="margin-bottom:4px;">Passport Tracking Sync</h2>
+  <p style="color:#6b7280;margin-top:0;font-size:13px;">${new Date().toISOString()}</p>
+
+  <div style="margin:16px 0;">${badges}</div>
+
+  <h3 style="margin:20px 0 8px;color:#1e293b;">Backfill <span style="font-weight:normal;color:#6b7280;">(${backfillTotal} remaining, oldest first)</span></h3>
+  <p style="font-size:13px;color:#374151;margin:0 0 8px;">${backfillRows.length} processed, ${backfillParsed} scraped OK</p>
+  ${buildTableHtml(backfillRows)}
+
+  <h3 style="margin:20px 0 8px;color:#1e293b;">Updates <span style="font-weight:normal;color:#6b7280;">(${updatesTotal} active, most stale first)</span></h3>
+  <p style="font-size:13px;color:#374151;margin:0 0 8px;">${updateRows.length} processed, ${updateParsed} scraped OK</p>
+  ${buildTableHtml(updateRows)}
+
+  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+  <p style="font-size:12px;color:#9ca3af;">Remaining backfill: ~${backfillTotal - b.scraped - expired}</p>
+</div>`;
 
   try {
     await sgMail.send({
       to: 'jamie@rubyshines.com',
       from: 'pipeline@rubyshines.com',
       subject,
-      text,
+      html,
+      trackingSettings: { clickTracking: { enable: false, enableText: false } },
     });
   } catch (e) {
     console.error('Failed to send summary email:', e.message);
