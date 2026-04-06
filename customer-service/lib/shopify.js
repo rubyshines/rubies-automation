@@ -309,6 +309,7 @@ async function fetchAllProducts(cursor = null) {
                   sku
                   price
                   inventoryQuantity
+                  inventoryItem { id }
                   selectedOptions { name value }
                 }
               }
@@ -1217,6 +1218,61 @@ async function updateProductStatus(productId, status) {
 }
 
 /**
+ * Fetch a single product by numeric ID (for webhook metafield enrichment).
+ */
+async function fetchProductById(numericId) {
+  const gid = normalizeGid(numericId, 'Product');
+  const data = await shopifyGraphQL(`
+    query fetchProduct($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        handle
+        status
+        tags
+        descriptionHtml
+        productType
+        vendor
+        metafields(first: 50) {
+          edges {
+            node { namespace key value }
+          }
+        }
+        variants(first: 100) {
+          edges {
+            node {
+              id
+              title
+              sku
+              price
+              inventoryQuantity
+              inventoryItem { id }
+              selectedOptions { name value }
+            }
+          }
+        }
+      }
+    }
+  `, { id: gid });
+
+  if (!data.product) return null;
+
+  const node = data.product;
+  const metafields = {};
+  for (const mf of (node.metafields?.edges || [])) {
+    const { namespace, key, value } = mf.node;
+    if (namespace === 'custom') {
+      try { metafields[key] = JSON.parse(value); } catch { metafields[key] = value; }
+    }
+  }
+  return {
+    ...node,
+    metafields,
+    variants: node.variants.edges.map(v => v.node),
+  };
+}
+
+/**
  * Update shipping address on an order.
  */
 async function updateOrderShippingAddress(orderId, shippingAddress) {
@@ -1266,4 +1322,5 @@ module.exports = {
   orderEditCommit,
   sendOrderInvoice,
   updateOrderShippingAddress,
+  fetchProductById,
 };

@@ -1,0 +1,125 @@
+/**
+ * Webhook Receiver — Express server for Shopify + Gorgias webhooks
+ *
+ * Deployed on Railway. Receives real-time events and upserts to Supabase.
+ * Daily sync remains as reconciliation for missed webhooks.
+ *
+ * Usage:
+ *   npm run webhook-server
+ *   PORT=3000 (default, Railway injects automatically)
+ */
+
+const path = require('path');
+if (!process.env.SUPABASE_URL) {
+  require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
+}
+
+const express = require('express');
+const { verifyShopifyHmac } = require('./lib/hmac');
+const { verifyGorgiasSecret } = require('./lib/gorgiasAuth');
+const { logEvent, enqueueDeadLetter } = require('./lib/deadLetter');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ---------------------------------------------------------------------------
+// Middleware
+// ---------------------------------------------------------------------------
+
+// Shopify needs raw body for HMAC verification.
+// Parse JSON for all other routes.
+app.use('/webhooks/shopify', express.raw({ type: 'application/json' }));
+app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+// ---------------------------------------------------------------------------
+// Shopify webhook routes
+// ---------------------------------------------------------------------------
+const SHOPIFY_HANDLERS = {
+  'orders-create':      () => require('./handlers/shopifyOrders'),
+  'orders-updated':     () => require('./handlers/shopifyOrders'),
+  'customers-update':   () => require('./handlers/shopifyCustomers'),
+  'inventory-levels-update': () => require('./handlers/shopifyInventory'),
+  'fulfillments-create': () => require('./handlers/shopifyFulfillments'),
+  'fulfillments-update': () => require('./handlers/shopifyFulfillments'),
+  'products-create':    () => require('./handlers/shopifyProducts'),
+  'products-update':    () => require('./handlers/shopifyProducts'),
+};
+
+app.post('/webhooks/shopify/:topic', verifyShopifyHmac, async (req, res) => {
+  const topic = req.params.topic;
+  const loaderFn = SHOPIFY_HANDLERS[topic];
+
+  if (!loaderFn) {
+    console.warn(`[webhook] Unknown Shopify topic: ${topic}`);
+    return res.status(404).json({ error: 'unknown topic' });
+  }
+
+  // Respond immediately — Shopify retries on timeout
+  res.status(200).json({ received: true });
+
+  const start = Date.now();
+  const payload = JSON.parse(req.body.toString());
+  const payloadId = String(payload.id || payload.inventory_item_id || '');
+
+  try {
+    const handler = loaderFn();
+    await handler.handle(topic, payload);
+    await logEvent('shopify', topic, payloadId, 'processed', Date.now() - start);
+    console.log(`[webhook] shopify/${topic} #${payloadId} processed in ${Date.now() - start}ms`);
+  } catch (err) {
+    console.error(`[webhook] shopify/${topic} #${payloadId} failed:`, err.message);
+    await logEvent('shopify', topic, payloadId, 'failed', Date.now() - start, err.message);
+    await enqueueDeadLetter('shopify', topic, payload, err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Gorgias webhook route
+// ---------------------------------------------------------------------------
+app.post('/webhooks/gorgias', verifyGorgiasSecret, async (req, res) => {
+  // Respond immediately — Gorgias has a 10s timeout
+  res.status(200).json({ received: true });
+
+  const start = Date.now();
+  const payload = req.body;
+  const ticketId = String(payload?.ticket?.id || '');
+
+  try {
+    const handler = require('./handlers/gorgiasTickets');
+    await handler.handle(payload);
+    await logEvent('gorgias', 'ticket-message-created', ticketId, 'processed', Date.now() - start);
+    console.log(`[webhook] gorgias/ticket #${ticketId} processed in ${Date.now() - start}ms`);
+  } catch (err) {
+    console.error(`[webhook] gorgias/ticket #${ticketId} failed:`, err.message);
+    await logEvent('gorgias', 'ticket-message-created', ticketId, 'failed', Date.now() - start, err.message);
+    await enqueueDeadLetter('gorgias', 'ticket-message-created', payload, err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Start
+// ---------------------------------------------------------------------------
+const server = app.listen(PORT, () => {
+  console.log(`[webhook] Server listening on port ${PORT}`);
+});
+
+// Graceful shutdown
+function shutdown(signal) {
+  console.log(`[webhook] ${signal} received, shutting down...`);
+  server.close(() => {
+    console.log('[webhook] Server closed');
+    process.exit(0);
+  });
+  // Force exit after 10s if connections don't close
+  setTimeout(() => process.exit(1), 10000);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

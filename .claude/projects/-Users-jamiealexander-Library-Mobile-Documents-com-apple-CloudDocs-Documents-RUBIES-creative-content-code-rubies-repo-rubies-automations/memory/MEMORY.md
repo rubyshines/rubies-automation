@@ -182,6 +182,9 @@ node wholesale/discover.js --contact-test --url "https://sockdrawerheroes.com"
 ## Webhook & Real-Time Sync Plan
 - [Webhook & Real-Time Sync Plan](project_webhook_realtime_plan.md) — Replace polling with Gorgias + Shopify inventory webhooks on Railway. Phase 3: move CS reads to Supabase.
 
+## Hybrid CS Advisor
+- [Hybrid Advisor Status](project_hybrid_advisor_status.md) — Opus + deterministic tools, in production. ~$0.08/convo. Replaces decision tree. Poller uses with tree fallback.
+
 ## Dependencies
 - `@supabase/supabase-js`, `dotenv`, `googleapis`, `@google-analytics/data`
 - `@sendgrid/mail`, `pg`, `puppeteer` (v22, bundles Chromium)

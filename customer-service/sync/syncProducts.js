@@ -159,6 +159,7 @@ async function run() {
       variantRows.push({
         shopify_variant_id: v.id,
         shopify_product_id: p.id,
+        shopify_inventory_item_id: v.inventoryItem?.id || null,
         title: v.title,
         sku: v.sku || null,
         price: parseFloat(v.price) || 0,

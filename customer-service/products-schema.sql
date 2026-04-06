@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS product_variants (
   shopify_variant_id  text PRIMARY KEY,          -- Shopify GID
   shopify_product_id  text NOT NULL REFERENCES products(shopify_product_id) ON DELETE CASCADE,
+  shopify_inventory_item_id text,                -- Shopify InventoryItem GID (for webhook inventory updates)
   title               text NOT NULL,
   sku                 text,
   price               numeric NOT NULL DEFAULT 0,
@@ -57,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_product_variants_product
 
 CREATE INDEX IF NOT EXISTS idx_product_variants_sku
   ON product_variants(sku);
+
+CREATE INDEX IF NOT EXISTS idx_product_variants_inventory_item
+  ON product_variants(shopify_inventory_item_id);
 
 -- ─── RPC: get_product_catalog ────────────────────────────────────────────────
 -- Returns all products with aggregate variant stats.
