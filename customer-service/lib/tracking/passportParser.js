@@ -14,7 +14,16 @@ const DATE_RE = new RegExp(`(${MONTHS})\\s+(\\d{1,2})\\s+(\\d{1,2}:\\d{2})`, 'g'
  * Same output shape as analyzer.parseTrackingPage().
  */
 function parsePassportPage(text) {
-  if (!text || text.length < 100 || !/passport/i.test(text)) {
+  if (!text || text.length < 100) {
+    return { current_status: 'unknown', parse_failed: true, events: [] };
+  }
+  // Check for Passport page markers — the word "Passport" may be truncated
+  // on long pages, so also accept other Passport-specific patterns
+  const isPassportPage = /passport/i.test(text)
+    || /CURRENT STATUS/.test(text)
+    || /YOUR LOCAL DELIVERY/.test(text)
+    || /ESTIMATED DELIVERY DATE/.test(text);
+  if (!isPassportPage) {
     return { current_status: 'unknown', parse_failed: true, events: [] };
   }
 
@@ -49,7 +58,7 @@ function doParse(text) {
   const destination = destMatch ? destMatch[1].trim() : null;
 
   // --- Local carrier ---
-  const localCarrierMatch = text.match(/Your local delivery\s+([A-Za-z][\w\s&.-]*?)(?:\s+[A-Z0-9]{6,}|\s+Rate|\n)/);
+  const localCarrierMatch = text.match(/(?:Your local delivery|YOUR LOCAL DELIVERY)\s+([A-Za-z][\w\s&.|()-]*?)(?:\s+[A-Z0-9]{6,}|\s+Rate|\n)/);
   let localCarrier = localCarrierMatch ? localCarrierMatch[1].trim() : null;
   // Clean up: remove trailing tracking number fragments
   if (localCarrier && localCarrier.length > 30) localCarrier = localCarrier.split(/\s+/).slice(0, 3).join(' ');
