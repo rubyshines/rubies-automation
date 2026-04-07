@@ -102,17 +102,34 @@ async function findOrCreateCustomer({ email, first_name, last_name, phone, addre
 async function handleCreateOrder({
   email, first_name, last_name, phone, address,
   customer_id,
-  items, discount_percent, free, note, tags,
+  items, custom_items, discount_percent, free, note, tags,
   confirmed,
 }) {
-  if (!items || items.length === 0) {
-    return { content: [{ type: 'text', text: 'Must provide at least one item.' }] };
+  const hasItems = items && items.length > 0;
+  const hasCustomItems = custom_items && custom_items.length > 0;
+  if (!hasItems && !hasCustomItems) {
+    return { content: [{ type: 'text', text: 'Must provide at least one item or custom_item.' }] };
   }
 
-  // Resolve items
-  const resolved = await resolveItems(items);
+  // Resolve catalog items
+  const resolved = hasItems ? await resolveItems(items) : [];
   if (resolved.error) {
     return { content: [{ type: 'text', text: resolved.error }] };
+  }
+
+  // Add custom items (no variant, no inventory)
+  if (hasCustomItems) {
+    for (const ci of custom_items) {
+      resolved.push({
+        variantId: null,
+        productTitle: ci.title,
+        variantTitle: 'Custom',
+        sku: null,
+        price: ci.price,
+        quantity: ci.quantity || 1,
+        isCustom: true,
+      });
+    }
   }
 
   // Determine discount
@@ -194,10 +211,13 @@ async function handleCreateOrder({
 
   md += `\n**Items:**\n`;
   for (const r of itemLines) {
+    const label = r.isCustom
+      ? `${r.quantity}x ${r.productTitle} (custom — no fulfillment)`
+      : `${r.quantity}x ${r.productTitle} - ${r.variantTitle}`;
     if (discountPct > 0) {
-      md += `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} — ~~${fmtCurrency(r.unitPrice)}~~ → ${fmtCurrency(r.discountedPrice)}\n`;
+      md += `  ${label} — ~~${fmtCurrency(r.unitPrice)}~~ → ${fmtCurrency(r.discountedPrice)}\n`;
     } else {
-      md += `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} → ${fmtCurrency(r.unitPrice)}\n`;
+      md += `  ${label} → ${fmtCurrency(r.unitPrice)}\n`;
     }
     if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
       md += `  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})\n`;
@@ -209,19 +229,23 @@ async function handleCreateOrder({
   md += `**Shipping:** ${isFree ? 'Free' : 'Standard (Shopify-calculated)'}\n`;
   if (note) md += `**Note:** ${note}\n`;
 
-  // Phase 1: preview only
-  if (!confirmed) {
-    md += `\nCall again with \`confirmed=true\` to create this order.`;
-    return { content: [{ type: 'text', text: md }] };
-  }
-
-  // Phase 2: create the draft order
+  // Build line items for Shopify draft
   const lineItems = [];
   for (const r of itemLines) {
-    const li = {
-      variantId: r.variantId,
-      quantity: r.quantity,
-    };
+    let li;
+    if (r.isCustom) {
+      li = {
+        title: r.productTitle,
+        originalUnitPrice: r.unitPrice.toFixed(2),
+        quantity: r.quantity,
+        requiresShipping: false,
+      };
+    } else {
+      li = {
+        variantId: r.variantId,
+        quantity: r.quantity,
+      };
+    }
     if (discountPct > 0) {
       li.appliedDiscount = {
         title: isFree ? 'Free / Samples' : `${discountPct}% discount`,
@@ -262,6 +286,7 @@ async function handleCreateOrder({
     draftInput.shippingAddress = shippingAddr;
   }
 
+  // Always create draft in Phase 1 so we get the admin link + Shopify-calculated totals
   const draftOrder = await createDraftOrder(draftInput);
 
   md += `\n---\n**Draft Order Created — Awaiting Confirmation**\n\n`;
@@ -309,7 +334,7 @@ const tools = [
         },
         items: {
           type: 'array',
-          description: 'Products to include in the order',
+          description: 'Products to include in the order (real catalog items)',
           items: {
             type: 'object',
             properties: {
@@ -317,6 +342,19 @@ const tools = [
               variant_id: { type: 'string', description: 'Shopify variant ID (if known)' },
               quantity: { type: 'number', description: 'Quantity (default: 1)' },
             },
+          },
+        },
+        custom_items: {
+          type: 'array',
+          description: 'Custom line items (not from catalog, won\'t reserve inventory or require fulfillment). Use for charge-backs, adjustments, or special cases.',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string', description: 'Line item title (e.g. "3x AJ Underwear — keep charge")' },
+              price: { type: 'string', description: 'Unit price (e.g. "25.20")' },
+              quantity: { type: 'number', description: 'Quantity (default: 1)' },
+            },
+            required: ['title', 'price'],
           },
         },
         free: {
@@ -338,7 +376,7 @@ const tools = [
           description: 'Set to true to create the order. Omit or false for preview.',
         },
       },
-      required: ['items'],
+      required: [],
     },
     handler: handleCreateOrder,
   },

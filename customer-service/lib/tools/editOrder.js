@@ -19,6 +19,7 @@ const {
   getAdminUrl,
   normalizeGid,
   shopifyGraphQL,
+  updateOrderShippingAddress,
 } = require('../shopify');
 const { searchProducts } = require('../productCache');
 const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
@@ -58,7 +59,7 @@ const tools = [
   {
     name: 'edit_order',
     description: [
-      'Edit an unfulfilled Shopify order by swapping, removing, or adding line items.',
+      'Edit an unfulfilled Shopify order by swapping, removing, or adding line items, and/or updating the shipping address.',
       'Two-phase flow:',
       'Phase 1 (confirmed omitted or false): Validates the order is editable (not fulfilled, not in-progress at Warehance),',
       'stages the edit in Shopify to get exact price calculations, and returns a detailed preview.',
@@ -89,6 +90,20 @@ const tools = [
             },
           },
         },
+        shipping_address: {
+          type: 'object',
+          description: 'Update shipping address. Can be used alone (address-only update) or with swap_items. Fields: address1, address2, city, province, country, zip, first_name, last_name.',
+          properties: {
+            first_name: { type: 'string' },
+            last_name: { type: 'string' },
+            address1: { type: 'string' },
+            address2: { type: 'string' },
+            city: { type: 'string' },
+            province: { type: 'string' },
+            country: { type: 'string', description: 'Country code e.g. "US", "CA", "AU"' },
+            zip: { type: 'string' },
+          },
+        },
         note: {
           type: 'string',
           description: 'Staff note for the edit (shown in Shopify admin timeline)',
@@ -104,7 +119,7 @@ const tools = [
       },
       required: ['order_number'],
     },
-    handler: async ({ order_number, swap_items, note, dry_run, confirmed }) => {
+    handler: async ({ order_number, swap_items, shipping_address, note, dry_run, confirmed }) => {
       // ---------------------------------------------------------------
       // Phase 2: Commit the staged edit
       // ---------------------------------------------------------------
@@ -132,6 +147,20 @@ const tools = [
           _edit_data.calculated_order_id,
           note || _edit_data.note || 'Order edited via CS MCP tool',
         );
+
+        // Update shipping address if provided alongside item edits
+        if (shipping_address) {
+          const addrInput = {};
+          if (shipping_address.first_name) addrInput.firstName = shipping_address.first_name;
+          if (shipping_address.last_name) addrInput.lastName = shipping_address.last_name;
+          if (shipping_address.address1) addrInput.address1 = shipping_address.address1;
+          if (shipping_address.address2 !== undefined) addrInput.address2 = shipping_address.address2 || '';
+          if (shipping_address.city) addrInput.city = shipping_address.city;
+          if (shipping_address.province) addrInput.province = shipping_address.province;
+          if (shipping_address.country) addrInput.countryCode = shipping_address.country;
+          if (shipping_address.zip) addrInput.zip = shipping_address.zip;
+          await updateOrderShippingAddress(committedOrder.id, addrInput);
+        }
 
         lines.push('**Order Edit Completed**', '');
         lines.push(`**Order:** ${committedOrder.name} — ${getAdminUrl(committedOrder.id)}`);
@@ -244,10 +273,49 @@ const tools = [
       }
 
       // ---------------------------------------------------------------
+      // Address-only update (no swap_items needed)
+      // ---------------------------------------------------------------
+      if (shipping_address && (!swap_items || swap_items.length === 0)) {
+        const order = await getOrderForEdit(order_number);
+        if (order.displayFulfillmentStatus === 'FULFILLED') {
+          return { content: [{ type: 'text', text: `Error: Order ${order.name} is already fulfilled. Cannot update shipping address.` }] };
+        }
+
+        const addrInput = {};
+        if (shipping_address.first_name) addrInput.firstName = shipping_address.first_name;
+        if (shipping_address.last_name) addrInput.lastName = shipping_address.last_name;
+        if (shipping_address.address1) addrInput.address1 = shipping_address.address1;
+        if (shipping_address.address2 !== undefined) addrInput.address2 = shipping_address.address2 || '';
+        if (shipping_address.city) addrInput.city = shipping_address.city;
+        if (shipping_address.province) addrInput.province = shipping_address.province;
+        if (shipping_address.country) addrInput.countryCode = shipping_address.country;
+        if (shipping_address.zip) addrInput.zip = shipping_address.zip;
+
+        const updated = await updateOrderShippingAddress(order.id, addrInput);
+        const a = updated.shippingAddress;
+        const lines = [
+          '**Shipping Address Updated**',
+          '',
+          `**Order:** ${order.name} — ${getAdminUrl(order.id)}`,
+          `**New address:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}`,
+        ];
+
+        writeAuditEntry({
+          action_type: 'address_updated',
+          actor: 'claude_code',
+          entity_type: 'order',
+          entity_id: order.name,
+          details: { order_id: order.id, new_address: addrInput, note },
+        });
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      }
+
+      // ---------------------------------------------------------------
       // Phase 1: Validate, stage edit, preview
       // ---------------------------------------------------------------
       if (!swap_items || swap_items.length === 0) {
-        return { content: [{ type: 'text', text: 'Error: swap_items are required. Provide [{ remove_sku, add_query }] to swap, [{ remove_sku }] to remove, or [{ add_query }] to add items.' }] };
+        return { content: [{ type: 'text', text: 'Error: swap_items or shipping_address required. Provide [{ remove_sku, add_query }] to swap, [{ remove_sku }] to remove, [{ add_query }] to add items, or shipping_address to update the address.' }] };
       }
 
       // Validate each swap has at least a remove or add operation
