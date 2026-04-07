@@ -209,8 +209,8 @@ async function buildPools(supabase, candidates, full) {
       continue;
     }
 
-    // Skip expired pages permanently
-    if (snap.status === 'expired') { expiredSkipped++; continue; }
+    // Skip expired and parse_error pages permanently (use --retry-errors to re-process parse errors)
+    if (snap.status === 'expired' || snap.status === 'parse_error') { expiredSkipped++; continue; }
 
     // Skip delivered (shouldn't be in candidates, but defensive)
     if (snap.status === 'delivered') continue;
@@ -388,8 +388,13 @@ async function scrapeOrder(supabase, order, snapMap) {
   // Distinguish real in-transit from parse failures
   const status = parsed.current_status || 'unknown';
   if (status === 'unknown' || status === 'pre_transit') {
-    console.warn(`  #${order.order_number}: parse_error — scraped ${rawText.length} chars but status=${status}`);
-    return 'parse_error';
+    const rawStatus = parsed.raw_current_status || '(not found)';
+    console.warn(`  #${order.order_number}: parse_error — scraped ${rawText.length} chars, status=${status}, page says: "${rawStatus}"`);
+    // Save as parse_error so it won't retry (use --retry-errors after fixing parser)
+    await supabase.from('tracking_snapshots')
+      .update({ current_status: 'parse_error' })
+      .eq('tracking_number', order.tracking_number);
+    return { type: 'parse_error', rawStatus };
   }
 
   return 'in_transit';
@@ -469,17 +474,21 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
       const result = await scrapeOrder(supabase, order, snapMap);
       consecutiveErrors = 0;
 
+      const resultType = typeof result === 'object' ? result.type : result;
+      const rawStatus = typeof result === 'object' ? result.rawStatus : null;
+
       orderResults.push({
         order_number: order.order_number,
         pool,
         country: order.country_code || '?',
         tracking: order.tracking_number,
         fulfilled_at: order.fulfilled_at?.split('T')[0] || '?',
-        result,
-        parseOk: !['captcha', 'expired', 'parse_error'].includes(result),
+        result: resultType,
+        parseOk: !['captcha', 'expired', 'parse_error'].includes(resultType),
+        rawStatus,
       });
 
-      switch (result) {
+      switch (resultType) {
         case 'captcha':
           counts.captcha++;
           if (counts.captcha >= 3) {
@@ -600,11 +609,14 @@ async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipp
       const link = `https://track.passportshipping.com/${r.tracking}`;
       const check = r.parseOk ? '&#10003;' : '&#10007;';
       const checkColor = r.parseOk ? '#16a34a' : '#dc2626';
+      const rawStatusNote = r.rawStatus
+        ? `<br><span style="font-size:11px;color:#991b1b;">Page says: "${r.rawStatus}"</span>`
+        : '';
       return `<tr style="background:${bg};border-bottom:1px solid #e5e7eb;">
         <td style="padding:5px 10px;font-size:13px;font-weight:600;">#${r.order_number}</td>
         <td style="padding:5px 10px;font-size:13px;">${r.country || '?'}</td>
         <td style="padding:5px 10px;font-size:13px;color:#6b7280;">${r.fulfilled_at || '?'}</td>
-        <td style="padding:5px 10px;font-size:13px;"><span style="color:${statusColor(r.result)};font-weight:600;">${r.result}</span></td>
+        <td style="padding:5px 10px;font-size:13px;"><span style="color:${statusColor(r.result)};font-weight:600;">${r.result}</span>${rawStatusNote}</td>
         <td style="padding:5px 10px;font-size:15px;text-align:center;color:${checkColor};">${check}</td>
         <td style="padding:5px 10px;font-size:12px;"><a href="${link}" style="color:#2563eb;">${r.tracking}</a></td>
       </tr>`;
@@ -690,17 +702,48 @@ async function run() {
   }
 }
 
+async function retryParseErrors() {
+  const supabase = getSupabaseClient();
+  const { data: errorSnaps } = await supabase.from('tracking_snapshots')
+    .select('tracking_number, order_number')
+    .eq('current_status', 'parse_error');
+
+  if (!errorSnaps?.length) {
+    console.log('No parse_error snapshots to retry.');
+    return;
+  }
+
+  console.log(`Retrying ${errorSnaps.length} parse_error snapshots...`);
+
+  // Reset them to unknown so buildPools picks them up as backfill
+  for (const s of errorSnaps) {
+    await supabase.from('tracking_snapshots')
+      .update({ current_status: 'unknown' })
+      .eq('tracking_number', s.tracking_number);
+  }
+
+  console.log('Reset to unknown. Running sync...');
+  await syncPassportDelivery({ full: true, limit: errorSnaps.length });
+}
+
 if (require.main === module) {
   const args = process.argv.slice(2);
   const full = args.includes('--full');
+  const retryErrors = args.includes('--retry-errors');
   const limitIdx = args.indexOf('--limit');
   const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1], 10) : 0;
 
-  if (full) console.log('Running full scan (ignoring cooldown)...');
-  if (limit) console.log(`Limit: ${limit} orders per run`);
-  syncPassportDelivery({ full, limit })
-    .then(r => console.log('Done:', JSON.stringify(r)))
-    .catch(e => { console.error('Error:', e.message); process.exit(1); });
+  if (retryErrors) {
+    retryParseErrors()
+      .then(() => console.log('Done'))
+      .catch(e => { console.error('Error:', e.message); process.exit(1); });
+  } else {
+    if (full) console.log('Running full scan (ignoring cooldown)...');
+    if (limit) console.log(`Limit: ${limit} orders per run`);
+    syncPassportDelivery({ full, limit })
+      .then(r => console.log('Done:', JSON.stringify(r)))
+      .catch(e => { console.error('Error:', e.message); process.exit(1); });
+  }
 }
 
 module.exports = { syncPassportDelivery, run };

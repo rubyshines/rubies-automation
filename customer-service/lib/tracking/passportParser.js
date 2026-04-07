@@ -37,6 +37,10 @@ function parsePassportPage(text) {
 function doParse(text) {
   const header = text.substring(0, 800);
 
+  // --- Raw CURRENT STATUS text (for diagnostics when status is unknown) ---
+  const csMatch = text.match(/CURRENT STATUS\n(.+?)(?:\n|$)/);
+  const rawCurrentStatus = csMatch ? csMatch[1].trim() : null;
+
   // --- Status ---
   let currentStatus = 'unknown';
   if (/\bdelivered\b/i.test(header)) currentStatus = 'delivered';
@@ -95,6 +99,7 @@ function doParse(text) {
     customs_cleared: customsCleared,
     events,
     parse_failed: false,
+    ...(currentStatus === 'unknown' && rawCurrentStatus && { raw_current_status: rawCurrentStatus }),
   };
 }
 
