@@ -43,6 +43,8 @@
     "gmail-review": "node email-intelligence/sync/backfillGmail.js --review",
     "gmail-summarize": "node email-intelligence/sync/backfillGmail.js --summarize",
     "gmail-discover": "node email-intelligence/discover-inbox.js",
+    "gmail-sync": "node email-intelligence/sync/syncGmail.js",
+    "inbox-digest": "node email-intelligence/dailyInboxDigest.js",
     "b2b-sync": "node email-intelligence/sync/syncB2bContacts.js",
     "daily-order-alerts": "node reports/dailyOrderAlerts.js",
     "cs-poll-drafts": "node customer-service/poller/pollGorgiasDrafts.js",
@@ -54,7 +56,8 @@
     "cs-shipping-alerts": "node reports/dailyOrderAlerts.js",
     "webhook-server": "node webhooks/server.js",
     "webhook-register": "node webhooks/scripts/registerShopifyWebhooks.js",
-    "webhook-register-gorgias": "node webhooks/scripts/registerGorgiasWebhook.js"
+    "webhook-register-gorgias": "node webhooks/scripts/registerGorgiasWebhook.js",
+    "competitor-pricing": "node competitor-pricing/monthly-competitor-pricing.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
