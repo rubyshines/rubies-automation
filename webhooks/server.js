@@ -27,13 +27,18 @@ const PORT = process.env.PORT || 3000;
 // ---------------------------------------------------------------------------
 
 // Shopify needs raw body for HMAC verification.
-// Parse JSON for all other routes.
-app.use('/webhooks/shopify', express.raw({ type: 'application/json' }));
-app.use(express.json());
+// JSON parser for everything else, but MUST skip Shopify webhook routes.
+app.use('/webhooks/shopify', express.raw({ type: '*/*' }));
+app.use((req, res, next) => {
+  // Skip JSON parsing for Shopify routes (already handled by express.raw above)
+  if (req.path.startsWith('/webhooks/shopify')) return next();
+  express.json()(req, res, next);
+});
 
 // Request logger (helps debug webhook delivery issues)
 app.use('/webhooks', (req, _res, next) => {
-  console.log(`[webhook] ${req.method} ${req.path} from ${req.ip} — content-type: ${req.get('content-type') || 'none'}, hmac: ${req.get('X-Shopify-Hmac-Sha256') ? 'present' : 'absent'}`);
+  const bodyType = Buffer.isBuffer(req.body) ? `Buffer(${req.body.length})` : typeof req.body;
+  console.log(`[webhook] ${req.method} ${req.path} from ${req.ip} — body: ${bodyType}, hmac: ${req.get('X-Shopify-Hmac-Sha256') ? 'present' : 'absent'}`);
   next();
 });
 
