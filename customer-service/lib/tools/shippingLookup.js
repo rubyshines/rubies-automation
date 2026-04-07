@@ -183,6 +183,7 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
   // Step 3: For each fulfillment, scrape + analyze
   const results = [];
   const destCountry = order.shippingAddress?.countryCodeV2 || order.shippingAddress?.countryCode;
+  const destCountryName = order.shippingAddress?.country || null;
   const destProvince = order.shippingAddress?.provinceCode || order.shippingAddress?.province || null;
   const shippingZone = await getShippingZone(destCountry);
 
@@ -221,7 +222,7 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
         try {
           summary = await summarizeForCustomer(
             { current_status: cached.current_status, events: cached.raw_events, trackingUrl: cached.tracking_url, local_carrier: cached.local_carrier },
-            { shippingZone, countryCode: destCountry, provinceCode: destProvince, region: destRegion, customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null, orderNumber: order.name?.replace('#', ''), customerMessage, shipDate }
+            { shippingZone, countryCode: destCountry, countryName: destCountryName, provinceCode: destProvince, region: destRegion, customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null, orderNumber: order.name?.replace('#', ''), customerMessage, shipDate }
           );
         } catch (e) { /* fall back to cached summary */ }
       }
@@ -251,6 +252,7 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
         {
           shippingZone,
           countryCode: destCountry,
+          countryName: destCountryName,
           provinceCode: destProvince,
           region: destRegion,
           customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null,

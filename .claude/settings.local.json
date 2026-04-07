@@ -60,7 +60,11 @@
       "mcp__rubies-cs__passport_claim_update",
       "mcp__rubies-cs__resolve_order",
       "mcp__rubies-cs__release_warehouse_hold",
-      "mcp__rubies-cs__unresolve_order"
+      "mcp__rubies-cs__unresolve_order",
+      "mcp__rubies-cs__shipping_delay_resolve",
+      "mcp__rubies-cs__delivery_estimate",
+      "mcp__rubies-cs__create_order_complete",
+      "WebFetch(domain:docs.railway.com)"
     ]
   },
   "enableAllProjectMcpServers": true,

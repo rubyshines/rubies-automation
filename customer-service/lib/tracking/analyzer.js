@@ -271,7 +271,7 @@ function daysSinceDelivery(trackingData) {
 }
 
 async function buildShippingResponse(trackingData, context) {
-  const { shippingZone, customerName, orderNumber, customerMessage, shipDate, countryCode, provinceCode, region } = context || {};
+  const { shippingZone, customerName, orderNumber, customerMessage, shipDate, countryCode, countryName, provinceCode, region } = context || {};
   const name = customerName || null;
   const greeting = name ? `Hi ${name}` : 'Hi';
   const trackingLink = trackingData.trackingUrl || null;
@@ -291,6 +291,7 @@ async function buildShippingResponse(trackingData, context) {
 
   const parts = [];
   let needsHumanFollowUp = false;
+  let customsNoteMentioned = false;
 
   switch (status) {
     case 'delivered': {
@@ -320,16 +321,36 @@ async function buildShippingResponse(trackingData, context) {
         parts.push(`${greeting}, your package is out for delivery today!`);
       } else if (daysSinceLastUpdate !== null && daysSinceLastUpdate > 14) {
         // Likely lost — 14+ days no update
-        parts.push(`${greeting}, I'm sorry for the delay — I can see your package hasn't had a tracking update in ${daysSinceLastUpdate} days.`);
-        parts.push(`I'm going to check in with the carrier but it can sometimes take a few days to hear back.`);
-        parts.push(`I'll keep you posted — worst case scenario I'll send over another package so don't worry, we'll get this sorted.`);
-        needsHumanFollowUp = true;
+        const lastEvent = trackingData.events?.[0]?.description || '';
+        const lastEventIsCustoms = /tax.?payment|customs|dut(y|ies)|clearance|held|import.?fee/i.test(lastEvent);
+        if (lastEventIsCustoms && shippingZone === 'ddu') {
+          const dest = countryName || countryCode || 'your country';
+          parts.push(`${greeting}, I can see your package has been held up in customs in ${dest} for ${daysSinceLastUpdate} days.`);
+          parts.push(`This can happen with international shipments — sometimes customs requires a payment before they release the package. If you haven't already, check with your local post office or customs authority to see if there's an outstanding payment.`);
+          parts.push(`If you have already paid and it's still not moving, let me know and I'll look into it further.`);
+          customsNoteMentioned = true;
+        } else {
+          parts.push(`${greeting}, I'm sorry for the delay — I can see your package hasn't had a tracking update in ${daysSinceLastUpdate} days.`);
+          parts.push(`I'm going to check in with the carrier but it can sometimes take a few days to hear back.`);
+          parts.push(`I'll keep you posted — worst case scenario I'll send over another package so don't worry, we'll get this sorted.`);
+          needsHumanFollowUp = true;
+        }
       } else if (daysSinceLastUpdate !== null && daysSinceLastUpdate > 7) {
         // Stale — 7+ days no update
-        parts.push(`${greeting}, I'm sorry for the delay — the tracking hasn't updated in ${daysSinceLastUpdate} days.`);
-        parts.push(`I'm going to check in with the carrier but it can sometimes take a few days to hear back.`);
-        parts.push(`I'll keep you posted — worst case scenario I'll send over another package so don't worry, we'll get this sorted.`);
-        needsHumanFollowUp = true;
+        const lastEvent = trackingData.events?.[0]?.description || '';
+        const lastEventIsCustoms = /tax.?payment|customs|dut(y|ies)|clearance|held|import.?fee/i.test(lastEvent);
+        if (lastEventIsCustoms && shippingZone === 'ddu') {
+          const dest = countryName || countryCode || 'your country';
+          parts.push(`${greeting}, I can see your package has been held up in customs in ${dest} for ${daysSinceLastUpdate} days.`);
+          parts.push(`This can happen with international shipments — sometimes customs requires a payment before they release the package. If you haven't already, check with your local post office or customs authority to see if there's an outstanding payment.`);
+          parts.push(`If you have already paid and it's still not moving, let me know and I'll look into it further.`);
+          customsNoteMentioned = true;
+        } else {
+          parts.push(`${greeting}, I'm sorry for the delay — the tracking hasn't updated in ${daysSinceLastUpdate} days.`);
+          parts.push(`I'm going to check in with the carrier but it can sometimes take a few days to hear back.`);
+          parts.push(`I'll keep you posted — worst case scenario I'll send over another package so don't worry, we'll get this sorted.`);
+          needsHumanFollowUp = true;
+        }
       } else if (isOverdue) {
         // Past delivery window but tracking still updating
         parts.push(`${greeting}, I'm sorry for the delay — your order shipped ${bizDaysSinceShip} business days ago and is still in transit${trackingData.last_location ? ' at ' + trackingData.last_location : ''}, which is outside our usual ${window.standard.min}-${window.standard.max} business day delivery window.`);
@@ -353,7 +374,13 @@ async function buildShippingResponse(trackingData, context) {
           parts.push(`${localCarrier} is handling the local delivery.`);
         }
         if (trackingData.customs_cleared === false) {
-          parts.push(`It's currently going through customs — this can sometimes add a few days.`);
+          const dest = countryName || countryCode || 'your country';
+          if (shippingZone === 'ddu') {
+            parts.push(`It's currently going through customs in ${dest}. This is normal for international shipments but sometimes customs requires a payment before they release the package. If you receive a notice from your local post office or customs authority asking for a payment, go ahead and pay it to get the package released.`);
+            customsNoteMentioned = true;
+          } else {
+            parts.push(`It's currently going through customs in ${dest} — this can sometimes add a few days.`);
+          }
         }
       }
       break;
@@ -398,11 +425,11 @@ async function buildShippingResponse(trackingData, context) {
 
   // Add zone-specific duties note (only if relevant to the message)
   const askingAboutDuties = customerMessage && /dut(y|ies)|customs|tax|import|aduana/i.test(customerMessage);
-  if (askingAboutDuties || shippingZone === 'ddu') {
+  if ((askingAboutDuties || shippingZone === 'ddu') && !customsNoteMentioned) {
     if (shippingZone === 'ddp') {
       parts.push(`Just a heads up — all duties and taxes are covered on your order, so nothing extra to pay.`);
     } else if (shippingZone === 'ddu') {
-      parts.push(`Just a heads up — you may be charged customs duties on delivery. If you are, pay it and send us the receipt and we'll refund it.`);
+      parts.push(`Just a heads up — you may be charged customs duties on delivery. These are set by your local customs authority and are unfortunately outside of our control.`);
     }
   }
 
