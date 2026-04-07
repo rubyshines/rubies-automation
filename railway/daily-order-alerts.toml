@@ -1,0 +1,6 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "node reports/dailyOrderAlerts.js"
+cronSchedule = "40 9 * * *"

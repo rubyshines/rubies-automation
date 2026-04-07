@@ -1,0 +1,6 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "node scripts/write-service-account-key.js && node seo-tracking/weekly-seo-digest.js"
+cronSchedule = "45 10 * * 1"
