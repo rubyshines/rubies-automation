@@ -1,0 +1,6 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "node scripts/write-service-account-key.js && node competitor-pricing/monthly-competitor-pricing.js"
+cronSchedule = "0 14 1 * *"
