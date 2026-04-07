@@ -53,15 +53,25 @@ async function handle(payload) {
     return;
   }
 
-  const tags = (ticket.tags || []).map(tag => (tag.name || tag).toLowerCase());
+  // Gorgias templates may send tags as a JSON string
+  let rawTags = ticket.tags || [];
+  if (typeof rawTags === 'string') {
+    try { rawTags = JSON.parse(rawTags); } catch { rawTags = []; }
+  }
+  const tags = (Array.isArray(rawTags) ? rawTags : []).map(tag => (tag.name || tag).toLowerCase());
   if (tags.includes('spam')) {
     console.log(`[gorgias-webhook] Skip ${ticketId}: spam tag`);
     return;
   }
 
   // Check assignee — skip if assigned to another agent
+  // Gorgias templates may send assignee_user as a JSON string
+  let assigneeUser = ticket.assignee_user;
+  if (typeof assigneeUser === 'string') {
+    try { assigneeUser = JSON.parse(assigneeUser); } catch { assigneeUser = null; }
+  }
   const aiBotId = await getAiBotUserId();
-  const assigneeId = ticket.assignee_user?.id;
+  const assigneeId = assigneeUser?.id;
   if (assigneeId && assigneeId !== aiBotId) {
     console.log(`[gorgias-webhook] Skip ${ticketId}: assigned to another agent`);
     return;
@@ -106,8 +116,8 @@ async function handle(payload) {
     id: ticketId,
     customer: ticket.customer,
     status: ticket.status,
-    assignee_user: ticket.assignee_user,
-    tags: ticket.tags,
+    assignee_user: assigneeUser,
+    tags: rawTags,
     spam: ticket.spam,
   };
 
