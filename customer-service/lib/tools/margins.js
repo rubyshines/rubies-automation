@@ -6,6 +6,7 @@
 
 const { searchProducts } = require('../productCache');
 const { getOrderByNumber } = require('../shopify');
+const { getOrderByNumberFromSupabase } = require('../supabaseQueries');
 const { getCostForSku, getCostByPrefix, getAllCosts } = require('../costsCache');
 
 function fmtCurrency(n) {
@@ -73,7 +74,8 @@ async function handleProductMargins({ query }) {
 // ---------------------------------------------------------------------------
 
 async function handleOrderProfitability({ order_number }) {
-  const order = await getOrderByNumber(order_number);
+  let order = await getOrderByNumberFromSupabase(order_number);
+  if (!order) order = await getOrderByNumber(order_number);
 
   let totalRevenue = 0;
   let totalCogs = 0;

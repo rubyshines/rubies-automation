@@ -2,7 +2,7 @@
  * RUBIES Inventory — Daily Variant-Level Snapshot
  *
  * Snapshots inventory_quantity for every active variant (~500) into Supabase.
- * Reuses fetchAllProducts() from customer-service/lib/shopify.js.
+ * Reads from Supabase product_variants table (kept fresh by webhooks + daily sync).
  * Sends a SendGrid notification on failure only.
  */
 
@@ -11,8 +11,7 @@ if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 }
 
-const { fetchAllProducts } = require('../customer-service/lib/shopify');
-const { upsert } = require('../shared/supabaseClient');
+const { getSupabaseClient, upsert } = require('../shared/supabaseClient');
 const { getSendgridClient } = require('../shared/sendgridClient');
 
 function todayDate() {
@@ -21,24 +20,6 @@ function todayDate() {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
-}
-
-async function fetchAllActiveProducts() {
-  const allProducts = [];
-  let cursor = null;
-
-  while (true) {
-    const { products, pageInfo } = await fetchAllProducts(cursor);
-    for (const p of products) {
-      if (p.status === 'ACTIVE') {
-        allProducts.push(p);
-      }
-    }
-    if (!pageInfo.hasNextPage) break;
-    cursor = pageInfo.endCursor;
-  }
-
-  return allProducts;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,24 +32,35 @@ async function run() {
   const date = todayDate();
   console.log(`  Date: ${date}`);
 
-  const products = await fetchAllActiveProducts();
-  console.log(`  Active products: ${products.length}`);
+  const supabase = getSupabaseClient();
 
-  const rows = [];
-  for (const product of products) {
-    for (const variant of product.variants) {
-      rows.push({
-        date,
-        variant_id: variant.id,
-        sku: variant.sku || '',
-        product_handle: product.handle || '',
-        inventory_quantity: variant.inventoryQuantity ?? 0,
-        price: parseFloat(variant.price) || 0,
-      });
-    }
-  }
+  // Read from Supabase instead of calling Shopify API
+  const { data: variants, error: vErr } = await supabase
+    .from('product_variants')
+    .select('shopify_variant_id, sku, price, inventory_quantity, shopify_product_id');
+  if (vErr) throw new Error(`Failed to fetch variants: ${vErr.message}`);
 
-  console.log(`  Total variants: ${rows.length}`);
+  // Get product handles for the variants
+  const { data: products, error: pErr } = await supabase
+    .from('products')
+    .select('shopify_product_id, handle')
+    .eq('status', 'ACTIVE');
+  if (pErr) throw new Error(`Failed to fetch products: ${pErr.message}`);
+
+  const handleMap = new Map((products || []).map(p => [p.shopify_product_id, p.handle]));
+
+  // Only include variants from active products
+  const activeVariants = (variants || []).filter(v => handleMap.has(v.shopify_product_id));
+  console.log(`  Active variants: ${activeVariants.length}`);
+
+  const rows = activeVariants.map(v => ({
+    date,
+    variant_id: v.shopify_variant_id,
+    sku: v.sku || '',
+    product_handle: handleMap.get(v.shopify_product_id) || '',
+    inventory_quantity: v.inventory_quantity ?? 0,
+    price: parseFloat(v.price) || 0,
+  }));
 
   const totalUnits = rows.reduce((sum, r) => sum + r.inventory_quantity, 0);
   console.log(`  Total units in stock: ${totalUnits}`);

@@ -5,6 +5,7 @@
  */
 
 const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
+const { getCustomerOrdersFromSupabase, getCustomerFulfilledOrdersFromSupabase } = require('../supabaseQueries');
 const { searchProducts, getVariantBySku, getSiblingVariant } = require('../productCache');
 
 const tools = [
@@ -164,7 +165,9 @@ const tools = [
       try {
         if (original_order_id) {
           // Explicit order ID provided — still validate it's fulfilled
-          const { orders: allOrders } = await getCustomerOrders(customerGid, 50);
+          let orderResult = await getCustomerOrdersFromSupabase(customerGid, 50);
+          if (!orderResult) orderResult = await getCustomerOrders(customerGid, 50);
+          const { orders: allOrders } = orderResult;
           const originalGid = normalizeGid(original_order_id, 'Order');
           const match = allOrders.find(o => o.id === originalGid);
           if (!match) {
@@ -218,8 +221,9 @@ const tools = [
             };
           }
         } else {
-          // Auto-find: use dedicated fulfilled-orders function (top-level orders query with proper filters)
-          const fulfilledOrders = await getCustomerFulfilledOrders(customerGid, 20);
+          // Auto-find: try Supabase first, fall back to Shopify
+          let fulfilledOrders = await getCustomerFulfilledOrdersFromSupabase(customerGid, 20);
+          if (!fulfilledOrders.length) fulfilledOrders = await getCustomerFulfilledOrders(customerGid, 20);
           if (fulfilledOrders.length === 0) {
             return {
               content: [{

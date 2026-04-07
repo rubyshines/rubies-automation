@@ -1,8 +1,15 @@
 /**
  * Customer lookup tools: lookup_customer, get_customer_orders, get_order_details
+ *
+ * Reads from Supabase (fast, ~50ms). Falls back to Shopify if not found.
  */
 
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
+const {
+  searchCustomersFromSupabase,
+  getCustomerOrdersFromSupabase,
+  getOrderByNumberFromSupabase,
+} = require('../supabaseQueries');
 
 const tools = [
   {
@@ -19,7 +26,12 @@ const tools = [
       required: ['query'],
     },
     handler: async ({ query }) => {
-      const customers = await searchCustomers(query);
+      // Try Supabase first, fall back to Shopify
+      let customers = await searchCustomersFromSupabase(query);
+      if (!customers.length) {
+        customers = await searchCustomers(query);
+      }
+
       if (customers.length === 0) {
         return { content: [{ type: 'text', text: `No customers found matching "${query}"` }] };
       }
@@ -58,7 +70,12 @@ const tools = [
       required: ['customer_id'],
     },
     handler: async ({ customer_id, limit }) => {
-      const result = await getCustomerOrders(customer_id, limit || 10);
+      // Try Supabase first, fall back to Shopify
+      let result = await getCustomerOrdersFromSupabase(customer_id, limit || 10);
+      if (!result) {
+        result = await getCustomerOrders(customer_id, limit || 10);
+      }
+
       const formatted = {
         customer: {
           id: result.customer.id,
@@ -99,7 +116,12 @@ const tools = [
       required: ['order_number'],
     },
     handler: async ({ order_number }) => {
-      const order = await getOrderByNumber(order_number);
+      // Try Supabase first, fall back to Shopify
+      let order = await getOrderByNumberFromSupabase(order_number);
+      if (!order) {
+        order = await getOrderByNumber(order_number);
+      }
+
       const formatted = {
         id: order.id,
         name: order.name,
