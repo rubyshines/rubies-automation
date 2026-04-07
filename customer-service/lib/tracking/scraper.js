@@ -69,6 +69,7 @@ async function getBrowser() {
   const puppeteer = require('puppeteer');
   _browser = await puppeteer.launch({
     headless: 'new',
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
   _pageCount = 0;

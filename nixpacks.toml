@@ -1,0 +1,9 @@
+# Nixpacks build config for Railway
+# Chromium is needed for Puppeteer (Passport tracking scraper)
+
+[phases.setup]
+aptPkgs = ["chromium", "fonts-liberation", "libnss3", "libatk-bridge2.0-0", "libdrm2", "libxcomposite1", "libxdamage1", "libxrandr2", "libgbm1", "libasound2"]
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
