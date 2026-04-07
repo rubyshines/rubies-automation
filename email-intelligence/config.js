@@ -57,6 +57,14 @@ const SKIP_DOMAINS = new Set([
   'reports.emailsrvr.com',
   // Payroll platform notifications (the accountant domain is in KNOWN_DOMAINS)
   'wagepoint.com',
+  // SaaS newsletters / dev tools
+  'voyage.mongodb.com', 'mail.cursor.com',
+  // Cold outreach / unsolicited sales
+  'nuoptimavectorx.com', 'crossworxhq.com', 'getsavedbyservices.com', 'legendfusions.com',
+  // Newsletters / alumni
+  'fashionzone.ca', 'uwaterloo.ca',
+  // Auto-reply OOO from marketing recipients
+  'walkercares.org', 'vpd.ca',
 ]);
 
 // Known domains → specific business area classification

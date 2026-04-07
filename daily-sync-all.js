@@ -69,6 +69,10 @@ const PIPELINES = [
     name: 'Delivery Times',
     run: () => require('./customer-service/sync/syncDeliveryTimes').run(),
   },
+  {
+    name: 'Gmail Intelligence',
+    run: () => require('./email-intelligence/sync/syncGmail').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

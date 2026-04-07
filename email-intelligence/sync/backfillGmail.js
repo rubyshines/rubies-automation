@@ -374,27 +374,26 @@ async function runSummarize() {
   console.log('========================================\n');
 
   // Get threads that need summarization (no summary, or new messages since last summary)
-  let query = supabase
+  // Fetch all eligible threads first, then apply limit after filtering
+  const { data: threadRows } = await supabase
     .from('email_threads')
-    .select('gmail_thread_id, classification, summary, summary_updated_at, next_action, last_message_at')
+    .select('gmail_thread_id, classification, subject, summary, summary_updated_at, next_action, last_message_at')
     .neq('classification', 'skip')
     .neq('classification', 'internal')
-    .order('last_message_at', { ascending: false });
-
-  if (LIMIT) query = query.limit(LIMIT);
-  else query = query.limit(500);
-
-  const { data: threadRows } = await query;
+    .neq('classification', 'spam')
+    .order('last_message_at', { ascending: false })
+    .limit(500);
 
   if (!threadRows || threadRows.length === 0) {
     console.log('  No threads to summarize.');
     return;
   }
 
-  // Filter to threads that need work
-  const needsSummary = threadRows.filter(t =>
+  // Filter to threads that need work, then apply limit
+  let needsSummary = threadRows.filter(t =>
     !t.summary || (t.summary_updated_at && new Date(t.last_message_at) > new Date(t.summary_updated_at))
   );
+  if (LIMIT) needsSummary = needsSummary.slice(0, LIMIT);
 
   console.log(`  Threads found: ${threadRows.length}`);
   console.log(`  Need summarization: ${needsSummary.length}`);
