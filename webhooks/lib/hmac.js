@@ -35,7 +35,7 @@ function verifyShopifyHmac(req, res, next) {
   );
 
   if (!valid) {
-    console.warn('[hmac] Shopify HMAC verification failed');
+    console.warn(`[hmac] Shopify HMAC verification failed — topic: ${req.params.topic}, expected: ${computed.substring(0, 12)}..., got: ${hmacHeader.substring(0, 12)}...`);
     return res.status(401).json({ error: 'HMAC verification failed' });
   }
 

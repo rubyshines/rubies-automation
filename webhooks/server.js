@@ -31,6 +31,12 @@ const PORT = process.env.PORT || 3000;
 app.use('/webhooks/shopify', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
+// Request logger (helps debug webhook delivery issues)
+app.use('/webhooks', (req, _res, next) => {
+  console.log(`[webhook] ${req.method} ${req.path} from ${req.ip} — content-type: ${req.get('content-type') || 'none'}, hmac: ${req.get('X-Shopify-Hmac-Sha256') ? 'present' : 'absent'}`);
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // Health check
 // ---------------------------------------------------------------------------
