@@ -107,26 +107,6 @@
             <div id="context-content"></div>
           </details>
 
-          <!-- Simple Message Panel (for Snoozed/Closed tabs) -->
-          <div id="simple-message-panel" class="detail-section" style="display:none">
-            <h3>Send Message</h3>
-            <textarea id="simple-message-editor" rows="6" placeholder="Type a message to send to this customer..."></textarea>
-            <div id="simple-action-panel" style="display:none;margin-top:12px">
-              <div class="context-section-label" style="border:none;padding:0;margin-bottom:8px">Action</div>
-              <div class="action-chat-messages" id="simple-action-chat-messages" style="max-height:200px"></div>
-              <div class="action-chat-input-row">
-                <input type="text" class="action-chat-input" id="simple-action-chat-input"
-                  placeholder="exchange, refund, edit..."
-                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendSimpleActionMessage()}" />
-                <button class="action-chat-send" onclick="sendSimpleActionMessage()">Send</button>
-              </div>
-            </div>
-            <div class="btn-row" style="margin-top:12px">
-              <button class="btn btn-primary" onclick="sendSimpleMessage('snooze')">Send &amp; Snooze</button>
-              <button class="btn btn-close" onclick="sendSimpleMessage('close')">Send &amp; Close</button>
-              <button class="btn btn-secondary" onclick="reopenTicket()">Reopen</button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

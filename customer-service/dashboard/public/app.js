@@ -214,9 +214,8 @@ function renderTicketDetail(ticket) {
 
   const d = ticket.active_draft; // may be null for snoozed/closed
 
-  // Show draft panel if there's an active draft, simple message panel otherwise
-  document.getElementById('detail-draft').style.display = d ? 'block' : 'none';
-  document.getElementById('simple-message-panel').style.display = !d ? 'block' : 'none';
+  // Always show draft panel
+  document.getElementById('detail-draft').style.display = 'block';
 
   // Reset button states for draft panel
   if (d) {
@@ -329,8 +328,22 @@ function renderTicketDetail(ticket) {
     }
     document.getElementById('context-content').textContent = contextParts.join('\n\n') || 'No additional context';
   } else {
-    // Simple message panel — clear for fresh input
-    document.getElementById('simple-message-editor').value = '';
+    // No active draft — show empty editor for manual compose
+    document.getElementById('draft-editor').value = '';
+    document.getElementById('draft-notes').value = '';
+
+    const confEl = document.getElementById('detail-confidence');
+    confEl.textContent = '';
+    confEl.className = 'badge';
+    const statusEl = document.getElementById('detail-status-badge');
+    statusEl.textContent = '';
+    statusEl.className = 'badge';
+
+    // Show action panel with empty state
+    renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
+
+    document.getElementById('audit-trail').textContent = '';
+    document.getElementById('context-content').textContent = '';
   }
 
   // Scroll to last customer message
@@ -862,6 +875,7 @@ async function sendDraft(afterAction) {
   if (!currentTicketId) return;
 
   const response = document.getElementById('draft-editor').value;
+  if (!response.trim()) { alert('Please enter a message'); return; }
   const notes = document.getElementById('draft-notes').value || undefined;
 
   const btn = afterAction === 'close' ? document.getElementById('btn-send-close') : document.getElementById('btn-send');
@@ -870,9 +884,17 @@ async function sendDraft(afterAction) {
   btn.textContent = 'Sending...';
 
   try {
-    const result = await api(`/api/tickets/${currentTicketId}/send`, {
+    // Use ticket send (via draft) if there's an active draft, otherwise direct message
+    const endpoint = currentDraftId
+      ? `/api/tickets/${currentTicketId}/send`
+      : `/api/tickets/${currentTicketId}/message`;
+    const body = currentDraftId
+      ? { response, notes, after: afterAction }
+      : { message: response, after: afterAction };
+
+    const result = await api(endpoint, {
       method: 'POST',
-      body: { response, notes, after: afterAction },
+      body,
     });
     const label = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
     btn.textContent = `${label} (${(result.edit_distance * 100).toFixed(0)}% edit)`;
