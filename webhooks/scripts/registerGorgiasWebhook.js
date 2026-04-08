@@ -65,8 +65,12 @@ async function listWebhooks() {
   return hooks;
 }
 
-async function registerWebhook(baseUrl) {
-  const callbackUrl = `${baseUrl}/webhooks/gorgias`;
+async function registerWebhook(baseUrl, eventType = 'ticket-message-created') {
+  const paths = {
+    'ticket-message-created': '/webhooks/gorgias',
+    'ticket-updated': '/webhooks/gorgias/ticket-updated',
+  };
+  const callbackUrl = `${baseUrl}${paths[eventType] || '/webhooks/gorgias'}`;
   const secret = process.env.GORGIAS_WEBHOOK_SECRET;
 
   if (!secret) {
@@ -74,11 +78,11 @@ async function registerWebhook(baseUrl) {
     process.exit(1);
   }
 
-  console.log(`Registering Gorgias webhook: ${callbackUrl}\n`);
+  console.log(`Registering Gorgias webhook: ${eventType} → ${callbackUrl}\n`);
 
   const result = await gorgiasAPI('POST', '/integrations/webhooks', {
     url: callbackUrl,
-    event_type: 'ticket-message-created',
+    event_type: eventType,
     secret,
   });
 
@@ -131,7 +135,8 @@ async function deleteAllWebhooks() {
     process.exit(1);
   }
 
-  await registerWebhook(baseUrl.replace(/\/$/, ''));
+  const eventType = args.includes('--ticket-updated') ? 'ticket-updated' : 'ticket-message-created';
+  await registerWebhook(baseUrl.replace(/\/$/, ''), eventType);
 })().catch(err => {
   console.error('Fatal:', err.message);
   process.exit(1);

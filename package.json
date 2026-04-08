@@ -48,6 +48,7 @@
     "b2b-sync": "node email-intelligence/sync/syncB2bContacts.js",
     "daily-order-alerts": "node reports/dailyOrderAlerts.js",
     "cs-intake": "node customer-service/intake/processGorgiasTickets.js",
+    "cs-reconcile-tickets": "node customer-service/sync/reconcileTickets.js",
     "dashboard": "node customer-service/dashboard/server.js",
     "cs-seed-shipping-regions": "node customer-service/sync/seedShippingRegions.js",
     "cs-sync-delivery-times": "node customer-service/sync/syncDeliveryTimes.js",

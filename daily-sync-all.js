@@ -73,6 +73,10 @@ const PIPELINES = [
     name: 'Gmail Intelligence',
     run: () => require('./email-intelligence/sync/syncGmail').run(),
   },
+  {
+    name: 'Ticket Reconciliation',
+    run: () => require('./customer-service/sync/reconcileTickets').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

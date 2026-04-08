@@ -139,6 +139,24 @@ app.post('/webhooks/gorgias', verifyGorgiasSecret, async (req, res) => {
   }
 });
 
+// Gorgias ticket-updated (status changes — close/reopen)
+app.post('/webhooks/gorgias/ticket-updated', verifyGorgiasSecret, async (req, res) => {
+  res.status(200).json({ received: true });
+
+  const start = Date.now();
+  const payload = req.body;
+  const ticketId = String(payload?.ticket?.id || '');
+
+  try {
+    const handler = require('./handlers/gorgiasTicketUpdated');
+    await handler.handle(payload);
+    await logEvent('gorgias', 'ticket-updated', ticketId, 'processed', Date.now() - start);
+  } catch (err) {
+    console.error(`[webhook] gorgias/ticket-updated #${ticketId} failed:`, err.message);
+    await logEvent('gorgias', 'ticket-updated', ticketId, 'failed', Date.now() - start, err.message);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
