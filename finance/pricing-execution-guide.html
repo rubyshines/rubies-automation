@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RUBIES Pricing Update — April 2026 Execution Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  @page {
+    size: letter;
+    margin: 0.6in 0.7in;
+  }
+
+  :root {
+    --magenta: #A8005C;
+    --magenta-light: #f5e0ec;
+    --magenta-pale: #faf2f7;
+    --dark: #1a1a1a;
+    --gray: #555;
+    --gray-light: #999;
+    --gray-rule: #e0e0e0;
+    --amber: #f9a825;
+    --amber-bg: #fff8e1;
+    --green: #0a7c42;
+    --green-bg: #e8f8ef;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+    font-size: 9.5pt;
+    line-height: 1.45;
+    color: var(--dark);
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* --- Cover Header --- */
+  .cover {
+    padding: 32pt 0 20pt;
+    border-bottom: 3pt solid var(--magenta);
+    margin-bottom: 24pt;
+  }
+  .cover-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7.5pt;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 3pt;
+    color: var(--magenta);
+    margin-bottom: 6pt;
+  }
+  .cover h1 {
+    font-family: 'DM Serif Display', Georgia, serif;
+    font-size: 26pt;
+    font-weight: 400;
+    color: var(--dark);
+    line-height: 1.15;
+    margin-bottom: 6pt;
+  }
+  .cover-date {
+    font-size: 10pt;
+    color: var(--gray);
+  }
+
+  /* --- Sections --- */
+  .section {
+    margin-bottom: 22pt;
+    page-break-inside: avoid;
+  }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8pt;
+    margin-bottom: 10pt;
+    padding-bottom: 5pt;
+    border-bottom: 1.5pt solid var(--magenta);
+  }
+  .section-num {
+    font-family: 'DM Serif Display', Georgia, serif;
+    font-size: 18pt;
+    color: var(--magenta);
+    line-height: 1;
+  }
+  .section-title {
+    font-size: 13pt;
+    font-weight: 700;
+    color: var(--dark);
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+  }
+  .section-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 7pt;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1pt;
+    padding: 2pt 6pt;
+    border-radius: 2pt;
+    margin-left: auto;
+  }
+  .badge-done { background: var(--green-bg); color: var(--green); }
+
+  .sub-header {
+    font-size: 10pt;
+    font-weight: 700;
+    color: var(--dark);
+    margin: 12pt 0 6pt;
+    padding-left: 2pt;
+  }
+
+  /* --- Tables --- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    margin-bottom: 10pt;
+  }
+  thead th {
+    background: var(--magenta);
+    color: #fff;
+    font-weight: 600;
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+    padding: 5pt 7pt;
+    text-align: left;
+    white-space: nowrap;
+  }
+  thead th.r { text-align: right; }
+  tbody td {
+    padding: 4.5pt 7pt;
+    border-bottom: 0.5pt solid var(--gray-rule);
+    vertical-align: top;
+  }
+  tbody td.r { text-align: right; font-family: 'IBM Plex Mono', monospace; font-size: 8pt; }
+  tbody td.bold { font-weight: 600; }
+  tbody td.muted { color: var(--gray-light); font-style: italic; }
+  tbody tr.hold td { background: var(--magenta-pale); }
+  tbody tr.no-change td { color: var(--gray-light); }
+  tbody tr:last-child td { border-bottom: 1pt solid var(--gray-rule); }
+
+  /* --- Callout Boxes --- */
+  .callout {
+    padding: 8pt 12pt;
+    border-radius: 3pt;
+    font-size: 8.5pt;
+    line-height: 1.5;
+    margin: 8pt 0 12pt;
+  }
+  .callout-magenta {
+    background: var(--magenta-pale);
+    border-left: 3pt solid var(--magenta);
+  }
+  .callout-amber {
+    background: var(--amber-bg);
+    border-left: 3pt solid var(--amber);
+  }
+  .callout-green {
+    background: var(--green-bg);
+    border-left: 3pt solid var(--green);
+  }
+  .callout strong { font-weight: 700; }
+
+  /* --- Lists --- */
+  .action-list {
+    list-style: none;
+    padding: 0;
+    margin: 4pt 0;
+  }
+  .action-list li {
+    padding: 3pt 0 3pt 14pt;
+    position: relative;
+    font-size: 9pt;
+    line-height: 1.5;
+  }
+  .action-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8pt;
+    width: 6pt;
+    height: 6pt;
+    background: var(--magenta);
+    border-radius: 1pt;
+  }
+  .action-list li strong { font-weight: 600; }
+
+  .drop-list {
+    list-style: none;
+    padding: 0;
+    margin: 4pt 0;
+  }
+  .drop-list li {
+    padding: 2pt 0 2pt 14pt;
+    position: relative;
+    font-size: 8.5pt;
+    color: var(--gray);
+  }
+  .drop-list li::before {
+    content: '\00D7';
+    position: absolute;
+    left: 0;
+    color: #c0392b;
+    font-weight: 700;
+    font-size: 11pt;
+    line-height: 1;
+    top: 1pt;
+  }
+
+  /* --- Tiers --- */
+  .tier-grid {
+    display: flex;
+    gap: 8pt;
+    margin: 6pt 0 10pt;
+  }
+  .tier-box {
+    flex: 1;
+    background: var(--magenta-pale);
+    border: 1pt solid #e8c8da;
+    border-radius: 3pt;
+    padding: 8pt 10pt;
+    text-align: center;
+  }
+  .tier-qty {
+    font-family: 'DM Serif Display', Georgia, serif;
+    font-size: 16pt;
+    color: var(--magenta);
+  }
+  .tier-pct {
+    font-weight: 700;
+    font-size: 11pt;
+    color: var(--dark);
+    margin: 2pt 0;
+  }
+  .tier-note {
+    font-size: 7pt;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+  }
+
+  /* --- Footer --- */
+  .footer {
+    margin-top: 20pt;
+    padding-top: 10pt;
+    border-top: 0.5pt solid var(--gray-rule);
+    font-size: 7.5pt;
+    color: var(--gray-light);
+    text-align: center;
+  }
+
+  /* --- Print --- */
+  @media print {
+    body { font-size: 9pt; }
+    .section { page-break-inside: avoid; }
+    .page-break { page-break-before: always; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Cover -->
+<div class="cover">
+  <div class="cover-label">Execution Guide</div>
+  <h1>RUBIES Pricing Update</h1>
+  <div class="cover-date">April 2026 &mdash; Tactical changes based on Pricing Strategy review</div>
+</div>
+
+<!-- Section 1: Product Price Increases -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">1</span>
+    <span class="section-title">Product Price Increases (DTC)</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Product</th><th class="r">Current</th><th class="r">New Price</th><th class="r">Change</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">AJ Underwear (sizes 12+)</td><td class="r">$28</td><td class="r bold">$32</td><td class="r">+$4 (14%)</td><td></td></tr>
+      <tr class="hold"><td class="bold">AJ Underwear (sizes 4-11)</td><td class="r">$28</td><td class="r bold">$28</td><td class="r muted">Hold</td><td>Youth accessibility</td></tr>
+      <tr><td class="bold">Charlie Underwear (sizes 12+)</td><td class="r">$29</td><td class="r bold">$33</td><td class="r">+$4 (14%)</td><td></td></tr>
+      <tr class="hold"><td class="bold">Charlie Underwear (sizes 4-11)</td><td class="r">$29</td><td class="r bold">$29</td><td class="r muted">Hold</td><td>Youth accessibility</td></tr>
+      <tr><td>Sassy Underwear</td><td class="r">$28</td><td class="r bold">$32</td><td class="r">+$4 (14%)</td><td></td></tr>
+      <tr><td>Naomi Gaff</td><td class="r">$35</td><td class="r bold">$38</td><td class="r">+$3 (9%)</td><td></td></tr>
+      <tr><td>Ruby Bikini Bottom</td><td class="r">$44</td><td class="r bold">$48</td><td class="r">+$4 (9%)</td><td></td></tr>
+      <tr><td>Cheeky Bikini Bottom</td><td class="r">$44</td><td class="r bold">$48</td><td class="r">+$4 (9%)</td><td></td></tr>
+      <tr><td>Stella High-Waisted</td><td class="r">$44</td><td class="r bold">$48</td><td class="r">+$4 (9%)</td><td></td></tr>
+      <tr><td>Serena Shorts</td><td class="r">$47</td><td class="r bold">$52</td><td class="r">+$5 (11%)</td><td></td></tr>
+      <tr><td>Brooke Bra</td><td class="r">$39</td><td class="r bold">$42</td><td class="r">+$3 (8%)</td><td></td></tr>
+      <tr><td>Ava Seamless Bra</td><td class="r">$43</td><td class="r bold">$46</td><td class="r">+$3 (7%)</td><td></td></tr>
+      <tr><td>Sky One-Piece</td><td class="r">$59</td><td class="r bold">$65</td><td class="r">+$6 (10%)</td><td></td></tr>
+      <tr><td>Mia Bikini Top</td><td class="r">$39</td><td class="r bold">$42</td><td class="r">+$3 (8%)</td><td></td></tr>
+      <tr><td>Tankini</td><td class="r">$41-49</td><td class="r bold">$45-52</td><td class="r">+$3-4</td><td></td></tr>
+      <tr><td>Flo Dance</td><td class="r">$28</td><td class="r bold">$32</td><td class="r">+$4 (14%)</td><td></td></tr>
+      <tr><td>Kids Underwear</td><td class="r">$19</td><td class="r bold">$22</td><td class="r">+$3 (16%)</td><td></td></tr>
+      <tr class="no-change"><td>Adult Tee</td><td class="r">$30</td><td class="r">$30</td><td class="r muted">No change</td><td class="muted">Margin too thin for wholesale</td></tr>
+      <tr class="no-change"><td>Accessories</td><td class="r">$12</td><td class="r">$12</td><td class="r muted">No change</td><td class="muted">Entry/add-on pricing</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-magenta">
+    <strong>Youth sizes 4-11 held at current price.</strong> These are overwhelmingly kids buyers (42% of units for AJ/Charlie/Ruby/Brooke). Lower shipping cost on smaller sizes. Sizes 12+ overlap with adult sizing and increase with adults.
+  </div>
+</div>
+
+<!-- Section 2: Volume Discounts -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">2</span>
+    <span class="section-title">Volume Discounts</span>
+  </div>
+
+  <p style="font-size:9pt; margin-bottom:8pt; color:var(--gray);">Keep on <strong style="color:var(--dark);">underwear only</strong>: AJ, Charlie, Sassy, Flo Dance. Same-product, not cross-product.</p>
+
+  <div class="tier-grid">
+    <div class="tier-box">
+      <div class="tier-qty">2</div>
+      <div class="tier-pct">5% off</div>
+      <div class="tier-note">Entry incentive</div>
+    </div>
+    <div class="tier-box">
+      <div class="tier-qty">3</div>
+      <div class="tier-pct">10% off</div>
+      <div class="tier-note">Sweet spot</div>
+    </div>
+    <div class="tier-box">
+      <div class="tier-qty">5+</div>
+      <div class="tier-pct">15% off</div>
+      <div class="tier-note">Loyalty reward</div>
+    </div>
+  </div>
+
+  <ul class="action-list">
+    <li><strong>Remove</strong> Ruby Bikini Bottom volume discount &mdash; only 6% buy 3+, seasonal purchase, customers won't notice</li>
+    <li><strong>Do not extend</strong> to swim, one-pieces, or bras &mdash; data doesn't support multi-buy in those categories</li>
+    <li><strong>Add to Brooke Bra</strong> &mdash; 3+ years of data, 29% already buy 2+, 8% buy 3+. Same tiers as underwear.</li>
+    <li><strong>Future:</strong> Consider adding to Ava Seamless Bra once more sales data exists (launched Sep 2025)</li>
+  </ul>
+</div>
+
+<!-- Section 3: Bundles -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">3</span>
+    <span class="section-title">Bundles</span>
+  </div>
+
+  <div class="sub-header">Current Active Bundles &mdash; Re-price</div>
+  <table>
+    <thead>
+      <tr><th>Bundle</th><th>Contents</th><th class="r">Current</th><th class="r">New Price</th><th class="r">Savings</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">Bikini Set</td><td>1 bottom + 1 top, pick colors</td><td class="r">$71</td><td class="r bold">$79</td><td class="r">$11 (12%)</td></tr>
+      <tr><td class="bold">Matching Set</td><td>1 underwear + 1 bra, pick colors</td><td class="r">$58</td><td class="r bold">$65</td><td class="r">$9 (12%)</td></tr>
+      <tr><td class="bold">Shaping Bundle</td><td>3 AJ + 1 bikini</td><td class="r">$103</td><td class="r bold">$119</td><td class="r">$25 (17%)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="sub-header">Delete Draft</div>
+  <ul class="drop-list">
+    <li>Swim Bundle (Sky + 2 bikini bottoms) &mdash; never launched, 0.6% buy this combo</li>
+  </ul>
+
+  <div class="callout callout-amber">
+    <strong>Bundles on hold &mdash; needs further work.</strong> New bundles (Everyday 3-Pack, renamed Matching Set) and Shaping Bundle UX fix (mixed colors) are blocked pending resolution of youth pricing implications. Fixed bundle prices conflict with youth sizes 4-11 being held at lower prices &mdash; e.g. a $85 3-pack could cost more than 3 kids items bought individually. Need to determine approach before creating or modifying bundles.
+  </div>
+</div>
+
+<!-- Page break for print -->
+<div class="page-break"></div>
+
+<!-- Section 4: Shipping Rates -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">4</span>
+    <span class="section-title">Shipping Rates</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Zone</th><th class="r">Current</th><th class="r">New Rate</th><th>Free Threshold</th><th>Change</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">US Standard</td><td class="r">$9.00</td><td class="r bold">$10.50</td><td>$99 (keep)</td><td>+$1.50</td></tr>
+      <tr><td class="bold">US Expedited</td><td class="r">$22.00</td><td class="r bold">$24.00</td><td>&mdash;</td><td>+$2.00</td></tr>
+      <tr><td class="bold">Canada</td><td class="r">$9.35</td><td class="r bold">$11.00</td><td>$99 (was $96)</td><td>+$1.65 + align threshold</td></tr>
+      <tr><td class="bold">DDP International</td><td class="r">$12.00</td><td class="r bold">$15.00</td><td>$125 (new)</td><td>+$3.00 + add threshold</td></tr>
+      <tr><td class="bold">DDU International</td><td class="r">$12.00</td><td class="r bold">$15.00</td><td>$125 (new)</td><td>+$3.00 + add threshold</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Section 5: International Markups -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">5</span>
+    <span class="section-title">International Market Markups</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Market</th><th class="r">Current Markup</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+      <tr class="no-change"><td>United States</td><td class="r">Base</td><td class="muted">No change</td></tr>
+      <tr class="no-change"><td>Canada</td><td class="r">0%</td><td class="muted">No change &mdash; home market</td></tr>
+      <tr class="no-change"><td>Australia</td><td class="r">0%</td><td class="muted">No change &mdash; $0 DDP, de minimis</td></tr>
+      <tr class="no-change"><td>New Zealand</td><td class="r">0%</td><td class="muted">No change &mdash; $0 DDP</td></tr>
+      <tr class="no-change"><td>United Kingdom</td><td class="r">+10%</td><td class="muted">No change</td></tr>
+      <tr class="no-change"><td>Eurozone</td><td class="r">+10%</td><td class="muted">No change</td></tr>
+      <tr><td>Switzerland</td><td class="r">+10%</td><td>No change <em>(revisit 2028)</em></td></tr>
+      <tr><td>Norway</td><td class="r">+10%</td><td>No change <em>(revisit 2028)</em></td></tr>
+      <tr><td>Sweden</td><td class="r">+10%</td><td>No change <em>(revisit 2028)</em></td></tr>
+      <tr><td>Denmark</td><td class="r">+10%</td><td>No change <em>(revisit 2028)</em></td></tr>
+      <tr class="no-change"><td>Iceland</td><td class="r">+10%</td><td class="muted">No change</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-amber">
+    <strong>EU de minimis removal</strong> takes effect July 1, 2026 &mdash; &euro;3 flat duty per shipment (~$1,257/year impact). Full 12% textile tariff expected ~2028 when EU Customs Data Hub launches. Revisit European markups then.
+  </div>
+</div>
+
+<!-- Section 6: Wholesale Communication -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">6</span>
+    <span class="section-title">Wholesale Communication</span>
+  </div>
+
+  <p style="font-size:9pt; margin-bottom:8pt;">6 active accounts to notify:</p>
+
+  <table>
+    <thead>
+      <tr><th>Account</th><th>Country</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="bold">Sock Drawer Heroes</td><td>Australia</td></tr>
+      <tr><td class="bold">Tuck and Bind</td><td>Australia</td></tr>
+      <tr><td class="bold">Illusions Lingerie</td><td>Australia</td></tr>
+      <tr><td class="bold">underDARE</td><td>United States</td></tr>
+      <tr><td class="bold">Early To Bed / Trans Essentials</td><td>United States</td></tr>
+      <tr><td class="bold">Zoe and Company</td><td>United States</td></tr>
+    </tbody>
+  </table>
+
+  <ul class="action-list">
+    <li><strong>Email each account personally</strong>, 30 days before price change goes live</li>
+    <li><strong>Key message:</strong> retail prices increasing, wholesale adjusts accordingly, their margin stays the same</li>
+    <li><strong>Offer one last order</strong> at current wholesale pricing before the change</li>
+    <li><strong>Exclude tees from wholesale</strong> or set floor price of $18-20 (currently $0.10 margin at 50% off)</li>
+  </ul>
+</div>
+
+<!-- Section 7: Competitor Monitoring -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">7</span>
+    <span class="section-title">Competitor Price Monitoring</span>
+    <span class="section-badge badge-done">Complete</span>
+  </div>
+
+  <ul class="action-list">
+    <li>Monthly automated pipeline deployed on Railway (runs 1st of each month)</li>
+    <li>Scrapes 16 products across 5 competitors: <strong>TomboyX, Origami Customs, En Femme, UNTAG, Knix</strong></li>
+    <li>Outputs: Google Sheet with hyperlinks &amp; diff %, email alert on price changes, Supabase historical tracking</li>
+  </ul>
+
+  <div class="callout callout-green">
+    <strong>Live sheet:</strong> <a href="https://docs.google.com/spreadsheets/d/1JHry_C9qCUrBlXQdUOqnC34gDPgcfSDCw0LtfKyhN5U" style="color:var(--green);">RUBIES Competitor Price Comparison</a>
+  </div>
+</div>
+
+<!-- Section 8: DTC Communication -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">8</span>
+    <span class="section-title">DTC Communication</span>
+  </div>
+
+  <ul class="action-list">
+    <li><strong>Silent switch</strong> &mdash; do not announce price increase to DTC customers</li>
+    <li>Klaviyo welcome flow (13.6% avg discount) cushions new customers to roughly current price level</li>
+    <li>Price has never been mentioned as a complaint in 1,886 reviews</li>
+  </ul>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  Prepared April 2026 &middot; Reference: RUBIES Pricing Strategy 2026 (full analysis)
+</div>
+
+</body>
+</html>
