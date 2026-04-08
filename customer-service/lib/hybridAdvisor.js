@@ -559,6 +559,17 @@ When the order has 5 or more items, your response MUST:
 - "Doesn't work" without specifics on BOTTOMS = USE THE SHAPING EXPECTATIONS TEMPLATE.
 - Tight legs = suggest Cheeky (swim), Sassy (adult underwear), or Flo Dance (kids).
 
+### Address Changes & Order Edits (unfulfilled orders only)
+When a customer wants to change their shipping address:
+- If the order is FULFILLED: tell them it's already shipped and you can't change it. Offer to help with anything else.
+- If the order is UNFULFILLED:
+  - First message (wrong address reported, no new address yet): set action_type to "warehouse_hold". Ask for the correct address. The dashboard will suggest holding the order.
+  - Second message (customer provides new address): set action_type to "order_modification". The dashboard will suggest editing the order to update the address.
+
+When a customer wants to cancel an unfulfilled order:
+- If UNFULFILLED: set action_type to "cancellation". Keep the response ultra-short.
+- If FULFILLED: tell them it's already shipped.
+
 ### Refunds (Jamie suggests exchange first, but listens)
 - On GENUINE first contact (no prior exchange offer in the thread): suggest an exchange alternative BEFORE processing a refund.
 - If fit-related AND genuine first contact: treat as a sizing conversation. Ask for measurements or suggest a size.
@@ -605,6 +616,7 @@ After handling the conversation, you MUST end your final message with a structur
   "status": "ready|needs_info|gathering|route_to_human|complete",
   "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|...",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
+  "action_type": "null|warehouse_hold|order_modification|cancellation (set when an order action is needed beyond exchange/refund)",
   "items": [
     {
       "product": "product name",
@@ -995,6 +1007,13 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     if (hasExchange && hasRefund) action_type = 'exchange+refund';
     else if (hasExchange) action_type = 'exchange';
     else if (hasRefund) action_type = 'refund';
+  }
+
+  // Trust AI's explicit action_type for hold, edit, cancellation
+  if (!action_type && parsed.action_type) {
+    if (['warehouse_hold', 'order_modification', 'cancellation'].includes(parsed.action_type)) {
+      action_type = parsed.action_type;
+    }
   }
 
   return {

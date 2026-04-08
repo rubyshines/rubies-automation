@@ -586,8 +586,9 @@ function renderActionPanel(draft) {
 
   // Header badge
   if (actionType) {
-    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : 'edit';
-    const badgeLabel = actionType.replace('exchange+refund', 'Exchange + Refund').replace('exchange', 'Exchange').replace('refund', 'Refund').replace('order_modification', 'Order Edit');
+    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : 'edit';
+    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel' };
+    const badgeLabel = badgeLabels[actionType] || actionType;
     headerEl.innerHTML = `
       <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>
       ${orderNum ? `<span class="action-order-ref">Order #${orderNum}</span>` : ''}
@@ -679,11 +680,26 @@ function buildActionPrefill(draft) {
   }
 
   if (actionType === 'order_modification') {
+    // Check for address change
+    const addr = structured.intake?.new_address || structured.prescription?.shipping_address;
+    if (addr) {
+      const parts = [addr.address1, addr.city, addr.province, addr.zip].filter(Boolean);
+      return `edit order #${orderNum}: update shipping address to ${parts.join(', ')}`;
+    }
     const swaps = structured.prescription?.swap_items || [];
     if (swaps.length) {
       const lines = swaps.map(s => `- swap ${s.remove_sku || '?'} for ${s.add_query || '?'}`);
       return `edit order #${orderNum}:\n${lines.join('\n')}`;
     }
+    return `edit order #${orderNum}`;
+  }
+
+  if (actionType === 'warehouse_hold') {
+    return `hold order #${orderNum}: customer requested address change`;
+  }
+
+  if (actionType === 'cancellation') {
+    return `cancel order #${orderNum}`;
   }
 
   return '';

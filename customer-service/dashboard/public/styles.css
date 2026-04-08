@@ -994,6 +994,7 @@ main { height: calc(100vh - 56px); }
 .action-type-badge.refund { background: var(--red-bg); color: var(--red); }
 .action-type-badge.exchange { background: var(--teal-soft); color: var(--teal); }
 .action-type-badge.edit { background: var(--surface-inset); color: var(--text-secondary); }
+.action-type-badge.hold { background: var(--yellow-bg); color: var(--yellow); }
 
 .action-order-ref {
   font-size: 13px;

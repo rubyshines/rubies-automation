@@ -1192,7 +1192,7 @@ const ACTION_CHAT_TOOLS = [
   },
   {
     name: 'edit_order',
-    description: 'Edit an unfulfilled order by swapping, removing, or adding line items. Returns preview first. Call again with confirmed=true to commit.',
+    description: 'Edit an unfulfilled order by swapping, removing, or adding line items, and/or updating shipping address. Returns preview first. Call again with confirmed=true to commit.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1208,10 +1208,59 @@ const ACTION_CHAT_TOOLS = [
             },
           },
         },
+        shipping_address: {
+          type: 'object', description: 'New shipping address (for address changes)',
+          properties: {
+            first_name: { type: 'string' },
+            last_name: { type: 'string' },
+            address1: { type: 'string' },
+            address2: { type: 'string' },
+            city: { type: 'string' },
+            province: { type: 'string' },
+            country: { type: 'string' },
+            zip: { type: 'string' },
+          },
+        },
         confirmed: { type: 'boolean', description: 'Set true to commit the edit' },
         note: { type: 'string', description: 'Staff note' },
       },
       required: ['order_number'],
+    },
+  },
+  {
+    name: 'warehouse_hold',
+    description: 'Place a warehouse hold on an unfulfilled order to prevent shipment. Use when resolving address changes, edits, or other issues before the order ships.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'number', description: 'Order number (e.g. 29887)' },
+        reason: { type: 'string', description: 'Reason for hold (e.g. "Customer requested address change")' },
+      },
+      required: ['order_number', 'reason'],
+    },
+  },
+  {
+    name: 'release_warehouse_hold',
+    description: 'Release a warehouse hold on an order, allowing it to proceed to fulfillment. Use after an issue has been resolved.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'number', description: 'Order number (e.g. 29887)' },
+        reason: { type: 'string', description: 'Reason for release (e.g. "Address updated, ready to ship")' },
+      },
+      required: ['order_number', 'reason'],
+    },
+  },
+  {
+    name: 'release_address_hold',
+    description: 'Release an address validation hold on an order. Use when address has been verified or corrected.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'number', description: 'Order number (e.g. 29887)' },
+        reason: { type: 'string', description: 'Reason (e.g. "Address confirmed by customer")' },
+      },
+      required: ['order_number', 'reason'],
     },
   },
 ];
@@ -1335,7 +1384,8 @@ RULES:
       (tr.tool === 'refund_order' && tr.input?.confirmed) ||
       (tr.tool === 'create_exchange_order' && tr.input?.confirmed) ||
       (tr.tool === 'edit_order' && tr.input?.confirmed) ||
-      (tr.result && typeof tr.result === 'string' && /completed|refunded|created/i.test(tr.result))
+      (tr.tool === 'warehouse_hold') ||
+      (tr.result && typeof tr.result === 'string' && /completed|refunded|created|hold placed/i.test(tr.result))
     );
     if (completedAction && !draft.action_executed_at) {
       updates.action_executed_at = new Date().toISOString();
@@ -1388,6 +1438,14 @@ async function executeActionTool(toolName, input, draft) {
     const editTools = require('../lib/tools/editOrder');
     const handler = editTools.find(t => t.name === 'edit_order')?.handler;
     if (!handler) throw new Error('Edit tool not found');
+    const result = await handler(input);
+    return result.content?.[0]?.text || JSON.stringify(result);
+  }
+
+  if (toolName === 'warehouse_hold' || toolName === 'release_warehouse_hold' || toolName === 'release_address_hold') {
+    const orderNotesTools = require('../lib/tools/orderNotes');
+    const handler = orderNotesTools.find(t => t.name === toolName)?.handler;
+    if (!handler) throw new Error(`${toolName} tool not found`);
     const result = await handler(input);
     return result.content?.[0]?.text || JSON.stringify(result);
   }
