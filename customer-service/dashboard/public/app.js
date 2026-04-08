@@ -853,7 +853,7 @@ async function refreshDraft() {
     localStorage.setItem(`draft-ticket-${currentTicketId}`, result.draft_response);
 
     if (result.structured?.status) {
-      const conf = result.structured.status === 'ready' ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
+      const conf = ['ready', 'complete'].includes(result.structured.status) ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
       document.getElementById('detail-confidence').textContent = conf;
       document.getElementById('detail-confidence').className = `badge badge-${conf}`;
       document.getElementById('detail-status-badge').textContent = result.structured.status;
@@ -861,6 +861,13 @@ async function refreshDraft() {
     }
     if (result.structured?.audit) {
       document.getElementById('audit-trail').textContent = result.structured.audit.join('\n');
+    }
+
+    // Re-render action panel with updated draft data
+    if (currentDraft && result.structured) {
+      currentDraft.structured_output = result.structured;
+      currentDraft.action_type = result.structured.action_type || null;
+      renderActionPanel(currentDraft);
     }
 
     btn.disabled = false;
