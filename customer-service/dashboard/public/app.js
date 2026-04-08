@@ -1,8 +1,13 @@
 // CS Draft Dashboard — client-side logic
 
+let currentTicketId = null;
+let currentTicket = null;
+let currentTab = 'new';
+let knownTicketIds = new Set();
+
+// Legacy aliases for simulator compatibility
 let currentDraftId = null;
 let currentDraft = null;
-let knownDraftIds = new Set();
 
 // ---------------------------------------------------------------------------
 // Init
@@ -15,17 +20,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   // Restore active tab + sim type
   const savedTab = localStorage.getItem('activeTab');
-  if (savedTab && ['queue', 'history', 'test'].includes(savedTab)) switchTab(savedTab);
+  if (savedTab && ['new', 'followup', 'snoozed', 'closed', 'test'].includes(savedTab)) switchTab(savedTab);
   simRestoreType();
 
   // Restore simulator session if active
   if (simRestore()) simRenderRestoredSession();
 
-  loadQueue().then(async () => {
+  loadTicketQueue().then(async () => {
     // Deep link: #sim-ticket-67811718 → load simulator with that ticket
     const simTicketMatch = location.hash.match(/^#sim-ticket-(\d+)$/);
     if (simTicketMatch) {
-      // Clear any restored session before loading the new ticket
       sim.active = false;
       sim.turns = [];
       sim.intake = null;
@@ -38,30 +42,22 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Restore selected draft from URL hash (only if still pending)
-    const hashId = parseInt(location.hash.replace('#draft-', ''));
-    if (hashId) {
-      try {
-        const draft = await api(`/api/drafts/${hashId}`);
-        if (draft.status === 'pending') {
-          selectDraft(hashId);
-        } else {
-          location.hash = '';
-        }
-      } catch { location.hash = ''; }
+    // Restore selected ticket from URL hash
+    const ticketMatch = location.hash.match(/^#ticket-(\d+)$/);
+    if (ticketMatch) {
+      selectTicket(parseInt(ticketMatch[1]));
     }
   });
   loadStats();
   // Auto-refresh every 30s
   setInterval(() => {
-    loadQueue();
+    loadTicketQueue();
     loadStats();
   }, 30000);
 
   // Esc key returns to queue
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && currentDraftId && document.getElementById('sidebar-context').style.display !== 'none') {
-      // Don't intercept Esc if user is typing in a textarea/input
+    if (e.key === 'Escape' && currentTicketId && document.getElementById('sidebar-context').style.display !== 'none') {
       const tag = document.activeElement?.tagName;
       if (tag === 'TEXTAREA' || tag === 'INPUT') {
         document.activeElement.blur();
@@ -73,10 +69,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Autosave draft edits + notes to localStorage
   document.getElementById('draft-editor').addEventListener('input', () => {
-    if (currentDraftId) localStorage.setItem(`draft-${currentDraftId}`, document.getElementById('draft-editor').value);
+    if (currentTicketId) localStorage.setItem(`draft-ticket-${currentTicketId}`, document.getElementById('draft-editor').value);
   });
   document.getElementById('draft-notes').addEventListener('input', () => {
-    if (currentDraftId) localStorage.setItem(`notes-${currentDraftId}`, document.getElementById('draft-notes').value);
+    if (currentTicketId) localStorage.setItem(`notes-ticket-${currentTicketId}`, document.getElementById('draft-notes').value);
   });
 });
 
@@ -85,54 +81,61 @@ document.addEventListener('DOMContentLoaded', () => {
 // ---------------------------------------------------------------------------
 
 function switchTab(tab) {
+  currentTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
 
-  document.getElementById('panel-queue').style.display = tab === 'queue' ? 'flex' : 'none';
-  document.getElementById('panel-history').style.display = tab === 'history' ? 'block' : 'none';
+  const isTicketTab = ['new', 'followup', 'snoozed', 'closed'].includes(tab);
+  document.getElementById('panel-tickets').style.display = isTicketTab ? 'flex' : 'none';
   document.getElementById('panel-test').style.display = tab === 'test' ? 'block' : 'none';
 
   localStorage.setItem('activeTab', tab);
-  if (tab === 'history') loadHistory();
+  if (isTicketTab) loadTicketQueue();
 }
 
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
 
-async function loadQueue() {
+async function loadTicketQueue() {
   try {
-    const drafts = await api('/api/drafts?status=pending');
+    const tickets = await api(`/api/tickets?tab=${currentTab}`);
     const container = document.getElementById('queue-items');
 
-    // Detect new drafts and send desktop notification
-    if (knownDraftIds.size > 0) {
-      const newDrafts = drafts.filter(d => !knownDraftIds.has(d.id));
-      if (newDrafts.length > 0) {
-        notifyNewDrafts(newDrafts);
+    // Detect new tickets and send desktop notification (only for new/followup tabs)
+    if (['new', 'followup'].includes(currentTab) && knownTicketIds.size > 0) {
+      const newTickets = tickets.filter(t => !knownTicketIds.has(t.id));
+      if (newTickets.length > 0) {
+        notifyNewDrafts(newTickets);
       }
     }
-    knownDraftIds = new Set(drafts.map(d => d.id));
+    if (['new', 'followup'].includes(currentTab)) {
+      knownTicketIds = new Set(tickets.map(t => t.id));
+    }
 
-    if (!drafts.length) {
-      container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-dim)">No pending drafts</div>';
+    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
+    if (!tickets.length) {
+      container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabels[currentTab] || 'No tickets'}</div>`;
       return;
     }
 
-    container.innerHTML = drafts.map(d => `
-      <div class="queue-item ${d.id === currentDraftId ? 'active' : ''}" onclick="selectDraft(${d.id})">
+    container.innerHTML = tickets.map(t => `
+      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''}" onclick="selectTicket(${t.id})">
         <div class="queue-item-header">
-          <span class="queue-item-name">${esc(d.customer_name || d.customer_email)}</span>
-          <span class="badge badge-${d.confidence}">${d.confidence}</span>
+          <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
+          ${t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
         </div>
-        <div class="queue-item-order">${esc(d.order_number || 'No order')} | ${d.message_type || '?'} | Turn ${d.turn_number}</div>
-        <div class="queue-item-time">${timeAgo(d.created_at)}</div>
+        <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
+        <div class="queue-item-time">${timeAgo(t.updated_at)}</div>
       </div>
     `).join('');
   } catch (err) {
-    console.error('Failed to load queue:', err);
+    console.error('Failed to load ticket queue:', err);
   }
 }
+
+// Legacy alias for any remaining references
+function loadQueue() { return loadTicketQueue(); }
 
 function showSidebarContext() {
   document.getElementById('sidebar-queue').style.display = 'none';
@@ -149,9 +152,9 @@ function updateBackButton() {
   document.getElementById('sidebar-back-count').textContent = `Back to queue (${count})`;
 }
 
-async function selectDraft(id) {
-  currentDraftId = id;
-  location.hash = `draft-${id}`;
+async function selectTicket(id) {
+  currentTicketId = id;
+  location.hash = `ticket-${id}`;
 
   // Highlight in queue
   document.querySelectorAll('.queue-item').forEach(el => el.classList.remove('active'));
@@ -161,44 +164,64 @@ async function selectDraft(id) {
   });
 
   try {
-    currentDraft = await api(`/api/drafts/${id}`);
-    renderDetail(currentDraft);
+    currentTicket = await api(`/api/tickets/${id}`);
+    // Set legacy aliases for action panel compatibility
+    if (currentTicket.active_draft) {
+      currentDraftId = currentTicket.active_draft.id;
+      currentDraft = currentTicket.active_draft;
+    } else {
+      currentDraftId = null;
+      currentDraft = null;
+    }
+    renderTicketDetail(currentTicket);
     updateBackButton();
     showSidebarContext();
   } catch (err) {
-    console.error('Failed to load draft:', err);
+    console.error('Failed to load ticket:', err);
   }
 }
 
-function renderDetail(d) {
+// Legacy alias
+function selectDraft(id) { return selectTicket(id); }
+
+function renderTicketDetail(ticket) {
   document.getElementById('detail-placeholder').style.display = 'none';
   document.getElementById('detail-content').style.display = 'block';
 
-  // Reset all button states
-  const btnSend = document.getElementById('btn-send');
-  const btnSendClose = document.getElementById('btn-send-close');
-  const btnCloseOnly = document.getElementById('btn-close-only');
-  const btnTrain = document.getElementById('btn-train');
-  const btnRefresh = document.getElementById('btn-refresh');
-  const btnRelease = document.getElementById('btn-release');
-  const btnDelete = document.getElementById('btn-delete');
-  btnSend.textContent = 'Send Reply';
-  btnSend.disabled = false;
-  btnSendClose.textContent = 'Send & Close';
-  btnSendClose.disabled = false;
-  btnCloseOnly.textContent = 'Close';
-  btnCloseOnly.disabled = false;
-  btnTrain.textContent = 'Train';
-  btnTrain.disabled = false;
-  btnRefresh.disabled = false;
-  btnRelease.textContent = 'Release to Gorgias';
-  btnRelease.disabled = false;
-  if (btnDelete) { btnDelete.textContent = 'Delete'; btnDelete.disabled = false; }
-  const btnSpam = document.getElementById('btn-spam');
-  if (btnSpam) { btnSpam.textContent = 'Spam'; btnSpam.disabled = false; }
+  const isActiveTab = ['new', 'followup'].includes(currentTab);
+  const d = ticket.active_draft; // may be null for snoozed/closed
 
-  // Render basic customer info immediately from draft snapshot
-  const ctx = d.customer_context || {};
+  // Show/hide draft panel vs simple message panel based on tab
+  document.getElementById('detail-draft').style.display = isActiveTab && d ? 'block' : 'none';
+  document.getElementById('simple-message-panel').style.display = !isActiveTab ? 'block' : 'none';
+
+  // Reset button states for draft panel
+  if (isActiveTab && d) {
+    const btnSend = document.getElementById('btn-send');
+    const btnSendClose = document.getElementById('btn-send-close');
+    const btnCloseOnly = document.getElementById('btn-close-only');
+    const btnTrain = document.getElementById('btn-train');
+    const btnRefresh = document.getElementById('btn-refresh');
+    const btnRelease = document.getElementById('btn-release');
+    const btnDelete = document.getElementById('btn-delete');
+    btnSend.textContent = 'Send Reply';
+    btnSend.disabled = false;
+    btnSendClose.textContent = 'Send & Close';
+    btnSendClose.disabled = false;
+    btnCloseOnly.textContent = 'Close';
+    btnCloseOnly.disabled = false;
+    btnTrain.textContent = 'Train';
+    btnTrain.disabled = false;
+    btnRefresh.disabled = false;
+    btnRelease.textContent = 'Release to Gorgias';
+    btnRelease.disabled = false;
+    if (btnDelete) { btnDelete.textContent = 'Delete'; btnDelete.disabled = false; }
+    const btnSpam = document.getElementById('btn-spam');
+    if (btnSpam) { btnSpam.textContent = 'Spam'; btnSpam.disabled = false; }
+  }
+
+  // Customer info from ticket context
+  const ctx = ticket.customer_context || {};
   document.getElementById('customer-card').innerHTML = `
     <div>
       <span class="customer-name">${esc(ctx.name || 'Unknown')}</span>
@@ -206,14 +229,14 @@ function renderDetail(d) {
       ${ctx.buying_for === 'third_party' ? ' <span class="badge badge-muted">Third-party</span>' : ''}
     </div>
     <div class="customer-contact">
-      <span>${esc(ctx.email || d.customer_email)}</span>
+      <span>${esc(ctx.email || ticket.customer_email)}</span>
     </div>
     ${ctx.address ? `<div class="customer-address">${formatAddress(ctx.address)}</div>` : ''}
     <div class="ltv-stats" id="ltv-stats"><span style="color:var(--text-tertiary);font-size:12px">Loading stats...</span></div>
   `;
 
-  // Render basic order info from draft snapshot (will be enriched by loadCustomerContext)
-  const order = d.order_context;
+  // Order info from ticket context
+  const order = ticket.order_context;
   if (order) {
     document.getElementById('ticket-order').innerHTML = renderOrderCard(order.name, order.date, order.items, null, null, null, null);
   } else {
@@ -224,12 +247,12 @@ function renderDetail(d) {
   document.getElementById('other-orders-section').style.display = 'none';
   document.getElementById('past-tickets-section').style.display = 'none';
 
-  // Async: load enriched customer context (strip # from order number)
-  const orderNum = d.order_number ? String(d.order_number).replace('#', '') : null;
-  loadCustomerContext(d.customer_email, orderNum);
+  // Async: load enriched customer context
+  const orderNum = ticket.order_number ? String(ticket.order_number).replace('#', '') : null;
+  loadCustomerContext(ticket.customer_email, orderNum);
 
-  // Conversation thread
-  const history = d.conversation_history || [];
+  // Conversation thread (from ticket, not draft)
+  const history = ticket.conversation_history || [];
   document.getElementById('conversation-thread').innerHTML = history
     .filter(m => m.channel !== 'internal-note')
     .map(m => {
@@ -243,47 +266,69 @@ function renderDetail(d) {
         </div>`;
     }).join('');
 
-  // Draft editor — restore autosaved edits if any
-  const savedDraft = localStorage.getItem(`draft-${d.id}`);
-  const savedNotes = localStorage.getItem(`notes-${d.id}`);
-  document.getElementById('draft-editor').value = savedDraft || d.draft_response;
-  document.getElementById('draft-notes').value = savedNotes || '';
+  if (isActiveTab && d) {
+    // Draft editor — restore autosaved edits if any
+    const savedDraft = localStorage.getItem(`draft-ticket-${ticket.id}`);
+    const savedNotes = localStorage.getItem(`notes-ticket-${ticket.id}`);
+    document.getElementById('draft-editor').value = savedDraft || d.draft_response;
+    document.getElementById('draft-notes').value = savedNotes || '';
 
-  // Confidence + status badges
-  const confEl = document.getElementById('detail-confidence');
-  confEl.textContent = d.confidence;
-  confEl.className = `badge badge-${d.confidence}`;
+    // Confidence + status badges
+    const confEl = document.getElementById('detail-confidence');
+    confEl.textContent = d.confidence;
+    confEl.className = `badge badge-${d.confidence}`;
 
-  const statusEl = document.getElementById('detail-status-badge');
-  statusEl.textContent = d.advisor_status;
-  statusEl.className = `badge badge-${d.advisor_status}`;
+    const statusEl = document.getElementById('detail-status-badge');
+    statusEl.textContent = d.advisor_status;
+    statusEl.className = `badge badge-${d.advisor_status}`;
 
-  // Action panel — intent-specific UIs
-  renderActionPanel(d);
+    // Action panel — intent-specific UIs
+    renderActionPanel(d);
 
-  // Audit trail
-  const audit = d.audit_trail || [];
-  document.getElementById('audit-trail').textContent = audit.join('\n');
+    // Audit trail
+    const audit = d.audit_trail || [];
+    document.getElementById('audit-trail').textContent = audit.join('\n');
 
-  // Context
-  const contextParts = [];
-  if (d.intake_state) {
-    contextParts.push('INTAKE STATE:\n' + JSON.stringify(d.intake_state, null, 2));
+    // Context
+    const contextParts = [];
+    if (d.intake_state) {
+      contextParts.push('INTAKE STATE:\n' + JSON.stringify(d.intake_state, null, 2));
+    }
+    const structured = d.structured_output || {};
+    if (structured.tone_sample) {
+      contextParts.push(`\nTONE SAMPLE (${structured.tone_sample.situation}):\n"${structured.tone_sample.message}"`);
+    }
+    if (structured.prescription?.still_needed?.length) {
+      contextParts.push('\nSTILL NEEDED:\n' + structured.prescription.still_needed.join('\n'));
+    }
+    if (structured.exchanges?.length) {
+      contextParts.push('\nPREVIOUS EXCHANGES:\n' + JSON.stringify(structured.exchanges, null, 2));
+    }
+    document.getElementById('context-content').textContent = contextParts.join('\n\n') || 'No additional context';
+  } else {
+    // Simple message panel — clear for fresh input
+    document.getElementById('simple-message-editor').value = '';
   }
-  const structured = d.structured_output || {};
-  if (structured.tone_sample) {
-    contextParts.push(`\nTONE SAMPLE (${structured.tone_sample.situation}):\n"${structured.tone_sample.message}"`);
-  }
-  if (structured.prescription?.still_needed?.length) {
-    contextParts.push('\nSTILL NEEDED:\n' + structured.prescription.still_needed.join('\n'));
-  }
-  if (structured.exchanges?.length) {
-    contextParts.push('\nPREVIOUS EXCHANGES:\n' + JSON.stringify(structured.exchanges, null, 2));
-  }
-  document.getElementById('context-content').textContent = contextParts.join('\n\n') || 'No additional context';
 
   // Re-highlight queue
-  loadQueue();
+  loadTicketQueue();
+}
+
+// Legacy alias
+function renderDetail(d) {
+  // For simulator compatibility — wrap draft as a pseudo-ticket
+  const pseudoTicket = {
+    ...d,
+    active_draft: d,
+    conversation_history: d.conversation_history,
+    customer_context: d.customer_context,
+    order_context: d.order_context,
+  };
+  // Temporarily force active tab mode for draft rendering
+  const prevTab = currentTab;
+  currentTab = 'new';
+  renderTicketDetail(pseudoTicket);
+  currentTab = prevTab;
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +682,7 @@ async function sendActionMessage() {
   appendChatThinking();
 
   try {
-    const result = await api(`/api/drafts/${currentDraftId}/action-chat`, {
+    const result = await api(`/api/tickets/${currentTicketId}/action-chat`, {
       method: 'POST',
       body: { message, history: _actionChatHistory },
     });
@@ -717,7 +762,7 @@ function executeEditPhase2() {}
 // ---------------------------------------------------------------------------
 
 async function sendDraft(afterAction) {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
 
   const response = document.getElementById('draft-editor').value;
   const notes = document.getElementById('draft-notes').value || undefined;
@@ -728,23 +773,17 @@ async function sendDraft(afterAction) {
   btn.textContent = 'Sending...';
 
   try {
-    const result = await api(`/api/drafts/${currentDraftId}/send`, {
+    const result = await api(`/api/tickets/${currentTicketId}/send`, {
       method: 'POST',
       body: { response, notes, after: afterAction },
     });
     const label = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
     btn.textContent = `${label} (${(result.edit_distance * 100).toFixed(0)}% edit)`;
-    // Clear autosave
-    localStorage.removeItem(`draft-${currentDraftId}`);
-    localStorage.removeItem(`notes-${currentDraftId}`);
+    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
+    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
     setTimeout(() => {
-      currentDraftId = null;
-      currentDraft = null;
-      location.hash = '';
-      document.getElementById('detail-placeholder').style.display = 'flex';
-      document.getElementById('detail-content').style.display = 'none';
-      showSidebarQueue();
-      loadQueue();
+      clearTicketSelection();
+      loadTicketQueue();
       loadStats();
     }, 1500);
   } catch (err) {
@@ -756,7 +795,7 @@ async function sendDraft(afterAction) {
 }
 
 async function closeNoReply() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
   const notes = document.getElementById('draft-notes').value || undefined;
 
   const btn = document.getElementById('btn-close-only');
@@ -764,18 +803,14 @@ async function closeNoReply() {
   btn.textContent = 'Closing...';
 
   try {
-    await api(`/api/drafts/${currentDraftId}/close`, {
+    await api(`/api/tickets/${currentTicketId}/close`, {
       method: 'POST',
       body: { notes },
     });
-    localStorage.removeItem(`draft-${currentDraftId}`);
-    localStorage.removeItem(`notes-${currentDraftId}`);
-    currentDraftId = null;
-    currentDraft = null;
-    location.hash = '';
-    document.getElementById('detail-placeholder').style.display = 'flex';
-    document.getElementById('detail-content').style.display = 'none';
-    loadQueue();
+    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
+    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
+    clearTicketSelection();
+    loadTicketQueue();
     loadStats();
   } catch (err) {
     btn.textContent = 'Close';
@@ -784,16 +819,27 @@ async function closeNoReply() {
   }
 }
 
+function clearTicketSelection() {
+  currentTicketId = null;
+  currentTicket = null;
+  currentDraftId = null;
+  currentDraft = null;
+  location.hash = '';
+  document.getElementById('detail-placeholder').style.display = 'flex';
+  document.getElementById('detail-content').style.display = 'none';
+  showSidebarQueue();
+}
+
 async function refreshDraft() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
 
   const btn = document.getElementById('btn-refresh');
   btn.disabled = true;
 
   try {
-    const result = await api(`/api/drafts/${currentDraftId}/refresh`, { method: 'POST', body: {} });
+    const result = await api(`/api/tickets/${currentTicketId}/refresh`, { method: 'POST', body: {} });
     document.getElementById('draft-editor').value = result.draft_response;
-    localStorage.setItem(`draft-${currentDraftId}`, result.draft_response);
+    localStorage.setItem(`draft-ticket-${currentTicketId}`, result.draft_response);
 
     if (result.structured?.status) {
       const conf = result.structured.status === 'ready' ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
@@ -814,7 +860,7 @@ async function refreshDraft() {
 }
 
 async function trainDraft() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
 
   const response = document.getElementById('draft-editor').value;
   const notes = document.getElementById('draft-notes').value || undefined;
@@ -824,7 +870,7 @@ async function trainDraft() {
   btn.textContent = 'Saving...';
 
   try {
-    await api(`/api/drafts/${currentDraftId}/train`, {
+    await api(`/api/tickets/${currentTicketId}/train`, {
       method: 'POST',
       body: { response, notes },
     });
@@ -838,19 +884,16 @@ async function trainDraft() {
 }
 
 async function releaseDraft() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
   const notes = document.getElementById('draft-notes').value || undefined;
 
   try {
-    await api(`/api/drafts/${currentDraftId}/release`, {
+    await api(`/api/tickets/${currentTicketId}/release`, {
       method: 'POST',
       body: { notes },
     });
-    currentDraftId = null;
-    currentDraft = null;
-    document.getElementById('detail-placeholder').style.display = 'flex';
-    document.getElementById('detail-content').style.display = 'none';
-    loadQueue();
+    clearTicketSelection();
+    loadTicketQueue();
     loadStats();
   } catch (err) {
     alert('Release failed: ' + err.message);
@@ -858,20 +901,15 @@ async function releaseDraft() {
 }
 
 async function markSpam() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
   if (!confirm('Mark as spam? This will close the ticket in Gorgias and tag it as spam.')) return;
 
   try {
-    await api(`/api/drafts/${currentDraftId}/spam`, { method: 'POST', body: {} });
-    localStorage.removeItem(`draft-${currentDraftId}`);
-    localStorage.removeItem(`notes-${currentDraftId}`);
-    currentDraftId = null;
-    currentDraft = null;
-    location.hash = '';
-    document.getElementById('detail-placeholder').style.display = 'flex';
-    document.getElementById('detail-content').style.display = 'none';
-    showSidebarQueue();
-    loadQueue();
+    await api(`/api/tickets/${currentTicketId}/spam`, { method: 'POST', body: {} });
+    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
+    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
+    clearTicketSelection();
+    loadTicketQueue();
     loadStats();
   } catch (err) {
     alert('Spam failed: ' + err.message);
@@ -879,62 +917,19 @@ async function markSpam() {
 }
 
 async function deleteDraft() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
   if (!confirm('Are you sure you want to delete this draft? This cannot be undone.')) return;
 
   try {
-    await api(`/api/drafts/${currentDraftId}/delete`, { method: 'POST', body: {} });
-    localStorage.removeItem(`draft-${currentDraftId}`);
-    localStorage.removeItem(`notes-${currentDraftId}`);
-    currentDraftId = null;
-    currentDraft = null;
-    location.hash = '';
-    document.getElementById('detail-placeholder').style.display = 'flex';
-    document.getElementById('detail-content').style.display = 'none';
-    showSidebarQueue();
-    loadQueue();
+    await api(`/api/tickets/${currentTicketId}/delete`, { method: 'POST', body: {} });
+    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
+    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
+    clearTicketSelection();
+    loadTicketQueue();
     loadStats();
   } catch (err) {
     alert('Delete failed: ' + err.message);
   }
-}
-
-function triggerPoll() {
-  const btn = document.getElementById('btn-poll');
-  btn.disabled = true;
-  btn.textContent = 'Fetching...';
-
-  const source = new EventSource('/api/poll/stream');
-
-  source.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    if (data.phase === 'fetched') {
-      if (data.total === 0) {
-        btn.textContent = 'No new tickets';
-      } else {
-        btn.textContent = `0/${data.total} tickets`;
-      }
-    } else if (data.phase === 'processing') {
-      btn.textContent = `${data.current}/${data.total} tickets`;
-    } else if (data.phase === 'done') {
-      source.close();
-      btn.textContent = `Done (${data.draftsCreated} new)`;
-      loadQueue();
-      loadStats();
-      setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
-    } else if (data.phase === 'error') {
-      source.close();
-      btn.textContent = 'Poll Failed';
-      setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
-    }
-  };
-
-  source.onerror = () => {
-    source.close();
-    btn.textContent = 'Poll Failed';
-    setTimeout(() => { btn.textContent = 'Poll Now'; btn.disabled = false; }, 3000);
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -943,24 +938,74 @@ function triggerPoll() {
 
 async function loadStats() {
   try {
-    const s = await api('/api/stats');
-    document.getElementById('stat-pending').textContent = `${s.pending} pending`;
-    document.getElementById('stat-last-poll').textContent = s.lastPollAt ? `polled ${timeAgo(s.lastPollAt)}` : 'never polled';
+    const s = await api('/api/tickets/stats');
+    const parts = [];
+    if (s.new > 0) parts.push(`${s.new} new`);
+    if (s.followup > 0) parts.push(`${s.followup} follow-up${s.followup > 1 ? 's' : ''}`);
+    document.getElementById('stat-attention').textContent = parts.length ? parts.join(', ') : 'All clear';
+
+    // Update tab badges
+    document.getElementById('tab-count-new').textContent = s.new || '';
+    document.getElementById('tab-count-followup').textContent = s.followup || '';
+    document.getElementById('tab-count-snoozed').textContent = s.snoozed || '';
   } catch (err) {
     console.error('Stats failed:', err);
   }
 }
 
 // ---------------------------------------------------------------------------
-// History
+// Simple Message (Snoozed/Closed tabs)
+// ---------------------------------------------------------------------------
+
+async function sendSimpleMessage(afterAction) {
+  if (!currentTicketId) return;
+  const message = document.getElementById('simple-message-editor').value;
+  if (!message.trim()) { alert('Please enter a message'); return; }
+
+  try {
+    await api(`/api/tickets/${currentTicketId}/message`, {
+      method: 'POST',
+      body: { message, after: afterAction },
+    });
+    clearTicketSelection();
+    loadTicketQueue();
+    loadStats();
+  } catch (err) {
+    alert('Send failed: ' + err.message);
+  }
+}
+
+async function reopenTicket() {
+  if (!currentTicketId) return;
+  try {
+    await api(`/api/tickets/${currentTicketId}/reopen`, { method: 'POST', body: {} });
+    clearTicketSelection();
+    // Switch to the appropriate tab
+    switchTab('new');
+    loadStats();
+  } catch (err) {
+    alert('Reopen failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// History (legacy — kept for backward compatibility)
 // ---------------------------------------------------------------------------
 
 async function loadHistory() {
+  // No longer used — Closed tab replaces history
+}
+
+/*
+// Legacy history table rendering (removed — Closed tab replaces it)
+async function _legacyLoadHistory() {
   try {
     const items = await api('/api/history?limit=100');
     const tbody = document.getElementById('history-body');
+    if (!tbody) return;
     tbody.innerHTML = items.map(d => `
       <tr>
+        <td>${d.gorgias_ticket_id ? `<a href="https://rubies.gorgias.com/app/ticket/${d.gorgias_ticket_id}" target="_blank">#${d.gorgias_ticket_id}</a>` : '-'}</td>
         <td>${formatTime(d.sent_at || d.created_at)}</td>
         <td>${esc(d.customer_name || d.customer_email)}</td>
         <td>${esc(d.order_number || '-')}</td>
@@ -974,6 +1019,7 @@ async function loadHistory() {
     console.error('History failed:', err);
   }
 }
+*/
 
 // ---------------------------------------------------------------------------
 // Helpers

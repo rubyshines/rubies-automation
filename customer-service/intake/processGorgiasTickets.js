@@ -1,17 +1,18 @@
 /**
- * Gorgias Draft Poller
+ * Gorgias Ticket Intake
  *
- * Polls Gorgias for new customer messages, runs them through the CS advisor,
- * and stores AI-drafted responses in Supabase for dashboard review.
+ * Processes Gorgias customer messages (via webhook or manual trigger),
+ * runs them through the CS advisor, and stores AI-drafted responses
+ * in Supabase for dashboard review.
  *
  * Assigns handled tickets to "AI Bot" in Gorgias so they disappear from
  * Jamie's inbox/unassigned queues.
  *
  * Usage:
- *   node customer-service/poller/pollGorgiasDrafts.js   (standalone)
- *   npm run cs-poll-drafts
+ *   node customer-service/intake/processGorgiasTickets.js   (standalone)
+ *   npm run cs-intake
  *
- * Exports run() for programmatic use.
+ * Exports run() and processTicket() for programmatic use.
  */
 
 const path = require('path');
@@ -50,7 +51,7 @@ async function getAiBotUserId() {
   if (_aiBotUserId) return _aiBotUserId;
   const user = await gorgias.findUser(AI_BOT_NAME);
   if (!user) {
-    console.warn(`[poller] Could not find Gorgias user "${AI_BOT_NAME}" — tickets will not be assigned`);
+    console.warn(`[intake] Could not find Gorgias user "${AI_BOT_NAME}" — tickets will not be assigned`);
     return null;
   }
   _aiBotUserId = user.id;
@@ -80,7 +81,7 @@ async function run({ onProgress } = {}) {
     ? new Date(new Date(stateRow.last_poll_at).getTime() - 5 * 60 * 1000) // 5min overlap
     : new Date(Date.now() - 24 * 60 * 60 * 1000); // default: 24hrs ago
 
-  console.log(`[poller] Scanning since ${lastPollAt.toISOString()}...`);
+  console.log(`[intake] Scanning since ${lastPollAt.toISOString()}...`);
 
   // Fetch recent tickets, keep only open + unassigned or assigned to AI bot
   let cursor = null;
@@ -105,7 +106,7 @@ async function run({ onProgress } = {}) {
     if (cursor) await gorgias.delay(500);
   } while (cursor);
 
-  console.log(`[poller] Found ${allTickets.length} open tickets`);
+  console.log(`[intake] Found ${allTickets.length} open tickets`);
   emit({ phase: 'fetched', total: allTickets.length });
 
   // 3. Pre-filter using ticket list data + batch Supabase check (no Gorgias API calls)
@@ -138,52 +139,52 @@ async function run({ onProgress } = {}) {
     // (tickets assigned to other agents are being handled elsewhere)
     const assigneeId = t.assignee_user?.id;
     if (assigneeId && assigneeId !== aiBotId) {
-      console.log(`[poller] Skip ${t.id}: assigned to another agent`);
+      console.log(`[intake] Skip ${t.id}: assigned to another agent`);
       ticketsSkipped++;
       return false;
     }
     // Assigned to AI bot with a pending draft = already in our queue
     if (assigneeId === aiBotId && draftedMessages[t.id]?.size > 0) {
-      console.log(`[poller] Skip ${t.id}: AI bot + pending draft`);
+      console.log(`[intake] Skip ${t.id}: AI bot + pending draft`);
       ticketsSkipped++;
       return false;
     }
     // Released back to Gorgias = don't re-draft
     if (releasedTickets.has(t.id) && !assigneeId) {
       // Only skip if unassigned (released). If AI bot re-assigned somehow, process it.
-      console.log(`[poller] Skip ${t.id}: released to Gorgias`);
+      console.log(`[intake] Skip ${t.id}: released to Gorgias`);
       ticketsSkipped++;
       return false;
     }
     // Spammed in our system
     if (spammedTickets.has(t.id)) {
-      console.log(`[poller] Skip ${t.id}: spammed`);
+      console.log(`[intake] Skip ${t.id}: spammed`);
       ticketsSkipped++;
       return false;
     }
     // Gorgias spam detection (field is `spam`, not `is_spam`)
     if (t.spam) {
-      console.log(`[poller] Skip ${t.id}: Gorgias spam`);
+      console.log(`[intake] Skip ${t.id}: Gorgias spam`);
       ticketsSkipped++;
       return false;
     }
     // Spam-tagged
     const tags = (t.tags || []).map(tag => (tag.name || tag).toLowerCase());
     if (tags.includes('spam')) {
-      console.log(`[poller] Skip ${t.id}: spam tag`);
+      console.log(`[intake] Skip ${t.id}: spam tag`);
       ticketsSkipped++;
       return false;
     }
     // No customer email
     if (!t.customer?.email) {
-      console.log(`[poller] Skip ${t.id}: no email`);
+      console.log(`[intake] Skip ${t.id}: no email`);
       ticketsSkipped++;
       return false;
     }
     return true;
   });
 
-  console.log(`[poller] ${ticketsToProcess.length} to process, ${ticketsSkipped} pre-filtered`);
+  console.log(`[intake] ${ticketsToProcess.length} to process, ${ticketsSkipped} pre-filtered`);
 
   // 4. Process only tickets that passed all filters
   for (let i = 0; i < ticketsToProcess.length; i++) {
@@ -195,7 +196,7 @@ async function run({ onProgress } = {}) {
       if (ptResult?.skipped) ticketsSkipped++;
       else ticketsProcessed++;
     } catch (err) {
-      console.error(`[poller] Error processing ticket ${ticket.id}: ${err.message}`);
+      console.error(`[intake] Error processing ticket ${ticket.id}: ${err.message}`);
       ticketsSkipped++;
     }
     await gorgias.delay(500);
@@ -211,10 +212,10 @@ async function run({ onProgress } = {}) {
       const text = followUpResult?.content?.[0]?.text || '';
       const match = text.match(/Created (\d+) follow-up/);
       followUpsCreated = match ? parseInt(match[1]) : 0;
-      if (followUpsCreated > 0) console.log(`[poller] ${followUpsCreated} follow-up drafts created`);
+      if (followUpsCreated > 0) console.log(`[intake] ${followUpsCreated} follow-up drafts created`);
     }
   } catch (err) {
-    console.warn(`[poller] Follow-up check failed: ${err.message}`);
+    console.warn(`[intake] Follow-up check failed: ${err.message}`);
   }
 
   try {
@@ -223,10 +224,10 @@ async function run({ onProgress } = {}) {
     if (bypassHandler) {
       const bypassResult = await bypassHandler({});
       const text = bypassResult?.content?.[0]?.text || '';
-      if (!text.includes('0 bypasses')) console.log(`[poller] Bypass detection: ${text.split('\n')[0]}`);
+      if (!text.includes('0 bypasses')) console.log(`[intake] Bypass detection: ${text.split('\n')[0]}`);
     }
   } catch (err) {
-    console.warn(`[poller] Bypass detection failed: ${err.message}`);
+    console.warn(`[intake] Bypass detection failed: ${err.message}`);
   }
 
   // 5. Update high-water mark
@@ -235,7 +236,7 @@ async function run({ onProgress } = {}) {
     .upsert({ id: 'gorgias_drafter', last_poll_at: new Date().toISOString(), updated_at: new Date().toISOString() });
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[poller] Done in ${elapsed}s — ${ticketsProcessed} processed, ${draftsCreated} drafts created, ${followUpsCreated} follow-ups, ${ticketsSkipped} skipped`);
+  console.log(`[intake] Done in ${elapsed}s — ${ticketsProcessed} processed, ${draftsCreated} drafts created, ${followUpsCreated} follow-ups, ${ticketsSkipped} skipped`);
 
   const result = { ticketsProcessed, draftsCreated, followUpsCreated, ticketsSkipped, elapsed };
   emit({ phase: 'done', ...result });
@@ -266,7 +267,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   // Check if we already have a draft for this specific message
   if (existingMessageIds?.has(latestCustomerMsgId)) {
-    console.log(`[poller] Skip ${ticketId}: draft exists for this message`);
+    console.log(`[intake] Skip ${ticketId}: draft exists for this message`);
     return { skipped: true };
   }
 
@@ -274,7 +275,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const latestMsg = messages[messages.length - 1];
   const isBot = latestMsg.sender?.email?.endsWith('@email.gorgias.com') || latestMsg.via === 'rule';
   if (latestMsg.from_agent === true && !isBot) {
-    console.log(`[poller] Skip ${ticketId}: agent already replied`);
+    console.log(`[intake] Skip ${ticketId}: agent already replied`);
     return { skipped: true };
   }
 
@@ -320,7 +321,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const issueDescription = contextParts.join('\n\n');
 
   // Run through hybrid advisor (Opus) with tree fallback
-  console.log(`[poller] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
+  console.log(`[intake] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
 
   let result;
   let usedFallback = false;
@@ -332,7 +333,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       intake: previousIntake || undefined,
     });
   } catch (err) {
-    console.warn(`[poller] Hybrid advisor error on ticket ${ticketId}: ${err.message} — falling back to tree`);
+    console.warn(`[intake] Hybrid advisor error on ticket ${ticketId}: ${err.message} — falling back to tree`);
     try {
       const treeFallback = getTreeFallback();
       result = await treeFallback({
@@ -342,14 +343,14 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       });
       usedFallback = true;
     } catch (err2) {
-      console.log(`[poller] Tree fallback also failed on ticket ${ticketId}: ${err2.message}`);
+      console.log(`[intake] Tree fallback also failed on ticket ${ticketId}: ${err2.message}`);
       return { skipped: true };
     }
   }
 
   const structured = result?._structured;
   if (!structured) {
-    console.warn(`[poller] No structured output for ticket ${ticketId}`);
+    console.warn(`[intake] No structured output for ticket ${ticketId}`);
     return { skipped: true };
   }
   if (usedFallback) structured.advisor_version = (structured.advisor_version || '') + '-fallback';
@@ -360,7 +361,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   if (routeToHuman && !structured._composedResponse) {
     const routeReason = structured.results?.[0]?.summary || structured.error || 'Unhandled message type';
     draftResponse = `[AI could not draft a response — needs manual reply]\n\nRoute reason: ${routeReason}\n\nCustomer message: ${messageText}`;
-    console.log(`[poller] Ticket ${ticketId} routed to human — creating training draft`);
+    console.log(`[intake] Ticket ${ticketId} routed to human — creating training draft`);
   } else {
     draftResponse = structured._composedResponse || '[No response composed]';
   }
@@ -375,10 +376,44 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     channel: m.channel,
   }));
 
+  // Upsert cs_tickets row (ticket-centric model)
+  const messageType = structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown';
+  const confidence = structured.confidence || 'low';
+
+  const { data: ticketRow, error: ticketErr } = await supabase
+    .from('cs_tickets')
+    .upsert({
+      gorgias_ticket_id: ticketId,
+      status: 'open',
+      turn_number: turnNumber,
+      customer_email: customerEmail,
+      customer_name: structured.customer?.name || null,
+      customer_pronouns: structured.customer?.pronouns || null,
+      customer_country: structured.customer?.country || null,
+      order_number: structured.order?.name || null,
+      conversation_history: conversationHistory,
+      order_context: structured.order || null,
+      customer_context: structured.customer || null,
+      message_type: messageType,
+      confidence,
+      advisor_status: structured.status,
+      updated_at: new Date().toISOString(),
+      gorgias_status: ticket.status || 'open',
+      gorgias_updated_at: ticket.updated_datetime || null,
+    }, { onConflict: 'gorgias_ticket_id' })
+    .select('id')
+    .single();
+
+  if (ticketErr) {
+    console.error(`[intake] Ticket upsert error for ${ticketId}: ${ticketErr.message}`);
+    return { skipped: true };
+  }
+
   // Insert draft — save advisor result verbatim, no post-processing
-  const { error: insertErr } = await supabase
+  const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
     .insert({
+      ticket_id: ticketRow.id,
       gorgias_ticket_id: ticketId,
       gorgias_message_id: latestCustomerMsgId,
       customer_email: customerEmail,
@@ -390,23 +425,31 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       structured_output: structured,
       intake_state: structured.intake || null,
       audit_trail: structured.audit || [],
-      confidence: structured.confidence || 'low',
+      confidence,
       advisor_status: structured.status,
-      message_type: structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown',
+      message_type: messageType,
       conversation_history: conversationHistory,
       order_context: structured.order || null,
       customer_context: structured.customer || null,
       action_type: structured.action_type || null,
       turn_number: turnNumber,
       previous_draft_id: previousDraftId,
-    });
+    })
+    .select('id')
+    .single();
 
   if (insertErr) {
-    console.error(`[poller] Insert error for ticket ${ticketId}: ${insertErr.message}`);
+    console.error(`[intake] Insert error for ticket ${ticketId}: ${insertErr.message}`);
     return { skipped: true };
   }
 
-  console.log(`[poller] Draft created for ticket ${ticketId} (confidence: ${structured.confidence || 'low'}, status: ${structured.status})`);
+  // Point ticket to the new active draft
+  await supabase
+    .from('cs_tickets')
+    .update({ active_draft_id: newDraft.id })
+    .eq('id', ticketRow.id);
+
+  console.log(`[intake] Draft created for ticket ${ticketId} (confidence: ${confidence}, status: ${structured.status})`);
 
   // Assign to AI Bot in Gorgias
   if (aiBotId) {
@@ -414,7 +457,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       await gorgias.assignTicket(ticketId, aiBotId);
       await gorgias.addTicketTag(ticketId, 'ai-draft');
     } catch (err) {
-      console.warn(`[poller] Could not assign/tag ticket ${ticketId}: ${err.message}`);
+      console.warn(`[intake] Could not assign/tag ticket ${ticketId}: ${err.message}`);
     }
   }
 
@@ -531,11 +574,11 @@ function buildConversationContext(messages, latestMsgId) {
 if (require.main === module) {
   run()
     .then(result => {
-      console.log('[poller] Result:', JSON.stringify(result));
+      console.log('[intake] Result:', JSON.stringify(result));
       process.exit(0);
     })
     .catch(err => {
-      console.error('[poller] Fatal error:', err);
+      console.error('[intake] Fatal error:', err);
       process.exit(1);
     });
 }

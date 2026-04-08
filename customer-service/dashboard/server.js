@@ -147,6 +147,9 @@ async function apiSendDraft(id, body) {
     console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
   }
 
+  // Update ticket status
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed');
+
   return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, after: afterAction };
 }
 
@@ -245,6 +248,8 @@ async function apiCloseDraft(id, body) {
     feedback_notes: body.notes || null,
   });
 
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+
   return { success: true };
 }
 
@@ -307,7 +312,7 @@ async function apiRefreshDraft(id) {
   const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
 
   // Build conversation context (same as poller)
-  const { buildConversationContext } = require('../poller/pollGorgiasDrafts');
+  const { buildConversationContext } = require('../intake/processGorgiasTickets');
   let contextParts = [];
   if (typeof buildConversationContext === 'function') {
     const ctx = buildConversationContext(messages, lastCustomer.id);
@@ -380,6 +385,8 @@ async function apiReleaseDraft(id, body) {
     feedback_notes: body.notes || null,
   });
 
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+
   return { success: true };
 }
 
@@ -404,11 +411,15 @@ async function apiDeleteDraft(id) {
     }
   }
 
-  // Soft-delete: mark as deleted so poller won't recreate
+  // Soft-delete: mark as deleted so intake won't recreate
   await supabase.from('cs_ai_drafts').update({
     status: 'deleted',
     reviewed_at: new Date().toISOString(),
   }).eq('id', id);
+
+  if (draft.gorgias_ticket_id) {
+    await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+  }
 
   return { success: true };
 }
@@ -435,11 +446,15 @@ async function apiMarkSpam(id) {
     }
   }
 
-  // Soft-delete: mark as spam so poller won't recreate
+  // Soft-delete: mark as spam so intake won't recreate
   await supabase.from('cs_ai_drafts').update({
     status: 'spam',
     reviewed_at: new Date().toISOString(),
   }).eq('id', id);
+
+  if (draft.gorgias_ticket_id) {
+    await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+  }
 
   return { success: true };
 }
@@ -903,7 +918,7 @@ async function apiSimulatorUpdateTurn(body) {
 }
 
 async function apiTriggerPoll() {
-  const { run } = require('../poller/pollGorgiasDrafts');
+  const { run } = require('../intake/processGorgiasTickets');
   return run();
 }
 
@@ -915,7 +930,7 @@ function apiPollStream(req, res) {
     'Connection': 'keep-alive',
   });
 
-  const { run } = require('../poller/pollGorgiasDrafts');
+  const { run } = require('../intake/processGorgiasTickets');
   run({
     onProgress: (data) => {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -1635,6 +1650,181 @@ async function apiGetCustomerContext(email, orderNumber) {
 }
 
 // ---------------------------------------------------------------------------
+// Ticket-centric API (cs_tickets as primary entity)
+// ---------------------------------------------------------------------------
+
+/**
+ * Update cs_tickets status after a draft action.
+ * Called from existing draft endpoints to keep ticket state in sync.
+ */
+async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {}) {
+  const now = new Date().toISOString();
+  const updates = { status, updated_at: now, ...extra };
+  if (status === 'snoozed') updates.snoozed_at = now;
+  if (status === 'closed') updates.closed_at = now;
+  if (status === 'snoozed' || status === 'closed') updates.active_draft_id = null;
+
+  await supabase
+    .from('cs_tickets')
+    .update(updates)
+    .eq('gorgias_ticket_id', gorgiasTicketId);
+}
+
+async function apiGetTickets(query) {
+  const supabase = getSupabaseClient();
+  const tab = query.get('tab') || 'new';
+  const limit = parseInt(query.get('limit') || '50', 10);
+
+  let q = supabase
+    .from('cs_tickets')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+
+  switch (tab) {
+    case 'new':
+      q = q.eq('status', 'open').eq('turn_number', 1);
+      break;
+    case 'followup':
+      q = q.eq('status', 'open').gt('turn_number', 1);
+      break;
+    case 'snoozed':
+      q = q.eq('status', 'snoozed');
+      break;
+    case 'closed':
+      q = q.eq('status', 'closed');
+      break;
+  }
+
+  const { data, error } = await q;
+  if (error) throw error;
+  return data;
+}
+
+async function apiGetTicketStats() {
+  const supabase = getSupabaseClient();
+
+  const [newResult, followupResult, snoozedResult] = await Promise.all([
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'open').eq('turn_number', 1),
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'open').gt('turn_number', 1),
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'snoozed'),
+  ]);
+
+  return {
+    new: newResult.count || 0,
+    followup: followupResult.count || 0,
+    snoozed: snoozedResult.count || 0,
+  };
+}
+
+async function apiGetTicket(id) {
+  const supabase = getSupabaseClient();
+
+  // Get ticket
+  const { data: ticket, error } = await supabase
+    .from('cs_tickets')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (error) throw error;
+
+  // Get active draft if present
+  let activeDraft = null;
+  if (ticket.active_draft_id) {
+    const { data } = await supabase
+      .from('cs_ai_drafts')
+      .select('*')
+      .eq('id', ticket.active_draft_id)
+      .single();
+    activeDraft = data;
+  }
+
+  // Get all drafts for this ticket (for history/training panel)
+  const { data: allDrafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('id, draft_response, sent_response, edit_distance, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, status, turn_number, sent_at, created_at')
+    .eq('ticket_id', id)
+    .order('created_at', { ascending: true });
+
+  return { ...ticket, active_draft: activeDraft, drafts: allDrafts || [] };
+}
+
+async function apiSendTicketMessage(ticketId, body) {
+  const supabase = getSupabaseClient();
+
+  const { data: ticket, error } = await supabase
+    .from('cs_tickets')
+    .select('gorgias_ticket_id, conversation_history')
+    .eq('id', ticketId)
+    .single();
+  if (error) throw error;
+
+  const message = body.message;
+  if (!message?.trim()) throw new Error('Message is required');
+
+  // Send to Gorgias
+  const bodyHtml = autoLinkProducts(message, _productConfig);
+  const replyResult = await gorgias.createTicketReply(ticket.gorgias_ticket_id, {
+    body_html: bodyHtml,
+    body_text: message,
+  });
+
+  // Append to conversation history
+  const history = ticket.conversation_history || [];
+  history.push({
+    id: replyResult?.id,
+    sender: 'agent',
+    body: message,
+    body_html: bodyHtml,
+    created_at: new Date().toISOString(),
+    channel: 'email',
+  });
+
+  // Post-send action
+  const afterAction = body.after || 'snooze';
+  const now = new Date().toISOString();
+  const updates = { conversation_history: history, updated_at: now };
+
+  if (afterAction === 'close') {
+    updates.status = 'closed';
+    updates.closed_at = now;
+    try {
+      await gorgias.closeTicket(ticket.gorgias_ticket_id);
+      await gorgias.assignTicket(ticket.gorgias_ticket_id, null);
+    } catch (err) {
+      console.warn(`[dashboard] Post-message close failed: ${err.message}`);
+    }
+  } else {
+    updates.status = 'snoozed';
+    updates.snoozed_at = now;
+    try {
+      await gorgias.snoozeTicket(ticket.gorgias_ticket_id, 3);
+    } catch (err) {
+      console.warn(`[dashboard] Post-message snooze failed: ${err.message}`);
+    }
+  }
+
+  await supabase.from('cs_tickets').update(updates).eq('id', ticketId);
+
+  return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
+}
+
+async function apiReopenTicket(ticketId) {
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+
+  await supabase.from('cs_tickets').update({
+    status: 'open',
+    updated_at: now,
+  }).eq('id', ticketId);
+
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
 
@@ -1643,6 +1833,8 @@ const routes = {
   'GET /api/stats': () => apiGetStats(),
   'GET /api/history': (req) => apiGetHistory(new URL(req.url, 'http://localhost').searchParams),
   'POST /api/poll': () => apiTriggerPoll(),
+  'GET /api/tickets': (req) => apiGetTickets(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/tickets/stats': () => apiGetTicketStats(),
 };
 
 // Routes with path params
@@ -1665,6 +1857,100 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/delete$/, handler: (_, id) => apiDeleteDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/spam$/, handler: (_, id) => apiMarkSpam(parseInt(id)) },
+  // Ticket-centric routes
+  { method: 'GET', pattern: /^\/api\/tickets\/(\d+)$/, handler: (_, id) => apiGetTicket(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/send$/, handler: (body, id) => {
+    // Delegate to draft send via active_draft_id
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiSendDraft(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/close$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiCloseDraft(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/train$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiTrainDraft(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: (_, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiRefreshDraft(t.active_draft_id);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/release$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiReleaseDraft(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/spam$/, handler: (_, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiMarkSpam(t.active_draft_id);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/delete$/, handler: (_, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiDeleteDraft(t.active_draft_id);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/exchange$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiExecuteExchange(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/refund$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiExecuteRefund(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/edit$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiExecuteEdit(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/action-chat$/, handler: (body, id) => {
+    const supabase = getSupabaseClient();
+    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
+      .then(({ data: t }) => {
+        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
+        return apiActionChat(t.active_draft_id, body);
+      });
+  }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/message$/, handler: (body, id) => apiSendTicketMessage(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },
+  // Legacy draft routes (kept for simulator + backward compat)
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },
   { method: 'GET', pattern: /^\/api\/simulator\/random$/, handler: (_, __, req) => {

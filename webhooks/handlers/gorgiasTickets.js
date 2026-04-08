@@ -7,7 +7,7 @@
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { processTicket, getAiBotUserId } = require('../../customer-service/poller/pollGorgiasDrafts');
+const { processTicket, getAiBotUserId } = require('../../customer-service/intake/processGorgiasTickets');
 const gorgias = require('../../customer-service/import/gorgiasClient');
 
 async function handle(payload) {

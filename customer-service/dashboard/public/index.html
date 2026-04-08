@@ -13,20 +13,20 @@
   <header>
     <h1>RUBIES Care</h1>
     <div id="stats-bar">
-      <span id="stat-pending" class="stat stat-fixed">--</span>
-      <span id="stat-last-poll" class="stat stat-fixed">--</span>
-      <button id="btn-poll" onclick="triggerPoll()">Poll Now</button>
+      <span id="stat-attention" class="stat stat-fixed">--</span>
     </div>
     <nav>
-      <button class="tab active" data-tab="queue" onclick="switchTab('queue')">Queue</button>
-      <button class="tab" data-tab="history" onclick="switchTab('history')">History</button>
+      <button class="tab active" data-tab="new" onclick="switchTab('new')">New <span class="tab-count" id="tab-count-new"></span></button>
+      <button class="tab" data-tab="followup" onclick="switchTab('followup')">Follow-up <span class="tab-count" id="tab-count-followup"></span></button>
+      <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
+      <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
       <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
     </nav>
   </header>
 
   <main>
-    <!-- Queue panel (split: list + detail) -->
-    <div id="panel-queue" class="panel">
+    <!-- Tickets panel (split: list + detail) — shared by all 4 ticket tabs -->
+    <div id="panel-tickets" class="panel">
       <div class="sidebar">
         <!-- View 1: Queue list -->
         <div id="sidebar-queue">
@@ -53,7 +53,7 @@
         </div>
       </div>
       <div id="draft-detail" class="detail">
-        <div id="detail-placeholder">Select a draft to review</div>
+        <div id="detail-placeholder">Select a ticket to review</div>
         <div id="detail-content" style="display:none">
 
           <!-- Conversation thread -->
@@ -66,6 +66,8 @@
           <div id="detail-draft" class="detail-section">
             <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span> <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft()" title="Regenerate draft">&#8635;</button></h3>
             <textarea id="draft-editor" rows="8"></textarea>
+            <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
+            <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
             <div id="draft-actions">
               <div id="action-panel" style="display:none">
                 <div id="action-header"></div>
@@ -74,8 +76,6 @@
                 <div id="action-preview" style="display:none"></div>
                 <div id="action-result" style="display:none"></div>
               </div>
-              <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
-              <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
               <div class="btn-row">
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send Reply</button>
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
@@ -99,27 +99,31 @@
             <summary>Context</summary>
             <div id="context-content"></div>
           </details>
+
+          <!-- Simple Message Panel (for Snoozed/Closed tabs) -->
+          <div id="simple-message-panel" class="detail-section" style="display:none">
+            <h3>Send Message</h3>
+            <textarea id="simple-message-editor" rows="6" placeholder="Type a message to send to this customer..."></textarea>
+            <div id="simple-action-panel" style="display:none;margin-top:12px">
+              <div class="context-section-label" style="border:none;padding:0;margin-bottom:8px">Action</div>
+              <div class="action-chat-messages" id="simple-action-chat-messages" style="max-height:200px"></div>
+              <div class="action-chat-input-row">
+                <input type="text" class="action-chat-input" id="simple-action-chat-input"
+                  placeholder="exchange, refund, edit..."
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendSimpleActionMessage()}" />
+                <button class="action-chat-send" onclick="sendSimpleActionMessage()">Send</button>
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top:12px">
+              <button class="btn btn-primary" onclick="sendSimpleMessage('snooze')">Send &amp; Snooze</button>
+              <button class="btn btn-close" onclick="sendSimpleMessage('close')">Send &amp; Close</button>
+              <button class="btn btn-secondary" onclick="reopenTicket()">Reopen</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- History panel -->
-    <div id="panel-history" class="panel" style="display:none">
-      <table id="history-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Customer</th>
-            <th>Order</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Edit Dist</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody id="history-body"></tbody>
-      </table>
-    </div>
     <!-- Test panel (unified: simulator + manual test + replay) -->
     <div id="panel-test" class="panel" style="display:none">
       <!-- Idle state -->

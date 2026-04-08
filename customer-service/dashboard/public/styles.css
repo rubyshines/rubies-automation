@@ -102,6 +102,27 @@ nav { display: flex; gap: 2px; }
 }
 .tab:hover { color: var(--text); }
 
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  margin-left: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tab-count:empty { display: none; }
+.tab.active .tab-count {
+  background: var(--accent);
+  color: white;
+}
+
 #btn-poll {
   background: var(--text);
   color: var(--surface);
@@ -124,7 +145,7 @@ nav { display: flex; gap: 2px; }
 
 main { height: calc(100vh - 56px); }
 .panel { height: 100%; }
-#panel-queue { display: flex; }
+#panel-tickets { display: flex; }
 
 /* ─── Sidebar (Queue List) ───────────────────────────────── */
 
