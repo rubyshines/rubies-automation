@@ -148,6 +148,7 @@ async function loadTicketQueue() {
           <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
           ${t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
         </div>
+        ${t.customer_name ? `<div class="queue-item-email">${esc(t.customer_email)}</div>` : ''}
         <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
         <div class="queue-item-time">${timeAgo(t.updated_at)}</div>
       </div>

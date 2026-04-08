@@ -380,6 +380,17 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const messageType = structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown';
   const confidence = structured.confidence || 'low';
 
+  // Get customer name — AI extraction, then Shopify fallback
+  let customerName = structured.customer?.name || null;
+  if (!customerName && customerEmail) {
+    const { data: custRow } = await supabase
+      .from('customers')
+      .select('first_name, last_name')
+      .eq('email', customerEmail.toLowerCase())
+      .maybeSingle();
+    if (custRow) customerName = [custRow.first_name, custRow.last_name].filter(Boolean).join(' ') || null;
+  }
+
   const { data: ticketRow, error: ticketErr } = await supabase
     .from('cs_tickets')
     .upsert({
@@ -387,7 +398,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       status: 'open',
       turn_number: turnNumber,
       customer_email: customerEmail,
-      customer_name: structured.customer?.name || null,
+      customer_name: customerName,
       customer_pronouns: structured.customer?.pronouns || null,
       customer_country: structured.customer?.country || null,
       order_number: structured.order?.name || null,
