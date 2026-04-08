@@ -1009,11 +1009,10 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     else if (hasRefund) action_type = 'refund';
   }
 
-  // Trust AI's explicit action_type for hold, edit, cancellation
-  if (!action_type && parsed.action_type) {
-    if (['warehouse_hold', 'order_modification', 'cancellation'].includes(parsed.action_type)) {
-      action_type = parsed.action_type;
-    }
+  // AI's explicit action_type for hold, edit, cancellation takes priority
+  // (item states like CONFIRMED may be misinterpreted as exchange for non-exchange scenarios)
+  if (parsed.action_type && ['warehouse_hold', 'order_modification', 'cancellation'].includes(parsed.action_type)) {
+    action_type = parsed.action_type;
   }
 
   return {
