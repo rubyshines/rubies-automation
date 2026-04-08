@@ -208,16 +208,24 @@ async function buildContextFromShopify(customer_email) {
  * @param {Object|null} [params.existingIntake] - previous intake (may contain order_number)
  * @returns {Promise<Object>} ctx
  */
-async function buildContext({ customer_email, order_number, issue_description, existingIntake }) {
-  // Quick-extract order number from message BEFORE order lookup
-  let messageOrderNumber = null;
-  if (issue_description) {
-    const orderMatch = issue_description.match(/#\s*(\d{4,6})\b/) || issue_description.match(/order\s*#?\s*(\d{4,6})\b/i);
-    if (orderMatch) {
-      const num = parseInt(orderMatch[1], 10);
-      if (num >= 1000 && num <= 999999) messageOrderNumber = orderMatch[1];
-    }
+/**
+ * Extract an order number from free-text customer message.
+ * Handles: #29784, order #29784, Order number: #29784, order # was 29887, order number 29784
+ * Returns the number string or null.
+ */
+function extractOrderNumber(text) {
+  if (!text) return null;
+  const match = text.match(/#\s*(\d{4,6})\b/) ||
+    text.match(/(?:order|#)\s*(?:#|number|num|no\.?|was|is)?\s*:?\s*(\d{4,6})\b/i);
+  if (match) {
+    const num = parseInt(match[1], 10);
+    if (num >= 1000 && num <= 999999) return match[1];
   }
+  return null;
+}
+
+async function buildContext({ customer_email, order_number, issue_description, existingIntake }) {
+  const messageOrderNumber = extractOrderNumber(issue_description);
 
   // Try Supabase first, fall back to Shopify
   let customerData = null;
@@ -273,7 +281,14 @@ async function buildContext({ customer_email, order_number, issue_description, e
     }
   }
 
-  if (!targetOrder) targetOrder = fulfilled[0] || null;
+  if (!targetOrder) {
+    // Prefer most recent non-cancelled, non-$0-exchange order (may be unfulfilled)
+    const nonExchange = all.filter(o =>
+      !o.cancelledAt &&
+      parseFloat(o.totalPriceSet?.shopMoney?.amount || '0') > 0
+    );
+    targetOrder = nonExchange[0] || fulfilled[0] || null;
+  }
 
   // Build order line items with normalized SKU sizes
   const orderLineItems = (targetOrder?.lineItems || []).map(li => {
@@ -296,4 +311,4 @@ async function buildContext({ customer_email, order_number, issue_description, e
   };
 }
 
-module.exports = { buildContext, analyzeOrders };
+module.exports = { buildContext, analyzeOrders, extractOrderNumber };

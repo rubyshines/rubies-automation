@@ -1318,19 +1318,36 @@ RULES:
     }
   }
 
-  // Update draft with action results if any tools were called
-  if (toolResults.length) {
+  // Update draft with action results and chat history
+  if (toolResults.length || finalResponse) {
     const prevResult = draft.action_result || {};
-    await supabase.from('cs_ai_drafts').update({
-      action_result: { ...prevResult, chat_tool_results: toolResults },
-    }).eq('id', draftId);
+    const updates = {
+      action_result: {
+        ...prevResult,
+        chat_tool_results: toolResults,
+        chat_history: currentMessages,
+        chat_response: finalResponse,
+      },
+    };
+
+    // Detect if a completing action was performed (refund, exchange, edit)
+    const completedAction = toolResults.some(tr =>
+      (tr.tool === 'refund_order' && tr.input?.confirmed) ||
+      (tr.tool === 'create_exchange_order' && tr.input?.confirmed) ||
+      (tr.tool === 'edit_order' && tr.input?.confirmed) ||
+      (tr.result && typeof tr.result === 'string' && /completed|refunded|created/i.test(tr.result))
+    );
+    if (completedAction && !draft.action_executed_at) {
+      updates.action_executed_at = new Date().toISOString();
+    }
+
+    await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
   }
 
   // Return the full conversation for the client to display
   return {
     response: finalResponse,
     tool_results: toolResults,
-    // Return updated messages for the client to maintain history
     history: currentMessages,
   };
 }

@@ -333,6 +333,15 @@ function renderTicketDetail(ticket) {
     document.getElementById('simple-message-editor').value = '';
   }
 
+  // Scroll to last customer message
+  setTimeout(() => {
+    const msgs = document.querySelectorAll('#conversation-thread .msg-customer');
+    const lastCustomerMsg = msgs[msgs.length - 1];
+    if (lastCustomerMsg) {
+      lastCustomerMsg.scrollIntoView({ behavior: 'auto', block: 'start' });
+    }
+  }, 50);
+
   // Re-highlight queue
   loadTicketQueue();
 }
@@ -587,10 +596,39 @@ function renderActionPanel(draft) {
     headerEl.innerHTML = `<span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--yellow)">Action</span>`;
   }
 
-  // Already executed?
+  // Already executed? Show the result
   if (draft.action_executed_at) {
-    appendChatMessage('assistant', `Action executed ${timeAgo(draft.action_executed_at)}. You can request additional actions.`);
-    input.placeholder = 'e.g. exchange the AJ to size L, refund the Ruby...';
+    // Restore saved chat history if available
+    const savedChat = draft.action_result?.chat_history;
+    if (savedChat?.length) {
+      // Replay tool results and response from saved history
+      const toolResults = draft.action_result?.chat_tool_results || [];
+      for (const tr of toolResults) {
+        const label = tr.tool.replace(/_/g, ' ');
+        const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+        const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
+        appendChatMessage('tool', `[${label}]\n${display}`);
+      }
+      if (draft.action_result?.chat_response) {
+        appendChatMessage('assistant', draft.action_result.chat_response);
+      }
+    } else {
+      // No saved chat — show summary from action_result
+      const result = draft.action_result || {};
+      const toolResults = result.chat_tool_results || [];
+      if (toolResults.length) {
+        for (const tr of toolResults) {
+          const label = tr.tool.replace(/_/g, ' ');
+          const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+          appendChatMessage('tool', `[${label}]\n${resultText}`);
+        }
+      } else {
+        appendChatMessage('assistant', `Action executed ${timeAgo(draft.action_executed_at)}.`);
+      }
+    }
+
+    headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Executed ${timeAgo(draft.action_executed_at)}</span>`;
+    input.placeholder = 'Request additional actions...';
     input.value = '';
     return;
   }
@@ -651,13 +689,34 @@ function buildActionPrefill(draft) {
   return '';
 }
 
+function simpleMarkdown(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    // Tables: | col | col | → HTML table
+    .replace(/((?:^\|.+\|$\n?)+)/gm, (table) => {
+      const rows = table.trim().split('\n').filter(r => !/^\|[\s-|]+\|$/.test(r));
+      const html = rows.map((row, i) => {
+        const cells = row.split('|').filter((_, j) => j > 0 && j < row.split('|').length - 1);
+        const tag = i === 0 ? 'th' : 'td';
+        return `<tr>${cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('')}</tr>`;
+      }).join('');
+      return `<table class="action-table">${html}</table>`;
+    })
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+}
+
 function appendChatMessage(role, content) {
   const container = document.getElementById('action-chat-messages');
   if (!container) return;
 
   const div = document.createElement('div');
   div.className = `action-msg action-msg-${role}`;
-  div.textContent = content;
+  if (role === 'tool') {
+    div.innerHTML = `<pre class="action-tool-output">${esc(content)}</pre>`;
+  } else {
+    div.innerHTML = simpleMarkdown(content);
+  }
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -701,23 +760,20 @@ async function sendActionMessage() {
 
     removeChatThinking();
 
-    // Show assistant response
-    if (result.response) {
-      appendChatMessage('assistant', result.response);
-    }
-
-    // Show tool results in a compact format
+    // Show tool calls first (like Claude Code — show the work before the answer)
     if (result.tool_results?.length) {
       for (const tr of result.tool_results) {
         const label = tr.tool.replace(/_/g, ' ');
         const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
-        // Truncate long results
-        const display = resultText.length > 400 ? resultText.substring(0, 400) + '...' : resultText;
+        const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
         appendChatMessage('tool', `[${label}]\n${display}`);
       }
-
-      // Auto-update draft editor with action results
       updateDraftFromActionResults(result.tool_results);
+    }
+
+    // Then show assistant response
+    if (result.response) {
+      appendChatMessage('assistant', result.response);
     }
 
     // Update history for next message

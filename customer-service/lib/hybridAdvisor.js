@@ -286,6 +286,7 @@ async function executeToolCall(toolName, toolInput) {
           days_since_order: Math.floor((Date.now() - new Date(ctx.targetOrder.createdAt).getTime()) / 86400000),
           fulfillment_status: ctx.targetOrder.displayFulfillmentStatus,
           financial_status: ctx.targetOrder.displayFinancialStatus,
+          shipping_address: ctx.targetOrder.shippingAddress || null,
           line_items: ctx.orderLineItems.map(li => ({
             title: li.title,
             variant: li.variantTitle,
@@ -847,6 +848,11 @@ async function hybridAdvisor({ customer_email, issue_description, order_number, 
       toolCallCount++;
       toolsCalled.push(toolBlock.name);
       audit.push(`Tool call: ${toolBlock.name}(${JSON.stringify(toolBlock.input).substring(0, 100)})`);
+
+      // Auto-populate customer_address for donation routing from order context
+      if (toolBlock.name === 'get_donation_partner' && !toolBlock.input.customer_address && orderContext?.target_order?.shipping_address) {
+        toolBlock.input.customer_address = orderContext.target_order.shipping_address;
+      }
 
       let result;
       try {
