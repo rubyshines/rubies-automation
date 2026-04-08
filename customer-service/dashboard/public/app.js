@@ -18,18 +18,32 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
-  // Restore active tab + sim type
+  // Check for deep links before restoring tab
+  const pendingTicketRestore = location.hash.match(/^#ticket-(\d+)$/);
+  const pendingSimRestore = location.hash.match(/^#sim-ticket-(\d+)$/);
+
+  // Restore active tab (but don't clear selection if we're about to restore a ticket)
   const savedTab = localStorage.getItem('activeTab');
-  if (savedTab && ['new', 'followup', 'snoozed', 'closed', 'test'].includes(savedTab)) switchTab(savedTab);
+  if (pendingSimRestore) {
+    // Will switch to test tab below
+  } else if (pendingTicketRestore) {
+    // Set tab without clearing selection — we'll select the ticket right after
+    currentTab = savedTab && ['new', 'followup', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
+    if (tabBtn) tabBtn.classList.add('active');
+    document.getElementById('panel-tickets').style.display = 'flex';
+    document.getElementById('panel-test').style.display = 'none';
+  } else if (savedTab && ['new', 'followup', 'snoozed', 'closed', 'test'].includes(savedTab)) {
+    switchTab(savedTab);
+  }
   simRestoreType();
 
   // Restore simulator session if active
   if (simRestore()) simRenderRestoredSession();
 
   loadTicketQueue().then(async () => {
-    // Deep link: #sim-ticket-67811718 → load simulator with that ticket
-    const simTicketMatch = location.hash.match(/^#sim-ticket-(\d+)$/);
-    if (simTicketMatch) {
+    if (pendingSimRestore) {
       sim.active = false;
       sim.turns = [];
       sim.intake = null;
@@ -38,14 +52,12 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('sim-thread').innerHTML = '';
       document.getElementById('sim-controls').innerHTML = '';
       switchTab('test');
-      simLoadTicket(simTicketMatch[1]);
+      simLoadTicket(pendingSimRestore[1]);
       return;
     }
 
-    // Restore selected ticket from URL hash
-    const ticketMatch = location.hash.match(/^#ticket-(\d+)$/);
-    if (ticketMatch) {
-      selectTicket(parseInt(ticketMatch[1]));
+    if (pendingTicketRestore) {
+      selectTicket(parseInt(pendingTicketRestore[1]));
     }
   });
   loadStats();
@@ -545,109 +557,98 @@ let _actionChatHistory = [];
 
 function renderActionPanel(draft) {
   const panel = document.getElementById('action-panel');
-  const headerEl = document.getElementById('action-header');
-  const detailsEl = document.getElementById('action-details');
-  const buttonsEl = document.getElementById('action-buttons');
+  const headerEl = document.getElementById('action-panel-header');
+  const messagesEl = document.getElementById('action-chat-messages');
   const previewEl = document.getElementById('action-preview');
   const resultEl = document.getElementById('action-result');
+  const input = document.getElementById('action-chat-input');
 
   // Reset
   previewEl.style.display = 'none';
   resultEl.style.display = 'none';
-  headerEl.innerHTML = '';
-  detailsEl.innerHTML = '';
-  buttonsEl.innerHTML = '';
+  messagesEl.innerHTML = '';
   _actionChatHistory = [];
 
   document.getElementById('btn-send').disabled = false;
-
-  // Always show the action panel — chat is useful for any draft
   panel.style.display = 'block';
-  headerEl.textContent = 'Action';
 
-  // Build the chat UI
   const actionType = draft.action_type || '';
-  const messageType = draft.message_type || '';
+  const orderNum = (draft.order_number || '').replace('#', '');
 
-  // Already executed? Show completed state + chat for further actions
-  if (draft.action_executed_at) {
-    headerEl.textContent = 'Action Completed';
-  }
-
-  // Build initial suggestion from structured output
-  const suggestion = buildActionSuggestion(draft);
-
-  detailsEl.innerHTML = `
-    <div class="action-chat-messages" id="action-chat-messages"></div>
-    <div class="action-chat-input-row">
-      <input type="text" class="action-chat-input" id="action-chat-input"
-        placeholder="e.g. exchange the AJ to size L, refund the Ruby..."
-        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendActionMessage()}" />
-      <button class="action-chat-send" id="action-chat-send" onclick="sendActionMessage()">Send</button>
-    </div>
-  `;
-
-  // Show initial suggestion as first assistant message
-  if (suggestion) {
-    appendChatMessage('assistant', suggestion);
-  } else if (draft.action_executed_at) {
-    appendChatMessage('assistant', `Previous action executed ${timeAgo(draft.action_executed_at)}. You can request additional actions here.`);
+  // Header badge
+  if (actionType) {
+    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : 'edit';
+    const badgeLabel = actionType.replace('exchange+refund', 'Exchange + Refund').replace('exchange', 'Exchange').replace('refund', 'Refund').replace('order_modification', 'Order Edit');
+    headerEl.innerHTML = `
+      <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>
+      ${orderNum ? `<span class="action-order-ref">Order #${orderNum}</span>` : ''}
+    `;
   } else {
-    appendChatMessage('assistant', 'No action detected. Type what you need — exchange, refund, or order edit.');
+    headerEl.innerHTML = `<span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--yellow)">Action</span>`;
   }
 
-  buttonsEl.innerHTML = '';
+  // Already executed?
+  if (draft.action_executed_at) {
+    appendChatMessage('assistant', `Action executed ${timeAgo(draft.action_executed_at)}. You can request additional actions.`);
+    input.placeholder = 'e.g. exchange the AJ to size L, refund the Ruby...';
+    input.value = '';
+    return;
+  }
+
+  // Build prefill command from structured output
+  const prefill = buildActionPrefill(draft);
+
+  if (prefill) {
+    input.value = prefill;
+    input.placeholder = 'Edit and hit Enter to execute...';
+    // Auto-size textarea to fit content
+    input.style.height = 'auto';
+    input.style.height = input.scrollHeight + 'px';
+    setTimeout(() => { input.focus(); input.select(); }, 100);
+  } else {
+    input.value = '';
+    input.placeholder = 'e.g. exchange the AJ to size L, refund the Ruby...';
+  }
 }
 
-function buildActionSuggestion(draft) {
+function buildActionPrefill(draft) {
   const structured = draft.structured_output || {};
-  const actionType = draft.action_type || draft.message_type || '';
+  const actionType = draft.action_type || '';
   const items = structured.intake?.items || [];
   const prescription = structured.prescription?.items || [];
-  const orderNum = draft.order_number || '';
+  const orderNum = (draft.order_number || '').replace('#', '');
 
-  if (!actionType && !items.length) return '';
+  if (!actionType) return '';
 
-  let lines = [];
-
-  if (actionType.includes('exchange') || actionType === 'exchange') {
-    const exchangeItems = items.filter(i => i.resolved_size);
-    if (exchangeItems.length) {
-      lines.push(`I suggest exchanging on order #${orderNum}:`);
-      for (const i of exchangeItems) {
-        const product = i.resolved_product || i.product;
-        const sku = i._orderSku || '';
-        lines.push(`- ${product} ${i.size || ''} → size ${i.resolved_size}${sku ? ` (${sku})` : ''}`);
-      }
-      if (structured.prescription?.donation) {
-        lines.push(`\nDonation: ${structured.prescription.donation.text || structured.prescription.donation.type || ''}`);
-      }
-      lines.push('\nShall I create the exchange draft?');
-    }
+  // Shorten product names for the command line
+  function shortName(name) {
+    return (name || '').replace(/^THE\s+/i, '').replace(/NO-TUCK SHAPING /i, '').trim();
   }
 
-  if (actionType.includes('refund') || actionType === 'refund') {
+  if (actionType.includes('refund')) {
     const refundItems = prescription.filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
     const itemsToShow = refundItems.length ? refundItems : items;
-    if (lines.length) lines.push('');
-    lines.push(`I suggest refunding on order #${orderNum}:`);
-    for (const i of itemsToShow) {
-      const sku = i._orderSku || i.sku || '';
-      lines.push(`- ${i.product} ${i.size || ''}${sku ? ` (${sku})` : ''}`);
+    const lines = itemsToShow.map(i => `- ${shortName(i.product)} ${i.size || ''}`);
+    return `refund on order #${orderNum}:\n${lines.join('\n')}`;
+  }
+
+  if (actionType.includes('exchange')) {
+    const exchangeItems = items.filter(i => i.resolved_size);
+    if (exchangeItems.length) {
+      const lines = exchangeItems.map(i => `- ${shortName(i.resolved_product || i.product)} ${i.size || ''} → ${i.resolved_size}`);
+      return `exchange on order #${orderNum}:\n${lines.join('\n')}`;
     }
-    lines.push('\nShall I calculate the refund?');
   }
 
   if (actionType === 'order_modification') {
     const swaps = structured.prescription?.swap_items || [];
-    lines.push(`I suggest editing order #${orderNum}:`);
-    for (const s of swaps) {
-      lines.push(`- Remove ${s.remove_sku || '?'}, add ${s.add_query || '?'}`);
+    if (swaps.length) {
+      const lines = swaps.map(s => `- swap ${s.remove_sku || '?'} for ${s.add_query || '?'}`);
+      return `edit order #${orderNum}:\n${lines.join('\n')}`;
     }
-    lines.push('\nShall I stage the edit?');
   }
 
-  return lines.join('\n');
+  return '';
 }
 
 function appendChatMessage(role, content) {

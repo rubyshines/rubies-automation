@@ -346,7 +346,9 @@ async function apiRefreshDraft(id) {
     structured_output: s,
     audit_trail: s?.audit || [],
     advisor_status: s?.status,
-    confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+    confidence: ['ready', 'complete'].includes(s?.status) ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+    action_type: s?.action_type || null,
+    message_type: s?.intake?.message_type || null,
   }).eq('id', id);
 
   return { draft_response: newDraft, structured: s };

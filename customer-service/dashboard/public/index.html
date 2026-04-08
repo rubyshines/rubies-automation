@@ -62,6 +62,20 @@
             <div id="conversation-thread"></div>
           </details>
 
+          <!-- Action Panel (above draft — action informs the response) -->
+          <div id="action-panel" style="display:none">
+            <div id="action-panel-header"></div>
+            <div class="action-chat-messages" id="action-chat-messages"></div>
+            <div class="action-chat-input-row">
+              <textarea class="action-chat-input" id="action-chat-input" rows="2"
+                placeholder="e.g. exchange the AJ to size L, refund the Ruby..."
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendActionMessage()}"></textarea>
+              <button class="action-chat-send" id="action-chat-send" onclick="sendActionMessage()">Send</button>
+            </div>
+            <div id="action-preview" style="display:none"></div>
+            <div id="action-result" style="display:none"></div>
+          </div>
+
           <!-- AI Draft (editable) -->
           <div id="detail-draft" class="detail-section">
             <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span> <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft()" title="Regenerate draft">&#8635;</button></h3>
@@ -69,13 +83,6 @@
             <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
             <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
             <div id="draft-actions">
-              <div id="action-panel" style="display:none">
-                <div id="action-header"></div>
-                <div id="action-details"></div>
-                <div id="action-buttons"></div>
-                <div id="action-preview" style="display:none"></div>
-                <div id="action-result" style="display:none"></div>
-              </div>
               <div class="btn-row">
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send Reply</button>
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
