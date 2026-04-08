@@ -212,15 +212,14 @@ function renderTicketDetail(ticket) {
   document.getElementById('detail-placeholder').style.display = 'none';
   document.getElementById('detail-content').style.display = 'block';
 
-  const isActiveTab = ['new', 'followup'].includes(currentTab);
   const d = ticket.active_draft; // may be null for snoozed/closed
 
-  // Show/hide draft panel vs simple message panel based on tab
-  document.getElementById('detail-draft').style.display = isActiveTab && d ? 'block' : 'none';
-  document.getElementById('simple-message-panel').style.display = !isActiveTab ? 'block' : 'none';
+  // Show draft panel if there's an active draft, simple message panel otherwise
+  document.getElementById('detail-draft').style.display = d ? 'block' : 'none';
+  document.getElementById('simple-message-panel').style.display = !d ? 'block' : 'none';
 
   // Reset button states for draft panel
-  if (isActiveTab && d) {
+  if (d) {
     const btnSend = document.getElementById('btn-send');
     const btnSendClose = document.getElementById('btn-send-close');
     const btnCloseOnly = document.getElementById('btn-close-only');
@@ -290,7 +289,7 @@ function renderTicketDetail(ticket) {
         </div>`;
     }).join('');
 
-  if (isActiveTab && d) {
+  if (d) {
     // Draft editor — restore autosaved edits if any
     const savedDraft = localStorage.getItem(`draft-ticket-${ticket.id}`);
     const savedNotes = localStorage.getItem(`notes-ticket-${ticket.id}`);
