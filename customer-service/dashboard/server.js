@@ -349,6 +349,7 @@ async function apiRefreshDraft(id) {
     confidence: ['ready', 'complete'].includes(s?.status) ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
     action_type: s?.action_type || null,
     message_type: s?.intake?.message_type || null,
+    order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
   }).eq('id', id);
 
   return { draft_response: newDraft, structured: s };

@@ -680,11 +680,24 @@ function buildActionPrefill(draft) {
   }
 
   if (actionType === 'order_modification') {
-    // Check for address change
+    // Check for address in structured output
     const addr = structured.intake?.new_address || structured.prescription?.shipping_address;
     if (addr) {
       const parts = [addr.address1, addr.city, addr.province, addr.zip].filter(Boolean);
       return `edit order #${orderNum}: update shipping address to ${parts.join(', ')}`;
+    }
+    // Check for address in draft response (AI often writes "I'll update to: <address>")
+    const draftText = draft.draft_response || '';
+    if (/address|shipping/i.test(draftText) && structured.intake?.message_type === 'shipping') {
+      // Extract address from the last customer message
+      const hist = draft.structured_output?.intake?.items?.[0]?.product ? null : (currentTicket?.conversation_history || []);
+      const lastCustomerMsg = hist?.filter(m => m.sender === 'customer').pop()?.body || '';
+      // Look for multi-line address pattern in customer message
+      const addrLines = lastCustomerMsg.split('\n').filter(l => l.trim()).slice(1); // skip greeting
+      if (addrLines.length >= 2) {
+        return `edit order #${orderNum}: update shipping address to\n${addrLines.join('\n')}`;
+      }
+      return `edit order #${orderNum}: update shipping address`;
     }
     const swaps = structured.prescription?.swap_items || [];
     if (swaps.length) {
