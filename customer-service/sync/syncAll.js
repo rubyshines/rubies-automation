@@ -237,6 +237,8 @@ async function syncOrders({ since, full } = {}) {
               allocationMethod: da.discountApplication?.allocationMethod,
               targetType: da.discountApplication?.targetType,
               value: da.discountApplication?.value,
+              code: da.discountApplication?.code || null,
+              title: da.discountApplication?.title || null,
             },
           };
         });

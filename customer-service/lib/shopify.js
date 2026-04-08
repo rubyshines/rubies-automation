@@ -649,6 +649,10 @@ async function fetchOrdersForSync(since = null, cursor = null) {
                         ... on MoneyV2 { amount currencyCode }
                         ... on PricingPercentageValue { percentage }
                       }
+                      ... on DiscountCodeApplication { code }
+                      ... on AutomaticDiscountApplication { title }
+                      ... on ScriptDiscountApplication { title }
+                      ... on ManualDiscountApplication { title }
                     }
                   }
                   duties {
@@ -920,6 +924,10 @@ async function getOrderForEdit(orderNumber) {
                         ... on MoneyV2 { amount currencyCode }
                         ... on PricingPercentageValue { percentage }
                       }
+                      ... on DiscountCodeApplication { code }
+                      ... on AutomaticDiscountApplication { title }
+                      ... on ScriptDiscountApplication { title }
+                      ... on ManualDiscountApplication { title }
                     }
                   }
                 }
