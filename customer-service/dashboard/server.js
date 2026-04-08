@@ -321,10 +321,9 @@ async function apiRefreshDraft(id) {
   contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
   const issueDescription = contextParts.join('\n\n');
 
-  // Run advisor
-  const advisorTools = require('../lib/tools/exchangeAdvisor');
-  const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
-  const result = await advisor.handler({
+  // Run hybrid advisor (same as intake path)
+  const { hybridAdvisor } = require('../lib/hybridAdvisor');
+  const result = await hybridAdvisor({
     customer_email: draft.customer_email,
     issue_description: issueDescription,
     intake: draft.intake_state || undefined,

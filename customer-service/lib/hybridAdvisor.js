@@ -358,7 +358,7 @@ async function executeToolCall(toolName, toolInput) {
 // System prompt builder
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(toneSamples, orderContext, treeContext) {
+function buildSystemPrompt(toneSamples, orderContext) {
   let orderSection = '';
   if (orderContext) {
     orderSection = `
@@ -482,17 +482,16 @@ In terms of expectations our shaping bottoms are meant to reshape the front area
 Ultimately your comfort is most important so let me know what you would like to do next. I'd be happy to send out another order if you would like to try another size."
 - DO NOT: Offer a refund. DO NOT: Ask a short clarifying question. Use the template.
 
-### Scenario: Customer says "return" or "refund" and the reason is FIT-RELATED (CRITICAL RULE)
-This applies when the customer uses the word "return" or "refund" BUT the reason is fit-related: too big, too small, tight, loose, doesn't fit, wrong size, sizing issue.
-- DO NOT process a refund. IGNORE the word "return/refund" entirely. Treat it as a sizing conversation.
-- DO: Ask what didn't work, or suggest going up/down a size, or ask for measurements.
-- ONLY process a refund if: (a) the customer insists AFTER you've offered an exchange, (b) the reason is NOT fit-related (defect, wrong item, changed mind about the product entirely, doesn't like the style), or (c) the customer has already gone through an exchange cycle and it still doesn't work.
-- Jamie almost NEVER processes a refund on first contact when the issue is fit-related. Exchanges are free and easy.
+### Scenario: Customer says "return" or "refund" and the reason is FIT-RELATED
+PRIORITY ORDER (apply the FIRST rule that matches):
+1. If an exchange has ALREADY been offered or suggested anywhere in this conversation (by you, a bot, a template, or the Gorgias return flow) AND the customer said "return" or "refund" AFTER that offer: PROCESS THE REFUND. The customer has decided. This overrides everything below.
+2. If the customer has said "return" or "refund" more than once across the conversation: PROCESS THE REFUND. Don't make them ask three times.
+3. On genuine first contact with NO prior exchange offer anywhere in the thread: treat it as a sizing conversation. Ask what didn't work, suggest a size, or ask for measurements. Jamie almost NEVER processes a refund on first contact when the issue is fit-related.
 
-### Scenario: Customer already explained the issue AND firmly requests refund (second ask, or gave detailed explanation)
+### Scenario: Customer already explained the issue AND firmly requests refund (second ask, been through bot flow, or gave detailed explanation)
 - DO: Process the refund immediately + include donation info
 - DO NOT: Ask "what didn't work out" again. They already told you.
-- Signs the customer has already explained: they describe fit issues, they mention specific products, they've been through a bot flow that collected details
+- Signs the customer has already explained: they describe fit issues, they mention specific products, they've been through a bot flow that collected details, they selected items for return
 
 ### Scenario: $0 exchange order (items don't fit)
 - A $0 order means this is a PREVIOUS exchange. The customer got free replacement items and those don't fit either.
@@ -551,7 +550,7 @@ When the order has 5 or more items, your response MUST:
 
 ### Refunds (CRITICAL — Jamie suggests exchange first, but listens)
 - On first contact where a customer says "return" or "refund": suggest an exchange alternative BEFORE processing a refund. Even for duplicate orders ("Are you interested in exchanging for anything else in our catalog?").
-- BUT if the customer has ALREADY declined an exchange IN THIS SAME CONVERSATION (e.g., bot asked about exchange and they said "return" again, or they explicitly say "no, I want a refund" or "just a refund please"), respect their decision and process the refund. Don't push twice.
+- BUT if the customer has ALREADY declined an exchange IN THIS SAME CONVERSATION, respect their decision and process the refund. Don't push twice. This includes: the Gorgias bot or template offered an exchange and the customer said "return" again, or they explicitly say "no, I want a refund", or they repeated "return" after ANY exchange suggestion (bot or human). From the customer's perspective, they've already been pitched — it doesn't matter who asked.
 - Also process a refund immediately for: (a) safety situations, (b) customer says they already tried exchanging, (c) customer clearly wants money back and has explained why the product fundamentally doesn't work for them.
 - If the issue is fit-related: treat it as a sizing conversation. Ask for measurements or suggest a size.
 - If "doesn't work" or "doesn't hide" on bottoms: USE THE SHAPING EXPECTATIONS TEMPLATE.
@@ -586,12 +585,7 @@ When the order has 5 or more items, your response MUST:
 - When a defect is reported: acknowledge it simply ("That shouldn't happen"), offer a replacement, but ALWAYS confirm the size before shipping ("Can you confirm the suit fit ok so you would want the same size?"). Don't assume.
 - If the customer writes in a language other than English, reply in THEIR language. Match whatever language they used.
 - When the situation is confusing or doesn't make sense (e.g., customer mentions products you don't recognize, claims something that contradicts order data), ASK CLARIFYING QUESTIONS before taking action. Don't assume and act on incomplete understanding.
-${orderSection}${toneSection}${treeContext ? `
-## Decision Tree Reference
-The deterministic decision tree has already analyzed this conversation. Use its output as a STRONG REFERENCE for what action to take. The tree encodes Jamie's validated business rules. You should generally AGREE with the tree's action choice (exchange vs refund vs ask) but you may improve the WORDING and TONE of its response. If you disagree with the tree's action, explain why in your audit.
-
-${treeContext}
-` : ''}
+${orderSection}${toneSection}
 ## Output Format
 
 After handling the conversation, you MUST end your final message with a structured JSON block wrapped in <structured> tags. This is required for every response.
@@ -796,7 +790,7 @@ async function hybridAdvisor({ customer_email, issue_description, order_number, 
     audit.push(`Order lookup failed: ${e.message}`);
   }
 
-  const systemPrompt = buildSystemPrompt(toneSamples, orderContext, '');
+  const systemPrompt = buildSystemPrompt(toneSamples, orderContext);
 
   // Build conversation messages
   const messages = [];

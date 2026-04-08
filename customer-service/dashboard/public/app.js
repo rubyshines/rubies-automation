@@ -90,7 +90,18 @@ function switchTab(tab) {
   document.getElementById('panel-test').style.display = tab === 'test' ? 'block' : 'none';
 
   localStorage.setItem('activeTab', tab);
-  if (isTicketTab) loadTicketQueue();
+  if (isTicketTab) {
+    // Clear selection when switching tabs
+    currentTicketId = null;
+    currentTicket = null;
+    currentDraftId = null;
+    currentDraft = null;
+    location.hash = '';
+    document.getElementById('detail-placeholder').style.display = 'flex';
+    document.getElementById('detail-content').style.display = 'none';
+    showSidebarQueue();
+    loadTicketQueue();
+  }
 }
 
 // ---------------------------------------------------------------------------
