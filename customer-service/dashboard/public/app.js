@@ -298,20 +298,7 @@ function renderTicketDetail(ticket) {
   const msgType = d?.message_type || ticket.message_type;
   const bannerEl = document.getElementById('outreach-banner');
   if (bannerEl) bannerEl.remove();
-  if (msgType === 'business_outreach') {
-    const banner = document.createElement('div');
-    banner.id = 'outreach-banner';
-    banner.className = 'outreach-banner outreach-business';
-    banner.innerHTML = `
-      <div class="outreach-banner-content">
-        <div class="outreach-banner-icon">&#x26D4;</div>
-        <div class="outreach-banner-text">
-          <strong>Business outreach</strong> — unsolicited sales/marketing email
-        </div>
-        <button class="outreach-banner-action" onclick="markSpam()">Mark as Spam</button>
-      </div>`;
-    document.getElementById('detail-content').insertBefore(banner, document.getElementById('action-panel'));
-  } else if (msgType === 'community_outreach') {
+  if (msgType === 'community_outreach') {
     const banner = document.createElement('div');
     banner.id = 'outreach-banner';
     banner.className = 'outreach-banner outreach-community';

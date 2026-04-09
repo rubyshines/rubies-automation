@@ -352,6 +352,16 @@ async function apiRefreshDraft(id) {
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
   }).eq('id', id);
 
+  // Also update ticket row with latest classification
+  if (draft.ticket_id) {
+    const ticketUpdates = { updated_at: new Date().toISOString() };
+    if (s?.intake?.message_type) ticketUpdates.message_type = s.intake.message_type;
+    if (s?.action_type) ticketUpdates.action_type = s.action_type;
+    if (s?.confidence) ticketUpdates.confidence = s.confidence;
+    if (s?.status) ticketUpdates.advisor_status = s.status;
+    await supabase.from('cs_tickets').update(ticketUpdates).eq('id', draft.ticket_id);
+  }
+
   return { draft_response: newDraft, structured: s };
 }
 
