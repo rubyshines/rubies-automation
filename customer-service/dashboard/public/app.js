@@ -142,17 +142,23 @@ async function loadTicketQueue() {
       return;
     }
 
-    container.innerHTML = tickets.map(t => `
-      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''}" onclick="selectTicket(${t.id})">
-        <div class="queue-item-header">
-          <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
-          ${t.message_type === 'business_outreach' ? '<span class="badge badge-spam">outreach</span>' : t.message_type === 'community_outreach' ? '<span class="badge badge-community">community</span>' : t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
+    container.innerHTML = tickets.map(t => {
+      const isSpam = t.message_type === 'business_outreach';
+      const isCommunity = t.message_type === 'community_outreach';
+      return `
+      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''}" onclick="selectTicket(${t.id})">
+        ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
+        <div class="queue-item-inner">
+          <div class="queue-item-header">
+            <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
+            ${isSpam ? '<span class="badge badge-spam">spam</span>' : isCommunity ? '<span class="badge badge-community">community</span>' : t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
+          </div>
+          ${t.customer_name ? `<div class="queue-item-email">${esc(t.customer_email)}</div>` : ''}
+          <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
+          <div class="queue-item-time">${timeAgo(t.updated_at)}</div>
         </div>
-        ${t.customer_name ? `<div class="queue-item-email">${esc(t.customer_email)}</div>` : ''}
-        <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
-        <div class="queue-item-time">${timeAgo(t.updated_at)}</div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   } catch (err) {
     console.error('Failed to load ticket queue:', err);
   }
@@ -296,13 +302,26 @@ function renderTicketDetail(ticket) {
     const banner = document.createElement('div');
     banner.id = 'outreach-banner';
     banner.className = 'outreach-banner outreach-business';
-    banner.innerHTML = 'Classified as <strong>business outreach</strong>. Use Spam to close, or Send Reply if you want to respond.';
+    banner.innerHTML = `
+      <div class="outreach-banner-content">
+        <div class="outreach-banner-icon">&#x26D4;</div>
+        <div class="outreach-banner-text">
+          <strong>Business outreach</strong> — unsolicited sales/marketing email
+        </div>
+        <button class="outreach-banner-action" onclick="markSpam()">Mark as Spam</button>
+      </div>`;
     document.getElementById('detail-content').insertBefore(banner, document.getElementById('action-panel'));
   } else if (msgType === 'community_outreach') {
     const banner = document.createElement('div');
     banner.id = 'outreach-banner';
     banner.className = 'outreach-banner outreach-community';
-    banner.innerHTML = 'Classified as <strong>community outreach</strong> (LGBTQ+ org).';
+    banner.innerHTML = `
+      <div class="outreach-banner-content">
+        <div class="outreach-banner-icon">&#x1F308;</div>
+        <div class="outreach-banner-text">
+          <strong>Community outreach</strong> — LGBTQ+ org partnership
+        </div>
+      </div>`;
     document.getElementById('detail-content').insertBefore(banner, document.getElementById('action-panel'));
   }
 
