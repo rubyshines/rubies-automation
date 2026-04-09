@@ -1001,6 +1001,26 @@ main { height: calc(100vh - 56px); }
 .action-type-badge.edit { background: var(--surface-inset); color: var(--text-secondary); }
 .action-type-badge.hold { background: var(--yellow-bg); color: var(--yellow); }
 
+.badge-spam { background: var(--red-bg); color: var(--red); }
+.badge-community { background: var(--teal-soft); color: var(--teal); }
+
+.outreach-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.outreach-business {
+  background: var(--red-bg);
+  border: 1px solid #fca5a5;
+  color: var(--red);
+}
+.outreach-community {
+  background: var(--teal-soft);
+  border: 1px solid rgba(26, 143, 125, 0.2);
+  color: var(--teal);
+}
+
 .action-order-ref {
   font-size: 13px;
   color: var(--text-secondary);
