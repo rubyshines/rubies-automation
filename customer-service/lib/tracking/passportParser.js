@@ -4,6 +4,10 @@
  * Parses the text content of a Passport tracking page without AI ($0 cost).
  * Returns { parse_failed: true } if the page format is unrecognized,
  * so callers can flag it for review or fall back to Sonnet.
+ *
+ * @param {string} text — raw text content of tracking page
+ * @param {string} [fulfilledAt] — ISO date of fulfillment, used to infer
+ *   the correct year for yearless event dates on the tracking page.
  */
 
 const MONTHS = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
@@ -13,7 +17,7 @@ const DATE_RE = new RegExp(`(${MONTHS})\\s+(\\d{1,2})\\s+(\\d{1,2}:\\d{2})`, 'g'
  * Parse a Passport tracking page text into structured data.
  * Same output shape as analyzer.parseTrackingPage().
  */
-function parsePassportPage(text) {
+function parsePassportPage(text, fulfilledAt) {
   if (!text || text.length < 100) {
     return { current_status: 'unknown', parse_failed: true, events: [] };
   }
@@ -28,13 +32,13 @@ function parsePassportPage(text) {
   }
 
   try {
-    return doParse(text);
+    return doParse(text, fulfilledAt);
   } catch (e) {
     return { current_status: 'unknown', parse_failed: true, parse_error: e.message, events: [] };
   }
 }
 
-function doParse(text) {
+function doParse(text, fulfilledAt) {
   const header = text.substring(0, 800);
 
   // --- Raw CURRENT STATUS text (for diagnostics when status is unknown) ---
@@ -77,7 +81,7 @@ function doParse(text) {
   // --- Events ---
   // Strategy: find the "Previous status updates" section and parse date-stamped entries
   const eventsSection = text.substring(text.indexOf('Current Status'));
-  const events = parseEvents(eventsSection);
+  const events = parseEvents(eventsSection, fulfilledAt);
 
   // --- Status description ---
   let statusDescription = null;
@@ -104,13 +108,43 @@ function doParse(text) {
 }
 
 /**
+ * Infer the correct year for a yearless "Mon DD HH:MM" date from a tracking page.
+ *
+ * Passport pages omit years. We use fulfilledAt as an anchor: the event must
+ * fall between (fulfilledAt - 1 day) and now. Try fulfillment year first,
+ * then fulfillment year + 1. Never return a future date.
+ */
+function inferEventYear(month, day, time, fulfilledAt) {
+  const now = new Date();
+  const fulfDate = fulfilledAt ? new Date(fulfilledAt) : null;
+  const baseYear = fulfDate ? fulfDate.getFullYear() : now.getFullYear();
+
+  // Try fulfillment year, then +1
+  for (const yr of [baseYear, baseYear + 1]) {
+    const d = new Date(`${month} ${day}, ${yr} ${time}`);
+    if (isNaN(d.getTime())) continue;
+    // Must be in the past (or now) and not before fulfillment (with 1-day grace)
+    const earliest = fulfDate ? new Date(fulfDate.getTime() - 24 * 60 * 60 * 1000) : new Date(0);
+    if (d <= now && d >= earliest) {
+      return d.toISOString();
+    }
+  }
+
+  // Fallback: use fulfillment year even if slightly before (same-day edge case)
+  const fallback = new Date(`${month} ${day}, ${baseYear} ${time}`);
+  if (!isNaN(fallback.getTime()) && fallback <= now) return fallback.toISOString();
+
+  return null; // truly unparseable — caller should handle
+}
+
+/**
  * Parse events from the tracking section.
  * Events on Passport pages follow this pattern in the text:
  *   "Description text\nMon DD HH:MM\nLOCATION, CC"
  *
  * We find all date stamps and extract the description before and location after each.
  */
-function parseEvents(section) {
+function parseEvents(section, fulfilledAt) {
   if (!section) return [];
 
   const events = [];
@@ -136,11 +170,7 @@ function parseEvents(section) {
     // Skip junk events (feedback forms, navigation text)
     if (isJunkEvent(description)) continue;
 
-    // Build ISO timestamp
-    const year = new Date().getFullYear();
-    const dateStr = `${month} ${day}, ${year} ${time}`;
-    const d = new Date(dateStr);
-    const timestamp = !isNaN(d) ? d.toISOString() : null;
+    const timestamp = inferEventYear(month, day, time, fulfilledAt);
 
     events.push({
       date: `${month} ${day}`,

@@ -103,18 +103,27 @@ async function pushDeliveryToShopify(shopifyOrderId, trackingNumber, deliveredAt
 
 /**
  * Infer a full timestamp from a yearless event date like "Jan 12 22:49".
+ * Try fulfillment year first, then +1. Pick whichever falls between
+ * fulfilledAt and now. Never return a future date.
  */
 function inferTimestamp(evt, fulfilledAt) {
   const date = (evt.date || '').trim();
   const time = (evt.time || '').trim();
   if (!date || !fulfilledAt) return `${date} ${time}`.trim();
-  const fulfYear = new Date(fulfilledAt).getFullYear();
-  let d = new Date(`${date}, ${fulfYear}${time ? ' ' + time : ''}`);
-  if (isNaN(d.getTime())) return `${date} ${time}`.trim();
-  if (d < new Date(fulfilledAt)) {
-    d = new Date(`${date}, ${fulfYear + 1}${time ? ' ' + time : ''}`);
+  const now = new Date();
+  const fulfDate = new Date(fulfilledAt);
+  const fulfYear = fulfDate.getFullYear();
+  const candidates = [fulfYear, fulfYear + 1];
+  for (const year of candidates) {
+    const d = new Date(`${date}, ${year}${time ? ' ' + time : ''}`);
+    if (isNaN(d.getTime())) continue;
+    if (d >= fulfDate && d <= now) return d.toISOString();
   }
-  return d.toISOString();
+  // Fallback: use fulfillment year even if slightly before fulfilledAt
+  // (same-day events where time is earlier)
+  const fallback = new Date(`${date}, ${fulfYear}${time ? ' ' + time : ''}`);
+  if (!isNaN(fallback.getTime()) && fallback <= now) return fallback.toISOString();
+  return `${date} ${time}`.trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -209,8 +218,15 @@ async function buildPools(supabase, candidates, full) {
       continue;
     }
 
-    // Skip expired and parse_error pages permanently (use --retry-errors to re-process parse errors)
-    if (snap.status === 'expired' || snap.status === 'parse_error') { expiredSkipped++; continue; }
+    // Skip expired pages permanently — tracking data is gone
+    if (snap.status === 'expired') { expiredSkipped++; continue; }
+
+    // parse_error = temporary failure (403, bad parse, etc.) — retry via update pool
+    if (snap.status === 'parse_error') {
+      order._scrapedAt = snap.scrapedAt;
+      updates.push(order);
+      continue;
+    }
 
     // Skip delivered (shouldn't be in candidates, but defensive)
     if (snap.status === 'delivered') continue;
@@ -263,8 +279,42 @@ async function scrapeOrder(supabase, order, snapMap) {
     return 'captcha';
   }
 
-  // Expired page check — includes redirect stubs (passportglobal.com) and "can't find" pages
-  const isExpired = /can.t find the tracking number/i.test(rawText)
+  // Temporary failure check — 403s, 5xx, etc. are retryable, not expired
+  if (/^(403 Forbidden|5\d{2}\s|Service Unavailable)/i.test(rawText.trim()) && rawText.length < 200) {
+    console.warn(`  #${order.order_number}: scrape_error — ${rawText.trim().substring(0, 50)}`);
+    await supabase.from('tracking_snapshots').upsert({
+      tracking_number: order.tracking_number,
+      order_number: order.order_number,
+      carrier,
+      tracking_url: order.tracking_url,
+      destination_country: order.country_code,
+      raw_text: rawText || null,
+      current_status: 'parse_error',
+      scraped_at: new Date().toISOString(),
+    }, { onConflict: 'tracking_number' });
+    return 'parse_error';
+  }
+
+  // "Can't find" on recent orders is retryable — Passport may not have ingested yet
+  const cantFind = /can.t find the tracking number/i.test(rawText);
+  const fulfilledDaysAgo = (Date.now() - new Date(order.fulfilled_at).getTime()) / (1000 * 60 * 60 * 24);
+  if (cantFind && fulfilledDaysAgo < 45) {
+    console.warn(`  #${order.order_number}: can't find tracking — retryable (${Math.round(fulfilledDaysAgo)}d old)`);
+    await supabase.from('tracking_snapshots').upsert({
+      tracking_number: order.tracking_number,
+      order_number: order.order_number,
+      carrier,
+      tracking_url: order.tracking_url,
+      destination_country: order.country_code,
+      raw_text: rawText || null,
+      current_status: 'parse_error',
+      scraped_at: new Date().toISOString(),
+    }, { onConflict: 'tracking_number' });
+    return 'parse_error';
+  }
+
+  // Expired page check — only for old orders where tracking is genuinely gone
+  const isExpired = cantFind
     || (/mistyped/i.test(rawText) && rawText.length < 400)
     || (/track\.passportglobal\.com/i.test(rawText) && rawText.length < 200)
     || (rawText.length < 100 && !/delivered|in transit|current status/i.test(rawText));
@@ -294,7 +344,7 @@ async function scrapeOrder(supabase, order, snapMap) {
   }
 
   // Parse
-  let parsed = parsePassportPage(rawText);
+  let parsed = parsePassportPage(rawText, order.fulfilled_at);
   if (parsed.parse_failed) {
     try {
       if (!parseTrackingPage) parseTrackingPage = require('../lib/tracking/analyzer').parseTrackingPage;
@@ -342,15 +392,32 @@ async function scrapeOrder(supabase, order, snapMap) {
     console.error(`  #${order.order_number}: upsert failed — ${upsertError.message}`);
   }
 
-  // If delivered, patch deliveredAt into order fulfillments
+  // If delivered, extract and validate deliveredAt before patching
   if (parsed.current_status === 'delivered') {
+    const now = new Date();
+    const fulfDate = new Date(order.fulfilled_at);
+
+    // --- Validate event timestamps before using them ---
+    // If any event has a future timestamp, the year inference failed
+    const hasFutureEvent = (parsed.events || []).some(e =>
+      e.timestamp && new Date(e.timestamp) > now
+    );
+    if (hasFutureEvent) {
+      console.warn(`  #${order.order_number}: date_error — delivered but event timestamps are in the future (year inference failed)`);
+      await supabase.from('tracking_snapshots')
+        .update({ current_status: 'parse_error' })
+        .eq('tracking_number', order.tracking_number);
+      return 'parse_error';
+    }
+
+    // --- Extract delivery date ---
     let deliveredAt = null;
     const events = (parsed.events || []).slice().reverse();
     for (const evt of events) {
       if (/deliver/i.test(evt.description || '')) {
         const ts = evt.timestamp || inferTimestamp(evt, order.fulfilled_at);
         const d = new Date(ts);
-        if (!isNaN(d.getTime()) && d.getFullYear() > 2020) {
+        if (!isNaN(d.getTime()) && d > fulfDate && d <= now) {
           deliveredAt = d.toISOString();
           break;
         }
@@ -361,7 +428,7 @@ async function scrapeOrder(supabase, order, snapMap) {
       const lastEvent = parsed.events[0];
       const ts = lastEvent.timestamp || inferTimestamp(lastEvent, order.fulfilled_at);
       const d = new Date(ts);
-      if (!isNaN(d.getTime()) && d.getFullYear() > 2020) deliveredAt = d.toISOString();
+      if (!isNaN(d.getTime()) && d > fulfDate && d <= now) deliveredAt = d.toISOString();
     }
 
     if (deliveredAt) {
@@ -380,6 +447,12 @@ async function scrapeOrder(supabase, order, snapMap) {
       await supabase.from('orders')
         .update({ fulfillments: updatedFulfillments })
         .eq('order_number', order.order_number);
+    } else {
+      console.warn(`  #${order.order_number}: date_error — page says delivered but could not extract a valid delivery date`);
+      await supabase.from('tracking_snapshots')
+        .update({ current_status: 'parse_error' })
+        .eq('tracking_number', order.tracking_number);
+      return 'parse_error';
     }
 
     return 'delivered';

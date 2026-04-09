@@ -20,7 +20,7 @@ const BROWSER_HEADERS = {
 
 function detectCarrier(trackingUrl) {
   if (!trackingUrl) return 'unknown';
-  if (trackingUrl.includes('passportshipping.com')) return 'passport';
+  if (trackingUrl.includes('passportshipping.com') || trackingUrl.includes('passportglobal.com')) return 'passport';
   if (trackingUrl.includes('ontrac.com')) return 'ontrac';
   if (trackingUrl.includes('usps.com')) return 'usps';
   if (trackingUrl.includes('fedex.com')) return 'fedex';
@@ -76,36 +76,57 @@ async function getBrowser() {
   return _browser;
 }
 
+// Passport tracking URLs to try in order — the branded subdomain has
+// historical data that the main domain sometimes can't find.
+const PASSPORT_URLS = [
+  'https://track.passportshipping.com/',
+  'https://rubyshines.passportglobal.com/',
+];
+
 async function fetchPassportPage(trackingNumber) {
   const browser = await getBrowser();
-  const page = await browser.newPage();
-  _pageCount++;
 
-  try {
-    await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+  for (const baseUrl of PASSPORT_URLS) {
+    const page = await browser.newPage();
+    _pageCount++;
 
-    await page.goto(`https://track.passportshipping.com/${trackingNumber}`, {
-      waitUntil: 'networkidle2',
-      timeout: 20000,
-    });
+    try {
+      await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
 
-    // Wait for tracking data to render (look for status text or events)
-    await page.waitForFunction(
-      () => document.body.innerText.includes('Delivered')
-        || document.body.innerText.includes('In transit')
-        || document.body.innerText.includes('Current Status')
-        || document.body.innerText.includes('Exception')
-        || document.body.innerText.includes('Returned')
-        || document.body.innerText.includes('Out for Delivery')
-        || document.body.innerText.includes('does not have'),
-      { timeout: 15000 },
-    ).catch(() => {}); // proceed even if timeout — page may have partial data
+      await page.goto(`${baseUrl}${trackingNumber}`, {
+        waitUntil: 'networkidle2',
+        timeout: 20000,
+      });
 
-    const text = await page.evaluate(() => document.body.innerText);
-    return text || '';
-  } finally {
-    await page.close().catch(() => {});
+      // Wait for tracking data to render (look for status text or events)
+      await page.waitForFunction(
+        () => document.body.innerText.includes('Delivered')
+          || document.body.innerText.includes('In transit')
+          || document.body.innerText.includes('Current Status')
+          || document.body.innerText.includes('Exception')
+          || document.body.innerText.includes('Returned')
+          || document.body.innerText.includes('Out for Delivery')
+          || document.body.innerText.includes('does not have'),
+        { timeout: 15000 },
+      ).catch(() => {}); // proceed even if timeout — page may have partial data
+
+      const text = await page.evaluate(() => document.body.innerText);
+
+      // If this URL returned usable data, use it
+      if (text && !/can.t find the tracking number/i.test(text) && text.length > 100) {
+        return text;
+      }
+
+      // Otherwise try next URL
+      await page.close().catch(() => {});
+    } catch {
+      await page.close().catch(() => {});
+      // Try next URL on error
+    }
   }
+
+  // All URLs failed — return last attempt's text (or empty) so caller can classify
+  return '';
 }
 
 async function closeBrowser() {
