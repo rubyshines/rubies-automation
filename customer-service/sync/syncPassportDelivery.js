@@ -650,6 +650,9 @@ async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipp
   const sgMail = getSendgridClient();
   if (!sgMail) return;
 
+  // Skip email if nothing was processed
+  if (orderResults.length === 0) return;
+
   const { backfill: b, updates: u, expired, captcha, errors } = result;
   const totalDelivered = b.delivered + u.delivered;
   const totalParsed = orderResults.filter(r => r.parseOk).length;
