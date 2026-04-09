@@ -460,7 +460,31 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     .update({ active_draft_id: newDraft.id })
     .eq('id', ticketRow.id);
 
-  console.log(`[intake] Draft created for ticket ${ticketId} (confidence: ${confidence}, status: ${structured.status})`);
+  console.log(`[intake] Draft created for ticket ${ticketId} (confidence: ${confidence}, status: ${structured.status}, type: ${messageType})`);
+
+  // Auto-dispose business outreach — close ticket, tag in Gorgias, mark draft as spam
+  if (messageType === 'business_outreach') {
+    const now = new Date().toISOString();
+    await supabase.from('cs_tickets').update({
+      status: 'closed',
+      closed_at: now,
+      updated_at: now,
+      active_draft_id: null,
+    }).eq('id', ticketRow.id);
+
+    await supabase.from('cs_ai_drafts').update({ status: 'spam' }).eq('id', newDraft.id);
+
+    try {
+      await gorgias.addTicketTag(ticketId, 'business-outreach');
+      await gorgias.closeTicket(ticketId);
+      await gorgias.assignTicket(ticketId, null);
+    } catch (err) {
+      console.warn(`[intake] Could not close outreach ticket ${ticketId}: ${err.message}`);
+    }
+
+    console.log(`[intake] Auto-closed business outreach: ticket ${ticketId}`);
+    return { drafted: true, outreach: true };
+  }
 
   // Assign to AI Bot in Gorgias
   if (aiBotId) {

@@ -559,6 +559,14 @@ When the order has 5 or more items, your response MUST:
 - "Doesn't work" without specifics on BOTTOMS = USE THE SHAPING EXPECTATIONS TEMPLATE.
 - Tight legs = suggest Cheeky (swim), Sassy (adult underwear), or Flo Dance (kids).
 
+### Outreach Classification
+When the message is NOT from a customer about an order, classify the intent:
+- business_outreach: Sales pitches, vendor proposals, marketing agencies, SEO services, supply chain vendors, business growth consultants, ad agencies, AI/tech service providers. These are unsolicited B2B emails offering services RUBIES didn't ask for. Set message_type to "business_outreach". Write a short polite decline as the draft.
+- community_outreach: LGBTQ+ organizations, pride events, gender-affirming programs, community partnerships, non-profit collaborations, sponsorship requests from queer/trans orgs. These are welcome and aligned with RUBIES values. Set message_type to "community_outreach". Write a warm response.
+
+Signs of business_outreach: mentions ROI, "scale your business", "boost sales", generic marketing language, sender domain is an agency, offers services unprompted, "I noticed your website", "I had a look at your site".
+Signs of community_outreach: mentions LGBTQ+, pride, trans, gender-affirming, community program, non-profit, donation partnership, queer youth.
+
 ### Address Changes & Order Edits (unfulfilled orders only)
 When a customer wants to change their shipping address:
 - If the order is FULFILLED: tell them it's already shipped and you can't change it. Offer to help with anything else.
@@ -615,7 +623,7 @@ After handling the conversation, you MUST end your final message with a structur
 <structured>
 {
   "status": "ready|needs_info|gathering|route_to_human|complete",
-  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|...",
+  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach (IMPORTANT: use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
   "action_type": "null|warehouse_hold|order_modification|cancellation (set when an order action is needed beyond exchange/refund)",
   "items": [
@@ -1014,6 +1022,18 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
   // (item states like CONFIRMED may be misinterpreted as exchange for non-exchange scenarios)
   if (parsed.action_type && ['warehouse_hold', 'order_modification', 'cancellation'].includes(parsed.action_type)) {
     action_type = parsed.action_type;
+  }
+
+  // Post-process: detect outreach from AI's audit when message_type is generic
+  // Check community FIRST (it may mention "not B2B" which would false-positive on business patterns)
+  if (intake.message_type === 'general_inquiry' || intake.message_type === 'unknown' || !intake.message_type) {
+    const auditText = (parsed.audit || []).join(' ').toLowerCase();
+    if (/community.outreach|lgbtq.*org|queer.*org|pride.*org|gender.affirm.*partner|aligned with rubies/i.test(auditText)) {
+      intake.message_type = 'community_outreach';
+    } else if (/business.outreach|sales.pitch|unsolicited.*b2b|classified as business/i.test(auditText) ||
+               /not looking for.*(services|marketing|seo|business)/i.test((composedResponse || '').toLowerCase())) {
+      intake.message_type = 'business_outreach';
+    }
   }
 
   return {
