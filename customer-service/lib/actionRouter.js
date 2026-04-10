@@ -7,7 +7,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { getProductNickname, PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./decisionTree');
+const { getProductNickname, PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./csConfig');
 const { KNOWN_SIZES_UPPER } = require('./sizeUtils');
 
 let _anthropic;

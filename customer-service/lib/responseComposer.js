@@ -7,7 +7,7 @@
  *   polishResponse(rawResponse, structured, previousResponses) → polished text
  */
 
-const { getProductNickname, pluralizeNickname, getSizeList, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('./decisionTree');
+const { getProductNickname, pluralizeNickname, getSizeList, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('./csConfig');
 const { normalizeSize, extractSizeFromSku } = require('./sizeUtils');
 const Anthropic = require('@anthropic-ai/sdk');
 

@@ -1,17 +1,15 @@
 /**
- * Exchange/Return Decision Tree
+ * CS Config — Product classification, sizing helpers, and legacy decision tree.
  *
- * Deterministic decision logic for exchange and return conversations.
- * Takes structured intake + order context, returns prescriptions per item.
+ * Product utilities: nicknames, categories, size lists, grading deltas, one-piece fit.
+ * Loaded from Supabase via initCsConfig() at server startup.
  *
- * The AI agent handles:
- *   - Parsing customer messages → structured intake (unstructured → structured)
- *   - Composing responses in Jamie's voice (structured → natural language)
- *
- * This module handles everything in between — no AI judgment, all code.
+ * Also contains the legacy walkTree() decision tree, still used by exchangeAdvisor.js.
+ * The active CS path is hybridAdvisor.js (Opus-based), not this tree.
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { prescribeDonationRouting } = require('./donationRouting');
 const {
   NUMERIC_SIZES, NUMERIC_EVEN, NUMERIC_FULL,
   LETTER_SIZES, LETTER_NO_PLUS, LETTER_WITH_PLUS,
@@ -446,44 +444,7 @@ function getCumulativeDelta(fromSize, toSize) {
 // Geographic helpers — geocoding + distance
 // ---------------------------------------------------------------------------
 
-/**
- * Geocode an address using Google Maps Geocoding API.
- * Returns { lat, lng } or null if API unavailable or fails.
- */
-async function geocodeAddress(address) {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (!apiKey) return null;
-
-  const parts = [address.address1, address.city, address.province, address.zip, address.country].filter(Boolean);
-  const query = encodeURIComponent(parts.join(', '));
-
-  try {
-    const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${apiKey}`
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
-    if (data.status === 'OK' && data.results.length > 0) {
-      const loc = data.results[0].geometry.location;
-      return { lat: loc.lat, lng: loc.lng };
-    }
-  } catch (e) { /* geocoding failed */ }
-
-  return null;
-}
-
-/**
- * Haversine distance between two lat/lng points in kilometers.
- */
-function haversineDistance(lat1, lng1, lat2, lng2) {
-  const R = 6371; // Earth radius in km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+// geocodeAddress, haversineDistance, prescribeDonationRouting — moved to donationRouting.js
 
 // ---------------------------------------------------------------------------
 // Phase 0: Safety Override
@@ -1837,175 +1798,9 @@ function prescribeOrderCreation(intake) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Phase 6: Donation Routing
-// ---------------------------------------------------------------------------
+// Phase 6: Donation Routing — moved to donationRouting.js (imported at top)
 
-async function prescribeDonationRouting(intake, context) {
-  // Skip for defects
-  const hasDefect = intake.items.some(i => i.issue === 'defect');
-  const nonDefectItems = intake.items.filter(i => i.issue !== 'defect');
-  if (nonDefectItems.length === 0) {
-    return {
-      phase: 'donation_routing',
-      skip: true,
-      reason: 'All items are defects — customer keeps originals',
-      audit: 'Skipped: defect items keep original',
-    };
-  }
-
-  const country = context.customerCountry;
-  // Count total UNITS being returned, not just intake entries
-  // Use _orderQty from multi-item expansion if available, or sum matching order line items
-  let itemCount = 0;
-  const orderLineItems = context.targetOrder?.lineItems || [];
-  for (const intakeItem of nonDefectItems) {
-    if (intakeItem._orderQty) {
-      itemCount += intakeItem._orderQty;
-    } else {
-      // Sum ALL matching line items (could be same product in different colors)
-      let matchedQty = 0;
-      const prodLower = (intakeItem.product || '').toLowerCase();
-      for (const oi of orderLineItems) {
-        const oiLower = (oi.title || '').toLowerCase();
-        const oiSecondWord = oiLower.split(' ')[1];
-        if (oiLower.includes(prodLower) || (oiSecondWord && oiSecondWord.length > 1 && prodLower.includes(oiSecondWord))) {
-          matchedQty += oi.quantity;
-        }
-      }
-      itemCount += matchedQty || 1;
-    }
-  }
-  if (itemCount === 0) itemCount = nonDefectItems.length; // fallback
-
-  if (!country) {
-    return {
-      phase: 'donation_routing',
-      response_text: 'Ask for shipping address to determine donation routing',
-      audit: 'Need country for donation routing',
-    };
-  }
-
-  const supabase = getSupabaseClient();
-
-  // Fetch ALL active partners in the customer's country (with lat/lng)
-  let partners = [];
-  try {
-    const { data } = await supabase
-      .from('donation_partners')
-      .select('id, name, region, city, address, description, donations_routed, latitude, longitude')
-      .eq('country_code', country)
-      .eq('active', true);
-    partners = data || [];
-  } catch (e) { /* no partners table yet */ }
-
-  // Format donation address into multi-line block with RUBIES Returns header
-  function formatDonationText(programExplanation, partner, washReminder) {
-    // Parse address: "624 NE 3rd St, McMinnville, OR 97128" → multi-line
-    // Format: street\ncity, state zip
-    const addrParts = partner.address.split(',').map(s => s.trim());
-    let streetLine, cityLine;
-    if (addrParts.length >= 3) {
-      // "624 NE 3rd St", "McMinnville", "OR 97128"
-      streetLine = addrParts[0];
-      cityLine = addrParts.slice(1).join(', '); // "McMinnville, OR 97128"
-    } else if (addrParts.length === 2) {
-      streetLine = addrParts[0];
-      cityLine = addrParts[1];
-    } else {
-      streetLine = partner.address;
-      cityLine = '';
-    }
-
-    const addressBlock = [
-      'RUBIES Returns',
-      `c/o ${partner.name}`,
-      streetLine,
-      cityLine,
-    ].filter(Boolean).join('\n');
-
-    const lines = [
-      programExplanation,
-      '',
-      addressBlock,
-      '',
-      `They ${partner.description.toLowerCase()} ${washReminder}`,
-      '',
-      'Your return will be greatly appreciated by someone in our community.',
-      '',
-      'Take care,',
-    ];
-    return lines.join('\n');
-  }
-
-  const programExplanation = 'We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs.';
-  const washReminder = 'Please wash any items that have been worn or tried on before donating.';
-
-  if (partners.length === 0) {
-    return {
-      phase: 'donation_routing',
-      type: 'local_no_partner',
-      response_text: `${programExplanation} Feel free to donate locally. Do you know of any LGBTQ+ organizations in your area we could partner with?`,
-      audit: `No partners in ${country} — local donation + ask for org referral`,
-    };
-  }
-
-  if (itemCount <= 1) {
-    return {
-      phase: 'donation_routing',
-      type: 'local_single',
-      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally.`,
-      audit: `Single item in ${country} — local donation (not worth shipping to partner)`,
-    };
-  }
-
-  // Multiple items — find closest partner by geographic proximity
-  // Geocode the customer's address using Google Maps, then haversine distance
-  let partner = partners[0]; // fallback to first partner
-  let routingMethod = 'load_balance';
-
-  const customerAddress = context.customer?.defaultAddress;
-  if (customerAddress) {
-    try {
-      const customerCoords = await geocodeAddress(customerAddress);
-      if (customerCoords) {
-        // Calculate distance to each partner
-        const withDistance = partners
-          .filter(p => p.latitude && p.longitude)
-          .map(p => ({
-            ...p,
-            distance_km: haversineDistance(customerCoords.lat, customerCoords.lng, p.latitude, p.longitude),
-          }))
-          .sort((a, b) => a.distance_km - b.distance_km);
-
-        if (withDistance.length > 0) {
-          // Pick closest 3, then load-balance among them
-          const closest3 = withDistance.slice(0, 3);
-          partner = closest3.sort((a, b) => a.donations_routed - b.donations_routed)[0];
-          routingMethod = `geographic (${Math.round(partner.distance_km)} km away)`;
-        }
-      }
-    } catch (e) {
-      // Geocoding failed — fall back to load-balance
-      partner = partners.sort((a, b) => a.donations_routed - b.donations_routed)[0];
-      routingMethod = 'load_balance (geocoding failed)';
-    }
-  }
-
-  return {
-    phase: 'donation_routing',
-    type: 'partner',
-    partner,
-    response_text: formatDonationText(programExplanation, partner, washReminder),
-    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${partner.donations_routed} previous donations`,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Phase 7: Positive feedback detection
-// ---------------------------------------------------------------------------
-
-// checkPositiveFeedback removed — AI parser handles this via intake._positiveFeedback
+// Phase 7: Positive feedback — handled by AI parser via intake._positiveFeedback
 
 // ---------------------------------------------------------------------------
 // Main: Walk the full tree

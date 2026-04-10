@@ -1663,12 +1663,15 @@ function renderConversation(messages, ticket) {
   const boundary = findFirstHumanAgentIndex(messages);
   const parts = [];
 
-  // If there's a bot intake flow (boundary > 0), collapse it
-  if (boundary > 0) {
-    const botMessages = messages.slice(0, boundary);
-    const botCount = botMessages.length;
+  // boundary > 0: bot flow is messages[0..boundary-1]
+  // boundary === -1: entire conversation is bot (no human agent yet)
+  // boundary === 0: no bot flow (email-only ticket)
+  const botEnd = boundary > 0 ? boundary : (boundary === -1 ? messages.length : 0);
 
-    // Check for handoff template in the bot flow
+  if (botEnd > 0) {
+    const botMessages = messages.slice(0, botEnd);
+
+    // Check for handoff template
     let handoffData = null;
     for (const m of botMessages) {
       if (isHandoffTemplate(m.body || '')) {
@@ -1676,43 +1679,37 @@ function renderConversation(messages, ticket) {
       }
     }
 
-    // Extract customer messages from within the bot flow (their actual words, not button clicks)
-    const customerMsgsInBot = botMessages.filter(m => {
-      if (m.sender !== 'customer') return false;
-      const text = (m.body || '').trim().toLowerCase();
-      // Skip button echoes and empty
-      if (!text || text === 'go back' || text === 'no' || text.length < 3) return false;
-      // Skip if it's just a menu option label
-      if (['help me with a return or exchange', 'start a return or exchange',
-           'learn about our returns and exchanges policy', 'sign in to continue',
-           'no, i need more help', 'exchange', 'return'].includes(text)) return false;
-      // Skip order selection echoes (e.g. "#29920 - $67.00 - April 7, 2026") — info is in the order form
-      if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) return false;
-      return true;
-    });
-
-    // Render collapsed bot group
+    // Collapsed bot group (hidden via CSS)
     parts.push(`<details class="bot-group">
-      <summary class="bot-group-summary">Bot intake · ${botCount} messages</summary>
+      <summary class="bot-group-summary">Bot intake · ${botMessages.length} messages</summary>
       <div class="bot-group-messages">${botMessages.map(m => renderMessageBubble(m, ticket)).join('')}</div>
     </details>`);
 
     // Show handoff card if present
     if (handoffData) parts.push(renderHandoffCard(handoffData));
 
-    // Show customer messages from within the bot flow as real messages
-    // (these are the customer's actual words, not button clicks)
-    for (const m of customerMsgsInBot) {
+    // Show real customer messages from within the bot flow (not button clicks)
+    for (const m of botMessages) {
+      if (m.sender !== 'customer') continue;
+      const text = (m.body || '').trim();
+      const lower = text.toLowerCase();
+      if (!text || text.length < 3) continue;
+      // Skip known button labels
+      if (['help me with a return or exchange', 'start a return or exchange',
+           'learn about our returns and exchanges policy', 'sign in to continue',
+           'no, i need more help', 'exchange', 'return', 'go back', 'no', 'yes',
+           'what would you like to do', 'select an order'].includes(lower)) continue;
+      // Skip order line echo ("#29920 - $67.00 - April 7, 2026") — info is in the order form
+      if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) continue;
       parts.push(renderMessageBubble(m, ticket));
     }
   }
 
-  // Render everything from the boundary onwards normally
-  const start = boundary > 0 ? boundary : 0;
-  for (let i = start; i < messages.length; i++) {
+  // Render everything after the boundary normally
+  for (let i = botEnd; i < messages.length; i++) {
     const m = messages[i];
     const text = (m.body || '').trim();
-    if (!text) continue; // skip empty
+    if (!text) continue;
     parts.push(renderMessageBubble(m, ticket));
   }
 

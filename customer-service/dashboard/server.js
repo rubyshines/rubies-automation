@@ -2299,7 +2299,7 @@ server.listen(PORT, async () => {
   await loadProductConfig();
   // Load product cache + decision tree config for the action router
   const { loadFromSupabase } = require('../lib/productCache');
-  const { initCsConfig } = require('../lib/decisionTree');
+  const { initCsConfig } = require('../lib/csConfig');
   await loadFromSupabase(getSupabaseClient());
   await initCsConfig();
 });

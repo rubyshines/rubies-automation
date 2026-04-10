@@ -152,7 +152,7 @@ async function main() {
   }
 
   // Load product CS config (nicknames, categories, size overrides) from Supabase
-  const { initCsConfig } = require('./lib/decisionTree');
+  const { initCsConfig } = require('./lib/csConfig');
   await initCsConfig();
 
   // Load product catalog from Supabase (async but fast), fall back to Shopify fetch if empty

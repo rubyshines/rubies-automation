@@ -28,8 +28,8 @@ const {
   initCsConfig,
   _activeProducts,
   PRODUCT_NICKNAMES,
-  prescribeDonationRouting,
-} = require('./decisionTree');
+} = require('./csConfig');
+const { prescribeDonationRouting } = require('./donationRouting');
 
 let _client = null;
 function getClient() {
@@ -307,7 +307,7 @@ async function executeToolCall(toolName, toolInput) {
 
     case 'analyze_onepiece_fit': {
       const { product, waist_size, height_inches, is_kids } = toolInput;
-      const { analyzeOnepieceFit, getChartCategory, getSeparatesText } = require('./decisionTree');
+      const { analyzeOnepieceFit, getChartCategory, getSeparatesText } = require('./csConfig');
       const { chartCategory } = getChartCategory(product, is_kids || false);
       const waist = normalizeSize(waist_size);
       if (!waist) return { error: `Invalid size: ${waist_size}` };

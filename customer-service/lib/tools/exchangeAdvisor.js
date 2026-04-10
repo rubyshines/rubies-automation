@@ -13,7 +13,7 @@
 const { execSync } = require('child_process');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
-const { walkTree, normalizeSize, getSizeModifier, getMeasureLocation, _activeProducts, initCsConfig } = require('../decisionTree');
+const { walkTree, normalizeSize, getSizeModifier, getMeasureLocation, _activeProducts, initCsConfig } = require('../csConfig');
 const { composeAgentResponse } = require('../responseComposer');
 const { buildContext, analyzeOrders } = require('../contextBuilder');
 
@@ -346,8 +346,8 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
         // Exact match, or one contains the other, or both share a nickname
         if (existingLower === aiProdLower) return true;
         if (existingLower.includes(aiProdLower) || aiProdLower.includes(existingLower)) return true;
-        const existingNick = require('../decisionTree').getProductNickname(i.product)?.toLowerCase();
-        const aiNick = require('../decisionTree').getProductNickname(aiItem.product)?.toLowerCase();
+        const existingNick = require('../csConfig').getProductNickname(i.product)?.toLowerCase();
+        const aiNick = require('../csConfig').getProductNickname(aiItem.product)?.toLowerCase();
         if (existingNick && aiNick && existingNick === aiNick) return true;
         return false;
       });
@@ -598,14 +598,14 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
 
   // Pre-purchase sizing — no order needed
   if (intake.message_type === 'sizing_inquiry' && !effectiveOrderNumber && !existingIntake?.order_number) {
-    const { classifyProduct: classifyProd } = require('../decisionTree');
+    const { classifyProduct: classifyProd } = require('../csConfig');
     const treeContext = {
       customer: customer || null,
       targetOrder: null, fulfilled: [], exchanges: [], all: [],
       customerCountry: customerCountry || 'US',
       isNorthAmerica: customerCountry ? ['US', 'CA'].includes(customerCountry) : true,
       orderHistory: [],
-      measurementType: intake.items.some(i => require('../decisionTree').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
+      measurementType: intake.items.some(i => require('../csConfig').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
       isPrePurchase: true,
       referenceDate: refDate,
     };
@@ -754,7 +754,7 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
   for (const intakeItem of intake.items) {
     if (intakeItem._variant_modifier) continue; // already set
     const matchedOi = orderLineItems.find(oi => {
-      const nick = require('../decisionTree').getProductNickname(oi.title)?.toLowerCase();
+      const nick = require('../csConfig').getProductNickname(oi.title)?.toLowerCase();
       return nick && intakeItem.product?.toLowerCase().includes(nick);
     });
     if (matchedOi?._rawSkuSize) {
@@ -825,11 +825,11 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
       for (const intakeItem of intake.items) {
         if (!intakeItem.product) continue;
         const intakeProdLower = intakeItem.product.toLowerCase();
-        const intakeNick = require('../decisionTree').getProductNickname(intakeItem.product)?.toLowerCase();
+        const intakeNick = require('../csConfig').getProductNickname(intakeItem.product)?.toLowerCase();
 
         // Find all order line items for this product in DIFFERENT sizes
         for (const oi of orderLineItems) {
-          const oiNick = require('../decisionTree').getProductNickname(oi.title)?.toLowerCase();
+          const oiNick = require('../csConfig').getProductNickname(oi.title)?.toLowerCase();
           const oiTitleLower = (oi.title || '').toLowerCase();
           const isSameProduct = (intakeNick && oiNick && intakeNick === oiNick)
             || (intakeProdLower.length > 2 && oiTitleLower.includes(intakeProdLower));
@@ -864,7 +864,7 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
   // When customer says "these" or "everything" without specifying products, and the order
   // has items across different body groups (tops vs bottoms), ask which items they mean.
   // Auto-assume all only when items are in the same body group.
-  const { classifyProduct: classifyProd } = require('../decisionTree');
+  const { classifyProduct: classifyProd } = require('../csConfig');
   if (!existingIntake && intake.items.length > 1 && !intake._bodyGroupConfirmed) {
     const ACCESSORY_CATEGORIES = new Set(['accessory', 'chest_pads', null, undefined]);
     const nonAccessoryItems = intake.items.filter(i => {
@@ -919,8 +919,8 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
 
       // Detect the swap details for the response
       const swapDescs = intake.items.map(i => {
-        const fromNick = require('../decisionTree').getProductNickname(i.product) || i.product;
-        const toNick = require('../decisionTree').getProductNickname(i.resolved_product || i.product) || i.resolved_product || i.product;
+        const fromNick = require('../csConfig').getProductNickname(i.product) || i.product;
+        const toNick = require('../csConfig').getProductNickname(i.resolved_product || i.product) || i.resolved_product || i.product;
         return `the ${fromNick} for a ${toNick} in size ${i.resolved_size}`;
       });
       const swapText = swapDescs.join(' and ');
@@ -1095,7 +1095,7 @@ async function _handleExchangeAdvisorInner({ customer_email, issue_description, 
     customer, targetOrder, fulfilled, exchanges, all: orders,
     customerCountry, isNorthAmerica,
     orderHistory: fulfilled.slice(0, 5),
-    measurementType: intake.items.some(i => require('../decisionTree').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
+    measurementType: intake.items.some(i => require('../csConfig').getChartCategory(i.product, false).measureType === 'chest') ? 'chest' : 'waist',
     referenceDate: refDate,
   };
 

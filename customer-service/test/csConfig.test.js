@@ -56,7 +56,7 @@ require.cache[supabaseModulePath] = {
   },
 };
 
-// Now require decisionTree — it will get the mocked supabaseClient
+// Now require csConfig — it will get the mocked supabaseClient
 const {
   walkTree,
   checkSafetyOverride,
@@ -85,7 +85,7 @@ const {
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
-} = require('../lib/decisionTree');
+} = require('../lib/csConfig');
 
 // ---------------------------------------------------------------------------
 // Initialize CS config from mock Supabase before tests run
