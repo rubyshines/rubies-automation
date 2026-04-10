@@ -83,7 +83,7 @@ async function run({ onProgress } = {}) {
 
   console.log(`[intake] Scanning since ${lastPollAt.toISOString()}...`);
 
-  // Fetch recent tickets, keep only open + unassigned or assigned to AI bot
+  // Fetch recent open tickets (all assignments — legacy tickets get reassigned to AI bot)
   let cursor = null;
   const allTickets = [];
   const seen = new Set();
@@ -135,14 +135,7 @@ async function run({ onProgress } = {}) {
 
   // Filter using only data we already have (no API calls)
   const ticketsToProcess = allTickets.filter(t => {
-    // Only process unassigned tickets OR tickets assigned to AI bot
-    // (tickets assigned to other agents are being handled elsewhere)
     const assigneeId = t.assignee_user?.id;
-    if (assigneeId && assigneeId !== aiBotId) {
-      console.log(`[intake] Skip ${t.id}: assigned to another agent`);
-      ticketsSkipped++;
-      return false;
-    }
     // Assigned to AI bot with a pending draft = already in our queue
     if (assigneeId === aiBotId && draftedMessages[t.id]?.size > 0) {
       console.log(`[intake] Skip ${t.id}: AI bot + pending draft`);
