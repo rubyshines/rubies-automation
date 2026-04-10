@@ -44,6 +44,7 @@ const orderNotesTools = require('./lib/tools/orderNotes');
 const deliveryEstimateTools = require('./lib/tools/deliveryEstimate');
 const passportClaimsTools = require('./lib/tools/passportClaims');
 const editOrderTools = require('./lib/tools/editOrder');
+const deliveryTimeReportTools = require('./lib/tools/deliveryTimeReport');
 
 const allTools = [
   ...customerLookupTools,
@@ -74,6 +75,7 @@ const allTools = [
   ...deliveryEstimateTools,
   ...passportClaimsTools,
   ...editOrderTools,
+  ...deliveryTimeReportTools,
 ];
 
 /**

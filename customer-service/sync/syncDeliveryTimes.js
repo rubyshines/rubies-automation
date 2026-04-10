@@ -95,6 +95,51 @@ function findPassportReceivedAt(rawEvents) {
   return null;
 }
 
+function findPassportDepartedAt(rawEvents, receivedAt) {
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) return null;
+
+  const sorted = [...rawEvents].sort((a, b) => {
+    const da = new Date(a.timestamp || `${a.date} ${a.time || ''}`);
+    const db = new Date(b.timestamp || `${b.date} ${b.time || ''}`);
+    return da - db;
+  });
+
+  const recvDate = receivedAt ? new Date(receivedAt) : null;
+
+  // Primary: "Shipped from origin" — most reliable departure signal (95%+ after received)
+  const primaryPatterns = [
+    /shipped from origin/i, /departed origin/i, /parcel departed/i,
+  ];
+  // Secondary: only use if timestamp is after received (some fire before received)
+  const secondaryPatterns = [
+    /preparing for export/i, /in the air/i, /heading your way/i,
+    /on transport to the country of destination/i, /crossing the border/i,
+    /processed and preparing/i,
+  ];
+
+  // Try primary first (no time constraint needed — reliable)
+  for (const event of sorted) {
+    const desc = event.description || '';
+    if (primaryPatterns.some(p => p.test(desc))) {
+      const ts = event.timestamp || `${event.date} ${event.time || ''}`;
+      const d = new Date(ts);
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+
+  // Fall back to secondary, but only if after received
+  for (const event of sorted) {
+    const desc = event.description || '';
+    if (secondaryPatterns.some(p => p.test(desc))) {
+      const ts = event.timestamp || `${event.date} ${event.time || ''}`;
+      const d = new Date(ts);
+      if (!isNaN(d.getTime()) && (!recvDate || d >= recvDate)) return d.toISOString();
+    }
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Main sync
 // ---------------------------------------------------------------------------
@@ -228,8 +273,11 @@ async function syncDeliveryTimes({ full = false } = {}) {
       // Passport leg enrichment
       const snap = snapMap[order.order_number];
       let passportReceivedAt = null;
+      let passportDepartedAt = null;
       let leg1 = null;
       let leg2 = null;
+      let leg1a = null;
+      let leg1b = null;
       let localCarrier = null;
       let carrier = null;
 
@@ -239,13 +287,21 @@ async function syncDeliveryTimes({ full = false } = {}) {
 
         if (snap.carrier === 'passport' && snap.raw_events) {
           passportReceivedAt = findPassportReceivedAt(snap.raw_events);
+          passportDepartedAt = findPassportDepartedAt(snap.raw_events, passportReceivedAt);
           if (passportReceivedAt) {
             leg1 = calendarDays(order.fulfilled_at, passportReceivedAt);
             leg2 = calendarDays(passportReceivedAt, deliveredAt);
             if (leg1 < 0 || leg2 < 0) {
               passportReceivedAt = null;
+              passportDepartedAt = null;
               leg1 = null;
               leg2 = null;
+            } else {
+              leg1a = leg1; // fulfilled → Passport received
+              if (passportDepartedAt) {
+                leg1b = calendarDays(passportReceivedAt, passportDepartedAt);
+                if (leg1b < 0) { leg1b = null; passportDepartedAt = null; }
+              }
             }
           }
         }
@@ -275,8 +331,11 @@ async function syncDeliveryTimes({ full = false } = {}) {
         transit_days: transitDays,
         transit_business_days: businessDays(order.fulfilled_at, deliveredAt),
         passport_received_at: passportReceivedAt,
+        passport_departed_at: passportDepartedAt,
         leg1_days: leg1,
         leg2_days: leg2,
+        leg1a_days: leg1a,
+        leg1b_days: leg1b,
         local_carrier: localCarrier,
         carrier,
         computed_at: new Date().toISOString(),

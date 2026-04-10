@@ -64,7 +64,9 @@
       "mcp__rubies-cs__shipping_delay_resolve",
       "mcp__rubies-cs__delivery_estimate",
       "mcp__rubies-cs__create_order_complete",
-      "WebFetch(domain:docs.railway.com)"
+      "WebFetch(domain:docs.railway.com)",
+      "WebFetch(domain:help.shopify.com)",
+      "WebFetch(domain:shopify.dev)"
     ]
   },
   "enableAllProjectMcpServers": true,

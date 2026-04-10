@@ -370,6 +370,9 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const conversationHistory = messages.map(m => ({
     id: m.id,
     sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
+    is_bot: m.from_agent !== false && (
+      (m.sender?.email || '').endsWith('@email.gorgias.com') || m.via === 'rule'
+    ),
     body_html: m.stripped_html || m.body_html || null,
     body: gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || ''),
     created_at: m.created_datetime,

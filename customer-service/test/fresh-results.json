@@ -1,0 +1,515 @@
+[
+  {
+    "ticket": "47116138",
+    "email": "jw1835@yahoo.com",
+    "flags": {
+      "createdOrder": true,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 115
+    },
+    "customerSummary": "> Help me with a return or exchange\n\nWhat would you like to do?\n> Start a return or exchange\n\nWe will be asking you to sign in so that you can select which order and items you would like to return.\nSelect an order\n> #26188 - $99.00 - August 27, 2025\n> MAGICAL SHAPING GEL CHEST PADS - Medium\n> MAGICA...",
+    "jamieResponse": "No problem. I went ahead and created a new order and send over a refund for the pads.\n\nWe have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nWith this in mind can you please send the items you are returning to:\n\nRUBIES Returns\nC/O Ariel Bustamante - RISE - LA LGBT Center\n1125 N. McCadden Place\nLos Angeles California 90038\nUnited States\n\nPlease wash any items that have been worn or tried on before they are returned.  \n\nYour return will be greatly appreciated by someone in our community.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 115,
+    "hybridResponse": "Hi Jeremy,\n\nThanks for the detail. I'll get the 2x AJ size 16 sent out, and I'll process a refund for both chest pads.\n\nFor the chest pads, rather than returning them, we donate exchanged items to LGBTQ+ organizations. Please send them to:\n\n**RUBIES Returns**\nc/o Rainbow Youth Center\n701 S Camino Del Rio, Suite 108\nDurango, CO 81301\n\nThey run a queer closet with free gender-affirming products, so your child's pads will go to good use. Please wash them if they've been tried on before sending.\n\nYour refund will be processed back to your original payment method.\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 104,
+    "hybridStatus": "complete",
+    "hybridError": null,
+    "scores": {
+      "action": 3,
+      "tone": 4,
+      "length": 3,
+      "accuracy": 1,
+      "match": "partial",
+      "issue": "Hallucinated donation address (Rainbow Youth Center in Durango, CO) — actual address is RISE/LA LGBT Center in Los Angeles. Also inferred size 16 without confirmation, whereas Jamie did not specify the exchange size in his response."
+    }
+  },
+  {
+    "ticket": "66132917",
+    "email": "saturdaypancakesbythesea@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": true,
+      "wordCount": 71
+    },
+    "customerSummary": "Hi Rubies! \n\nMy daughter gave the Ava bra a try and liked it… until she could feel it rubbing where the strap is sewn to the cup. Unfortunately, she won't be able to wear it since she has sensitive skin and it will rub off there. \n\nThe bra still has tags on. How can we send it back to you? \n\nThank y...",
+    "jamieResponse": "Hi Nancy,\n\nDarn I was hoping it was a sizing issue but yeah based on the measurements it isn't. Would you like a refund or to exchange for something else. \n\nI will talk to our designer and our supplier about this as our goal was to make a more sensory friendly bra and seems like based on this feedback we haven't nailed it quite yet. \n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 71,
+    "hybridResponse": "Hi,\n\nThat seam sensitivity is real, especially for kids with sensory issues, and I appreciate the detail.\n\nA couple of thoughts: at 27.5 inches, the size chart actually points to an XXS for the Ava. If the XS felt comfortable otherwise, the XXS would sit a little more snug, which sometimes means less movement and less rubbing. That said, if the issue is the seam itself rather than the fit, a different size may not help.\n\nCan you tell me a bit more about where exactly the rubbing is happening? Is it the strap-to-cup seam at the front, or the shoulder strap area?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 109,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 2,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "Wrong action: Jamie accepted the issue and offered refund/exchange, while AI asked for more information that was already provided in the photo. AI also suggested a sizing fix (XXS) that Jamie explicitly ruled out, and the response is too long compared to Jamie's brief, empathetic reply. Asking a clarifying question the customer already answered is a significant failure."
+    }
+  },
+  {
+    "ticket": "55467538",
+    "email": "crayonjamez@gmail.com",
+    "flags": {
+      "createdOrder": true,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 101
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#26907 - $107.10 - October 13, 2025\n\nO...",
+    "jamieResponse": "No problem. I went ahead and created a new order for you. \n\nWe have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nWith this in mind can you please send the items you are returning to:\n\nRUBIES Returns\nC/O McMinnville Trans Network\n624 NE 3rd St, \nMcMinnville, OR 97128\n\nPlease wash any items that have been worn or tried on before they are returned.  \n\nYour return will be greatly appreciated by someone in our community.\n\nTake care,\n \nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 101,
+    "hybridResponse": "Hi,\n\nI've got your exchange set up. Three new M's are on the way.\n\nFor the S items, please send them to:\n\n**RUBIES Returns**\nc/o TransPonder\n440 Maxwell Rd\nEugene, OR 97404\n\nTransPonder runs Sylvia's Closet, a free resource for binders, bras, breast forms, packers, and more for our community. Please give the items a quick wash before sending them off.\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 67,
+    "hybridStatus": "complete",
+    "hybridError": null,
+    "scores": {
+      "action": 3,
+      "tone": 4,
+      "length": 5,
+      "accuracy": 2,
+      "match": "partial",
+      "issue": "Wrong return address hallucinated - AI sent to TransPonder in Eugene, OR but Jamie sent to McMinnville Trans Network in McMinnville, OR. AI also skipped Jamie's explanation about the donation model/LGBTQ+ clothing programs context. The 'three new M's are on the way' phrasing is slightly presumptuous without confirming availability, but action direction (exchange + donate) was correct."
+    }
+  },
+  {
+    "ticket": "54829596",
+    "email": "jadeatoscano@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": true,
+      "wordCount": 45
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#26865 - $78.80 - October 9, 2025\n\nOrd...",
+    "jamieResponse": "Hi,\n\nAm I right these were a bit too loose? Based on your measurements you are on the edge of a medium and large. Let me know if you would like me to send you out a medium size?\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 45,
+    "hybridResponse": "Hmm, the size chart actually puts a 32\" waist right in the L range, which is what you have. Can you tell me a bit more about what's not working, so I can make sure we find the right fit?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 46,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 3,
+      "tone": 4,
+      "length": 5,
+      "accuracy": 3,
+      "match": "partial",
+      "issue": "AI correctly identified a sizing issue and asked for clarification, but missed the key insight Jamie caught: the customer is on the edge of M/L and likely needs a medium. Jamie proactively offered to send a medium, while the AI asked a vague follow-up question instead of moving toward resolution. The accuracy score is docked because stating 32\" is 'right in the L range' may be misleading if the customer is borderline M/L as Jamie noted."
+    }
+  },
+  {
+    "ticket": "61272881",
+    "email": "margaretmortimer73@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 81
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#27327 - $65.00 - November 9, 2025\n\nOr...",
+    "jamieResponse": "Hi,\n\nOk! I sent over a refund from this order for one pair. \n\nWe have moved to a model where all RUBIES returns will be donated. Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 81,
+    "hybridResponse": "Hi,\n\nNot confusing at all! That's actually a great idea and we can absolutely include the exchange L in the new order of 9.\n\nSince the 1X was too big, the L will have 2\" less fabric around the waist. Does that sound like it will work, or would the M (4\" less) be a better fit?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 63,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 4,
+      "length": 4,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "AI took wrong action entirely: asked a sizing clarification question instead of issuing a refund and explaining the donation-based return policy. Jamie didn't process an exchange at all — she refunded one pair and told the customer to donate the XL locally. The AI also incorrectly referenced size differences in inches (potentially hallucinated spec details) and assumed an exchange was still the right path when Jamie pivoted to a refund+donate model."
+    }
+  },
+  {
+    "ticket": "47094843",
+    "email": "rbrinker77@yahoo.com",
+    "flags": {
+      "createdOrder": true,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 45
+    },
+    "customerSummary": "I'd like to return the following items\n---------------------------------------\nOrder number: #26281\nItems requested for return: 1x THE SKY NO-TUCK SHAPING ONE-PIECE - Black / 2X Tall\nTotal: $59.00\nOrder Created: 9/1/2025, 1:17:49 PM\nShipping address: 344 Bella Way, Sun Prairie, WI, 53590\n\nHi, \n\nIt w...",
+    "jamieResponse": "No problem. I went ahead and created a new order for you. \n\nWe have moved to a model where all RUBIES returns will be donated. Since you only have one item to return, feel free to donate it locally. \n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 45,
+    "hybridResponse": "Once you confirm, I'll get the 1X standard sent out and share the donation info for the original.\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 24,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 4,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "Wrong action: AI asked for confirmation before acting, whereas Jamie proactively created the new order immediately. AI also hallucinated 'donation info' being shared, when Jamie simply told the customer to donate locally without sharing any links or additional info. The phrase 'Talk soon' is slightly off from Jamie's 'Take care' sign-off, a minor tone mismatch."
+    }
+  },
+  {
+    "ticket": "62014837",
+    "email": "daniel.eiriksson@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 40
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#27115 - $102.14 - October 31, 2025\n\nO...",
+    "jamieResponse": "Hi,\n\nNo problem. I can help you with an exchange. I can send over 3 pairs in exchange if you like. Let me know if you want the same colour black or different ones.\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 40,
+    "hybridResponse": "No problem at all. Since you had the bikini bottom in 1X, what size were you thinking for the AJ? The sizing should be similar, but just want to make sure we get it right before I send one out.\n\nAlso, for the bikini bottoms, no need to ship them back. Feel free to donate them locally to an LGBTQ+ organization in your area. And if you know of any orgs in Iceland we could partner with, I'd love to hear it.\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 88,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 2,
+      "tone": 4,
+      "length": 3,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "AI asked about sizing and offered a 'no return, donate instead' policy which was not mentioned or authorized. Jamie's actual action was to offer an exchange of 3 pairs and ask about color preference. AI hallucinated a donation policy and skipped the key offer of 3 pairs in the exchange."
+    }
+  },
+  {
+    "ticket": "53372200",
+    "email": "yamsmos@gmail.com",
+    "flags": {
+      "createdOrder": true,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 110
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#26318 - $114.00 - September 2, 2025\n\n...",
+    "jamieResponse": "Hi,\n\nNo problem. I went ahead and created a new order for you and sent over a refund for the different.\n\nWe have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nWith this in mind can you please send the items you are returning to:\n\nRUBIES Returns\nc/o Alexander Switzer\nValid USA\nPO Box #14061\nTucson, AZ, 85732\n\nPlease wash any items that have been worn or tried on before they are returned. \n\nYour return will be greatly appreciated by someone in our community.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 110,
+    "hybridResponse": "Hi,\n\nJust to confirm what I'm setting up:\n\n- AJ Sandstone M → AJ Sandstone S\n- Serena Shorty Short Black M → AJ Black S\n\nThe S will have 2\" less fabric around the waist than the M you have. Does that sound right?\n\nOnce you confirm I'll get the order out. For the two items you're sending back, please wash them and send to our donation partner:\n\nRUBIES Returns\nc/o LGBT Center of Raleigh\n128 East Cabarrus Street\nRaleigh, NC 27601\n\nThey run a free gender-affirming clothing closet, so your items will go to a great home.\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 105,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 3,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "Critical action failure: Jamie immediately created the order and issued a refund without asking for confirmation. AI asked a clarifying question instead of acting. AI also hallucinated a sizing claim ('2 inches less fabric'), hallucinated the wrong return address (LGBT Center of Raleigh vs Valid USA in Tucson, AZ), and signed off as 'Jamie Alexander, RUBIES Founder' which the AI should not impersonate."
+    }
+  },
+  {
+    "ticket": "65980806",
+    "email": "sheepanator@icloud.com",
+    "flags": {
+      "createdOrder": true,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 102
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#27879 - $111.40 - December 3, 2025\n\nO...",
+    "jamieResponse": "No problem. I went ahead and created a new order for you. \n\nWe have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nWith this in mind can you please send the items you are returning to:\n\nRUBIES Returns\nc/o LGBT Center of Raleigh\n128 East Cabarrus Street\nRaleigh, NC 27601\n\nPlease wash any items that have been worn or tried on before they are returned. \n\nYour return will be greatly appreciated by someone in our community.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 102,
+    "hybridResponse": "Hi,\n\nI've got your exchange sorted. Size S versions of the Cheeky and Sassy are on their way to you.\n\nInstead of returning your XS items, we donate them to a local LGBTQ+ organization. If you've worn or tried them on, just give them a quick wash before dropping off:\n\n**RUBIES Returns**\nc/o LGBT Center of Raleigh\n128 East Cabarrus Street\nRaleigh, NC 27601\n\nThey run a free gender-affirming clothing closet, so your items will go to good use.\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 85,
+    "hybridStatus": "complete",
+    "hybridError": null,
+    "scores": {
+      "action": 5,
+      "tone": 4,
+      "length": 4,
+      "accuracy": 4,
+      "match": "close",
+      "issue": "AI says 'items are on their way' implying the new order is confirmed/shipped, which is presumptuous. Jamie says 'created a new order' which is more precise. AI also omits Jamie's community-appreciation closing line. Minor differences but core action and structure are well matched."
+    }
+  },
+  {
+    "ticket": "49362304",
+    "email": "judechapman1066@proton.me",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 127
+    },
+    "customerSummary": "Hi, I got some pants from rubies a few ago and I noticed some elastic feeling threads sticking out of them. I was wondering if this was an issue? \n-------------------------------\nHi, I got some pants from rubies a few ago and I noticed some elastic feeling threads sticking out of them. I was wonderi...",
+    "jamieResponse": "Hi Jude,\n\nI am sorry for this and I have sent these over to our supplier for investigation. \n\nDo you mind answering a few questions and this will help. I'd be happy to send over replacements if that is what you would like after I have had a chance to learn more and talk to my supplier.\n\nCan you let me know if this is an issue with all three pairs or just one of them? \nI am curious had they been worn before or was the first time? \nIf they had be worn before how many times roughly had they been washed. Have they been put in a dryer?\nHow do they fit? Are they tight, just right or loose?\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 127,
+    "hybridResponse": "Hi,\n\nThat's definitely a defect and not something that should happen. I'm sorry about that.\n\nI can send out a replacement pair right away. Looking at your order, you have the Charlie in size 16. Does that sound right, or did it happen on one of the other styles?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 55,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 3,
+      "accuracy": 1,
+      "match": "different",
+      "issue": "AI hallucinated order details (Charlie in size 16) with no basis in the conversation, and jumped straight to offering a replacement without first investigating the issue as Jamie did. Jamie's actual approach was to ask diagnostic questions (how many pairs affected, worn/washed before, dryer use, fit) before committing to a replacement. The AI skipped all investigation steps entirely."
+    }
+  },
+  {
+    "ticket": "73972963",
+    "email": "jacob.lynch781@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": true,
+      "wordCount": 139
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#27522 - $89.60 - November 22, 2025\n\nO...",
+    "jamieResponse": "Hi.\n\nIn situations like this we can usually find something that works. If you are feeling the shaping is not working it's often due to two reasons: either the fit is off or there is a mismatch of expectations. \n\nIn terms of expectations our shaping bottoms are meant to reshape the front area to create a feminine mound. This is in contrast to \"tucking\" or \"gaffing\" underwear which completely flattens the area. This is why our shaping bottoms are very comfortable and can be worn for all activities. \n\nIn terms of the fit, unlike \"tucking\" bottoms they are intended to be worn comfortably. Not too tight or too loose. If you send me the waist measurement around the belly and just under the belly button and height I can double check the sizing.\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 139,
+    "hybridResponse": "Hi,\n\nThe fit issue came through. Before I process a return, I want to make sure we find something that actually works. Were the Ls too big or too small? I can check what size would work better and send out a free exchange.\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 50,
+    "hybridStatus": "gathering",
+    "hybridError": null,
+    "scores": {
+      "action": 2,
+      "tone": 4,
+      "length": 4,
+      "accuracy": 4,
+      "match": "partial",
+      "issue": "Wrong action: AI jumped to asking big/small fit question and offered exchange, while Jamie first educated about product expectations (shaping vs tucking distinction) before asking for measurements. AI skipped the key product education step that Jamie uses to address expectation mismatch, which is often the real root cause."
+    }
+  },
+  {
+    "ticket": "87158260",
+    "email": "anna.vanderstaay@uqconnect.edu.au",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 32
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#28289 - $91.04 - January 4, 2026\n\nOrd...",
+    "jamieResponse": "Hi,\n\nIt's no problem doing both returns/exchanges at the same time. Would she be interested in exchanging the No Tuck underwear for other pairs of AJs?\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 32,
+    "hybridResponse": "Hi,\n\nNo problem at all. Totally happy to do a part exchange and part return, so no need to do a full return and reorder.\n\nI'll send out a size 12 Serena for you. For the No-Tuck Underwear, I'll process a refund on those.\n\nFor all three items, feel free to donate them locally to an LGBTQ+ organisation in your area.\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 67,
+    "hybridStatus": "complete",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 3,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "Wrong action: Jamie asked if the customer wanted to exchange the No-Tuck underwear for AJs instead of returning them, whereas the AI assumed a refund without checking. The AI also hallucinated a specific instruction to donate items to an LGBTQ+ organisation, which Jamie did not say. The AI resolved the case prematurely rather than following Jamie's approach of confirming the exchange option first."
+    }
+  },
+  {
+    "ticket": "57944206",
+    "email": "mdevela@gmail.com",
+    "flags": {
+      "createdOrder": true,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 139
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Select an order\n\n#27048 - $116.27 - October 25, 2025\n\nO...",
+    "jamieResponse": "OK, got it. I expect maybe your other items you were wearing tighter - all our bottoms are meant to be worn comfortably - not too tight or too loose.\n\nNo problem. I went ahead and created a new order for you. \n\nWe have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nWith this in mind can you please send the items you are returning to:\n\nRUBIES Returns\nC/O Ariel Bustamante - RISE - LA LGBT Center\n1125 N. McCadden Place\nLos Angeles California 90038\nUnited States\n\nPlease wash any items that have been worn or tried on before they are returned.  \n\nYour return will be greatly appreciated by someone in our community.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 139,
+    "hybridResponse": "Hi,\n\nAt 36 inches your size chart recommendation is actually a 1X for both bottoms, not an XL. I'll go ahead and send out both in 1X.\n\nFor the two M's you have, please send them to our donation partner:\n\n**RUBIES Returns**\nc/o Valid USA\nPO Box 14061\nTucson, AZ 85732\n\nThey provide free gender-affirming undergarments to people in need. Please wash the items before sending. Your donation will mean a lot to someone in the community.\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 83,
+    "hybridStatus": "complete",
+    "hybridError": null,
+    "scores": {
+      "action": 3,
+      "tone": 3,
+      "length": 4,
+      "accuracy": 2,
+      "match": "partial",
+      "issue": "AI sent wrong donation address (Tucson, AZ) instead of the correct LA LGBT Center address in Los Angeles, which is especially relevant given the customer is in LA. AI also skipped Jamie's contextual note about fit expectations (worn comfortably, not too tight/too loose). Size recommendation of 1X vs XL may or may not be accurate but cannot be verified and differs from Jamie's implicit acceptance of XL. Tone is slightly more formal and less personal than Jamie's conversational style."
+    }
+  },
+  {
+    "ticket": "85013666",
+    "email": "bparnold@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 78
+    },
+    "customerSummary": "Hi Jamie - just a heads up that I received the exchange order but it looks like it is the same sizes that I originally ordered. The goal of the exchange was to size down two sizes to Larges across the order. I haven't removed anything from the wrapping or packaging and nothing has been worn. Please ...",
+    "jamieResponse": "Doh! So sorry for the mistake. I have created another order.\n\nHave you sent back the other order, if not can you send it all back to the following address:\n\nRUBIES Returns c/o \nMegan Staley - MOASH \n3032 Clawson Ave,\nRoyal Oak, MI \n48073 \n\nIf you want us to cover shipping back this order given it was my mistake just send over the receipt and I can refund from your original order.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 78,
+    "hybridResponse": "Hi,\n\nI am so sorry about this. It sounds like there was an error with the exchange and the wrong sizes were sent out. The last thing I want is for you to be stuck with items that don't fit.\n\nI'll get the correct Larges sent out to you right away. For the items you received in error, rather than shipping them back, we donate exchanged items to LGBTQ+ organizations. You can send them to:\n\n**RUBIES Returns**\nc/o Rainbow Youth Center\n701 S Camino Del Rio, Suite 108\nDurango, CO 81301\n\nThey run a queer closet with free gender-affirming products, so they'll go to a great home. Since the items are unworn, no need to wash them first.\n\nThe Sky one-piece on your order is a Tall. Did you want the L Tall again, or the standard L?\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 144,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 2,
+      "accuracy": 1,
+      "match": "different",
+      "issue": "AI hallucinated a return address (Rainbow Youth Center in Durango, CO) and a donation policy that doesn't exist. Jamie's actual return address is MOASH in Royal Oak, MI. AI also invented a Sky one-piece sizing question with no basis, failed to offer shipping refund for Jamie's mistake, and is far too verbose compared to Jamie's ~50-word casual response."
+    }
+  },
+  {
+    "ticket": "56162213",
+    "email": "shipleymj@yahoo.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 39
+    },
+    "customerSummary": "Hello,\nI'd like to request a return and refund from a recent order - the order was shipped to Lissa Shipley. We'd like to return the Sky One Piece in black size 13 - unfortunately it wasn't quite right for our needs. \n\nPlease advise how we can initiate the process. \n\nThank you!\nLissa",
+    "jamieResponse": "Hi Lissa,\n\nNo problem. If you can let me know your needs in more detail perhaps I can help you find something that works as we have a number of different swim options.\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 39,
+    "hybridResponse": "Hi Lissa,\n\nThanks for reaching out. Can you let me know what didn't work out with the Sky One-Piece in case I can help with another size or recommend another product?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 37,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 4,
+      "tone": 4,
+      "length": 5,
+      "accuracy": 4,
+      "match": "partial",
+      "issue": "AI asked about what didn't work with the product (size/fit issue framing) rather than proactively offering to help find something that works from their swim range. Jamie's approach was more solution-forward and brand-showcasing, highlighting that they have multiple swim options rather than diagnosing the return reason."
+    }
+  },
+  {
+    "ticket": "74281090",
+    "email": "thomasaustin098@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 54
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: We couldn't find any orders associated with this accoun...",
+    "jamieResponse": "No problem. I sent over a refund. \n\nWe have moved to a model where all RUBIES returns will be donated so feel free to donate it locally. We are actively looking for LGBTQ+ organizations that accept donations so if you have any contacts we would appreciate a referral.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 54,
+    "hybridResponse": "Hi,\n\nThe items sound like they could work with a small size adjustment. Can you tell me a bit more about the fit - were they too big or too small? I want to see if I can find a size that works before processing a refund.\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 53,
+    "hybridStatus": "gathering",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 3,
+      "accuracy": 4,
+      "match": "different",
+      "issue": "Wrong action entirely - Jamie immediately processed a refund without asking questions, but AI asked for more fit details to explore alternatives. Customer had already clearly stated they wanted a return/refund. AI also missed the key brand policy detail about donating returns instead of shipping them back."
+    }
+  },
+  {
+    "ticket": "84892023",
+    "email": "rock360472@yahoo.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 54
+    },
+    "customerSummary": "Hello, \n\nI recently received my order, and although the parcel itself was in good condition, the item inside arrived with a hole in it. \n\nI tried contacting support through your automated chat but did not receive a response. I have attached photos showing the damage. \n\nPlease let me know how this ca...",
+    "jamieResponse": "Hi Dean,\n\nI am sorry about this. Can you send me another picture so I can send to my supplier. The one you sent is blurry.\n\nCan you let me know which of the three items has a hole in it so I can send over a replacement?\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 54,
+    "hybridResponse": "",
+    "hybridWordCount": 0,
+    "hybridStatus": "error",
+    "hybridError": "Request timed out.",
+    "scores": null
+  },
+  {
+    "ticket": "83785108",
+    "email": "janelle.m.gera@gmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 34
+    },
+    "customerSummary": "Hi, \n\nI tried to donate two robots swimsuits and received them back in the mail; please advise.",
+    "jamieResponse": "Hi,\n\nCan you let me know where you donated them to. What address did you use. Also when you say robot suits, how are these related to RUBIES?\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 34,
+    "hybridResponse": "Hi,\n\nThat's a bit unusual! Can you tell me a bit more about what happened? Did the package get returned to you by the postal service, or did the donation organization send them back?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 40,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 2,
+      "tone": 3,
+      "length": 4,
+      "accuracy": 3,
+      "match": "partial",
+      "issue": "The AI asked about the return mechanism (postal service vs. donation org) but missed the critical clarifying questions Jamie asked: where/what address they donated to, and crucially what 'robot suits' are and how they relate to RUBIES. Jamie's response correctly identified that 'robot suits' is likely a misunderstanding or unrelated to RUBIES products, which the AI failed to flag. The AI's opening 'That's a bit unusual!' is slightly informal/performative compared to Jamie's direct style."
+    }
+  },
+  {
+    "ticket": "72595696",
+    "email": "srunferth@unferth.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": false,
+      "mentionedDelta": false,
+      "askedMeasurement": true,
+      "wordCount": 90
+    },
+    "customerSummary": "Help me with a return or exchange\n\n[Bot]: What would you like to do?\n\nStart a return or exchange\n\n[Bot]: We will be asking you to sign in so that you can select which order and items you would like to return.\n\n[Bot]: Sign in to continue\n\n[Bot]: Sorry, no account was found\n\nGo back\n\n[Bot]: We will be...",
+    "jamieResponse": "Hi,\n\nBased on the measurements and info I am thinking the one-piece just won't be the right fit.\n\nIn many cases if the one-piece does not work you could consider pairing the tankini https://rubyshines.com/products/the-queeny-tankini with our regular or high waisted bikini bottom. This two-piece can offer almost as much coverage as a one-piece but with a more flexible fit.\n\nBased on your measurements, I would recommend a size M on the bottoms and top.\n\nLet me know if you would like to exchange it.\n\nTalk soon,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 90,
+    "hybridResponse": "So the size chart actually suggests an L for your measurements, which is two sizes up from the S Tall you have. That would explain why it felt loose and slipped. At 5'7\" the Tall length should still work for you.\n\nDoes an S Tall to L Tall exchange sound right?\n\nTalk soon,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 57,
+    "hybridStatus": "needs_info",
+    "hybridError": null,
+    "scores": {
+      "action": 1,
+      "tone": 3,
+      "length": 4,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "AI recommended going up two sizes (S to L) when Jamie concluded the one-piece style itself won't work and suggested a product switch to the tankini + bikini bottom combo instead. AI hallucinated a size chart recommendation without verifying, and missed the key insight that the garment category was the problem, not just the size. Jamie recommended M for both pieces, not L."
+    }
+  },
+  {
+    "ticket": "61115028",
+    "email": "jclaudell@hotmail.com",
+    "flags": {
+      "createdOrder": false,
+      "mentionedDonation": true,
+      "mentionedDelta": false,
+      "askedMeasurement": false,
+      "wordCount": 99
+    },
+    "customerSummary": "Hello, \n\nI hope this finds you well. I have ordered a few times for my child and have a three items that I need to return. I followed the link in an email and a chat bot responded I would be contacted on how to return them. I'm hoping that you can help me with this. \nI have ordered the correct sized...",
+    "jamieResponse": "No problem. I sent over a refund. \n\nWe have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.\n\nWith this in mind can you please send the items you are returning to:\n\nRUBIES Returns \nc/o Rainbow Youth Center\n701 S Camino Del Rio, \nSuite 108 \nDurango, CO \n81301\n\nPlease wash any items that have been worn or tried on before they are returned. \n\nYour return will be greatly appreciated by someone in our community.\n\nTake care,\n\nJamie Alexander, RUBIES Founder",
+    "jamieWordCount": 99,
+    "hybridResponse": "Hi John,\n\nSorry my previous email got lost. The refund for the 2x AJ underwear from order #26555 has already been processed.\n\nFor the Brooke Bra from order #26720, I'll go ahead and process that refund now too.\n\nRather than mailing anything back, we've moved to a donation model. Feel free to donate all three items to a local LGBTQ+ organization in your area. Do you happen to know of any in Boulder we could partner with?\n\nTake care,\nJamie Alexander, RUBIES Founder",
+    "hybridWordCount": 83,
+    "hybridStatus": "complete",
+    "hybridError": null,
+    "scores": {
+      "action": 2,
+      "tone": 3,
+      "length": 3,
+      "accuracy": 2,
+      "match": "different",
+      "issue": "AI hallucinated a specific donation model without providing the actual return address (Rainbow Youth Center in Durango, CO), which is the critical action Jamie took. Instead it incorrectly implied no mailing was needed and asked an unnecessary question about Boulder LGBTQ+ orgs. Also hallucinated 'Brooke Bra' product name and incorrectly referenced 'AJ underwear' instead of 'Charlie underwear'. Missing the wash instruction for worn items."
+    }
+  }
+]

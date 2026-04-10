@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>RUBIES Care — Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #faf9f7;
+      color: #1c1917;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    .login-card {
+      background: #ffffff;
+      border: 1px solid #e7e5e4;
+      border-radius: 16px;
+      padding: 48px 40px;
+      max-width: 380px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.04);
+    }
+    .login-brand {
+      font-size: 18px;
+      font-weight: 700;
+      color: #c0392b;
+      letter-spacing: -0.01em;
+      margin-bottom: 6px;
+    }
+    .login-subtitle {
+      font-size: 13px;
+      color: #78716c;
+      margin-bottom: 32px;
+    }
+    #google-signin-btn {
+      display: flex;
+      justify-content: center;
+      min-height: 44px;
+    }
+    .login-error {
+      display: none;
+      margin-top: 16px;
+      padding: 10px 14px;
+      background: #fee2e2;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #b91c1c;
+    }
+    .login-loading {
+      display: none;
+      margin-top: 16px;
+      font-size: 13px;
+      color: #78716c;
+    }
+    .gis-unavailable {
+      display: none;
+      margin-top: 16px;
+      padding: 14px;
+      background: #f3f1ee;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #78716c;
+    }
+    .gis-unavailable button {
+      margin-top: 10px;
+      padding: 8px 20px;
+      background: #1c1917;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-brand">RUBIES Care</div>
+    <div class="login-subtitle">Sign in to continue</div>
+    <div id="google-signin-btn"></div>
+    <div id="login-loading" class="login-loading">Signing in...</div>
+    <div id="login-error" class="login-error"></div>
+    <div id="gis-unavailable" class="gis-unavailable">
+      Google Sign-In could not load. Check your connection and try again.
+      <br><button onclick="location.reload()">Retry</button>
+    </div>
+  </div>
+
+  <script>
+    // If already authenticated, redirect to dashboard
+    fetch('/auth/status').then(r => r.json()).then(data => {
+      if (data.authenticated) window.location.href = '/';
+    }).catch(() => {});
+
+    // Track whether GIS loaded
+    let gisLoaded = false;
+
+    function handleCredentialResponse(response) {
+      const errorEl = document.getElementById('login-error');
+      const loadingEl = document.getElementById('login-loading');
+      errorEl.style.display = 'none';
+      loadingEl.style.display = 'block';
+
+      fetch('/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential: response.credential }),
+      })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          loadingEl.style.display = 'none';
+          if (ok) {
+            window.location.href = '/';
+          } else {
+            errorEl.textContent = data.error || 'Sign-in failed';
+            errorEl.style.display = 'block';
+          }
+        })
+        .catch(err => {
+          loadingEl.style.display = 'none';
+          errorEl.textContent = 'Network error — please try again';
+          errorEl.style.display = 'block';
+        });
+    }
+
+    function initGIS() {
+      gisLoaded = true;
+      google.accounts.id.initialize({
+        client_id: window.__GOOGLE_CLIENT_ID__,
+        callback: handleCredentialResponse,
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('google-signin-btn'),
+        { theme: 'outline', size: 'large', width: 280, text: 'signin_with' }
+      );
+    }
+  </script>
+
+  <!-- Inject GOOGLE_CLIENT_ID from server and load GIS -->
+  <script>
+    // Fetch client ID from server (avoids hardcoding)
+    fetch('/auth/status').then(r => r.json()).then(data => {
+      // Client ID is passed via a dedicated endpoint or we hardcode it
+      // For simplicity, we'll load GIS and the server validates the token
+    });
+  </script>
+  <script>
+    // Load Google Identity Services
+    const gisScript = document.createElement('script');
+    gisScript.src = 'https://accounts.google.com/gsi/client';
+    gisScript.async = true;
+    gisScript.defer = true;
+    gisScript.onload = () => {
+      // Need client ID — fetch from server
+      fetch('/auth/client-id').then(r => r.json()).then(data => {
+        window.__GOOGLE_CLIENT_ID__ = data.clientId;
+        initGIS();
+      }).catch(() => {
+        document.getElementById('gis-unavailable').style.display = 'block';
+      });
+    };
+    gisScript.onerror = () => {
+      document.getElementById('gis-unavailable').style.display = 'block';
+    };
+    // Show fallback if GIS doesn't load within 5s
+    setTimeout(() => {
+      if (!gisLoaded) document.getElementById('gis-unavailable').style.display = 'block';
+    }, 5000);
+    document.head.appendChild(gisScript);
+  </script>
+</body>
+</html>

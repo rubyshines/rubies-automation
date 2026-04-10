@@ -2,8 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>RUBIES Care</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#c0392b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -22,6 +28,7 @@
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
       <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
     </nav>
+    <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
   </header>
 
   <main>
@@ -56,6 +63,21 @@
         <div id="detail-placeholder">Select a ticket to review</div>
         <div id="detail-content" style="display:none">
 
+          <!-- Mobile: combined back + summary bar (one sticky row) -->
+          <div id="mobile-header-bar" class="mobile-header-bar">
+            <button id="mobile-back-btn" class="mobile-back-arrow" onclick="mobileBackToQueue()">&larr;</button>
+            <div class="mobile-header-info" onclick="toggleSummaryExpand()">
+              <div class="mobile-header-line1">
+                <span id="summary-name" class="summary-name"></span>
+                <span id="summary-order" class="summary-order"></span>
+                <span id="summary-category" class="category-badge"></span>
+              </div>
+              <div id="summary-context" class="summary-context"></div>
+            </div>
+          </div>
+          <div id="summary-expanded" class="summary-expanded" style="display:none">
+            <div id="summary-expanded-content"></div>
+          </div>
           <!-- Conversation thread -->
           <details id="detail-conversation" class="detail-section" open>
             <summary>Conversation</summary>
@@ -67,7 +89,7 @@
             <div id="action-panel-header"></div>
             <div class="action-chat-messages" id="action-chat-messages"></div>
             <div class="action-chat-input-row">
-              <textarea class="action-chat-input" id="action-chat-input" rows="2"
+              <textarea class="action-chat-input" id="action-chat-input" rows="4"
                 placeholder="e.g. exchange the AJ to size L, refund the Ruby..."
                 onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendActionMessage()}"></textarea>
               <button class="action-chat-send" id="action-chat-send" onclick="sendActionMessage()">Send</button>

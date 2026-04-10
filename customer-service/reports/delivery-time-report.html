@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUBIES Delivery Time Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0e12;
+    --surface: #14171e;
+    --surface-raised: #1a1e27;
+    --surface-hover: #1f2430;
+    --border: #252a35;
+    --border-subtle: #1e222c;
+    --text: #e2e4e9;
+    --text-secondary: #8b90a0;
+    --text-muted: #4a4f5e;
+    --accent-ruby: #e84368;
+    --accent-blue: #4a8fe7;
+    --accent-green: #34c772;
+    --green: #2dd881;
+    --green-bg: rgba(45,216,129,0.08);
+    --yellow: #f0c246;
+    --yellow-bg: rgba(240,194,70,0.08);
+    --orange: #e8843a;
+    --orange-bg: rgba(232,132,58,0.08);
+    --red: #e8516e;
+    --red-bg: rgba(232,81,110,0.08);
+    --us-border: #4a8fe7;
+    --ca-border: #e84368;
+    --radius: 8px;
+    --font: 'DM Sans', -apple-system, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 80px;
+  }
+
+  /* ── Header ── */
+  .header {
+    margin-bottom: 40px;
+  }
+
+  .header-row {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+
+  .header h1 span {
+    color: var(--accent-ruby);
+  }
+
+  .header-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-family: var(--mono);
+  }
+
+  .badge strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 8px 24px;
+    padding: 20px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    margin-bottom: 32px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.7;
+  }
+
+  .legend-key {
+    font-family: var(--mono);
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--accent-blue);
+    white-space: nowrap;
+    min-width: 80px;
+  }
+
+  .legend-val {
+    color: var(--text-secondary);
+  }
+
+  .legend-val .arrow {
+    color: var(--text-muted);
+    margin: 0 2px;
+  }
+
+  /* ── Speed scale ── */
+  .speed-scale {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding: 0 4px;
+  }
+
+  .speed-scale-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .speed-chips {
+    display: flex;
+    gap: 6px;
+  }
+
+  .speed-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: var(--mono);
+    font-weight: 500;
+  }
+
+  .speed-chip.green { background: var(--green-bg); color: var(--green); }
+  .speed-chip.yellow { background: var(--yellow-bg); color: var(--yellow); }
+  .speed-chip.orange { background: var(--orange-bg); color: var(--orange); }
+  .speed-chip.red { background: var(--red-bg); color: var(--red); }
+
+  .speed-chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+  }
+
+  .speed-chip.green .speed-chip-dot { background: var(--green); }
+  .speed-chip.yellow .speed-chip-dot { background: var(--yellow); }
+  .speed-chip.orange .speed-chip-dot { background: var(--orange); }
+  .speed-chip.red .speed-chip-dot { background: var(--red); }
+
+  /* ── Table container ── */
+  .table-wrap {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 920px;
+  }
+
+  /* ── Header cells ── */
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #111420;
+    padding: 12px 14px;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-muted);
+    text-align: right;
+    white-space: nowrap;
+    border-bottom: 2px solid var(--border);
+  }
+
+  thead th:first-child {
+    text-align: left;
+    padding-left: 20px;
+  }
+
+  thead th.col-passport {
+    color: var(--text-muted);
+    position: relative;
+  }
+
+  /* ── Group separators ── */
+  .group-header td {
+    padding: 10px 14px 6px 20px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+    background: var(--bg);
+    border: none;
+  }
+
+  .group-header td .group-count {
+    font-family: var(--mono);
+    font-weight: 400;
+    color: var(--text-muted);
+    opacity: 0.6;
+    margin-left: 8px;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* ── Body rows ── */
+  tbody tr {
+    transition: background 0.12s ease;
+  }
+
+  tbody tr:not(.group-header):hover {
+    background: var(--surface-hover);
+  }
+
+  tbody td {
+    padding: 10px 14px;
+    font-size: 13px;
+    text-align: right;
+    color: var(--text);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-weight: 400;
+  }
+
+  tbody td:first-child {
+    text-align: left;
+    font-family: var(--font);
+    font-weight: 500;
+    font-size: 13px;
+    padding-left: 20px;
+    position: relative;
+  }
+
+  /* Region border indicators */
+  tr.region-us td:first-child {
+    border-left: 3px solid var(--us-border);
+    padding-left: 17px;
+  }
+
+  tr.region-ca td:first-child {
+    border-left: 3px solid var(--ca-border);
+    padding-left: 17px;
+  }
+
+  /* ── Muted "-" cells ── */
+  td.muted {
+    color: var(--text-muted);
+    opacity: 0.4;
+  }
+
+  /* ── Transit speed colors ── */
+  td.speed-green {
+    color: var(--green);
+    font-weight: 500;
+  }
+
+  td.speed-yellow {
+    color: var(--yellow);
+    font-weight: 500;
+  }
+
+  td.speed-orange {
+    color: var(--orange);
+    font-weight: 500;
+  }
+
+  td.speed-red {
+    color: var(--red);
+    font-weight: 500;
+  }
+
+  /* ── Passport columns subtle background ── */
+  td.passport-col {
+    background: rgba(255,255,255,0.012);
+  }
+
+  thead th.passport-col {
+    background: rgba(255,255,255,0.02);
+  }
+
+  /* ── Divider between core & passport columns ── */
+  td.divider-left, th.divider-left {
+    border-left: 1px solid var(--border);
+  }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 24px;
+    padding: 0 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .footer-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  .footer-brand {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-ruby);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  /* ── Animations ── */
+  .fade-in {
+    animation: fadeIn 0.5s ease-out both;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  tbody tr:not(.group-header) {
+    animation: rowIn 0.3s ease-out both;
+  }
+
+  @keyframes rowIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .page { padding: 24px 16px 60px; }
+    .header h1 { font-size: 22px; }
+    .legend { grid-template-columns: 1fr; padding: 16px; }
+    .speed-scale { flex-wrap: wrap; gap: 8px; }
+    .footer { flex-direction: column; gap: 8px; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- Header -->
+  <div class="header fade-in">
+    <div class="header-row">
+      <h1><span>RUBIES</span> Delivery Time Report</h1>
+    </div>
+    <div class="header-meta">
+      <span class="badge"><span class="badge-dot"></span> <strong>5,866</strong> orders</span>
+      <span class="badge">all time</span>
+      <span class="badge" id="report-date"></span>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend fade-in" style="animation-delay:0.08s">
+    <div class="legend-item">
+      <span class="legend-key">Processing</span>
+      <span class="legend-val">Order placed <span class="arrow">&rarr;</span> shipped (biz days)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">Transit Med</span>
+      <span class="legend-val">Typical ship-to-door time (cal days)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">P75</span>
+      <span class="legend-val">75% of orders arrive within this</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">P90</span>
+      <span class="legend-val">90% of orders arrive within this</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">Biz Med</span>
+      <span class="legend-val">Median transit in business days</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">To Hub</span>
+      <span class="legend-val">Warehouse <span class="arrow">&rarr;</span> Passport facility (cal days)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">Hub Proc</span>
+      <span class="legend-val">Passport processing before export (cal days)</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-key">In Transit</span>
+      <span class="legend-val">Departed Passport <span class="arrow">&rarr;</span> delivered (cal days)</span>
+    </div>
+  </div>
+
+  <!-- Speed scale -->
+  <div class="speed-scale fade-in" style="animation-delay:0.14s">
+    <span class="speed-scale-label">Transit speed</span>
+    <div class="speed-chips">
+      <span class="speed-chip green"><span class="speed-chip-dot"></span>&le;5d</span>
+      <span class="speed-chip yellow"><span class="speed-chip-dot"></span>6&ndash;15d</span>
+      <span class="speed-chip orange"><span class="speed-chip-dot"></span>16&ndash;25d</span>
+      <span class="speed-chip red"><span class="speed-chip-dot"></span>&gt;25d</span>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap fade-in" style="animation-delay:0.2s">
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Location</th>
+            <th>Orders</th>
+            <th>Processing</th>
+            <th>Transit Med</th>
+            <th>P75</th>
+            <th>P90</th>
+            <th>Biz Med</th>
+            <th class="divider-left passport-col">To Hub</th>
+            <th class="passport-col">Hub Proc</th>
+            <th class="passport-col">In Transit</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer fade-in" style="animation-delay:0.3s">
+    <div class="footer-note">
+      Passport leg columns shown where &ge;3 tracked orders exist. US domestic does not use Passport.<br>
+      Medians are per-column; legs may not sum exactly to total transit.
+    </div>
+    <div class="footer-brand">RUBIES</div>
+  </div>
+
+</div>
+
+<script>
+  const DATA = [
+    { group: 'us', label: 'United States', rows: [
+      ['US — West Coast', 1349, 1, 2, 3, 4, 2, '-', '-', '-'],
+      ['US — Northeast', 1237, 1, 5, 6, 7, 3, '-', '-', '-'],
+      ['US — Midwest', 925, 1, 4, 5, 7, 3, '-', '-', '-'],
+      ['US — South', 845, 1, 4, 5, 6, 3, '-', '-', '-'],
+      ['US — Mountain', 277, 1, 3, 4, 5, 2, '-', '-', '-'],
+      ['US — Other', 2, '-', 7, 7, 7, 5, '-', '-', '-'],
+    ]},
+    { group: 'ca', label: 'Canada', rows: [
+      ['CA — Central', 248, 1, 11, 14, 15, 8, 3, 1, 8],
+      ['CA — Western', 129, 1, 9, 12, 15, 7, 3, 1, 6],
+      ['CA — Eastern', 63, 1, 11, 13, 14, 9, 3, 1, 8],
+      ['CA — Atlantic', 41, 1, 14, 16, 18, 10, 4, 1, 11],
+    ]},
+    { group: 'intl', label: 'International', rows: [
+      ['United Kingdom', 218, 1, 8, 10, 12, 6, 3, 1, 5],
+      ['Australia', 189, 1, 10, 13, 16, 7, 3, 1, 7],
+      ['Germany', 68, 1, 11, 14, 18, 8, 3, 1, 8],
+      ['New Zealand', 30, 1, 11, 13, 17, 7, 3, 1, 8],
+      ['France', 30, 1, 16, 18, 22, 11, 3, 2, 13],
+      ['Spain', 27, 1, 16, 18, 20, 11, 3, 2, 12],
+      ['Netherlands', 26, 1, 13, 15, 22, 9, 3, 2, 8],
+      ['Sweden', 23, 2, 14, 18, 21, 9, 4, 1, 9],
+      ['Switzerland', 22, 1, 6, 6, 7, 4, '-', '-', '-'],
+      ['Denmark', 20, 1, 17, 21, 26, 12, 4, 2, 13],
+      ['Iceland', 14, 1, 18, 23, 43, 12, 3, 2, 15],
+      ['Ireland', 14, 1, 19, 21, 32, 13, 2, 2, 15],
+      ['Norway', 12, 1, 18, 22, 22, 13, 4, 1, 18],
+      ['Finland', 9, 1, 17, 19, 22, 11, 4, 2, 16],
+      ['Italy', 7, 1, 19, 21, 25, 12, 5, 1, 13],
+      ['Austria', 6, 2, 13, 14, 20, 9, 5, 2, 10],
+      ['Mexico', 6, 1, 19, 20, 21, 13, 5, 1, 15],
+      ['Israel', 5, 1, 27, 30, 42, 19, 3, 2, 24],
+      ['Belgium', 3, 1, 12, 14, 14, 9, 3, 2, 9],
+      ['Portugal', 3, 1, 15, 20, 20, 10, 3, 1, 12],
+      ['Japan', 3, 1, 11, 12, 12, 7, '-', '-', '-'],
+      ['Brazil', 2, '-', 46, 46, 46, 34, '-', '-', '-'],
+      ['Chile', 2, '-', 15, 15, 15, 11, '-', '-', '-'],
+      ['Czech Republic', 2, '-', 20, 20, 20, 13, '-', '-', '-'],
+      ['South Korea', 2, '-', 43, 43, 43, 28, '-', '-', '-'],
+      ['Poland', 2, '-', 33, 33, 33, 23, '-', '-', '-'],
+      ['Greece', 1, '-', 14, 14, 14, 9, '-', '-', '-'],
+      ['Estonia', 1, '-', 21, 21, 21, 15, '-', '-', '-'],
+      ['Lithuania', 1, '-', 12, 12, 12, 9, '-', '-', '-'],
+      ['French Guiana', 1, '-', 32, 32, 32, 22, '-', '-', '-'],
+      ['Argentina', 1, '-', 29, 29, 29, 19, '-', '-', '-'],
+    ]},
+  ];
+
+  function speedClass(val) {
+    if (val === '-') return '';
+    const n = parseInt(val);
+    if (n <= 5) return 'speed-green';
+    if (n <= 15) return 'speed-yellow';
+    if (n <= 25) return 'speed-orange';
+    return 'speed-red';
+  }
+
+  function fmtOrders(n) {
+    return typeof n === 'number' ? n.toLocaleString() : n;
+  }
+
+  function cell(val, extra = '') {
+    if (val === '-') return `<td class="muted ${extra}">-</td>`;
+    return `<td class="${extra}">${val}</td>`;
+  }
+
+  const tbody = document.getElementById('table-body');
+  let delay = 0;
+
+  DATA.forEach((section, si) => {
+    const totalOrders = section.rows.reduce((s, r) => s + (typeof r[1] === 'number' ? r[1] : 0), 0);
+    tbody.insertAdjacentHTML('beforeend',
+      `<tr class="group-header"><td colspan="10">${section.label}<span class="group-count">${totalOrders.toLocaleString()} orders</span></td></tr>`
+    );
+
+    section.rows.forEach((r, ri) => {
+      const regionClass = section.group === 'us' ? 'region-us' : section.group === 'ca' ? 'region-ca' : '';
+      const spdClass = speedClass(r[3]);
+      delay += 18;
+
+      const tr = `<tr class="${regionClass}" style="animation-delay:${delay}ms">
+        <td>${r[0]}</td>
+        ${cell(fmtOrders(r[1]))}
+        ${cell(r[2])}
+        ${cell(r[3], spdClass)}
+        ${cell(r[4])}
+        ${cell(r[5])}
+        ${cell(r[6])}
+        ${cell(r[7], 'divider-left passport-col')}
+        ${cell(r[8], 'passport-col')}
+        ${cell(r[9], 'passport-col')}
+      </tr>`;
+      tbody.insertAdjacentHTML('beforeend', tr);
+    });
+  });
+
+  // Set date
+  document.getElementById('report-date').textContent =
+    new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+</script>
+
+</body>
+</html>
