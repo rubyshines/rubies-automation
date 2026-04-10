@@ -1801,7 +1801,7 @@ async function apiGetTickets(query) {
 
   let q = supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at, parked_at')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at, parked_at, source')
     .order(tab === 'parked' ? 'parked_at' : 'updated_at', { ascending: tab === 'parked' })
     .limit(limit);
 

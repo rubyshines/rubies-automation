@@ -13,6 +13,9 @@ const OUR_DOMAIN = 'rubyshines.com';
 // ---------------------------------------------------------------------------
 
 // Domains whose emails should be skipped entirely (notifications, DMARC, SaaS)
+// Only pure SaaS/notification domains where a human will never email.
+// Do NOT add domains here as a hack for spam, newsletters, or auto-replies —
+// let the classifier handle those so we don't accidentally block real people.
 const SKIP_DOMAINS = new Set([
   // E-commerce platforms
   'shopify.com', 'myshopify.com', 'shopifyemail.com',
@@ -21,9 +24,9 @@ const SKIP_DOMAINS = new Set([
   // Dev / CI
   'github.com', 'gitlab.com', 'vercel.com', 'netlify.com', 'heroku.com',
   'railway.app', 'news.railway.app',
-  // Google / Microsoft / Apple
+  // Google / Microsoft / Apple (system notifications only)
   'google.com', 'accounts.google.com', 'microsoft.com',
-  'apple.com', 'icloud.com', 'office365.com', 'outlook.com',
+  'apple.com', 'office365.com',
   // Social
   'linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com', 'x.com', 'youtube.com',
   // Messaging / Productivity
@@ -48,23 +51,13 @@ const SKIP_DOMAINS = new Set([
   'mimecastreport.com', 'au-1.mimecastreport.com', 'us-4.mimecastreport.com',
   'alerts.comcast.net', 'alln-inbound-h.cisco.com',
   'soverin.net', 'secureserver.net', 'lolipop.jp',
-  'bell.ca',  // DMARC reports from Bell
+  'bell.ca', 'reports.emailsrvr.com',
   // Review platforms
   'judge.me',
-  // Travel / irrelevant
-  'booking.com',
-  // More DMARC senders
-  'reports.emailsrvr.com',
-  // Payroll platform notifications (the accountant domain is in KNOWN_DOMAINS)
+  // Payroll platform notifications
   'wagepoint.com',
-  // SaaS newsletters / dev tools
-  'voyage.mongodb.com', 'mail.cursor.com',
-  // Cold outreach / unsolicited sales
-  'nuoptimavectorx.com', 'crossworxhq.com', 'getsavedbyservices.com', 'legendfusions.com',
-  // Newsletters / alumni
-  'fashionzone.ca', 'uwaterloo.ca',
-  // Auto-reply OOO from marketing recipients
-  'walkercares.org', 'vpd.ca',
+  // Travel
+  'booking.com',
 ]);
 
 // Known domains → specific business area classification
@@ -138,6 +131,14 @@ const BUSINESS_AREAS = {
   internal: {
     label: 'Internal',
     description: 'Team communications, internal ops',
+  },
+  newsletter: {
+    label: 'Newsletter',
+    description: 'Recurring newsletters, digests, or updates — subscribed content, not direct communications',
+  },
+  auto_reply: {
+    label: 'Auto-Reply',
+    description: 'Out-of-office replies, vacation auto-responders, automatic replies to marketing emails',
   },
 };
 

@@ -17,6 +17,7 @@ if (!process.env.SUPABASE_URL) {
 const express = require('express');
 const { verifyShopifyHmac } = require('./lib/hmac');
 const { verifyGorgiasSecret } = require('./lib/gorgiasAuth');
+const { verifyGmailPush } = require('./lib/gmailPushAuth');
 const { logEvent, enqueueDeadLetter } = require('./lib/deadLetter');
 
 const app = express();
@@ -154,6 +155,31 @@ app.post('/webhooks/gorgias/ticket-updated', verifyGorgiasSecret, async (req, re
   } catch (err) {
     console.error(`[webhook] gorgias/ticket-updated #${ticketId} failed:`, err.message);
     await logEvent('gorgias', 'ticket-updated', ticketId, 'failed', Date.now() - start, err.message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Gmail push notification route (Google Cloud Pub/Sub)
+// ---------------------------------------------------------------------------
+app.post('/webhooks/gmail', verifyGmailPush, async (req, res) => {
+  // Respond immediately — Pub/Sub requires fast ACK
+  res.status(200).json({ received: true });
+
+  const start = Date.now();
+  const gmailPush = req.gmailPush;
+  const historyId = gmailPush?.historyId || 'unknown';
+
+  try {
+    const handler = require('./handlers/gmailPush');
+    const result = await handler.handle(req.body, gmailPush);
+    await logEvent('gmail', 'push-notification', String(historyId), 'processed', Date.now() - start);
+    if (result.processed > 0) {
+      console.log(`[webhook] gmail push: ${result.processed} messages, ${result.routed} routed (${Date.now() - start}ms)`);
+    }
+  } catch (err) {
+    console.error(`[webhook] gmail push failed:`, err.message);
+    await logEvent('gmail', 'push-notification', String(historyId), 'failed', Date.now() - start, err.message);
+    await enqueueDeadLetter('gmail', 'push-notification', req.body, err.message);
   }
 });
 

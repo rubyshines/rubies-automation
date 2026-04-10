@@ -74,6 +74,19 @@ const PIPELINES = [
     run: () => require('./email-intelligence/sync/syncGmail').run(),
   },
   {
+    name: 'Gmail CS Intake',
+    run: () => require('./customer-service/intake/processGmailCs').run(),
+  },
+  {
+    name: 'Gmail Watch Renewal',
+    run: async () => {
+      if (!process.env.GMAIL_PUSH_TOPIC) return { sources: { gmail_watch: { success: true, skipped: true } }, status: 'ok' };
+      const { renew } = require('./webhooks/scripts/registerGmailWatch');
+      const result = await renew();
+      return { sources: { gmail_watch: result }, status: result.success ? 'ok' : 'error' };
+    },
+  },
+  {
     name: 'Ticket Reconciliation',
     run: () => require('./customer-service/sync/reconcileTickets').run(),
   },

@@ -31,7 +31,7 @@ const GMAIL_CREDENTIALS_PATH = process.env.GMAIL_CREDENTIALS_PATH
 const GMAIL_TOKEN_PATH = process.env.GMAIL_TOKEN_PATH
   || path.join(UTILITIES_ROOT, 'creds', 'gmail-token.json');
 
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
+const SCOPES = ['https://www.googleapis.com/auth/gmail.modify'];
 
 const OUR_ADDRESS = 'jamie@rubyshines.com';
 

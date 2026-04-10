@@ -54,33 +54,10 @@ async function loadB2bContacts() {
   return b2bContactCache;
 }
 
-// In-memory domain cache (populated from Supabase on first use)
-let domainCache = null;
-
-async function loadDomainCache() {
-  if (domainCache) return domainCache;
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('email_classification_cache')
-    .select('sender_domain, classification, confidence');
-  if (error) throw error;
-  domainCache = new Map((data || []).map(r => [r.sender_domain, r]));
-  return domainCache;
-}
-
-async function saveDomainCache(domain, classification, confidence) {
-  const supabase = getSupabaseClient();
-  await supabase.from('email_classification_cache').upsert({
-    sender_domain: domain,
-    classification,
-    confidence,
-    sample_count: 1,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'sender_domain' });
-  if (domainCache) {
-    domainCache.set(domain, { sender_domain: domain, classification, confidence });
-  }
-}
+// Domain cache (Tier 2) removed — it freezes a one-time AI classification into
+// a deterministic rule, which goes against AI-first principles. At ~$1.50/month
+// for Sonnet calls, the cost savings aren't worth the misclassification risk.
+// The email_classification_cache table still exists but is no longer read.
 
 // ---------------------------------------------------------------------------
 // Tier 1: Rule-based classification
@@ -126,22 +103,6 @@ function classifyTier1(fromAddress) {
 }
 
 // ---------------------------------------------------------------------------
-// Tier 2: Domain cache lookup
-// ---------------------------------------------------------------------------
-
-async function classifyTier2(fromAddress) {
-  const domain = extractDomain(fromAddress);
-  if (!domain) return null;
-
-  const cache = await loadDomainCache();
-  const cached = cache.get(domain);
-  if (cached) {
-    return { classification: cached.classification, confidence: cached.confidence, tier: 2 };
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // Tier 3: Claude Sonnet batch classification
 // ---------------------------------------------------------------------------
 
@@ -170,14 +131,18 @@ async function classifyBatchTier3(messages) {
 Categories:
 - customer_support: End-customer (B2C consumer) emails about orders, sizing, returns, exchanges, product questions
 - wholesale: B2B retailer/shop communications — sales outreach, reorders, wholesale account management
-- lgbtq_org: LGBTQ+ community organizations — donation programs, partnership outreach, community centers
+- lgbtq_org: LGBTQ+ community organizations — donation programs, partnership outreach, community centers, pride events, gender-affirming programs
 - product_rd: Product design, fit testing, sampling, development with suppliers/designers
 - production_orders: Active manufacturing orders, factory production, PO tracking
-- email_marketing: Email campaigns, marketing strategy, Klaviyo, content planning
+- email_marketing: Email campaigns, marketing strategy, Klaviyo, content planning — specifically OUR campaigns and our marketing team (e.g. Hope Team Marketing)
 - 3pl_fulfillment: 3PL warehouse, logistics, shipping operations, inventory management
 - finance_legal: Accounting, tax, banking, legal, corporate, trust matters
 - internal: Team communications, internal operations
-- spam: Unsolicited sales pitches, cold outreach FROM other companies trying to sell TO us, newsletters we didn't sign up for
+- newsletter: Recurring newsletters, digests, or updates we subscribed to — not direct communications. Fashion roundups, industry news, SaaS product updates, alumni newsletters. NOT spam (opted-in at some point). NOT email_marketing (that's OUR campaigns).
+- auto_reply: Out-of-office replies, vacation auto-responders, automatic replies to OUR marketing emails. The sender is not writing to us — their email client is auto-responding. Look for "Automatic reply:", "Out of Office", "I am currently out", "I will be away".
+- spam: Unsolicited sales pitches, cold outreach FROM other companies trying to sell TO us
+
+IMPORTANT: LGBTQ+ organizations reaching out for the first time are NEVER spam, even if unsolicited. Classify as lgbtq_org. Signs: mentions LGBTQ+, pride, trans, gender-affirming, community program, non-profit, donation partnership, queer youth, community center. Compare to spam signs: mentions ROI, "scale your business", "boost sales", offers marketing/ad/SEO services, agency domain. Some spammers use trans/gender keywords as bait to sell ad services — that's still spam.
 
 Return a JSON array with one object per email: [{"index": 0, "classification": "...", "confidence": 0.0-1.0}]
 Only return the JSON array, nothing else.
@@ -252,17 +217,7 @@ async function classifyMessages(messages) {
       continue;
     }
 
-    // Tier 2: Domain cache
-    const t2 = await classifyTier2(msg.from_address);
-    if (t2) {
-      msg.classification = t2.classification;
-      msg.classification_confidence = t2.confidence;
-      msg.classified_at = new Date().toISOString();
-      results.push(msg);
-      continue;
-    }
-
-    // Needs Tier 3
+    // Needs Sonnet
     needsTier3.push(msg);
   }
 
@@ -279,13 +234,6 @@ async function classifyMessages(messages) {
         msg.classification = result.classification;
         msg.classification_confidence = result.confidence;
         msg.classified_at = new Date().toISOString();
-
-        // Cache the domain for future lookups — but NOT personal email providers
-        // (gmail.com, yahoo.com, etc. have diverse senders)
-        const domain = extractDomain(msg.from_address);
-        if (domain && result.confidence >= 0.7 && !PERSONAL_EMAIL_DOMAINS.has(domain)) {
-          await saveDomainCache(domain, result.classification, result.confidence);
-        }
       }
 
       results.push(...batch);
@@ -295,4 +243,4 @@ async function classifyMessages(messages) {
   return results;
 }
 
-module.exports = { classifyMessages, classifyTier1, extractDomain, loadDomainCache };
+module.exports = { classifyMessages, classifyTier1, extractDomain };

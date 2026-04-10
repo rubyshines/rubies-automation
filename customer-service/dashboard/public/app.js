@@ -224,6 +224,7 @@ async function loadTicketQueue() {
     container.innerHTML = tickets.map(t => {
       const isSpam = t.message_type === 'business_outreach';
       const isCommunity = t.message_type === 'community_outreach';
+      const isGmail = t.source === 'gmail';
       const isParked = t.status === 'parked';
       const parked = isParked ? parkedAge(t.parked_at) : null;
       const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
@@ -233,7 +234,7 @@ async function loadTicketQueue() {
         <div class="queue-item-inner">
           <div class="queue-item-header">
             <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
-            ${isSpam ? '<span class="badge badge-spam">spam</span>' : isCommunity ? '<span class="badge badge-community">community</span>' : t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
+            ${isGmail ? '<span class="badge badge-gmail">via email</span>' : ''}${isSpam ? '<span class="badge badge-spam">spam</span>' : isCommunity ? '<span class="badge badge-community">community</span>' : t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
           </div>
           ${t.customer_name ? `<div class="queue-item-email">${esc(t.customer_email)}</div>` : ''}
           <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
@@ -339,7 +340,7 @@ function renderTicketDetail(ticket) {
   // Park/Unpark button visibility
   const btnPark = document.getElementById('btn-park');
   const btnUnpark = document.getElementById('btn-unpark');
-  if (btnPark) btnPark.style.display = ticket.status === 'open' ? '' : 'none';
+  if (btnPark) btnPark.style.display = (ticket.status === 'open' || ticket.status === 'snoozed') ? '' : 'none';
   if (btnUnpark) btnUnpark.style.display = ticket.status === 'parked' ? '' : 'none';
 
   // Customer info from ticket context

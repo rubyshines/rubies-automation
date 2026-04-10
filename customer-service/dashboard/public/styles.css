@@ -1172,6 +1172,14 @@ main { height: calc(100vh - 56px); }
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+.badge-gmail {
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: none;
+  font-weight: 500;
+}
 
 /* Queue items — spam gets visually deprioritized */
 .queue-item-spam {

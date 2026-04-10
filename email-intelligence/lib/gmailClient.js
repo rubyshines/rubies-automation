@@ -20,7 +20,7 @@ const GMAIL_CREDENTIALS_PATH = process.env.GMAIL_CREDENTIALS_PATH
 const GMAIL_TOKEN_PATH = process.env.GMAIL_TOKEN_PATH
   || path.join(UTILITIES_ROOT, 'creds', 'gmail-token.json');
 
-const SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
+const SCOPES = ['https://www.googleapis.com/auth/gmail.modify'];
 
 let cachedClient = null;
 
@@ -57,4 +57,74 @@ async function getGmail() {
   return cachedClient;
 }
 
-module.exports = { getGmail };
+// ---------------------------------------------------------------------------
+// Label helpers (require gmail.modify scope)
+// ---------------------------------------------------------------------------
+
+let _labelCache = null;
+
+/**
+ * Get or create a Gmail label by name.
+ * Returns the label ID.
+ */
+async function getOrCreateLabel(gmail, name) {
+  if (!_labelCache) {
+    const res = await gmail.users.labels.list({ userId: 'me' });
+    _labelCache = new Map((res.data.labels || []).map(l => [l.name, l.id]));
+  }
+
+  if (_labelCache.has(name)) return _labelCache.get(name);
+
+  const res = await gmail.users.labels.create({
+    userId: 'me',
+    requestBody: {
+      name,
+      labelListVisibility: 'labelShow',
+      messageListVisibility: 'show',
+    },
+  });
+  _labelCache.set(name, res.data.id);
+  return res.data.id;
+}
+
+/**
+ * Add a label to a message (without archiving).
+ */
+async function labelMessage(gmail, messageId, labelId) {
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: messageId,
+    requestBody: { addLabelIds: [labelId] },
+  });
+}
+
+/**
+ * Add a label to a message and remove from INBOX (archive).
+ */
+async function labelAndArchive(gmail, messageId, labelId) {
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: messageId,
+    requestBody: {
+      addLabelIds: [labelId],
+      removeLabelIds: ['INBOX'],
+    },
+  });
+}
+
+/**
+ * Mark a message as spam in Gmail.
+ * Adds SPAM label, removes INBOX — trains Google's spam filter.
+ */
+async function markAsSpam(gmail, messageId) {
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: messageId,
+    requestBody: {
+      addLabelIds: ['SPAM'],
+      removeLabelIds: ['INBOX'],
+    },
+  });
+}
+
+module.exports = { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam };

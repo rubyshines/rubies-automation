@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS cs_tickets (
   id                      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   gorgias_ticket_id       bigint NOT NULL UNIQUE,
-  status                  text NOT NULL DEFAULT 'open',    -- open | snoozed | closed
+  status                  text NOT NULL DEFAULT 'open',    -- open | snoozed | closed | parked
   turn_number             integer NOT NULL DEFAULT 1,
 
   -- Customer (denormalized for queue display)
@@ -34,7 +34,11 @@ CREATE TABLE IF NOT EXISTS cs_tickets (
   created_at              timestamptz DEFAULT now(),
   updated_at              timestamptz DEFAULT now(),
   snoozed_at              timestamptz,
+  parked_at               timestamptz,
   closed_at               timestamptz,
+
+  -- Source tracking
+  source                  text DEFAULT 'gorgias',  -- gorgias | gmail
 
   -- Gorgias sync
   gorgias_status          text,             -- raw Gorgias status for reconciliation

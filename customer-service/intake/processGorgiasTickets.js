@@ -492,6 +492,10 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     if (custRow) customerName = [custRow.first_name, custRow.last_name].filter(Boolean).join(' ') || null;
   }
 
+  // Detect gmail-import source from Gorgias tags
+  const ticketTags = (ticket.tags || []).map(tag => (tag.name || tag).toLowerCase());
+  const ticketSource = ticketTags.includes('gmail-import') ? 'gmail' : 'gorgias';
+
   const { data: ticketRow, error: ticketErr } = await supabase
     .from('cs_tickets')
     .upsert({
@@ -509,6 +513,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       message_type: messageType,
       confidence,
       advisor_status: structured.status,
+      source: ticketSource,
       updated_at: new Date().toISOString(),
       gorgias_status: ticket.status || 'open',
       gorgias_updated_at: ticket.updated_datetime || null,
@@ -719,4 +724,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, processTicket, getAiBotUserId, buildConversationContext, buildPreviousDraftContext };
+module.exports = { run, processTicket, getAiBotUserId, buildConversationContext, buildPreviousDraftContext, checkForDuplicateTicket };

@@ -48,7 +48,11 @@ CREATE TABLE IF NOT EXISTS email_messages (
   classification TEXT,
   classification_confidence REAL,
   classified_at TIMESTAMPTZ,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
+  synced_at TIMESTAMPTZ DEFAULT NOW(),
+  -- Gmail inbox cleanup tracking
+  forwarded_to_gorgias_at TIMESTAMPTZ,  -- when CS email was forwarded to Gorgias
+  gorgias_ticket_id BIGINT,             -- Gorgias ticket ID created from this email
+  archived_at TIMESTAMPTZ               -- when email was labeled + archived from inbox
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_msg_thread ON email_messages (gmail_thread_id);
@@ -57,6 +61,8 @@ CREATE INDEX IF NOT EXISTS idx_email_msg_date ON email_messages (date DESC);
 CREATE INDEX IF NOT EXISTS idx_email_msg_classification ON email_messages (classification);
 CREATE INDEX IF NOT EXISTS idx_email_msg_unclassified
   ON email_messages (date DESC) WHERE classification IS NULL;
+CREATE INDEX IF NOT EXISTS idx_email_msg_unarchived
+  ON email_messages (classification) WHERE archived_at IS NULL AND is_sent = false;
 
 -- ---------------------------------------------------------------------------
 -- Email threads — aggregated thread-level intelligence

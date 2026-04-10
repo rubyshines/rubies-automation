@@ -114,6 +114,50 @@ async function getTicket(ticketId) {
 }
 
 /**
+ * Create a new ticket from an external email (e.g., Gmail import).
+ * Returns the created ticket object.
+ */
+async function createTicket({ customerEmail, customerName, subject, bodyText, tags = [] }) {
+  const bodyHtml = `<p>${(bodyText || '').replace(/\n/g, '<br>')}</p>`;
+
+  const ticket = await apiFetch('/tickets', {
+    method: 'POST',
+    body: JSON.stringify({
+      channel: 'email',
+      via: 'api',
+      subject: subject || '(no subject)',
+      customer: {
+        email: customerEmail,
+        name: customerName || undefined,
+      },
+      messages: [{
+        channel: 'email',
+        via: 'api',
+        from_agent: false,
+        source: {
+          type: 'email',
+          from: { name: customerName || '', address: customerEmail },
+          to: [{ name: 'RUBIES Customer Care', address: 'care@rubyshines.com' }],
+        },
+        body_html: bodyHtml,
+        body_text: bodyText || '',
+      }],
+    }),
+  });
+
+  // Add tags if specified
+  for (const tagName of tags) {
+    try {
+      await addTicketTag(ticket.id, tagName);
+    } catch (err) {
+      console.warn(`[gorgias] Could not tag ticket ${ticket.id} with '${tagName}': ${err.message}`);
+    }
+  }
+
+  return ticket;
+}
+
+/**
  * Create a reply message on a ticket (sent to customer via email).
  */
 async function createTicketReply(ticketId, { body_html, body_text }) {
@@ -136,6 +180,31 @@ async function createTicketReply(ticketId, { body_html, body_text }) {
       },
       body_html: html,
       body_text: body_text || '',
+    }),
+  });
+}
+
+/**
+ * Add an imported message to a ticket (not sent as email — for importing history).
+ * Use from_agent: true for our sent messages, false for customer messages.
+ */
+async function addTicketMessage(ticketId, { fromAddress, fromName, bodyText, fromAgent = false, sentDatetime }) {
+  const bodyHtml = `<p>${(bodyText || '').replace(/\n/g, '<br>')}</p>`;
+
+  return apiFetch(`/tickets/${ticketId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      channel: 'email',
+      via: 'api',
+      from_agent: fromAgent,
+      source: {
+        type: 'email',
+        from: { name: fromName || '', address: fromAddress },
+        to: [{ name: fromAgent ? '' : 'RUBIES Customer Care', address: fromAgent ? fromAddress : 'care@rubyshines.com' }],
+      },
+      body_html: bodyHtml,
+      body_text: bodyText || '',
+      ...(sentDatetime ? { sent_datetime: sentDatetime } : {}),
     }),
   });
 }
@@ -277,7 +346,9 @@ module.exports = {
   getUsers,
   findUser,
   // Write
+  createTicket,
   createTicketReply,
+  addTicketMessage,
   addInternalNote,
   addTicketTag,
   assignTicket,
