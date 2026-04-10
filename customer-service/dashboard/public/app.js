@@ -299,6 +299,7 @@ async function selectTicket(id) {
     }
     renderTicketDetail(currentTicket);
     updateBackButton();
+    updateNavArrows();
     showSidebarContext();
     // Mobile: switch to detail view
     if (isMobile()) {
@@ -1120,6 +1121,20 @@ function navigateTicket(direction) {
   if (nextIdx >= 0 && nextIdx < currentQueueTicketIds.length) {
     selectTicket(currentQueueTicketIds[nextIdx]);
   }
+}
+
+function updateNavArrows() {
+  const container = document.querySelector('.sidebar-nav-arrows');
+  if (!container) return;
+  const idx = currentQueueTicketIds.indexOf(currentTicketId);
+  if (idx === -1 || currentQueueTicketIds.length <= 1) {
+    container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'flex';
+  const [prevBtn, nextBtn] = container.querySelectorAll('.nav-arrow');
+  prevBtn.style.display = idx > 0 ? '' : 'none';
+  nextBtn.style.display = idx < currentQueueTicketIds.length - 1 ? '' : 'none';
 }
 
 async function refreshDraft() {
