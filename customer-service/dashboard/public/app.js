@@ -753,7 +753,12 @@ function renderActionPanel(draft) {
     // Restore saved chat history if available
     const savedChat = draft.action_result?.chat_history;
     if (savedChat?.length) {
-      // Replay tool results and response from saved history
+      // Replay full chat: user commands, tool calls, and responses
+      for (const msg of savedChat) {
+        if (msg.role === 'user' && typeof msg.content === 'string') {
+          appendChatMessage('user', msg.content);
+        }
+      }
       const toolResults = draft.action_result?.chat_tool_results || [];
       for (const tr of toolResults) {
         const label = tr.tool.replace(/_/g, ' ');

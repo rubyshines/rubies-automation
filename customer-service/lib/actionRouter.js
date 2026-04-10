@@ -97,7 +97,7 @@ Sizing systems:
 
 ## How to Execute Actions
 
-**Exchanges:** Use create_exchange_order. For items, prefer \`query\` (e.g. "Charlie 1X Black") over sku+target_size — it handles product name, size, AND color in one search. The customer_id is required — look it up first if needed.
+**Exchanges:** Use create_exchange_order. For items, prefer \`query\` (e.g. "Charlie 1X Black") over sku+target_size — it handles product name, size, AND color in one search. The customer_id is required — look it up first if needed. IMPORTANT: Always include the color in the query to match the original order (check the order items above for the color). If the customer ordered Pink, search for "AJ 2X Pink" not just "AJ 2X". Only use a different color if the customer explicitly asked for one.
 
 **Refunds:** Use refund_order with the order number and item SKUs.
 
