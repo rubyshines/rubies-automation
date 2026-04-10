@@ -12,7 +12,8 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
-const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('../decisionTree');
+const { getProductNickname, pluralizeNickname, getSizeList, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('../decisionTree');
+const { normalizeSize, extractSizeFromSku } = require('../sizeUtils');
 const { composeAgentResponse, polishResponse } = require('../responseComposer');
 
 // Import the advisor handler
@@ -157,7 +158,7 @@ async function handleTestConversation({ customer_email, messages, order_number }
             const itemSize = i.size ? normalizeSize(i.size) : null;
             for (const oi of orderItems) {
               if (oi.title?.toLowerCase().includes(prodLower.split(' ')[0])) {
-                const oiSkuSize = oi.sku ? normalizeSize(oi.sku.split('-').pop()) : null;
+                const oiSkuSize = extractSizeFromSku(oi.sku).normalized;
                 if (itemSize && oiSkuSize && oiSkuSize !== itemSize) continue;
                 qty += oi.quantity;
               }

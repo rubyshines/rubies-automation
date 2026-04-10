@@ -14,6 +14,7 @@
 
 const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, searchCustomers, normalizeGid, getAdminUrl } = require('../shopify');
 const { searchProducts, getVariantById } = require('../productCache');
+const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 
 const CURRENCY_OVERRIDES = {
   'hello@sockdrawerheroes.com': 'USD',
@@ -22,13 +23,6 @@ const CURRENCY_OVERRIDES = {
 // ---------------------------------------------------------------------------
 // CSV Matrix Parser — programmatically maps header columns to sizes
 // ---------------------------------------------------------------------------
-
-const KNOWN_SIZES = new Set([
-  'XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', 'XL', 'XXL',
-  '1X', '2X', '3X', '4X', '5X',
-  '3XL', '4XL', '5XL',  // spreadsheet aliases for 3X, 4X, 5X
-  '4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16',
-]);
 
 function parseCSVMatrix(lines) {
   const results = [];
@@ -41,7 +35,7 @@ function parseCSVMatrix(lines) {
   const sizeColumns = []; // { index, size }
   for (let i = 0; i < headerCells.length; i++) {
     const cell = headerCells[i].toUpperCase();
-    if (KNOWN_SIZES.has(cell)) {
+    if (KNOWN_SIZES_UPPER.has(cell)) {
       sizeColumns.push({ index: i, size: headerCells[i] }); // preserve original case
     }
   }
@@ -225,14 +219,8 @@ const tools = [
 
       // --- Detect CSV matrix format ---
       // Check if first line looks like a header with size columns
-      const KNOWN_SIZES = new Set([
-        'XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', 'XL', 'XXL',
-        '1X', '2X', '3X', '4X', '5X',
-        '4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16',
-      ]);
-
       const firstLineCells = lines[0].split(',').map(c => c.trim());
-      const sizeColumnsInHeader = firstLineCells.filter(c => KNOWN_SIZES.has(c.toUpperCase()));
+      const sizeColumnsInHeader = firstLineCells.filter(c => KNOWN_SIZES_UPPER.has(c.toUpperCase()));
       const isCSVMatrix = sizeColumnsInHeader.length >= 3; // At least 3 size columns = matrix format
 
       if (isCSVMatrix) {

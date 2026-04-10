@@ -12,6 +12,14 @@
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const {
+  NUMERIC_SIZES, NUMERIC_EVEN, NUMERIC_FULL,
+  LETTER_SIZES, LETTER_NO_PLUS, LETTER_WITH_PLUS,
+  SIZE_ALIASES, NUMERIC_TO_LETTER_UPPER, ODD_HALF_SIZES,
+  CHEST_PAD_SIZES, CHEST_PAD_MAP,
+  parseSizeVariant, normalizeSize, getSizeModifier,
+  extractSizeFromSku, formatMeasurementDisplay,
+} = require('./sizeUtils');
 
 // ---------------------------------------------------------------------------
 // Product maps — populated by initCsConfig() from Supabase at server startup.
@@ -118,34 +126,11 @@ function pluralizeNickname(nickname, quantity) {
 }
 
 // ---------------------------------------------------------------------------
-// Size constants (shared with exchangeAdvisor.js)
+// Size constants — imported from sizeUtils.js (single source of truth)
 // ---------------------------------------------------------------------------
-
-const NUMERIC_SIZES = ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16'];
-const NUMERIC_EVEN = ['4', '6', '8', '10', '12', '14', '16'];
-const NUMERIC_FULL = ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16']; // even + odd
-const LETTER_SIZES = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
-const LETTER_NO_PLUS = ['XXS', 'XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
-const LETTER_WITH_PLUS = ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'];
-const SIZE_ALIASES = {
-  'XL': '1X', 'XXL': '2X', '2XL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X',
-  'XS1': 'XS+', 'XXS1': 'XXS+',  // SKU barcode format: + replaced with 1
-};
 const KID_LABELS = new Set(['daughter', 'girl', 'son', 'boy', 'kid', 'kiddo', 'child', 'kids']);
 
-// Chest pad sizing: maps bra/top size → chest pad size
-// S = Youth 6-10 / Adult XXS, M = Youth 12-16 / Adult XS-L, L = Adult 1X-4X
-const CHEST_PAD_SIZES = ['S', 'M', 'L'];
-const CHEST_PAD_MAP = {
-  // Youth numeric → pad size
-  '6': 'S', '7': 'S', '8': 'S', '9': 'S', '10': 'S',
-  '11': 'M', '12': 'M', '13': 'M', '14': 'M', '16': 'M',
-  // Adult letter → pad size
-  'XXS': 'S', 'XXS+': 'S',
-  'XS': 'M', 'XS+': 'M', 'S': 'M', 'M': 'M', 'L': 'M',
-  '1X': 'L', '2X': 'L', '3X': 'L', '4X': 'L',
-};
-const ODD_HALF_SIZES = new Set(['7', '9', '11', '13', 'XXS+', 'XS+']);
+// Chest pad, half-size constants — imported from sizeUtils.js
 
 // ── Product category classification ────────────────────────────────────────
 // PRODUCT_CATEGORIES is populated by initCsConfig() from Supabase.
@@ -174,49 +159,7 @@ const FULL_NUMERIC_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 // Which categories use letter sizes with plus (XXS+, XS+)?
 const PLUS_LETTER_CATEGORIES = new Set(['swim_bottom', 'onepiece']);
 
-/**
- * Parse a size string into base size + variant modifier (e.g. "L Tall" → { base: "L", modifier: "Tall" }).
- * Handles: "LT", "L Tall", "L TALL", "MT", "M Tall", "2X Tall", "S Regular", etc.
- */
-function parseSizeVariant(size) {
-  if (!size) return { base: null, modifier: null };
-  const s = size.toString().trim();
-  // Match patterns like "LT", "MT", "2XT" (single letter T suffix on known sizes)
-  const codedMatch = s.match(/^(\d{0,1}X?[SMLX]{0,2}\+?)T$/i);
-  if (codedMatch) {
-    const base = codedMatch[1].toUpperCase();
-    // Make sure the base is a real size (not just random letters ending in T)
-    const normalized = SIZE_ALIASES[base] || base;
-    if (LETTER_SIZES.includes(normalized) || NUMERIC_SIZES.includes(normalized)) {
-      return { base: normalized, modifier: 'Tall' };
-    }
-  }
-  // Match "L Tall", "M Regular", "2X Tall", "L Long", etc.
-  const spaceMatch = s.match(/^(.+?)\s+(Tall|Regular|Long)$/i);
-  if (spaceMatch) {
-    let modifier = spaceMatch[2].charAt(0).toUpperCase() + spaceMatch[2].slice(1).toLowerCase();
-    if (modifier === 'Long') modifier = 'Tall'; // Long = Tall in our catalog
-    return { base: spaceMatch[1].trim().toUpperCase(), modifier };
-  }
-  return { base: s, modifier: null };
-}
-
-function normalizeSize(size) {
-  if (!size) return null;
-  const { base, modifier } = parseSizeVariant(size);
-  if (!base) return null;
-  const s = base.toUpperCase();
-  return SIZE_ALIASES[s] || s;
-}
-
-/**
- * Extract the variant modifier (Tall/Regular) from a size string, if any.
- * Returns null if no modifier present.
- */
-function getSizeModifier(size) {
-  if (!size) return null;
-  return parseSizeVariant(size).modifier;
-}
+// parseSizeVariant, normalizeSize, getSizeModifier — imported from sizeUtils.js
 
 /**
  * Determine the size chart category for measurement lookups.
@@ -224,12 +167,7 @@ function getSizeModifier(size) {
  * @param {boolean} isKids - Whether to use kids or adult chart
  * @returns {{ chartCategory: string, measureType: string }}
  */
-/**
- * Format a measurement value for display. 30 inches → '30"', 58 cm → '58 cm'
- */
-function formatMeasurementDisplay(value, unit) {
-  return unit === 'cm' ? `${value} cm` : `${value}"`;
-}
+// formatMeasurementDisplay — imported from sizeUtils.js
 
 /**
  * Get the measurement location description for a body part.
@@ -784,7 +722,7 @@ function prescribeOrderIdentification(intake, context) {
     for (const li of items) {
       const key = li.title;
       // Extract size from SKU (last segment) — deterministic
-      const skuSize = li.sku ? normalizeSize(li.sku.split('-').pop()) : null;
+      const skuSize = extractSizeFromSku(li.sku).normalized;
       if (!productSizes[key]) productSizes[key] = new Set();
       if (skuSize) productSizes[key].add(skuSize);
     }
@@ -1709,8 +1647,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const hasHave = recommendation.endsWith('s') ? 'have' : 'has';
           const thatThem = recommendation.endsWith('s') ? 'them' : 'that';
           // When switching from youth to adult product, mention the equivalent size
-          const numToAdult = { '10': 'XXS', '11': 'XXS+', '12': 'XS', '13': 'XS+', '14': 'S', '16': 'M' };
-          const equivSize = NUMERIC_SIZES.includes(normSize) && !isKids ? numToAdult[normSize] : null;
+          const equivSize = NUMERIC_SIZES.includes(normSize) && !isKids ? NUMERIC_TO_LETTER_UPPER[normSize] : null;
           const sizeNote = equivSize ? ` in size ${equivSize}` : '';
           rx.response_text = `The ${recommendation}${sizeNote} ${hasHave} a larger leg opening which may work better. Would you like to try ${thatThem} instead? ${link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           rx.recommendation = { product: recommendation, link };

@@ -5,6 +5,7 @@
 const { loadProducts, getProducts } = require('../productCache');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { embed } = require('../embeddings');
+const { getVariantSize, getVariantColor } = require('../sizeUtils');
 
 function stripHtml(html) {
   if (!html) return '';
@@ -37,12 +38,12 @@ async function updateProductKnowledge() {
 
     let content = `# ${product.title}\n\n${description}\n\n`;
     const sizes = [...new Set(product.variants
-      .map(v => (v.selectedOptions || []).find(o => o.name.toLowerCase().includes('size'))?.value)
+      .map(v => getVariantSize(v))
       .filter(Boolean))];
     if (sizes.length) content += `**Available sizes:** ${sizes.join(', ')}\n\n`;
 
     const colors = [...new Set(product.variants
-      .map(v => (v.selectedOptions || []).find(o => o.name.toLowerCase().includes('color') || o.name.toLowerCase().includes('colour'))?.value)
+      .map(v => getVariantColor(v))
       .filter(Boolean))];
     if (colors.length) content += `**Available colors:** ${colors.join(', ')}\n\n`;
 

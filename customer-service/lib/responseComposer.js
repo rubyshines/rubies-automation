@@ -7,7 +7,8 @@
  *   polishResponse(rawResponse, structured, previousResponses) → polished text
  */
 
-const { getProductNickname, pluralizeNickname, getSizeList, normalizeSize, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('./decisionTree');
+const { getProductNickname, pluralizeNickname, getSizeList, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('./decisionTree');
+const { normalizeSize, extractSizeFromSku } = require('./sizeUtils');
 const Anthropic = require('@anthropic-ai/sdk');
 
 let _polishClient = null;
@@ -60,7 +61,7 @@ async function composeAgentResponse(s, previousResponses) {
     const itemSize = item.size ? normalizeSize(item.size) : null;
     for (const oi of orderItems) {
       if (oi.title?.toLowerCase().includes(prodLower.split(' ')[0])) {
-        const oiSkuSize = oi.sku ? normalizeSize(oi.sku.split('-').pop()) : null;
+        const oiSkuSize = extractSizeFromSku(oi.sku).normalized;
         if (itemSize && oiSkuSize && oiSkuSize !== itemSize) continue;
         qty += oi.quantity;
       }

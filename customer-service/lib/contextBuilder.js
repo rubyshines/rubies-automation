@@ -9,7 +9,7 @@
  */
 
 const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('./shopify');
-const { normalizeSize } = require('./decisionTree');
+const { extractSizeFromSku } = require('./sizeUtils');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
 // Max age before falling back to Shopify (1 hour)
@@ -292,8 +292,8 @@ async function buildContext({ customer_email, order_number, issue_description, e
 
   // Build order line items with normalized SKU sizes
   const orderLineItems = (targetOrder?.lineItems || []).map(li => {
-    const rawSkuSize = li.sku ? li.sku.split('-').pop() : null;
-    return { ...li, _skuSize: rawSkuSize ? normalizeSize(rawSkuSize) : null, _rawSkuSize: rawSkuSize };
+    const { raw, normalized } = extractSizeFromSku(li.sku);
+    return { ...li, _skuSize: normalized, _rawSkuSize: raw };
   });
 
   return {

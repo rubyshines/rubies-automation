@@ -6,6 +6,11 @@
 
 const { fetchAllProducts } = require('./shopify');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const {
+  KNOWN_SIZES, NUMERIC_TO_LETTER,
+  normalizeSizeLower,
+  getVariantSize, getVariantColor,
+} = require('./sizeUtils');
 
 let cachedProducts = [];
 
@@ -100,49 +105,7 @@ function getProducts() {
   return cachedProducts;
 }
 
-/**
- * Size normalization for wholesale and search.
- *
- * RUBIES uses two sizing systems:
- *   - "Youth Size" (numeric): 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16
- *     Used by AJ, Charlie, Brooke, Ruby bikini bottoms
- *   - "Size" (letter): XXS, XXS+, XS, XS+, S, M, L, 1X, 2X, 3X, 4X
- *     Used by Ava, Cheeky, Sassy, and newer products (see products.config.json)
- *
- * Products with numeric sizing ALSO have letter sizes (XS–4X).
- * Products with letter-only sizing do NOT have numeric sizes,
- * so numeric input must be converted: 10→XXS, 11→XXS+, 12→XS, 13→XS+, 14→S, 16→M
- */
-const SIZE_ALIASES = {
-  'xl': '1x', 'xxl': '2x', '3xl': '3x', '4xl': '4x', '5xl': '5x',
-  // Tall size SKU suffixes → variant option values
-  'st': 's tall', 'mt': 'm tall', 'lt': 'l tall',
-  'xlt': '1x tall', '2xlt': '2x tall', '3xlt': '3x tall',
-};
-
-const NUMERIC_TO_LETTER = {
-  '10': 'xxs', '11': 'xxs+', '12': 'xs', '13': 'xs+', '14': 's', '16': 'm',
-};
-
-const KNOWN_SIZES = new Set([
-  '4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16',
-  'xxs', 'xxs+', 'xs', 'xs+', 's', 'm', 'l', '1x', '2x', '3x', '4x', '5x',
-  'xl', 'xxl', '3xl', '4xl', '5xl',
-  // Tall sizes (SKU suffixes)
-  'st', 'mt', 'lt', 'xlt', '2xlt', '3xlt',
-]);
-
-function normalizeSize(s) {
-  const lower = s.toLowerCase().trim();
-  return SIZE_ALIASES[lower] || lower;
-}
-
-function getVariantSize(variant) {
-  const sizeOpt = (variant.selectedOptions || []).find(o =>
-    o.name.toLowerCase().includes('size')
-  );
-  return sizeOpt ? sizeOpt.value.toLowerCase().trim() : null;
-}
+// Size constants, normalizeSize, getVariantSize, getVariantColor — imported from sizeUtils.js
 
 /**
  * Fuzzy search products and variants by query string.
@@ -160,7 +123,7 @@ function searchProducts(query) {
   const otherTokens = [];
   for (const token of tokens) {
     if (KNOWN_SIZES.has(token)) {
-      sizeTokens.push(normalizeSize(token));
+      sizeTokens.push(normalizeSizeLower(token));
     } else {
       otherTokens.push(token);
     }
@@ -331,7 +294,7 @@ function getVariantBySku(sku) {
 function getSiblingVariant(sku, targetSize) {
   if (!sku || !targetSize) return null;
   const normalSku = sku.trim().toUpperCase();
-  const normalTarget = normalizeSize(targetSize);
+  const normalTarget = normalizeSizeLower(targetSize);
 
   for (const product of cachedProducts) {
     const match = product.variants.find(v => (v.sku || '').trim().toUpperCase() === normalSku);
@@ -342,9 +305,9 @@ function getSiblingVariant(sku, targetSize) {
       const variantSize = getVariantSize(variant);
       if (!variantSize) continue;
 
-      // Match the color from the original variant
-      const originalColor = (match.selectedOptions || []).find(o => o.name.toLowerCase() === 'color')?.value?.toLowerCase();
-      const variantColor = (variant.selectedOptions || []).find(o => o.name.toLowerCase() === 'color')?.value?.toLowerCase();
+      // Match the color from the original variant (handles both "Color" and "Option 1" naming)
+      const originalColor = getVariantColor(match);
+      const variantColor = getVariantColor(variant);
 
       if (originalColor && variantColor && originalColor !== variantColor) continue;
 
