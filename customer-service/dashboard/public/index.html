@@ -42,10 +42,16 @@
         </div>
         <!-- View 2: Customer context (when draft selected) -->
         <div id="sidebar-context" style="display:none">
-          <button class="sidebar-back" onclick="showSidebarQueue()">
-            <span class="sidebar-back-arrow">&larr;</span>
-            <span id="sidebar-back-count"></span>
-          </button>
+          <div class="sidebar-nav">
+            <button class="sidebar-back" onclick="showSidebarQueue()">
+              <span class="sidebar-back-arrow">&larr;</span>
+              <span id="sidebar-back-count"></span>
+            </button>
+            <div class="sidebar-nav-arrows">
+              <button class="nav-arrow" onclick="navigateTicket(-1)" title="Previous ticket (k)">&uarr;</button>
+              <button class="nav-arrow" onclick="navigateTicket(1)" title="Next ticket (j)">&darr;</button>
+            </div>
+          </div>
           <div class="sidebar-context-inner">
             <div id="customer-card"></div>
             <div id="current-ticket-header"></div>

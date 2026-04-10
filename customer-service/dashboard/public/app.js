@@ -4,6 +4,7 @@ let currentTicketId = null;
 let currentTicket = null;
 let currentTab = 'new';
 let knownTicketIds = new Set();
+let currentQueueTicketIds = []; // ordered list of ticket IDs in current queue view
 
 // Legacy aliases for simulator compatibility
 let currentDraftId = null;
@@ -148,13 +149,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Esc key returns to queue
   document.addEventListener('keydown', (e) => {
+    const tag = document.activeElement?.tagName;
+    const inTextField = tag === 'TEXTAREA' || tag === 'INPUT';
+
     if (e.key === 'Escape' && currentTicketId && document.getElementById('sidebar-context').style.display !== 'none') {
-      const tag = document.activeElement?.tagName;
-      if (tag === 'TEXTAREA' || tag === 'INPUT') {
+      if (inTextField) {
         document.activeElement.blur();
         return;
       }
       showSidebarQueue();
+    }
+
+    // j/k or Alt+Arrow for next/prev ticket (only when not typing)
+    if (!inTextField && currentTicketId) {
+      if (e.key === 'j' || (e.altKey && e.key === 'ArrowDown')) { navigateTicket(1); e.preventDefault(); }
+      if (e.key === 'k' || (e.altKey && e.key === 'ArrowUp')) { navigateTicket(-1); e.preventDefault(); }
     }
   });
 
@@ -214,6 +223,8 @@ async function loadTicketQueue() {
     if (['new', 'followup'].includes(currentTab)) {
       knownTicketIds = new Set(tickets.map(t => t.id));
     }
+
+    currentQueueTicketIds = tickets.map(t => t.id);
 
     const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
     if (!tickets.length) {
@@ -1090,7 +1101,25 @@ function clearTicketSelection() {
   location.hash = '';
   document.getElementById('detail-placeholder').style.display = 'flex';
   document.getElementById('detail-content').style.display = 'none';
+  // Clear stale content
+  document.getElementById('conversation-thread').innerHTML = '';
+  document.getElementById('draft-editor').value = '';
+  document.getElementById('draft-notes').value = '';
+  document.getElementById('customer-card').innerHTML = '';
+  document.getElementById('ticket-order').innerHTML = '';
+  document.getElementById('current-ticket-header').innerHTML = '';
+  document.getElementById('action-panel').style.display = 'none';
   showSidebarQueue();
+}
+
+function navigateTicket(direction) {
+  if (!currentTicketId || !currentQueueTicketIds.length) return;
+  const idx = currentQueueTicketIds.indexOf(currentTicketId);
+  if (idx === -1) return;
+  const nextIdx = idx + direction;
+  if (nextIdx >= 0 && nextIdx < currentQueueTicketIds.length) {
+    selectTicket(currentQueueTicketIds[nextIdx]);
+  }
 }
 
 async function refreshDraft() {
