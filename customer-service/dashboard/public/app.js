@@ -7,6 +7,7 @@ let knownTicketIds = new Set();
 let currentQueueTicketIds = []; // ordered list of ticket IDs in current queue view
 let ticketsProcessedThisSession = 0;
 let lastActionTime = 0;
+let ticketNavStack = []; // for back-navigation from past ticket views
 
 // Legacy aliases for simulator compatibility
 let currentDraftId = null;
@@ -198,6 +199,7 @@ function switchTab(tab) {
     currentTicket = null;
     currentDraftId = null;
     currentDraft = null;
+    ticketNavStack = [];
     location.hash = '';
     const ph = document.getElementById('detail-placeholder');
     ph.style.display = 'flex';
@@ -243,17 +245,30 @@ async function loadTicketQueue() {
       const isParked = t.status === 'parked';
       const parked = isParked ? parkedAge(t.parked_at) : null;
       const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
+      const categoryClass = getCategoryClass(t.message_type);
+      const categoryLabel = isSpam ? 'spam' : isCommunity ? 'community' : (t.message_type || 'general').replace(/_/g, ' ');
+      const statusClass = `status-dot-${t.status || 'open'}`;
+      const orderStr = t.order_number ? `#${String(t.order_number).replace(/^#/, '')}` : '';
+      const timeStr = parked ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>` : timeAgo(t.updated_at);
+
+      // Row 2: secondary badges (only shown when there's content)
+      const row2Parts = [];
+      if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
+      if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
+      if (t.turn_number > 1) row2Parts.push(`<span class="badge badge-muted">Turn ${t.turn_number}</span>`);
+
       return `
       <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
         ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
         <div class="queue-item-inner">
-          <div class="queue-item-header">
+          <div class="queue-item-row1">
+            <span class="category-badge ${categoryClass}">${esc(categoryLabel)}</span>
+            <span class="status-dot ${statusClass}"></span>
             <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
-            ${isGmail ? '<span class="badge badge-gmail">via email</span>' : ''}${isSpam ? '<span class="badge badge-spam">spam</span>' : isCommunity ? '<span class="badge badge-community">community</span>' : t.confidence ? `<span class="badge badge-${t.confidence}">${t.confidence}</span>` : ''}
+            ${orderStr ? `<span class="queue-item-dash">&mdash;</span><span class="queue-item-order">${esc(orderStr)}</span>` : ''}
+            <span class="queue-item-time">${timeStr}</span>
           </div>
-          ${t.customer_name ? `<div class="queue-item-email">${esc(t.customer_email)}</div>` : ''}
-          <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
-          ${parked ? `<div class="queue-item-time"><span class="badge badge-parked-${parked.tier}">${parked.label}</span></div>` : `<div class="queue-item-time">${timeAgo(t.updated_at)}</div>`}
+          ${row2Parts.length ? `<div class="queue-item-row2">${row2Parts.join('')}</div>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -271,13 +286,36 @@ function showSidebarContext() {
 }
 
 function showSidebarQueue() {
+  if (ticketNavStack.length > 0) {
+    const prevId = ticketNavStack.pop();
+    selectTicket(prevId);
+    return;
+  }
   document.getElementById('sidebar-context').style.display = 'none';
   document.getElementById('sidebar-queue').style.display = 'block';
 }
 
 function updateBackButton() {
-  const count = document.querySelectorAll('.queue-item').length;
-  document.getElementById('sidebar-back-count').textContent = `Back to queue (${count})`;
+  const backLabel = ticketNavStack.length > 0
+    ? 'Back to ticket'
+    : `Back to queue (${document.querySelectorAll('.queue-item').length})`;
+  document.getElementById('sidebar-back-count').textContent = backLabel;
+}
+
+async function navigateToPastTicket(gorgiasTicketId) {
+  ticketNavStack.push(currentTicketId);
+  try {
+    const result = await api(`/api/tickets/by-gorgias/${gorgiasTicketId}`);
+    if (result?.id) {
+      selectTicket(result.id);
+    } else {
+      ticketNavStack.pop();
+      window.open(`https://rubies.gorgias.com/app/ticket/${gorgiasTicketId}`, '_blank');
+    }
+  } catch {
+    ticketNavStack.pop();
+    window.open(`https://rubies.gorgias.com/app/ticket/${gorgiasTicketId}`, '_blank');
+  }
 }
 
 async function selectTicket(id) {
@@ -357,32 +395,35 @@ function renderTicketDetail(ticket) {
   if (btnPark) btnPark.style.display = (ticket.status === 'open' || ticket.status === 'snoozed') ? '' : 'none';
   if (btnUnpark) btnUnpark.style.display = ticket.status === 'parked' ? '' : 'none';
 
-  // Customer info from ticket context
+  // Customer info from ticket context (compact — enriched version loads async)
   const ctx = ticket.customer_context || {};
   document.getElementById('customer-card').innerHTML = `
-    <div>
-      <span class="customer-name">${esc(ctx.name || 'Unknown')}</span>
-      <span class="customer-pronouns">(${esc(ctx.pronouns || 'they/them')})</span>
-      ${ctx.buying_for === 'third_party' ? ' <span class="badge badge-muted">Third-party</span>' : ''}
+    <div class="customer-compact">
+      <div class="customer-compact-line1">
+        <span class="customer-name">${esc(ctx.name || 'Unknown')}</span>
+        <span class="customer-pronouns">(${esc(ctx.pronouns || 'they/them')})</span>
+        ${ctx.buying_for === 'third_party' ? ' <span class="badge badge-muted">Third-party</span>' : ''}
+      </div>
+      <div class="customer-compact-line2">
+        <span>${esc(ctx.email || ticket.customer_email)}</span>
+      </div>
     </div>
-    <div class="customer-contact">
-      <span>${esc(ctx.email || ticket.customer_email)}</span>
-    </div>
-    ${ctx.address ? `<div class="customer-address">${formatAddress(ctx.address)}</div>` : ''}
-    <div class="ltv-stats" id="ltv-stats"><span style="color:var(--text-tertiary);font-size:12px">Loading stats...</span></div>
   `;
 
   // Current ticket header with Gorgias link
   const gorgiasId = ticket.gorgias_ticket_id;
   const ticketMsgType = ticket.active_draft?.message_type || ticket.message_type || '';
   const categoryClass = getCategoryClass(ticketMsgType);
+  const ticketStatus = ticket.status || 'open';
+  const statusDotClass = `status-dot-${ticketStatus}`;
   document.getElementById('current-ticket-header').innerHTML = gorgiasId ? `
     <div class="current-ticket-bar">
+      <span class="status-dot ${statusDotClass}"></span>
       <a href="https://rubies.gorgias.com/app/ticket/${gorgiasId}" target="_blank" class="current-ticket-link">
         Ticket #${gorgiasId} <span class="external-link-icon">&#8599;</span>
       </a>
-      ${ticketMsgType ? `<span class="category-badge ${categoryClass}">${esc(ticketMsgType)}</span>` : ''}
-      <span class="current-ticket-status badge badge-${ticket.status || 'open'}">${esc(ticket.status || 'open')}</span>
+      ${ticketMsgType ? `<span class="category-badge ${categoryClass}">${esc(ticketMsgType.replace(/_/g, ' '))}</span>` : ''}
+      <span class="current-ticket-status-text">${esc(ticketStatus)}</span>
     </div>
   ` : '';
 
@@ -443,26 +484,6 @@ function renderTicketDetail(ticket) {
     // Action panel — intent-specific UIs
     renderActionPanel(d);
 
-    // Audit trail
-    const audit = d.audit_trail || [];
-    document.getElementById('audit-trail').textContent = audit.join('\n');
-
-    // Context
-    const contextParts = [];
-    if (d.intake_state) {
-      contextParts.push('INTAKE STATE:\n' + JSON.stringify(d.intake_state, null, 2));
-    }
-    const structured = d.structured_output || {};
-    if (structured.tone_sample) {
-      contextParts.push(`\nTONE SAMPLE (${structured.tone_sample.situation}):\n"${structured.tone_sample.message}"`);
-    }
-    if (structured.prescription?.still_needed?.length) {
-      contextParts.push('\nSTILL NEEDED:\n' + structured.prescription.still_needed.join('\n'));
-    }
-    if (structured.exchanges?.length) {
-      contextParts.push('\nPREVIOUS EXCHANGES:\n' + JSON.stringify(structured.exchanges, null, 2));
-    }
-    document.getElementById('context-content').textContent = contextParts.join('\n\n') || 'No additional context';
   } else {
     // No active draft — show empty editor for manual compose
     document.getElementById('draft-editor').value = '';
@@ -478,8 +499,6 @@ function renderTicketDetail(ticket) {
     // Show action panel with empty state
     renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
 
-    document.getElementById('audit-trail').textContent = '';
-    document.getElementById('context-content').textContent = '';
   }
 
   // Scroll to last customer message
@@ -538,20 +557,32 @@ async function loadCustomerContext(email, orderNumber) {
     const l = ctx.ltv;
     const flag = countryFlag(ctx.ticket_order?.shipping_address?.countryCodeV2 || ctx.customer?.address?.countryCodeV2);
 
+    const orderCountLabel = `${l.order_count || 0} order${(l.order_count || 0) !== 1 ? 's' : ''}${l.exchange_count ? ` (${l.exchange_count} exch)` : ''}`;
+    const locationParts = [];
+    if (c.address?.city) locationParts.push(c.address.city);
+    if (c.address?.countryCodeV2 || c.address?.country_code) locationParts.push(flag);
+    const locationStr = locationParts.join(' ');
+
     document.getElementById('customer-card').innerHTML = `
-      <div>
-        <span class="customer-name">${esc(c.name)}</span>
-        ${c.phone ? `<span style="color:var(--text-secondary);font-size:12px;margin-left:8px">${esc(c.phone)}</span>` : ''}
-      </div>
-      <div class="customer-contact">
-        <span>${esc(c.email)}</span>
-        ${c.address ? `<span>${flag} ${formatAddress(c.address)}</span>` : ''}
-      </div>
-      <div class="ltv-stats">
-        <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.total_spent || 0).toFixed(0)}</span><span class="ltv-stat-label">spent (${l.currency})</span></div>
-        <div class="ltv-stat"><span class="ltv-stat-value">${l.order_count || 0}</span><span class="ltv-stat-label">orders${l.exchange_count ? ` (${l.exchange_count} exch)` : ''}</span></div>
-        <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.avg_order_value || 0).toFixed(0)}</span><span class="ltv-stat-label">avg order</span></div>
-        ${l.days_since_last != null ? `<div class="ltv-stat"><span class="ltv-stat-value">${l.days_since_last}d</span><span class="ltv-stat-label">since last</span></div>` : ''}
+      <div class="customer-compact">
+        <div class="customer-compact-line1">
+          <span class="customer-name">${esc(c.name)}</span>
+          ${c.phone ? `<span class="customer-phone">${esc(c.phone)}</span>` : ''}
+        </div>
+        <div class="customer-compact-line2">
+          <span>${esc(c.email)}</span>
+          <span class="customer-sep">&middot;</span>
+          <span>${orderCountLabel}</span>
+          ${locationStr ? `<span class="customer-sep">&middot;</span><span>${locationStr}</span>` : ''}
+        </div>
+        <details class="customer-ltv-details">
+          <summary class="customer-ltv-toggle">Spend details</summary>
+          <div class="ltv-stats">
+            <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.total_spent || 0).toFixed(0)}</span><span class="ltv-stat-label">spent (${l.currency})</span></div>
+            <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.avg_order_value || 0).toFixed(0)}</span><span class="ltv-stat-label">avg order</span></div>
+            ${l.days_since_last != null ? `<div class="ltv-stat"><span class="ltv-stat-value">${l.days_since_last}d</span><span class="ltv-stat-label">since last</span></div>` : ''}
+          </div>
+        </details>
       </div>
     `;
 
@@ -564,9 +595,16 @@ async function loadCustomerContext(email, orderNumber) {
       if (to.warehance_url) linksHtml += `<a href="${to.warehance_url}" target="_blank" class="order-link">Warehance</a>`;
       if (to.tracking_url) linksHtml += `<a href="${to.tracking_url}" target="_blank" class="order-link order-link-tracking">Tracking</a>`;
 
+      const trackingInfo = (to.tracking_url || to.tracking_number) ? {
+        url: to.tracking_url,
+        number: to.tracking_number,
+        company: to.tracking_company,
+        status: to.tracking_status,
+      } : null;
+
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
         `#${to.order_number}`, to.created_at, to.items,
-        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address
+        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo
       );
     }
 
@@ -582,35 +620,32 @@ async function loadCustomerContext(email, orderNumber) {
     if (ctx.past_tickets?.length) {
       document.getElementById('past-tickets-section').style.display = '';
       document.getElementById('past-tickets-count').textContent = ctx.past_tickets.length;
+      const now = Date.now();
       document.getElementById('past-tickets-list').innerHTML = ctx.past_tickets.map(t => {
         const categoryClass = getCategoryClass(t.category);
         const resIcon = t.resolution_successful === true ? '<span class="resolution-icon" style="color:var(--green)">&#10003;</span>'
           : t.resolution_successful === false ? '<span class="resolution-icon" style="color:var(--red)">&#10007;</span>'
           : '<span class="resolution-icon" style="color:var(--text-tertiary)">-</span>';
-        const gorgiasLink = t.gorgias_ticket_id
-          ? `<a href="https://rubies.gorgias.com/app/ticket/${t.gorgias_ticket_id}" target="_blank" class="ticket-entry-gorgias" title="Open in Gorgias">#${t.gorgias_ticket_id}</a>`
+        const isRecent = t.created_at && (now - new Date(t.created_at).getTime()) < 30 * 86400000;
+        const recentClass = isRecent ? ' ticket-entry-recent' : '';
+
+        // Clickable: navigate to ticket in this tool, or open in Gorgias
+        const clickAction = t.gorgias_ticket_id
+          ? `onclick="event.stopPropagation(); navigateToPastTicket('${t.gorgias_ticket_id}')"`
           : '';
-        return `<div class="ticket-entry" onclick="this.querySelector('.ticket-entry-detail')?.classList.toggle('hidden')">
+        const ticketRef = t.gorgias_ticket_id ? `#${t.gorgias_ticket_id}` : '';
+
+        return `<div class="ticket-entry ticket-entry-navigable${recentClass}" ${clickAction}>
           <div class="ticket-entry-header">
-            ${gorgiasLink}
+            <span class="ticket-entry-id">${ticketRef}</span>
             <span class="ticket-entry-date">${timeAgo(t.created_at)}</span>
             <span class="category-badge ${categoryClass}">${esc(t.category || 'general')}</span>
             ${t.ai_processed ? '<span class="badge-ai">AI</span>' : ''}
             <span class="ticket-entry-summary">${esc(t.subject || t.summary || '')}</span>
             ${resIcon}
           </div>
-          ${t.summary ? `<div class="ticket-entry-detail hidden" style="display:none">${esc(t.summary)}</div>` : ''}
         </div>`;
       }).join('');
-
-      // Wire up expand/collapse
-      document.querySelectorAll('.ticket-entry').forEach(el => {
-        el.style.cursor = 'pointer';
-        el.onclick = () => {
-          const detail = el.querySelector('.ticket-entry-detail');
-          if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
-        };
-      });
     }
 
   } catch (err) {
@@ -669,7 +704,7 @@ function renderOtherOrders(showCount) {
   document.getElementById('other-orders-list').innerHTML = html;
 }
 
-function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress) {
+function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo) {
   const statusColor = !fulfillmentStatus ? 'var(--text-tertiary)'
     : fulfillmentStatus.toLowerCase() === 'fulfilled' ? 'var(--green)'
     : fulfillmentStatus.toLowerCase() === 'unfulfilled' ? 'var(--yellow)'
@@ -688,6 +723,22 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
 
   const addressHtml = shippingAddress ? `<div class="order-shipping-address">${formatAddress(shippingAddress)}</div>` : '';
 
+  let trackingHtml = '';
+  if (trackingInfo && (trackingInfo.url || trackingInfo.number)) {
+    const parts = [];
+    if (trackingInfo.company) parts.push(`<span class="order-tracking-carrier">${esc(trackingInfo.company)}</span>`);
+    if (trackingInfo.number) {
+      const trackNum = trackingInfo.url
+        ? `<a href="${trackingInfo.url}" target="_blank" class="order-tracking-link">${esc(trackingInfo.number)} &#8599;</a>`
+        : `<span class="order-tracking-num">${esc(trackingInfo.number)}</span>`;
+      parts.push(trackNum);
+    } else if (trackingInfo.url) {
+      parts.push(`<a href="${trackingInfo.url}" target="_blank" class="order-tracking-link">Track &#8599;</a>`);
+    }
+    if (trackingInfo.status) parts.push(`<span class="order-tracking-status">${esc(trackingInfo.status)}</span>`);
+    trackingHtml = `<div class="order-tracking">${parts.join('')}</div>`;
+  }
+
   return `
     <div class="ticket-order-header">
       <span class="ticket-order-title">Order ${esc(name)}</span>
@@ -696,6 +747,7 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     </div>
     ${addressHtml}
     <table class="order-items-table">${itemsHtml}</table>
+    ${trackingHtml}
     ${total != null ? `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>` : ''}
     ${linksHtml ? `<div class="order-links" style="margin-top:8px">${linksHtml}</div>` : ''}
   `;
@@ -1249,10 +1301,6 @@ async function refreshDraft() {
       document.getElementById('detail-status-badge').textContent = result.structured.status;
       document.getElementById('detail-status-badge').className = `badge badge-${result.structured.status}`;
     }
-    if (result.structured?.audit) {
-      document.getElementById('audit-trail').textContent = result.structured.audit.join('\n');
-    }
-
     // Re-render action panel with updated draft data
     if (currentDraft && result.structured) {
       currentDraft.structured_output = result.structured;
@@ -1881,7 +1929,13 @@ function extractCustomerWords(botMessages) {
     if (BOT_BUTTON_LABELS.has(text.toLowerCase())) continue;
     if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) continue;
     if (isOrderFormOutput(text)) continue;
-    words.push(esc(text));
+    // Use body_html if available (preserves formatting for HTML emails)
+    if (m.body_html) {
+      const cleaned = cleanMessageBody(m.body_html);
+      words.push(collapseQuotedContent(cleaned));
+    } else {
+      words.push(esc(text));
+    }
   }
   return words;
 }
@@ -2662,11 +2716,17 @@ function updateSummaryBar(ticket) {
 
   // Category pill (reuse desktop badge classes)
   const categoryEl = document.getElementById('summary-category');
-  const category = ticket.active_draft?.message_type || '';
+  const category = ticket.active_draft?.message_type || ticket.message_type || '';
   const categoryLabel = category.replace(/_/g, ' ');
   categoryEl.textContent = categoryLabel;
-  categoryEl.className = 'category-badge category-' + (category.split('_')[0] || 'general');
+  categoryEl.className = 'category-badge ' + getCategoryClass(category);
   categoryEl.style.display = category ? '' : 'none';
+
+  // Status dot in mobile header
+  const statusDot = document.getElementById('summary-status-dot');
+  if (statusDot) {
+    statusDot.className = `status-dot status-dot-${ticket.status || 'open'}`;
+  }
 
   // Context tags — follow-up, prior actions, alerts (as colored pills)
   const contextEl = document.getElementById('summary-context');
@@ -2696,14 +2756,14 @@ function updateSummaryBar(ticket) {
 function toggleSummaryExpand() {
   const el = document.getElementById('summary-expanded');
   if (el.style.display === 'none') {
-    // Populate with full sidebar context (customer, order, past orders, past tickets)
+    // Populate with sidebar context in new order: order, customer, other orders, past tickets
     const parts = [];
-
-    const customerCard = document.getElementById('customer-card');
-    if (customerCard?.innerHTML) parts.push(customerCard.innerHTML);
 
     const ticketOrder = document.getElementById('ticket-order');
     if (ticketOrder?.innerHTML) parts.push(ticketOrder.innerHTML);
+
+    const customerCard = document.getElementById('customer-card');
+    if (customerCard?.innerHTML) parts.push(customerCard.innerHTML);
 
     const otherOrders = document.getElementById('other-orders-section');
     if (otherOrders && otherOrders.style.display !== 'none') parts.push(otherOrders.innerHTML);
