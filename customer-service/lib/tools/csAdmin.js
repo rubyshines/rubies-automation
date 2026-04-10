@@ -437,4 +437,366 @@ function _computeEditDistance(a, b) {
   return dp[m][n] / maxLen;
 }
 
+// ---------------------------------------------------------------------------
+// Auto follow-up engine (runs autonomously, not an MCP tool)
+// ---------------------------------------------------------------------------
+
+const MIN_AGE_DAYS = 3;
+const MAX_AGE_DAYS = 7;
+
+let _followUpRunning = false;
+
+/**
+ * Build the personal follow-up email (Stage 2) from jamie@rubyshines.com.
+ */
+function buildPersonalFollowUpEmail(customerName, originalResponse) {
+  const greeting = customerName ? `Hi ${customerName}` : 'Hi there';
+
+  const text = `${greeting},
+
+I wanted to follow up on your inquiry in case my initial response and follow up ended up in your spam folder. This is what I wrote:
+
+${originalResponse}
+
+Talk soon,
+Jamie Alexander
+RUBIES Founder`;
+
+  const escapedResponse = (originalResponse || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+
+  const html = `<p>${greeting},</p>
+<p>I wanted to follow up on your inquiry in case my initial response and follow up ended up in your spam folder. This is what I wrote:</p>
+<blockquote style="border-left: 3px solid #ccc; padding-left: 12px; margin: 16px 0; color: #555;">
+${escapedResponse}
+</blockquote>
+<p>Talk soon,<br>Jamie Alexander<br>RUBIES Founder</p>`;
+
+  return { subject: 'Follow up from your RUBIES inquiry', text, html };
+}
+
+/**
+ * Process auto follow-ups for snoozed tickets.
+ *
+ * Stage 1 (day 3): Send follow-up via Gorgias (care@), re-snooze 3 days.
+ * Stage 2 (day 6): Send personal email via SendGrid (jamie@), close ticket.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.dry_run=false] — log what would happen without sending
+ * @returns {{ stage1Sent, stage2Sent, skipped, errors, candidates: object[] }}
+ */
+async function processAutoFollowUps({ dry_run = false } = {}) {
+  if (_followUpRunning) {
+    console.log('[follow-up] Already running, skipping');
+    return { stage1Sent: 0, stage2Sent: 0, skipped: 0, errors: 0, candidates: [] };
+  }
+  _followUpRunning = true;
+
+  const supabase = getSupabaseClient();
+  let gorgias;
+  try {
+    gorgias = require('../../import/gorgiasClient');
+  } catch (e) {
+    _followUpRunning = false;
+    throw new Error('Gorgias client not available');
+  }
+
+  const now = Date.now();
+  const minCutoff = new Date(now - MIN_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const maxCutoff = new Date(now - MAX_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  let stage1Sent = 0, stage2Sent = 0, skipped = 0, errors = 0;
+  const candidates = [];
+
+  try {
+    // Get all snoozed tickets
+    const { data: snoozedTickets, error: ticketErr } = await supabase
+      .from('cs_tickets')
+      .select('id, gorgias_ticket_id, customer_email, customer_name, status, snoozed_at')
+      .eq('status', 'snoozed');
+
+    if (ticketErr) throw ticketErr;
+    if (!snoozedTickets?.length) {
+      console.log('[follow-up] No snoozed tickets');
+      return { stage1Sent, stage2Sent, skipped, errors, candidates };
+    }
+
+    // --- STAGE 1: Gorgias follow-up (care@) ---
+    for (const ticket of snoozedTickets) {
+      try {
+        const { data: draft } = await supabase
+          .from('cs_ai_drafts')
+          .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at, sent_response, message_type')
+          .eq('gorgias_ticket_id', ticket.gorgias_ticket_id)
+          .eq('status', 'sent')
+          .is('follow_up_draft_id', null)
+          .not('message_type', 'in', '("follow_up","personal_follow_up")')
+          .order('sent_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!draft?.sent_at) continue;
+
+        // Check age window: 3-7 days
+        const sentAt = new Date(draft.sent_at);
+        if (sentAt > new Date(minCutoff) || sentAt < new Date(maxCutoff)) {
+          continue; // Too fresh or too stale
+        }
+
+        const daysAgo = Math.round((now - sentAt.getTime()) / (24 * 60 * 60 * 1000));
+        const entry = { stage: 1, ticket_id: ticket.gorgias_ticket_id, email: draft.customer_email, name: draft.customer_name, days_ago: daysAgo };
+        candidates.push(entry);
+
+        if (dry_run) {
+          console.log(`[follow-up] DRY RUN Stage 1: ${draft.customer_email} (${daysAgo}d ago)`);
+          continue;
+        }
+
+        // Belt-and-suspenders: verify Gorgias status
+        let gorgiasTicket;
+        try {
+          gorgiasTicket = await gorgias.getTicket(ticket.gorgias_ticket_id);
+        } catch (e) {
+          console.warn(`[follow-up] Could not fetch Gorgias ticket ${ticket.gorgias_ticket_id}: ${e.message}`);
+          skipped++;
+          continue;
+        }
+        if (gorgiasTicket?.status === 'closed') {
+          console.log(`[follow-up] Skip ${ticket.gorgias_ticket_id}: closed in Gorgias`);
+          skipped++;
+          continue;
+        }
+
+        // Send follow-up via Gorgias
+        const greeting = draft.customer_name ? `Hi ${draft.customer_name}` : 'Hi there';
+        const followUpText = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.\n\nTalk soon,\nJamie Alexander, RUBIES Founder`;
+
+        const replyResult = await gorgias.createTicketReply(ticket.gorgias_ticket_id, {
+          body_text: followUpText,
+          body_html: `<p>${followUpText.replace(/\n/g, '<br>')}</p>`,
+        });
+
+        // Create audit draft record
+        const { data: newDraft } = await supabase
+          .from('cs_ai_drafts')
+          .insert({
+            gorgias_ticket_id: ticket.gorgias_ticket_id,
+            gorgias_message_id: 0,
+            customer_email: draft.customer_email,
+            customer_name: draft.customer_name,
+            order_number: draft.order_number,
+            draft_response: followUpText,
+            sent_response: followUpText,
+            structured_output: { status: 'follow_up', reason: `${MIN_AGE_DAYS}-day no-reply auto follow-up` },
+            audit_trail: ['[Auto Follow-up Stage 1] 3-day no-reply, sent via Gorgias'],
+            confidence: 'high',
+            advisor_status: 'follow_up',
+            message_type: 'follow_up',
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            previous_draft_id: draft.id,
+            gorgias_reply_message_id: replyResult?.id || null,
+            source: 'auto_follow_up',
+          })
+          .select('id')
+          .single();
+
+        // Link original → follow-up
+        if (newDraft) {
+          await supabase.from('cs_ai_drafts').update({ follow_up_draft_id: newDraft.id }).eq('id', draft.id);
+        }
+
+        // Log feedback
+        await supabase.from('cs_ai_feedback_log').insert({
+          draft_id: draft.id,
+          gorgias_ticket_id: ticket.gorgias_ticket_id,
+          action: 'auto_follow_up_stage1',
+          feedback_notes: 'Auto follow-up sent via Gorgias (care@)',
+        });
+
+        // Re-snooze for 3 more days
+        try {
+          await gorgias.snoozeTicket(ticket.gorgias_ticket_id, 3);
+        } catch (e) {
+          console.warn(`[follow-up] Could not re-snooze ticket ${ticket.gorgias_ticket_id}: ${e.message}`);
+        }
+
+        // Update ticket snoozed_at
+        await supabase.from('cs_tickets').update({
+          snoozed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq('id', ticket.id);
+
+        console.log(`[follow-up] Stage 1 sent: ${draft.customer_email} (ticket ${ticket.gorgias_ticket_id})`);
+        stage1Sent++;
+        entry.sent = true;
+
+        await gorgias.delay(500);
+      } catch (err) {
+        console.error(`[follow-up] Stage 1 error on ticket ${ticket.gorgias_ticket_id}: ${err.message}`);
+        errors++;
+      }
+    }
+
+    // --- STAGE 2: Personal email (jamie@) ---
+    for (const ticket of snoozedTickets) {
+      try {
+        const { data: followUpDraft } = await supabase
+          .from('cs_ai_drafts')
+          .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at, previous_draft_id')
+          .eq('gorgias_ticket_id', ticket.gorgias_ticket_id)
+          .eq('status', 'sent')
+          .eq('message_type', 'follow_up')
+          .is('follow_up_draft_id', null)
+          .order('sent_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!followUpDraft?.sent_at) continue;
+
+        // Check age window: 3-7 days since the follow-up was sent
+        const sentAt = new Date(followUpDraft.sent_at);
+        if (sentAt > new Date(minCutoff) || sentAt < new Date(maxCutoff)) {
+          continue;
+        }
+
+        const daysAgo = Math.round((now - sentAt.getTime()) / (24 * 60 * 60 * 1000));
+
+        // Trace back to original draft for the sent_response
+        let originalResponse = null;
+        if (followUpDraft.previous_draft_id) {
+          const { data: origDraft } = await supabase
+            .from('cs_ai_drafts')
+            .select('sent_response, draft_response')
+            .eq('id', followUpDraft.previous_draft_id)
+            .single();
+          originalResponse = origDraft?.sent_response || origDraft?.draft_response || null;
+        }
+
+        if (!originalResponse) {
+          console.warn(`[follow-up] Skip stage 2 for ticket ${ticket.gorgias_ticket_id}: no original response found`);
+          skipped++;
+          continue;
+        }
+
+        const entry = { stage: 2, ticket_id: ticket.gorgias_ticket_id, email: followUpDraft.customer_email, name: followUpDraft.customer_name, days_ago: daysAgo };
+        candidates.push(entry);
+
+        if (dry_run) {
+          console.log(`[follow-up] DRY RUN Stage 2: ${followUpDraft.customer_email} (follow-up ${daysAgo}d ago)`);
+          continue;
+        }
+
+        // Belt-and-suspenders: verify Gorgias status
+        let gorgiasTicket;
+        try {
+          gorgiasTicket = await gorgias.getTicket(ticket.gorgias_ticket_id);
+        } catch (e) {
+          console.warn(`[follow-up] Could not fetch Gorgias ticket ${ticket.gorgias_ticket_id}: ${e.message}`);
+          skipped++;
+          continue;
+        }
+        if (gorgiasTicket?.status === 'closed') {
+          console.log(`[follow-up] Skip ${ticket.gorgias_ticket_id}: closed in Gorgias`);
+          skipped++;
+          continue;
+        }
+
+        // Send personal email via SendGrid
+        const { getSendgridClient } = require('../../../shared/sendgridClient');
+        const sgMail = getSendgridClient();
+        if (!sgMail) {
+          console.error('[follow-up] SendGrid not configured — cannot send stage 2 personal email');
+          errors++;
+          continue;
+        }
+
+        const email = buildPersonalFollowUpEmail(followUpDraft.customer_name, originalResponse);
+        await sgMail.send({
+          to: followUpDraft.customer_email,
+          from: { name: 'Jamie Alexander', email: 'jamie@rubyshines.com' },
+          subject: email.subject,
+          text: email.text,
+          html: email.html,
+          trackingSettings: { clickTracking: { enable: false, enableText: false } },
+        });
+
+        // Create audit draft record
+        const { data: newDraft } = await supabase
+          .from('cs_ai_drafts')
+          .insert({
+            gorgias_ticket_id: ticket.gorgias_ticket_id,
+            gorgias_message_id: 0,
+            customer_email: followUpDraft.customer_email,
+            customer_name: followUpDraft.customer_name,
+            order_number: followUpDraft.order_number,
+            draft_response: email.text,
+            sent_response: email.text,
+            structured_output: { status: 'personal_follow_up', reason: '6-day no-reply, personal email from jamie@' },
+            audit_trail: ['[Auto Follow-up Stage 2] 6-day no-reply, personal email from jamie@rubyshines.com'],
+            confidence: 'high',
+            advisor_status: 'follow_up',
+            message_type: 'personal_follow_up',
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+            previous_draft_id: followUpDraft.id,
+            source: 'auto_follow_up',
+          })
+          .select('id')
+          .single();
+
+        // Link stage 1 → stage 2
+        if (newDraft) {
+          await supabase.from('cs_ai_drafts').update({ follow_up_draft_id: newDraft.id }).eq('id', followUpDraft.id);
+        }
+
+        // Log feedback
+        await supabase.from('cs_ai_feedback_log').insert({
+          draft_id: followUpDraft.id,
+          gorgias_ticket_id: ticket.gorgias_ticket_id,
+          action: 'auto_follow_up_stage2',
+          feedback_notes: 'Personal follow-up sent via SendGrid (jamie@)',
+        });
+
+        // Close ticket in Gorgias
+        try {
+          await gorgias.closeTicket(ticket.gorgias_ticket_id);
+          await gorgias.assignTicket(ticket.gorgias_ticket_id, null);
+          await gorgias.addTicketTag(ticket.gorgias_ticket_id, 'auto-follow-up-closed');
+        } catch (e) {
+          console.warn(`[follow-up] Could not close ticket ${ticket.gorgias_ticket_id}: ${e.message}`);
+        }
+
+        // Update ticket status to closed
+        await supabase.from('cs_tickets').update({
+          status: 'closed',
+          closed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          active_draft_id: null,
+        }).eq('id', ticket.id);
+
+        console.log(`[follow-up] Stage 2 sent: ${followUpDraft.customer_email} (ticket ${ticket.gorgias_ticket_id}) — closed`);
+        stage2Sent++;
+        entry.sent = true;
+
+        await gorgias.delay(500);
+      } catch (err) {
+        console.error(`[follow-up] Stage 2 error on ticket ${ticket.gorgias_ticket_id}: ${err.message}`);
+        errors++;
+      }
+    }
+  } finally {
+    _followUpRunning = false;
+  }
+
+  const summary = dry_run
+    ? `DRY RUN: ${candidates.length} candidates (${candidates.filter(c => c.stage === 1).length} stage 1, ${candidates.filter(c => c.stage === 2).length} stage 2)`
+    : `Stage 1: ${stage1Sent} sent, Stage 2: ${stage2Sent} sent, ${skipped} skipped, ${errors} errors`;
+  console.log(`[follow-up] ${summary}`);
+
+  return { stage1Sent, stage2Sent, skipped, errors, candidates };
+}
+
 module.exports = tools;
+module.exports.processAutoFollowUps = processAutoFollowUps;

@@ -2024,13 +2024,20 @@ const paramRoutes = [
         return apiSendDraft(t.active_draft_id, body);
       });
   }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/close$/, handler: (body, id) => {
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/close$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
-    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
-      .then(({ data: t }) => {
-        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiCloseDraft(t.active_draft_id, body);
-      });
+    const { data: t } = await supabase.from('cs_tickets').select('active_draft_id, gorgias_ticket_id').eq('id', parseInt(id)).single();
+    if (t?.active_draft_id) return apiCloseDraft(t.active_draft_id, body);
+    // No active draft (e.g. snoozed ticket) — close directly
+    if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
+    try {
+      await gorgias.closeTicket(t.gorgias_ticket_id);
+      await gorgias.assignTicket(t.gorgias_ticket_id, null);
+    } catch (err) {
+      console.warn(`[dashboard] Could not close/unassign ticket: ${err.message}`);
+    }
+    await updateTicketStatus(supabase, t.gorgias_ticket_id, 'closed');
+    return { success: true };
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/train$/, handler: (body, id) => {
     const supabase = getSupabaseClient();

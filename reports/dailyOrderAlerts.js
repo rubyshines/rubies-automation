@@ -222,7 +222,7 @@ function shippingRow(a, overrideColor, overrideLabel) {
 // Combined HTML email
 // ---------------------------------------------------------------------------
 
-function formatCombinedHtml(unfulfilled, shipping, opts) {
+function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const today = new Date().toISOString().split('T')[0];
   const uf = unfulfilled;
   const sh = shipping;
@@ -373,6 +373,21 @@ function formatCombinedHtml(unfulfilled, shipping, opts) {
     allClearHtml = `<p style="color:#22c55e;font-weight:bold;font-size:16px;margin:24px 0;">All clear \u2014 no issues detected.</p>`;
   }
 
+  // --- Auto follow-ups (last 24h) ---
+  let followUpHtml = '';
+  const followUps = extra.autoFollowUps || [];
+  if (followUps.length > 0) {
+    const stage1 = followUps.filter(f => f.message_type === 'follow_up');
+    const stage2 = followUps.filter(f => f.message_type === 'personal_follow_up');
+    const formatRow = f => `<li>${esc(f.customer_name || f.customer_email)} (ticket ${f.gorgias_ticket_id})</li>`;
+    const parts = [];
+    if (stage1.length) parts.push(`<strong>Follow-up from care@ (${stage1.length}):</strong><ul style="margin:4px 0;">${stage1.map(formatRow).join('')}</ul>`);
+    if (stage2.length) parts.push(`<strong>Personal email from jamie@ (${stage2.length}):</strong><ul style="margin:4px 0;">${stage2.map(formatRow).join('')}</ul>`);
+    followUpHtml = `
+      <h3 style="margin:24px 0 8px;color:#8b5cf6;">Auto Follow-ups (${followUps.length})</h3>
+      <div style="font-size:13px;">${parts.join('')}</div>`;
+  }
+
   // --- Errors ---
   let errorsHtml = '';
   if (uf.errors?.length > 0) {
@@ -399,6 +414,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts) {
       ${section('Pre-Order', '#6366f1', preOrderRows)}
       ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
       ${resolvedHtml}
+      ${followUpHtml}
       ${errorsHtml}
     </div>`;
 
@@ -638,8 +654,23 @@ async function run() {
     console.log(formatConsole(unfulfilled, shipping, opts));
   }
 
+  // Fetch auto follow-up activity from last 24h
+  let autoFollowUps = [];
+  try {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from('cs_ai_drafts')
+      .select('customer_email, customer_name, gorgias_ticket_id, message_type, sent_at')
+      .eq('source', 'auto_follow_up')
+      .gte('sent_at', yesterday)
+      .order('sent_at', { ascending: false });
+    autoFollowUps = data || [];
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch follow-up data: ${err.message}`);
+  }
+
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts);
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps });
 
   const sgMail = getSendgridClient();
   if (sgMail) {

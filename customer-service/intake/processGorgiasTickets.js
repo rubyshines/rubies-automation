@@ -195,20 +195,17 @@ async function run({ onProgress } = {}) {
     await gorgias.delay(500);
   }
 
-  // 4. Check for follow-ups and bypasses via MCP tools
+  // 4. Auto follow-ups + bypasses
   let followUpsCreated = 0;
   try {
-    const adminTools = require('../lib/tools/csAdmin');
-    const followUpHandler = adminTools.find(t => t.name === 'check_follow_ups')?.handler;
-    if (followUpHandler) {
-      const followUpResult = await followUpHandler({ days_threshold: 3 });
-      const text = followUpResult?.content?.[0]?.text || '';
-      const match = text.match(/Created (\d+) follow-up/);
-      followUpsCreated = match ? parseInt(match[1]) : 0;
-      if (followUpsCreated > 0) console.log(`[intake] ${followUpsCreated} follow-up drafts created`);
+    const { processAutoFollowUps } = require('../lib/tools/csAdmin');
+    if (processAutoFollowUps) {
+      const result = await processAutoFollowUps();
+      followUpsCreated = (result.stage1Sent || 0) + (result.stage2Sent || 0);
+      if (followUpsCreated > 0) console.log(`[intake] ${followUpsCreated} auto follow-ups sent`);
     }
   } catch (err) {
-    console.warn(`[intake] Follow-up check failed: ${err.message}`);
+    console.warn(`[intake] Auto follow-up check failed: ${err.message}`);
   }
 
   try {

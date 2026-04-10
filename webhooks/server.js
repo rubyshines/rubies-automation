@@ -164,9 +164,34 @@ const server = app.listen(PORT, () => {
   console.log(`[webhook] Server listening on port ${PORT}`);
 });
 
+// ---------------------------------------------------------------------------
+// Auto follow-up timer (every 4 hours)
+// ---------------------------------------------------------------------------
+const FOLLOW_UP_INTERVAL = 4 * 60 * 60 * 1000;
+let followUpTimer;
+
+async function runAutoFollowUps() {
+  try {
+    const { processAutoFollowUps } = require('../customer-service/lib/tools/csAdmin');
+    const result = await processAutoFollowUps();
+    if (result.stage1Sent > 0 || result.stage2Sent > 0) {
+      console.log(`[follow-up] Stage 1: ${result.stage1Sent} sent, Stage 2: ${result.stage2Sent} sent, ${result.skipped} skipped`);
+    }
+  } catch (err) {
+    console.error(`[follow-up] Auto follow-up check failed: ${err.message}`);
+  }
+}
+
+// Run once on startup (30s delay), then every 4 hours
+setTimeout(() => {
+  runAutoFollowUps();
+  followUpTimer = setInterval(runAutoFollowUps, FOLLOW_UP_INTERVAL);
+}, 30_000);
+
 // Graceful shutdown
 function shutdown(signal) {
   console.log(`[webhook] ${signal} received, shutting down...`);
+  if (followUpTimer) clearInterval(followUpTimer);
   server.close(() => {
     console.log('[webhook] Server closed');
     process.exit(0);

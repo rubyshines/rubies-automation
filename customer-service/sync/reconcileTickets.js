@@ -39,7 +39,7 @@ async function run() {
   // Fetch all non-closed tickets from our DB
   const { data: activeTickets, error: fetchErr } = await supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, status, customer_email')
+    .select('id, gorgias_ticket_id, status, customer_email, snoozed_at')
     .in('status', ['open', 'snoozed']);
 
   if (fetchErr) throw fetchErr;
@@ -88,10 +88,21 @@ async function run() {
           channel: m.channel,
         }));
 
-        await supabase.from('cs_tickets').update({
-          conversation_history: conversationHistory,
-          updated_at: now,
-        }).eq('id', ticket.id);
+        // Detect snoozed tickets with new customer replies — flip back to open
+        // so the next intake poll picks them up and creates a fresh draft
+        const updateFields = { conversation_history: conversationHistory, updated_at: now };
+
+        if (ticket.status === 'snoozed' && ticket.snoozed_at) {
+          const customerMessages = messages.filter(m => m.from_agent === false);
+          const latestCustomerMsg = customerMessages[customerMessages.length - 1];
+          if (latestCustomerMsg && new Date(latestCustomerMsg.created_datetime) > new Date(ticket.snoozed_at)) {
+            updateFields.status = 'open';
+            console.log(`[reconcile] ${ticket.gorgias_ticket_id} — snoozed → open (customer replied)`);
+            statusUpdated++;
+          }
+        }
+
+        await supabase.from('cs_tickets').update(updateFields).eq('id', ticket.id);
         historyUpdated++;
       }
 
