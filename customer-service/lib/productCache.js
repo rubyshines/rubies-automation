@@ -7,7 +7,7 @@
 const { fetchAllProducts } = require('./shopify');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const {
-  KNOWN_SIZES, NUMERIC_TO_LETTER,
+  KNOWN_SIZES, NUMERIC_TO_LETTER, TALL_ALIASES,
   normalizeSizeLower,
   getVariantSize, getVariantColor,
 } = require('./sizeUtils');
@@ -122,7 +122,7 @@ function searchProducts(query) {
   const sizeTokens = [];
   const otherTokens = [];
   for (const token of tokens) {
-    if (KNOWN_SIZES.has(token)) {
+    if (KNOWN_SIZES.has(token) || TALL_ALIASES[token]) {
       sizeTokens.push(normalizeSizeLower(token));
     } else {
       otherTokens.push(token);

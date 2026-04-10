@@ -110,7 +110,9 @@ Sizing systems:
 - When the operator says "yes", "confirm", "do it", "go ahead" — proceed with phase 2 using the draft_order_id or _refund_data from phase 1.
 - Be concise. Show what you did, not a wall of text.
 - For search queries, use short product nicknames (e.g. "Charlie" not "THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR").
-- If a color change is requested, include the color in the query (e.g. "Charlie 1X Black").`;
+- If a color change is requested, include the color in the query (e.g. "Charlie 1X Black").
+- Tall sizes: ST = S Tall, MT = M Tall, LT = L Tall. When searching, use "S Tall" not "ST" (e.g. "Sky S Tall" not "Sky ST").
+- **If a search/tool call fails, do NOT retry with the same query.** Try a different format: use the SKU from the original order with the target size, or search with just the product name and a broader size (e.g. "Sky S" instead of "Sky S Tall"), or use search_products to find the right variant first.`;
 }
 
 // ---------------------------------------------------------------------------
