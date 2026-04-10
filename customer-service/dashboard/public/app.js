@@ -106,13 +106,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Will switch to test tab below
   } else if (pendingTicketRestore) {
     // Set tab without clearing selection — we'll select the ticket right after
-    currentTab = savedTab && ['new', 'followup', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
+    currentTab = savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
     document.getElementById('panel-test').style.display = 'none';
-  } else if (savedTab && ['new', 'followup', 'snoozed', 'closed', 'test'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed', 'test'].includes(savedTab)) {
     switchTab(savedTab);
   }
   simRestoreType();
@@ -176,7 +176,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
 
-  const isTicketTab = ['new', 'followup', 'snoozed', 'closed'].includes(tab);
+  const isTicketTab = ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(tab);
   document.getElementById('panel-tickets').style.display = isTicketTab ? 'flex' : 'none';
   document.getElementById('panel-test').style.display = tab === 'test' ? 'block' : 'none';
 
@@ -215,7 +215,7 @@ async function loadTicketQueue() {
       knownTicketIds = new Set(tickets.map(t => t.id));
     }
 
-    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
+    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
     if (!tickets.length) {
       container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabels[currentTab] || 'No tickets'}</div>`;
       return;
@@ -224,8 +224,11 @@ async function loadTicketQueue() {
     container.innerHTML = tickets.map(t => {
       const isSpam = t.message_type === 'business_outreach';
       const isCommunity = t.message_type === 'community_outreach';
+      const isParked = t.status === 'parked';
+      const parked = isParked ? parkedAge(t.parked_at) : null;
+      const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
       return `
-      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''}" onclick="selectTicket(${t.id})">
+      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" onclick="selectTicket(${t.id})">
         ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
         <div class="queue-item-inner">
           <div class="queue-item-header">
@@ -234,7 +237,7 @@ async function loadTicketQueue() {
           </div>
           ${t.customer_name ? `<div class="queue-item-email">${esc(t.customer_email)}</div>` : ''}
           <div class="queue-item-order">${esc(t.order_number || 'No order')} | ${t.message_type || '?'}${t.turn_number > 1 ? ` | Turn ${t.turn_number}` : ''}</div>
-          <div class="queue-item-time">${timeAgo(t.updated_at)}</div>
+          ${parked ? `<div class="queue-item-time"><span class="badge badge-parked-${parked.tier}">${parked.label}</span></div>` : `<div class="queue-item-time">${timeAgo(t.updated_at)}</div>`}
         </div>
       </div>`;
     }).join('');
@@ -326,12 +329,18 @@ function renderTicketDetail(ticket) {
     btnTrain.textContent = 'Train';
     btnTrain.disabled = false;
     btnRefresh.disabled = false;
-    btnRelease.textContent = 'Release to Gorgias';
+    btnRelease.textContent = 'Release';
     btnRelease.disabled = false;
     if (btnDelete) { btnDelete.textContent = 'Delete'; btnDelete.disabled = false; }
     const btnSpam = document.getElementById('btn-spam');
     if (btnSpam) { btnSpam.textContent = 'Spam'; btnSpam.disabled = false; }
   }
+
+  // Park/Unpark button visibility
+  const btnPark = document.getElementById('btn-park');
+  const btnUnpark = document.getElementById('btn-unpark');
+  if (btnPark) btnPark.style.display = ticket.status === 'open' ? '' : 'none';
+  if (btnUnpark) btnUnpark.style.display = ticket.status === 'parked' ? '' : 'none';
 
   // Customer info from ticket context
   const ctx = ticket.customer_context || {};
@@ -1194,6 +1203,7 @@ async function loadStats() {
     // Update tab badges
     document.getElementById('tab-count-new').textContent = s.new || '';
     document.getElementById('tab-count-followup').textContent = s.followup || '';
+    document.getElementById('tab-count-parked').textContent = s.parked || '';
     document.getElementById('tab-count-snoozed').textContent = s.snoozed || '';
   } catch (err) {
     console.error('Stats failed:', err);
@@ -1232,6 +1242,30 @@ async function reopenTicket() {
     loadStats();
   } catch (err) {
     alert('Reopen failed: ' + err.message);
+  }
+}
+
+async function parkTicket() {
+  if (!currentTicketId) return;
+  try {
+    await api(`/api/tickets/${currentTicketId}/park`, { method: 'POST', body: {} });
+    clearTicketSelection();
+    loadTicketQueue();
+    loadStats();
+  } catch (err) {
+    alert('Park failed: ' + err.message);
+  }
+}
+
+async function unparkTicket() {
+  if (!currentTicketId) return;
+  try {
+    await api(`/api/tickets/${currentTicketId}/unpark`, { method: 'POST', body: {} });
+    clearTicketSelection();
+    loadTicketQueue();
+    loadStats();
+  } catch (err) {
+    alert('Unpark failed: ' + err.message);
   }
 }
 
@@ -1298,6 +1332,14 @@ async function api(url, opts = {}) {
 function esc(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function parkedAge(dateStr) {
+  if (!dateStr) return { label: 'Parked', tier: 'fresh' };
+  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  const tier = days <= 2 ? 'fresh' : days <= 5 ? 'aging' : 'stale';
+  const label = days === 0 ? 'Parked today' : days === 1 ? 'Parked 1 day ago' : `Parked ${days} days ago`;
+  return { label, tier };
 }
 
 function timeAgo(dateStr, mode) {
@@ -1557,17 +1599,13 @@ function parseHandoffTemplate(text) {
   return Object.keys(result).length ? result : null;
 }
 
-/** Render a handoff template as a clean card */
+/** Render a handoff template — only customer's message, order/items shown in separate cards */
 function renderHandoffCard(data) {
-  let html = '<div class="handoff-card">';
-  html += '<div class="handoff-label">Customer request (via bot)</div>';
-  if (data.message) html += `<div class="handoff-message">"${esc(data.message)}"</div>`;
-  if (data.order) html += `<div class="handoff-order">${esc(data.order)}</div>`;
-  if (data.items?.length) {
-    html += `<div class="handoff-items">${data.items.map(i => esc(i)).join(' · ')}</div>`;
-  }
-  html += '</div>';
-  return html;
+  if (!data.message) return '';
+  return `<div class="handoff-card">
+    <div class="handoff-label">Customer request (via bot)</div>
+    <div class="handoff-message">"${esc(data.message)}"</div>
+  </div>`;
 }
 
 /** Check if a customer message is the Gorgias order form output */
@@ -1688,20 +1726,34 @@ function renderConversation(messages, ticket) {
     // Show handoff card if present
     if (handoffData) parts.push(renderHandoffCard(handoffData));
 
-    // Show real customer messages from within the bot flow (not button clicks)
+    // Show order form as compact card (customer selected items)
+    for (const m of botMessages) {
+      if (m.sender === 'customer' && isOrderFormOutput(m.body)) {
+        parts.push(renderOrderFormCompact(m.body));
+      }
+    }
+
+    // Collect real customer messages from within the bot flow (not button clicks)
+    const customerWords = [];
     for (const m of botMessages) {
       if (m.sender !== 'customer') continue;
       const text = (m.body || '').trim();
       const lower = text.toLowerCase();
       if (!text || text.length < 3) continue;
-      // Skip known button labels
       if (['help me with a return or exchange', 'start a return or exchange',
            'learn about our returns and exchanges policy', 'sign in to continue',
            'no, i need more help', 'exchange', 'return', 'go back', 'no', 'yes',
            'what would you like to do', 'select an order'].includes(lower)) continue;
-      // Skip order line echo ("#29920 - $67.00 - April 7, 2026") — info is in the order form
       if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) continue;
-      parts.push(renderMessageBubble(m, ticket));
+      // Skip order form output — already shown as a card
+      if (isOrderFormOutput(text)) continue;
+      customerWords.push(esc(text));
+    }
+    if (customerWords.length) {
+      parts.push(`<div class="handoff-card">
+        <div class="handoff-label">Customer said</div>
+        <div class="customer-words">${customerWords.map(w => `<div class="customer-word">${w}</div>`).join('')}</div>
+      </div>`);
     }
   }
 

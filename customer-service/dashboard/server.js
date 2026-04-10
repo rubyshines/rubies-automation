@@ -1783,8 +1783,9 @@ async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {})
   const now = new Date().toISOString();
   const updates = { status, updated_at: now, ...extra };
   if (status === 'snoozed') updates.snoozed_at = now;
+  if (status === 'parked') updates.parked_at = now;
   if (status === 'closed') updates.closed_at = now;
-  if (status === 'snoozed' || status === 'closed') updates.active_draft_id = null;
+  if (status === 'snoozed' || status === 'closed' || status === 'parked') updates.active_draft_id = null;
 
   await supabase
     .from('cs_tickets')
@@ -1799,8 +1800,8 @@ async function apiGetTickets(query) {
 
   let q = supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at')
-    .order('updated_at', { ascending: false })
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at, parked_at')
+    .order(tab === 'parked' ? 'parked_at' : 'updated_at', { ascending: tab === 'parked' })
     .limit(limit);
 
   switch (tab) {
@@ -1809,6 +1810,9 @@ async function apiGetTickets(query) {
       break;
     case 'followup':
       q = q.eq('status', 'open').gt('turn_number', 1);
+      break;
+    case 'parked':
+      q = q.eq('status', 'parked');
       break;
     case 'snoozed':
       q = q.eq('status', 'snoozed');
@@ -1826,11 +1830,13 @@ async function apiGetTickets(query) {
 async function apiGetTicketStats() {
   const supabase = getSupabaseClient();
 
-  const [newResult, followupResult, snoozedResult] = await Promise.all([
+  const [newResult, followupResult, parkedResult, snoozedResult] = await Promise.all([
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'open').eq('turn_number', 1),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'open').gt('turn_number', 1),
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'parked'),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'snoozed'),
   ]);
@@ -1838,6 +1844,7 @@ async function apiGetTicketStats() {
   return {
     new: newResult.count || 0,
     followup: followupResult.count || 0,
+    parked: parkedResult.count || 0,
     snoozed: snoozedResult.count || 0,
   };
 }
@@ -1940,6 +1947,33 @@ async function apiReopenTicket(ticketId) {
 
   await supabase.from('cs_tickets').update({
     status: 'open',
+    updated_at: now,
+  }).eq('id', ticketId);
+
+  return { success: true };
+}
+
+async function apiParkTicket(ticketId) {
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+
+  await supabase.from('cs_tickets').update({
+    status: 'parked',
+    parked_at: now,
+    updated_at: now,
+    active_draft_id: null,
+  }).eq('id', ticketId);
+
+  return { success: true };
+}
+
+async function apiUnparkTicket(ticketId) {
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+
+  await supabase.from('cs_tickets').update({
+    status: 'open',
+    parked_at: null,
     updated_at: now,
   }).eq('id', ticketId);
 
@@ -2072,6 +2106,8 @@ const paramRoutes = [
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/message$/, handler: (body, id) => apiSendTicketMessage(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/park$/, handler: (_, id) => apiParkTicket(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpark$/, handler: (_, id) => apiUnparkTicket(parseInt(id)) },
   // Legacy draft routes (kept for simulator + backward compat)
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },

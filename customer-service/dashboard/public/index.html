@@ -24,6 +24,7 @@
     <nav>
       <button class="tab active" data-tab="new" onclick="switchTab('new')">New <span class="tab-count" id="tab-count-new"></span></button>
       <button class="tab" data-tab="followup" onclick="switchTab('followup')">Follow-up <span class="tab-count" id="tab-count-followup"></span></button>
+      <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
       <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
       <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
@@ -104,15 +105,20 @@
             <textarea id="draft-editor" rows="8"></textarea>
             <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
             <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
-            <div id="draft-actions">
-              <div class="btn-row">
+            <div id="draft-actions" class="draft-actions">
+              <div class="btn-row btn-row-primary">
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send Reply</button>
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
-                <button id="btn-close-only" class="btn btn-dismiss" onclick="closeNoReply()">Close</button>
-                <button id="btn-train" class="btn btn-train" onclick="trainDraft()">Train</button>
-                <button id="btn-release" class="btn btn-secondary" onclick="releaseDraft()">Release to Gorgias</button>
-                <button id="btn-spam" class="btn btn-dismiss" onclick="markSpam()">Spam</button>
-                <button id="btn-delete" class="btn btn-dismiss" onclick="deleteDraft()">Delete</button>
+                <button id="btn-unpark" class="btn btn-unpark" onclick="unparkTicket()" style="display:none">Unpark</button>
+              </div>
+              <div class="btn-row btn-row-secondary">
+                <button id="btn-close-only" class="btn btn-ghost" onclick="closeNoReply()">Close</button>
+                <button id="btn-train" class="btn btn-ghost" onclick="trainDraft()">Train</button>
+                <button id="btn-park" class="btn btn-ghost" onclick="parkTicket()">Park</button>
+                <span class="btn-row-divider"></span>
+                <button id="btn-release" class="btn btn-ghost" onclick="releaseDraft()">Release</button>
+                <button id="btn-spam" class="btn btn-ghost btn-ghost-danger" onclick="markSpam()">Spam</button>
+                <button id="btn-delete" class="btn btn-ghost btn-ghost-danger" onclick="deleteDraft()">Delete</button>
               </div>
             </div>
           </div>
