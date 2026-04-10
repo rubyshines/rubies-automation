@@ -451,7 +451,7 @@ async function apiRefreshDraft(id) {
   }
 
   // Update the draft in Supabase
-  await supabase.from('cs_ai_drafts').update({
+  const updates = {
     draft_response: newDraft,
     structured_output: s,
     audit_trail: s?.audit || [],
@@ -460,7 +460,15 @@ async function apiRefreshDraft(id) {
     action_type: s?.action_type || null,
     message_type: s?.intake?.message_type || null,
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
-  }).eq('id', id);
+  };
+
+  // Clear action state if no action was executed yet (stale suggestion)
+  // Keep it if action was already executed (exchange/refund already in Shopify)
+  if (!draft.action_executed_at) {
+    updates.action_result = null;
+  }
+
+  await supabase.from('cs_ai_drafts').update(updates).eq('id', id);
 
   // Also update ticket row with latest classification
   if (draft.ticket_id) {
