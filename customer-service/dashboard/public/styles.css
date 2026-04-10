@@ -682,10 +682,40 @@ main { height: calc(100vh - 56px); }
   background: var(--teal-soft);
 }
 
-/* Past tickets (collapsed) */
+/* Current ticket bar */
+.current-ticket-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 12px 0 8px;
+  background: var(--surface-inset);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.current-ticket-link {
+  font-weight: 600;
+  color: var(--green);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.current-ticket-link:hover { text-decoration: underline; }
+.external-link-icon { font-size: 11px; }
+.current-ticket-status { margin-left: auto; }
+
+/* Past tickets */
 #past-tickets-list {
   font-size: 12px;
 }
+.ticket-entry-gorgias {
+  font-size: 10px;
+  color: var(--green);
+  text-decoration: none;
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 52px;
+}
+.ticket-entry-gorgias:hover { text-decoration: underline; }
 
 .ticket-entry {
   padding: 8px 0;
@@ -825,8 +855,100 @@ main { height: calc(100vh - 56px); }
   font-size: 10px;
 }
 
-/* ─── Handoff Card ──────────────────────────────────────── */
+/* ─── Intake Summary Card ──────────────────────────────── */
 
+.intake-card {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--teal);
+  border-left: 3px solid var(--teal);
+  border-radius: var(--radius);
+}
+
+.intake-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.intake-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--teal);
+}
+
+.intake-channel {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+
+.intake-channel--chat {
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
+.intake-channel--email {
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+}
+
+.intake-time {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.intake-words {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.intake-word {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.intake-word + .intake-word {
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.intake-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 10px 0;
+}
+
+.intake-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.intake-item {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  background: var(--surface-inset);
+  border-radius: 10px;
+}
+
+.intake-item-variant {
+  color: var(--teal);
+  font-weight: 600;
+}
+
+/* Legacy handoff-card kept for any remaining uses */
 .handoff-card {
   margin-bottom: 10px;
   padding: 12px 16px;
@@ -843,87 +965,6 @@ main { height: calc(100vh - 56px); }
   letter-spacing: 0.04em;
   color: var(--teal);
   margin-bottom: 6px;
-}
-
-.handoff-message {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-  line-height: 1.5;
-  margin-bottom: 6px;
-  font-style: italic;
-}
-
-.handoff-order {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 4px;
-}
-
-.handoff-items {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.customer-words {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.customer-word {
-  font-size: 13px;
-  color: var(--text);
-  line-height: 1.5;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.customer-word:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.order-form-items {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
-  line-height: 1.6;
-}
-
-.order-selection-items {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.order-selection-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.order-selection-product {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.order-selection-size {
-  font-weight: 700;
-  color: var(--teal);
-  font-size: 12px;
-  padding: 1px 8px;
-  background: var(--teal-soft);
-  border-radius: 10px;
-}
-
-.order-selection-issue {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  font-style: italic;
 }
 
 /* ─── Conversation Thread ────────────────────────────────── */

@@ -615,6 +615,11 @@ When a customer wants to cancel an unfulfilled order:
 - If the customer writes in a language other than English, reply in THEIR language. Match whatever language they used.
 - When the situation is confusing or doesn't make sense (e.g., customer mentions products you don't recognize, claims something that contradicts order data), ASK CLARIFYING QUESTIONS before taking action. Don't assume and act on incomplete understanding.
 ${orderSection}${toneSection}
+## Product Links
+When you mention a product by name in your response, use a markdown link so the customer can click through to the product page. Use the nickname as the link text.
+${Object.entries(_activeProducts).map(([handle, p]) => `- ${p.nickname}: [${p.nickname}](https://rubyshines.com/products/${handle})`).join('\n')}
+Only link products you're actually recommending or discussing. Don't link every product mention — e.g. if you're confirming what they ordered, no link needed. Link when suggesting they try a product or look at a product page.
+
 ## Output Format
 
 After handling the conversation, you MUST end your final message with a structured JSON block wrapped in <structured> tags. This is required for every response.

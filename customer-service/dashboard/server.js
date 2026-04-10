@@ -24,6 +24,7 @@ const { autoLinkProducts } = require('../lib/autoLinker');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // Product config for auto-linking (loaded at startup)
+// Product config loaded at startup for any server-side product lookups
 let _productConfig = [];
 async function loadProductConfig() {
   const supabase = getSupabaseClient();
@@ -192,20 +193,18 @@ async function apiSendDraft(id, body) {
   const notes = body.notes || null;
 
   // Send to Gorgias (auto-link product names in HTML)
-  const bodyHtml = autoLinkProducts(finalResponse, _productConfig);
+  const bodyHtml = autoLinkProducts(finalResponse);
   const replyResult = await gorgias.createTicketReply(draft.gorgias_ticket_id, {
     body_html: bodyHtml,
     body_text: finalResponse,
   });
 
-  // Compute edit distance
-  const editDist = computeEditDistance(draft.draft_response, finalResponse);
+  const wasEdited = (draft.draft_response || '').trim() !== finalResponse.trim();
 
   // Update draft
   await supabase.from('cs_ai_drafts').update({
     status: 'sent',
     sent_response: finalResponse,
-    edit_distance: editDist,
     feedback_notes: notes,
     reviewed_at: new Date().toISOString(),
     sent_at: new Date().toISOString(),
@@ -215,15 +214,14 @@ async function apiSendDraft(id, body) {
   // Post-send action: snooze (default) or close
   const afterAction = body.after || 'snooze';
 
-  // Log feedback (include which button was clicked)
-  const baseAction = editDist < 0.05 ? 'sent' : 'edited';
+  // Log feedback
+  const baseAction = wasEdited ? 'edited' : 'sent';
   await supabase.from('cs_ai_feedback_log').insert({
     draft_id: id,
     gorgias_ticket_id: draft.gorgias_ticket_id,
     action: `${baseAction}_${afterAction}`,
     original_response: draft.draft_response,
     final_response: finalResponse,
-    edit_distance: editDist,
     feedback_notes: notes,
     advisor_status: draft.advisor_status,
     confidence: draft.confidence,
@@ -241,6 +239,7 @@ async function apiSendDraft(id, body) {
   history.push({
     id: replyResult?.id,
     sender: 'agent',
+    is_bot: false,
     body: finalResponse,
     body_html: bodyHtml,
     created_at: new Date().toISOString(),
@@ -263,7 +262,7 @@ async function apiSendDraft(id, body) {
     console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
   }
 
-  return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, after: afterAction };
+  return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
 }
 
 async function apiExecuteAction(id) {
@@ -378,7 +377,6 @@ async function apiTrainDraft(id, body) {
 
   const finalResponse = body.response || draft.draft_response;
   const notes = body.notes || null;
-  const editDist = computeEditDistance(draft.draft_response, finalResponse);
 
   // Keep draft as pending — Train just logs training data, draft stays in queue for Refresh
   await supabase.from('cs_ai_drafts').update({
@@ -393,7 +391,6 @@ async function apiTrainDraft(id, body) {
     action: 'trained',
     original_response: draft.draft_response,
     final_response: finalResponse,
-    edit_distance: editDist,
     feedback_notes: notes,
     advisor_status: draft.advisor_status,
     confidence: draft.confidence,
@@ -403,7 +400,7 @@ async function apiTrainDraft(id, body) {
 
   // Ticket stays assigned to AI Bot — Train is just for capturing data, not releasing
 
-  return { success: true, edit_distance: editDist };
+  return { success: true };
 }
 
 async function apiRefreshDraft(id) {
@@ -589,7 +586,7 @@ async function apiGetStats() {
 
   const { data: recentFeedback } = await supabase
     .from('cs_ai_feedback_log')
-    .select('action, edit_distance, confidence, message_type, created_at')
+    .select('action, confidence, message_type, created_at')
     .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
     .order('created_at', { ascending: false });
 
@@ -604,8 +601,6 @@ async function apiGetStats() {
   const edited = feedback.filter(f => f.action === 'edited').length;
   const released = feedback.filter(f => f.action === 'released').length;
   const bypassed = feedback.filter(f => f.action === 'bypassed').length;
-  const avgEditDist = feedback.filter(f => f.edit_distance != null).reduce((sum, f) => sum + f.edit_distance, 0)
-    / (feedback.filter(f => f.edit_distance != null).length || 1);
 
   // Get last poll time
   const { data: pollerState } = await supabase
@@ -618,7 +613,6 @@ async function apiGetStats() {
     pending: pendingCount || 0,
     last30Days: { total, sent, edited, released, bypassed },
     acceptanceRate: total > 0 ? ((sent / total) * 100).toFixed(1) + '%' : 'N/A',
-    avgEditDistance: avgEditDist.toFixed(3),
     lastPollAt: pollerState?.last_poll_at || null,
   };
 }
@@ -932,7 +926,6 @@ async function apiSimulatorSave(body) {
         order_number: structured.order?.name || order_number || null,
         draft_response: turn.original_ai_response || '',
         sent_response: turn.edited_ai_response || null,
-        edit_distance: turn.original_ai_response !== turn.edited_ai_response ? 1 : 0,
         structured_output: structured,
         intake_state: structured.intake || null,
         audit_trail: structured.audit || [],
@@ -995,7 +988,6 @@ async function apiSimulatorSaveTurn(body) {
       order_number: structured.order?.name || order_number || null,
       draft_response: turn.original_ai_response || '',
       sent_response: turn.edited_ai_response || null,
-      edit_distance: turn.original_ai_response !== turn.edited_ai_response ? 1 : 0,
       structured_output: structured,
       intake_state: structured.intake || null,
       audit_trail: structured.audit || [],
@@ -1029,10 +1021,6 @@ async function apiSimulatorUpdateTurn(body) {
     // Compute edit distance
     const { data: draft } = await supabase.from('cs_ai_drafts').select('draft_response').eq('id', draft_id).single();
     if (draft?.draft_response) {
-      const orig = draft.draft_response.toLowerCase().split(/\s+/);
-      const edit = edited_response.toLowerCase().split(/\s+/);
-      const maxLen = Math.max(orig.length, edit.length);
-      updates.edit_distance = maxLen === 0 ? 0 : (orig.join(' ') === edit.join(' ') ? 0 : 1);
     }
   }
   if (notes != null) updates.feedback_notes = notes;
@@ -1075,7 +1063,7 @@ async function apiGetHistory(query) {
 
   const { data, error } = await supabase
     .from('cs_ai_drafts')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, draft_response, sent_response, edit_distance, feedback_notes, confidence, advisor_status, message_type, status, sent_at, created_at')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, status, sent_at, created_at')
     .neq('status', 'pending')
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -1758,6 +1746,7 @@ async function apiGetCustomerContext(email, orderNumber) {
   const aiTicketIds = new Set((aiDraftsRes.data || []).map(d => String(d.gorgias_ticket_id)));
   const pastTickets = (ticketsRes.data || []).map(t => ({
     id: t.id,
+    gorgias_ticket_id: t.source_id,
     created_at: t.created_at,
     resolved_at: t.resolved_at,
     category: t.category,
@@ -1875,7 +1864,7 @@ async function apiGetTicket(id) {
   // Get all drafts for this ticket (for history/training panel)
   const { data: allDrafts } = await supabase
     .from('cs_ai_drafts')
-    .select('id, draft_response, sent_response, edit_distance, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, status, turn_number, sent_at, created_at')
+    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, status, turn_number, sent_at, created_at')
     .eq('ticket_id', id)
     .order('created_at', { ascending: true });
 
@@ -1896,7 +1885,7 @@ async function apiSendTicketMessage(ticketId, body) {
   if (!message?.trim()) throw new Error('Message is required');
 
   // Send to Gorgias
-  const bodyHtml = autoLinkProducts(message, _productConfig);
+  const bodyHtml = autoLinkProducts(message);
   const replyResult = await gorgias.createTicketReply(ticket.gorgias_ticket_id, {
     body_html: bodyHtml,
     body_text: message,
@@ -1907,6 +1896,7 @@ async function apiSendTicketMessage(ticketId, body) {
   history.push({
     id: replyResult?.id,
     sender: 'agent',
+    is_bot: false,
     body: message,
     body_html: bodyHtml,
     created_at: new Date().toISOString(),
@@ -2312,27 +2302,6 @@ function readBody(req) {
 }
 
 // Reuse from poller
-function computeEditDistance(a, b) {
-  if (!a && !b) return 0;
-  if (!a || !b) return 1;
-  const wordsA = a.toLowerCase().split(/\s+/);
-  const wordsB = b.toLowerCase().split(/\s+/);
-  const maxLen = Math.max(wordsA.length, wordsB.length);
-  if (maxLen === 0) return 0;
-  const m = wordsA.length, n = wordsB.length;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = wordsA[i - 1] === wordsB[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n] / maxLen;
-}
-
 // ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------

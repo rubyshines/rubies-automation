@@ -24,6 +24,15 @@ async function handle(payload) {
   }
 
   const ticketId = ticket.id;
+
+  // Route status-change events to the ticket-updated handler
+  // (Gorgias sends all triggers to the same URL for one integration)
+  if (!message?.id) {
+    console.log(`[gorgias-webhook] ticket-status-updated #${ticketId} status=${ticket.status}`);
+    const { handle: handleStatusUpdate } = require('./gorgiasTicketUpdated');
+    return handleStatusUpdate(payload);
+  }
+
   console.log(`[gorgias-webhook] ticket-message-created #${ticketId}`);
 
   // --- Quick-reject filters (same logic as poller pre-filter) ---

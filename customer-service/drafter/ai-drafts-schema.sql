@@ -46,7 +46,6 @@ CREATE TABLE IF NOT EXISTS cs_ai_drafts (
   -- Review workflow
   status                  text NOT NULL DEFAULT 'pending',  -- pending | sent | superseded | released
   sent_response           text,                          -- what was actually sent (may differ from draft)
-  edit_distance           float,                         -- 0.0 = identical, 1.0 = completely rewritten
   feedback_notes          text,                          -- optional training notes from Jamie
   reviewed_at             timestamptz,
   sent_at                 timestamptz,
@@ -88,7 +87,6 @@ CREATE TABLE IF NOT EXISTS cs_ai_feedback_log (
   action                  text NOT NULL,                 -- sent | edited | released | bypassed
   original_response       text,
   final_response          text,
-  edit_distance           float,                         -- 0.0 = identical, 1.0 = rewritten
   feedback_notes          text,
   advisor_status          text,
   confidence              text,

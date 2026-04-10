@@ -321,7 +321,7 @@ function renderTicketDetail(ticket) {
     const btnRefresh = document.getElementById('btn-refresh');
     const btnRelease = document.getElementById('btn-release');
     const btnDelete = document.getElementById('btn-delete');
-    btnSend.textContent = 'Send Reply';
+    btnSend.textContent = 'Send & Snooze';
     btnSend.disabled = false;
     btnSendClose.textContent = 'Send & Close';
     btnSendClose.disabled = false;
@@ -357,6 +357,20 @@ function renderTicketDetail(ticket) {
     ${ctx.address ? `<div class="customer-address">${formatAddress(ctx.address)}</div>` : ''}
     <div class="ltv-stats" id="ltv-stats"><span style="color:var(--text-tertiary);font-size:12px">Loading stats...</span></div>
   `;
+
+  // Current ticket header with Gorgias link
+  const gorgiasId = ticket.gorgias_ticket_id;
+  const ticketMsgType = ticket.active_draft?.message_type || ticket.message_type || '';
+  const categoryClass = getCategoryClass(ticketMsgType);
+  document.getElementById('current-ticket-header').innerHTML = gorgiasId ? `
+    <div class="current-ticket-bar">
+      <a href="https://rubies.gorgias.com/app/ticket/${gorgiasId}" target="_blank" class="current-ticket-link">
+        Ticket #${gorgiasId} <span class="external-link-icon">&#8599;</span>
+      </a>
+      ${ticketMsgType ? `<span class="category-badge ${categoryClass}">${esc(ticketMsgType)}</span>` : ''}
+      <span class="current-ticket-status badge badge-${ticket.status || 'open'}">${esc(ticket.status || 'open')}</span>
+    </div>
+  ` : '';
 
   // Order info from ticket context
   const order = ticket.order_context;
@@ -559,8 +573,12 @@ async function loadCustomerContext(email, orderNumber) {
         const resIcon = t.resolution_successful === true ? '<span class="resolution-icon" style="color:var(--green)">&#10003;</span>'
           : t.resolution_successful === false ? '<span class="resolution-icon" style="color:var(--red)">&#10007;</span>'
           : '<span class="resolution-icon" style="color:var(--text-tertiary)">-</span>';
+        const gorgiasLink = t.gorgias_ticket_id
+          ? `<a href="https://rubies.gorgias.com/app/ticket/${t.gorgias_ticket_id}" target="_blank" class="ticket-entry-gorgias" title="Open in Gorgias">#${t.gorgias_ticket_id}</a>`
+          : '';
         return `<div class="ticket-entry" onclick="this.querySelector('.ticket-entry-detail')?.classList.toggle('hidden')">
           <div class="ticket-entry-header">
+            ${gorgiasLink}
             <span class="ticket-entry-date">${timeAgo(t.created_at)}</span>
             <span class="category-badge ${categoryClass}">${esc(t.category || 'general')}</span>
             ${t.ai_processed ? '<span class="badge-ai">AI</span>' : ''}
@@ -1015,7 +1033,6 @@ async function sendDraft(afterAction) {
   btn.textContent = 'Sending...';
 
   try {
-    // Use ticket send (via draft) if there's an active draft, otherwise direct message
     const endpoint = currentDraftId
       ? `/api/tickets/${currentTicketId}/send`
       : `/api/tickets/${currentTicketId}/message`;
@@ -1023,12 +1040,8 @@ async function sendDraft(afterAction) {
       ? { response, notes, after: afterAction }
       : { message: response, after: afterAction };
 
-    const result = await api(endpoint, {
-      method: 'POST',
-      body,
-    });
-    const label = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
-    btn.textContent = `${label} (${(result.edit_distance * 100).toFixed(0)}% edit)`;
+    await api(endpoint, { method: 'POST', body });
+    btn.textContent = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
     localStorage.removeItem(`draft-ticket-${currentTicketId}`);
     localStorage.removeItem(`notes-ticket-${currentTicketId}`);
     setTimeout(() => {
@@ -1037,7 +1050,7 @@ async function sendDraft(afterAction) {
       loadStats();
     }, 1500);
   } catch (err) {
-    btn.textContent = afterAction === 'close' ? 'Send & Close' : 'Send Reply';
+    btn.textContent = afterAction === 'close' ? 'Send & Close' : 'Send & Snooze';
     document.getElementById('btn-send').disabled = false;
     document.getElementById('btn-send-close').disabled = false;
     alert('Send failed: ' + err.message);
@@ -1293,7 +1306,6 @@ async function _legacyLoadHistory() {
         <td>${esc(d.order_number || '-')}</td>
         <td>${esc(d.message_type || '-')}</td>
         <td class="status-${d.status}">${d.status}</td>
-        <td>${d.edit_distance != null ? (d.edit_distance * 100).toFixed(0) + '%' : '-'}</td>
         <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.feedback_notes || '-')}</td>
       </tr>
     `).join('');
@@ -1600,15 +1612,6 @@ function parseHandoffTemplate(text) {
   return Object.keys(result).length ? result : null;
 }
 
-/** Render a handoff template — only customer's message, order/items shown in separate cards */
-function renderHandoffCard(data) {
-  if (!data.message) return '';
-  return `<div class="handoff-card">
-    <div class="handoff-label">Customer request (via bot)</div>
-    <div class="handoff-message">"${esc(data.message)}"</div>
-  </div>`;
-}
-
 /** Check if a customer message is the Gorgias order form output */
 function isOrderFormOutput(text) {
   if (!text) return false;
@@ -1618,75 +1621,80 @@ function isOrderFormOutput(text) {
     || /^#\d+\s*[-–]\s*\$[\d,.]+\s*[-–]/.test(text.trim());
 }
 
-/** Render the order form output as a clean "Customer selected" card using AI intake data */
-function renderOrderSelectionCard(ticket) {
-  const intake = ticket.active_draft?.structured_output?.intake
-    || ticket.active_draft?.intake_state
-    || {};
-  const items = intake.items || [];
-  const orderNum = ticket.order_number;
-
-  let html = '<div class="handoff-card">';
-  html += '<div class="handoff-label">Customer selected</div>';
-  if (orderNum) html += `<div class="handoff-order">Order #${String(orderNum).replace(/^#/, '')}</div>`;
-  if (items.length) {
-    html += '<div class="order-selection-items">';
-    for (const item of items) {
-      const product = item.product || item.title || '?';
-      const size = item.size || item.variant || '';
-      const issue = item.issue || '';
-      html += `<div class="order-selection-item">
-        <span class="order-selection-product">${esc(product)}</span>
-        ${size ? `<span class="order-selection-size">${esc(size)}</span>` : ''}
-        ${issue ? `<span class="order-selection-issue">${esc(issue)}</span>` : ''}
-      </div>`;
-    }
-    html += '</div>';
-  }
-  html += '</div>';
-  return html;
-}
-
-/** Render Gorgias order form as compact card with product nicknames */
-function renderOrderFormCompact(text) {
-  // Extract items: "1x THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR – Pink / L"
+/** Parse order form text into compact item lines with product nicknames */
+function parseOrderFormItems(text) {
   const itemLines = text.match(/\d+x\s+.+/gi) || [];
   const nicknames = {
     'CHARLIE': 'Charlie', 'AJ': 'AJ', 'SERENA': 'Serena', 'RUBY': 'Ruby',
     'BROOKE': 'Brooke', 'AVA': 'Ava', 'CHEEKY': 'Cheeky', 'SASSY': 'Sassy',
-    'FLO': 'Flo', 'BIKINI': 'Bikini',
+    'FLO': 'Flo', 'BIKINI': 'Bikini', 'SKY': 'Sky', 'STELLA': 'Stella',
+    'MIA': 'Mia',
   };
-
-  const items = itemLines.map(line => {
+  return itemLines.map(line => {
     const qtyMatch = line.match(/^(\d+)x\s+/i);
     const qty = qtyMatch ? qtyMatch[1] : '1';
     const rest = line.replace(/^\d+x\s+/i, '');
-    // Find nickname
     let name = rest;
     for (const [key, nick] of Object.entries(nicknames)) {
       if (rest.toUpperCase().includes(key)) { name = nick; break; }
     }
-    // Extract variant (after last –)
     const variantMatch = rest.match(/[-–]\s*([^-–]+)$/);
     const variant = variantMatch ? variantMatch[1].trim() : '';
-    return `${qty} x ${esc(name)} ${esc(variant)}`;
+    return { qty, name, variant };
   });
+}
 
-  if (!items.length) return ''; // fallback: skip if parsing failed
+/**
+ * Render a unified intake summary card.
+ * Consolidates bot handoff, order selection, and customer words into one card.
+ * Works for both bot (chat) and email intake paths.
+ *
+ * @param {Object} opts
+ * @param {'chat'|'email'} opts.channel - Intake channel
+ * @param {string[]} opts.customerWords - Verbatim customer messages
+ * @param {Array} opts.orderItems - Parsed order form items [{qty, name, variant}]
+ * @param {string} opts.timestamp - ISO timestamp of first customer message
+ */
+function renderIntakeCard({ channel, customerWords, orderItems, timestamp }) {
+  if (!customerWords.length && !orderItems.length) return '';
 
-  return `<div class="handoff-card">
-    <div class="handoff-label">Customer selected</div>
-    <div class="order-form-items">${items.join('<br>')}</div>
+  const channelLabel = channel === 'chat' ? 'via chat' : 'via email';
+  const time = timestamp ? timeAgo(timestamp, 'long') : '';
+
+  let html = '<div class="intake-card">';
+
+  // Header: label + channel pill
+  html += `<div class="intake-header">
+    <span class="intake-label">Customer</span>
+    <span class="intake-channel intake-channel--${channel}">${channelLabel}</span>
+    ${time ? `<span class="intake-time">${time}</span>` : ''}
   </div>`;
+
+  // Customer's words
+  if (customerWords.length) {
+    html += '<div class="intake-words">';
+    for (const word of customerWords) {
+      html += `<div class="intake-word">${word}</div>`;
+    }
+    html += '</div>';
+  }
+
+  // Order items (compact)
+  if (orderItems.length) {
+    if (customerWords.length) html += '<div class="intake-divider"></div>';
+    html += '<div class="intake-items">';
+    for (const item of orderItems) {
+      html += `<span class="intake-item">${esc(item.qty)}x ${esc(item.name)} <span class="intake-item-variant">${esc(item.variant)}</span></span>`;
+    }
+    html += '</div>';
+  }
+
+  html += '</div>';
+  return html;
 }
 
 /** Render a single message bubble */
 function renderMessageBubble(m, ticket) {
-  // Replace Gorgias order form with a compact card using product nicknames
-  if (m.sender === 'customer' && isOrderFormOutput(m.body)) {
-    return renderOrderFormCompact(m.body);
-  }
-
   const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
   const cleaned = cleanMessageBody(rawHtml);
   const processed = collapseQuotedContent(cleaned);
@@ -1697,7 +1705,41 @@ function renderMessageBubble(m, ticket) {
     </div>`;
 }
 
-/** Render conversation — everything before first human agent = bot intake flow (collapsed) */
+/** Bot button clicks and menu labels to filter from customer words */
+const BOT_BUTTON_LABELS = new Set([
+  'help me with a return or exchange', 'start a return or exchange',
+  'learn about our returns and exchanges policy', 'sign in to continue',
+  'no, i need more help', 'exchange', 'return', 'go back', 'no', 'yes',
+  'what would you like to do', 'select an order',
+]);
+
+/** Extract customer's actual words from bot flow (filters out button clicks, order forms) */
+function extractCustomerWords(botMessages) {
+  const words = [];
+  for (const m of botMessages) {
+    if (m.sender !== 'customer') continue;
+    const text = (m.body || '').trim();
+    if (!text || text.length < 3) continue;
+    if (BOT_BUTTON_LABELS.has(text.toLowerCase())) continue;
+    if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) continue;
+    if (isOrderFormOutput(text)) continue;
+    words.push(esc(text));
+  }
+  return words;
+}
+
+/** Extract order items from bot flow messages */
+function extractOrderItems(botMessages) {
+  for (const m of botMessages) {
+    if (m.sender === 'customer' && isOrderFormOutput(m.body)) {
+      const items = parseOrderFormItems(m.body);
+      if (items.length) return items;
+    }
+  }
+  return [];
+}
+
+/** Render conversation — unified intake card + message thread */
 function renderConversation(messages, ticket) {
   const boundary = findFirstHumanAgentIndex(messages);
   const parts = [];
@@ -1708,58 +1750,47 @@ function renderConversation(messages, ticket) {
   const botEnd = boundary > 0 ? boundary : (boundary === -1 ? messages.length : 0);
 
   if (botEnd > 0) {
+    // --- Bot/chat intake path ---
     const botMessages = messages.slice(0, botEnd);
 
-    // Check for handoff template
-    let handoffData = null;
-    for (const m of botMessages) {
-      if (isHandoffTemplate(m.body || '')) {
-        handoffData = parseHandoffTemplate(m.body);
-      }
-    }
-
-    // Collapsed bot group (hidden via CSS)
+    // Collapsed raw bot transcript
     parts.push(`<details class="bot-group">
       <summary class="bot-group-summary">Bot intake · ${botMessages.length} messages</summary>
       <div class="bot-group-messages">${botMessages.map(m => renderMessageBubble(m, ticket)).join('')}</div>
     </details>`);
 
-    // Show handoff card if present
-    if (handoffData) parts.push(renderHandoffCard(handoffData));
+    // Unified intake card: customer words + order items
+    const customerWords = extractCustomerWords(botMessages);
+    const orderItems = extractOrderItems(botMessages);
+    const firstCustomerMsg = botMessages.find(m => m.sender === 'customer');
 
-    // Show order form as compact card (customer selected items)
-    for (const m of botMessages) {
-      if (m.sender === 'customer' && isOrderFormOutput(m.body)) {
-        parts.push(renderOrderFormCompact(m.body));
-      }
-    }
-
-    // Collect real customer messages from within the bot flow (not button clicks)
-    const customerWords = [];
-    for (const m of botMessages) {
-      if (m.sender !== 'customer') continue;
-      const text = (m.body || '').trim();
-      const lower = text.toLowerCase();
-      if (!text || text.length < 3) continue;
-      if (['help me with a return or exchange', 'start a return or exchange',
-           'learn about our returns and exchanges policy', 'sign in to continue',
-           'no, i need more help', 'exchange', 'return', 'go back', 'no', 'yes',
-           'what would you like to do', 'select an order'].includes(lower)) continue;
-      if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) continue;
-      // Skip order form output — already shown as a card
-      if (isOrderFormOutput(text)) continue;
-      customerWords.push(esc(text));
-    }
-    if (customerWords.length) {
-      parts.push(`<div class="handoff-card">
-        <div class="handoff-label">Customer said</div>
-        <div class="customer-words">${customerWords.map(w => `<div class="customer-word">${w}</div>`).join('')}</div>
-      </div>`);
+    parts.push(renderIntakeCard({
+      channel: 'chat',
+      customerWords,
+      orderItems,
+      timestamp: firstCustomerMsg?.created_at,
+    }));
+  } else if (messages.length > 0 && messages[0].sender === 'customer') {
+    // --- Email intake path: show first customer email as intake card ---
+    const firstMsg = messages[0];
+    const body = (firstMsg.body || '').trim();
+    if (body) {
+      const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
+      const cleaned = cleanMessageBody(rawHtml);
+      const processed = collapseQuotedContent(cleaned);
+      parts.push(renderIntakeCard({
+        channel: 'email',
+        customerWords: [processed],
+        orderItems: [],
+        timestamp: firstMsg.created_at,
+      }));
     }
   }
 
-  // Render everything after the boundary normally
-  for (let i = botEnd; i < messages.length; i++) {
+  // Render messages after the intake section
+  // For bot path: start after bot flow. For email path: start at index 1 (skip first, already in card)
+  const startIdx = botEnd > 0 ? botEnd : (parts.length > 0 ? 1 : 0);
+  for (let i = startIdx; i < messages.length; i++) {
     const m = messages[i];
     const text = (m.body || '').trim();
     if (!text) continue;

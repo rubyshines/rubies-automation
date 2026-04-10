@@ -190,11 +190,13 @@ function getAnthropicClient() {
   return _anthropicClient;
 }
 
-const INTAKE_PARSE_PROMPT = `You are parsing a customer service message from RUBIES, a gender-affirming underwear brand. Extract structured data from this message.
+function buildIntakeParsePrompt() {
+  const productList = Object.values(_activeProducts).map(p => `${p.nickname} (${p.category}${p.sizes ? ', sizes: ' + p.sizes.join(',') : ''})`).join(', ');
+  return `You are parsing a customer service message from RUBIES, a gender-affirming underwear brand. Extract structured data from this message.
 
-RUBIES products: AJ, Charlie, Brooke, Ruby (youth/numeric sizes: 4,6,7,8,9,10,11,12,13,14,16), Ava, Cheeky, Sassy, Flo Dance (adult/letter sizes: XXS,XXS+,XS,XS+,S,M,L,1X,2X,3X,4X), Brooke Bra (tops), Serena Shorty Shorts, Sky One-Piece, Queeny Tankini, Stella Bikini Bottoms.${Object.values(_activeProducts).length > 0 ? ' ' + Object.values(_activeProducts).map(p => `${p.nickname} (${p.category}${p.sizes ? ', sizes: ' + p.sizes.join(',') : ''})`).join(', ') + '.' : ''}
+RUBIES products: ${productList || 'AJ, Charlie, Brooke, Ruby, Ava, Cheeky, Sassy, Flo, Stella, Sky, Queeny, Serena'}.
 
-Size aliases: XL=1X, XXL=2X, 3XL=3X, 4XL=4X. Numeric-to-letter: 10=XXS, 12=XS, 14=S, 16=M.
+Size aliases: XL=1X, XXL=2X, 3XL=3X, 4XL=4X. Numeric-to-letter: 10=XXS, 12=XS, 14=S, 16=M.`;
 
 Return JSON:
 {
@@ -295,7 +297,7 @@ async function parseExchangeIntake(messageText, existingIntake, orderItems) {
     const response = await ai.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
-      messages: [{ role: 'user', content: INTAKE_PARSE_PROMPT + orderContext + '\n\nCustomer message:\n' + messageText.slice(0, 2000) }],
+      messages: [{ role: 'user', content: buildIntakeParsePrompt() + orderContext + '\n\nCustomer message:\n' + messageText.slice(0, 2000) }],
     });
     const text = response.content[0]?.text || '{}';
     parsed = JSON.parse(text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
@@ -533,8 +535,7 @@ function regexFallbackParse(messageText) {
   else if (/doesn't work|not working/i.test(lower)) result.message_type = 'product_not_working';
   else if (/exchange|swap|too tight|too loose|too big|too small|doesn't fit/i.test(lower)) result.message_type = 'exchange';
 
-  const configNicknames = Object.values(_activeProducts).map(p => p.nickname);
-  const allNicknames = ['AJ','Charlie','Brooke','Ruby','Ava','Cheeky','Sassy','Serena','Flo','Stella','Sky','Queeny', ...configNicknames];
+  const allNicknames = Object.values(_activeProducts).map(p => p.nickname);
   const productMatchRegex = new RegExp(`\\b(${[...new Set(allNicknames)].join('|')})\\b`, 'gi');
   const productMatch = messageText.match(productMatchRegex);
   if (productMatch) {

@@ -383,13 +383,12 @@ const tools = [
 
           if (agentReplyAfterDraft) {
             const sentText = gorgiasClient.stripHtml(agentReplyAfterDraft.body_html || agentReplyAfterDraft.body_text || '');
-            const editDist = _computeEditDistance(draft.draft_response, sentText);
-            const status = editDist < 0.3 ? 'sent' : 'superseded';
+            const wasEdited = (draft.draft_response || '').trim() !== sentText.trim();
+            const status = wasEdited ? 'superseded' : 'sent';
 
             await supabase.from('cs_ai_drafts').update({
               status,
               sent_response: sentText,
-              edit_distance: editDist,
               reviewed_at: agentReplyAfterDraft.created_datetime,
               sent_at: agentReplyAfterDraft.created_datetime,
             }).eq('id', draft.id);
@@ -397,13 +396,12 @@ const tools = [
             await supabase.from('cs_ai_feedback_log').insert({
               draft_id: draft.id,
               gorgias_ticket_id: parseInt(tid),
-              action: editDist < 0.3 ? 'sent' : 'bypassed',
+              action: wasEdited ? 'bypassed' : 'sent',
               original_response: draft.draft_response,
               final_response: sentText,
-              edit_distance: editDist,
             });
 
-            results.push({ draft_id: draft.id, ticket_id: tid, status, edit_distance: editDist.toFixed(2) });
+            results.push({ draft_id: draft.id, ticket_id: tid, status });
           }
         }
 
@@ -418,25 +416,6 @@ const tools = [
 /**
  * Word-level Levenshtein edit distance (0 = identical, 1 = completely different).
  */
-function _computeEditDistance(a, b) {
-  if (!a && !b) return 0;
-  if (!a || !b) return 1;
-  const wordsA = a.toLowerCase().split(/\s+/);
-  const wordsB = b.toLowerCase().split(/\s+/);
-  const maxLen = Math.max(wordsA.length, wordsB.length);
-  if (maxLen === 0) return 0;
-  const m = wordsA.length, n = wordsB.length;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = wordsA[i - 1] === wordsB[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n] / maxLen;
-}
-
 // ---------------------------------------------------------------------------
 // Auto follow-up engine (runs autonomously, not an MCP tool)
 // ---------------------------------------------------------------------------

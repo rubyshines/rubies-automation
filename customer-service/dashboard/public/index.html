@@ -48,15 +48,16 @@
           </button>
           <div class="sidebar-context-inner">
             <div id="customer-card"></div>
+            <div id="current-ticket-header"></div>
             <div id="ticket-order"></div>
             <div id="other-orders-section" style="display:none">
               <div class="context-section-label">Order History <span id="other-orders-count" class="badge badge-muted"></span></div>
               <div id="other-orders-list"></div>
             </div>
-            <details id="past-tickets-section" style="display:none">
-              <summary>Past Tickets <span id="past-tickets-count" class="badge badge-muted"></span></summary>
+            <div id="past-tickets-section" style="display:none">
+              <div class="context-section-label">Past Tickets <span id="past-tickets-count" class="badge badge-muted"></span></div>
               <div id="past-tickets-list"></div>
-            </details>
+            </div>
           </div>
         </div>
       </div>
@@ -107,7 +108,7 @@
             <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
             <div id="draft-actions" class="draft-actions">
               <div class="btn-row btn-row-primary">
-                <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send Reply</button>
+                <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send &amp; Snooze</button>
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
                 <button id="btn-unpark" class="btn btn-unpark" onclick="unparkTicket()" style="display:none">Unpark</button>
               </div>

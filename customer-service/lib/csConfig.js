@@ -113,6 +113,41 @@ function getProductNickname(fullTitle) {
 }
 
 /**
+ * Get product page URL from a nickname. Returns null if not found.
+ */
+function getProductUrl(nickname) {
+  if (!nickname) return null;
+  const lower = nickname.toLowerCase();
+  for (const [handle, prod] of Object.entries(_activeProducts)) {
+    if (prod.nickname.toLowerCase() === lower) {
+      return `https://rubyshines.com/products/${handle}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build a human-friendly product list text from the loaded config.
+ */
+function buildProductListText() {
+  const byCategory = {};
+  for (const prod of Object.values(_activeProducts)) {
+    if (prod.category === 'accessory' || prod.category === 'chest_pads') continue;
+    if (!byCategory[prod.category]) byCategory[prod.category] = [];
+    byCategory[prod.category].push(prod.nickname);
+  }
+  const parts = [];
+  if (byCategory.underwear_bottom?.length) parts.push(`underwear (${byCategory.underwear_bottom.join(', ')})`);
+  if (byCategory.swim_bottom?.length) parts.push(`bikini bottoms (${byCategory.swim_bottom.join(', ')})`);
+  if (byCategory.underwear_top?.length) parts.push(`bras (${byCategory.underwear_top.join(', ')})`);
+  if (byCategory.swim_top?.length) parts.push(`swim tops (${byCategory.swim_top.join(', ')})`);
+  if (byCategory.onepiece?.length) parts.push(`the ${byCategory.onepiece.join(', ')} one-piece`);
+  return parts.length
+    ? `Which product are you looking at? We have ${parts.join(', ')}.`
+    : 'Which product are you looking at? We have underwear (AJ, Charlie, Sassy), bikini bottoms (Ruby, Stella), bras (Brooke), swim shorts (Serena), and the Sky one-piece.';
+}
+
+/**
  * Pluralize a product nickname when quantity > 1.
  * "AJ" → "AJs", "Sassy" → "Sassys", "Chest Pads" stays "Chest Pads"
  */
@@ -1567,16 +1602,16 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         let recommendation, link;
         if (isSwim) {
           recommendation = 'Cheeky Bikini Bottoms';
-          link = 'https://rubyshines.com/products/the-cheeky-shaping-bikini-bottom';
+          link = getProductUrl('Cheeky') || '';
         } else if (isKids) {
           recommendation = 'Flo Dance Underwear';
-          link = 'https://rubyshines.com/products/the-flo-shaping-dance-underwear';
+          link = getProductUrl('Flo') || '';
         } else {
           // Adult underwear: check config for additional style-switch targets
           const configTargets = Object.values(_activeProducts)
             .filter(p => p.styleSwitch?.isTarget && p.styleSwitch.forCategories?.includes('underwear_bottom'));
           recommendation = 'Sassy';
-          link = 'https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear';
+          link = getProductUrl('Sassy') || '';
         }
 
         // Check if the recommendation is the same product they already have
@@ -1597,8 +1632,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const isYouthNearBoundary = !isSwim && normSize === '14' && !LETTER_SIZES.includes(normSize);
           const numericToAdult = { '10': 'XXS', '11': 'XXS+', '12': 'XS', '13': 'XS+', '14': 'S', '16': 'M' };
           const adultEquiv = numericToAdult[normSize] || null;
+          const sassyUrl = getProductUrl('Sassy') || '';
           const adultAlt = (nearAdultBoundary || isYouthNearBoundary) && adultEquiv
-            ? ` Or you could try the Sassy in size ${adultEquiv} which is the equivalent in our adult line and has a different cut — https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear`
+            ? ` Or you could try the Sassy in size ${adultEquiv} which is the equivalent in our adult line and has a different cut — ${sassyUrl}`
             : '';
           rx.response_text = `The ${currentNick} already has the widest leg opening in our range. Sizing up would give more room in the legs.${adultAlt}${measureAsk ? ' ' + measureAsk.charAt(0).toUpperCase() + measureAsk.slice(1) : ''}`;
           rx.audit = `Tight legs on ${currentNick} — already widest leg opening, suggesting size up${adultAlt ? ' + adult alternative' : ''}`;
@@ -1833,7 +1869,7 @@ async function prescribePrePurchaseSizing(intake, context) {
     still_needed.push('which product');
     items.push({
       state: 'NEEDS_PRODUCT',
-      response_text: 'Which product are you looking at? We have underwear (AJ, Charlie, Sassy), bikini bottoms (Ruby, Stella), bras (Brooke), swim shorts (Serena), and the Sky one-piece.',
+      response_text: buildProductListText(),
     });
     audit.push('No product specified — asking');
     return { items, still_needed, audit };
@@ -2275,6 +2311,7 @@ module.exports = {
   prescribeDonationRouting,
   // Product nicknames
   getProductNickname,
+  getProductUrl,
   pluralizeNickname,
   PRODUCT_NICKNAMES,
   // Product classification
