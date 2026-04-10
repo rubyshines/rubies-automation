@@ -307,6 +307,67 @@ main { height: calc(100vh - 56px); }
   font-weight: 500;
 }
 
+/* Queue clear state (shown when all tickets in lane are processed) */
+.queue-clear-state {
+  text-align: center;
+  max-width: 320px;
+}
+.queue-clear-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.7;
+}
+.queue-clear-heading {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.queue-clear-count {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-bottom: 20px;
+}
+.queue-clear-lanes {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.queue-clear-lane-btn {
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.queue-clear-lane-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Slide-out animation for processed queue items */
+@keyframes queue-item-slide-out {
+  to {
+    transform: translateX(-100%);
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-bottom-width: 0;
+  }
+}
+.queue-item-removing {
+  animation: queue-item-slide-out 0.25s ease forwards;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .detail-section {
   margin-bottom: 16px;
   background: var(--surface-raised);
