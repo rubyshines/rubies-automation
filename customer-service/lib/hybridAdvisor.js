@@ -631,6 +631,7 @@ After handling the conversation, you MUST end your final message with a structur
       "product": "product name",
       "current_size": "size they have",
       "resolved_size": "size they're getting (null if unresolved)",
+      "resolved_color": "color they want (null if same color or not specified)",
       "resolved_product": "different product if style switch (null if same)",
       "issue": "close_fit_tight|close_fit_loose|doesnt_fit|way_off|defect|...",
       "state": "CONFIRMED|AWAITING_DECISION|NEEDS_MEASUREMENT|REFUND_CONFIRMED|ROUTE_TO_HUMAN"
@@ -993,10 +994,11 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     items: (parsed.items || []).map(item => ({
       product: item.product,
       size: item.current_size || null,
-      color: null,
+      color: item.resolved_color || null,
       issue: item.issue || null,
       desired_size: item.resolved_size || null,
       resolved_size: item.state === 'CONFIRMED' ? item.resolved_size : null,
+      resolved_color: item.resolved_color || null,
       resolved_product: item.resolved_product || null,
     })),
     name: parsed.customer_name || null,
@@ -1006,6 +1008,22 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     order_number: orderContext?.target_order?.name?.replace('#', '') || null,
     conversation_email: customer_email,
   };
+
+  // On multi-turn conversations, merge AI's newly resolved sizes into carried-forward intake items.
+  // The existingIntake from prior turns may have null resolved_size that the AI has now confirmed.
+  if (existingIntake && parsed.items?.length) {
+    for (const aiItem of parsed.items) {
+      if (aiItem.state === 'CONFIRMED' && aiItem.resolved_size) {
+        const match = intake.items?.find(i => i.product === aiItem.product && !i.resolved_size);
+        if (match) {
+          match.resolved_size = aiItem.resolved_size;
+          match.resolved_color = aiItem.resolved_color || match.resolved_color;
+          match.resolved_product = aiItem.resolved_product || match.resolved_product;
+          if (!match.desired_size) match.desired_size = aiItem.resolved_size;
+        }
+      }
+    }
+  }
 
   // Compute action_type from prescription items (which have the resolved states)
   let action_type = null;

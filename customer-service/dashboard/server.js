@@ -11,6 +11,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: path.resolve(__dirname, '../..', '.env') });
@@ -34,7 +35,7 @@ async function loadProductConfig() {
   console.log(`[dashboard] Auto-linker loaded ${_productConfig.length} products`);
 }
 
-const PORT = process.env.DASHBOARD_PORT || 3847;
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3847;
 const STATIC_DIR = path.join(__dirname, 'public');
 
 // MIME types for static files
@@ -45,7 +46,102 @@ const MIME = {
   '.json': 'application/json',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
 };
+
+// ---------------------------------------------------------------------------
+// Authentication (Google OAuth + signed cookie session)
+// ---------------------------------------------------------------------------
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const ALLOWED_EMAIL = process.env.ALLOWED_EMAIL;
+const SESSION_SECRET = process.env.SESSION_SECRET;
+const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
+
+let _oauthClient = null;
+async function verifyGoogleToken(idToken) {
+  if (!_oauthClient) {
+    const { OAuth2Client } = require('google-auth-library');
+    _oauthClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+  }
+  const ticket = await _oauthClient.verifyIdToken({
+    idToken,
+    audience: GOOGLE_CLIENT_ID,
+  });
+  return ticket.getPayload();
+}
+
+function signSession(email) {
+  const exp = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE;
+  const payload = JSON.stringify({ email, exp });
+  const b64 = Buffer.from(payload).toString('base64url');
+  const sig = crypto.createHmac('sha256', SESSION_SECRET).update(b64).digest('base64url');
+  return `${b64}.${sig}`;
+}
+
+function verifySession(cookie) {
+  if (!cookie || !SESSION_SECRET) return null;
+  const [b64, sig] = cookie.split('.');
+  if (!b64 || !sig) return null;
+  const expected = crypto.createHmac('sha256', SESSION_SECRET).update(b64).digest('base64url');
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(b64, 'base64url').toString());
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const cookies = {};
+  header.split(';').forEach(pair => {
+    const [name, ...rest] = pair.trim().split('=');
+    if (name) cookies[name.trim()] = decodeURIComponent(rest.join('='));
+  });
+  return cookies;
+}
+
+function setSessionCookie(res, value, host) {
+  const isLocalhost = (host || '').startsWith('localhost');
+  const flags = [
+    `session=${encodeURIComponent(value)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `SameSite=Lax`,
+    `Max-Age=${SESSION_MAX_AGE}`,
+  ];
+  if (!isLocalhost) flags.push('Secure');
+  res.setHeader('Set-Cookie', flags.join('; '));
+}
+
+function clearSessionCookie(res, host) {
+  const isLocalhost = (host || '').startsWith('localhost');
+  const flags = [
+    'session=',
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+  ];
+  if (!isLocalhost) flags.push('Secure');
+  res.setHeader('Set-Cookie', flags.join('; '));
+}
+
+function isAuthEnabled() {
+  return !!(GOOGLE_CLIENT_ID && ALLOWED_EMAIL && SESSION_SECRET);
+}
+
+// Paths that don't require auth
+const AUTH_WHITELIST = new Set(['/login.html', '/health', '/manifest.json', '/sw.js']);
+function isAuthWhitelisted(pathname) {
+  if (AUTH_WHITELIST.has(pathname)) return true;
+  if (pathname.startsWith('/auth/')) return true;
+  if (pathname.startsWith('/icons/')) return true;
+  // Allow CSS/fonts for login page styling
+  if (pathname === '/styles.css') return true;
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // API handlers
@@ -147,8 +243,24 @@ async function apiSendDraft(id, body) {
     console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
   }
 
-  // Update ticket status
-  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed');
+  // Append reply to conversation history
+  const { data: ticketRow } = await supabase
+    .from('cs_tickets')
+    .select('conversation_history')
+    .eq('gorgias_ticket_id', draft.gorgias_ticket_id)
+    .single();
+  const history = ticketRow?.conversation_history || [];
+  history.push({
+    id: replyResult?.id,
+    sender: 'agent',
+    body: finalResponse,
+    body_html: bodyHtml,
+    created_at: new Date().toISOString(),
+    channel: 'email',
+  });
+
+  // Update ticket status + conversation history
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', { conversation_history: history });
 
   return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, after: afterAction };
 }
@@ -1011,7 +1123,17 @@ async function apiExecuteExchange(id, body) {
   if (!customer) throw new Error(`Customer not found: ${draft.customer_email}`);
 
   const structured = draft.structured_output || {};
-  const items = (structured.intake?.items || []).filter(i => i.resolved_size);
+  let items = (structured.intake?.items || []).filter(i => i.resolved_size);
+  // Fallback: if intake items lack resolved_size (multi-turn carry-forward bug), pull from prescription
+  if (!items.length) {
+    const intakeItems = structured.intake?.items || [];
+    const rxItems = (structured.prescription?.items || [])
+      .filter(i => i.state === 'CONFIRMED' && i.recommendation?.size);
+    items = rxItems.map(rx => {
+      const intake = intakeItems.find(ii => ii.product === rx.product) || {};
+      return { ...intake, product: rx.product, resolved_size: rx.recommendation.size };
+    });
+  }
   if (!items.length) throw new Error('No exchange items resolved');
 
   const result = await exchangeHandler({
@@ -1277,6 +1399,7 @@ const ACTION_CHAT_TOOLS = [
 ];
 
 async function apiActionChat(draftId, body) {
+  const { routeAction } = require('../lib/actionRouter');
   const supabase = getSupabaseClient();
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts').select('*').eq('id', draftId).single();
@@ -1284,133 +1407,45 @@ async function apiActionChat(draftId, body) {
 
   const userMessage = body.message;
   const history = body.history || [];
-
-  // Build system prompt with context
   const structured = draft.structured_output || {};
-  const orderItems = (structured.order?.items || [])
-    .map(i => `  - ${i.title} ${i.variant || ''} (SKU: ${i.sku}, qty: ${i.quantity})`).join('\n');
 
-  const systemPrompt = `You are an action executor for the RUBIES CS dashboard. You help the operator execute exchanges, refunds, and order edits.
-
-CONTEXT:
-- Customer: ${draft.customer_email}
-- Order: #${draft.order_number}
-- Order items:
-${orderItems || '  (no items)'}
-- Fulfillment: ${structured.order?.fulfillment_status || 'unknown'}
-
-AI ADVISOR SUGGESTION: ${draft.action_type || 'none'} — ${draft.advisor_status || ''}
-${structured.intake?.items?.length ? 'Suggested items: ' + structured.intake.items.map(i => `${i.product} ${i.size || ''} → ${i.resolved_size || '?'}`).join(', ') : ''}
-
-RULES:
-- Be concise. Show what you're about to do and ask for confirmation before executing.
-- For exchanges: call create_exchange_order with the customer_email and items array. Use SKU + target_size.
-- For refunds: call refund_order with order_number and items array.
-- For edits: call edit_order with order_number and swap_items.
-- Always show a preview first (phase 1), then ask for confirmation before completing (phase 2).
-- When the operator says "yes", "confirm", "do it", etc. — proceed with phase 2.
-- After completing an action, summarize what was done.
-- If the operator wants multiple actions (exchange + refund), do them sequentially.`;
-
-  // Build messages array
-  const messages = [...history, { role: 'user', content: userMessage }];
-
-  const client = getAnthropic();
-
-  // Run the agentic loop — keep going while Claude wants to use tools
-  let currentMessages = messages;
-  let finalResponse = '';
-  let toolResults = [];
-  const maxIterations = 10;
-
-  for (let i = 0; i < maxIterations; i++) {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      tools: ACTION_CHAT_TOOLS,
-      messages: currentMessages,
-    });
-
-    // Collect text and tool use blocks
-    const textBlocks = response.content.filter(b => b.type === 'text');
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-
-    if (textBlocks.length) {
-      finalResponse += textBlocks.map(b => b.text).join('\n');
-    }
-
-    // If no tool calls, we're done
-    if (toolUseBlocks.length === 0 || response.stop_reason === 'end_turn') {
-      if (toolUseBlocks.length === 0) break;
-    }
-
-    // Execute tool calls
-    const toolResultMessages = [];
-    for (const toolUse of toolUseBlocks) {
-      let result;
-      try {
-        result = await executeActionTool(toolUse.name, toolUse.input, draft);
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, result });
-      } catch (err) {
-        result = { error: err.message };
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, error: err.message });
-      }
-
-      toolResultMessages.push({
-        type: 'tool_result',
-        tool_use_id: toolUse.id,
-        content: typeof result === 'string' ? result : JSON.stringify(result),
-      });
-    }
-
-    // Add assistant response + tool results to messages for next iteration
-    currentMessages = [
-      ...currentMessages,
-      { role: 'assistant', content: response.content },
-      { role: 'user', content: toolResultMessages },
-    ];
-
-    // If stop_reason is end_turn and there were tool calls, continue to get final text
-    if (response.stop_reason === 'end_turn' && toolUseBlocks.length > 0) {
-      // One more iteration to get Claude's response after tool results
-      continue;
-    }
-  }
-
-  // Update draft with action results and chat history
-  if (toolResults.length || finalResponse) {
-    const prevResult = draft.action_result || {};
-    const updates = {
-      action_result: {
-        ...prevResult,
-        chat_tool_results: toolResults,
-        chat_history: currentMessages,
-        chat_response: finalResponse,
-      },
-    };
-
-    // Detect if a completing action was performed (refund, exchange, edit)
-    const completedAction = toolResults.some(tr =>
-      (tr.tool === 'refund_order' && tr.input?.confirmed) ||
-      (tr.tool === 'create_exchange_order' && tr.input?.confirmed) ||
-      (tr.tool === 'edit_order' && tr.input?.confirmed) ||
-      (tr.tool === 'warehouse_hold') ||
-      (tr.result && typeof tr.result === 'string' && /completed|refunded|created|hold placed/i.test(tr.result))
-    );
-    if (completedAction && !draft.action_executed_at) {
-      updates.action_executed_at = new Date().toISOString();
-    }
-
-    await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
-  }
-
-  // Return the full conversation for the client to display
-  return {
-    response: finalResponse,
-    tool_results: toolResults,
-    history: currentMessages,
+  const context = {
+    draft,
+    customer_email: draft.customer_email,
+    order_number: (draft.order_number || '').replace('#', ''),
+    order_items: structured.order?.items || [],
+    fulfillment_status: structured.order?.fulfillment_status,
+    intake: structured.intake,
   };
+
+  const result = await routeAction(userMessage, context, history);
+
+  // Update draft with action results
+  const prevResult = draft.action_result || {};
+  const updates = {
+    action_result: {
+      ...prevResult,
+      chat_tool_results: result.tool_results,
+      chat_history: result.history,
+      chat_response: result.response,
+    },
+  };
+
+  // Detect if a completing action was performed
+  const completedAction = result.tool_results.some(tr =>
+    (tr.tool === 'refund_order' && tr.input?.confirmed) ||
+    (tr.tool === 'create_exchange_order' && tr.input?.confirmed) ||
+    (tr.tool === 'edit_order' && tr.input?.confirmed) ||
+    (tr.tool === 'warehouse_hold') ||
+    (tr.result && typeof tr.result === 'string' && /completed|refunded|created|hold placed/i.test(tr.result))
+  );
+  if (completedAction && !draft.action_executed_at) {
+    updates.action_executed_at = new Date().toISOString();
+  }
+
+  await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
+
+  return result;
 }
 
 async function executeActionTool(toolName, input, draft) {
@@ -2053,6 +2088,104 @@ const paramRoutes = [
 async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
+  const host = req.headers.host || '';
+
+  // ── Health check ──
+  if (pathname === '/health') {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
+    return;
+  }
+
+  // ── Auth endpoints ──
+  if (pathname.startsWith('/auth/')) {
+    res.setHeader('Content-Type', 'application/json');
+
+    if (pathname === '/auth/google' && req.method === 'POST') {
+      try {
+        const body = await readBody(req);
+        if (!body.credential) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: 'Missing credential' }));
+          return;
+        }
+        const payload = await verifyGoogleToken(body.credential);
+        if (payload.email !== ALLOWED_EMAIL) {
+          console.warn(`[auth] Rejected login from ${payload.email} (allowed: ${ALLOWED_EMAIL})`);
+          res.writeHead(403);
+          res.end(JSON.stringify({ error: 'Unauthorized email' }));
+          return;
+        }
+        const token = signSession(payload.email);
+        setSessionCookie(res, token, host);
+        console.log(`[auth] Login: ${payload.email}`);
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, email: payload.email }));
+      } catch (err) {
+        console.error('[auth] Google token verification failed:', err.message);
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Invalid token' }));
+      }
+      return;
+    }
+
+    if (pathname === '/auth/logout' && req.method === 'POST') {
+      clearSessionCookie(res, host);
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (pathname === '/auth/status' && req.method === 'GET') {
+      const cookies = parseCookies(req);
+      const session = verifySession(cookies.session);
+      if (session) {
+        res.writeHead(200);
+        res.end(JSON.stringify({ authenticated: true, email: session.email }));
+      } else {
+        res.writeHead(200);
+        res.end(JSON.stringify({ authenticated: false }));
+      }
+      return;
+    }
+
+    if (pathname === '/auth/client-id' && req.method === 'GET') {
+      res.writeHead(200);
+      res.end(JSON.stringify({ clientId: GOOGLE_CLIENT_ID || null }));
+      return;
+    }
+
+    res.writeHead(404);
+    res.end(JSON.stringify({ error: 'Not found' }));
+    return;
+  }
+
+  // ── Auth middleware (check session for protected routes) ──
+  if (isAuthEnabled() && !isAuthWhitelisted(pathname)) {
+    const cookies = parseCookies(req);
+    const session = verifySession(cookies.session);
+    if (!session) {
+      if (pathname.startsWith('/api/')) {
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(401);
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+      // Serve login page for HTML requests
+      try {
+        const loginPath = path.join(STATIC_DIR, 'login.html');
+        const content = fs.readFileSync(loginPath);
+        res.setHeader('Content-Type', 'text/html');
+        res.writeHead(200);
+        res.end(content);
+      } catch {
+        res.writeHead(401);
+        res.end('Unauthorized — login.html not found');
+      }
+      return;
+    }
+  }
 
   // SSE stream endpoint (not JSON)
   if (pathname === '/api/poll/stream' && req.method === 'GET') {
@@ -2164,4 +2297,9 @@ const server = http.createServer(handleRequest);
 server.listen(PORT, async () => {
   console.log(`\n  RUBIES Care running at http://localhost:${PORT}\n`);
   await loadProductConfig();
+  // Load product cache + decision tree config for the action router
+  const { loadFromSupabase } = require('../lib/productCache');
+  const { initCsConfig } = require('../lib/decisionTree');
+  await loadFromSupabase(getSupabaseClient());
+  await initCsConfig();
 });

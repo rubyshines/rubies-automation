@@ -10,10 +10,88 @@ let currentDraftId = null;
 let currentDraft = null;
 
 // ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+async function checkAuth() {
+  try {
+    const res = await fetch('/auth/status');
+    const data = await res.json();
+    if (!data.authenticated) {
+      window.location.href = '/login.html';
+      return false;
+    }
+    return true;
+  } catch {
+    return true; // if auth check fails (e.g., no auth configured), proceed
+  }
+}
+
+async function logout() {
+  await fetch('/auth/logout', { method: 'POST' });
+  window.location.href = '/login.html';
+}
+
+// ---------------------------------------------------------------------------
+// Auto-refresh (universal — desktop + mobile)
+// ---------------------------------------------------------------------------
+
+let _autoRefreshInterval = null;
+let _actionInFlight = false;
+let _lastStatsJson = '';
+let _visibilityDebounce = null;
+
+function startAutoRefresh() {
+  // Poll every 30s when visible
+  _autoRefreshInterval = setInterval(autoRefreshTick, 30000);
+
+  // Refresh on visibility change (tab switch, app foreground, lock screen wake)
+  document.addEventListener('visibilitychange', () => {
+    clearTimeout(_visibilityDebounce);
+    if (document.hidden) {
+      // Pause auto-poll when hidden
+      clearInterval(_autoRefreshInterval);
+      _autoRefreshInterval = null;
+    } else {
+      // Debounce: iOS fires multiple times
+      _visibilityDebounce = setTimeout(() => {
+        autoRefreshTick();
+        if (!_autoRefreshInterval) {
+          _autoRefreshInterval = setInterval(autoRefreshTick, 30000);
+        }
+      }, 500);
+    }
+  });
+}
+
+async function autoRefreshTick() {
+  if (_actionInFlight) return;
+  try {
+    const res = await fetch('/api/tickets/stats');
+    if (res.status === 401) return; // session expired, checkAuth handles redirect
+    const stats = await res.json();
+    const json = JSON.stringify(stats);
+    if (json !== _lastStatsJson) {
+      _lastStatsJson = json;
+      loadTicketQueue();
+      loadStats();
+    }
+  } catch { /* network error — skip this tick */ }
+}
+
+// ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  // Check auth before anything else
+  if (!(await checkAuth())) return;
+
+  // Register service worker for PWA
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
   // Request notification permission on first load
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
@@ -61,11 +139,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   loadStats();
-  // Auto-refresh every 30s
-  setInterval(() => {
-    loadTicketQueue();
-    loadStats();
-  }, 30000);
+  // Smart auto-refresh: polls every 30s when visible, pauses when hidden,
+  // refreshes immediately on visibility change (tab switch / app foreground)
+  startAutoRefresh();
+
+  // Initialize mobile features
+  initMobile();
 
   // Esc key returns to queue
   document.addEventListener('keydown', (e) => {
@@ -206,6 +285,12 @@ async function selectTicket(id) {
     renderTicketDetail(currentTicket);
     updateBackButton();
     showSidebarContext();
+    // Mobile: switch to detail view
+    if (isMobile()) {
+      document.body.classList.add('mobile-detail-view');
+      history.pushState({ mobileDetail: true }, '');
+    }
+    updateSummaryBar(currentTicket);
   } catch (err) {
     console.error('Failed to load ticket:', err);
   }
@@ -279,20 +364,9 @@ function renderTicketDetail(ticket) {
   const orderNum = ticket.order_number ? String(ticket.order_number).replace('#', '') : null;
   loadCustomerContext(ticket.customer_email, orderNum);
 
-  // Conversation thread (from ticket, not draft)
-  const history = ticket.conversation_history || [];
-  document.getElementById('conversation-thread').innerHTML = history
-    .filter(m => m.channel !== 'internal-note')
-    .map(m => {
-      const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
-      const cleaned = cleanMessageBody(rawHtml);
-      const processed = collapseQuotedContent(cleaned);
-      return `
-        <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
-          <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} - ${timeAgo(m.created_at, 'long')}</div>
-          <div class="msg-body">${processed}</div>
-        </div>`;
-    }).join('');
+  // Conversation thread — group bot messages, show customer + human agent normally
+  const history = (ticket.conversation_history || []).filter(m => m.channel !== 'internal-note');
+  document.getElementById('conversation-thread').innerHTML = renderConversation(history, ticket);
 
   // Show classification banner for outreach
   const msgType = d?.message_type || ticket.message_type;
@@ -677,10 +751,12 @@ function renderActionPanel(draft) {
   if (prefill) {
     input.value = prefill;
     input.placeholder = 'Edit and hit Enter to execute...';
-    // Auto-size textarea to fit content
-    input.style.height = 'auto';
-    input.style.height = input.scrollHeight + 'px';
-    setTimeout(() => { input.focus(); input.select(); }, 100);
+    // Auto-size textarea to fit content (defer to allow DOM to render)
+    setTimeout(() => {
+      input.style.height = 'auto';
+      if (input.scrollHeight > 0) input.style.height = input.scrollHeight + 'px';
+    }, 50);
+    if (!isMobile()) setTimeout(() => { input.focus(); input.select(); }, 100);
   } else {
     input.value = '';
     input.placeholder = 'e.g. exchange the AJ to size L, refund the Ruby...';
@@ -709,9 +785,19 @@ function buildActionPrefill(draft) {
   }
 
   if (actionType.includes('exchange')) {
-    const exchangeItems = items.filter(i => i.resolved_size);
+    let exchangeItems = items.filter(i => i.resolved_size);
+    // Fallback: if intake items lack resolved_size (multi-turn bug), pull from prescription
+    if (!exchangeItems.length) {
+      const rxItems = structured.prescription?.items || [];
+      exchangeItems = rxItems
+        .filter(i => i.state === 'CONFIRMED' && i.recommendation?.size)
+        .map(i => ({ product: i.product, size: items.find(ii => ii.product === i.product)?.size, resolved_size: i.recommendation.size, resolved_product: null }));
+    }
     if (exchangeItems.length) {
-      const lines = exchangeItems.map(i => `- ${shortName(i.resolved_product || i.product)} ${i.size || ''} → ${i.resolved_size}`);
+      const lines = exchangeItems.map(i => {
+        const color = i.resolved_color ? ` ${i.resolved_color}` : '';
+        return `- ${shortName(i.resolved_product || i.product)} ${i.size || ''} → ${i.resolved_size}${color}`;
+      });
       return `exchange on order #${orderNum}:\n${lines.join('\n')}`;
     }
   }
@@ -768,7 +854,14 @@ function simpleMarkdown(text) {
       }).join('');
       return `<table class="action-table">${html}</table>`;
     })
+    // Bold
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    // Bullet lists: lines starting with - or •
+    .replace(/(?:^|\n)((?:[•\-–] .+(?:\n|$))+)/g, (_, list) => {
+      const items = list.trim().split('\n').map(l => `<li>${l.replace(/^[•\-–]\s*/, '')}</li>`).join('');
+      return `<ul class="action-list">${items}</ul>`;
+    })
+    // Line breaks (after list handling)
     .replace(/\n/g, '<br>');
 }
 
@@ -779,7 +872,11 @@ function appendChatMessage(role, content) {
   const div = document.createElement('div');
   div.className = `action-msg action-msg-${role}`;
   if (role === 'tool') {
-    div.innerHTML = `<pre class="action-tool-output">${esc(content)}</pre>`;
+    // Collapsible tool output — show first line as summary
+    const lines = content.trim().split('\n');
+    const summary = esc(lines[0]).replace(/^\[|\]$/g, '');
+    const full = esc(content);
+    div.innerHTML = `<details class="action-tool-details"><summary class="action-tool-summary">${summary}</summary><pre class="action-tool-output">${full}</pre></details>`;
   } else {
     div.innerHTML = simpleMarkdown(content);
   }
@@ -1176,14 +1273,26 @@ async function _legacyLoadHistory() {
 // ---------------------------------------------------------------------------
 
 async function api(url, opts = {}) {
-  const res = await fetch(url, {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+  const method = opts.method || 'GET';
+  // Guard auto-refresh during mutations
+  if (method === 'POST') _actionInFlight = true;
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    // Session expired — redirect to login
+    if (res.status === 401) {
+      window.location.href = '/login.html';
+      throw new Error('Session expired');
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  } finally {
+    if (method === 'POST') _actionInFlight = false;
+  }
 }
 
 function esc(str) {
@@ -1370,6 +1479,244 @@ function collapseQuotedContent(html) {
     </button>
     <div class="quoted-content">${quotedHtml}</div>
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Bot message detection + grouped conversation rendering
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the boundary between Gorgias bot intake and real conversation.
+ * Strategy:
+ * 1. If is_bot flags exist (new data): first agent message where is_bot === false
+ * 2. Legacy fallback: find the handoff template ("Thanks for reaching out...") —
+ *    everything up to and including it is bot. First agent message AFTER it is human.
+ *    If no handoff template found, assume no bot flow (email-only ticket).
+ */
+function findFirstHumanAgentIndex(messages) {
+  // Strategy 1: Use is_bot flags if available
+  const hasFlags = messages.some(m => m.is_bot !== undefined);
+  if (hasFlags) {
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].sender === 'agent' && messages[i].is_bot === false) return i;
+    }
+    return -1;
+  }
+
+  // Strategy 2: Legacy — find handoff template as boundary marker
+  let handoffIndex = -1;
+  for (let i = 0; i < messages.length; i++) {
+    if (isHandoffTemplate(messages[i].body || '')) {
+      handoffIndex = i;
+      break;
+    }
+  }
+
+  if (handoffIndex === -1) {
+    // No handoff template = likely email-only ticket, no bot flow
+    return 0;
+  }
+
+  // First agent message after the handoff is human
+  for (let i = handoffIndex + 1; i < messages.length; i++) {
+    if (messages[i].sender === 'agent') return i;
+  }
+
+  return -1;
+}
+
+/** Check if a message is the Gorgias handoff template */
+function isHandoffTemplate(text) {
+  return /thanks for reaching out[\s\S]*our team will get back to you[\s\S]*subject:/i.test(text);
+}
+
+/** Parse the Gorgias handoff template into structured data */
+function parseHandoffTemplate(text) {
+  const result = {};
+  const subjectMatch = text.match(/Subject:\s*(.+?)(?=\s*Message:|$)/i);
+  if (subjectMatch) result.subject = subjectMatch[1].trim();
+
+  const messageMatch = text.match(/Message:\s*(.+?)(?=\s*Order number:|$)/is);
+  if (messageMatch) result.message = messageMatch[1].trim();
+
+  const orderMatch = text.match(/Order number:\s*(#?\d+(?:\s*-\s*\$[\d,.]+)?(?:\s*-\s*[^,\n]+)?)/i);
+  if (orderMatch) result.order = orderMatch[1].trim();
+
+  const itemsMatch = text.match(/Selected items:\s*(.+?)(?=\s*Created:|$)/is);
+  if (itemsMatch) {
+    result.items = itemsMatch[1].trim()
+      .split(/\d+x\s+/i).filter(Boolean)
+      .map(i => i.replace(/\s*-\s*$/, '').replace(/THE\s+/i, '').split(/\s+-\s+/)[0].trim())
+      .filter(Boolean);
+  }
+
+  // Also extract the customer's actual message from within the template
+  const customerMsg = text.match(/(?:Return|Exchange)\s+(.+?)(?=\s*Order number:|$)/is);
+  if (customerMsg && !result.message) result.message = customerMsg[1].trim();
+
+  return Object.keys(result).length ? result : null;
+}
+
+/** Render a handoff template as a clean card */
+function renderHandoffCard(data) {
+  let html = '<div class="handoff-card">';
+  html += '<div class="handoff-label">Customer request (via bot)</div>';
+  if (data.message) html += `<div class="handoff-message">"${esc(data.message)}"</div>`;
+  if (data.order) html += `<div class="handoff-order">${esc(data.order)}</div>`;
+  if (data.items?.length) {
+    html += `<div class="handoff-items">${data.items.map(i => esc(i)).join(' · ')}</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+/** Check if a customer message is the Gorgias order form output */
+function isOrderFormOutput(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return (lower.includes('order number:') && lower.includes('selected items:'))
+    || (lower.includes('selected items:') && lower.includes('total:'))
+    || /^#\d+\s*[-–]\s*\$[\d,.]+\s*[-–]/.test(text.trim());
+}
+
+/** Render the order form output as a clean "Customer selected" card using AI intake data */
+function renderOrderSelectionCard(ticket) {
+  const intake = ticket.active_draft?.structured_output?.intake
+    || ticket.active_draft?.intake_state
+    || {};
+  const items = intake.items || [];
+  const orderNum = ticket.order_number;
+
+  let html = '<div class="handoff-card">';
+  html += '<div class="handoff-label">Customer selected</div>';
+  if (orderNum) html += `<div class="handoff-order">Order #${String(orderNum).replace(/^#/, '')}</div>`;
+  if (items.length) {
+    html += '<div class="order-selection-items">';
+    for (const item of items) {
+      const product = item.product || item.title || '?';
+      const size = item.size || item.variant || '';
+      const issue = item.issue || '';
+      html += `<div class="order-selection-item">
+        <span class="order-selection-product">${esc(product)}</span>
+        ${size ? `<span class="order-selection-size">${esc(size)}</span>` : ''}
+        ${issue ? `<span class="order-selection-issue">${esc(issue)}</span>` : ''}
+      </div>`;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+/** Render Gorgias order form as compact card with product nicknames */
+function renderOrderFormCompact(text) {
+  // Extract items: "1x THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR – Pink / L"
+  const itemLines = text.match(/\d+x\s+.+/gi) || [];
+  const nicknames = {
+    'CHARLIE': 'Charlie', 'AJ': 'AJ', 'SERENA': 'Serena', 'RUBY': 'Ruby',
+    'BROOKE': 'Brooke', 'AVA': 'Ava', 'CHEEKY': 'Cheeky', 'SASSY': 'Sassy',
+    'FLO': 'Flo', 'BIKINI': 'Bikini',
+  };
+
+  const items = itemLines.map(line => {
+    const qtyMatch = line.match(/^(\d+)x\s+/i);
+    const qty = qtyMatch ? qtyMatch[1] : '1';
+    const rest = line.replace(/^\d+x\s+/i, '');
+    // Find nickname
+    let name = rest;
+    for (const [key, nick] of Object.entries(nicknames)) {
+      if (rest.toUpperCase().includes(key)) { name = nick; break; }
+    }
+    // Extract variant (after last –)
+    const variantMatch = rest.match(/[-–]\s*([^-–]+)$/);
+    const variant = variantMatch ? variantMatch[1].trim() : '';
+    return `${qty} x ${esc(name)} ${esc(variant)}`;
+  });
+
+  if (!items.length) return ''; // fallback: skip if parsing failed
+
+  return `<div class="handoff-card">
+    <div class="handoff-label">Customer selected</div>
+    <div class="order-form-items">${items.join('<br>')}</div>
+  </div>`;
+}
+
+/** Render a single message bubble */
+function renderMessageBubble(m, ticket) {
+  // Replace Gorgias order form with a compact card using product nicknames
+  if (m.sender === 'customer' && isOrderFormOutput(m.body)) {
+    return renderOrderFormCompact(m.body);
+  }
+
+  const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
+  const cleaned = cleanMessageBody(rawHtml);
+  const processed = collapseQuotedContent(cleaned);
+  return `
+    <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
+      <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} – ${timeAgo(m.created_at, 'long')}</div>
+      <div class="msg-body">${processed}</div>
+    </div>`;
+}
+
+/** Render conversation — everything before first human agent = bot intake flow (collapsed) */
+function renderConversation(messages, ticket) {
+  const boundary = findFirstHumanAgentIndex(messages);
+  const parts = [];
+
+  // If there's a bot intake flow (boundary > 0), collapse it
+  if (boundary > 0) {
+    const botMessages = messages.slice(0, boundary);
+    const botCount = botMessages.length;
+
+    // Check for handoff template in the bot flow
+    let handoffData = null;
+    for (const m of botMessages) {
+      if (isHandoffTemplate(m.body || '')) {
+        handoffData = parseHandoffTemplate(m.body);
+      }
+    }
+
+    // Extract customer messages from within the bot flow (their actual words, not button clicks)
+    const customerMsgsInBot = botMessages.filter(m => {
+      if (m.sender !== 'customer') return false;
+      const text = (m.body || '').trim().toLowerCase();
+      // Skip button echoes and empty
+      if (!text || text === 'go back' || text === 'no' || text.length < 3) return false;
+      // Skip if it's just a menu option label
+      if (['help me with a return or exchange', 'start a return or exchange',
+           'learn about our returns and exchanges policy', 'sign in to continue',
+           'no, i need more help', 'exchange', 'return'].includes(text)) return false;
+      // Skip order selection echoes (e.g. "#29920 - $67.00 - April 7, 2026") — info is in the order form
+      if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) return false;
+      return true;
+    });
+
+    // Render collapsed bot group
+    parts.push(`<details class="bot-group">
+      <summary class="bot-group-summary">Bot intake · ${botCount} messages</summary>
+      <div class="bot-group-messages">${botMessages.map(m => renderMessageBubble(m, ticket)).join('')}</div>
+    </details>`);
+
+    // Show handoff card if present
+    if (handoffData) parts.push(renderHandoffCard(handoffData));
+
+    // Show customer messages from within the bot flow as real messages
+    // (these are the customer's actual words, not button clicks)
+    for (const m of customerMsgsInBot) {
+      parts.push(renderMessageBubble(m, ticket));
+    }
+  }
+
+  // Render everything from the boundary onwards normally
+  const start = boundary > 0 ? boundary : 0;
+  for (let i = start; i < messages.length; i++) {
+    const m = messages[i];
+    const text = (m.body || '').trim();
+    if (!text) continue; // skip empty
+    parts.push(renderMessageBubble(m, ticket));
+  }
+
+  return parts.join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -2047,4 +2394,180 @@ async function simSendActionMessage() {
 function formatAddress(a) {
   if (!a) return '';
   return [a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ');
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Navigation
+// ---------------------------------------------------------------------------
+
+function isMobile() {
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function mobileBackToQueue() {
+  document.body.classList.remove('mobile-detail-view');
+  // Pop history state so browser back doesn't re-enter detail
+  if (history.state?.mobileDetail) history.back();
+}
+
+// Populate the sticky customer summary bar on mobile
+function updateSummaryBar(ticket) {
+  // Always populate (hidden on desktop via CSS, visible on mobile)
+
+  const name = ticket.customer_name || ticket.customer_email || '';
+  const orderNum = String(ticket.order_number || '').replace(/^#/, ''); // strip leading # if present
+  const order = orderNum ? `#${orderNum}` : '';
+
+  document.getElementById('summary-name').textContent = name;
+  document.getElementById('summary-order').textContent = order;
+
+  // Category pill (reuse desktop badge classes)
+  const categoryEl = document.getElementById('summary-category');
+  const category = ticket.active_draft?.message_type || '';
+  const categoryLabel = category.replace(/_/g, ' ');
+  categoryEl.textContent = categoryLabel;
+  categoryEl.className = 'category-badge category-' + (category.split('_')[0] || 'general');
+  categoryEl.style.display = category ? '' : 'none';
+
+  // Context tags — follow-up, prior actions, alerts (as colored pills)
+  const contextEl = document.getElementById('summary-context');
+  if (contextEl) {
+    const tags = [];
+
+    if (currentTab === 'followup') {
+      tags.push('<span class="context-tag context-tag-followup">follow-up</span>');
+    }
+
+    const action = ticket.active_draft?.action_type;
+    if (action === 'exchange') tags.push('<span class="context-tag context-tag-exchanged">exchanged</span>');
+    else if (action === 'refund') tags.push('<span class="context-tag context-tag-refunded">refunded</span>');
+    else if (action === 'edit') tags.push('<span class="context-tag context-tag-edited">edited</span>');
+
+    const status = ticket.active_draft?.advisor_status || '';
+    if (status === 'needs_info') tags.push('<span class="context-tag context-tag-alert">needs info</span>');
+    else if (status === 'route_to_human') tags.push('<span class="context-tag context-tag-alert">manual</span>');
+
+    contextEl.innerHTML = tags.join('');
+  }
+
+  // Collapse expanded on new ticket
+  document.getElementById('summary-expanded').style.display = 'none';
+}
+
+function toggleSummaryExpand() {
+  const el = document.getElementById('summary-expanded');
+  if (el.style.display === 'none') {
+    // Populate with full sidebar context (customer, order, past orders, past tickets)
+    const parts = [];
+
+    const customerCard = document.getElementById('customer-card');
+    if (customerCard?.innerHTML) parts.push(customerCard.innerHTML);
+
+    const ticketOrder = document.getElementById('ticket-order');
+    if (ticketOrder?.innerHTML) parts.push(ticketOrder.innerHTML);
+
+    const otherOrders = document.getElementById('other-orders-section');
+    if (otherOrders && otherOrders.style.display !== 'none') parts.push(otherOrders.innerHTML);
+
+    const pastTickets = document.getElementById('past-tickets-section');
+    if (pastTickets && pastTickets.style.display !== 'none') {
+      parts.push(pastTickets.outerHTML);
+    }
+
+    const sep = '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">';
+    document.getElementById('summary-expanded-content').innerHTML = parts.join(sep);
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+// Auto-collapse conversation when draft editor gets focus on mobile
+function setupDraftFocusCollapse() {
+  const editor = document.getElementById('draft-editor');
+  if (!editor) return;
+
+  editor.addEventListener('focus', () => {
+    if (!isMobile()) return;
+    const conversation = document.getElementById('detail-conversation');
+    if (conversation && conversation.open) {
+      conversation.removeAttribute('open');
+    }
+  });
+}
+
+// Keyboard handling: scroll textarea into view when mobile keyboard opens
+function setupKeyboardHandler() {
+  if (!('visualViewport' in window)) return;
+  window.visualViewport.addEventListener('resize', () => {
+    if (!isMobile()) return;
+    const el = document.activeElement;
+    if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
+      setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 100);
+    }
+  });
+}
+
+// Swipe right to go back to queue (PWA standalone only)
+function setupSwipeGesture() {
+  // Only in standalone PWA mode to avoid conflict with Safari swipe-back
+  if (!window.matchMedia('(display-mode: standalone)').matches) return;
+
+  let startX = 0, startY = 0;
+  const detail = document.getElementById('draft-detail');
+  if (!detail) return;
+
+  detail.addEventListener('touchstart', (e) => {
+    if (!isMobile() || !document.body.classList.contains('mobile-detail-view')) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+
+  detail.addEventListener('touchend', (e) => {
+    if (!isMobile() || !document.body.classList.contains('mobile-detail-view')) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = e.changedTouches[0].clientY - startY;
+    // Horizontal swipe > 80px, angle < 30 degrees from horizontal
+    if (dx > 80 && Math.abs(dy) < dx * 0.57) {
+      mobileBackToQueue();
+    }
+  }, { passive: true });
+}
+
+// Handle browser/PWA back button
+function setupHistoryNavigation() {
+  window.addEventListener('popstate', (e) => {
+    if (isMobile() && document.body.classList.contains('mobile-detail-view')) {
+      document.body.classList.remove('mobile-detail-view');
+    }
+  });
+}
+
+// Handle orientation change
+function setupOrientationHandler() {
+  window.addEventListener('resize', () => {
+    if (!isMobile() && document.body.classList.contains('mobile-detail-view')) {
+      document.body.classList.remove('mobile-detail-view');
+    }
+  });
+}
+
+// Measure mobile header height for CSS variable
+function updateMobileHeaderHeight() {
+  if (!isMobile()) return;
+  const header = document.querySelector('header');
+  if (header) {
+    document.documentElement.style.setProperty('--mobile-header-h', header.offsetHeight + 'px');
+  }
+}
+
+// Initialize all mobile features
+function initMobile() {
+  setupDraftFocusCollapse();
+  setupKeyboardHandler();
+  setupSwipeGesture();
+  setupHistoryNavigation();
+  setupOrientationHandler();
+  updateMobileHeaderHeight();
+  window.addEventListener('resize', updateMobileHeaderHeight);
 }
