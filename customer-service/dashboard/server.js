@@ -230,20 +230,8 @@ async function apiSendDraft(id, body) {
     message_type: draft.message_type,
     turn_number: draft.turn_number,
   });
-  try {
-    if (afterAction === 'close') {
-      await gorgias.closeTicket(draft.gorgias_ticket_id);
-      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-      await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
-    } else {
-      // Snooze for 3 days — if customer replies, Gorgias auto-unsnoozes
-      await gorgias.snoozeTicket(draft.gorgias_ticket_id, 3);
-    }
-  } catch (err) {
-    console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
-  }
-
-  // Append reply to conversation history
+  // Append reply to conversation history BEFORE Gorgias snooze/close
+  // (the snooze triggers a webhook that can race and overwrite history)
   const { data: ticketRow } = await supabase
     .from('cs_tickets')
     .select('conversation_history')
@@ -261,6 +249,19 @@ async function apiSendDraft(id, body) {
 
   // Update ticket status + conversation history
   await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', { conversation_history: history });
+
+  // THEN update Gorgias (may trigger webhook, but our history is already saved)
+  try {
+    if (afterAction === 'close') {
+      await gorgias.closeTicket(draft.gorgias_ticket_id);
+      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+      await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
+    } else {
+      await gorgias.snoozeTicket(draft.gorgias_ticket_id, 3);
+    }
+  } catch (err) {
+    console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
+  }
 
   return { success: true, edit_distance: editDist, gorgias_message_id: replyResult?.id, after: afterAction };
 }
