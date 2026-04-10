@@ -153,8 +153,8 @@ async function prescribeDonationRouting(intake, context) {
     return {
       phase: 'donation_routing',
       type: 'local_single',
-      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally.`,
-      audit: `Single item in ${country} — local donation (not worth shipping to partner)`,
+      response_text: `${programExplanation} Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.`,
+      audit: `Single item in ${country} — local donation + offered partner org info`,
     };
   }
 
