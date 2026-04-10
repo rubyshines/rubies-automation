@@ -234,6 +234,89 @@ async function run({ onProgress } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Duplicate ticket detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if a new ticket is a duplicate of an existing open/snoozed ticket
+ * from the same customer. Only calls the AI when there IS an existing ticket.
+ *
+ * @returns {string|object} 'close_new' | { action: 'close_existing', ticketsToClose } | 'keep_both' | null
+ */
+async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, newMessages) {
+  // Quick check: does this customer have any non-closed tickets?
+  const { data: existingTickets } = await supabase
+    .from('cs_tickets')
+    .select('id, gorgias_ticket_id, order_number, status, message_type, conversation_history, created_at')
+    .eq('customer_email', customerEmail)
+    .in('status', ['open', 'snoozed', 'follow_up'])
+    .neq('gorgias_ticket_id', newTicketId);
+
+  if (!existingTickets?.length) return null; // No existing tickets — not a duplicate
+
+  // There IS an existing ticket — ask Opus to compare
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic();
+
+  const newContent = newMessages
+    .filter(m => !m.from_agent)
+    .map(m => gorgias.stripHtml(m.stripped_text || m.body_text || ''))
+    .join('\n')
+    .substring(0, 800);
+
+  const existingSummaries = existingTickets.map(t => {
+    const msgs = t.conversation_history || [];
+    const customerMsgs = msgs.filter(m => m.sender === 'customer');
+    const agentMsgs = msgs.filter(m => m.sender === 'agent' && !m.is_bot);
+    const lastCustomer = customerMsgs[customerMsgs.length - 1]?.body?.substring(0, 300) || '';
+    const lastAgent = agentMsgs[agentMsgs.length - 1]?.body?.substring(0, 200) || '';
+    return `Ticket #${t.gorgias_ticket_id} (${t.status}, ${t.message_type || 'unknown'}, order ${t.order_number || 'none'}, created ${t.created_at?.substring(0, 10)}):
+  Customer: ${lastCustomer}
+  Agent reply: ${lastAgent || '(no reply yet)'}`;
+  }).join('\n\n');
+
+  const response = await client.messages.create({
+    model: 'claude-opus-4-6',
+    max_tokens: 200,
+    messages: [{ role: 'user', content: `A customer (${customerEmail}) just created a new support ticket. They already have existing open ticket(s). Determine if the new ticket is about the same issue.
+
+EXISTING TICKET(S):
+${existingSummaries}
+
+NEW TICKET:
+${newContent}
+
+Respond with ONLY a JSON object:
+{
+  "action": "close_new" | "close_existing" | "keep_both",
+  "reason": "brief explanation"
+}
+
+Rules:
+- "close_new": new ticket is clearly about the same issue and the existing ticket has equal or more context (e.g. agent already replied). Close the new one.
+- "close_existing": new ticket is about the same issue but has MORE context or detail. Close the old one(s), process the new one.
+- "keep_both": tickets are about genuinely different issues (different orders, different problems). Keep both.
+- Bot chat retries (short/empty messages about same topic) → close_new
+- If existing ticket already has an agent reply with sizing help → close_new (don't restart the conversation)` }],
+  });
+
+  const text = response.content[0]?.text || '';
+  try {
+    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    console.log(`[intake] Duplicate check for ${newTicketId}: ${parsed.action} — ${parsed.reason}`);
+
+    if (parsed.action === 'close_new') return 'close_new';
+    if (parsed.action === 'close_existing') {
+      return { action: 'close_existing', ticketsToClose: existingTickets };
+    }
+    return 'keep_both';
+  } catch {
+    console.warn(`[intake] Could not parse duplicate check response: ${text.substring(0, 100)}`);
+    return 'keep_both'; // When in doubt, keep both
+  }
+}
+
+// ---------------------------------------------------------------------------
 // processTicket — extracted from run() for reuse by webhook handler
 // ---------------------------------------------------------------------------
 
@@ -270,6 +353,31 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
 
   const customerEmail = ticket.customer?.email;
+
+  // Check for duplicate tickets from the same customer
+  if (customerEmail) {
+    const dupAction = await checkForDuplicateTicket(supabase, customerEmail, ticketId, messages);
+    if (dupAction === 'close_new') {
+      console.log(`[intake] Skip ${ticketId}: duplicate of existing ticket`);
+      // Close in Gorgias + add note
+      try {
+        await gorgias.addInternalNote(ticketId, 'Auto-closed: duplicate of existing open ticket for this customer.');
+        await gorgias.closeTicket(ticketId);
+      } catch (e) { console.warn(`[intake] Could not close duplicate ${ticketId}: ${e.message}`); }
+      return { skipped: true, reason: 'duplicate' };
+    }
+    if (dupAction?.action === 'close_existing') {
+      console.log(`[intake] Closing older ticket(s) — this one has more context`);
+      for (const oldTicket of dupAction.ticketsToClose) {
+        try {
+          await supabase.from('cs_tickets').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', oldTicket.id);
+          await gorgias.addInternalNote(oldTicket.gorgias_ticket_id, `Auto-closed: superseded by newer ticket #${ticketId} with more context.`);
+          await gorgias.closeTicket(oldTicket.gorgias_ticket_id);
+        } catch (e) { console.warn(`[intake] Could not close old ticket ${oldTicket.gorgias_ticket_id}: ${e.message}`); }
+      }
+    }
+    // 'keep_both' or no action → continue processing normally
+  }
 
   // Get previous draft's intake state for multi-turn
   let previousIntake = null;
