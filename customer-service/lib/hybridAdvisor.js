@@ -586,9 +586,11 @@ When a customer wants to cancel an unfulfilled order:
 - If a customer wants to PAY for items they kept from an exchange (e.g., they forgot to donate/return them), send them an invoice. Don't tell them it's free or to keep them. They're offering to do the right thing.
 
 ### Donations
+- All RUBIES returns are donated (not shipped back).
 - Skip donation info for defects (customer keeps the defective item).
 - Wash instructions only for named donation partner (not for local donations).
-- Single item in a country with partners = "feel free to donate locally" (not worth shipping).
+- Single item: tell them to donate locally, but ALWAYS offer the partner org option. Use this framing: "Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs."
+- Multiple items: call get_donation_partner to get the specific partner and address.
 
 ### Safety
 - If the message indicates danger, hiding items, or an unsafe situation, process a refund immediately with no questions. Be extra gentle.
