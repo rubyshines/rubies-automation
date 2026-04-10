@@ -462,10 +462,13 @@ async function apiRefreshDraft(id) {
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
   };
 
-  // Clear action state if no action was executed yet (stale suggestion)
-  // Keep it if action was already executed (exchange/refund already in Shopify)
-  if (!draft.action_executed_at) {
+  // Clear action state unless a two-phase action was fully completed (phase 2 done).
+  // Phase 1 previews, stale suggestions, and chat-based actions that never confirmed
+  // should all be cleared so the new draft gets a fresh action panel.
+  const actionCompleted = draft.action_result?.phase === 'completed';
+  if (!actionCompleted) {
     updates.action_result = null;
+    updates.action_executed_at = null;
   }
 
   await supabase.from('cs_ai_drafts').update(updates).eq('id', id);
