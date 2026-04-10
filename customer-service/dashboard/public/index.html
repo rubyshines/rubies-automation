@@ -53,22 +53,22 @@
             </div>
           </div>
           <div class="sidebar-context-inner">
-            <div id="customer-card"></div>
             <div id="current-ticket-header"></div>
             <div id="ticket-order"></div>
-            <div id="other-orders-section" style="display:none">
-              <div class="context-section-label">Order History <span id="other-orders-count" class="badge badge-muted"></span></div>
+            <div id="customer-card"></div>
+            <details id="other-orders-section" class="context-details" style="display:none">
+              <summary class="context-section-label">Order History <span id="other-orders-count" class="badge badge-muted"></span></summary>
               <div id="other-orders-list"></div>
-            </div>
-            <div id="past-tickets-section" style="display:none">
-              <div class="context-section-label">Past Tickets <span id="past-tickets-count" class="badge badge-muted"></span></div>
+            </details>
+            <details id="past-tickets-section" class="context-details" style="display:none">
+              <summary class="context-section-label">Past Tickets <span id="past-tickets-count" class="badge badge-muted"></span></summary>
               <div id="past-tickets-list"></div>
-            </div>
+            </details>
           </div>
         </div>
       </div>
       <div id="draft-detail" class="detail">
-        <div id="detail-placeholder">Select a ticket to review</div>
+        <div id="detail-placeholder"></div>
         <div id="detail-content" style="display:none">
 
           <!-- Mobile: combined back + summary bar (one sticky row) -->
@@ -76,9 +76,10 @@
             <button id="mobile-back-btn" class="mobile-back-arrow" onclick="mobileBackToQueue()">&larr;</button>
             <div class="mobile-header-info" onclick="toggleSummaryExpand()">
               <div class="mobile-header-line1">
+                <span id="summary-category" class="category-badge"></span>
+                <span id="summary-status-dot" class="status-dot"></span>
                 <span id="summary-name" class="summary-name"></span>
                 <span id="summary-order" class="summary-order"></span>
-                <span id="summary-category" class="category-badge"></span>
               </div>
               <div id="summary-context" class="summary-context"></div>
             </div>
@@ -131,17 +132,6 @@
             </div>
           </div>
 
-          <!-- Decision Path -->
-          <details id="detail-audit" class="detail-section">
-            <summary>Decision Path</summary>
-            <div id="audit-trail"></div>
-          </details>
-
-          <!-- Context -->
-          <details id="detail-context" class="detail-section">
-            <summary>Context</summary>
-            <div id="context-content"></div>
-          </details>
 
         </div>
       </div>

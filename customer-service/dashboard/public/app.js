@@ -233,9 +233,18 @@ async function loadTicketQueue() {
     currentQueueTicketIds = tickets.map(t => t.id);
 
     const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
+    const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
     if (!tickets.length) {
       container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabels[currentTab] || 'No tickets'}</div>`;
+      // Update detail placeholder when queue is empty
+      if (!currentTicketId) {
+        document.getElementById('detail-placeholder').textContent = allClearLabels[currentTab] || 'All clear';
+      }
       return;
+    }
+    // Update placeholder for non-empty queue
+    if (!currentTicketId) {
+      document.getElementById('detail-placeholder').textContent = 'Select a ticket to review';
     }
 
     container.innerHTML = tickets.map(t => {
