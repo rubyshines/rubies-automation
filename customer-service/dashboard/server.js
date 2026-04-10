@@ -1955,6 +1955,71 @@ async function apiReopenTicket(ticketId) {
   return { success: true };
 }
 
+async function apiForwardTicket(ticketId, body) {
+  const supabase = getSupabaseClient();
+
+  const { data: ticket, error } = await supabase
+    .from('cs_tickets')
+    .select('gorgias_ticket_id, customer_email, customer_name')
+    .eq('id', ticketId)
+    .single();
+  if (error) throw error;
+  if (!ticket.gorgias_ticket_id) throw new Error('No Gorgias ticket linked');
+
+  // Fetch full conversation from Gorgias
+  const messages = await gorgias.getTicketMessages(ticket.gorgias_ticket_id);
+  if (!messages?.length) throw new Error('No messages found');
+
+  // Get ticket subject
+  const gorgiasTicket = await gorgias.getTicket(ticket.gorgias_ticket_id);
+  const subject = gorgiasTicket?.subject || `Ticket #${ticket.gorgias_ticket_id}`;
+
+  // Compose HTML email from conversation
+  const gorgiasUrl = `https://rubies.gorgias.com/app/ticket/${ticket.gorgias_ticket_id}`;
+  let html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:700px;margin:0 auto">
+      <div style="padding:16px 20px;background:#f5f0eb;border-radius:8px;margin-bottom:16px">
+        <div style="font-size:14px;font-weight:600;margin-bottom:4px">${subject}</div>
+        <div style="font-size:12px;color:#666">
+          Customer: ${ticket.customer_name || ''} &lt;${ticket.customer_email}&gt;
+          &nbsp;&middot;&nbsp; <a href="${gorgiasUrl}" style="color:#1a7f64">View in Gorgias</a>
+        </div>
+      </div>`;
+
+  for (const m of messages) {
+    if (m.channel === 'internal-note') continue;
+    const isCustomer = m.from_agent === false || m.from_agent === 'False';
+    const borderColor = isCustomer ? '#1a7f64' : '#ccc';
+    const senderLabel = isCustomer ? (ticket.customer_name || ticket.customer_email) : 'Agent';
+    const timestamp = m.created_datetime ? new Date(m.created_datetime).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const bodyHtml = m.body_html || m.stripped_html || (m.body_text || '').replace(/\n/g, '<br>');
+
+    html += `
+      <div style="border-left:3px solid ${borderColor};padding:12px 16px;margin-bottom:12px;background:#fff;border-radius:0 6px 6px 0">
+        <div style="font-size:11px;color:#888;margin-bottom:6px">${senderLabel} &middot; ${timestamp}</div>
+        <div style="font-size:14px;line-height:1.5">${bodyHtml}</div>
+      </div>`;
+  }
+
+  html += '</div>';
+
+  // Send via SendGrid
+  const { getSendgridClient } = require('../../shared/sendgridClient');
+  const sgMail = getSendgridClient();
+  if (!sgMail) throw new Error('SendGrid not configured');
+
+  const recipientEmail = body.to || 'iamjamiealexander@gmail.com';
+  await sgMail.send({
+    to: recipientEmail,
+    from: { name: 'RUBIES Customer Care', email: 'care@rubyshines.com' },
+    subject: `[FWD] ${subject}`,
+    html,
+    trackingSettings: { clickTracking: { enable: false, enableText: false } },
+  });
+
+  return { success: true, forwarded_to: recipientEmail };
+}
+
 async function apiParkTicket(ticketId) {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
@@ -2117,6 +2182,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/park$/, handler: (_, id) => apiParkTicket(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpark$/, handler: (_, id) => apiUnparkTicket(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/forward$/, handler: (body, id) => apiForwardTicket(parseInt(id), body) },
   // Legacy draft routes (kept for simulator + backward compat)
   { method: 'POST', pattern: /^\/api\/test$/, handler: (body) => apiRunTest(body) },
   { method: 'POST', pattern: /^\/api\/replay$/, handler: (body) => apiReplayTicket(body) },

@@ -5,6 +5,8 @@ let currentTicket = null;
 let currentTab = 'new';
 let knownTicketIds = new Set();
 let currentQueueTicketIds = []; // ordered list of ticket IDs in current queue view
+let ticketsProcessedThisSession = 0;
+let lastActionTime = 0;
 
 // Legacy aliases for simulator compatibility
 let currentDraftId = null;
@@ -197,7 +199,9 @@ function switchTab(tab) {
     currentDraftId = null;
     currentDraft = null;
     location.hash = '';
-    document.getElementById('detail-placeholder').style.display = 'flex';
+    const ph = document.getElementById('detail-placeholder');
+    ph.style.display = 'flex';
+    ph.textContent = 'Select a ticket to review';
     document.getElementById('detail-content').style.display = 'none';
     showSidebarQueue();
     loadTicketQueue();
@@ -240,7 +244,7 @@ async function loadTicketQueue() {
       const parked = isParked ? parkedAge(t.parked_at) : null;
       const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
       return `
-      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" onclick="selectTicket(${t.id})">
+      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
         ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
         <div class="queue-item-inner">
           <div class="queue-item-header">
@@ -282,10 +286,8 @@ async function selectTicket(id) {
 
   // Highlight in queue
   document.querySelectorAll('.queue-item').forEach(el => el.classList.remove('active'));
-  const items = document.querySelectorAll('.queue-item');
-  items.forEach(el => {
-    if (el.onclick.toString().includes(id)) el.classList.add('active');
-  });
+  const matchEl = document.querySelector(`.queue-item[data-ticket-id="${id}"]`);
+  if (matchEl) matchEl.classList.add('active');
 
   try {
     currentTicket = await api(`/api/tickets/${id}`);
@@ -1059,11 +1061,11 @@ async function sendDraft(afterAction) {
 
     await api(endpoint, { method: 'POST', body });
     btn.textContent = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
-    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
-    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
+    const sentTicketId = currentTicketId;
+    localStorage.removeItem(`draft-ticket-${sentTicketId}`);
+    localStorage.removeItem(`notes-ticket-${sentTicketId}`);
     setTimeout(() => {
-      clearTicketSelection();
-      loadTicketQueue();
+      advanceToNextTicket(sentTicketId);
       loadStats();
     }, 1500);
   } catch (err) {
@@ -1083,14 +1085,14 @@ async function closeNoReply() {
   btn.textContent = 'Closing...';
 
   try {
-    await api(`/api/tickets/${currentTicketId}/close`, {
+    const closedTicketId = currentTicketId;
+    await api(`/api/tickets/${closedTicketId}/close`, {
       method: 'POST',
       body: { notes },
     });
-    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
-    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
-    clearTicketSelection();
-    loadTicketQueue();
+    localStorage.removeItem(`draft-ticket-${closedTicketId}`);
+    localStorage.removeItem(`notes-ticket-${closedTicketId}`);
+    advanceToNextTicket(closedTicketId);
     loadStats();
   } catch (err) {
     btn.textContent = 'Close';
@@ -1105,7 +1107,9 @@ function clearTicketSelection() {
   currentDraftId = null;
   currentDraft = null;
   location.hash = '';
-  document.getElementById('detail-placeholder').style.display = 'flex';
+  const ph = document.getElementById('detail-placeholder');
+  ph.style.display = 'flex';
+  ph.textContent = 'Select a ticket to review'; // Reset from queue-clear state
   document.getElementById('detail-content').style.display = 'none';
   // Clear stale content
   document.getElementById('conversation-thread').innerHTML = '';
@@ -1116,6 +1120,91 @@ function clearTicketSelection() {
   document.getElementById('current-ticket-header').innerHTML = '';
   document.getElementById('action-panel').style.display = 'none';
   showSidebarQueue();
+}
+
+// ---------------------------------------------------------------------------
+// Auto-advance after action
+// ---------------------------------------------------------------------------
+
+function advanceToNextTicket(removedTicketId) {
+  const idx = currentQueueTicketIds.indexOf(removedTicketId);
+  currentQueueTicketIds = currentQueueTicketIds.filter(id => id !== removedTicketId);
+
+  // Animate removal from sidebar queue
+  const queueEl = document.querySelector(`.queue-item[data-ticket-id="${removedTicketId}"]`);
+  if (queueEl) {
+    queueEl.classList.add('queue-item-removing');
+    queueEl.addEventListener('animationend', () => queueEl.remove());
+  }
+
+  // Track session stats (reset after 30min idle)
+  const now = Date.now();
+  if (lastActionTime && (now - lastActionTime) > 30 * 60 * 1000) {
+    ticketsProcessedThisSession = 0;
+  }
+  lastActionTime = now;
+  ticketsProcessedThisSession++;
+
+  // Update back button count
+  updateBackButton();
+
+  if (currentQueueTicketIds.length === 0) {
+    showQueueClearState();
+    return;
+  }
+
+  // Advance: try next (same index position), fall back to previous
+  const nextIdx = Math.min(idx, currentQueueTicketIds.length - 1);
+  selectTicket(currentQueueTicketIds[nextIdx]);
+}
+
+async function showQueueClearState() {
+  // Clear ticket state
+  currentTicketId = null;
+  currentTicket = null;
+  currentDraftId = null;
+  currentDraft = null;
+  location.hash = '';
+
+  // Show in detail panel (not the sidebar)
+  document.getElementById('detail-content').style.display = 'none';
+  const placeholder = document.getElementById('detail-placeholder');
+  placeholder.style.display = 'flex';
+
+  // Build next-lane buttons from stats
+  let nextLaneHTML = '';
+  try {
+    const s = await api('/api/tickets/stats');
+    const lanes = [
+      { tab: 'new', label: 'new', count: s.new },
+      { tab: 'followup', label: 'follow-up', count: s.followup },
+      { tab: 'parked', label: 'parked', count: s.parked },
+    ];
+    const available = lanes.filter(l => l.count > 0 && l.tab !== currentTab);
+    if (available.length > 0) {
+      nextLaneHTML = '<div class="queue-clear-lanes">' +
+        available.map(l => `<button class="queue-clear-lane-btn" onclick="switchTab('${l.tab}')">${l.count} ${l.label}</button>`).join('') +
+        '</div>';
+    }
+  } catch (e) { /* stats fetch failed, skip lane buttons */ }
+
+  const allClear = !nextLaneHTML;
+  placeholder.innerHTML = `
+    <div class="queue-clear-state">
+      <div class="queue-clear-icon">${allClear ? '&#10024;' : '&#10003;'}</div>
+      <div class="queue-clear-heading">${allClear ? 'All queues clear' : 'All caught up'}</div>
+      <div class="queue-clear-count">${ticketsProcessedThisSession} ticket${ticketsProcessedThisSession !== 1 ? 's' : ''} processed this session</div>
+      ${nextLaneHTML}
+    </div>
+  `;
+
+  // Show sidebar queue (which is now empty)
+  showSidebarQueue();
+
+  // Mobile: exit detail view since there's nothing left
+  if (isMobile()) {
+    document.body.classList.remove('mobile-detail-view');
+  }
 }
 
 function navigateTicket(direction) {
@@ -1207,12 +1296,12 @@ async function releaseDraft() {
   const notes = document.getElementById('draft-notes').value || undefined;
 
   try {
-    await api(`/api/tickets/${currentTicketId}/release`, {
+    const releasedTicketId = currentTicketId;
+    await api(`/api/tickets/${releasedTicketId}/release`, {
       method: 'POST',
       body: { notes },
     });
-    clearTicketSelection();
-    loadTicketQueue();
+    advanceToNextTicket(releasedTicketId);
     loadStats();
   } catch (err) {
     alert('Release failed: ' + err.message);
@@ -1224,11 +1313,11 @@ async function markSpam() {
   if (!confirm('Mark as spam? This will close the ticket in Gorgias and tag it as spam.')) return;
 
   try {
-    await api(`/api/tickets/${currentTicketId}/spam`, { method: 'POST', body: {} });
-    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
-    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
-    clearTicketSelection();
-    loadTicketQueue();
+    const spamTicketId = currentTicketId;
+    await api(`/api/tickets/${spamTicketId}/spam`, { method: 'POST', body: {} });
+    localStorage.removeItem(`draft-ticket-${spamTicketId}`);
+    localStorage.removeItem(`notes-ticket-${spamTicketId}`);
+    advanceToNextTicket(spamTicketId);
     loadStats();
   } catch (err) {
     alert('Spam failed: ' + err.message);
@@ -1240,11 +1329,11 @@ async function deleteDraft() {
   if (!confirm('Are you sure you want to delete this draft? This cannot be undone.')) return;
 
   try {
-    await api(`/api/tickets/${currentTicketId}/delete`, { method: 'POST', body: {} });
-    localStorage.removeItem(`draft-ticket-${currentTicketId}`);
-    localStorage.removeItem(`notes-ticket-${currentTicketId}`);
-    clearTicketSelection();
-    loadTicketQueue();
+    const deletedTicketId = currentTicketId;
+    await api(`/api/tickets/${deletedTicketId}/delete`, { method: 'POST', body: {} });
+    localStorage.removeItem(`draft-ticket-${deletedTicketId}`);
+    localStorage.removeItem(`notes-ticket-${deletedTicketId}`);
+    advanceToNextTicket(deletedTicketId);
     loadStats();
   } catch (err) {
     alert('Delete failed: ' + err.message);
@@ -1283,12 +1372,12 @@ async function sendSimpleMessage(afterAction) {
   if (!message.trim()) { alert('Please enter a message'); return; }
 
   try {
-    await api(`/api/tickets/${currentTicketId}/message`, {
+    const sentTicketId = currentTicketId;
+    await api(`/api/tickets/${sentTicketId}/message`, {
       method: 'POST',
       body: { message, after: afterAction },
     });
-    clearTicketSelection();
-    loadTicketQueue();
+    advanceToNextTicket(sentTicketId);
     loadStats();
   } catch (err) {
     alert('Send failed: ' + err.message);
@@ -1311,9 +1400,9 @@ async function reopenTicket() {
 async function parkTicket() {
   if (!currentTicketId) return;
   try {
-    await api(`/api/tickets/${currentTicketId}/park`, { method: 'POST', body: {} });
-    clearTicketSelection();
-    loadTicketQueue();
+    const parkedTicketId = currentTicketId;
+    await api(`/api/tickets/${parkedTicketId}/park`, { method: 'POST', body: {} });
+    advanceToNextTicket(parkedTicketId);
     loadStats();
   } catch (err) {
     alert('Park failed: ' + err.message);
@@ -1323,12 +1412,32 @@ async function parkTicket() {
 async function unparkTicket() {
   if (!currentTicketId) return;
   try {
-    await api(`/api/tickets/${currentTicketId}/unpark`, { method: 'POST', body: {} });
-    clearTicketSelection();
-    loadTicketQueue();
+    const unparkedTicketId = currentTicketId;
+    await api(`/api/tickets/${unparkedTicketId}/unpark`, { method: 'POST', body: {} });
+    advanceToNextTicket(unparkedTicketId);
     loadStats();
   } catch (err) {
     alert('Unpark failed: ' + err.message);
+  }
+}
+
+async function forwardTicket() {
+  if (!currentTicketId) return;
+  const to = prompt('Forward to email:', 'iamjamiealexander@gmail.com');
+  if (!to) return;
+
+  const btn = document.getElementById('btn-forward');
+  btn.disabled = true;
+  btn.textContent = 'Forwarding...';
+
+  try {
+    await api(`/api/tickets/${currentTicketId}/forward`, { method: 'POST', body: { to } });
+    btn.textContent = 'Forwarded';
+    setTimeout(() => { btn.textContent = 'Forward'; btn.disabled = false; }, 2000);
+  } catch (err) {
+    btn.textContent = 'Forward';
+    btn.disabled = false;
+    alert('Forward failed: ' + err.message);
   }
 }
 

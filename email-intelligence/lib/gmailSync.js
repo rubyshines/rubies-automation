@@ -217,7 +217,7 @@ async function fetchMessage(gmail, messageId) {
     date: new Date(parseInt(res.data.internalDate)).toISOString(),
     body_text: bodyText,
     labels: res.data.labelIds || [],
-    is_sent: fromAddr === OUR_ADDRESS || (res.data.labelIds || []).includes('SENT'),
+    is_sent: fromAddr === OUR_ADDRESS || fromAddr.endsWith('@rubyshines.com') || (res.data.labelIds || []).includes('SENT'),
     has_attachments: attachments.length > 0,
     attachment_meta: attachments.length > 0 ? attachments : null,
     is_auto_reply: isAutoReply(headers),
