@@ -1590,18 +1590,21 @@ RULES:
 // Helpers
 // ---------------------------------------------------------------------------
 
-function extractTrackingUrl(fulfillments) {
+function extractTrackingInfo(fulfillments) {
   if (!fulfillments || !Array.isArray(fulfillments)) return null;
   for (const f of fulfillments) {
-    if (f.tracking_url) return f.tracking_url;
-    if (f.tracking_urls?.length) return f.tracking_urls[0];
-    // Shopify GraphQL format
-    if (f.trackingInfo?.length) {
-      const ti = f.trackingInfo[0];
-      if (ti.url) return ti.url;
-    }
+    const url = f.tracking_url || f.tracking_urls?.[0] || f.trackingInfo?.[0]?.url || null;
+    const number = f.tracking_number || f.tracking_numbers?.[0] || f.trackingInfo?.[0]?.number || null;
+    const company = f.tracking_company || f.trackingInfo?.[0]?.company || null;
+    const status = f.shipment_status || f.status || null;
+    if (url || number) return { url, number, company, status };
   }
   return null;
+}
+
+function extractTrackingUrl(fulfillments) {
+  const info = extractTrackingInfo(fulfillments);
+  return info?.url || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1693,7 +1696,7 @@ async function apiGetCustomerContext(email, orderNumber) {
         .select('title, variant_title, sku, quantity, unit_price, unit_price_currency')
         .eq('shopify_order_id', matchedOrder.shopify_order_id);
 
-      const trackingUrl = extractTrackingUrl(matchedOrder.fulfillments);
+      const trackingInfo = extractTrackingInfo(matchedOrder.fulfillments);
       ticketOrder = {
         order_number: matchedOrder.order_number,
         created_at: matchedOrder.created_at,
@@ -1704,7 +1707,10 @@ async function apiGetCustomerContext(email, orderNumber) {
         shopify_order_id: matchedOrder.shopify_order_id,
         shipping_address: matchedOrder.shipping_address,
         warehance_url: warehanceRes ? warehanceOrderUrl(warehanceRes) : null,
-        tracking_url: trackingUrl,
+        tracking_url: trackingInfo?.url || null,
+        tracking_company: trackingInfo?.company || null,
+        tracking_number: trackingInfo?.number || null,
+        tracking_status: trackingInfo?.status || null,
         items: (items || []).map(i => ({
           title: i.title,
           variant: i.variant_title,
@@ -1744,6 +1750,8 @@ async function apiGetCustomerContext(email, orderNumber) {
     shopify_order_id: o.shopify_order_id,
     shipping_address: o.shipping_address,
     tracking_url: extractTrackingUrl(o.fulfillments),
+    tracking_company: extractTrackingInfo(o.fulfillments)?.company || null,
+    tracking_number: extractTrackingInfo(o.fulfillments)?.number || null,
     items: (otherLineItems[o.shopify_order_id] || []).map(i => ({
       title: i.title,
       variant: i.variant_title,
@@ -2081,6 +2089,14 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/delete$/, handler: (_, id) => apiDeleteDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/spam$/, handler: (_, id) => apiMarkSpam(parseInt(id)) },
   // Ticket-centric routes
+  { method: 'GET', pattern: /^\/api\/tickets\/by-gorgias\/(\d+)$/, handler: async (_, gorgiasId) => {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase.from('cs_tickets')
+      .select('id')
+      .eq('gorgias_ticket_id', parseInt(gorgiasId))
+      .single();
+    return data || { id: null };
+  }},
   { method: 'GET', pattern: /^\/api\/tickets\/(\d+)$/, handler: (_, id) => apiGetTicket(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/send$/, handler: (body, id) => {
     // Delegate to draft send via active_draft_id
@@ -2170,13 +2186,23 @@ const paramRoutes = [
         return apiExecuteEdit(t.active_draft_id, body);
       });
   }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/action-chat$/, handler: (body, id) => {
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/action-chat$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
-    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
-      .then(({ data: t }) => {
-        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiActionChat(t.active_draft_id, body);
-      });
+    const { data: t } = await supabase.from('cs_tickets')
+      .select('active_draft_id, customer_email, order_number, order_context')
+      .eq('id', parseInt(id)).single();
+    if (t?.active_draft_id) return apiActionChat(t.active_draft_id, body);
+
+    // No active draft — run action chat with ticket context directly
+    const { routeAction } = require('../lib/actionRouter');
+    const orderCtx = t?.order_context || {};
+    const context = {
+      customer_email: t?.customer_email,
+      order_number: (t?.order_number || '').replace('#', ''),
+      order_items: orderCtx.items || [],
+      fulfillment_status: orderCtx.fulfillment_status,
+    };
+    return routeAction(body.message, context, body.history || []);
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/message$/, handler: (body, id) => apiSendTicketMessage(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },

@@ -271,13 +271,15 @@ async function loadTicketQueue() {
         ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
         <div class="queue-item-inner">
           <div class="queue-item-row1">
-            <span class="category-badge ${categoryClass}">${esc(categoryLabel)}</span>
             <span class="status-dot ${statusClass}"></span>
             <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
-            ${orderStr ? `<span class="queue-item-dash">&mdash;</span><span class="queue-item-order">${esc(orderStr)}</span>` : ''}
             <span class="queue-item-time">${timeStr}</span>
           </div>
-          ${row2Parts.length ? `<div class="queue-item-row2">${row2Parts.join('')}</div>` : ''}
+          <div class="queue-item-row2">
+            <span class="category-badge ${categoryClass}">${esc(categoryLabel)}</span>
+            ${orderStr ? `<span class="queue-item-order">${esc(orderStr)}</span>` : ''}
+            ${row2Parts.join('')}
+          </div>
         </div>
       </div>`;
     }).join('');
@@ -625,12 +627,18 @@ async function loadCustomerContext(email, orderNumber) {
       renderOtherOrders(5);
     }
 
-    // Render past tickets
-    if (ctx.past_tickets?.length) {
-      document.getElementById('past-tickets-section').style.display = '';
-      document.getElementById('past-tickets-count').textContent = ctx.past_tickets.length;
+    // Render past tickets (exclude the current ticket)
+    const currentGorgiasId = String(currentTicket?.gorgias_ticket_id || '');
+    const filteredPastTickets = (ctx.past_tickets || []).filter(t =>
+      !currentGorgiasId || String(t.gorgias_ticket_id) !== currentGorgiasId
+    );
+    // Always show past tickets section (with count, even if 0)
+    const pastSection = document.getElementById('past-tickets-section');
+    pastSection.style.display = '';
+    document.getElementById('past-tickets-count').textContent = filteredPastTickets.length;
+    if (filteredPastTickets.length) {
       const now = Date.now();
-      document.getElementById('past-tickets-list').innerHTML = ctx.past_tickets.map(t => {
+      document.getElementById('past-tickets-list').innerHTML = filteredPastTickets.map(t => {
         const categoryClass = getCategoryClass(t.category);
         const resIcon = t.resolution_successful === true ? '<span class="resolution-icon" style="color:var(--green)">&#10003;</span>'
           : t.resolution_successful === false ? '<span class="resolution-icon" style="color:var(--red)">&#10007;</span>'
@@ -655,6 +663,11 @@ async function loadCustomerContext(email, orderNumber) {
           </div>
         </div>`;
       }).join('');
+      pastSection.classList.remove('context-details-empty');
+    } else {
+      document.getElementById('past-tickets-list').innerHTML = '';
+      pastSection.removeAttribute('open');
+      pastSection.classList.add('context-details-empty');
     }
 
   } catch (err) {
@@ -1009,7 +1022,7 @@ function removeChatThinking() {
 }
 
 async function sendActionMessage() {
-  if (!currentDraftId) return;
+  if (!currentTicketId) return;
 
   const input = document.getElementById('action-chat-input');
   const sendBtn = document.getElementById('action-chat-send');
