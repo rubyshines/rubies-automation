@@ -1398,6 +1398,28 @@ const ACTION_CHAT_TOOLS = [
   },
 ];
 
+function extractActionLinks(toolResults) {
+  const links = [];
+  for (const tr of (toolResults || [])) {
+    const text = typeof tr.result === 'string' ? tr.result : '';
+    // Shopify order links
+    const orderMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+orders\/(\d+)/g);
+    for (const m of orderMatches) {
+      const orderNum = text.match(/#(\d{4,6})/);
+      links.push({ type: 'order', label: `Order ${orderNum ? orderNum[0] : ''}`, url: m[0] });
+    }
+    // Shopify draft order links
+    const draftMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+draft_orders\/(\d+)/g);
+    for (const m of draftMatches) {
+      const draftNum = text.match(/#D(\d+)/);
+      links.push({ type: 'draft', label: `Draft ${draftNum ? draftNum[0] : ''}`, url: m[0] });
+    }
+  }
+  // Dedupe by URL
+  const seen = new Set();
+  return links.filter(l => { if (seen.has(l.url)) return false; seen.add(l.url); return true; });
+}
+
 async function apiActionChat(draftId, body) {
   const { routeAction } = require('../lib/actionRouter');
   const supabase = getSupabaseClient();
@@ -1444,6 +1466,9 @@ async function apiActionChat(draftId, body) {
   }
 
   await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
+
+  // Extract Shopify admin links from tool results for the UI
+  result.links = extractActionLinks(result.tool_results);
 
   return result;
 }
@@ -2251,7 +2276,9 @@ const paramRoutes = [
       intake: null,
     };
     try {
-      return await routeAction(body.message, context, body.history || []);
+      const result = await routeAction(body.message, context, body.history || []);
+      result.links = extractActionLinks(result.tool_results);
+      return result;
     } catch (err) {
       console.error(`[action-chat] No-draft fallback error:`, err.message, err.stack);
       throw err;

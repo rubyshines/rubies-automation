@@ -1062,6 +1062,14 @@ async function sendActionMessage() {
       appendChatMessage('assistant', result.response);
     }
 
+    // Show action links (Shopify admin links for orders/drafts)
+    if (result.links?.length) {
+      const linksHtml = result.links.map(l =>
+        `<a href="${esc(l.url)}" target="_blank" class="action-link action-link-${l.type}">${esc(l.label)} &#8599;</a>`
+      ).join(' ');
+      appendChatMessage('assistant', linksHtml);
+    }
+
     // Update history for next message
     _actionChatHistory = result.history || [];
 

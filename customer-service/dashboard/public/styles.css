@@ -1673,6 +1673,20 @@ main { height: calc(100vh - 56px); }
   white-space: pre-wrap;
 }
 
+.action-link {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-right: 6px;
+}
+.action-link-order { background: var(--green); color: white; }
+.action-link-order:hover { opacity: 0.9; }
+.action-link-draft { background: var(--surface-inset); color: var(--green); border: 1px solid var(--border); }
+.action-link-draft:hover { background: var(--border); }
+
 .action-msg-tool {
   background: transparent;
   border: none;
