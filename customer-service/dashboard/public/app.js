@@ -1047,8 +1047,8 @@ async function sendActionMessage() {
     // Show tool calls first (like Claude Code — show the work before the answer)
     if (result.tool_results?.length) {
       for (const tr of result.tool_results) {
-        const label = tr.tool.replace(/_/g, ' ');
-        const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+        const label = (tr.tool || 'unknown').replace(/_/g, ' ');
+        const resultText = tr.result != null ? (typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2)) : (tr.error || 'No result');
         const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
         appendChatMessage('tool', `[${label}]\n${display}`);
       }
@@ -1065,6 +1065,7 @@ async function sendActionMessage() {
 
   } catch (err) {
     removeChatThinking();
+    console.error('[action-chat] Error:', err);
     appendChatMessage('assistant', `Error: ${err.message}`);
   }
 

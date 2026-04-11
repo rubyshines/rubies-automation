@@ -2415,7 +2415,7 @@ async function handleRequest(req, res) {
       res.writeHead(404);
       res.end(JSON.stringify({ error: 'Not found' }));
     } catch (err) {
-      console.error(`[dashboard] API error: ${err.message}`);
+      console.error(`[dashboard] API error: ${err.message}\n${err.stack}`);
       res.writeHead(500);
       res.end(JSON.stringify({ error: err.message }));
     }
