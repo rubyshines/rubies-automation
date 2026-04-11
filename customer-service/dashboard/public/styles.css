@@ -21,11 +21,26 @@
   --yellow-bg: #fef9c3;
   --red: #b91c1c;
   --red-bg: #fee2e2;
+  --blue: #2563eb;
+  --blue-bg: #dbeafe;
   --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
   --shadow-md: 0 2px 8px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.04);
   --radius: 8px;
   --radius-lg: 12px;
 }
+
+/* ─── Status Dots ───────────────────────────────────────── */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot-open { background: var(--green); }
+.status-dot-parked { background: var(--yellow); }
+.status-dot-snoozed { background: var(--blue); }
+.status-dot-closed { background: var(--text-tertiary); }
 
 body {
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -174,11 +189,10 @@ main { height: calc(100vh - 56px); }
   padding-left: 17px;
 }
 
-.queue-item-header {
+.queue-item-row1 {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 3px;
+  gap: 6px;
 }
 
 .queue-item-name {
@@ -186,27 +200,28 @@ main { height: calc(100vh - 56px); }
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .queue-item-time {
   font-size: 11px;
   color: var(--text-tertiary);
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-.queue-item-email {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  margin-top: -1px;
+.queue-item-row2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
 }
 .queue-item-order {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 2px;
-}
-.queue-item-preview {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -224,7 +239,7 @@ main { height: calc(100vh - 56px); }
 .sidebar-nav {
   display: flex;
   align-items: stretch;
-  background: var(--surface-inset);
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
@@ -403,15 +418,39 @@ main { height: calc(100vh - 56px); }
 
 #customer-card {
   font-size: 13px;
-  line-height: 1.7;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 14px;
+  line-height: 1.5;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.customer-compact-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.customer-compact-line2 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+.customer-sep {
+  color: var(--text-tertiary);
+}
+
+.customer-phone {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .customer-name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 13px;
   letter-spacing: -0.01em;
 }
 
@@ -421,50 +460,54 @@ main { height: calc(100vh - 56px); }
   font-weight: 400;
 }
 
-.customer-contact {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 2px;
+.customer-ltv-details {
+  margin-top: 6px;
 }
-
-.customer-address {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 2px;
+.customer-ltv-toggle {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  list-style: none;
+}
+.customer-ltv-toggle::-webkit-details-marker { display: none; }
+.customer-ltv-toggle::before {
+  content: '\25B6';
+  font-size: 8px;
+  margin-right: 4px;
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.customer-ltv-details[open] > .customer-ltv-toggle::before {
+  transform: rotate(90deg);
 }
 
 .ltv-stats {
-  display: flex;
-  gap: 16px;
-  margin-top: 10px;
-  flex-wrap: wrap;
+  margin-top: 4px;
+  line-height: 1.6;
 }
 
 .ltv-stat {
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-inset);
-  padding: 6px 14px;
-  border-radius: var(--radius);
-  min-width: 80px;
+  display: inline;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .ltv-stat-value {
-  font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
-  letter-spacing: -0.02em;
 }
 
 .ltv-stat-label {
-  font-size: 10px;
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 600;
+}
+
+.ltv-stat + .ltv-stat::before {
+  content: '\00b7';
+  margin: 0 4px;
+  color: var(--text-tertiary);
 }
 
 /* Ticket order (prominent) */
@@ -583,13 +626,18 @@ main { height: calc(100vh - 56px); }
 
 .order-item-name {
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 13px;
   padding-right: 12px !important;
 }
 
 .order-item-variant {
-  color: var(--text-secondary);
-  font-weight: 400;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-inset);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
 }
 
 .order-item-sku {
@@ -607,6 +655,38 @@ main { height: calc(100vh - 56px); }
   white-space: nowrap;
 }
 
+.order-tracking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.order-tracking-carrier {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.order-tracking-link {
+  color: var(--blue);
+  text-decoration: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+.order-tracking-link:hover { text-decoration: underline; }
+.order-tracking-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.order-tracking-status {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--teal);
+  font-size: 11px;
+}
+
 .ticket-order-total {
   font-size: 13px;
   color: var(--text);
@@ -616,6 +696,11 @@ main { height: calc(100vh - 56px); }
   border-top: 1px solid var(--border);
 }
 
+.context-details {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
 .context-section-label {
   font-size: 10px;
   font-weight: 600;
@@ -623,8 +708,26 @@ main { height: calc(100vh - 56px); }
   letter-spacing: 0.06em;
   color: var(--text-tertiary);
   margin-bottom: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  cursor: pointer;
+  list-style: none;
+}
+.context-section-label::-webkit-details-marker { display: none; }
+.context-section-label::before {
+  content: '\25B6';
+  font-size: 8px;
+  margin-right: 6px;
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.context-details[open] > .context-section-label::before {
+  transform: rotate(90deg);
+}
+.context-details-empty > .context-section-label {
+  cursor: default;
+  pointer-events: none;
+}
+.context-details-empty > .context-section-label::before {
+  display: none;
 }
 
 /* Other orders — compact expandable rows */
@@ -775,21 +878,29 @@ main { height: calc(100vh - 56px); }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  margin: 12px 0 8px;
-  background: var(--surface-inset);
-  border-radius: 8px;
+  padding: 8px 0;
+  margin-bottom: 8px;
   font-size: 12px;
+  border-bottom: 1px solid var(--border);
 }
 .current-ticket-link {
   font-weight: 600;
-  color: var(--green);
+  color: var(--text);
   text-decoration: none;
   white-space: nowrap;
 }
 .current-ticket-link:hover { text-decoration: underline; }
-.external-link-icon { font-size: 11px; }
-.current-ticket-status { margin-left: auto; }
+.external-link-icon { font-size: 11px; color: var(--text-tertiary); }
+.current-ticket-status-text {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.current-ticket-age {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
 
 /* Past tickets */
 #past-tickets-list {
@@ -811,6 +922,22 @@ main { height: calc(100vh - 56px); }
   cursor: default;
 }
 .ticket-entry:last-child { border-bottom: none; }
+.ticket-entry-navigable {
+  cursor: pointer;
+  transition: background 0.12s ease;
+  padding: 8px 6px;
+  margin: 0 -6px;
+  border-radius: 4px;
+}
+.ticket-entry-navigable:hover { background: var(--surface-inset); }
+.ticket-entry-recent { border-left: 2px solid var(--teal); padding-left: 10px; }
+.ticket-entry-id {
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+  min-width: 52px;
+}
 
 .ticket-entry-header {
   display: flex;
@@ -1851,34 +1978,6 @@ main { height: calc(100vh - 56px); }
 }
 .btn-unpark:hover { background: #15796a; }
 
-/* ─── Audit Trail ────────────────────────────────────────── */
-
-#audit-trail {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  color: var(--text-secondary);
-  background: var(--surface-inset);
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
-/* ─── Context ────────────────────────────────────────────── */
-
-#context-content {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  color: var(--text-secondary);
-  background: var(--surface-inset);
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-}
-
 /* ─── History Table ──────────────────────────────────────── */
 
 #panel-history {
@@ -2567,8 +2666,6 @@ main { height: calc(100vh - 56px); }
   #detail-conversation { order: 2; }
   #action-panel { order: 3; }
   #detail-draft { order: 4; }
-  #detail-audit { order: 10; }
-  #detail-context { order: 11; }
 
   /* ── Detail Sections ────────────────────────────────────── */
 

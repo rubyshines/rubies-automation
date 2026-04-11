@@ -427,6 +427,7 @@ function renderTicketDetail(ticket) {
   const categoryClass = getCategoryClass(ticketMsgType);
   const ticketStatus = ticket.status || 'open';
   const statusDotClass = `status-dot-${ticketStatus}`;
+  const ticketAge = ticket.created_at ? timeAgo(ticket.created_at) : '';
   document.getElementById('current-ticket-header').innerHTML = gorgiasId ? `
     <div class="current-ticket-bar">
       <span class="status-dot ${statusDotClass}"></span>
@@ -435,6 +436,7 @@ function renderTicketDetail(ticket) {
       </a>
       ${ticketMsgType ? `<span class="category-badge ${categoryClass}">${esc(ticketMsgType.replace(/_/g, ' '))}</span>` : ''}
       <span class="current-ticket-status-text">${esc(ticketStatus)}</span>
+      ${ticketAge ? `<span class="current-ticket-age">${ticketAge}</span>` : ''}
     </div>
   ` : '';
 
