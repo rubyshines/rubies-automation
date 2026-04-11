@@ -42,7 +42,7 @@ const ARCHIVE_CLASSIFICATIONS = {
 // Classification → Gmail label mapping (for ALL emails, not just archived ones)
 const CLASSIFICATION_LABELS = {
   customer_support: 'R/Customer Support',
-  wholesale: 'R/Wholesale',
+  wholesale: 'R/B2B',
   lgbtq_org: 'R/LGBTQ+ Org',
   product_rd: 'R/Product R&D',
   production_orders: 'R/Production',
@@ -243,8 +243,8 @@ async function run({ onProgress } = {}) {
 
   const lastPollAt = pollerState?.last_poll_at || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Query unprocessed emails
-  const classificationsToProcess = ['customer_support', ...Object.keys(ARCHIVE_CLASSIFICATIONS)];
+  // Query all unprocessed emails (not just archive categories — we label everything)
+  const classificationsToProcess = [...Object.keys(CLASSIFICATION_LABELS)].filter(c => c !== 'sent');
   let allMessages = [];
   let from = 0;
   while (true) {
