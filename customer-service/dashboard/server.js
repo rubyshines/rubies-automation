@@ -2130,13 +2130,60 @@ const paramRoutes = [
         return apiTrainDraft(t.active_draft_id, body);
       });
   }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: (_, id) => {
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: async (_, id) => {
     const supabase = getSupabaseClient();
-    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
-      .then(({ data: t }) => {
-        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiRefreshDraft(t.active_draft_id);
-      });
+    const { data: t } = await supabase.from('cs_tickets')
+      .select('active_draft_id, gorgias_ticket_id, customer_email, order_number')
+      .eq('id', parseInt(id)).single();
+    if (t?.active_draft_id) return apiRefreshDraft(t.active_draft_id);
+
+    // No active draft — create a new one by running the advisor on the latest customer message
+    if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
+    const gorgiasClient = require('../import/gorgiasClient');
+    const { processTicket, getAiBotUserId, buildConversationContext } = require('../intake/processGorgiasTickets');
+    const { hybridAdvisor } = require('../lib/hybridAdvisor');
+
+    const messages = await gorgiasClient.getTicketMessages(t.gorgias_ticket_id);
+    const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+    if (!lastCustomer) throw new Error('No customer message found');
+
+    const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
+    let contextParts = [];
+    if (typeof buildConversationContext === 'function') {
+      const ctx = buildConversationContext(messages, lastCustomer.id);
+      if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
+    }
+    contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
+
+    const result = await hybridAdvisor({
+      customer_email: t.customer_email,
+      issue_description: contextParts.join('\n\n'),
+    });
+
+    const s = result._structured;
+    const newDraft = s?._composedResponse || '';
+    const confidence = ['ready', 'complete'].includes(s?.status) ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low';
+
+    const { data: newDraftRow } = await supabase.from('cs_ai_drafts').insert({
+      ticket_id: parseInt(id),
+      gorgias_ticket_id: t.gorgias_ticket_id,
+      gorgias_message_id: lastCustomer.id,
+      customer_email: t.customer_email,
+      order_number: t.order_number,
+      draft_response: newDraft,
+      structured_output: s,
+      audit_trail: s?.audit || [],
+      confidence,
+      advisor_status: s?.status,
+      message_type: s?.intake?.message_type || null,
+      turn_number: 1,
+    }).select('id').single();
+
+    if (newDraftRow) {
+      await supabase.from('cs_tickets').update({ active_draft_id: newDraftRow.id }).eq('id', parseInt(id));
+    }
+
+    return { draft_response: newDraft, structured: s };
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/release$/, handler: (body, id) => {
     const supabase = getSupabaseClient();
