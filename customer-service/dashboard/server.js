@@ -2200,9 +2200,15 @@ const paramRoutes = [
       customer_email: t?.customer_email,
       order_number: (t?.order_number || '').replace('#', ''),
       order_items: orderCtx.items || [],
-      fulfillment_status: orderCtx.fulfillment_status,
+      fulfillment_status: orderCtx.fulfillment_status || null,
+      intake: null,
     };
-    return routeAction(body.message, context, body.history || []);
+    try {
+      return await routeAction(body.message, context, body.history || []);
+    } catch (err) {
+      console.error(`[action-chat] No-draft fallback error:`, err.message, err.stack);
+      throw err;
+    }
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/message$/, handler: (body, id) => apiSendTicketMessage(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },
