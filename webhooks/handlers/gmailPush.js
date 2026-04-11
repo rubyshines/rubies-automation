@@ -16,22 +16,18 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient, upsert } = require('../../shared/supabaseClient');
-const { getGmail } = require('../../email-intelligence/lib/gmailClient');
+const { getGmail, getOrCreateLabel } = require('../../email-intelligence/lib/gmailClient');
 const { fetchMessage } = require('../../email-intelligence/lib/gmailSync');
 const { classifyMessages } = require('../../email-intelligence/lib/classifier');
-const { processMessage } = require('../../customer-service/intake/processGmailCs');
-const { getOrCreateLabel } = require('../../email-intelligence/lib/gmailClient');
-
-const HISTORY_STATE_ID = 'gmail_push_history';
+const { processMessage, CLASSIFICATION_LABELS } = require('../../customer-service/intake/processGmailCs');
 
 /**
  * Handle a Gmail push notification from Pub/Sub.
- * @param {object} payload - The Pub/Sub message body (already parsed, with req.gmailPush attached)
+ * @param {object} payload - The Pub/Sub message body
  * @param {object} gmailPush - Decoded { emailAddress, historyId } from middleware
  */
 async function handle(payload, gmailPush) {
   const supabase = getSupabaseClient();
-  const gmail = await getGmail();
 
   const newHistoryId = gmailPush.historyId;
   if (!newHistoryId) {
@@ -39,12 +35,27 @@ async function handle(payload, gmailPush) {
     return { processed: 0 };
   }
 
+  console.log(`[gmail-push] Received push — historyId: ${newHistoryId}`);
+
+  let gmail;
+  try {
+    gmail = await getGmail();
+  } catch (err) {
+    console.error(`[gmail-push] Gmail auth failed: ${err.message}`);
+    throw err;
+  }
+
   // Get our stored historyId
-  const { data: state } = await supabase
+  const { data: state, error: stateErr } = await supabase
     .from('gmail_sync_state')
     .select('last_history_id')
     .eq('id', 'jamie@rubyshines.com')
     .single();
+
+  if (stateErr) {
+    console.error(`[gmail-push] Could not read gmail_sync_state: ${stateErr.message}`);
+    throw new Error(`gmail_sync_state read failed: ${stateErr.message}`);
+  }
 
   const startHistoryId = state?.last_history_id;
   if (!startHistoryId) {
@@ -76,14 +87,20 @@ async function handle(payload, gmailPush) {
     } while (pageToken);
   } catch (err) {
     if (err.code === 404) {
-      // historyId too old — daily sync will catch up
-      console.warn('[gmail-push] History expired, skipping — daily sync will backfill');
+      console.warn('[gmail-push] History expired (startHistoryId too old) — daily sync will backfill');
       return { processed: 0 };
     }
+    console.error(`[gmail-push] History API failed: ${err.message}`);
     throw err;
   }
 
   if (messageIds.size === 0) {
+    console.log(`[gmail-push] No new messages in history (startId: ${startHistoryId}, newId: ${newHistoryId})`);
+    // Update historyId even with no messages
+    await supabase.from('gmail_sync_state').update({
+      last_history_id: parseInt(newHistoryId),
+      updated_at: new Date().toISOString(),
+    }).eq('id', 'jamie@rubyshines.com');
     return { processed: 0 };
   }
 
@@ -99,14 +116,15 @@ async function handle(payload, gmailPush) {
   const newIds = ids.filter(id => !existingIds.has(id));
 
   if (newIds.length === 0) {
-    console.log('[gmail-push] All messages already synced');
-    // Still update historyId
+    console.log('[gmail-push] All messages already synced — updating historyId');
     await supabase.from('gmail_sync_state').update({
       last_history_id: parseInt(newHistoryId),
       updated_at: new Date().toISOString(),
     }).eq('id', 'jamie@rubyshines.com');
     return { processed: 0 };
   }
+
+  console.log(`[gmail-push] Fetching ${newIds.length} new messages (${existingIds.size} already synced)`);
 
   // Fetch full messages
   const messages = [];
@@ -115,12 +133,35 @@ async function handle(payload, gmailPush) {
       const msg = await fetchMessage(gmail, id);
       if (msg) messages.push(msg);
     } catch (err) {
-      console.warn(`[gmail-push] Could not fetch message ${id}: ${err.message}`);
+      console.error(`[gmail-push] Failed to fetch message ${id}: ${err.message}`);
     }
   }
 
+  if (messages.length === 0) {
+    console.warn('[gmail-push] All message fetches failed — updating historyId anyway');
+    await supabase.from('gmail_sync_state').update({
+      last_history_id: parseInt(newHistoryId),
+      updated_at: new Date().toISOString(),
+    }).eq('id', 'jamie@rubyshines.com');
+    return { processed: 0 };
+  }
+
   // Classify
-  const classified = await classifyMessages(messages);
+  console.log(`[gmail-push] Classifying ${messages.length} messages...`);
+  let classified;
+  try {
+    classified = await classifyMessages(messages);
+  } catch (err) {
+    console.error(`[gmail-push] Classification failed: ${err.message}`);
+    throw err;
+  }
+
+  // Log classifications
+  for (const m of classified) {
+    if (!m.is_sent) {
+      console.log(`[gmail-push] Classified: ${m.from_address} — "${(m.subject || '').substring(0, 40)}" → ${m.classification} (${(m.classification_confidence || 0).toFixed(2)})`);
+    }
+  }
 
   // Save to email_messages
   const rows = classified.map(m => ({
@@ -146,14 +187,22 @@ async function handle(payload, gmailPush) {
   }));
 
   if (rows.length) {
-    await upsert('email_messages', rows, ['gmail_message_id']);
+    try {
+      await upsert('email_messages', rows, ['gmail_message_id']);
+      console.log(`[gmail-push] Saved ${rows.length} messages to Supabase`);
+    } catch (err) {
+      console.error(`[gmail-push] Supabase upsert failed: ${err.message}`);
+      throw err;
+    }
   }
 
   // Route each message through processGmailCs
   const archiveEnabled = process.env.GMAIL_CS_ARCHIVE === 'true';
-  const labelNames = ['CS-Routed', 'Spam-Archived', 'Auto-Reply', 'Newsletter', 'Automated'];
+
+  // Pre-create all R/ labels
+  const allLabelNames = [...new Set(Object.values(CLASSIFICATION_LABELS).filter(Boolean))];
   const labelIds = {};
-  for (const name of labelNames) {
+  for (const name of allLabelNames) {
     try {
       labelIds[name] = await getOrCreateLabel(gmail, name);
     } catch (err) {
@@ -162,13 +211,19 @@ async function handle(payload, gmailPush) {
   }
 
   let routed = 0;
+  let labeled = 0;
+  let errors = 0;
   for (const msg of classified) {
     if (msg.is_sent) continue;
     try {
       const result = await processMessage(supabase, gmail, msg, { archiveEnabled, labelIds });
-      if (result.action === 'forwarded' || result.action === 'archived') routed++;
+      if (result.action === 'forwarded') { routed++; console.log(`[gmail-push] → Forwarded to Gorgias: ${msg.from_address}`); }
+      else if (result.action === 'archived') { routed++; console.log(`[gmail-push] → Archived (${result.classification}): ${msg.from_address}`); }
+      else if (result.action === 'labeled') { labeled++; }
+      else if (result.action === 'skipped') { console.log(`[gmail-push] → Skipped (${result.reason}): ${msg.from_address}`); }
     } catch (err) {
-      console.error(`[gmail-push] Error routing ${msg.gmail_message_id}: ${err.message}`);
+      errors++;
+      console.error(`[gmail-push] Error routing ${msg.gmail_message_id} (${msg.from_address}): ${err.message}`);
     }
   }
 
@@ -178,8 +233,8 @@ async function handle(payload, gmailPush) {
     updated_at: new Date().toISOString(),
   }).eq('id', 'jamie@rubyshines.com');
 
-  console.log(`[gmail-push] Processed ${messages.length} messages, routed ${routed}`);
-  return { processed: messages.length, routed };
+  console.log(`[gmail-push] Done — ${messages.length} messages, ${routed} routed, ${labeled} labeled, ${errors} errors`);
+  return { processed: messages.length, routed, labeled, errors };
 }
 
 module.exports = { handle };

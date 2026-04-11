@@ -271,7 +271,7 @@ async function run({ onProgress } = {}) {
   console.log(`[gmail-cs] Found ${allMessages.length} emails to process`);
 
   // Process each email
-  const stats = { forwarded: 0, archived: 0, skipped: 0, errors: 0 };
+  const stats = { forwarded: 0, archived: 0, labeled: 0, skipped: 0, errors: 0 };
   const archiveStats = {};
 
   for (const msg of allMessages) {
@@ -283,6 +283,7 @@ async function run({ onProgress } = {}) {
         stats.archived++;
         archiveStats[result.classification] = (archiveStats[result.classification] || 0) + 1;
       }
+      else if (result.action === 'labeled') stats.labeled++;
       else if (result.action === 'skipped') stats.skipped++;
 
       if (onProgress) onProgress({ processed: stats.forwarded + stats.archived + stats.skipped, total: allMessages.length });
@@ -299,7 +300,7 @@ async function run({ onProgress } = {}) {
     updated_at: new Date().toISOString(),
   }, { onConflict: 'id' });
 
-  console.log(`[gmail-cs] Done — forwarded: ${stats.forwarded}, archived: ${stats.archived} (${Object.entries(archiveStats).map(([k, v]) => `${k}:${v}`).join(', ')}), skipped: ${stats.skipped}, errors: ${stats.errors}`);
+  console.log(`[gmail-cs] Done — forwarded: ${stats.forwarded}, labeled: ${stats.labeled}, archived: ${stats.archived} (${Object.entries(archiveStats).map(([k, v]) => `${k}:${v}`).join(', ')}), skipped: ${stats.skipped}, errors: ${stats.errors}`);
 
   return {
     sources: {
@@ -330,4 +331,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, processMessage };
+module.exports = { run, processMessage, CLASSIFICATION_LABELS };
