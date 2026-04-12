@@ -35,10 +35,10 @@ const ARCHIVE_CLASSIFICATIONS = {
   spam: 'R/Spam',
   auto_reply: 'R/Auto-Reply',
   newsletter: 'R/Newsletter',
-  skip: 'R/Automated',
 };
 
 // Classification → Gmail label mapping (for ALL emails, not just archived ones)
+// skip → null: machine noise (DMARC, GitHub, etc.) — no label, just mark processed
 const CLASSIFICATION_LABELS = {
   customer_support: 'R/Customer Support',
   wholesale: 'R/B2B',
@@ -52,7 +52,7 @@ const CLASSIFICATION_LABELS = {
   spam: 'R/Spam',
   auto_reply: 'R/Auto-Reply',
   newsletter: 'R/Newsletter',
-  skip: 'R/Automated',
+  skip: null,
 };
 
 // Only forward CS emails newer than this date to Gorgias.
