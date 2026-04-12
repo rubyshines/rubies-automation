@@ -258,7 +258,12 @@ async function loadTicketQueue() {
       const categoryLabel = isSpam ? 'spam' : isCommunity ? 'community' : (t.message_type || 'general').replace(/_/g, ' ');
       const statusClass = `status-dot-${t.status || 'open'}`;
       const orderStr = t.order_number ? `#${String(t.order_number).replace(/^#/, '')}` : '';
-      const timeStr = parked ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>` : timeAgo(t.updated_at);
+      // Show ticket age (how long customer has been waiting) not updated_at
+      const ticketAge = t.created_at ? timeAgo(t.created_at, 'short') : '?';
+      const ageTier = ticketAgeTier(t.created_at);
+      const timeStr = parked
+        ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
+        : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>`;
 
       // Row 2: secondary badges (only shown when there's content)
       const row2Parts = [];
@@ -428,6 +433,8 @@ function renderTicketDetail(ticket) {
   const ticketStatus = ticket.status || 'open';
   const statusDotClass = `status-dot-${ticketStatus}`;
   const ticketAge = ticket.created_at ? timeAgo(ticket.created_at) : '';
+  const ticketCreatedDate = ticket.created_at ? new Date(ticket.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const ageTier = ticketAgeTier(ticket.created_at);
   document.getElementById('current-ticket-header').innerHTML = gorgiasId ? `
     <div class="current-ticket-bar">
       <span class="status-dot ${statusDotClass}"></span>
@@ -436,7 +443,8 @@ function renderTicketDetail(ticket) {
       </a>
       ${ticketMsgType ? `<span class="category-badge ${categoryClass}">${esc(ticketMsgType.replace(/_/g, ' '))}</span>` : ''}
       <span class="current-ticket-status-text">${esc(ticketStatus)}</span>
-      ${ticketAge ? `<span class="current-ticket-age">${ticketAge}</span>` : ''}
+      ${ticketAge ? `<span class="current-ticket-age age-${ageTier}">waiting ${ticketAge}</span>` : ''}
+      ${ticketCreatedDate ? `<span class="current-ticket-date">${ticketCreatedDate}</span>` : ''}
     </div>
   ` : '';
 
@@ -1581,9 +1589,32 @@ async function api(url, opts = {}) {
   }
 }
 
+function showToast(message, type = 'success') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('toast-visible'), 10);
+  setTimeout(() => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
 function esc(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function ticketAgeTier(dateStr) {
+  if (!dateStr) return 'fresh';
+  const hours = (Date.now() - new Date(dateStr).getTime()) / 3600000;
+  if (hours < 4) return 'fresh';
+  if (hours < 12) return 'warm';
+  if (hours < 24) return 'hot';
+  return 'overdue';
 }
 
 function parkedAge(dateStr) {

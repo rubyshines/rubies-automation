@@ -898,8 +898,24 @@ main { height: calc(100vh - 56px); }
 }
 .current-ticket-age {
   font-size: 11px;
+  font-weight: 600;
+}
+.current-ticket-date {
+  font-size: 10px;
   color: var(--text-tertiary);
-  font-weight: 500;
+  margin-left: 4px;
+}
+
+/* Ticket age urgency tiers — queue list + detail card */
+.age-fresh { color: var(--text-tertiary); }
+.age-warm { color: var(--yellow); }
+.age-hot { color: #f97316; }
+.age-overdue { color: var(--red); font-weight: 700; }
+
+.queue-item-age {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 /* Past tickets */
@@ -2360,6 +2376,41 @@ main { height: calc(100vh - 56px); }
   color: var(--red);
   background: var(--red-bg);
 }
+
+/* ─── Toast Notifications ────────────────────────────────── */
+
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  pointer-events: auto;
+}
+.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast-success { background: var(--green); color: white; }
+.toast-error { background: var(--accent); color: white; }
+.toast-info { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 
 /* ─── Mobile Header Bar (hidden on desktop) ─────────────── */
 
