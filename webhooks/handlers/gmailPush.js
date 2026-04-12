@@ -16,9 +16,9 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient, upsert } = require('../../shared/supabaseClient');
-const { getGmail, getOrCreateLabel } = require('../../email-intelligence/lib/gmailClient');
-const { fetchMessage } = require('../../email-intelligence/lib/gmailSync');
-const { classifyMessages } = require('../../email-intelligence/lib/classifier');
+const { getGmail, getOrCreateLabel } = require('../../gmail-management/lib/gmailClient');
+const { fetchMessage } = require('../../gmail-management/lib/gmailSync');
+const { classifyMessages } = require('../../gmail-management/lib/classifier');
 const { processMessage, CLASSIFICATION_LABELS } = require('../../customer-service/intake/processGmailCs');
 
 /**
@@ -196,10 +196,15 @@ async function handle(payload, gmailPush) {
     }
   }
 
-  // Route each message through processGmailCs
+  // Update historyId before processing (so concurrent pushes don't re-fetch)
+  await supabase.from('gmail_sync_state').update({
+    last_history_id: parseInt(newHistoryId),
+    updated_at: new Date().toISOString(),
+  }).eq('id', 'jamie@rubyshines.com');
+
+  // Process all unprocessed messages (includes ones just synced + any missed by previous runs)
   const archiveEnabled = process.env.GMAIL_CS_ARCHIVE === 'true';
 
-  // Pre-create all R/ labels
   const allLabelNames = [...new Set(Object.values(CLASSIFICATION_LABELS).filter(Boolean))];
   const labelIds = {};
   for (const name of allLabelNames) {
@@ -210,11 +215,20 @@ async function handle(payload, gmailPush) {
     }
   }
 
+  // Query ALL unprocessed inbound emails — not just the ones we just synced
+  const { data: unprocessed } = await supabase
+    .from('email_messages')
+    .select('gmail_message_id, gmail_thread_id, from_address, from_name, to_addresses, subject, date, body_text, classification, classification_confidence, forwarded_to_gorgias_at')
+    .eq('is_sent', false)
+    .is('processed_at', null)
+    .not('classification', 'is', null)
+    .order('date', { ascending: true })
+    .limit(50);
+
   let routed = 0;
   let labeled = 0;
   let errors = 0;
-  for (const msg of classified) {
-    if (msg.is_sent) continue;
+  for (const msg of (unprocessed || [])) {
     try {
       const result = await processMessage(supabase, gmail, msg, { archiveEnabled, labelIds });
       if (result.action === 'forwarded') { routed++; console.log(`[gmail-push] → Forwarded to Gorgias: ${msg.from_address}`); }
@@ -227,13 +241,7 @@ async function handle(payload, gmailPush) {
     }
   }
 
-  // Update historyId
-  await supabase.from('gmail_sync_state').update({
-    last_history_id: parseInt(newHistoryId),
-    updated_at: new Date().toISOString(),
-  }).eq('id', 'jamie@rubyshines.com');
-
-  console.log(`[gmail-push] Done — ${messages.length} messages, ${routed} routed, ${labeled} labeled, ${errors} errors`);
+  console.log(`[gmail-push] Done — synced: ${messages.length}, processed: ${(unprocessed||[]).length}, routed: ${routed}, labeled: ${labeled}, errors: ${errors}`);
   return { processed: messages.length, routed, labeled, errors };
 }
 

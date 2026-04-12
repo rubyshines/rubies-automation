@@ -23,13 +23,12 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam } = require('../../email-intelligence/lib/gmailClient');
-const { stripQuotedContent } = require('../../email-intelligence/lib/gmailSync');
+const { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam } = require('../../gmail-management/lib/gmailClient');
+const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 const gorgias = require('../import/gorgiasClient');
 const { checkForDuplicateTicket } = require('./processGorgiasTickets');
 
 const CARE_ADDRESS = 'care@rubyshines.com';
-const POLLER_ID = 'gmail_cs_drafter';
 
 // Classifications that should be archived out of the inbox
 const ARCHIVE_CLASSIFICATIONS = {
@@ -66,21 +65,29 @@ const CS_CUTOFF_DATE = process.env.GMAIL_CS_CUTOFF_DATE || new Date().toISOStrin
  */
 async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }) {
   const classification = msg.classification;
+  const now = new Date().toISOString();
+
+  // Helper: mark this email as processed (called at every exit point)
+  const markProcessed = () =>
+    supabase.from('email_messages').update({ processed_at: now }).eq('gmail_message_id', msg.gmail_message_id);
 
   // ── customer_support → forward to Gorgias ──
   if (classification === 'customer_support') {
     // Skip if addressed to care@ (Gorgias already has it)
     if ((msg.to_addresses || []).some(a => a.toLowerCase().includes(CARE_ADDRESS))) {
+      await markProcessed();
       return { action: 'skipped', reason: 'addressed_to_care' };
     }
 
     // Skip if already forwarded
     if (msg.forwarded_to_gorgias_at) {
+      await markProcessed();
       return { action: 'skipped', reason: 'already_forwarded' };
     }
 
     // Skip old emails (don't flood Gorgias on first run)
     if (msg.date && msg.date.substring(0, 10) < CS_CUTOFF_DATE) {
+      await markProcessed();
       return { action: 'skipped', reason: 'before_cutoff' };
     }
 
@@ -89,6 +96,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     const dupAction = await checkForDuplicateTicket(supabase, msg.from_address, 0, newMessages);
     if (dupAction === 'close_new') {
       console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: duplicate of existing ticket for ${msg.from_address}`);
+      await markProcessed();
       return { action: 'skipped', reason: 'duplicate' };
     }
 
@@ -103,6 +111,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
 
     if (priorReplies && priorReplies.length > 0) {
       console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: legacy thread already handled in Gmail`);
+      await markProcessed();
       return { action: 'skipped', reason: 'legacy_thread' };
     }
 
@@ -147,11 +156,12 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     const threadCount = thread.length;
     console.log(`[gmail-cs] Created Gorgias ticket ${ticket.id} for ${msg.from_address} — "${(msg.subject || '').substring(0, 50)}" (${threadCount} message${threadCount > 1 ? 's' : ''})`);
 
-    // Mark all thread messages as forwarded
+    // Mark all thread messages as forwarded + processed
     const threadMsgIds = thread.map(m => m.gmail_message_id);
     await supabase.from('email_messages').update({
-      forwarded_to_gorgias_at: new Date().toISOString(),
+      forwarded_to_gorgias_at: now,
       gorgias_ticket_id: ticket.id,
+      processed_at: now,
     }).in('gmail_message_id', threadMsgIds);
 
     // Label in Gmail
@@ -173,7 +183,8 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     if (spamLabel) await labelMessage(gmail, msg.gmail_message_id, spamLabel);
     await markAsSpam(gmail, msg.gmail_message_id);
     await supabase.from('email_messages').update({
-      archived_at: new Date().toISOString(),
+      archived_at: now,
+      processed_at: now,
     }).eq('gmail_message_id', msg.gmail_message_id);
     return { action: 'archived', classification };
   }
@@ -191,7 +202,8 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     }
 
     await supabase.from('email_messages').update({
-      archived_at: new Date().toISOString(),
+      archived_at: now,
+      processed_at: now,
     }).eq('gmail_message_id', msg.gmail_message_id);
 
     return { action: 'archived', classification };
@@ -202,6 +214,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
   if (classLabel && labelIds[classLabel]) {
     await labelMessage(gmail, msg.gmail_message_id, labelIds[classLabel]);
   }
+  await markProcessed();
   return { action: 'labeled', classification };
 }
 
@@ -223,10 +236,10 @@ async function run({ onProgress } = {}) {
     return { sources: { gmail_cs: { success: false, error: err.message } }, status: 'error' };
   }
 
-  // Pre-create all labels
-  const labelNames = ['CS-Routed', ...Object.values(ARCHIVE_CLASSIFICATIONS)];
+  // Pre-create all R/ labels
+  const allLabelNames = [...new Set(Object.values(CLASSIFICATION_LABELS).filter(Boolean))];
   const labelIds = {};
-  for (const name of labelNames) {
+  for (const name of allLabelNames) {
     try {
       labelIds[name] = await getOrCreateLabel(gmail, name);
     } catch (err) {
@@ -234,17 +247,7 @@ async function run({ onProgress } = {}) {
     }
   }
 
-  // Get last poll time
-  const { data: pollerState } = await supabase
-    .from('cs_poller_state')
-    .select('last_poll_at')
-    .eq('id', POLLER_ID)
-    .single();
-
-  const lastPollAt = pollerState?.last_poll_at || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  // Query all unprocessed emails (not just archive categories — we label everything)
-  const classificationsToProcess = [...Object.keys(CLASSIFICATION_LABELS)].filter(c => c !== 'sent');
+  // Query all unprocessed inbound emails (state-driven, not timestamp-driven)
   let allMessages = [];
   let from = 0;
   while (true) {
@@ -252,9 +255,8 @@ async function run({ onProgress } = {}) {
       .from('email_messages')
       .select('gmail_message_id, gmail_thread_id, from_address, from_name, to_addresses, subject, date, body_text, classification, classification_confidence, forwarded_to_gorgias_at')
       .eq('is_sent', false)
-      .is('archived_at', null)
-      .in('classification', classificationsToProcess)
-      .gte('date', lastPollAt)
+      .is('processed_at', null)
+      .not('classification', 'is', null)
       .order('date', { ascending: true })
       .range(from, from + 999);
 
@@ -292,13 +294,6 @@ async function run({ onProgress } = {}) {
       stats.errors++;
     }
   }
-
-  // Update poller state
-  await supabase.from('cs_poller_state').upsert({
-    id: POLLER_ID,
-    last_poll_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'id' });
 
   console.log(`[gmail-cs] Done — forwarded: ${stats.forwarded}, labeled: ${stats.labeled}, archived: ${stats.archived} (${Object.entries(archiveStats).map(([k, v]) => `${k}:${v}`).join(', ')}), skipped: ${stats.skipped}, errors: ${stats.errors}`);
 
