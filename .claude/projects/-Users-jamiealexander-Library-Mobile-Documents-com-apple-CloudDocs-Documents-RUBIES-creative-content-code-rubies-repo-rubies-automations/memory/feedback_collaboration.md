@@ -22,3 +22,11 @@ Plans (created via EnterPlanMode) are ephemeral and DO NOT survive `/clear` or s
 - Before suggesting `/clear` or restart, check for active plan content worth keeping.
 - Save plan content (or thorough summary) as a memory file FIRST.
 - When in doubt, save it — redundant memory is better than lost work.
+
+## Restart servers after code changes
+
+After modifying server-side code, restart the relevant server automatically — don't wait for Jamie to notice it's stale.
+
+**Why:** Jamie had to ask why dashboard changes weren't reflected in the UI — the server was still running old code.
+
+**How to apply:** After editing dashboard server, intake scripts, or any code the server imports: kill the process on the relevant port (`lsof -ti:PORT | xargs kill -9`) and restart in the background. Do this proactively.
