@@ -370,3 +370,4 @@ const tools = [
 ];
 
 module.exports = tools;
+module.exports.getShippingZone = getShippingZone;

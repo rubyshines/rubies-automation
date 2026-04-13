@@ -136,4 +136,23 @@ async function markAsSpam(gmail, messageId) {
   });
 }
 
-module.exports = { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam };
+// ---------------------------------------------------------------------------
+// Attachment helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Download an attachment from a Gmail message.
+ * Returns { data: Buffer, filename, mimeType }.
+ */
+async function downloadAttachment(gmail, messageId, attachmentId, filename, mimeType) {
+  const res = await gmail.users.messages.attachments.get({
+    userId: 'me',
+    messageId,
+    id: attachmentId,
+  });
+  // Gmail returns base64url-encoded data
+  const data = Buffer.from(res.data.data, 'base64url');
+  return { data, filename, mimeType };
+}
+
+module.exports = { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam, downloadAttachment };

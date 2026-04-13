@@ -21,26 +21,18 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { buildContext } = require('../lib/contextBuilder');
 const gorgias = require('../import/gorgiasClient');
 
-// Lazy-load advisors
-let _hybridHandler = null;
-let _treeHandler = null;
+// Lazy-load AI advisor
+let _advisorHandler = null;
 
 function getAdvisorHandler() {
-  if (!_hybridHandler) {
-    const { hybridAdvisor } = require('../lib/hybridAdvisor');
-    _hybridHandler = hybridAdvisor;
+  if (!_advisorHandler) {
+    const { aiAdvisor } = require('../lib/aiAdvisor');
+    _advisorHandler = aiAdvisor;
   }
-  return _hybridHandler;
-}
-
-function getTreeFallback() {
-  if (!_treeHandler) {
-    const advisorTools = require('../lib/tools/exchangeAdvisor');
-    _treeHandler = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor')).handler;
-  }
-  return _treeHandler;
+  return _advisorHandler;
 }
 
 // AI Bot user ID — cached after first lookup
@@ -83,28 +75,34 @@ async function run({ onProgress } = {}) {
 
   console.log(`[intake] Scanning since ${lastPollAt.toISOString()}...`);
 
-  // Fetch recent open tickets (all assignments — legacy tickets get reassigned to AI bot)
-  let cursor = null;
+  // Fetch recent open tickets via two passes:
+  //  1. updated_datetime:desc — catches tickets with new activity
+  //  2. created_datetime:desc — catches newly created tickets that may not have been updated
+  // This prevents tickets from falling through when webhook delivery fails.
   const allTickets = [];
   const seen = new Set();
-  do {
-    const { data: tickets, nextCursor } = await gorgias.getTickets({
-      cursor,
-      limit: 30,
-      order_by: 'updated_datetime:desc',
-    });
-    // Stop once we pass the high-water mark
-    const recent = tickets.filter(t => new Date(t.updated_datetime) >= lastPollAt);
-    for (const t of recent) {
-      if (t.status === 'open' && !t.spam && !seen.has(t.id)) {
-        allTickets.push(t);
-        seen.add(t.id);
+
+  for (const orderBy of ['updated_datetime:desc', 'created_datetime:desc']) {
+    let cursor = null;
+    do {
+      const { data: tickets, nextCursor } = await gorgias.getTickets({
+        cursor,
+        limit: 30,
+        order_by: orderBy,
+      });
+      const dateField = orderBy.startsWith('created') ? 'created_datetime' : 'updated_datetime';
+      const recent = tickets.filter(t => new Date(t[dateField]) >= lastPollAt);
+      for (const t of recent) {
+        if (t.status === 'open' && !t.spam && !seen.has(t.id)) {
+          allTickets.push(t);
+          seen.add(t.id);
+        }
       }
-    }
-    if (recent.length < tickets.length) break;
-    cursor = nextCursor;
-    if (cursor) await gorgias.delay(500);
-  } while (cursor);
+      if (recent.length < tickets.length) break;
+      cursor = nextCursor;
+      if (cursor) await gorgias.delay(500);
+    } while (cursor);
+  }
 
   console.log(`[intake] Found ${allTickets.length} open tickets`);
   emit({ phase: 'fetched', total: allTickets.length });
@@ -123,8 +121,11 @@ async function run({ onProgress } = {}) {
   const spammedTickets = new Set();
   for (const d of (existingDrafts || [])) {
     if (d.status === 'spam') spammedTickets.add(d.gorgias_ticket_id);
-    if (!draftedMessages[d.gorgias_ticket_id]) draftedMessages[d.gorgias_ticket_id] = new Set();
-    draftedMessages[d.gorgias_ticket_id].add(d.gorgias_message_id);
+    // Only track pending drafts — sent/superseded drafts shouldn't block new intake
+    if (d.status === 'pending') {
+      if (!draftedMessages[d.gorgias_ticket_id]) draftedMessages[d.gorgias_ticket_id] = new Set();
+      draftedMessages[d.gorgias_ticket_id].add(d.gorgias_message_id);
+    }
   }
 
   // Build set of tickets with released drafts (don't re-draft those)
@@ -379,13 +380,15 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     // 'keep_both' or no action → continue processing normally
   }
 
+  // Derive turn number from actual customer messages (Gorgias is system of record)
+  const turnNumber = customerMessages.length;
+
   // Get previous draft's intake state for multi-turn
   let previousIntake = null;
-  let turnNumber = 1;
   let previousDraftId = null;
   const { data: prevDraft } = await supabase
     .from('cs_ai_drafts')
-    .select('id, intake_state, turn_number')
+    .select('id, intake_state')
     .eq('gorgias_ticket_id', ticketId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -393,7 +396,6 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   if (prevDraft) {
     previousIntake = prevDraft.intake_state;
-    turnNumber = (prevDraft.turn_number || 0) + 1;
     previousDraftId = prevDraft.id;
 
     // Supersede old pending drafts
@@ -415,35 +417,41 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const contextParts = [];
   if (conversationContext) contextParts.push(`[CONVERSATION HISTORY]\n${conversationContext}`);
   if (previousDraftContext) contextParts.push(`[PREVIOUS AI PROCESSING]\n${previousDraftContext}`);
-  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
+  // Surface attachment metadata (filenames + types) so the advisor knows what was attached
+  const attachments = latestCustomerMsg.attachments || [];
+  const attachmentNote = attachments.length
+    ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
+    : '';
+  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
   const issueDescription = contextParts.join('\n\n');
+
+  // Deterministic context fetch — always have order/customer data regardless of AI parse outcome
+  let preContext = null;
+  try {
+    preContext = await buildContext({
+      customer_email: customerEmail,
+      issue_description: issueDescription,
+      existingIntake: previousIntake,
+    });
+  } catch (err) {
+    console.warn(`[intake] Pre-context fetch failed for ${ticketId}: ${err.message}`);
+  }
 
   // Run through hybrid advisor (Opus) with tree fallback
   console.log(`[intake] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
 
   let result;
-  let usedFallback = false;
   try {
     const advisorHandler = getAdvisorHandler();
     result = await advisorHandler({
       customer_email: customerEmail,
       issue_description: issueDescription,
       intake: previousIntake || undefined,
+      preContext,
     });
   } catch (err) {
-    console.warn(`[intake] Hybrid advisor error on ticket ${ticketId}: ${err.message} — falling back to tree`);
-    try {
-      const treeFallback = getTreeFallback();
-      result = await treeFallback({
-        customer_email: customerEmail,
-        issue_description: issueDescription,
-        intake: previousIntake || undefined,
-      });
-      usedFallback = true;
-    } catch (err2) {
-      console.log(`[intake] Tree fallback also failed on ticket ${ticketId}: ${err2.message}`);
-      return { skipped: true };
-    }
+    console.error(`[intake] AI advisor error on ticket ${ticketId}: ${err.message}`);
+    return { skipped: true };
   }
 
   const structured = result?._structured;
@@ -451,7 +459,6 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     console.warn(`[intake] No structured output for ticket ${ticketId}`);
     return { skipped: true };
   }
-  if (usedFallback) structured.advisor_version = (structured.advisor_version || '') + '-fallback';
 
   // Draft response comes from advisor (composed inside the tool)
   const routeToHuman = structured.status === 'route_to_human' || (structured.error && !structured.intake);
@@ -468,21 +475,27 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const conversationHistory = messages.map(m => ({
     id: m.id,
     sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
-    is_bot: m.from_agent !== false && (
+    is_bot: m.from_agent !== false && m.via !== 'api' && (
       (m.sender?.email || '').endsWith('@email.gorgias.com') || m.via === 'rule'
     ),
     body_html: m.stripped_html || m.body_html || null,
     body: gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || ''),
     created_at: m.created_datetime,
     channel: m.channel,
+    attachments: (m.attachments || []).map(a => ({
+      name: a.name, url: a.url, content_type: a.content_type,
+    })),
   }));
 
   // Upsert cs_tickets row (ticket-centric model)
   const messageType = structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown';
   const confidence = structured.confidence || 'low';
 
-  // Get customer name — AI extraction, then Shopify fallback
+  // Get customer name — AI extraction, then preContext, then Supabase fallback
   let customerName = structured.customer?.name || null;
+  if (!customerName && preContext?.customer) {
+    customerName = [preContext.customer.firstName, preContext.customer.lastName].filter(Boolean).join(' ') || null;
+  }
   if (!customerName && customerEmail) {
     const { data: custRow } = await supabase
       .from('customers')
@@ -496,28 +509,39 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const ticketTags = (ticket.tags || []).map(tag => (tag.name || tag).toLowerCase());
   const ticketSource = ticketTags.includes('gmail-import') ? 'gmail' : 'gorgias';
 
+  // Build upsert payload — only include fields with non-null values to avoid
+  // clobbering good data from a previous turn when the AI parse fails
+  const ticketUpsert = {
+    gorgias_ticket_id: ticketId,
+    created_at: ticket.created_datetime || new Date().toISOString(),
+    status: 'open',
+    turn_number: turnNumber,
+    customer_email: customerEmail,
+    conversation_history: conversationHistory,
+    message_type: messageType,
+    confidence,
+    advisor_status: structured.status,
+    source: ticketSource,
+    updated_at: new Date().toISOString(),
+    gorgias_status: ticket.status || 'open',
+    gorgias_updated_at: ticket.updated_datetime || null,
+  };
+  // Only overwrite these if we got real values — don't clobber prior data with nulls
+  // Fall back to preContext for order/customer data when AI parse fails
+  if (customerName) ticketUpsert.customer_name = customerName;
+  if (structured.customer?.pronouns) ticketUpsert.customer_pronouns = structured.customer.pronouns;
+  if (structured.customer?.country || preContext?.customerCountry) {
+    ticketUpsert.customer_country = structured.customer?.country || preContext.customerCountry;
+  }
+  if (structured.order?.name || preContext?.targetOrder?.name) {
+    ticketUpsert.order_number = structured.order?.name || preContext.targetOrder.name;
+  }
+  if (structured.order) ticketUpsert.order_context = structured.order;
+  if (structured.customer) ticketUpsert.customer_context = structured.customer;
+
   const { data: ticketRow, error: ticketErr } = await supabase
     .from('cs_tickets')
-    .upsert({
-      gorgias_ticket_id: ticketId,
-      status: 'open',
-      turn_number: turnNumber,
-      customer_email: customerEmail,
-      customer_name: customerName,
-      customer_pronouns: structured.customer?.pronouns || null,
-      customer_country: structured.customer?.country || null,
-      order_number: structured.order?.name || null,
-      conversation_history: conversationHistory,
-      order_context: structured.order || null,
-      customer_context: structured.customer || null,
-      message_type: messageType,
-      confidence,
-      advisor_status: structured.status,
-      source: ticketSource,
-      updated_at: new Date().toISOString(),
-      gorgias_status: ticket.status || 'open',
-      gorgias_updated_at: ticket.updated_datetime || null,
-    }, { onConflict: 'gorgias_ticket_id' })
+    .upsert(ticketUpsert, { onConflict: 'gorgias_ticket_id' })
     .select('id')
     .single();
 

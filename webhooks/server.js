@@ -72,7 +72,12 @@ app.post('/webhooks/debug', (req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime() });
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    commit: process.env.RAILWAY_GIT_COMMIT_SHA?.substring(0, 7) || 'local',
+    deployed: process.env.RAILWAY_DEPLOYMENT_ID || null,
+  });
 });
 
 // ---------------------------------------------------------------------------

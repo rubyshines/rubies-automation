@@ -117,8 +117,22 @@ async function getTicket(ticketId) {
  * Create a new ticket from an external email (e.g., Gmail import).
  * Returns the created ticket object.
  */
-async function createTicket({ customerEmail, customerName, subject, bodyText, tags = [] }) {
+async function createTicket({ customerEmail, customerName, subject, bodyText, tags = [], attachments = [] }) {
   const bodyHtml = `<p>${(bodyText || '').replace(/\n/g, '<br>')}</p>`;
+
+  const message = {
+    channel: 'email',
+    via: 'api',
+    from_agent: false,
+    source: {
+      type: 'email',
+      from: { name: customerName || '', address: customerEmail },
+      to: [{ name: 'RUBIES Customer Care', address: 'care@rubyshines.com' }],
+    },
+    body_html: bodyHtml,
+    body_text: bodyText || '',
+  };
+  if (attachments.length) message.attachments = attachments;
 
   const ticket = await apiFetch('/tickets', {
     method: 'POST',
@@ -130,18 +144,7 @@ async function createTicket({ customerEmail, customerName, subject, bodyText, ta
         email: customerEmail,
         name: customerName || undefined,
       },
-      messages: [{
-        channel: 'email',
-        via: 'api',
-        from_agent: false,
-        source: {
-          type: 'email',
-          from: { name: customerName || '', address: customerEmail },
-          to: [{ name: 'RUBIES Customer Care', address: 'care@rubyshines.com' }],
-        },
-        body_html: bodyHtml,
-        body_text: bodyText || '',
-      }],
+      messages: [message],
     }),
   });
 
@@ -188,24 +191,27 @@ async function createTicketReply(ticketId, { body_html, body_text }) {
  * Add an imported message to a ticket (not sent as email — for importing history).
  * Use from_agent: true for our sent messages, false for customer messages.
  */
-async function addTicketMessage(ticketId, { fromAddress, fromName, bodyText, fromAgent = false, sentDatetime }) {
+async function addTicketMessage(ticketId, { fromAddress, fromName, bodyText, fromAgent = false, sentDatetime, attachments = [] }) {
   const bodyHtml = `<p>${(bodyText || '').replace(/\n/g, '<br>')}</p>`;
+
+  const message = {
+    channel: 'email',
+    via: 'api',
+    from_agent: fromAgent,
+    source: {
+      type: 'email',
+      from: { name: fromName || '', address: fromAddress },
+      to: [{ name: fromAgent ? '' : 'RUBIES Customer Care', address: fromAgent ? fromAddress : 'care@rubyshines.com' }],
+    },
+    body_html: bodyHtml,
+    body_text: bodyText || '',
+    ...(sentDatetime ? { sent_datetime: sentDatetime } : {}),
+  };
+  if (attachments.length) message.attachments = attachments;
 
   return apiFetch(`/tickets/${ticketId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({
-      channel: 'email',
-      via: 'api',
-      from_agent: fromAgent,
-      source: {
-        type: 'email',
-        from: { name: fromName || '', address: fromAddress },
-        to: [{ name: fromAgent ? '' : 'RUBIES Customer Care', address: fromAgent ? fromAddress : 'care@rubyshines.com' }],
-      },
-      body_html: bodyHtml,
-      body_text: bodyText || '',
-      ...(sentDatetime ? { sent_datetime: sentDatetime } : {}),
-    }),
+    body: JSON.stringify(message),
   });
 }
 

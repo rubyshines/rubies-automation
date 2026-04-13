@@ -23,12 +23,51 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam } = require('../../gmail-management/lib/gmailClient');
+const { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam, downloadAttachment } = require('../../gmail-management/lib/gmailClient');
 const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 const gorgias = require('../import/gorgiasClient');
 const { checkForDuplicateTicket } = require('./processGorgiasTickets');
 
 const CARE_ADDRESS = 'care@rubyshines.com';
+const ATTACHMENT_BUCKET = 'email-attachments';
+
+/**
+ * Upload Gmail attachments to Supabase Storage and return Gorgias-compatible attachment objects.
+ * Files are stored at: email-attachments/{gmailMessageId}/{filename}
+ */
+async function uploadAttachmentsForGorgias(gmail, supabase, gmailMessageId, attachmentMeta) {
+  if (!attachmentMeta?.length) return [];
+  console.log(`[gmail-cs] Processing ${attachmentMeta.length} attachment(s) for message ${gmailMessageId}`);
+  const gorgiasAttachments = [];
+  for (const att of attachmentMeta) {
+    if (!att.attachmentId) continue;
+    try {
+      const { data, filename, mimeType } = await downloadAttachment(
+        gmail, gmailMessageId, att.attachmentId, att.filename, att.mimeType
+      );
+      console.log(`[gmail-cs] Downloaded ${filename} (${mimeType}, ${data.length} bytes)`);
+      const storagePath = `${gmailMessageId}/${filename}`;
+      const { error } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .upload(storagePath, data, { contentType: mimeType, upsert: true });
+      if (error) { console.warn(`[gmail-cs] Attachment upload failed: ${error.message}`); continue; }
+      const { data: urlData, error: urlErr } = await supabase.storage
+        .from(ATTACHMENT_BUCKET)
+        .createSignedUrl(storagePath, 600); // 10 min — enough for Gorgias to copy
+      if (urlErr) { console.warn(`[gmail-cs] Signed URL failed: ${urlErr.message}`); continue; }
+      console.log(`[gmail-cs] Uploaded ${filename} → signed URL ready`);
+      gorgiasAttachments.push({
+        url: urlData.signedUrl,
+        name: filename,
+        content_type: mimeType,
+        size: data.length,
+      });
+    } catch (err) {
+      console.warn(`[gmail-cs] Could not process attachment ${att.filename}: ${err.message}`);
+    }
+  }
+  return gorgiasAttachments;
+}
 
 // Classifications that should be archived out of the inbox
 const ARCHIVE_CLASSIFICATIONS = {
@@ -115,10 +154,10 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       return { action: 'skipped', reason: 'legacy_thread' };
     }
 
-    // Fetch full thread history for context
+    // Fetch full thread history for context (include attachment_meta for forwarding)
     const { data: threadMessages } = await supabase
       .from('email_messages')
-      .select('gmail_message_id, from_address, from_name, to_addresses, subject, date, body_text, is_sent')
+      .select('gmail_message_id, from_address, from_name, to_addresses, subject, date, body_text, is_sent, attachment_meta')
       .eq('gmail_thread_id', msg.gmail_thread_id)
       .order('date', { ascending: true });
 
@@ -127,6 +166,11 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     const firstMsg = thread[0];
     const isOurAddress = (addr) => addr && (addr.toLowerCase().includes('@rubyshines.com'));
 
+    // Upload attachments from the first message for Gorgias
+    const firstMsgAttachments = await uploadAttachmentsForGorgias(
+      gmail, supabase, firstMsg.gmail_message_id, firstMsg.attachment_meta
+    );
+
     // Create ticket with the first (oldest) message in the thread
     const ticket = await gorgias.createTicket({
       customerEmail: firstMsg.is_sent ? (msg.from_address) : firstMsg.from_address,
@@ -134,12 +178,16 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       subject: firstMsg.subject || msg.subject || '(no subject)',
       bodyText: stripQuotedContent(firstMsg.body_text || ''),
       tags: ['gmail-import'],
+      attachments: firstMsgAttachments,
     });
 
     // Add remaining thread messages chronologically
     for (let i = 1; i < thread.length; i++) {
       const tm = thread[i];
       const fromAgent = tm.is_sent || isOurAddress(tm.from_address);
+      const tmAttachments = await uploadAttachmentsForGorgias(
+        gmail, supabase, tm.gmail_message_id, tm.attachment_meta
+      );
       try {
         await gorgias.addTicketMessage(ticket.id, {
           fromAddress: tm.from_address,
@@ -147,6 +195,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
           bodyText: stripQuotedContent(tm.body_text || ''),
           fromAgent,
           sentDatetime: tm.date,
+          attachments: tmAttachments,
         });
       } catch (err) {
         console.warn(`[gmail-cs] Could not add thread message to ticket ${ticket.id}: ${err.message}`);
