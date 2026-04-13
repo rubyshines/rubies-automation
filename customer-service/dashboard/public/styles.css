@@ -683,8 +683,13 @@ main { height: calc(100vh - 56px); }
 .order-tracking-status {
   margin-left: auto;
   font-weight: 600;
-  color: var(--teal);
   font-size: 11px;
+}
+.order-tracking-details {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  padding-left: 2px;
 }
 
 .ticket-order-total {
@@ -882,12 +887,15 @@ main { height: calc(100vh - 56px); }
   margin-bottom: 8px;
   font-size: 12px;
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  flex-wrap: nowrap;
 }
 .current-ticket-link {
   font-weight: 600;
   color: var(--text);
   text-decoration: none;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .current-ticket-link:hover { text-decoration: underline; }
 .external-link-icon { font-size: 11px; color: var(--text-tertiary); }
@@ -895,15 +903,21 @@ main { height: calc(100vh - 56px); }
   margin-left: auto;
   font-size: 11px;
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
-.current-ticket-age {
+.current-ticket-timing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
   font-size: 11px;
+}
+.current-ticket-timing .current-ticket-age {
   font-weight: 600;
 }
-.current-ticket-date {
-  font-size: 10px;
+.current-ticket-timing .current-ticket-replied {
   color: var(--text-tertiary);
-  margin-left: 4px;
+  font-weight: 400;
 }
 
 /* Ticket age urgency tiers — queue list + detail card */
@@ -916,6 +930,11 @@ main { height: calc(100vh - 56px); }
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
+}
+.queue-item-replied {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: 2px;
 }
 
 /* Past tickets */
@@ -1297,6 +1316,11 @@ main { height: calc(100vh - 56px); }
 .msg-body td, .msg-body th { padding: 2px 6px; }
 .msg-body blockquote { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; color: var(--text-secondary); }
 .msg-body a { color: var(--teal); }
+
+.msg-attachments { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+.msg-attachment-thumb img { max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; }
+.msg-attachment-thumb img:hover { opacity: 0.8; }
+.msg-attachment-file { display: inline-block; padding: 4px 8px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; color: var(--teal); text-decoration: none; }
 
 /* ─── Draft Editor ───────────────────────────────────────── */
 
@@ -2411,6 +2435,47 @@ main { height: calc(100vh - 56px); }
 .toast-success { background: var(--green); color: white; }
 .toast-error { background: var(--accent); color: white; }
 .toast-info { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+
+/* Persistent error toasts with action buttons */
+.toast-persistent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+.toast-retry-btn {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.3);
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.toast-retry-btn:hover {
+  background: rgba(255,255,255,0.35);
+}
+.toast-dismiss-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.6);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.toast-dismiss-btn:hover {
+  color: white;
+}
 
 /* ─── Mobile Header Bar (hidden on desktop) ─────────────── */
 

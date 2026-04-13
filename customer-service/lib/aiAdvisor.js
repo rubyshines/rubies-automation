@@ -1,13 +1,12 @@
 /**
- * Hybrid CS Advisor — AI-controlled conversation with deterministic tools
+ * AI CS Advisor — AI-controlled conversation with deterministic tools
  *
- * Architecture: Claude Sonnet controls the conversational flow and judgment,
+ * Architecture: Claude Opus controls the conversational flow and judgment,
  * while deterministic functions provide the data (fabric deltas, size charts,
  * donation routing, order details, tone samples).
  *
- * This replaces the decision tree as the conversation controller. Instead of
- * a rigid phase-based tree that overrides customer intent, the AI reads the
- * customer's message and decides what to do, calling tools when it needs data.
+ * The AI reads the customer's message and decides what to do, calling tools
+ * when it needs data.
  *
  * Compatible with the existing _structured output format.
  */
@@ -28,8 +27,9 @@ const {
   initCsConfig,
   _activeProducts,
   PRODUCT_NICKNAMES,
-} = require('./csConfig');
+} = require('./sizingEngine');
 const { prescribeDonationRouting } = require('./donationRouting');
+const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
 
 let _client = null;
 function getClient() {
@@ -157,6 +157,29 @@ const TOOLS = [
       required: ['situation'],
     },
   },
+  {
+    name: 'compare_products',
+    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, and inventory for a specific size. Use this when an item is out of stock and you need to suggest a swap, or when a customer asks how products differ. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        product: { type: 'string', description: 'Product name to find alternatives for (e.g. "Sassy", "Ruby")' },
+        size: { type: 'string', description: 'Size to check inventory for (e.g. "S", "M", "14")' },
+      },
+      required: ['product'],
+    },
+  },
+  {
+    name: 'check_unfulfilled_order',
+    description: 'Investigate why an unfulfilled order hasn\'t shipped. Checks inventory levels for each item, pre-order tags, order age in business days, and partial fulfillment. Call this when a customer asks about a delayed or unshipped order.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'string', description: 'Order number to investigate' },
+      },
+      required: ['order_number'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -263,15 +286,26 @@ async function executeToolCall(toolName, toolInput) {
     }
 
     case 'get_order_context': {
-      const { customer_email, order_number, message } = toolInput;
-      const ctx = await buildContext({ customer_email, order_number, issue_description: message });
+      const { customer_email, order_number, message, _preContext } = toolInput;
+      const ctx = _preContext || await buildContext({ customer_email, order_number, issue_description: message });
       if (!ctx.customer) return { error: `No customer found for ${customer_email}` };
+
+      // Look up DDP status for the customer's country
+      let dutiesPrepaid = null;
+      if (ctx.customerCountry) {
+        try {
+          const { getShippingZone } = require('./tools/shippingLookup');
+          const zone = await getShippingZone(ctx.customerCountry);
+          dutiesPrepaid = zone === 'ddp' || zone === 'us' || zone === 'canada';
+        } catch (_) { /* non-critical */ }
+      }
 
       return {
         customer: {
           email: ctx.customer.email,
           name: ctx.customer.firstName,
           country: ctx.customerCountry,
+          duties_prepaid: dutiesPrepaid,
           address: ctx.customer.defaultAddress ? {
             address1: ctx.customer.defaultAddress.address1,
             city: ctx.customer.defaultAddress.city,
@@ -307,7 +341,7 @@ async function executeToolCall(toolName, toolInput) {
 
     case 'analyze_onepiece_fit': {
       const { product, waist_size, height_inches, is_kids } = toolInput;
-      const { analyzeOnepieceFit, getChartCategory, getSeparatesText } = require('./csConfig');
+      const { analyzeOnepieceFit, getChartCategory, getSeparatesText } = require('./sizingEngine');
       const { chartCategory } = getChartCategory(product, is_kids || false);
       const waist = normalizeSize(waist_size);
       if (!waist) return { error: `Invalid size: ${waist_size}` };
@@ -317,9 +351,9 @@ async function executeToolCall(toolName, toolInput) {
       } else if (fit.type === 'wiggle') {
         return { fit: 'wiggle', recommended_size: fit.size, variant: fit.variant, waist_size: fit.waistSize, delta: fit.unit, message: `Height suggests ${fit.size} ${fit.variant} (1 size ${fit.moreOrLess} than waist). Should work with a little wiggle room.` };
       } else if (fit.type === 'separates') {
-        return { fit: 'separates', waist_size: fit.waistSize, height_size: fit.heightSize, variant: fit.variant, size_diff: fit.sizeDiff, message: `Waist and height are ${fit.sizeDiff} sizes apart. The one-piece won't fit well. Suggest a tankini top paired with a bikini bottom for more flexible fit.` };
+        return { fit: 'separates', waist_size: fit.waistSize, height_size: fit.heightSize, variant: fit.variant, size_diff: fit.sizeDiff, message: `Waist and height are ${fit.sizeDiff} sizes apart. The one-piece won't fit well. Suggest the Queeny tankini paired with the Ruby (standard) or Stella (high-waisted, more coverage) bikini bottom.` };
       } else {
-        return { fit: 'outside_range', message: 'Height is outside our chart ranges. Suggest separates (tankini + bikini bottom) as a safer option.' };
+        return { fit: 'outside_range', message: 'Height is outside our chart ranges. Suggest the Queeny tankini paired with the Ruby (standard) or Stella (high-waisted, more coverage) bikini bottom as a safer option.' };
       }
     }
 
@@ -350,6 +384,127 @@ async function executeToolCall(toolName, toolInput) {
       }
     }
 
+    case 'compare_products': {
+      const { product, size } = toolInput;
+      const category = classifyProduct(product);
+      if (!category) return { error: `Unknown product: ${product}` };
+
+      const supabase = getSupabaseClient();
+      const { data: catalog } = await supabase.rpc('get_product_catalog', {
+        p_collection: null,
+        p_category: null,
+        p_age_group: null,
+      });
+
+      if (!catalog?.length) return { error: 'Could not load product catalog' };
+
+      // Use handle → product_cs_config for stable product identification
+      // _activeProducts is keyed by handle with { nickname, category }
+      const sourceHandle = Object.entries(_activeProducts).find(([, v]) => v.nickname === product)?.[0];
+      const sourceConfig = sourceHandle ? _activeProducts[sourceHandle] : null;
+      if (!sourceConfig) return { error: `No product config for: ${product}` };
+
+      // Find alternatives: same category, different product, joined by handle
+      const sameCategory = catalog.filter(p => {
+        if (p.handle === sourceHandle) return false;
+        const config = _activeProducts[p.handle];
+        return config && config.category === category;
+      });
+
+      const sourceProduct = catalog.find(p => p.handle === sourceHandle);
+
+      // Ensure product cache is loaded for inventory lookups
+      const { searchProducts, loadFromSupabase, getProducts } = require('./productCache');
+      if (!getProducts()?.length) await loadFromSupabase();
+
+      // Build alternatives with size + inventory filtering
+      let alternatives = [];
+      for (const p of sameCategory) {
+        const config = _activeProducts[p.handle];
+        const nick = config.nickname;
+        const allSizes = [...(p.kid_sizes || []), ...(p.adult_sizes || [])];
+
+        if (size) {
+          const normalizedSize = normalizeSize(size);
+          if (!allSizes.some(s => normalizeSize(s) === normalizedSize)) continue;
+
+          // Search by full title — sum inventory across all colors for this size
+          const variants = searchProducts(`${p.title} ${size}`);
+          const matches = variants.filter(v => {
+            const vSize = normalizeSize(v.variantTitle?.split('/').pop()?.trim());
+            return vSize === normalizedSize && v.productTitle === p.title;
+          });
+          const sizeInventory = matches.reduce((sum, v) => sum + (v.inventoryQuantity || 0), 0);
+          if (sizeInventory <= 0) continue;
+
+          alternatives.push({
+            product: nick,
+            fit_description: p.fit_description,
+            best_for: p.best_for,
+            comparison_notes: p.comparison_notes,
+            size,
+            inventory_in_size: sizeInventory,
+          });
+        } else {
+          alternatives.push({
+            product: nick,
+            fit_description: p.fit_description,
+            best_for: p.best_for,
+            comparison_notes: p.comparison_notes,
+            available_sizes: allSizes,
+            total_inventory: p.total_inventory,
+          });
+        }
+      }
+
+      // Check source product inventory for the requested size — per-color breakdown
+      let sourceInventory = null;
+      let sourceColorInventory = [];
+      if (size && sourceProduct) {
+        const srcVariants = searchProducts(`${sourceProduct.title} ${size}`);
+        const srcMatches = srcVariants.filter(v => {
+          const vSize = normalizeSize(v.variantTitle?.split('/').pop()?.trim());
+          return vSize === normalizeSize(size) && v.productTitle === sourceProduct.title;
+        });
+        sourceInventory = srcMatches.reduce((sum, v) => sum + (v.inventoryQuantity || 0), 0);
+        sourceColorInventory = srcMatches.map(v => ({
+          color: v.variantTitle?.split('/')[0]?.trim() || 'Unknown',
+          inventory: v.inventoryQuantity || 0,
+        })).filter(c => c.inventory > 0);
+      }
+
+      return {
+        source: {
+          product: sourceConfig.nickname,
+          category,
+          fit_description: sourceProduct?.fit_description,
+          best_for: sourceProduct?.best_for,
+          comparison_notes: sourceProduct?.comparison_notes,
+          ...(size ? { size, total_inventory: sourceInventory, available_colors: sourceColorInventory } : {}),
+        },
+        alternatives,
+      };
+    }
+
+    case 'check_unfulfilled_order': {
+      const { order_number } = toolInput;
+      const { getOrderByNumber } = require('./shopify');
+      try {
+        const shopifyOrder = await getOrderByNumber(order_number);
+        // Map line items to the format analyzeUnfulfilledOrder expects (needs variantId)
+        const mapped = {
+          ...shopifyOrder,
+          lineItems: (shopifyOrder.lineItems || []).map(li => ({
+            ...li,
+            variantId: li.variant?.id || null,
+          })),
+        };
+        return await analyzeUnfulfilledOrder(mapped);
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` };
   }
@@ -365,7 +520,7 @@ function buildSystemPrompt(toneSamples, orderContext) {
     orderSection = `
 ## Customer & Order Context
 - Customer email: ${orderContext.customer?.email || 'unknown'}
-- Customer country: ${orderContext.customer?.country || 'unknown'}
+- Customer country: ${orderContext.customer?.country || 'unknown'}${orderContext.customer?.duties_prepaid != null ? ` (duties ${orderContext.customer.duties_prepaid ? 'PREPAID — we cover customs charges' : 'NOT prepaid — customer responsible'})` : ''}
 ${orderContext.target_order ? `- Order: ${orderContext.target_order.name} (placed ${orderContext.target_order.created_at?.split('T')[0] || 'unknown'}, ${orderContext.target_order.days_since_order} days ago)
 - Fulfillment: ${orderContext.target_order.fulfillment_status}
 - Items: ${orderContext.target_order.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
@@ -391,6 +546,8 @@ Jamie: "${s.agent_message}"`).join('\n\n')}
 ## Your Approach
 You read the customer's message, understand what they actually want, and respond directly. You have access to tools for looking up order details, size charts, fabric deltas, and donation routing. Use them when you need data.
 
+When a customer asks for a specific product, check availability and offer it — trust their product preferences. Sizing is different: if their measurements suggest a different size, flag it.
+
 CRITICAL: Do NOT volunteer order details (order numbers, product names, sizes, quantities) unless the customer has mentioned them first. When the customer sends a generic message like "help me with a return or exchange", just ask what's going on. Do NOT look up their order and list it back to them. Only reference specific order details when:
 1. The customer mentions a specific product, size, or order number
 2. You need to confirm details for an exchange or refund that's already been discussed
@@ -398,6 +555,12 @@ CRITICAL: Do NOT volunteer order details (order numbers, product names, sizes, q
 The order context is available to YOU for reference, but don't present it to the customer unprompted.
 
 CRITICAL: NEVER ask for an order number or email address if you already have order context in the system prompt. The customer's order and email were already looked up for you. Use that data directly. Asking for information you already have is the worst possible customer experience.
+
+## EMAIL & CUSTOMER SCENARIOS
+- **Email mismatch:** If the conversation email differs from the email on the order, reply to the conversation email but use the order data from the order email. Don't ask the customer to re-send from a different address.
+- **Customer not found:** If no customer record exists for the email, ask for the order number or the email they placed the order with.
+- **No fulfilled orders:** If the customer has orders but none are fulfilled yet, explain that we need to wait for delivery before we can do an exchange. Offer to help with anything else in the meantime.
+- **"Product not working" + self-identified direction:** If the customer says "it's not working" but also mentions it feels tight or loose, treat it as a sizing issue in that direction. Don't ask "what didn't work" — they already told you.
 
 ## ANTI-HALLUCINATION RULES (ABSOLUTE, NEVER VIOLATE)
 These rules override everything else. Violations cause real harm to customers.
@@ -428,6 +591,9 @@ The same principle applies to exchanges AND refunds: if the customer's intent is
 - The sizing makes sense (not a huge jump like 7 to 12 without a measurement)
 If the customer says "too loose" or "too big" WITHOUT specifying a target size, do NOT create an order. Instead, offer 1-2 size options with deltas, or ask for a measurement.
 When you create an order, ALWAYS include donation info in the same message.
+
+**Exchanges — inventory check before confirming:**
+Before confirming a size exchange, call compare_products with the product name and target size to verify inventory. If the target size is out of stock, don't offer it. Instead, use the compare_products results to suggest an alternative product in the same size that IS in stock, using the comparison data to explain the difference. Example: "The M is currently out of stock, but the Naomi in M has a similar cheeky cut and is available. Would you like to try that instead?"
 
 **Refunds — when to process vs when to nudge:**
 The key question is: has the customer received REAL sizing help from you (Jamie/agent) in this conversation? A "real" exchange offer means you suggested a specific size, mentioned fabric delta, or asked for measurements. The Gorgias bot's generic "would you like to exchange?" does NOT count.
@@ -532,29 +698,85 @@ In ALL defect cases: always confirm the size fits before shipping a replacement 
 
 ## Key Business Rules
 
-### Exchanges (60-day window)
+### Exchanges — Order Age Tiers
 - Exchanges are free. Customer gets a new order, donates the old items.
-- If the order is over 60 days old, still process it graciously (mark as "generous").
+- **0-60 days:** Standard exchange window. Process normally.
+- **61-180 days:** Outside standard window. Still process it, but acknowledge: "This is outside our standard exchange window but we want to make sure you're happy with your purchase."
+- **181-365 days:** Case-by-case. Lean toward helping, but note the timeframe. Use judgment.
+- **Over 365 days:** Escalate to Jamie. Do NOT process — set status to "route_to_human" with audit note "Order over 1 year old, escalating."
+
+### Refund Eligibility by Order Age
+- **0-60 days:** Process refund normally.
+- **61-180 days:** Process as "generous" — still do it, but note it in audit.
+- **Over 180 days:** Escalate to Jamie. Set status to "route_to_human".
 
 ### Size Guidance
 - When the customer requests a SPECIFIC size and it exists, CONFIRM IT. Do not second-guess or offer alternatives unless the delta is extreme (>4").
 - "A bit tight/loose", "slightly tight/loose", "next size up/down" = high confidence. Go ahead and create the order or confirm the adjacent size.
-- "Too tight/loose" without qualifier = unclear degree. Offer 1-2 options with fabric deltas.
+- "Too tight/loose" without qualifier = unclear degree. Offer next 2 sizes with fabric deltas.
 - "Way too tight/loose" or "much too big/small" = major misfit. Offer options or ask for measurements.
 - ALWAYS use the get_fabric_delta tool to get real numbers. Never estimate or make up deltas.
 - When the customer gives a measurement, use lookup_size_chart to find the right size.
+- If the measurement falls BETWEEN two sizes, present both options with deltas and let the customer choose.
+- If the measurement matches their current size but they say it doesn't fit, bump one size in their issue direction (tight → next up, loose → next down).
 - Don't ask what unit (inches/cm) for measurements. Just look it up.
-- For one-pieces, if they say "too short", check if they want the Tall variant.
+- For one-pieces: "too short" → check Tall variant. "Too long" → check Regular variant. If waist + height both provided, use analyze_onepiece_fit to check whether the one-piece works or if separates (tankini + bikini bottom) would be better.
+
+### Youth/Adult Size Boundary
+RUBIES has two size systems: Youth (numeric: 4-16) and Adult (letter: XXS-4X). They meet at Youth 16 ↔ Adult L.
+- When a customer in Youth 16 needs the next size UP: cross to adult sizing. The next size is L (adult). Include a note: "Since [size 16] is the largest youth size, the next size up is our adult [L]. It uses the same fabric measurements."
+- When a customer in Adult XXS needs the next size DOWN: cross to youth sizing. The next size is 16 (youth). Include a note explaining the crossover.
+- If "a bit tight/loose" or "next size" confidence: auto-confirm the crossover size.
+- If the customer is at the TOP of the adult range (4X) or BOTTOM of youth range (4) with nowhere to go: ask for a measurement to verify sizing before suggesting anything.
+
+### Repeat Exchange Auto-Confirm
+If the customer already received a previous exchange for this product (visible as a $0 order in their history), and they're asking to exchange again in the same direction:
+- Auto-confirm the next size in that direction. They've already been through this once — don't make them re-explain.
+- Reassure them and offer the exchange. Don't suggest a refund for repeat exchangers.
+
+### Multi-Size Purchase Detection
+If the customer bought MULTIPLE sizes of the SAME product on one order (e.g., AJ in size 10 and size 12 — they were trying to find the right fit):
+- "Too tight" → they want to exchange the LARGEST size they bought (the others were already too small). Only exchange that one.
+- "Too loose" → they want to exchange the SMALLEST size they bought. Only exchange that one.
+- On refund request for a try-both-sizes purchase: offer a catalog exchange ("Would you like to try a different product instead?") before processing refund.
 
 ### Multi-item Orders
 - Don't ask about items the customer didn't mention.
 - If multiple items of the SAME product and size, assume they mean all of them.
 - If items across DIFFERENT body groups (tops vs bottoms) and customer was vague ("everything"), ask which ones.
+- If the order has BOTH tops AND bottoms with sizing issues, ask for BOTH waist AND chest measurements (don't just ask for one).
+- Accessories (gift cards, pins, etc.) cannot be sized or exchanged. Any issue with an accessory = refund.
 
 ### Product Knowledge
+
+**Swim bottoms (coverage order, most → least):**
+- **Serena** (Shorty Shorts) — 3.5" inseam shorts, most coverage. Great for active use (beach, running, dance). Pairs with Queeny or Mia top.
+- **Stella** (High Waisted) — high-waisted bikini bottom, more coverage around the waist. Same shaping as Ruby.
+- **Ruby** — standard bikini bottom, the original. Pairs with Queeny tankini or Mia halter top.
+- **Cheeky** — least coverage, higher leg cut, "more grown-up" style. Adult sizes only (no youth). Never recommend Cheeky when the customer wants MORE coverage.
+
+**Swim tops:**
+- **Queeny** (Tankini) — more coverage and sun protection than Mia. Matches with Ruby or Serena bottoms. Good alternative to Sky one-piece when separates are needed.
+- **Mia** (Halter Bikini Top) — classic halter bikini top, less coverage than Queeny.
+
+**One-piece:**
+- **Sky** — full one-piece. When it doesn't fit (waist/height mismatch), suggest separates: Queeny tankini + Ruby or Stella bottom (NOT Cheeky, since the customer wanted one-piece-level coverage).
+
+**Underwear bottoms (coverage order, most → least):**
+- **AJ** — best-seller, most structured fit, wide waistband. Available in youth + adult sizes.
+- **Charlie** — similar to AJ with structured fit. Available in youth + adult sizes.
+- **Flo** (Dance) — streamlined fit for dancers/performers, good under tight clothing. Youth + adult sizes.
+- **Sassy** — lower rise, higher leg cut, less butt coverage than AJ. Adult sizes only. Recommend for tight legs (larger leg opening).
+- **Naomi** (Gaff) — maximum smoothing, two high-compression fabrics, slightly cheeky silhouette. Adult sizes only. For customers who want extra-strength shaping.
+
+**Underwear tops:**
+- **Brooke** — bra, available in youth + adult sizes.
+- **Ava** — seamless bra, runs slightly smaller in the hip area. Adult sizes only.
+
 - "Doesn't hide" / "doesn't flatten" on BOTTOMS = expectation mismatch. RUBIES shapes, doesn't flatten. USE THE SHAPING EXPECTATIONS TEMPLATE (see above). This is one of the few cases where a longer response (~170 words) is appropriate.
 - "Doesn't work" without specifics on BOTTOMS = USE THE SHAPING EXPECTATIONS TEMPLATE.
 - Tight legs = suggest Cheeky (swim), Sassy (adult underwear), or Flo Dance (kids).
+- **Waist loose BUT legs fit (CRITICAL — DO NOT CREATE AN ORDER):** If the customer says the waist/stomach is too loose but the legs fit fine, DO NOT size down and DO NOT create an exchange order. Sizing down will make the legs too tight. Instead, suggest a product with a different leg cut: [Flo Dance](https://rubyshines.com/products/the-flo-no-tuck-shaping-dance-underwear) (kids), [Sassy](https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear) (adult) for underwear, [Cheeky Bikini](https://rubyshines.com/products/the-cheeky-no-tuck-shaping-bikini-bottom) for swim. These have larger leg openings so a smaller waist size won't squeeze the legs. Set status to "needs_info" and item state to "AWAITING_DECISION" — wait for the customer to confirm they want the alternative product before creating any order. Even if the customer requested a specific smaller size, override that request and explain the trade-off: "If we size down for the waist, the legs will likely be too tight. I'd suggest trying [product] which has a larger leg opening so we can get a better fit around the waist without squeezing the legs."
 
 ### Outreach Classification
 When the message is NOT from a customer about an order, classify the intent:
@@ -581,6 +803,38 @@ When a customer wants to cancel an unfulfilled order:
 - If UNFULFILLED: set action_type to "cancellation". Keep the response ultra-short.
 - If FULFILLED: tell them it's already shipped.
 
+### Shipping & Fulfillment Inquiries ("where is my order?", "why hasn't it shipped?")
+When a customer asks about a delayed or unshipped order:
+1. Check the fulfillment_status in the order context
+2. If UNFULFILLED: call check_unfulfilled_order to investigate why
+3. Use the investigation results to give an honest, specific response:
+
+**Pre-order item on order:** "When you placed your order you would have seen a message that [item] is a pre-order. We're still waiting for inventory to arrive." Offer a refund if they'd prefer not to wait. Set message_type to "shipping".
+
+**Out-of-stock item blocking fulfillment:** Be honest. "I'm sorry for the delay. Our warehouse let me know the [item] in [variant] is currently out of stock. Our website was out of sync with our inventory."
+
+Swap precedence (follow this order):
+  1. **What the customer asked for.** If they named a specific product/size, call compare_products to check availability. Look at the source.total_inventory and source.available_colors in the result. If in stock and sizing makes sense, offer it. If in stock but sizing doesn't match their measurements, flag the concern and suggest the right size. If their color is OOS but other colors are available, offer those.
+  2. **Same product, different color.** If their preferred color is OOS, the compare_products source.available_colors shows which colors have stock. Offer those.
+  3. **Different product, same size.** Call compare_products — the alternatives list shows in-stock products in the same category. Use fit_description and comparison_notes to pick the closest match. Don't offer a different size — the customer chose that size for a reason. (Exception: youth ↔ adult equivalent sizes like youth 14 = adult S are the same fit.)
+  4. **Refund just that item** and ship the rest of the order now.
+  Set status to "needs_info", action_type to "fulfillment_check".
+
+**Pre-order resolved but ANOTHER item now OOS:** The original delay reason is resolved but a different item is blocking. Don't reference the old pre-order reason. Focus on the current blocker (the OOS item).
+
+**Order stuck (3+ business days, no issues found):** "I'm sorry for the delay. I'm looking into this and will get back to you." Set action_type to "fulfillment_check" so it gets flagged for Jamie.
+
+**Normal processing (0-2 business days):** "Your order is being prepared and should ship today/tomorrow. You'll get a shipping confirmation with tracking once it's on its way."
+
+**Following up on a previous shipping promise:** If the conversation history shows a prior reply promising the order would ship (e.g., "should ship early next week") and it still hasn't, take ownership: "I'm sorry, I told you it would ship [timeframe] and it still hasn't gone out." Then investigate and give the real reason.
+
+CRITICAL: Never make up a shipping date or promise. Only give specific dates when the investigation shows the order is in normal processing. For stuck/OOS orders, say you're looking into it.
+
+### Customs / Duties Charges
+When a customer says they were charged customs duties or import taxes on delivery:
+- **DDP country (duties PREPAID in context above):** This is our mistake — we cover duties for their country. Apologize and let them know we'll refund the amount. If they haven't already sent or mentioned a receipt, ask them to send one showing what they paid. If they have (attached image, mentioned the amount, etc.), acknowledge it. Either way, set status to "route_to_human" so Jamie can verify the receipt before processing the refund. Set message_type to "shipping", customer_intent to "refund". If the customer stated the amount, include it in the audit (e.g. "DDP duties refund: €13.90 — pending receipt verification"). This is a manual Shopify refund (not item-based), so Jamie handles it after verifying.
+- **DDU country (duties NOT prepaid):** Explain that customs duties are set by their local customs authority and are unfortunately outside our control. We can't predict or cover them. Be empathetic but clear. Set message_type to "shipping".
+
 ### Refunds (additional rules)
 - $0 exchange orders: NEVER refund. These are previous exchanges. Offer another exchange instead.
 - If a customer wants to PAY for items they kept from an exchange (e.g., they forgot to donate/return them), send them an invoice. Don't tell them it's free or to keep them. They're offering to do the right thing.
@@ -588,11 +842,17 @@ When a customer wants to cancel an unfulfilled order:
 ### Donations
 - All RUBIES returns are donated (not shipped back). Never ask a customer to ship items back to RUBIES.
 - Skip donation info for defects (customer keeps the defective item).
-- ALWAYS call get_donation_partner when you need donation info. It handles all the routing logic (single vs multiple items, partner availability, geographic matching). Use its response_text as the basis for what you tell the customer.
+- ALWAYS call get_donation_partner when you need donation info. It handles ALL routing logic: geographic proximity matching (finds 3 closest partners), load balancing across partners, single vs multiple item handling. Use its response_text as the basis for what you tell the customer. Never try to pick a donation partner yourself.
 - Wash instructions: only include when the tool returns a named partner with an address (not for local donations).
 - No partners in customer's country: the tool will suggest donating locally and ask if they know an LGBTQ+ org. Relay that.
 - Single item with partners available: the tool will suggest donating locally but offer our partner org info. Relay that.
 - Multiple items with partners available: the tool returns the specific partner name, address, and description. Include the full address block.
+
+### Kids & Third-Party Purchases
+- When a parent/guardian is buying for a child: take a measurements-only approach. Ask for waist/chest measurement.
+- NEVER ask how the product looks or fits on a child. Only ask about measurements and comfort.
+- Extra patience in tone. Parents are often navigating this for the first time.
+- Adapt language: "your child's comfort is most important" not "your comfort."
 
 ### Safety
 - If the message indicates danger, hiding items, or an unsafe situation, process a refund immediately with no questions. Be extra gentle.
@@ -610,7 +870,7 @@ When a customer wants to cancel an unfulfilled order:
 - When asking what didn't work, always add: "in case I can help you with another size or recommend another product"
 - For measurements: ask for waist "around the belly and just under the belly button" for bottoms. For tops, ask for "the measurement around the chest where a bikini band sits".
 - NEVER say "Shall I set that up?" or "Would you like me to proceed?" Say "Does that sound right?" or "Does that sound like it will work?"
-- NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover..."). Just write the customer email directly.
+- NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover...", "Hmm", "Actually", "Let me try again"). Just write the customer email directly. Write ONE draft, then immediately output the <structured> block. NEVER revise, critique, or re-draft your response. Your first draft is your final draft.
 - Start with "Hi," or "Hi [name]," then get straight to the point. No preambles.
 - Action tense depends on status:
   - When ALL items are resolved (status "ready" or "complete"): write actions as ALREADY DONE (past tense). The operator executes before sending. Say "I've created your exchange" not "I'll create". Say "I've processed the refund" not "I'll process".
@@ -652,6 +912,7 @@ After handling the conversation, you MUST end your final message with a structur
   "customer_pronouns": "they/them|she/her|he/him",
   "buying_for": "self|third_party",
   "third_party_label": "daughter|son|child|null",
+  "duties_refund_amount": "amount and currency if DDP duties refund (e.g. '13.90 EUR'), null otherwise",
   "confidence": "high|medium|low",
   "audit": ["reasoning step 1", "reasoning step 2"]
 }
@@ -791,10 +1052,10 @@ function validateResponse(composedResponse, toolsCalled, audit) {
  * @param {string} [params.reference_date] - ISO date for time-sensitive logic
  * @returns {Promise<Object>} Compatible _structured output
  */
-async function hybridAdvisor({ customer_email, issue_description, order_number, intake: existingIntake, reference_date }) {
+async function aiAdvisor({ customer_email, issue_description, order_number, intake: existingIntake, reference_date, preContext }) {
   // Ensure product config is loaded
   if (Object.keys(_activeProducts).length === 0) {
-    try { await initCsConfig(); } catch (e) { console.error('[hybridAdvisor] initCsConfig failed:', e.message); }
+    try { await initCsConfig(); } catch (e) { console.error('[aiAdvisor] initCsConfig failed:', e.message); }
   }
 
   const client = getClient();
@@ -818,18 +1079,28 @@ async function hybridAdvisor({ customer_email, issue_description, order_number, 
   } catch (e) { /* tone table may not exist yet */ }
 
   // Pre-fetch order context for system prompt
+  // Use preContext if caller already did the deterministic lookup (intake path)
   let orderContext = null;
-  try {
+  if (preContext) {
     orderContext = await executeToolCall('get_order_context', {
       customer_email,
       order_number: order_number || undefined,
       message: issue_description,
+      _preContext: preContext,
     });
-    if (orderContext.error) {
-      audit.push(`Order lookup: ${orderContext.error}`);
+  } else {
+    try {
+      orderContext = await executeToolCall('get_order_context', {
+        customer_email,
+        order_number: order_number || undefined,
+        message: issue_description,
+      });
+      if (orderContext.error) {
+        audit.push(`Order lookup: ${orderContext.error}`);
+      }
+    } catch (e) {
+      audit.push(`Order lookup failed: ${e.message}`);
     }
-  } catch (e) {
-    audit.push(`Order lookup failed: ${e.message}`);
   }
 
   const systemPrompt = buildSystemPrompt(toneSamples, orderContext);
@@ -860,7 +1131,7 @@ async function hybridAdvisor({ customer_email, issue_description, order_number, 
   while (toolCallCount < MAX_TOOL_CALLS) {
     response = await client.messages.create({
       model: 'claude-opus-4-6',
-      max_tokens: 2000,
+      max_tokens: 4096,
       system: systemPrompt,
       tools: TOOLS,
       messages: currentMessages,
@@ -969,14 +1240,14 @@ async function hybridAdvisor({ customer_email, issue_description, order_number, 
 function buildCompatibleStructured(parsed, composedResponse, opts) {
   const { customer_email, orderContext, existingIntake, audit } = opts;
 
-  // Default structure if parsing failed
+  // Default structure if parsing failed — preserve any order context already gathered
   if (!parsed) {
     return {
       status: 'route_to_human',
       intake: existingIntake || { message_type: null, items: [] },
       prescription: { items: [], donation: null, crossover_note: null, still_needed: [], flags: [] },
       customer: { email: customer_email, name: null, pronouns: 'they/them', country: orderContext?.customer?.country },
-      order: null,
+      order: orderContext?.target_order || null,
       action_type: null,
       confidence: 'low',
       advisor_version: 'hybrid-v3',
@@ -1101,4 +1372,4 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
   };
 }
 
-module.exports = { hybridAdvisor };
+module.exports = { aiAdvisor };

@@ -41,7 +41,7 @@ async function logout() {
 // ---------------------------------------------------------------------------
 
 let _autoRefreshInterval = null;
-let _actionInFlight = false;
+const _actionsInFlight = new Set(); // ticket IDs with pending background actions
 let _lastStatsJson = '';
 let _visibilityDebounce = null;
 
@@ -69,7 +69,7 @@ function startAutoRefresh() {
 }
 
 async function autoRefreshTick() {
-  if (_actionInFlight) return;
+  if (_actionsInFlight.size > 0) return;
   try {
     const res = await fetch('/api/tickets/stats');
     if (res.status === 401) return; // session expired, checkAuth handles redirect
@@ -258,12 +258,14 @@ async function loadTicketQueue() {
       const categoryLabel = isSpam ? 'spam' : isCommunity ? 'community' : (t.message_type || 'general').replace(/_/g, ' ');
       const statusClass = `status-dot-${t.status || 'open'}`;
       const orderStr = t.order_number ? `#${String(t.order_number).replace(/^#/, '')}` : '';
-      // Show ticket age (how long customer has been waiting) not updated_at
+      // Timing: ticket age + last activity
       const ticketAge = t.created_at ? timeAgo(t.created_at, 'short') : '?';
       const ageTier = ticketAgeTier(t.created_at);
+      const lastReply = t.snoozed_at || t.updated_at;
+      const lastReplyAgo = lastReply ? timeAgo(lastReply, 'short') : null;
       const timeStr = parked
         ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
-        : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>`;
+        : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>${lastReplyAgo && t.snoozed_at ? `<span class="queue-item-replied">replied ${lastReplyAgo}</span>` : ''}`;
 
       // Row 2: secondary badges (only shown when there's content)
       const row2Parts = [];
@@ -432,9 +434,10 @@ function renderTicketDetail(ticket) {
   const categoryClass = getCategoryClass(ticketMsgType);
   const ticketStatus = ticket.status || 'open';
   const statusDotClass = `status-dot-${ticketStatus}`;
-  const ticketAge = ticket.created_at ? timeAgo(ticket.created_at) : '';
-  const ticketCreatedDate = ticket.created_at ? new Date(ticket.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const ticketAge = ticket.created_at ? timeAgo(ticket.created_at, 'short') : '';
   const ageTier = ticketAgeTier(ticket.created_at);
+  const detailLastReply = ticket.snoozed_at || null;
+  const detailLastReplyAgo = detailLastReply ? timeAgo(detailLastReply, 'short') : null;
   document.getElementById('current-ticket-header').innerHTML = gorgiasId ? `
     <div class="current-ticket-bar">
       <span class="status-dot ${statusDotClass}"></span>
@@ -443,8 +446,10 @@ function renderTicketDetail(ticket) {
       </a>
       ${ticketMsgType ? `<span class="category-badge ${categoryClass}">${esc(ticketMsgType.replace(/_/g, ' '))}</span>` : ''}
       <span class="current-ticket-status-text">${esc(ticketStatus)}</span>
-      ${ticketAge ? `<span class="current-ticket-age age-${ageTier}">waiting ${ticketAge}</span>` : ''}
-      ${ticketCreatedDate ? `<span class="current-ticket-date">${ticketCreatedDate}</span>` : ''}
+      <span class="current-ticket-timing">
+        ${ticketAge ? `<span class="current-ticket-age age-${ageTier}">${ticketAge} old</span>` : ''}
+        ${detailLastReplyAgo ? `<span class="current-ticket-replied">replied ${detailLastReplyAgo} ago</span>` : ''}
+      </span>
     </div>
   ` : '';
 
@@ -522,12 +527,18 @@ function renderTicketDetail(ticket) {
 
   }
 
-  // Scroll to last customer message
+  // Smart scroll: align bottom of viewport with top of the next section
   setTimeout(() => {
-    const msgs = document.querySelectorAll('#conversation-thread .msg-customer');
-    const lastCustomerMsg = msgs[msgs.length - 1];
-    if (lastCustomerMsg) {
-      lastCustomerMsg.scrollIntoView({ behavior: 'auto', block: 'start' });
+    const detail = document.getElementById('draft-detail');
+    if (!detail) return;
+    const hasPendingDraft = d && ['pending', 'revised'].includes(d.status);
+    // Pending draft: bottom of viewport = top of training notes
+    // Already replied: bottom of viewport = top of action/draft section
+    const anchor = hasPendingDraft
+      ? document.querySelector('.label[for="draft-notes"]')
+      : document.getElementById('detail-draft');
+    if (anchor) {
+      detail.scrollTop = anchor.offsetTop - detail.clientHeight;
     }
   }, 50);
 
@@ -620,7 +631,12 @@ async function loadCustomerContext(email, orderNumber) {
         url: to.tracking_url,
         number: to.tracking_number,
         company: to.tracking_company,
+        shippedAt: to.tracking_shipped_at,
+        deliveredAt: to.tracking_delivered_at,
         status: to.tracking_status,
+        estimatedDelivery: to.tracking_estimated_delivery,
+        lastLocation: to.tracking_last_location,
+        summary: to.tracking_summary,
       } : null;
 
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
@@ -767,8 +783,31 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     } else if (trackingInfo.url) {
       parts.push(`<a href="${trackingInfo.url}" target="_blank" class="order-tracking-link">Track &#8599;</a>`);
     }
-    if (trackingInfo.status) parts.push(`<span class="order-tracking-status">${esc(trackingInfo.status)}</span>`);
-    trackingHtml = `<div class="order-tracking">${parts.join('')}</div>`;
+    // Show shipment status from tracking_snapshots (real tracking data)
+    const statusLabels = { delivered: 'Delivered', in_transit: 'In Transit', pre_transit: 'Pre-Transit', expired: 'Expired', unknown: null };
+    const statusColors = { delivered: 'var(--green)', in_transit: 'var(--blue, #2563eb)', pre_transit: 'var(--yellow)', expired: 'var(--text-tertiary)' };
+    const label = trackingInfo.status ? (statusLabels[trackingInfo.status] ?? trackingInfo.status) : null;
+    if (label) {
+      const color = statusColors[trackingInfo.status] || 'var(--text-secondary)';
+      // For delivered, append the date inline
+      let statusText = label;
+      if (trackingInfo.status === 'delivered' && trackingInfo.deliveredAt) {
+        const dd = new Date(trackingInfo.deliveredAt);
+        statusText += ` ${dd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+      }
+      parts.push(`<span class="order-tracking-status" style="color:${color}">${esc(statusText)}</span>`);
+    } else if (trackingInfo.shippedAt) {
+      parts.push(`<span class="order-tracking-status" style="color:var(--text-tertiary)">Shipped ${timeAgo(trackingInfo.shippedAt)}</span>`);
+    }
+    // Show estimated delivery or last location
+    const extras = [];
+    if (trackingInfo.status !== 'delivered' && trackingInfo.estimatedDelivery) {
+      const ed = new Date(trackingInfo.estimatedDelivery);
+      extras.push(`Est. delivery: ${ed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`);
+    }
+    if (trackingInfo.lastLocation) extras.push(trackingInfo.lastLocation);
+    const extraHtml = extras.length ? `<div class="order-tracking-details">${esc(extras.join(' · '))}</div>` : '';
+    trackingHtml = `<div class="order-tracking">${parts.join('')}</div>${extraHtml}`;
   }
 
   return `
@@ -823,8 +862,8 @@ function renderActionPanel(draft) {
 
   // Header badge
   if (actionType) {
-    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : 'edit';
-    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel' };
+    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'fulfillment_check' ? 'hold' : 'edit';
+    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', fulfillment_check: 'Fulfillment Check' };
     const badgeLabel = badgeLabels[actionType] || actionType;
     headerEl.innerHTML = `
       <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>
@@ -834,42 +873,55 @@ function renderActionPanel(draft) {
     headerEl.innerHTML = `<span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--yellow)">Action</span>`;
   }
 
-  // Already executed? Show the result
-  if (draft.action_executed_at) {
-    // Restore saved chat history if available
-    const savedChat = draft.action_result?.chat_history;
-    if (savedChat?.length) {
-      // Replay full chat: user commands, tool calls, and responses
-      for (const msg of savedChat) {
-        if (msg.role === 'user' && typeof msg.content === 'string') {
-          appendChatMessage('user', msg.content);
-        }
+  // Restore saved chat history (whether action is fully executed or mid-conversation)
+  const savedChat = draft.action_result?.chat_history;
+  if (savedChat?.length) {
+    for (const msg of savedChat) {
+      if (msg.role === 'user' && typeof msg.content === 'string') {
+        appendChatMessage('user', msg.content);
       }
-      const toolResults = draft.action_result?.chat_tool_results || [];
+    }
+    const toolResults = draft.action_result?.chat_tool_results || [];
+    for (const tr of toolResults) {
+      const label = tr.tool.replace(/_/g, ' ');
+      const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+      const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
+      appendChatMessage('tool', `[${label}]\n${display}`);
+    }
+    if (draft.action_result?.chat_response) {
+      appendChatMessage('assistant', draft.action_result.chat_response);
+    }
+    // Restore action links (e.g. Shopify order links)
+    renderActionLinks(draft.action_result?.chat_links);
+
+    // Restore chat history so follow-up messages have context
+    _actionChatHistory = savedChat;
+
+    if (draft.action_executed_at) {
+      headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Executed ${timeAgo(draft.action_executed_at)}</span>`;
+      input.placeholder = 'Request additional actions...';
+    } else {
+      // Show updated prefill from re-draft if action type changed
+      const newPrefill = buildActionPrefill(draft);
+      input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
+      if (newPrefill) input.value = newPrefill;
+    }
+    return;
+  }
+
+  // No chat history — check if there's a non-chat action_result to show
+  if (draft.action_executed_at) {
+    const result = draft.action_result || {};
+    const toolResults = result.chat_tool_results || [];
+    if (toolResults.length) {
       for (const tr of toolResults) {
         const label = tr.tool.replace(/_/g, ' ');
         const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
-        const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
-        appendChatMessage('tool', `[${label}]\n${display}`);
-      }
-      if (draft.action_result?.chat_response) {
-        appendChatMessage('assistant', draft.action_result.chat_response);
+        appendChatMessage('tool', `[${label}]\n${resultText}`);
       }
     } else {
-      // No saved chat — show summary from action_result
-      const result = draft.action_result || {};
-      const toolResults = result.chat_tool_results || [];
-      if (toolResults.length) {
-        for (const tr of toolResults) {
-          const label = tr.tool.replace(/_/g, ' ');
-          const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
-          appendChatMessage('tool', `[${label}]\n${resultText}`);
-        }
-      } else {
-        appendChatMessage('assistant', `Action executed ${timeAgo(draft.action_executed_at)}.`);
-      }
+      appendChatMessage('assistant', `Action executed ${timeAgo(draft.action_executed_at)}.`);
     }
-
     headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Executed ${timeAgo(draft.action_executed_at)}</span>`;
     input.placeholder = 'Request additional actions...';
     input.value = '';
@@ -969,6 +1021,10 @@ function buildActionPrefill(draft) {
     return `cancel order #${orderNum}`;
   }
 
+  if (actionType === 'fulfillment_check') {
+    return `check fulfillment for order #${orderNum}`;
+  }
+
   return '';
 }
 
@@ -994,6 +1050,23 @@ function simpleMarkdown(text) {
     })
     // Line breaks (after list handling)
     .replace(/\n/g, '<br>');
+}
+
+function renderActionLinks(links) {
+  const container = document.getElementById('action-chat-messages');
+  if (!container || !links?.length) return;
+  const div = document.createElement('div');
+  div.className = 'action-msg action-msg-links';
+  for (const l of links) {
+    const a = document.createElement('a');
+    a.href = l.url;
+    a.target = '_blank';
+    a.className = `action-link action-link-${l.type}`;
+    a.textContent = `${l.label} ↗`;
+    div.appendChild(a);
+  }
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
 }
 
 function appendChatMessage(role, content) {
@@ -1071,12 +1144,7 @@ async function sendActionMessage() {
     }
 
     // Show action links (Shopify admin links for orders/drafts)
-    if (result.links?.length) {
-      const linksHtml = result.links.map(l =>
-        `<a href="${esc(l.url)}" target="_blank" class="action-link action-link-${l.type}">${esc(l.label)} &#8599;</a>`
-      ).join(' ');
-      appendChatMessage('assistant', linksHtml);
-    }
+    if (result.links?.length) renderActionLinks(result.links);
 
     // Update history for next message
     _actionChatHistory = result.history || [];
@@ -1132,66 +1200,55 @@ function executeEditPhase2() {}
 // Actions
 // ---------------------------------------------------------------------------
 
-async function sendDraft(afterAction) {
+function sendDraft(afterAction) {
   if (!currentTicketId) return;
+  if (_actionsInFlight.has(currentTicketId)) return;
 
   const response = document.getElementById('draft-editor').value;
   if (!response.trim()) { alert('Please enter a message'); return; }
   const notes = document.getElementById('draft-notes').value || undefined;
 
-  const btn = afterAction === 'close' ? document.getElementById('btn-send-close') : document.getElementById('btn-send');
-  document.getElementById('btn-send').disabled = true;
-  document.getElementById('btn-send-close').disabled = true;
-  btn.textContent = 'Sending...';
+  const ticketId = currentTicketId;
+  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const draftId = currentDraftId;
+  const endpoint = draftId
+    ? `/api/tickets/${ticketId}/send`
+    : `/api/tickets/${ticketId}/message`;
+  const body = draftId
+    ? { response, notes, after: afterAction }
+    : { message: response, after: afterAction };
 
-  try {
-    const endpoint = currentDraftId
-      ? `/api/tickets/${currentTicketId}/send`
-      : `/api/tickets/${currentTicketId}/message`;
-    const body = currentDraftId
-      ? { response, notes, after: afterAction }
-      : { message: response, after: afterAction };
+  // Optimistic: clear local state and advance immediately
+  localStorage.removeItem(`draft-ticket-${ticketId}`);
+  localStorage.removeItem(`notes-ticket-${ticketId}`);
+  advanceToNextTicket(ticketId);
 
-    await api(endpoint, { method: 'POST', body });
-    btn.textContent = afterAction === 'close' ? 'Sent & Closed' : 'Sent & Snoozed';
-    const sentTicketId = currentTicketId;
-    localStorage.removeItem(`draft-ticket-${sentTicketId}`);
-    localStorage.removeItem(`notes-ticket-${sentTicketId}`);
-    setTimeout(() => {
-      advanceToNextTicket(sentTicketId);
-      loadStats();
-    }, 1500);
-  } catch (err) {
-    btn.textContent = afterAction === 'close' ? 'Send & Close' : 'Send & Snooze';
-    document.getElementById('btn-send').disabled = false;
-    document.getElementById('btn-send-close').disabled = false;
-    alert('Send failed: ' + err.message);
-  }
+  const label = afterAction === 'close' ? `${ticketRef} — Sent & closed` : `${ticketRef} — Sent & snoozed`;
+  executeBackgroundAction(ticketId, label,
+    () => api(endpoint, { method: 'POST', body }),
+    () => {
+      // Restore draft to localStorage on failure so it's not lost
+      localStorage.setItem(`draft-ticket-${ticketId}`, response);
+      if (notes) localStorage.setItem(`notes-ticket-${ticketId}`, notes);
+    }
+  );
 }
 
-async function closeNoReply() {
+function closeNoReply() {
   if (!currentTicketId) return;
+  if (_actionsInFlight.has(currentTicketId)) return;
   const notes = document.getElementById('draft-notes').value || undefined;
 
-  const btn = document.getElementById('btn-close-only');
-  btn.disabled = true;
-  btn.textContent = 'Closing...';
+  const ticketId = currentTicketId;
+  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
 
-  try {
-    const closedTicketId = currentTicketId;
-    await api(`/api/tickets/${closedTicketId}/close`, {
-      method: 'POST',
-      body: { notes },
-    });
-    localStorage.removeItem(`draft-ticket-${closedTicketId}`);
-    localStorage.removeItem(`notes-ticket-${closedTicketId}`);
-    advanceToNextTicket(closedTicketId);
-    loadStats();
-  } catch (err) {
-    btn.textContent = 'Close';
-    btn.disabled = false;
-    alert('Close failed: ' + err.message);
-  }
+  localStorage.removeItem(`draft-ticket-${ticketId}`);
+  localStorage.removeItem(`notes-ticket-${ticketId}`);
+  advanceToNextTicket(ticketId);
+
+  executeBackgroundAction(ticketId, `${ticketRef} — Closed`,
+    () => api(`/api/tickets/${ticketId}/close`, { method: 'POST', body: { notes } })
+  );
 }
 
 function clearTicketSelection() {
@@ -1390,6 +1447,7 @@ async function releaseDraft() {
       method: 'POST',
       body: { notes },
     });
+    showToast('Draft released');
     advanceToNextTicket(releasedTicketId);
     loadStats();
   } catch (err) {
@@ -1406,6 +1464,7 @@ async function markSpam() {
     await api(`/api/tickets/${spamTicketId}/spam`, { method: 'POST', body: {} });
     localStorage.removeItem(`draft-ticket-${spamTicketId}`);
     localStorage.removeItem(`notes-ticket-${spamTicketId}`);
+    showToast('Marked as spam');
     advanceToNextTicket(spamTicketId);
     loadStats();
   } catch (err) {
@@ -1422,6 +1481,7 @@ async function deleteDraft() {
     await api(`/api/tickets/${deletedTicketId}/delete`, { method: 'POST', body: {} });
     localStorage.removeItem(`draft-ticket-${deletedTicketId}`);
     localStorage.removeItem(`notes-ticket-${deletedTicketId}`);
+    showToast('Draft deleted');
     advanceToNextTicket(deletedTicketId);
     loadStats();
   } catch (err) {
@@ -1466,6 +1526,7 @@ async function sendSimpleMessage(afterAction) {
       method: 'POST',
       body: { message, after: afterAction },
     });
+    showToast(afterAction === 'close' ? 'Sent & closed' : 'Sent & snoozed');
     advanceToNextTicket(sentTicketId);
     loadStats();
   } catch (err) {
@@ -1477,6 +1538,7 @@ async function reopenTicket() {
   if (!currentTicketId) return;
   try {
     await api(`/api/tickets/${currentTicketId}/reopen`, { method: 'POST', body: {} });
+    showToast('Ticket reopened');
     clearTicketSelection();
     // Switch to the appropriate tab
     switchTab('new');
@@ -1486,28 +1548,32 @@ async function reopenTicket() {
   }
 }
 
-async function parkTicket() {
+function parkTicket() {
   if (!currentTicketId) return;
-  try {
-    const parkedTicketId = currentTicketId;
-    await api(`/api/tickets/${parkedTicketId}/park`, { method: 'POST', body: {} });
-    advanceToNextTicket(parkedTicketId);
-    loadStats();
-  } catch (err) {
-    alert('Park failed: ' + err.message);
-  }
+  if (_actionsInFlight.has(currentTicketId)) return;
+
+  const ticketId = currentTicketId;
+  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+
+  advanceToNextTicket(ticketId);
+
+  executeBackgroundAction(ticketId, `${ticketRef} — Parked`,
+    () => api(`/api/tickets/${ticketId}/park`, { method: 'POST', body: {} })
+  );
 }
 
-async function unparkTicket() {
+function unparkTicket() {
   if (!currentTicketId) return;
-  try {
-    const unparkedTicketId = currentTicketId;
-    await api(`/api/tickets/${unparkedTicketId}/unpark`, { method: 'POST', body: {} });
-    advanceToNextTicket(unparkedTicketId);
-    loadStats();
-  } catch (err) {
-    alert('Unpark failed: ' + err.message);
-  }
+  if (_actionsInFlight.has(currentTicketId)) return;
+
+  const ticketId = currentTicketId;
+  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+
+  advanceToNextTicket(ticketId);
+
+  executeBackgroundAction(ticketId, `${ticketRef} — Unparked`,
+    () => api(`/api/tickets/${ticketId}/unpark`, { method: 'POST', body: {} })
+  );
 }
 
 async function forwardTicket() {
@@ -1568,25 +1634,86 @@ async function _legacyLoadHistory() {
 
 async function api(url, opts = {}) {
   const method = opts.method || 'GET';
-  // Guard auto-refresh during mutations
-  if (method === 'POST') _actionInFlight = true;
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    // Session expired — redirect to login
-    if (res.status === 401) {
-      window.location.href = '/login.html';
-      throw new Error('Session expired');
-    }
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    return data;
-  } finally {
-    if (method === 'POST') _actionInFlight = false;
+  const res = await fetch(url, {
+    method,
+    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  // Session expired — redirect to login
+  if (res.status === 401) {
+    window.location.href = '/login.html';
+    throw new Error('Session expired');
   }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Optimistic action execution
+// ---------------------------------------------------------------------------
+
+function executeBackgroundAction(ticketId, label, apiCall, onError) {
+  _actionsInFlight.add(ticketId);
+  apiCall()
+    .then(() => {
+      showToast(label);
+      loadStats();
+    })
+    .catch(err => {
+      console.error(`Action failed for ticket ${ticketId}:`, err);
+      if (onError) onError(err);
+      showRetryToast(
+        `${label} failed: ${err.message}`,
+        () => executeBackgroundAction(ticketId, label, apiCall, onError)
+      );
+      reinsertTicket(ticketId);
+    })
+    .finally(() => {
+      _actionsInFlight.delete(ticketId);
+    });
+}
+
+function reinsertTicket(ticketId) {
+  if (!currentQueueTicketIds.includes(ticketId)) {
+    currentQueueTicketIds.unshift(ticketId);
+  }
+  loadTicketQueue();
+}
+
+function showRetryToast(message, retryFn) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-error toast-persistent';
+
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'toast-message';
+  msgSpan.textContent = message;
+  toast.appendChild(msgSpan);
+
+  const retryBtn = document.createElement('button');
+  retryBtn.className = 'toast-retry-btn';
+  retryBtn.textContent = 'Retry';
+  retryBtn.addEventListener('click', () => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 300);
+    retryFn();
+  });
+  toast.appendChild(retryBtn);
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'toast-dismiss-btn';
+  dismissBtn.innerHTML = '&times;';
+  dismissBtn.addEventListener('click', () => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 300);
+  });
+  toast.appendChild(dismissBtn);
+
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('toast-visible'), 10);
+  // No auto-dismiss — user must interact
 }
 
 function showToast(message, type = 'success') {
@@ -1968,10 +2095,19 @@ function renderMessageBubble(m, ticket) {
   const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
   const cleaned = cleanMessageBody(rawHtml);
   const processed = collapseQuotedContent(cleaned);
+  const attachmentHtml = (m.attachments || []).length
+    ? `<div class="msg-attachments">${m.attachments.map(a => {
+        const isImage = (a.content_type || '').startsWith('image/');
+        return isImage
+          ? `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-thumb"><img src="${esc(a.url)}" alt="${esc(a.name)}" title="${esc(a.name)}"></a>`
+          : `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-file">${esc(a.name)}</a>`;
+      }).join('')}</div>`
+    : '';
   return `
     <div class="msg msg-${m.sender === 'customer' ? 'customer' : 'agent'}">
       <div class="msg-header">${m.sender === 'customer' ? 'Customer' : 'Agent'} – ${timeAgo(m.created_at, 'long')}</div>
       <div class="msg-body">${processed}</div>
+      ${attachmentHtml}
     </div>`;
 }
 

@@ -282,9 +282,10 @@ async function apiExecuteAction(id) {
   const results = {};
 
   // Import the MCP tool handlers
-  const advisorTools = require('../lib/tools/exchangeAdvisor');
-  const exchangeHandler = advisorTools.find(t => t.name === 'create_exchange_order')?.handler;
-  const refundHandler = advisorTools.find(t => t.name === 'refund_order')?.handler;
+  const exchangeOrderTools = require('../lib/tools/exchangeOrder');
+  const refundOrderTools = require('../lib/tools/refundOrder');
+  const exchangeHandler = exchangeOrderTools.find(t => t.name === 'create_exchange_order')?.handler;
+  const refundHandler = refundOrderTools.find(t => t.name === 'refund_order')?.handler;
 
   if (draft.action_type.includes('exchange') && exchangeHandler) {
     // Build exchange params from structured output
@@ -432,23 +433,15 @@ async function apiRefreshDraft(id) {
   const issueDescription = contextParts.join('\n\n');
 
   // Run hybrid advisor (same as intake path)
-  const { hybridAdvisor } = require('../lib/hybridAdvisor');
-  const result = await hybridAdvisor({
+  const { aiAdvisor } = require('../lib/aiAdvisor');
+  const result = await aiAdvisor({
     customer_email: draft.customer_email,
     issue_description: issueDescription,
     intake: draft.intake_state || undefined,
   });
 
   const s = result._structured;
-  let newDraft = s?._composedResponse || '';
-  if (!newDraft && s) {
-    try {
-      const { composeAgentResponse } = require('../lib/responseComposer');
-      newDraft = await composeAgentResponse(s, []);
-    } catch (e) {
-      newDraft = `[Compose error: ${e.message}]`;
-    }
-  }
+  let newDraft = s?._composedResponse || result?.draft || '[No response composed]';
 
   // Update the draft in Supabase
   const updates = {
@@ -462,12 +455,23 @@ async function apiRefreshDraft(id) {
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
   };
 
-  // Clear action state unless a two-phase action was fully completed (phase 2 done).
-  // Phase 1 previews, stale suggestions, and chat-based actions that never confirmed
-  // should all be cleared so the new draft gets a fresh action panel.
+  // On re-draft: keep action chat history (don't lose operator work) but clear
+  // execution state so the action panel reflects the new draft's recommendation.
+  // The prefill command updates from the new action_type, but the conversation stays.
   const actionCompleted = draft.action_result?.phase === 'completed';
   if (!actionCompleted) {
-    updates.action_result = null;
+    const prevChat = draft.action_result;
+    if (prevChat?.chat_history?.length) {
+      // Preserve chat but clear execution flags
+      updates.action_result = {
+        chat_history: prevChat.chat_history,
+        chat_tool_results: prevChat.chat_tool_results,
+        chat_response: prevChat.chat_response,
+        chat_links: prevChat.chat_links,
+      };
+    } else {
+      updates.action_result = null;
+    }
     updates.action_executed_at = null;
   }
 
@@ -633,44 +637,30 @@ async function apiRunTest(body) {
   if (!customer_email || !messages?.length) throw new Error('Provide customer_email and messages array');
 
   // Use the conversation tester handler directly
-  const testerTools = require('../lib/tools/conversationTester');
+  const testerTools = require('../lib/tools/advisorTester');
   const tester = testerTools.find(t => t.name === 'test_cs_conversation');
   const result = await tester.handler({ customer_email, messages, order_number });
 
   // Also get the raw structured data for each turn by running advisor directly
-  const advisorTools = require('../lib/tools/exchangeAdvisor');
-  const advisor = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor'));
+  const { aiAdvisor } = require('../lib/aiAdvisor');
 
   const turns = [];
-  let intake = null;
   for (const msg of messages) {
     try {
-      const advResult = await advisor.handler({
+      const advResult = await aiAdvisor({
         customer_email,
         issue_description: msg,
         order_number: order_number || undefined,
-        intake,
       });
-      const s = advResult._structured;
-      if (s) intake = s.intake;
-
-      const { composeAgentResponse } = require('../lib/responseComposer');
-      let draft = '';
-      try {
-        const prevResponses = turns.map(t => t.ai_response).filter(Boolean);
-        draft = await composeAgentResponse(s, prevResponses);
-      } catch (e) {
-        draft = `[Compose error: ${e.message}]`;
-      }
+      const s = advResult?._structured;
 
       turns.push({
         customer_message: msg,
-        ai_response: draft,
+        ai_response: advResult?._composedResponse || advResult?.draft || '',
         status: s?.status,
-        confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+        confidence: s?.confidence || (s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low'),
         audit: s?.audit || [],
-        intake: s?.intake,
-        prescription: s?.prescription,
+        items: s?.items,
       });
     } catch (e) {
       turns.push({
@@ -707,36 +697,23 @@ async function apiReplayTicket(body) {
     .map(m => gorgiasClient.stripHtml(m.stripped_text || m.body_text || ''));
 
   // Run the AI on each customer message
-  const advisorTools = require('../lib/tools/exchangeAdvisor');
-  const advisor = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor'));
+  const { aiAdvisor } = require('../lib/aiAdvisor');
 
   const turns = [];
-  let intake = null;
   for (let i = 0; i < customerMsgs.length; i++) {
     const msg = customerMsgs[i];
     const actualReply = agentMsgs[i] || null;
 
     try {
-      const advResult = await advisor.handler({
+      const advResult = await aiAdvisor({
         customer_email: customerEmail,
         issue_description: msg,
-        intake,
       });
-      const s = advResult._structured;
-      if (s) intake = s.intake;
-
-      const { composeAgentResponse } = require('../lib/responseComposer');
-      let draft = '';
-      try {
-        const prevResponses = turns.map(t => t.ai_response).filter(Boolean);
-        draft = await composeAgentResponse(s, prevResponses);
-      } catch (e) {
-        draft = `[Compose error: ${e.message}]`;
-      }
+      const s = advResult?._structured;
 
       turns.push({
         customer_message: msg,
-        ai_response: draft,
+        ai_response: advResult?._composedResponse || advResult?.draft || '',
         actual_response: actualReply,
         status: s?.status,
         audit: s?.audit || [],
@@ -845,22 +822,25 @@ async function apiSimulatorRandom(category, ticketId) {
   let customerContext = null;
 
   try {
-    const advisorTools = require('../lib/tools/exchangeAdvisor');
-    const advisor = advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor');
-    const result = await advisor.handler({
-      customer_email: convo.customer_email,
-      issue_description: firstMessage,
-      order_number: orderNumber,
-    });
-    const s = result._structured;
-    if (s) {
-      orderContext = s.order;
+    const { buildContext } = require('../lib/contextBuilder');
+    const ctx = await buildContext({ customer_email: convo.customer_email, order_number: orderNumber, issue_description: firstMessage });
+    if (ctx.customer) {
       customerContext = {
-        email: s.customer?.email,
-        name: s.customer?.name,
-        pronouns: s.customer?.pronouns,
-        country: s.customer?.country,
-        address: s.customer?.address,
+        email: ctx.customer.email,
+        name: ctx.customer.firstName,
+        pronouns: 'they/them',
+        country: ctx.customerCountry,
+        address: ctx.customer.defaultAddress || null,
+      };
+    }
+    if (ctx.targetOrder) {
+      orderContext = {
+        name: ctx.targetOrder.name,
+        created_at: ctx.targetOrder.createdAt,
+        fulfillment_status: ctx.targetOrder.displayFulfillmentStatus,
+        line_items: ctx.orderLineItems.map(li => ({
+          title: li.title, variant: li.variantTitle, quantity: li.quantity, sku: li.sku, sku_size: li._skuSize,
+        })),
       };
     }
   } catch (e) {
@@ -879,9 +859,9 @@ async function apiSimulatorTurn(body) {
   const { customer_email, issue_description, order_number, intake, previous_responses, reference_date } = body;
   if (!customer_email || !issue_description) throw new Error('Provide customer_email and issue_description');
 
-  const { hybridAdvisor } = require('../lib/hybridAdvisor');
+  const { aiAdvisor } = require('../lib/aiAdvisor');
 
-  const result = await hybridAdvisor({
+  const result = await aiAdvisor({
     customer_email,
     issue_description,
     order_number: order_number || undefined,
@@ -1421,7 +1401,7 @@ function extractActionLinks(toolResults) {
 }
 
 async function apiActionChat(draftId, body) {
-  const { routeAction } = require('../lib/actionRouter');
+  const { operatorAgent } = require('../lib/operatorAgent');
   const supabase = getSupabaseClient();
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts').select('*').eq('id', draftId).single();
@@ -1440,7 +1420,10 @@ async function apiActionChat(draftId, body) {
     intake: structured.intake,
   };
 
-  const result = await routeAction(userMessage, context, history);
+  const result = await operatorAgent(userMessage, context, history);
+
+  // Extract Shopify admin links from tool results before saving
+  result.links = extractActionLinks(result.tool_results);
 
   // Update draft with action results
   const prevResult = draft.action_result || {};
@@ -1450,6 +1433,7 @@ async function apiActionChat(draftId, body) {
       chat_tool_results: result.tool_results,
       chat_history: result.history,
       chat_response: result.response,
+      chat_links: result.links,
     },
   };
 
@@ -1466,9 +1450,6 @@ async function apiActionChat(draftId, body) {
   }
 
   await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
-
-  // Extract Shopify admin links from tool results for the UI
-  result.links = extractActionLinks(result.tool_results);
 
   return result;
 }
@@ -1618,11 +1599,13 @@ RULES:
 function extractTrackingInfo(fulfillments) {
   if (!fulfillments || !Array.isArray(fulfillments)) return null;
   for (const f of fulfillments) {
-    const url = f.tracking_url || f.tracking_urls?.[0] || f.trackingInfo?.[0]?.url || null;
-    const number = f.tracking_number || f.tracking_numbers?.[0] || f.trackingInfo?.[0]?.number || null;
-    const company = f.tracking_company || f.trackingInfo?.[0]?.company || null;
-    const status = f.shipment_status || f.status || null;
-    if (url || number) return { url, number, company, status };
+    // Support both camelCase (from our sync) and snake_case (from Shopify REST) field names
+    const url = f.trackingUrl || f.tracking_url || f.tracking_urls?.[0] || f.trackingInfo?.[0]?.url || null;
+    const number = f.trackingNumber || f.tracking_number || f.tracking_numbers?.[0] || f.trackingInfo?.[0]?.number || null;
+    const company = f.trackingCompany || f.tracking_company || f.trackingInfo?.[0]?.company || null;
+    const deliveredAt = f.deliveredAt || f.delivered_at || null;
+    const shippedAt = f.createdAt || f.created_at || null;
+    if (url || number) return { url, number, company, deliveredAt, shippedAt };
   }
   return null;
 }
@@ -1651,7 +1634,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     // 2. Recent orders
     supabase
       .from('orders')
-      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, shop_currency, shipping_address, note, tags, fulfillments')
+      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, shop_currency, shipping_address, note, tags, fulfillments')
       .eq('customer_email', email)
       .order('created_at', { ascending: false })
       .limit(10),
@@ -1722,10 +1705,22 @@ async function apiGetCustomerContext(email, orderNumber) {
         .eq('shopify_order_id', matchedOrder.shopify_order_id);
 
       const trackingInfo = extractTrackingInfo(matchedOrder.fulfillments);
+
+      // Enrich with tracking_snapshots data (from Passport scraper)
+      let trackingSnapshot = null;
+      if (trackingInfo?.number) {
+        const { data: snap } = await supabase
+          .from('tracking_snapshots')
+          .select('current_status, estimated_delivery, last_location, local_carrier, summary, scraped_at')
+          .eq('tracking_number', trackingInfo.number)
+          .maybeSingle();
+        if (snap) trackingSnapshot = snap;
+      }
+
       ticketOrder = {
         order_number: matchedOrder.order_number,
         created_at: matchedOrder.created_at,
-        total: matchedOrder.total_price,
+        total: matchedOrder.current_total_price || matchedOrder.total_price,
         currency: matchedOrder.shop_currency,
         fulfillment_status: matchedOrder.fulfillment_status,
         financial_status: matchedOrder.financial_status,
@@ -1733,9 +1728,14 @@ async function apiGetCustomerContext(email, orderNumber) {
         shipping_address: matchedOrder.shipping_address,
         warehance_url: warehanceRes ? warehanceOrderUrl(warehanceRes) : null,
         tracking_url: trackingInfo?.url || null,
-        tracking_company: trackingInfo?.company || null,
+        tracking_company: trackingSnapshot?.local_carrier || trackingInfo?.company || null,
         tracking_number: trackingInfo?.number || null,
-        tracking_status: trackingInfo?.status || null,
+        tracking_shipped_at: trackingInfo?.shippedAt || null,
+        tracking_delivered_at: trackingInfo?.deliveredAt || null,
+        tracking_status: trackingSnapshot?.current_status || null,
+        tracking_estimated_delivery: trackingSnapshot?.estimated_delivery || null,
+        tracking_last_location: trackingSnapshot?.last_location || null,
+        tracking_summary: trackingSnapshot?.summary || null,
         items: (items || []).map(i => ({
           title: i.title,
           variant: i.variant_title,
@@ -1768,7 +1768,7 @@ async function apiGetCustomerContext(email, orderNumber) {
   const otherOrders = otherOrdersRaw.map(o => ({
     order_number: o.order_number,
     created_at: o.created_at,
-    total: o.total_price,
+    total: o.current_total_price || o.total_price,
     currency: o.shop_currency,
     fulfillment_status: o.fulfillment_status,
     financial_status: o.financial_status,
@@ -1834,7 +1834,7 @@ async function apiGetTickets(query) {
 
   let q = supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at, parked_at, source')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, turn_number, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source')
     .order(tab === 'parked' ? 'parked_at' : 'updated_at', { ascending: tab === 'parked' })
     .limit(limit);
 
@@ -2166,7 +2166,7 @@ const paramRoutes = [
     if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
     const gorgiasClient = require('../import/gorgiasClient');
     const { processTicket, getAiBotUserId, buildConversationContext } = require('../intake/processGorgiasTickets');
-    const { hybridAdvisor } = require('../lib/hybridAdvisor');
+    const { aiAdvisor } = require('../lib/aiAdvisor');
 
     const messages = await gorgiasClient.getTicketMessages(t.gorgias_ticket_id);
     const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
@@ -2180,7 +2180,7 @@ const paramRoutes = [
     }
     contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
 
-    const result = await hybridAdvisor({
+    const result = await aiAdvisor({
       customer_email: t.customer_email,
       issue_description: contextParts.join('\n\n'),
     });
@@ -2266,7 +2266,7 @@ const paramRoutes = [
     if (t?.active_draft_id) return apiActionChat(t.active_draft_id, body);
 
     // No active draft — run action chat with ticket context directly
-    const { routeAction } = require('../lib/actionRouter');
+    const { operatorAgent } = require('../lib/operatorAgent');
     const orderCtx = t?.order_context || {};
     const context = {
       customer_email: t?.customer_email,
@@ -2276,7 +2276,7 @@ const paramRoutes = [
       intake: null,
     };
     try {
-      const result = await routeAction(body.message, context, body.history || []);
+      const result = await operatorAgent(body.message, context, body.history || []);
       result.links = extractActionLinks(result.tool_results);
       return result;
     } catch (err) {
@@ -2495,7 +2495,7 @@ server.listen(PORT, async () => {
   await loadProductConfig();
   // Load product cache + decision tree config for the action router
   const { loadFromSupabase } = require('../lib/productCache');
-  const { initCsConfig } = require('../lib/csConfig');
+  const { initCsConfig } = require('../lib/sizingEngine');
   await loadFromSupabase(getSupabaseClient());
   await initCsConfig();
 });
