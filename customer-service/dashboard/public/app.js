@@ -905,6 +905,11 @@ function renderActionPanel(draft) {
       const newPrefill = buildActionPrefill(draft);
       input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
       if (newPrefill) input.value = newPrefill;
+      // Show quick-reply buttons if awaiting confirmation
+      const chatResponse = draft.action_result?.chat_response || '';
+      if (chatResponse && isConfirmationPrompt(chatResponse)) {
+        renderQuickReplies(['Yes, confirm', 'No, cancel']);
+      }
     }
     return;
   }
@@ -1069,6 +1074,35 @@ function renderActionLinks(links) {
   container.scrollTop = container.scrollHeight;
 }
 
+function isConfirmationPrompt(text) {
+  return /shall I (confirm|proceed|go ahead)|confirm\??|want me to (proceed|complete|go ahead)|ready to (confirm|proceed)|proceed\?/i.test(text);
+}
+
+function renderQuickReplies(options) {
+  const container = document.getElementById('action-chat-messages');
+  if (!container) return;
+  // Remove any existing quick-reply row
+  const existing = container.querySelector('.action-quick-replies');
+  if (existing) existing.remove();
+
+  const row = document.createElement('div');
+  row.className = 'action-quick-replies';
+  for (const label of options) {
+    const btn = document.createElement('button');
+    btn.className = 'quick-reply-btn' + (label.toLowerCase().includes('no') ? ' quick-reply-no' : '');
+    btn.textContent = label;
+    btn.onclick = () => {
+      row.remove();
+      const input = document.getElementById('action-chat-input');
+      input.value = label.toLowerCase().includes('no') ? 'no, cancel' : 'yes confirm';
+      sendActionMessage();
+    };
+    row.appendChild(btn);
+  }
+  container.appendChild(row);
+  container.scrollTop = container.scrollHeight;
+}
+
 function appendChatMessage(role, content) {
   const container = document.getElementById('action-chat-messages');
   if (!container) return;
@@ -1112,6 +1146,10 @@ async function sendActionMessage() {
   const message = input.value.trim();
   if (!message) return;
 
+  // Remove quick-reply buttons if present
+  const qr = document.querySelector('.action-quick-replies');
+  if (qr) qr.remove();
+
   // Show user message
   appendChatMessage('user', message);
   input.value = '';
@@ -1145,6 +1183,11 @@ async function sendActionMessage() {
 
     // Show action links (Shopify admin links for orders/drafts)
     if (result.links?.length) renderActionLinks(result.links);
+
+    // Show quick-reply buttons when confirmation is needed
+    if (result.response && isConfirmationPrompt(result.response)) {
+      renderQuickReplies(['Yes, confirm', 'No, cancel']);
+    }
 
     // Update history for next message
     _actionChatHistory = result.history || [];
@@ -2052,7 +2095,7 @@ function parseOrderFormItems(text) {
  * @param {Array} opts.orderItems - Parsed order form items [{qty, name, variant}]
  * @param {string} opts.timestamp - ISO timestamp of first customer message
  */
-function renderIntakeCard({ channel, customerWords, orderItems, timestamp }) {
+function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attachments }) {
   if (!customerWords.length && !orderItems.length) return '';
 
   const channelLabel = channel === 'chat' ? 'via chat' : 'via email';
@@ -2074,6 +2117,16 @@ function renderIntakeCard({ channel, customerWords, orderItems, timestamp }) {
       html += `<div class="intake-word">${word}</div>`;
     }
     html += '</div>';
+  }
+
+  // Attachments
+  if (attachments && attachments.length) {
+    html += `<div class="msg-attachments">${attachments.map(a => {
+      const isImage = (a.content_type || '').startsWith('image/');
+      return isImage
+        ? `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-thumb"><img src="${esc(a.url)}" alt="${esc(a.name)}" title="${esc(a.name)}"></a>`
+        : `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-file">${esc(a.name)}</a>`;
+    }).join('')}</div>`;
   }
 
   // Order items (compact)
@@ -2195,6 +2248,7 @@ function renderConversation(messages, ticket) {
         customerWords: [processed],
         orderItems: [],
         timestamp: firstMsg.created_at,
+        attachments: firstMsg.attachments,
       }));
     }
   }
