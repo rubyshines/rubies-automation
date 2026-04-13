@@ -27,7 +27,7 @@ const PIPELINES = [
   },
   {
     name: 'Email Tracking',
-    run: () => require('./email-tracking/daily-email-tracking').run(),
+    run: () => require('./klaviyo-tracking/daily-email-tracking').run(),
   },
   {
     name: 'Reviews',
@@ -70,8 +70,8 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncDeliveryTimes').run(),
   },
   {
-    name: 'Gmail Intelligence',
-    run: () => require('./email-intelligence/sync/syncGmail').run(),
+    name: 'Gmail Management',
+    run: () => require('./gmail-management/sync/syncGmail').run(),
   },
   {
     name: 'Gmail CS Intake',
@@ -84,6 +84,23 @@ const PIPELINES = [
       const { renew } = require('./webhooks/scripts/registerGmailWatch');
       const result = await renew();
       return { sources: { gmail_watch: result }, status: result.success ? 'ok' : 'error' };
+    },
+  },
+  {
+    name: 'Gorgias Intake Sweep',
+    run: async () => {
+      const { run: intakeRun } = require('./customer-service/intake/processGorgiasTickets');
+      const result = await intakeRun();
+      return {
+        sources: {
+          intake: {
+            success: true,
+            rowsWritten: result.draftsCreated || 0,
+            error: null,
+          },
+        },
+        status: 'ok',
+      };
     },
   },
   {

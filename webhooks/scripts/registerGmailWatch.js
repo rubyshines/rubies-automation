@@ -18,7 +18,7 @@ if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 }
 
-const { getGmail } = require('../../email-intelligence/lib/gmailClient');
+const { getGmail } = require('../../gmail-management/lib/gmailClient');
 
 async function renew() {
   const topicName = process.env.GMAIL_PUSH_TOPIC;

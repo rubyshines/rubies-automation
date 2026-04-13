@@ -461,11 +461,18 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     if (snap?.raw_events) staleDays = daysSinceLastEvent(snap.raw_events);
     else if (shopifyEvt?.lastEventDays != null) staleDays = shopifyEvt.lastEventDays;
 
-    if (staleDays !== null && staleDays >= 14) {
+    // Passport packages at the origin hub (Los Angeles) have a normal 7-14 day
+    // tracking gap while in international transit. Use a higher stale threshold
+    // to avoid noise from the expected handoff delay.
+    const atOriginHub = isPassport && /los angeles/i.test(snap?.last_location || lastEvent || '');
+    const staleThreshold = atOriginHub ? 12 : 7;
+    const likelyLostThreshold = atOriginHub ? 18 : 14;
+
+    if (staleDays !== null && staleDays >= likelyLostThreshold) {
       alert.issues.push(`No tracking update in ${staleDays} days - likely lost`);
       alert.severity = 'high';
       if (!alert.claimReason) alert.claimReason = 'likely_lost';
-    } else if (staleDays !== null && staleDays >= 7) {
+    } else if (staleDays !== null && staleDays >= staleThreshold) {
       alert.issues.push(`No tracking update in ${staleDays} days`);
       if (alert.severity !== 'high') alert.severity = 'medium';
     }

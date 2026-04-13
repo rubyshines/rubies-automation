@@ -51,7 +51,6 @@ async function fetchUnfulfilledFromSupabase(supabase) {
     .not('financial_status', 'in', '("REFUNDED","VOIDED")')
     .is('cancelled_at', null)
     .is('closed_at', null)
-    .gt('total_price', 0)
     .order('created_at', { ascending: true });
 
   if (error) throw new Error(`Orders query failed: ${error.message}`);
