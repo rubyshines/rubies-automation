@@ -42,7 +42,7 @@ async function checkInventory(order) {
           product { title tags }
           inventoryItem {
             inventoryLevels(first: 5) {
-              edges { node { available location { name } } }
+              edges { node { quantities(names: ["available"]) { name quantity } location { name } } }
             }
           }
         }
@@ -52,7 +52,10 @@ async function checkInventory(order) {
       if (!variant) continue;
 
       const totalAvailable = variant.inventoryItem?.inventoryLevels?.edges?.reduce(
-        (sum, e) => sum + (e.node.available || 0), 0
+        (sum, e) => {
+          const avail = e.node.quantities?.find(q => q.name === 'available');
+          return sum + (avail?.quantity || 0);
+        }, 0
       ) || 0;
 
       const tags = variant.product?.tags || [];
@@ -67,10 +70,10 @@ async function checkInventory(order) {
         inventoryQuantity: variant.inventoryQuantity,
         isPreOrder,
         tags,
-        locations: variant.inventoryItem?.inventoryLevels?.edges?.map(e => ({
-          name: e.node.location.name,
-          available: e.node.available,
-        })) || [],
+        locations: variant.inventoryItem?.inventoryLevels?.edges?.map(e => {
+          const avail = e.node.quantities?.find(q => q.name === 'available');
+          return { name: e.node.location.name, available: avail?.quantity || 0 };
+        }) || [],
       });
     } catch (e) {
       results.push({
@@ -263,7 +266,7 @@ async function draftUnfulfilledResponse(investigation, context) {
   try {
     const ai = getAI();
     const response = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-6',
       max_tokens: 400,
       messages: [{
         role: 'user',

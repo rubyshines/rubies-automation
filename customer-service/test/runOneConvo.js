@@ -4,7 +4,7 @@
  */
 require('dotenv').config();
 const gorgias = require('../import/gorgiasClient');
-const { hybridAdvisor } = require('../lib/hybridAdvisor');
+const { aiAdvisor } = require('../lib/aiAdvisor');
 
 const ticketId = process.argv[2];
 const orderOverride = process.argv[3];
@@ -49,7 +49,7 @@ if (!ticketId) { console.log('Usage: node runOneConvo.js <ticketId> [orderNumber
   console.log('');
 
   // Run hybrid
-  const result = await hybridAdvisor({
+  const result = await aiAdvisor({
     customer_email: email,
     issue_description: fullContext,
     order_number: orderNumber,

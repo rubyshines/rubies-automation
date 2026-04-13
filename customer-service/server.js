@@ -35,8 +35,8 @@ const draftOrderTools = require('./lib/tools/draftOrders');
 const adminTools = require('./lib/tools/adminTools');
 const ltvTools = require('./lib/tools/ltv');
 const createOrderTools = require('./lib/tools/createOrder');
-const exchangeAdvisorTools = require('./lib/tools/exchangeAdvisor');
-const conversationTesterTools = require('./lib/tools/conversationTester');
+const csAdvisorTools = require('./lib/tools/csAdvisorMcp');
+const advisorTesterTools = require('./lib/tools/advisorTester');
 const refundOrderTools = require('./lib/tools/refundOrder');
 const shippingLookupTools = require('./lib/tools/shippingLookup');
 const shippingInfoTools = require('./lib/tools/shippingInfo');
@@ -66,8 +66,8 @@ const allTools = [
   ...adminTools,
   ...ltvTools,
   ...createOrderTools,
-  ...exchangeAdvisorTools,
-  ...conversationTesterTools,
+  ...csAdvisorTools,
+  ...advisorTesterTools,
   ...refundOrderTools,
   ...shippingLookupTools,
   ...shippingInfoTools,
@@ -152,7 +152,7 @@ async function main() {
   }
 
   // Load product CS config (nicknames, categories, size overrides) from Supabase
-  const { initCsConfig } = require('./lib/csConfig');
+  const { initCsConfig } = require('./lib/sizingEngine');
   await initCsConfig();
 
   // Load product catalog from Supabase (async but fast), fall back to Shopify fetch if empty

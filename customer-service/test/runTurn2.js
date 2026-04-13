@@ -7,7 +7,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const gorgias = require('../import/gorgiasClient');
-const { hybridAdvisor } = require('../lib/hybridAdvisor');
+const { aiAdvisor } = require('../lib/aiAdvisor');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
 const TOTAL = parseInt(process.argv[2]) || 20;
@@ -105,7 +105,7 @@ function isRealJamie(body) {
 
       // Run Opus
       const t0 = Date.now();
-      const result = await hybridAdvisor({
+      const result = await aiAdvisor({
         customer_email: convo.customer_email,
         issue_description: fullContext.substring(0, 4000),
         order_number: orderNum ? String(orderNum) : undefined,

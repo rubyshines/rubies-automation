@@ -12,13 +12,12 @@
  */
 
 const { searchCustomers, getCustomerOrders } = require('../shopify');
-const { getProductNickname, pluralizeNickname, getSizeList, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('../csConfig');
+const { getProductNickname, pluralizeNickname, getSizeList, classifyProduct, getAdjacentSizes, getCumulativeDelta, KID_LABELS } = require('../sizingEngine');
 const { normalizeSize, extractSizeFromSku } = require('../sizeUtils');
-const { composeAgentResponse, polishResponse } = require('../responseComposer');
+// responseComposer no longer needed — AI advisor composes its own responses
 
-// Import the advisor handler
-const advisorTools = require('./exchangeAdvisor');
-const advisorHandler = (advisorTools.find(t => t.name === 'cs_advisor') || advisorTools.find(t => t.name === 'exchange_advisor')).handler;
+// Import the AI advisor
+const { aiAdvisor } = require('../aiAdvisor');
 
 // ---------------------------------------------------------------------------
 // Tool handler
@@ -42,24 +41,19 @@ async function handleTestConversation({ customer_email, messages, order_number }
     let s = null;
 
     try {
-      const result = await advisorHandler({
+      const result = await aiAdvisor({
         customer_email,
         issue_description: customerMsg,
         order_number: order_number || undefined,
         intake,
       });
 
-      s = result._structured;
+      s = result?._structured;
 
       // Shipping/non-exchange responses have a different structure — handle directly
       if (s && !s.intake && (s.results || s.status === 'route_to_human' || s.status === 'complete' || s.error)) {
-        const agentText = result.content?.[0]?.text || '(No response)';
-        // Extract just the customer response part from the markdown
-        const customerResponseMatch = agentText.match(/\*\*Customer response:\*\*\n([\s\S]*?)(?:\n\n|$)/);
-        const cleanResponse = customerResponseMatch?.[1]?.trim() ||
-          (s.results?.[0]?.summary) ||
-          agentText.replace(/^##.*\n/gm, '').replace(/\*\*[^*]+\*\*[^\n]*/g, '').trim().split('\n').pop()?.trim() ||
-          agentText;
+        const agentText = result._composedResponse || result.draft || s.results?.[0]?.summary || '(No response)';
+        const cleanResponse = agentText;
         conversationLog.push({ messageNum: i + 1, customer: customerMsg, agent: cleanResponse, status: s.status || 'complete', _structured: s, items: [], name: null, pronouns: null, flags: [] });
         continue;
       }
@@ -91,8 +85,7 @@ async function handleTestConversation({ customer_email, messages, order_number }
       continue;
     }
 
-    const prevResponses = conversationLog.filter(e => e.agent && !e.agent.startsWith('(')).map(e => e.agent);
-    const agentResponse = await composeAgentResponse(s, prevResponses);
+    const agentResponse = result?._composedResponse || result?.draft || '(No response composed)';
 
     conversationLog.push({
       messageNum: i + 1,

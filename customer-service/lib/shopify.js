@@ -130,12 +130,14 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
                 address1 address2 city province country countryCodeV2 zip
               }
               totalPriceSet { shopMoney { amount currencyCode } }
+              currentTotalPriceSet { shopMoney { amount currencyCode } }
               lineItems(first: 50) {
                 edges {
                   node {
                     title
                     variantTitle
                     quantity
+                    currentQuantity
                     sku
                   }
                 }
@@ -151,7 +153,7 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
     customer: data.customer,
     orders: data.customer.orders.edges.map(e => ({
       ...e.node,
-      lineItems: e.node.lineItems.edges.map(li => li.node),
+      lineItems: e.node.lineItems.edges.map(li => li.node).filter(li => li.currentQuantity > 0),
     })),
   };
 }
@@ -184,6 +186,7 @@ async function getOrderByNumber(orderNumber) {
               zip
             }
             totalPriceSet { shopMoney { amount currencyCode } }
+            currentTotalPriceSet { shopMoney { amount currencyCode } }
             subtotalPriceSet { shopMoney { amount currencyCode } }
             totalShippingPriceSet { shopMoney { amount currencyCode } }
             totalTaxSet { shopMoney { amount currencyCode } }
@@ -193,6 +196,7 @@ async function getOrderByNumber(orderNumber) {
                   title
                   variantTitle
                   quantity
+                  currentQuantity
                   sku
                   originalUnitPriceSet { shopMoney { amount currencyCode } }
                   variant { id }
@@ -216,7 +220,7 @@ async function getOrderByNumber(orderNumber) {
   if (!order) throw new Error(`Order not found: ${orderNumber}`);
   return {
     ...order,
-    lineItems: order.lineItems.edges.map(e => e.node),
+    lineItems: order.lineItems.edges.map(e => e.node).filter(li => li.currentQuantity > 0),
   };
 }
 
@@ -247,12 +251,14 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
               address1 address2 city province country countryCodeV2 zip
             }
             totalPriceSet { shopMoney { amount currencyCode } }
+            currentTotalPriceSet { shopMoney { amount currencyCode } }
             lineItems(first: 50) {
               edges {
                 node {
                   title
                   variantTitle
                   quantity
+                  currentQuantity
                   sku
                 }
               }
@@ -267,7 +273,7 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
   return data.orders.edges
     .map(e => ({
       ...e.node,
-      lineItems: e.node.lineItems.edges.map(li => li.node),
+      lineItems: e.node.lineItems.edges.map(li => li.node).filter(li => li.currentQuantity > 0),
     }))
     .filter(o =>
       o.displayFulfillmentStatus === 'FULFILLED' &&
@@ -638,6 +644,7 @@ async function fetchOrdersForSync(since = null, cursor = null) {
                   variantTitle
                   sku
                   quantity
+                  currentQuantity
                   variant { id }
                   originalUnitPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
                   discountAllocations {
@@ -690,8 +697,8 @@ async function fetchOrdersForSync(since = null, cursor = null) {
   const orders = data.orders.edges.map(e => {
     const o = e.node;
 
-    // Flatten line items
-    o.lineItems = o.lineItems.edges.map(li => li.node);
+    // Flatten line items — filter out items removed by order edits (currentQuantity = 0)
+    o.lineItems = o.lineItems.edges.map(li => li.node).filter(li => li.currentQuantity == null || li.currentQuantity > 0);
 
     // Flatten discount applications
     o.discountApplications = (o.discountApplications?.edges || []).map(e => e.node);
@@ -912,6 +919,7 @@ async function getOrderForEdit(orderNumber) {
                   title
                   variantTitle
                   quantity
+                  currentQuantity
                   sku
                   originalUnitPriceSet { shopMoney { amount currencyCode } }
                   variant { id title price }
@@ -945,7 +953,7 @@ async function getOrderForEdit(orderNumber) {
   if (!order) throw new Error(`Order not found: ${orderNumber}`);
   return {
     ...order,
-    lineItems: order.lineItems.edges.map(e => e.node),
+    lineItems: order.lineItems.edges.map(e => e.node).filter(li => li.currentQuantity > 0),
     discountApplications: (order.discountApplications?.edges || []).map(e => e.node),
   };
 }

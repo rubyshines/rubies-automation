@@ -4,17 +4,19 @@
  * Two-phase flow: Phase 1 calculates + shows preview, Phase 2 (confirmed=true) executes the refund.
  */
 
-const { getOrderByNumber, calculateRefund, createRefund, normalizeGid, getAdminUrl } = require('../shopify');
+const { getOrderByNumber, calculateRefund, createRefund, normalizeGid, getAdminUrl, shopifyGraphQL } = require('../shopify');
 
 const tools = [
   {
     name: 'refund_order',
     description: [
-      'Refund specific line items on an order. Two-phase flow:',
-      'Phase 1 (confirmed omitted or false): calculates the refund using Shopify suggestedRefund and returns a preview with amounts. Does NOT execute the refund.',
+      'Refund on an order. Supports two modes:',
+      '(A) Line-item refund: provide items array with { sku, quantity } or { line_item_id, quantity }.',
+      '(B) Custom amount refund: provide amount (e.g. "13.90") for arbitrary refunds like customs reimbursement, goodwill credits, or partial adjustments that don\'t map to a specific line item.',
+      'Two-phase flow:',
+      'Phase 1 (confirmed omitted or false): calculates/previews the refund. Does NOT execute.',
       'Phase 2 (confirmed=true): executes the refund, returning funds to the original payment method.',
       'IMPORTANT: You MUST present the Phase 1 preview to the user and receive explicit confirmation before calling Phase 2.',
-      'Provide items as an array of { sku, quantity } or { line_item_id, quantity } to refund.',
       'A notification email is always sent to the customer.',
     ].join(' '),
     inputSchema: {
@@ -24,9 +26,13 @@ const tools = [
           type: 'string',
           description: 'Order number (e.g. "29338", "#29338")',
         },
+        amount: {
+          type: 'string',
+          description: 'Custom refund amount (e.g. "13.90"). Use this for arbitrary refunds like customs reimbursement that don\'t map to a specific line item. Mutually exclusive with items.',
+        },
         items: {
           type: 'array',
-          description: 'Items to refund. Each item needs { sku, quantity } or { line_item_id, quantity }.',
+          description: 'Items to refund. Each item needs { sku, quantity } or { line_item_id, quantity }. Mutually exclusive with amount.',
           items: {
             type: 'object',
             properties: {
@@ -52,19 +58,40 @@ const tools = [
       },
       required: ['order_number'],
     },
-    handler: async ({ order_number, items, note, confirmed, _refund_data }) => {
+    handler: async ({ order_number, amount, items, note, confirmed, _refund_data }) => {
       // --- Phase 2: Execute the refund ---
       if (confirmed && _refund_data) {
         const refundInput = {
           orderId: _refund_data.order_id,
           currency: _refund_data.currency || 'USD',
-          refundLineItems: _refund_data.refund_line_items,
           transactions: _refund_data.transactions.map(t => ({ ...t, orderId: _refund_data.order_id })),
           notify: true,
         };
+        // Only include refundLineItems if this is a line-item refund (not a custom amount refund)
+        if (_refund_data.refund_line_items && _refund_data.refund_line_items.length > 0) {
+          refundInput.refundLineItems = _refund_data.refund_line_items;
+        }
         if (note) refundInput.note = note;
 
         const refund = await createRefund(refundInput);
+
+        // Custom amount refund — no line items in the response
+        if (_refund_data.custom_amount) {
+          return {
+            content: [{
+              type: 'text',
+              text: [
+                '**Refund Completed**',
+                '',
+                `**Order:** ${_refund_data.order_name} — ${getAdminUrl(_refund_data.order_id)}`,
+                `**Refunded:** ${_refund_data.custom_amount} ${_refund_data.currency}`,
+                `**Notification:** Sent`,
+                note ? `\n**Note:** ${note}` : '',
+              ].filter(Boolean).join('\n'),
+            }],
+          };
+        }
+
         const itemLines = refund.refundLineItems.map(rli =>
           `  ${rli.quantity}x ${rli.lineItem.title}${rli.lineItem.variantTitle ? ` - ${rli.lineItem.variantTitle}` : ''} → ${rli.subtotalSet.shopMoney.amount} ${rli.subtotalSet.shopMoney.currencyCode}`
         ).join('\n');
@@ -94,8 +121,64 @@ const tools = [
       }
 
       // --- Phase 1: Calculate and preview ---
-      if (!items || items.length === 0) {
-        return { content: [{ type: 'text', text: 'Error: items are required to calculate a refund. Provide [{ sku, quantity }] or [{ line_item_id, quantity }].' }] };
+
+      // Validate: need either amount or items
+      if (!amount && (!items || items.length === 0)) {
+        return { content: [{ type: 'text', text: 'Error: provide either amount (for custom refund) or items (for line-item refund).' }] };
+      }
+      if (amount && items && items.length > 0) {
+        return { content: [{ type: 'text', text: 'Error: provide either amount or items, not both.' }] };
+      }
+
+      // --- Custom amount refund path ---
+      if (amount) {
+        const refundAmount = parseFloat(amount);
+        if (isNaN(refundAmount) || refundAmount <= 0) {
+          return { content: [{ type: 'text', text: `Error: invalid refund amount "${amount}". Must be a positive number.` }] };
+        }
+
+        const order = await getOrderByNumber(order_number);
+        if (order.displayFinancialStatus === 'REFUNDED') {
+          return { content: [{ type: 'text', text: `Error: Order ${order.name} is already fully refunded.` }] };
+        }
+
+        // Get the order's transactions to find the parent transaction for refund
+        const parentTransaction = await getOrderParentTransaction(order.id);
+        if (!parentTransaction) {
+          return { content: [{ type: 'text', text: `Error: Could not find a successful payment transaction on order ${order.name} to refund against.` }] };
+        }
+
+        const currency = parentTransaction.presentmentCurrency || 'USD';
+
+        const transactions = [{
+          gateway: parentTransaction.gateway,
+          parentId: parentTransaction.id,
+          amount: refundAmount.toFixed(2),
+          kind: 'REFUND',
+        }];
+
+        const refundData = {
+          order_id: order.id,
+          order_name: order.name,
+          custom_amount: refundAmount.toFixed(2),
+          refund_line_items: [],
+          transactions,
+          currency,
+        };
+
+        const outputLines = [
+          '**Custom Amount Refund Preview — Awaiting Confirmation**',
+          '',
+          `**Order:** ${order.name} — ${getAdminUrl(order.id)}`,
+          `**Customer:** ${order.customer?.firstName || ''} ${order.customer?.lastName || ''} (${order.customer?.email || 'no email'})`.trim(),
+          '',
+          `**Refund amount:** ${refundAmount.toFixed(2)} ${currency}`,
+          `**Refund to:** original payment method (${parentTransaction.gateway})`,
+          '',
+          `To confirm, call refund_order again with confirmed=true, order_number="${order_number}", and _refund_data=${JSON.stringify(refundData)}`,
+        ];
+
+        return { content: [{ type: 'text', text: outputLines.join('\n') }] };
       }
 
       // Look up the order
@@ -209,10 +292,40 @@ const tools = [
 ];
 
 /**
+ * Fetch the parent (SALE) transaction for an order, needed for custom amount refunds.
+ */
+async function getOrderParentTransaction(orderId) {
+  const gid = normalizeGid(orderId, 'Order');
+  const data = await shopifyGraphQL(`
+    query getOrderTransactions($id: ID!) {
+      order(id: $id) {
+        transactions(first: 20) {
+          id
+          kind
+          status
+          gateway
+          amountSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+        }
+      }
+    }
+  `, { id: gid });
+  // Find the successful SALE transaction (the original payment)
+  const txns = data.order.transactions || [];
+  const sale = txns.find(t => t.kind === 'SALE' && t.status === 'SUCCESS');
+  if (!sale) return null;
+  return {
+    id: sale.id,
+    gateway: sale.gateway,
+    presentmentCurrency: sale.amountSet.presentmentMoney.currencyCode,
+  };
+}
+
+/**
  * Fetch line item IDs for an order (needed for refund API).
  */
-const { shopifyGraphQL } = require('../shopify');
-
 async function getOrderLineItemIds(orderId) {
   const data = await shopifyGraphQL(`
     query getOrderLineItems($id: ID!) {

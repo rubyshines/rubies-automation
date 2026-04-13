@@ -60,6 +60,7 @@ function doParse(text, fulfilledAt) {
   else if (/\bPassport does not have\b/i.test(header)) currentStatus = 'pre_transit';
   // Also check event text for delivery confirmation (backup)
   if (currentStatus !== 'delivered' && /\bhas been delivered\b/i.test(text)) currentStatus = 'delivered';
+  if (currentStatus !== 'delivered' && /\bpicked up by recip/i.test(text)) currentStatus = 'delivered';
 
   // --- Destination ---
   const destMatch = text.match(/To:\s*(.+?)(?:\n|Order|Trying)/);

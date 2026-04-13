@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const gorgias = require('../import/gorgiasClient');
-const { hybridAdvisor } = require('../lib/hybridAdvisor');
+const { aiAdvisor } = require('../lib/aiAdvisor');
 
 const COUNT = parseInt(process.argv[2]) || 20;
 const SEED = parseInt(process.argv[3]) || Date.now();
@@ -143,7 +143,7 @@ async function main() {
     let hybridError = null;
 
     try {
-      const result = await hybridAdvisor({
+      const result = await aiAdvisor({
         customer_email: conv.email,
         issue_description: customerContext,
         order_number: null,

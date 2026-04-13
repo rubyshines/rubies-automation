@@ -1,5 +1,5 @@
 /**
- * Action Router — agentic tool-calling loop for operator commands.
+ * Operator Agent — agentic tool-calling loop for operator commands.
  *
  * Works like Claude Code: gets the real MCP tool schemas, full RUBIES context,
  * and an agentic loop that calls tools and reasons about results.
@@ -7,7 +7,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { getProductNickname, PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./csConfig');
+const { getProductNickname, PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./sizingEngine');
 const { KNOWN_SIZES_UPPER } = require('./sizeUtils');
 
 let _anthropic;
@@ -28,6 +28,7 @@ function loadToolSchemas() {
     require('./tools/draftOrders'),
     // Action tools
     require('./tools/exchangeOrder'),
+    require('./tools/invoiceOrder'),
     require('./tools/refundOrder'),
     require('./tools/editOrder'),
     require('./tools/orderNotes'),
@@ -97,7 +98,9 @@ Sizing systems:
 
 ## How to Execute Actions
 
-**Exchanges:** Use create_exchange_order. For items, prefer \`query\` (e.g. "Charlie 1X Black") over sku+target_size — it handles product name, size, AND color in one search. The customer_id is required — look it up first if needed. IMPORTANT: Always include the color in the query to match the original order (check the order items above for the color). If the customer ordered Pink, search for "AJ 2X Pink" not just "AJ 2X". Only use a different color if the customer explicitly asked for one.
+**Exchanges:** Use create_exchange_order for pure exchanges (same number of items, all free). For items, prefer \`query\` (e.g. "Charlie 1X Black") over sku+target_size — it handles product name, size, AND color in one search. The customer_id is required — look it up first if needed. IMPORTANT: Always include the color in the query to match the original order (check the order items above for the color). If the customer ordered Pink, search for "AJ 2X Pink" not just "AJ 2X". Only use a different color if the customer explicitly asked for one.
+
+**Exchange + invoice (extra items):** When the customer is exchanging AND adding extra items, or when the operator says "invoice for the difference", use create_invoice_order. Put the replacement items in \`exchange_items\` (free, 100% discount) and the extra items in \`paid_items\` (full price). This creates ONE order with both free and paid items, then sends an invoice for the paid portion. Example: exchanging 3 items but customer wants 4 → 3 in exchange_items, 1 in paid_items.
 
 **Refunds:** Use refund_order with the order number and item SKUs.
 
@@ -129,7 +132,7 @@ Sizing systems:
  * @param {function} [onEvent] - Optional callback for streaming: onEvent({ type, data })
  *   type: 'thinking' | 'tool_call' | 'tool_result' | 'text'
  */
-async function routeAction(message, context, history = [], onEvent) {
+async function operatorAgent(message, context, history = [], onEvent) {
   const { tools, handlers } = loadToolSchemas();
   const systemPrompt = buildSystemPrompt(context);
   const client = getAnthropic();
@@ -231,4 +234,4 @@ async function routeAction(message, context, history = [], onEvent) {
   };
 }
 
-module.exports = { routeAction };
+module.exports = { operatorAgent };

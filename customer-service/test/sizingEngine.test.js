@@ -56,7 +56,7 @@ require.cache[supabaseModulePath] = {
   },
 };
 
-// Now require csConfig — it will get the mocked supabaseClient
+// Now require sizingEngine — it will get the mocked supabaseClient
 const {
   walkTree,
   checkSafetyOverride,
@@ -85,7 +85,7 @@ const {
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
-} = require('../lib/csConfig');
+} = require('../lib/sizingEngine');
 
 // ---------------------------------------------------------------------------
 // Initialize CS config from mock Supabase before tests run
@@ -2073,10 +2073,10 @@ describe('isSameProduct — nickname matching', () => {
 
 // ---------------------------------------------------------------------------
 // Clarification upgrade — regex-based issue upgrade when parser returns no items
-// (Logic lives in exchangeAdvisor.js but is pure regex, testable standalone)
+// (Logic lives in aiAdvisor.js but is pure regex, testable standalone)
 // ---------------------------------------------------------------------------
 describe('clarification upgrade regex', () => {
-  // Replicate the regex logic from exchangeAdvisor.js
+  // Replicate the regex logic from aiAdvisor.js
   function applyClarification(messageText, items) {
     const msgLower = (messageText || '').toLowerCase();
     let clarifiedIssue = null;
@@ -2139,7 +2139,7 @@ describe('clarification upgrade regex', () => {
 
 // ---------------------------------------------------------------------------
 // Body group ambiguity check
-// (Logic lives in exchangeAdvisor.js — replicate here for unit testing)
+// (Logic lives in aiAdvisor.js — replicate here for unit testing)
 // ---------------------------------------------------------------------------
 describe('body group ambiguity check', () => {
   function checkBodyGroupAmbiguity(products) {

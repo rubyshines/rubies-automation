@@ -28,7 +28,7 @@ function analyzeOrders(orders) {
   const exchanges = orders.filter(o =>
     !o.cancelledAt &&
     o.displayFulfillmentStatus !== 'FULFILLED' &&
-    parseFloat(o.totalPriceSet?.shopMoney?.amount || '999') === 0
+    parseFloat((o.currentTotalPriceSet || o.totalPriceSet)?.shopMoney?.amount || '999') === 0
   );
   return { fulfilled, exchanges, all: orders };
 }

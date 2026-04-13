@@ -1,11 +1,12 @@
 /**
- * CS Config — Product classification, sizing helpers, and legacy decision tree.
+ * Sizing Engine — Product classification, sizing helpers, and size calculations.
  *
  * Product utilities: nicknames, categories, size lists, grading deltas, one-piece fit.
  * Loaded from Supabase via initCsConfig() at server startup.
  *
- * Also contains the legacy walkTree() decision tree, still used by exchangeAdvisor.js.
- * The active CS path is hybridAdvisor.js (Opus-based), not this tree.
+ * NOTE: Also contains legacy walkTree() and prescribe*() functions. These are no longer
+ * in the active execution path (aiAdvisor handles all CS logic) but remain for test
+ * coverage of utility functions they exercise. Will be removed in a follow-up cleanup.
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
@@ -28,6 +29,7 @@ const {
 const PRODUCT_NICKNAMES = {};
 const PRODUCT_CATEGORIES = {};
 const PRODUCT_SIZE_OVERRIDES = {};
+const TITLE_TO_HANDLE = {};  // Shopify product title (upper) → handle for exact lookups
 let _activeProducts = {};
 
 /**
@@ -48,7 +50,16 @@ async function initCsConfig() {
   for (const k of Object.keys(PRODUCT_NICKNAMES)) delete PRODUCT_NICKNAMES[k];
   for (const k of Object.keys(PRODUCT_CATEGORIES)) delete PRODUCT_CATEGORIES[k];
   for (const k of Object.keys(PRODUCT_SIZE_OVERRIDES)) delete PRODUCT_SIZE_OVERRIDES[k];
+  for (const k of Object.keys(TITLE_TO_HANDLE)) delete TITLE_TO_HANDLE[k];
   for (const k of Object.keys(_activeProducts)) delete _activeProducts[k];
+
+  // Build title → handle map from products table for exact product resolution
+  const { data: products } = await supabase.from('products').select('title, handle');
+  if (products) {
+    for (const p of products) {
+      if (p.title && p.handle) TITLE_TO_HANDLE[p.title.toUpperCase()] = p.handle;
+    }
+  }
 
   for (const row of data) {
     _activeProducts[row.product_handle] = {
@@ -82,12 +93,17 @@ async function initCsConfig() {
 
 /**
  * Get short nickname for a product. Falls back to the full title if no nickname.
+ * Uses handle-based lookup (exact) first, then keyword matching (fuzzy) for free text.
  */
 function getProductNickname(fullTitle) {
   if (!fullTitle) return 'item';
   const upper = fullTitle.toUpperCase();
 
-  // Try exact match
+  // Try exact title → handle → nickname (most reliable, avoids keyword collisions)
+  const handle = TITLE_TO_HANDLE[upper];
+  if (handle && _activeProducts[handle]) return _activeProducts[handle].nickname;
+
+  // Try exact keyword match
   if (PRODUCT_NICKNAMES[upper]) return PRODUCT_NICKNAMES[upper];
 
   // Try: does any nickname key contain the title or vice versa
@@ -178,6 +194,12 @@ const KID_LABELS = new Set(['daughter', 'girl', 'son', 'boy', 'kid', 'kiddo', 'c
 
 function classifyProduct(productName) {
   if (!productName) return null;
+
+  // Try exact title → handle → category (most reliable)
+  const handle = TITLE_TO_HANDLE[productName.toUpperCase()];
+  if (handle && _activeProducts[handle]) return _activeProducts[handle].category;
+
+  // Fall back to keyword matching for free text (nicknames, customer messages)
   const lower = productName.toLowerCase();
   // Sort by keyword length descending so longer/more specific keywords match first
   const entries = Object.entries(PRODUCT_CATEGORIES).sort((a, b) => b[0].length - a[0].length);
