@@ -162,8 +162,8 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       .eq('gmail_thread_id', msg.gmail_thread_id)
       .order('date', { ascending: true });
 
-    // Use full thread if available, otherwise fall back to single message
-    const thread = (threadMessages && threadMessages.length > 1) ? threadMessages : [msg];
+    // Use thread from DB (has attachment_meta), fall back to raw msg only if query failed
+    const thread = (threadMessages && threadMessages.length > 0) ? threadMessages : [msg];
     const firstMsg = thread[0];
     const isOurAddress = (addr) => addr && (addr.toLowerCase().includes('@rubyshines.com'));
 

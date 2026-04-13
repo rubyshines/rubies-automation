@@ -218,7 +218,7 @@ async function handle(payload, gmailPush) {
   // Query ALL unprocessed inbound emails — not just the ones we just synced
   const { data: unprocessed } = await supabase
     .from('email_messages')
-    .select('gmail_message_id, gmail_thread_id, from_address, from_name, to_addresses, subject, date, body_text, classification, classification_confidence, forwarded_to_gorgias_at')
+    .select('gmail_message_id, gmail_thread_id, from_address, from_name, to_addresses, subject, date, body_text, classification, classification_confidence, forwarded_to_gorgias_at, attachment_meta')
     .eq('is_sent', false)
     .is('processed_at', null)
     .not('classification', 'is', null)
