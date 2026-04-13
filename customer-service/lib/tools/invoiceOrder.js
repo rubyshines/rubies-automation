@@ -98,7 +98,7 @@ const tools = [
         summary += `\nPaid subtotal: $${paidTotal.toFixed(2)}\n`;
       }
 
-      summary += `Shipping: Standard (calculated by Shopify)\n`;
+      summary += `Shipping: Free (exchange order)\n`;
       summary += `Note: ${note || 'Invoice order (exchange + paid items) created via CS MCP server'}\n`;
 
       if (!confirmed) {
@@ -131,6 +131,7 @@ const tools = [
       const draftOrder = await createDraftOrder({
         customerId: normalizeGid(customer_id, 'Customer'),
         lineItems,
+        shippingLine: { title: 'Free Shipping', price: '0.00' },
         note: note || 'Invoice order (exchange + paid items) created via CS MCP server',
         tags: ['invoice', 'cs-mcp'],
       });
