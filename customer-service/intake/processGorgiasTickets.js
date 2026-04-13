@@ -197,17 +197,9 @@ async function run({ onProgress } = {}) {
   }
 
   // 4. Auto follow-ups + bypasses
+  // DISABLED: Auto follow-ups have a dedup bug that causes repeat sends.
+  // Re-enable after fixing the follow-up state tracking.
   let followUpsCreated = 0;
-  try {
-    const { processAutoFollowUps } = require('../lib/tools/csAdmin');
-    if (processAutoFollowUps) {
-      const result = await processAutoFollowUps();
-      followUpsCreated = (result.stage1Sent || 0) + (result.stage2Sent || 0);
-      if (followUpsCreated > 0) console.log(`[intake] ${followUpsCreated} auto follow-ups sent`);
-    }
-  } catch (err) {
-    console.warn(`[intake] Auto follow-up check failed: ${err.message}`);
-  }
 
   try {
     const adminTools = require('../lib/tools/csAdmin');

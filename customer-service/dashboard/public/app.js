@@ -852,6 +852,7 @@ function renderActionPanel(draft) {
   previewEl.style.display = 'none';
   resultEl.style.display = 'none';
   messagesEl.innerHTML = '';
+  messagesEl.style.display = '';
   _actionChatHistory = [];
 
   document.getElementById('btn-send').disabled = false;
@@ -873,7 +874,35 @@ function renderActionPanel(draft) {
     headerEl.innerHTML = `<span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--yellow)">Action</span>`;
   }
 
-  // Restore saved chat history (whether action is fully executed or mid-conversation)
+  // If action is already executed, show history but no prefill — nothing left to do
+  if (draft.action_executed_at) {
+    const savedChat = draft.action_result?.chat_history;
+    if (savedChat?.length) {
+      _actionChatHistory = savedChat;
+      for (const msg of savedChat) {
+        if (msg.role === 'user' && typeof msg.content === 'string') {
+          appendChatMessage('user', msg.content);
+        }
+      }
+    }
+    const toolResults = draft.action_result?.chat_tool_results || [];
+    for (const tr of toolResults) {
+      const label = tr.tool.replace(/_/g, ' ');
+      const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
+      const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
+      appendChatMessage('tool', `[${label}]\n${display}`);
+    }
+    if (draft.action_result?.chat_response) {
+      appendChatMessage('assistant', draft.action_result.chat_response);
+    }
+    renderActionLinks(draft.action_result?.chat_links);
+    headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done ${timeAgo(draft.action_executed_at)}</span>`;
+    input.placeholder = 'Request additional actions...';
+    input.value = '';
+    return;
+  }
+
+  // Restore saved chat history (action in progress, not yet executed)
   const savedChat = draft.action_result?.chat_history;
   if (savedChat?.length) {
     for (const msg of savedChat) {
@@ -897,37 +926,29 @@ function renderActionPanel(draft) {
     // Restore chat history so follow-up messages have context
     _actionChatHistory = savedChat;
 
-    if (draft.action_executed_at) {
-      headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Executed ${timeAgo(draft.action_executed_at)}</span>`;
+    // If advisor says complete, action is done — no prefill needed
+    if (draft.advisor_status === 'complete') {
+      headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done</span>`;
       input.placeholder = 'Request additional actions...';
-    } else {
-      // Show updated prefill from re-draft if action type changed
-      const newPrefill = buildActionPrefill(draft);
-      input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
-      if (newPrefill) input.value = newPrefill;
-      // Show quick-reply buttons if awaiting confirmation
-      const chatResponse = draft.action_result?.chat_response || '';
-      if (chatResponse && isConfirmationPrompt(chatResponse)) {
-        renderQuickReplies(['Yes, confirm', 'No, cancel']);
-      }
+      input.value = '';
+      return;
+    }
+
+    // Show updated prefill from re-draft if action type changed
+    const newPrefill = buildActionPrefill(draft);
+    input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
+    if (newPrefill) input.value = newPrefill;
+    // Show quick-reply buttons if awaiting confirmation
+    const chatResponse = draft.action_result?.chat_response || '';
+    if (chatResponse && isConfirmationPrompt(chatResponse)) {
+      renderQuickReplies(['Yes, confirm', 'No, cancel']);
     }
     return;
   }
 
-  // No chat history — check if there's a non-chat action_result to show
-  if (draft.action_executed_at) {
-    const result = draft.action_result || {};
-    const toolResults = result.chat_tool_results || [];
-    if (toolResults.length) {
-      for (const tr of toolResults) {
-        const label = tr.tool.replace(/_/g, ' ');
-        const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
-        appendChatMessage('tool', `[${label}]\n${resultText}`);
-      }
-    } else {
-      appendChatMessage('assistant', `Action executed ${timeAgo(draft.action_executed_at)}.`);
-    }
-    headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Executed ${timeAgo(draft.action_executed_at)}</span>`;
+  // Advisor says complete, no chat history — action was done in a prior pass
+  if (draft.advisor_status === 'complete') {
+    headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done</span>`;
     input.placeholder = 'Request additional actions...';
     input.value = '';
     return;

@@ -213,11 +213,12 @@ async function runAutoFollowUps() {
   }
 }
 
-// Run once on startup (30s delay), then every 4 hours
-setTimeout(() => {
-  runAutoFollowUps();
-  followUpTimer = setInterval(runAutoFollowUps, FOLLOW_UP_INTERVAL);
-}, 30_000);
+// DISABLED: Auto follow-ups have a dedup bug that causes repeat sends.
+// Re-enable after fixing the follow-up state tracking.
+// setTimeout(() => {
+//   runAutoFollowUps();
+//   followUpTimer = setInterval(runAutoFollowUps, FOLLOW_UP_INTERVAL);
+// }, 30_000);
 
 // Graceful shutdown
 function shutdown(signal) {

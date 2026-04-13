@@ -246,21 +246,23 @@ async function apiSendDraft(id, body) {
     channel: 'email',
   });
 
-  // Update ticket status + conversation history
-  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', { conversation_history: history });
+  // Save conversation history FIRST (Gorgias webhook can race and overwrite)
+  await supabase.from('cs_tickets').update({
+    conversation_history: history,
+    updated_at: new Date().toISOString(),
+  }).eq('gorgias_ticket_id', draft.gorgias_ticket_id);
 
-  // THEN update Gorgias (may trigger webhook, but our history is already saved)
-  try {
-    if (afterAction === 'close') {
-      await gorgias.closeTicket(draft.gorgias_ticket_id);
-      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-      await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
-    } else {
-      await gorgias.snoozeTicket(draft.gorgias_ticket_id, 3);
-    }
-  } catch (err) {
-    console.warn(`[dashboard] Post-send action (${afterAction}) failed: ${err.message}`);
+  // Update Gorgias SECOND — if this fails, status stays unchanged and the error propagates
+  if (afterAction === 'close') {
+    await gorgias.closeTicket(draft.gorgias_ticket_id);
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+    await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
+  } else {
+    await gorgias.snoozeTicket(draft.gorgias_ticket_id, 3);
   }
+
+  // Update DB status LAST — only after Gorgias succeeded
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed');
 
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
 }
@@ -339,14 +341,11 @@ async function apiCloseDraft(id, body) {
     .single();
   if (fetchErr) throw fetchErr;
 
-  // Close ticket + unassign from AI Bot
-  try {
-    await gorgias.closeTicket(draft.gorgias_ticket_id);
-    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-  } catch (err) {
-    console.warn(`[dashboard] Could not close/unassign ticket: ${err.message}`);
-  }
+  // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
+  await gorgias.closeTicket(draft.gorgias_ticket_id);
+  await gorgias.assignTicket(draft.gorgias_ticket_id, null);
 
+  // Update DB only after Gorgias succeeded
   await supabase.from('cs_ai_drafts').update({
     status: 'sent',
     feedback_notes: body.notes || 'Closed without reply',
@@ -500,12 +499,8 @@ async function apiReleaseDraft(id, body) {
     .single();
   if (fetchErr) throw fetchErr;
 
-  // Unassign from AI Bot
-  try {
-    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-  } catch (err) {
-    console.warn(`[dashboard] Could not unassign ticket: ${err.message}`);
-  }
+  // Unassign from AI Bot in Gorgias FIRST — if this fails, operation fails
+  await gorgias.assignTicket(draft.gorgias_ticket_id, null);
 
   // Update draft
   await supabase.from('cs_ai_drafts').update({
@@ -522,7 +517,8 @@ async function apiReleaseDraft(id, body) {
     feedback_notes: body.notes || null,
   });
 
-  await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+  // Mark as released (NOT closed — the ticket is still open in Gorgias for manual handling)
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'released');
 
   return { success: true };
 }
@@ -538,17 +534,13 @@ async function apiDeleteDraft(id) {
   if (fetchErr) throw fetchErr;
   if (!draft) return { success: true };
 
-  // Close ticket in Gorgias so poller won't pick it up again
+  // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
   if (draft.gorgias_ticket_id) {
-    try {
-      await gorgias.closeTicket(draft.gorgias_ticket_id);
-      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-    } catch (err) {
-      console.warn(`[dashboard] Could not close ticket on delete: ${err.message}`);
-    }
+    await gorgias.closeTicket(draft.gorgias_ticket_id);
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
   }
 
-  // Soft-delete: mark as deleted so intake won't recreate
+  // Update DB only after Gorgias succeeded
   await supabase.from('cs_ai_drafts').update({
     status: 'deleted',
     reviewed_at: new Date().toISOString(),
@@ -572,18 +564,14 @@ async function apiMarkSpam(id) {
   if (fetchErr) throw fetchErr;
   if (!draft) return { success: true };
 
-  // Close ticket, tag as spam, unassign from AI Bot
+  // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
   if (draft.gorgias_ticket_id) {
-    try {
-      await gorgias.addTicketTag(draft.gorgias_ticket_id, 'spam');
-      await gorgias.closeTicket(draft.gorgias_ticket_id);
-      await gorgias.assignTicket(draft.gorgias_ticket_id, null);
-    } catch (err) {
-      console.warn(`[dashboard] Spam Gorgias actions failed: ${err.message}`);
-    }
+    await gorgias.addTicketTag(draft.gorgias_ticket_id, 'spam');
+    await gorgias.closeTicket(draft.gorgias_ticket_id);
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
   }
 
-  // Soft-delete: mark as spam so intake won't recreate
+  // Update DB only after Gorgias succeeded
   await supabase.from('cs_ai_drafts').update({
     status: 'spam',
     reviewed_at: new Date().toISOString(),
@@ -1967,25 +1955,19 @@ async function apiSendTicketMessage(ticketId, body) {
   const now = new Date().toISOString();
   const updates = { conversation_history: history, updated_at: now };
 
+  // Update Gorgias FIRST — if this fails, operation fails and ticket stays open
   if (afterAction === 'close') {
+    await gorgias.closeTicket(ticket.gorgias_ticket_id);
+    await gorgias.assignTicket(ticket.gorgias_ticket_id, null);
     updates.status = 'closed';
     updates.closed_at = now;
-    try {
-      await gorgias.closeTicket(ticket.gorgias_ticket_id);
-      await gorgias.assignTicket(ticket.gorgias_ticket_id, null);
-    } catch (err) {
-      console.warn(`[dashboard] Post-message close failed: ${err.message}`);
-    }
   } else {
+    await gorgias.snoozeTicket(ticket.gorgias_ticket_id, 3);
     updates.status = 'snoozed';
     updates.snoozed_at = now;
-    try {
-      await gorgias.snoozeTicket(ticket.gorgias_ticket_id, 3);
-    } catch (err) {
-      console.warn(`[dashboard] Post-message snooze failed: ${err.message}`);
-    }
   }
 
+  // Update DB only after Gorgias succeeded
   await supabase.from('cs_tickets').update(updates).eq('id', ticketId);
 
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
@@ -2162,12 +2144,9 @@ const paramRoutes = [
     if (t?.active_draft_id) return apiCloseDraft(t.active_draft_id, body);
     // No active draft (e.g. snoozed ticket) — close directly
     if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
-    try {
-      await gorgias.closeTicket(t.gorgias_ticket_id);
-      await gorgias.assignTicket(t.gorgias_ticket_id, null);
-    } catch (err) {
-      console.warn(`[dashboard] Could not close/unassign ticket: ${err.message}`);
-    }
+    // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
+    await gorgias.closeTicket(t.gorgias_ticket_id);
+    await gorgias.assignTicket(t.gorgias_ticket_id, null);
     await updateTicketStatus(supabase, t.gorgias_ticket_id, 'closed');
     return { success: true };
   }},
