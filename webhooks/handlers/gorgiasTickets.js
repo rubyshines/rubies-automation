@@ -44,9 +44,10 @@ async function handle(payload) {
     return;
   }
 
-  // Skip non-open tickets
-  if (ticket.status && ticket.status !== 'open') {
-    console.log(`[gorgias-webhook] Skip ${ticketId}: status=${ticket.status}`);
+  // Skip closed tickets (but allow pending/other statuses — new tickets may not
+  // be 'open' yet when the webhook fires, especially from non-email channels)
+  if (ticket.status === 'closed') {
+    console.log(`[gorgias-webhook] Skip ${ticketId}: status=closed`);
     return;
   }
 
@@ -138,14 +139,10 @@ async function handle(payload) {
     console.log(`[gorgias-webhook] Ticket ${ticketId} skipped by processTicket`);
   }
 
-  // Update high-water mark
-  await supabase
-    .from('cs_poller_state')
-    .upsert({
-      id: 'gorgias_drafter',
-      last_poll_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+  // NOTE: Do NOT update cs_poller_state here. The webhook processes a single
+  // ticket — advancing the high-water mark would cause the poller to skip
+  // every other ticket in the window. Only the poller (which scans the full
+  // window) should advance last_poll_at.
 }
 
 module.exports = { handle };
