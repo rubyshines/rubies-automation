@@ -37,6 +37,14 @@ All business logic lives in MCP tools (or the underlying functions they call). E
 
 **How to apply:** When building an AI feature, give it the actual tool schemas (including lookup/search tools, not just action tools). Let the AI decide which tools to call and how to interpret results. Don't pre-filter or pre-route with regex.
 
+## Verify deployment before debugging
+
+After making code changes, confirm the updated code is actually running before investigating further issues. Dashboard changes need a server restart (kill port + restart). Webhook/poller changes need a Railway deploy (commit + push to main). Don't chase bugs that are just stale code.
+
+**Why:** Wasted time debugging "broken" behavior that was actually the old code still running — the fix was correct but hadn't been deployed.
+
+**How to apply:** When a fix doesn't seem to work: (1) Dashboard: check if the server was restarted (`lsof -ti:3847`). (2) Webhooks/pollers: ask Jamie if Railway has redeployed — don't assume the push triggered a deploy. (3) Don't layer more fixes on top until you've confirmed the first fix is actually live.
+
 ## Temporary memory files need done_when conditions
 
 **Why:** Memory accumulates without cleanup and becomes noise. Jamie shouldn't have to remember to tell me to clean up stale files.

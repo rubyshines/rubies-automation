@@ -23,6 +23,14 @@ Plans (created via EnterPlanMode) are ephemeral and DO NOT survive `/clear` or s
 - Save plan content (or thorough summary) as a memory file FIRST.
 - When in doubt, save it — redundant memory is better than lost work.
 
+## Stop and rethink when a fix isn't working
+
+When a fix isn't working after the first attempt, stop and rethink the approach rather than adding more layers. The right solution is usually simpler than what you're trying.
+
+**Why:** Tendency to keep pushing on the current approach — adding patches, workarounds, and edge-case handling — when the difficulty itself is a signal the approach is wrong.
+
+**How to apply:** If a fix requires more than one iteration, pause and ask: "Am I solving the right problem?" Look for the direct path before adding complexity.
+
 ## Restart servers after code changes
 
 After modifying server-side code, restart the relevant server automatically — don't wait for Jamie to notice it's stale.
