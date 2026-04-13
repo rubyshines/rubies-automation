@@ -38,3 +38,11 @@ After modifying server-side code, restart the relevant server automatically — 
 **Why:** Jamie had to ask why dashboard changes weren't reflected in the UI — the server was still running old code.
 
 **How to apply:** After editing dashboard server, intake scripts, or any code the server imports: kill the process on the relevant port (`lsof -ti:PORT | xargs kill -9`) and restart in the background. Do this proactively.
+
+## Always use Eastern Time
+
+When showing timestamps, log times, or any time-related data, convert to Eastern Time (ET).
+
+**Why:** Jamie is in the Eastern time zone. UTC timestamps require mental math.
+
+**How to apply:** When displaying times from databases, logs, or APIs (which are typically UTC), convert and present as ET. Use "ET" label (covers both EST and EDT automatically).
