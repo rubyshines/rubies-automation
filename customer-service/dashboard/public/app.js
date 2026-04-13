@@ -1621,7 +1621,7 @@ function unparkTicket() {
 
 async function forwardTicket() {
   if (!currentTicketId) return;
-  const to = prompt('Forward to email:', 'iamjamiealexander@gmail.com');
+  const to = prompt('Forward to email:', 'jamie@rubyshines.com');
   if (!to) return;
 
   const btn = document.getElementById('btn-forward');
@@ -1992,6 +1992,8 @@ function findFirstHumanAgentIndex(messages) {
   // Strategy 1: Use is_bot flags if available
   const hasFlags = messages.some(m => m.is_bot !== undefined);
   if (hasFlags) {
+    const hasBotMessages = messages.some(m => m.sender === 'agent' && m.is_bot === true);
+    if (!hasBotMessages) return 0; // No bot flow — email-only ticket
     for (let i = 0; i < messages.length; i++) {
       if (messages[i].sender === 'agent' && messages[i].is_bot === false) return i;
     }
@@ -3124,3 +3126,113 @@ function initMobile() {
   updateMobileHeaderHeight();
   window.addEventListener('resize', updateMobileHeaderHeight);
 }
+
+// ---------------------------------------------------------------------------
+// Attachment Lightbox
+// ---------------------------------------------------------------------------
+
+document.addEventListener('DOMContentLoaded', function initLightbox() {
+  const overlay = document.getElementById('lightbox');
+  const content = document.getElementById('lightbox-content');
+  const prevBtn = document.getElementById('lightbox-prev');
+  const nextBtn = document.getElementById('lightbox-next');
+  const closeBtn = document.getElementById('lightbox-close');
+  if (!overlay || !content) return;
+
+  let items = [];  // [{ url, name, isImage }]
+  let index = 0;
+
+  function open(attachmentEl) {
+    // Gather all attachments in the same .msg-attachments container
+    const container = attachmentEl.closest('.msg-attachments');
+    items = [];
+    if (container) {
+      container.querySelectorAll('.msg-attachment-thumb, .msg-attachment-file').forEach(el => {
+        const url = el.href || el.querySelector('img')?.src || '';
+        const name = el.querySelector('img')?.alt || el.textContent.trim() || 'file';
+        const contentType = el.querySelector('img') ? 'image/' : '';
+        items.push({ url, name, isImage: !!el.classList.contains('msg-attachment-thumb') });
+      });
+    }
+    if (!items.length) {
+      // Fallback: single item
+      const url = attachmentEl.href || attachmentEl.querySelector('img')?.src || '';
+      const name = attachmentEl.querySelector('img')?.alt || attachmentEl.textContent.trim() || 'file';
+      items = [{ url, name, isImage: !!attachmentEl.classList.contains('msg-attachment-thumb') }];
+    }
+
+    index = items.findIndex(i => i.url === (attachmentEl.href || attachmentEl.querySelector('img')?.src));
+    if (index < 0) index = 0;
+
+    render();
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  function render() {
+    const item = items[index];
+    if (!item) return;
+
+    const counter = items.length > 1
+      ? `<div class="lightbox-counter">${index + 1} / ${items.length}</div>`
+      : '';
+
+    if (item.isImage) {
+      content.innerHTML = `
+        <img class="lightbox-img" src="${esc(item.url)}" alt="${esc(item.name)}">
+        <div class="lightbox-filename">${esc(item.name)}</div>
+        ${counter}`;
+    } else {
+      content.innerHTML = `
+        <div class="lightbox-file-card">
+          <div class="lightbox-file-icon">&#128196;</div>
+          <div class="lightbox-file-name">${esc(item.name)}</div>
+          <a class="lightbox-file-download" href="${esc(item.url)}" target="_blank" rel="noopener">Download</a>
+        </div>
+        ${counter}`;
+    }
+
+    prevBtn.hidden = items.length <= 1;
+    nextBtn.hidden = items.length <= 1;
+    prevBtn.style.opacity = index === 0 ? '0.3' : '1';
+    nextBtn.style.opacity = index === items.length - 1 ? '0.3' : '1';
+  }
+
+  function nav(dir) {
+    const next = index + dir;
+    if (next < 0 || next >= items.length) return;
+    index = next;
+    render();
+  }
+
+  // Event delegation — catch clicks on attachment thumbs/files anywhere in the page
+  document.addEventListener('click', (e) => {
+    const thumb = e.target.closest('.msg-attachment-thumb, .msg-attachment-file');
+    if (thumb) {
+      e.preventDefault();
+      open(thumb);
+    }
+  });
+
+  closeBtn.addEventListener('click', close);
+  prevBtn.addEventListener('click', () => nav(-1));
+  nextBtn.addEventListener('click', () => nav(1));
+
+  // Click overlay background to close (but not the content itself)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  // Keyboard
+  document.addEventListener('keydown', (e) => {
+    if (!overlay.classList.contains('active')) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft') nav(-1);
+    if (e.key === 'ArrowRight') nav(1);
+  });
+});

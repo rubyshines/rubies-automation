@@ -1382,9 +1382,10 @@ function extractActionLinks(toolResults) {
   const links = [];
   for (const tr of (toolResults || [])) {
     const text = typeof tr.result === 'string' ? tr.result : '';
-    // Shopify order links
+    // Shopify order links (exclude draft_orders — matched separately below)
     const orderMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+orders\/(\d+)/g);
     for (const m of orderMatches) {
+      if (m[0].includes('draft_orders/')) continue; // handled by draft regex below
       const orderNum = text.match(/#(\d{4,6})/);
       links.push({ type: 'order', label: `Order ${orderNum ? orderNum[0] : ''}`, url: m[0] });
     }
@@ -2027,10 +2028,19 @@ async function apiForwardTicket(ticketId, body) {
     const timestamp = m.created_datetime ? new Date(m.created_datetime).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '';
     const bodyHtml = m.body_html || m.stripped_html || (m.body_text || '').replace(/\n/g, '<br>');
 
+    // Render inline attachment thumbnails
+    const attachmentHtml = (m.attachments || []).map(a => {
+      const isImage = (a.content_type || '').startsWith('image/');
+      return isImage
+        ? `<div style="margin-top:8px"><a href="${a.url}" target="_blank"><img src="${a.url}" alt="${a.name || 'attachment'}" style="max-width:300px;max-height:200px;border-radius:4px;border:1px solid #e7e5e4"></a></div>`
+        : `<div style="margin-top:8px"><a href="${a.url}" target="_blank" style="color:#1a7f64;font-size:13px">${a.name || 'attachment'}</a></div>`;
+    }).join('');
+
     html += `
       <div style="border-left:3px solid ${borderColor};padding:12px 16px;margin-bottom:12px;background:#fff;border-radius:0 6px 6px 0">
         <div style="font-size:11px;color:#888;margin-bottom:6px">${senderLabel} &middot; ${timestamp}</div>
         <div style="font-size:14px;line-height:1.5">${bodyHtml}</div>
+        ${attachmentHtml}
       </div>`;
   }
 
@@ -2041,7 +2051,7 @@ async function apiForwardTicket(ticketId, body) {
   const sgMail = getSendgridClient();
   if (!sgMail) throw new Error('SendGrid not configured');
 
-  const recipientEmail = body.to || 'iamjamiealexander@gmail.com';
+  const recipientEmail = body.to || 'jamie@rubyshines.com';
   await sgMail.send({
     to: recipientEmail,
     from: { name: 'RUBIES Customer Care', email: 'care@rubyshines.com' },

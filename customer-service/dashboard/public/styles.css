@@ -1318,9 +1318,92 @@ main { height: calc(100vh - 56px); }
 .msg-body a { color: var(--teal); }
 
 .msg-attachments { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
-.msg-attachment-thumb img { max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; }
+.msg-attachment-thumb img { max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; transition: opacity 0.15s; }
 .msg-attachment-thumb img:hover { opacity: 0.8; }
-.msg-attachment-file { display: inline-block; padding: 4px 8px; font-size: 12px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 4px; color: var(--teal); text-decoration: none; }
+.msg-attachment-file { display: inline-block; padding: 4px 8px; font-size: 12px; background: var(--surface-inset); border: 1px solid var(--border); border-radius: 4px; color: var(--teal); text-decoration: none; }
+
+/* ─── Attachment Lightbox ──────────────────────────────── */
+.lightbox-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(28, 25, 23, 0.85);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.lightbox-overlay.active { opacity: 1; pointer-events: all; }
+
+.lightbox-content {
+  position: relative;
+  max-width: 90vw; max-height: 88vh;
+  display: flex; flex-direction: column; align-items: center;
+  transform: scale(0.96); transition: transform 0.2s ease;
+}
+.lightbox-overlay.active .lightbox-content { transform: scale(1); }
+
+.lightbox-img {
+  max-width: 90vw; max-height: 80vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+  user-select: none; -webkit-user-drag: none;
+}
+
+.lightbox-filename {
+  margin-top: 10px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px; color: rgba(255, 255, 255, 0.7);
+  text-align: center;
+  max-width: 80vw; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+.lightbox-counter {
+  margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: rgba(255, 255, 255, 0.4);
+}
+
+.lightbox-close {
+  position: fixed; top: 16px; right: 20px;
+  width: 36px; height: 36px;
+  background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+  color: rgba(255, 255, 255, 0.8); font-size: 18px; line-height: 1;
+}
+.lightbox-close:hover { background: rgba(255, 255, 255, 0.2); }
+
+.lightbox-nav {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  width: 40px; height: 40px;
+  background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+  color: rgba(255, 255, 255, 0.8); font-size: 18px;
+}
+.lightbox-nav:hover { background: rgba(255, 255, 255, 0.2); }
+.lightbox-nav.prev { left: 16px; }
+.lightbox-nav.next { right: 16px; }
+.lightbox-nav[hidden] { display: none; }
+
+/* File (non-image) display in lightbox */
+.lightbox-file-card {
+  background: var(--surface); border-radius: var(--radius-lg);
+  padding: 32px 48px; text-align: center;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+}
+.lightbox-file-icon { font-size: 36px; margin-bottom: 12px; color: var(--text-secondary); }
+.lightbox-file-name { font-size: 15px; font-weight: 500; color: var(--text); margin-bottom: 16px; }
+.lightbox-file-download {
+  display: inline-block; padding: 8px 20px;
+  background: var(--teal); color: white; border-radius: var(--radius);
+  text-decoration: none; font-size: 13px; font-weight: 500;
+  transition: background 0.15s;
+}
+.lightbox-file-download:hover { background: #157a6b; }
 
 /* ─── Draft Editor ───────────────────────────────────────── */
 
@@ -1726,6 +1809,31 @@ main { height: calc(100vh - 56px); }
 .action-link-order:hover { opacity: 0.9; }
 .action-link-draft { background: var(--surface-inset); color: var(--green); border: 1px solid var(--border); }
 .action-link-draft:hover { background: var(--border); }
+
+.action-quick-replies {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  align-self: flex-start;
+}
+.quick-reply-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--green);
+  background: var(--green);
+  color: white;
+  transition: opacity 0.15s;
+}
+.quick-reply-btn:hover { opacity: 0.85; }
+.quick-reply-no {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.quick-reply-no:hover { background: var(--surface-inset); }
 
 .action-msg-tool {
   background: transparent;
