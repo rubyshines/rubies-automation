@@ -47,18 +47,16 @@ async function uploadAttachmentsForGorgias(gmail, supabase, gmailMessageId, atta
       );
       console.log(`[gmail-cs] Downloaded ${filename} (${mimeType}, ${data.length} bytes)`);
       const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storagePath = `${gmailMessageId}/${safeFilename}`;
+      const uuid = require('crypto').randomUUID();
+      const storagePath = `${gmailMessageId}/${uuid}/${safeFilename}`;
       const { error } = await supabase.storage
         .from(ATTACHMENT_BUCKET)
         .upload(storagePath, data, { contentType: mimeType, upsert: true });
       if (error) { console.warn(`[gmail-cs] Attachment upload failed: ${error.message}`); continue; }
-      const { data: urlData, error: urlErr } = await supabase.storage
-        .from(ATTACHMENT_BUCKET)
-        .createSignedUrl(storagePath, 600); // 10 min — enough for Gorgias to copy
-      if (urlErr) { console.warn(`[gmail-cs] Signed URL failed: ${urlErr.message}`); continue; }
-      console.log(`[gmail-cs] Uploaded ${filename} → signed URL ready`);
+      const { data: urlData } = supabase.storage.from(ATTACHMENT_BUCKET).getPublicUrl(storagePath);
+      console.log(`[gmail-cs] Uploaded ${filename} → public URL ready`);
       gorgiasAttachments.push({
-        url: urlData.signedUrl,
+        url: urlData.publicUrl,
         name: filename,
         content_type: mimeType,
         size: data.length,
