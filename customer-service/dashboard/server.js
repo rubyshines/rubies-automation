@@ -1397,8 +1397,12 @@ function extractActionLinks(toolResults) {
     }
   }
   // Dedupe by URL
+  return dedupeLinks(links);
+}
+
+function dedupeLinks(links) {
   const seen = new Set();
-  return links.filter(l => { if (seen.has(l.url)) return false; seen.add(l.url); return true; });
+  return (links || []).filter(l => { if (seen.has(l.url)) return false; seen.add(l.url); return true; });
 }
 
 async function apiActionChat(draftId, body) {
@@ -1434,7 +1438,7 @@ async function apiActionChat(draftId, body) {
       chat_tool_results: result.tool_results,
       chat_history: result.history,
       chat_response: result.response,
-      chat_links: result.links,
+      chat_links: dedupeLinks([...(prevResult.chat_links || []), ...result.links]),
     },
   };
 

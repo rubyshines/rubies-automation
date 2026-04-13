@@ -1075,7 +1075,8 @@ function renderActionLinks(links) {
 }
 
 function isConfirmationPrompt(text) {
-  return /shall I (confirm|proceed|go ahead)|confirm\??|want me to (proceed|complete|go ahead)|ready to (confirm|proceed)|proceed\?/i.test(text);
+  if (/\b(done|completed|refunded|executed|success)\b/i.test(text)) return false;
+  return /shall I (confirm|proceed|go ahead)|want me to (proceed|complete|go ahead)|ready to (confirm|proceed)|proceed\?|to confirm,?\s+(call|click|reply)/i.test(text);
 }
 
 function renderQuickReplies(options) {
