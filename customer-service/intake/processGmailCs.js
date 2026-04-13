@@ -46,7 +46,8 @@ async function uploadAttachmentsForGorgias(gmail, supabase, gmailMessageId, atta
         gmail, gmailMessageId, att.attachmentId, att.filename, att.mimeType
       );
       console.log(`[gmail-cs] Downloaded ${filename} (${mimeType}, ${data.length} bytes)`);
-      const storagePath = `${gmailMessageId}/${filename}`;
+      const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${gmailMessageId}/${safeFilename}`;
       const { error } = await supabase.storage
         .from(ATTACHMENT_BUCKET)
         .upload(storagePath, data, { contentType: mimeType, upsert: true });
