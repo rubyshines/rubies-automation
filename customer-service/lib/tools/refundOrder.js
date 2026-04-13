@@ -312,9 +312,9 @@ async function getOrderParentTransaction(orderId) {
       }
     }
   `, { id: gid });
-  // Find the successful SALE transaction (the original payment)
+  // Find the successful payment transaction (SALE or CAPTURE depending on gateway)
   const txns = data.order.transactions || [];
-  const sale = txns.find(t => t.kind === 'SALE' && t.status === 'SUCCESS');
+  const sale = txns.find(t => (t.kind === 'SALE' || t.kind === 'CAPTURE') && t.status === 'SUCCESS');
   if (!sale) return null;
   return {
     id: sale.id,

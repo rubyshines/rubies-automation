@@ -1697,7 +1697,17 @@ async function apiGetCustomerContext(email, orderNumber) {
   let ticketOrder = null;
   const orderNum = orderNumber ? parseInt(String(orderNumber).replace('#', '')) : null;
   if (orderNum) {
-    const matchedOrder = allOrders.find(o => o.order_number === orderNum);
+    // Try matching from customer's orders first, then fall back to direct order lookup
+    // (handles cases where customer contacts from a different email than what's on the order)
+    let matchedOrder = allOrders.find(o => o.order_number === orderNum);
+    if (!matchedOrder) {
+      const { data: directOrder } = await supabase
+        .from('orders')
+        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, shop_currency, shipping_address, note, tags, fulfillments')
+        .eq('order_number', orderNum)
+        .maybeSingle();
+      if (directOrder) matchedOrder = directOrder;
+    }
     if (matchedOrder) {
       // Fetch line items for this specific order
       const { data: items } = await supabase
