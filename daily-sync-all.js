@@ -86,27 +86,11 @@ const PIPELINES = [
       return { sources: { gmail_watch: result }, status: result.success ? 'ok' : 'error' };
     },
   },
-  {
-    name: 'Gorgias Intake Sweep',
-    run: async () => {
-      const { run: intakeRun } = require('./customer-service/intake/processGorgiasTickets');
-      const result = await intakeRun();
-      return {
-        sources: {
-          intake: {
-            success: true,
-            rowsWritten: result.draftsCreated || 0,
-            error: null,
-          },
-        },
-        status: 'ok',
-      };
-    },
-  },
-  {
-    name: 'Ticket Reconciliation',
-    run: () => require('./customer-service/sync/reconcileTickets').run(),
-  },
+  // DISABLED 2026-04-13: Investigating sync drift — relying on webhooks only
+  // {
+  //   name: 'Ticket Reconciliation',
+  //   run: () => require('./customer-service/sync/reconcileTickets').run(),
+  // },
 ];
 
 // ---------------------------------------------------------------------------
