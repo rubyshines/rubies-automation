@@ -309,6 +309,27 @@ async function closeTicket(ticketId) {
   });
 }
 
+/**
+ * Fetch tickets from a Gorgias view (filtered ticket list).
+ * Views use server-side filters (e.g. "All open" = view 28532).
+ * Paginates until all results are returned.
+ */
+async function getViewItems(viewId, { limit = 30, order_by = 'updated_datetime:desc' } = {}) {
+  const all = [];
+  let cursor = null;
+  do {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    params.set('order_by', order_by);
+    if (cursor) params.set('cursor', cursor);
+    const result = await apiFetch(`/views/${viewId}/items?${params}`);
+    if (result.data) all.push(...result.data);
+    cursor = result.meta?.next_cursor || null;
+    if (cursor) await delay(500);
+  } while (cursor);
+  return all;
+}
+
 // ─── Utilities ───────────────────────────────────────────────
 
 /**
@@ -347,6 +368,7 @@ module.exports = {
   getTickets,
   getTicket,
   getTicketMessages,
+  getViewItems,
   getMacros,
   getTags,
   getUsers,

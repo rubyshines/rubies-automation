@@ -54,178 +54,6 @@ async function getAiBotUserId() {
 // Core polling logic
 // ---------------------------------------------------------------------------
 
-async function run({ onProgress } = {}) {
-  const emit = onProgress || (() => {});
-  const supabase = getSupabaseClient();
-  const startTime = Date.now();
-  let draftsCreated = 0;
-  let ticketsProcessed = 0;
-  let ticketsSkipped = 0;
-
-  // 1. Get high-water mark for efficient scanning
-  const { data: stateRow } = await supabase
-    .from('cs_poller_state')
-    .select('last_poll_at')
-    .eq('id', 'gorgias_drafter')
-    .maybeSingle();
-
-  const lastPollAt = stateRow?.last_poll_at
-    ? new Date(new Date(stateRow.last_poll_at).getTime() - 5 * 60 * 1000) // 5min overlap
-    : new Date(Date.now() - 24 * 60 * 60 * 1000); // default: 24hrs ago
-
-  console.log(`[intake] Scanning since ${lastPollAt.toISOString()}...`);
-
-  // Fetch recent open tickets via two passes:
-  //  1. updated_datetime:desc — catches tickets with new activity
-  //  2. created_datetime:desc — catches newly created tickets that may not have been updated
-  // This prevents tickets from falling through when webhook delivery fails.
-  const allTickets = [];
-  const seen = new Set();
-
-  for (const orderBy of ['updated_datetime:desc', 'created_datetime:desc']) {
-    let cursor = null;
-    do {
-      const { data: tickets, nextCursor } = await gorgias.getTickets({
-        cursor,
-        limit: 30,
-        order_by: orderBy,
-      });
-      const dateField = orderBy.startsWith('created') ? 'created_datetime' : 'updated_datetime';
-      const recent = tickets.filter(t => new Date(t[dateField]) >= lastPollAt);
-      for (const t of recent) {
-        if (t.status === 'open' && !t.spam && !seen.has(t.id)) {
-          allTickets.push(t);
-          seen.add(t.id);
-        }
-      }
-      if (recent.length < tickets.length) break;
-      cursor = nextCursor;
-      if (cursor) await gorgias.delay(500);
-    } while (cursor);
-  }
-
-  console.log(`[intake] Found ${allTickets.length} open tickets`);
-  emit({ phase: 'fetched', total: allTickets.length });
-
-  // 3. Pre-filter using ticket list data + batch Supabase check (no Gorgias API calls)
-  const aiBotId = await getAiBotUserId();
-  const ticketIds = allTickets.map(t => t.id);
-
-  // Batch-check which tickets already have drafts or were spammed
-  const { data: existingDrafts } = await supabase
-    .from('cs_ai_drafts')
-    .select('gorgias_ticket_id, gorgias_message_id, status')
-    .in('gorgias_ticket_id', ticketIds.length ? ticketIds : [0]);
-
-  const draftedMessages = {};
-  const spammedTickets = new Set();
-  for (const d of (existingDrafts || [])) {
-    if (d.status === 'spam') spammedTickets.add(d.gorgias_ticket_id);
-    // Only track pending drafts — sent/superseded drafts shouldn't block new intake
-    if (d.status === 'pending') {
-      if (!draftedMessages[d.gorgias_ticket_id]) draftedMessages[d.gorgias_ticket_id] = new Set();
-      draftedMessages[d.gorgias_ticket_id].add(d.gorgias_message_id);
-    }
-  }
-
-  // Build set of tickets with released drafts (don't re-draft those)
-  const releasedTickets = new Set();
-  for (const d of (existingDrafts || [])) {
-    if (d.status === 'released') releasedTickets.add(d.gorgias_ticket_id);
-  }
-
-  // Filter using only data we already have (no API calls)
-  const ticketsToProcess = allTickets.filter(t => {
-    const assigneeId = t.assignee_user?.id;
-    // Assigned to AI bot with a pending draft = already in our queue
-    if (assigneeId === aiBotId && draftedMessages[t.id]?.size > 0) {
-      console.log(`[intake] Skip ${t.id}: AI bot + pending draft`);
-      ticketsSkipped++;
-      return false;
-    }
-    // Released back to Gorgias = don't re-draft
-    if (releasedTickets.has(t.id) && !assigneeId) {
-      // Only skip if unassigned (released). If AI bot re-assigned somehow, process it.
-      console.log(`[intake] Skip ${t.id}: released to Gorgias`);
-      ticketsSkipped++;
-      return false;
-    }
-    // Spammed in our system
-    if (spammedTickets.has(t.id)) {
-      console.log(`[intake] Skip ${t.id}: spammed`);
-      ticketsSkipped++;
-      return false;
-    }
-    // Gorgias spam detection (field is `spam`, not `is_spam`)
-    if (t.spam) {
-      console.log(`[intake] Skip ${t.id}: Gorgias spam`);
-      ticketsSkipped++;
-      return false;
-    }
-    // Spam-tagged
-    const tags = (t.tags || []).map(tag => (tag.name || tag).toLowerCase());
-    if (tags.includes('spam')) {
-      console.log(`[intake] Skip ${t.id}: spam tag`);
-      ticketsSkipped++;
-      return false;
-    }
-    // No customer email
-    if (!t.customer?.email) {
-      console.log(`[intake] Skip ${t.id}: no email`);
-      ticketsSkipped++;
-      return false;
-    }
-    return true;
-  });
-
-  console.log(`[intake] ${ticketsToProcess.length} to process, ${ticketsSkipped} pre-filtered`);
-
-  // 4. Process only tickets that passed all filters
-  for (let i = 0; i < ticketsToProcess.length; i++) {
-    const ticket = ticketsToProcess[i];
-    emit({ phase: 'processing', current: i + 1, total: ticketsToProcess.length });
-    try {
-      const ptResult = await processTicket(supabase, ticket, aiBotId, draftedMessages[ticket.id]);
-      if (ptResult?.drafted) draftsCreated++;
-      if (ptResult?.skipped) ticketsSkipped++;
-      else ticketsProcessed++;
-    } catch (err) {
-      console.error(`[intake] Error processing ticket ${ticket.id}: ${err.message}`);
-      ticketsSkipped++;
-    }
-    await gorgias.delay(500);
-  }
-
-  // 4. Auto follow-ups + bypasses
-  // DISABLED: Auto follow-ups have a dedup bug that causes repeat sends.
-  // Re-enable after fixing the follow-up state tracking.
-  let followUpsCreated = 0;
-
-  try {
-    const adminTools = require('../lib/tools/csAdmin');
-    const bypassHandler = adminTools.find(t => t.name === 'detect_bypasses')?.handler;
-    if (bypassHandler) {
-      const bypassResult = await bypassHandler({});
-      const text = bypassResult?.content?.[0]?.text || '';
-      if (!text.includes('0 bypasses')) console.log(`[intake] Bypass detection: ${text.split('\n')[0]}`);
-    }
-  } catch (err) {
-    console.warn(`[intake] Bypass detection failed: ${err.message}`);
-  }
-
-  // 5. Update high-water mark
-  await supabase
-    .from('cs_poller_state')
-    .upsert({ id: 'gorgias_drafter', last_poll_at: new Date().toISOString(), updated_at: new Date().toISOString() });
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[intake] Done in ${elapsed}s — ${ticketsProcessed} processed, ${draftsCreated} drafts created, ${followUpsCreated} follow-ups, ${ticketsSkipped} skipped`);
-
-  const result = { ticketsProcessed, draftsCreated, followUpsCreated, ticketsSkipped, elapsed };
-  emit({ phase: 'done', ...result });
-  return result;
-}
-
 // ---------------------------------------------------------------------------
 // Duplicate ticket detection
 // ---------------------------------------------------------------------------
@@ -383,9 +211,6 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     // 'keep_both' or no action → continue processing normally
   }
 
-  // Derive turn number from actual customer messages (Gorgias is system of record)
-  const turnNumber = customerMessages.length;
-
   // Get previous draft's intake state for multi-turn
   let previousIntake = null;
   let previousDraftId = null;
@@ -490,6 +315,14 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     })),
   }));
 
+  // Count real messages (customer + non-bot agent, excluding internal notes and bot)
+  const messageCount = conversationHistory.filter(m =>
+    m.sender === 'customer' || (m.sender === 'agent' && !m.is_bot)
+  ).length;
+
+  // Detect if an agent has replied (from conversation history — catches replies made outside dashboard)
+  const hasAgentReply = conversationHistory.some(m => m.sender === 'agent' && !m.is_bot);
+
   // Upsert cs_tickets row (ticket-centric model)
   const messageType = structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown';
   const confidence = structured.confidence || 'low';
@@ -518,7 +351,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     gorgias_ticket_id: ticketId,
     created_at: ticket.created_datetime || new Date().toISOString(),
     status: 'open',
-    turn_number: turnNumber,
+    message_count: messageCount,
     customer_email: customerEmail,
     conversation_history: conversationHistory,
     message_type: messageType,
@@ -541,6 +374,8 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
   if (structured.order) ticketUpsert.order_context = structured.order;
   if (structured.customer) ticketUpsert.customer_context = structured.customer;
+  // Only set has_agent_reply to true, never back to false (one-way latch)
+  if (hasAgentReply) ticketUpsert.has_agent_reply = true;
 
   const { data: ticketRow, error: ticketErr } = await supabase
     .from('cs_tickets')
@@ -576,7 +411,6 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       order_context: structured.order || null,
       customer_context: structured.customer || null,
       action_type: structured.action_type || null,
-      turn_number: turnNumber,
       previous_draft_id: previousDraftId,
     })
     .select('id')
@@ -735,20 +569,4 @@ function buildConversationContext(messages, latestMsgId) {
 // Draft formatting
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// CLI entry point
-// ---------------------------------------------------------------------------
-
-if (require.main === module) {
-  run()
-    .then(result => {
-      console.log('[intake] Result:', JSON.stringify(result));
-      process.exit(0);
-    })
-    .catch(err => {
-      console.error('[intake] Fatal error:', err);
-      process.exit(1);
-    });
-}
-
-module.exports = { run, processTicket, getAiBotUserId, buildConversationContext, buildPreviousDraftContext, checkForDuplicateTicket };
+module.exports = { processTicket, getAiBotUserId, buildConversationContext, buildPreviousDraftContext, checkForDuplicateTicket };
