@@ -22,30 +22,32 @@ type: project
 
 **Supabase Architecture:** All tables documented in schema SQL files per domain. Supabase is state store for everything. Dotenv guard pattern lets scripts work standalone or from runner.
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
-- **Production:** Webhook server running on Railway (real-time Shopify, Gorgias, Gmail). Daily sync pipeline runs scheduled. Gmail webhook via Cloud Pub/Sub. All shared clients stable.
-- **Partial:** Webhook dead-letter queue stores failures but no automatic reprocessing. Gmail Watch renewal daily but token expiry handling manual. Shopify webhook registration requires manual re-run if domain changes.
-- **Gaps:** No webhook circuit breaker (high-volume events could overload). No idempotency token tracking per webhook (Shopify retries could duplicate if handler not idempotent). No CloudFront/CDN layer.
+- **Production:** Webhook server running on Railway (real-time Shopify, Gorgias, Gmail). Daily sync pipeline runs scheduled (16 sub-pipelines). Gmail webhook via Cloud Pub/Sub. All shared clients stable.
+- **Partial:** Webhook dead-letter queue stores failures but no automatic reprocessing. Gmail Watch renewal daily but token expiry handling manual.
+
+## Key Files
+
+- `webhooks/server.js` — Express webhook server (Shopify, Gorgias, Gmail).
+- `daily-sync-all.js` — Daily sync runner (16 sub-pipelines).
+- `shared/supabaseClient.js` — Singleton Supabase client.
+- `shared/shopifyClient.js` — Singleton Shopify client (GraphQL + REST + ShopifyQL).
+- `gmail-management/sync/` — Gmail classification and CS routing.
 
 ## Key Decisions
 
-- **Architecture principles:** MCP tools are source of truth for all business logic (same result from CLI, dashboard, or poller). Supabase for state, files for config. No duplicate stores. Idempotent pipelines. Singleton clients. Schema SQL files for every table.
-- **Immediate 200 response on webhooks:** Handlers run async after response. Critical for Gorgias 10s timeout and Shopify retry deadlines.
-- **Daily sync as idempotency layer:** Even if webhooks miss or duplicate, daily sync runs reconciliation (last write wins via upsert).
-- **3-tier email classifier:** Rule-first (zero cost), then AI batch (~$1.50/mo Sonnet). Avoids expensive per-message classification.
-- **Raw body for Shopify HMAC:** Custom route-level express.raw() to avoid JSON parsing breaking signature verification.
-- **Gmail push vs polling:** Cloud Pub/Sub push delivery. More efficient than hourly polling.
-- **Always paginate Supabase queries:** Default 1000 row limit causes wrong analysis. Always paginate large tables.
-- **Webhook + real-time sync plan:** Replace remaining polling with Gorgias + Shopify webhooks on Railway. Phase 3: move CS reads to Supabase. All phases built together.
+- **Immediate 200 response on webhooks:** Handlers run async after response. Critical for Gorgias 10s timeout.
+- **Daily sync as idempotency layer:** Even if webhooks miss or duplicate, daily sync reconciles.
+- **3-tier email classifier:** Rule-first (zero cost), then AI batch (~$1.50/mo Sonnet).
+- **Gmail push via Cloud Pub/Sub:** More efficient than polling.
 
 ## What's Next
 
+- Complete webhook migration (replace remaining polling)
+
+## Backlog
+
 - Webhook circuit breaker / rate limiting
 - Idempotency tokens for webhook dedup
-- Website design and development (Shopify storefront + custom)
-- Complete webhook migration (replace remaining polling)
+- Shopify webhook registration requires manual re-run if domain changes

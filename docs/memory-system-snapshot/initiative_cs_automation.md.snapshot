@@ -1,0 +1,22 @@
+---
+name: CS Automation
+description: AI advisor reducing Jamie's CS time, currently human-in-the-loop, moving toward autonomy
+type: project
+domains: [cs]
+last_updated: 2026-04-14
+---
+
+## Goal
+Reduce Jamie's ~1hr/day CS time using AI advisor.
+
+## Phases
+- AI advisor built and handling all ticket types — complete
+- Human-in-the-loop via dashboard (Jamie reviews/approves drafts) — active
+- Increasing autonomy as quality improves — future
+
+## Current Status
+Active. AI drafts responses, Jamie reviews and approves via ops dashboard. ~$0.08/conversation. 95% action accuracy on 198 held-out conversations.
+
+## Decisions Made
+- Agentic loops, not decision trees
+- Human-in-the-loop for foreseeable future until quality proven

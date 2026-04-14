@@ -23,26 +23,30 @@ type: project
 
 **Daily Sales Report:** ShopifyQL for daily/MTD/YTD revenue, conversion rates, channel breakdown. 7-day + 365-day trending. HTML email.
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
 - **Production:** SEO daily pipeline + weekly digest. Klaviyo email tracking. Competitor pricing monthly. Sales reports daily.
-- **Partial:** Blog prioritization based on keyword impressions (heuristic, not ML). Anomaly thresholds hardcoded in config (not adaptive). Strategy roadmap items manually updated in Supabase.
-- **Gaps:** No conversion funnel tracking. No attribution between SEO and sales (GSC/Shopify separate). Email tracking missing flow-level granularity.
+- **Partial:** Blog prioritization based on keyword impressions (heuristic, not ML). Anomaly thresholds hardcoded in config (not adaptive).
+
+## Key Files
+
+- `seo-tracking/daily-seo-tracking.js` — Daily SEO pipeline (GSC, GA4, Shopify).
+- `seo-tracking/weekly-seo-digest.js` — Weekly HTML email digest.
+- `klaviyo-tracking/daily-email-tracking.js` — Klaviyo email metrics sync.
+- `competitor-pricing/monthly-competitor-pricing.js` — Competitor price scraping.
+- `customer-service/lib/tools/blogResearch.js` — Blog/SEO MCP tools.
 
 ## Key Decisions
 
-- **Baseline date concept:** Fixed reference date (2026-02-18) in config for normalized sentiment scoring across periods.
-- **Anomaly-first recommendations:** Only generated if anomalies detected AND strategy items exist. Reduces noise.
 - **Best-effort Sheet updates:** Pipeline doesn't fail if Sheets write fails; Supabase is source of truth.
-- **Blog writing guidelines:** Community-first + SEO traffic. Use data to pick topics, brand voice for tone, real reviews for social proof. Register published posts in Supabase to avoid duplication.
-- **Pricing strategy 2026:** Full analysis + PDF at finance/RUBIES-Pricing-Strategy-2026.pdf. Price increases, bundles, DDP, wholesale, projected $1.1-1.3M CAD.
+- **Blog writing guidelines:** Community-first + SEO traffic. Brand voice for tone, real reviews for social proof. Register published posts in Supabase to avoid duplication.
 
 ## What's Next
 
-- SEO/content strategy execution
-- Pricing and bundles revamp
 - Attribution: connect SEO keywords to actual sales
+- Conversion funnel tracking
+
+## Backlog
+
+- Email tracking missing flow-level granularity
+- Strategy roadmap items manually updated in Supabase — should be automated

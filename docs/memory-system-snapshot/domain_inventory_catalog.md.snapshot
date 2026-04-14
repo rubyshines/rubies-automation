@@ -18,24 +18,29 @@ type: project
 
 **Price History:** Automatic detection and logging of price changes to `price_history` table.
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
 - **Production:** Full catalog synced daily. Inventory snapshots captured daily (2+ years retention). Fuzzy search working. Price history tracking active.
 - **Partial:** Metafields synced but materials_composition and comparison_notes not surfaced in recommendations.
-- **Gaps:** No real-time intra-day inventory (daily snapshots only; Shopify webhooks update variants but no streaming view). Some legacy SKU inconsistencies.
+
+## Key Files
+
+- `customer-service/lib/productCache.js` — In-memory product cache loaded from Supabase.
+- `customer-service/lib/tools/productSearch.js` — Fuzzy product search MCP tool.
+- `customer-service/lib/tools/inventory.js` — Inventory snapshot and velocity tools.
+- `inventory-tracking/daily-inventory-tracking.js` — Daily inventory snapshot pipeline.
 
 ## Key Decisions
 
-- **Metafields as typed columns, not JSONB:** Each metafield gets its own typed column (arrays for multi-valued, text for single). Enables direct SQL filtering and type safety. Trade-off: migration step in sync to map Shopify structure → table schema.
-- **Supabase is cache, Shopify is source of truth:** Products always fetched fresh from Shopify; Supabase enables fast reads without API rate limits. 1-hour staleness threshold triggers fallback to live Shopify.
-- **Products migration from JSON to Supabase:** Recently completed. Some tooling may still reference old product-cache.json — clean up if found.
+- **Supabase is cache, Shopify is source of truth:** Supabase enables fast reads without API rate limits.
+- **Metafields as typed columns, not JSONB:** Each metafield gets its own typed column for direct SQL filtering.
 
 ## What's Next
 
+- Real-time inventory streaming (beyond daily snapshots)
+
+## Backlog
+
 - Clean up any remaining JSON cache references
 - Surface metafield data in product recommendations
-- Investigate real-time inventory streaming (beyond daily snapshots)
+- Legacy SKU inconsistencies

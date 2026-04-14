@@ -71,7 +71,6 @@ See domain files in MEMORY.md for systems detail. Deployment: Railway (scheduled
 - **Brand voice:** All customer-facing content must be playful/supportive, never political, righteous, or judgmental.
 - **Always use Opus** (claude-opus-4-6) for AI features — never Sonnet or Haiku for tool-calling.
 - **Run tests** before and after changes: `node --test customer-service/test/*.test.js`
-- **Memory directory location:** The authoritative memory directory is `~/.claude/projects/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/memory/`. Always use this path for any direct file operations (audit, restore, manual edit). Do NOT edit memory files at any other path — duplicates at other locations (e.g., inside the project directory) are stale artifacts and should be ignored or deleted.
 - **Memory Protocol — reading (every session start):**
   1. Read `feedback_collaboration.md` and `feedback_technical_rules.md`
   2. Scan MEMORY.md domain map — match user's request to domain keyword(s). If no domain matches, scan initiative list for keyword match.

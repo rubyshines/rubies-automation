@@ -16,27 +16,30 @@ type: project
 
 **Backfill:** 176 report snapshots + 4,062 transactions (Mar 2022 — Mar 2026).
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
 - **Production:** Daily finance sync runs as part of daily-sync-all.js pipeline. OAuth tokens persisted in Supabase (singleton pattern). Report snapshots populated every sync.
-- **Partial:** Nitro fulfillment costs need related-party data cleanup. Passport invoice imports exist but sparse integration. One-time project exclusions hardcoded in margin report.
-- **Gaps:** No budgeting tools. Limited vendor/customer aging analysis. No automated anomaly alerts (flags exist but no email triggers).
+- **Partial:** Nitro fulfillment costs need related-party data cleanup. Passport invoice imports exist but sparse integration.
+
+## Key Files
+
+- `finance/server.js` — Finance MCP server entry point.
+- `finance/sync/` — QBO sync pipeline (OAuth, transactions, report snapshots).
+- `finance/lib/` — Financial analysis functions.
+- `finance/generate-margin-report.js` — PDF margin report generation.
 
 ## Key Decisions
 
-- **C-Corp (CCPC):** Estate freeze completed Feb 2025. Family trust. Shareholder accounts. Capital extraction mechanics. Logan Katz as accountants.
-- **Singleton token pattern:** One active set of QBO tokens per company (stored with id='singleton').
+- **C-Corp (CCPC):** Estate freeze completed Feb 2025. Family trust. Logan Katz as accountants.
 - **Report-first architecture:** Primary analysis uses QBO's pre-calculated reports (P&L, CF, BS) rather than custom aggregation from raw transactions.
-- **High-water mark incremental sync:** Transactions synced by MetaData.LastUpdatedTime, handles corrections/voided transactions gracefully.
 - **QBO pending transactions caveat:** QBO API only returns posted transactions. Always caveat that pending Wise items may be missing.
-- **IRAP 2026 proposal:** NRC-IRAP funding for AI ops automation. May-Dec 2026, ~$135K total (~$70K IRAP). 4 automation goals: CS, sales, finance, SME documentation. Prep docs at ~/Downloads/IRAP-Meeting-Prep.html. Lisa Borneaz (ITA).
 
 ## What's Next
 
-- Clean up Nitro fulfillment cost data
 - Build anomaly alerting (margin compression, unusual expenses)
-- IRAP proposal execution (May 2026 start)
+- Budgeting tools
+
+## Backlog
+
+- Clean up Nitro fulfillment cost data
+- One-time project exclusions hardcoded in margin report — should be configurable

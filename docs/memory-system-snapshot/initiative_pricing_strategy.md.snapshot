@@ -1,0 +1,23 @@
+---
+name: Pricing Strategy 2026
+description: Price increases, fixed bundle pricing, DDP optimization
+type: project
+domains: [marketing, inventory]
+last_updated: 2026-04-14
+---
+
+## Goal
+Execute 2026 pricing strategy to improve margins and simplify pricing.
+
+## Phases
+1. Analysis & PDF report — complete
+2. Base price increases — not started
+3. Bundle repricing — in progress
+4. DDP optimization — not started
+
+## Current Status
+- Bundle repricing: fixed dollar prices for 3 bundles (bikini $79, matching $62, shaping $119). 3-pack skipped — needs tiered pricing. Executing week of 2026-04-14.
+
+## Decisions Made
+- Fixed dollar bundle prices instead of % off display
+- 3-pack can't work with single fixed price due to youth/adult spread

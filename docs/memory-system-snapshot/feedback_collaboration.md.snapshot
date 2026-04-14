@@ -39,6 +39,36 @@ After modifying server-side code, restart the relevant server automatically — 
 
 **How to apply:** After editing dashboard server, intake scripts, or any code the server imports: kill the process on the relevant port (`lsof -ti:PORT | xargs kill -9`) and restart in the background. Do this proactively.
 
+## Memory system design principles (2026-04-14 reorganization)
+
+If Jamie says memory is drifting or you notice structural issues, re-read this section and CLAUDE.md's Memory Protocol, then audit against these principles:
+
+**Single source of truth:** Every fact lives in exactly one place. Domain files own "what exists and how it works." Initiative files own "where we're going on a business goal." Project files own "what code to build." Don't duplicate across files.
+
+**Separation of concerns:**
+- Domain Current Status = system state (what's running). No gaps — gaps go to Backlog or What's Next.
+- Initiative Current Status = progress toward a business goal.
+- What's Next = directional items without an initiative yet. Move to initiative when one is created.
+- Backlog = specific bugs/fixes/tasks for later. Promote to project when non-trivial.
+
+**Anti-drift rules:**
+- Never silently update memory — propose delta to Jamie first, write after approval.
+- Never create new memory files without discussing with Jamie first. Always check if content belongs in an existing file.
+- Don't record implementation details that live in code/prompts. Memory captures *what we decided and why*, not the rules themselves.
+- Keep MEMORY.md one-liners as static topic descriptions, not current status.
+- Validate links at session start (MEMORY.md → files, domain Key Files → code paths).
+- After any memory file changes, verify MEMORY.md matches disk.
+- Initiative updates are high-level progress bullets, not detailed analysis.
+
+**Common drift patterns to watch for:**
+- Creating granular files instead of adding to existing domain/initiative files
+- Duplicating advisor behavior rules from the prompt into domain Key Decisions
+- MEMORY.md index pointing at files that no longer exist
+- What's Next accumulating items that should be on initiatives
+- Gaps appearing in Current Status instead of Backlog
+
+**Why:** Jamie spent significant time organizing memory in April 2026 because it had drifted badly — 30 ghost file references, no initiative tracking, vague instructions that led to inconsistent reading/writing. The system works when the rules are followed precisely.
+
 ## Always use Eastern Time
 
 When showing timestamps, log times, or any time-related data, convert to Eastern Time (ET).

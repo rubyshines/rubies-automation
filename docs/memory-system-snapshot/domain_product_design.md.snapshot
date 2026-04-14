@@ -26,24 +26,26 @@ type: project
 
 **Product Classification:** 25 active products across 7 categories (underwear_bottom, underwear_top, swim_bottom, swim_top, onepiece, chest_pads, accessory). Each has specific size system and variant rules.
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
 - **Production:** Sizing constants and normalization library fully stable. Product classification and grading deltas powering exchange logic. Measurement-based sizing active. One-piece fit analysis working. Chest pad sizing (S/M/L by base size) in use.
-- **Partial:** Product metafields (fit_description, comparison_notes, materials_composition) synced from Shopify but not surfaced in product recommendation logic.
-- **Gaps:** No historical grading delta audit trail. Metafield-based fitting notes not consumed by AI.
+- **Partial:** Product metafields synced from Shopify but not surfaced in product recommendation logic.
+
+## Key Files
+
+- `customer-service/lib/sizingEngine.js` — Product classification, size normalization, grading deltas, fabric calculations.
+- `customer-service/lib/sizeUtils.js` — Size utility functions.
 
 ## Key Decisions
 
-- **Waist-primary, height-secondary for one-piece:** Most fit failures are height-related, not waist. Customers more forgiving of loose waist if length is correct.
-- **Half-size logic is load-bearing:** Odd numeric sizes (7, 9, 11, 13) and plus letters (XXS+, XS+) represent actual 1" grading steps, not display variants. Affects cumulative delta calculations.
-- **Deterministic sizing, not AI:** All size calculations, alias normalization, chart lookups, grading deltas are pure functions. AI only handles fuzzy product matching and natural language intake parsing.
+- **Deterministic sizing, not AI:** All size calculations, alias normalization, chart lookups, grading deltas are pure functions. AI only handles fuzzy product matching and natural language.
 - **Sizes from SKU, not variant title:** Last segment of SKU is canonical size.
+- **Half-size logic is load-bearing:** Odd numeric sizes and plus letters represent actual 1" grading steps, not display variants.
 
 ## What's Next
 
-- Measurements plan for graded spec across all designs (in progress)
+- Measurements plan for graded spec across all designs
+
+## Backlog
+
 - Surface product metafields (fit_description, comparison_notes) in sizing recommendations

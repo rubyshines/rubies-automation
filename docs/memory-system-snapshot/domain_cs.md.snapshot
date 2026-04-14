@@ -1,0 +1,59 @@
+---
+name: Customer Service
+description: AI advisor, ops dashboard, exchanges, shipping tracking, Gorgias/Gmail intake, knowledge base
+type: project
+---
+
+## What's Built
+
+**AI Advisor (Opus-based):** AI reads full conversation + calls tools as needed. Handles exchanges, sizing, shipping, product questions, positive feedback. Returns structured JSON for dashboard consumption. All business rules live in the system prompt.
+
+**Tool Ecosystem (30+ MCP tools):** Lookup (customer, orders, products), actions (create/edit/refund orders, exchanges, wholesale orders, warehouse holds), analytics (LTV, margins, inventory, delivery estimates, reviews), knowledge (CS history search, FAQ, sizing guide).
+
+**Dashboard (web-based):** Real-time Gorgias ticket queue with tabs (New, Follow-up, Parked, Snoozed, Closed). Operators review AI-drafted responses and approve/edit. Operator agent for complex order manipulations. Mobile-responsive PWA. Deployed on Railway at ops.rubyshines.com.
+
+**Intake Pipeline:** Two pathways -- Gorgias ticket webhooks and Gmail CS parsing. Both feed through the AI advisor, store drafts in Supabase, and auto-assign handled tickets to "RUBIES AI" in Gorgias.
+
+**Exchange System:** Two-phase flow. Phase 1: AI determines size, creates draft order in Shopify, shows preview with links. Phase 2: operator confirms, marks paid. Only uses FULFILLED non-cancelled orders for current size (ignores $0 exchange orders). Auto-finds correct order unless operator specifies one.
+
+**Donation Routing:** After exchange, routes old items to LGBTQ+ partners. Geographic matching (Google Maps geocoding + haversine distance), load-balanced across 3 closest partners. Skips for defects. Full explanation of gender-affirming program in customer message.
+
+**Knowledge Base:** 63 embedded articles (Voyage AI, 512 dims). Semantic search for product info, shipping, policies. NOT used for exchange decisions (advisor handles those directly).
+
+**Auto Follow-ups:** Day 3 care@ via Gorgias, day 6 personal jamie@ via SendGrid, then close. Runs on 4h timer in webhook server.
+
+## Current Status
+
+- **Production:** AI advisor handling all ticket types. Dashboard fully operational. Intake running (Gorgias webhooks + Gmail). Auto follow-ups disabled (see project_followup_bugs.md). ~$0.08/conversation.
+- **Validated:** 95% action accuracy on 198 held-out conversations. 60+ scenarios tested across 7 complexity tiers.
+- **Partial:** Shipping tracking integration exists. Delivery estimate accuracy needs ongoing validation.
+
+## Key Files
+
+- `customer-service/lib/aiAdvisor.js` — AI advisor entry point (Opus). All CS business rules live in its system prompt.
+- `customer-service/lib/operatorAgent.js` — Operator command agent for dashboard.
+- `customer-service/lib/sizingEngine.js` — Product classification, size normalization, grading deltas.
+- `customer-service/lib/contextBuilder.js` — Builds customer + order context from Supabase/Shopify.
+- `customer-service/lib/tools/` — MCP tool implementations (30+ tools).
+- `customer-service/dashboard/` — Ops dashboard (web UI).
+- `customer-service/intake/` — Gorgias webhook + Gmail intake processing.
+- `customer-service/sync/gorgiasAdvisorResync.js` — Gorgias↔Advisor sync drift checker. Run to detect ticket reconciliation issues.
+
+## Key Decisions
+
+- **Agentic loops, not decision trees:** Opus controls flow. All exchange/sizing/response rules live in the advisor prompt, not in code.
+- **Structured output:** Advisor returns `_structured` JSON alongside customer-facing markdown. Dashboard consumes structured data directly.
+- **Exchange sizing from SKU, not variant title:** Last segment of SKU is the canonical size.
+- **Advisor prompt changes:** Always trace execution path, read audit trails, check existing rules before modifying. Don't add rules that duplicate existing logic.
+- **Always check stored ticket data** in Supabase before diagnosing advisor issues on a ticket.
+- **Testing workflow:** Pull real conversations from Supabase, run tests directly via node (not MCP).
+
+## What's Next
+
+- Expand shipping scenario coverage (info/duties/address scenarios remaining)
+- Validate delivery estimate accuracy against real outcomes
+
+## Backlog
+
+- Ticket merging: when customer sends new ticket about same subject as recent one (especially exchanges), merge into original instead of creating new. Integrates with existing dedup logic. Preferred approach: close new ticket, reopen old (preserves exchange history and prior drafts). See ticket #377 as example.
+- Remove legacy walkTree/prescribe functions from sizingEngine.js (requires migrating test assertions)

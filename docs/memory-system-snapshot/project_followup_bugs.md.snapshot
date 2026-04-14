@@ -1,0 +1,38 @@
+---
+name: Auto follow-up bugs
+description: Follow-up system disabled as of 2026-04-13 — dedup bug causes repeat sends, races with intake
+type: project
+domain: cs
+done_when: Follow-up system re-enabled with fixes and tested on real tickets
+---
+
+## Status: DISABLED (2026-04-13)
+
+Auto follow-ups disabled in both `webhooks/server.js` (timer) and `customer-service/intake/processGorgiasTickets.js` (post-intake call). Committed in 28f3634.
+
+## Bugs to Fix Before Re-enabling
+
+### 1. Dedup bug — repeat sends
+The follow-up sent "just checking in" 12+ times to Stacie Nelson (ticket 92719662) on 2026-04-13. The dedup relies on `follow_up_draft_id IS NULL` on the original sent draft, but:
+- Multiple original drafts (turn 1 + turn 2) each qualify separately
+- After linking one, the other still qualifies on the next run
+- Even after all originals are linked, the system ran far more than 2 times — need to investigate what's triggering extra runs beyond the 4-hour timer
+
+**Why:** `processAutoFollowUps()` in `csAdmin.js` queries for sent drafts with no `follow_up_draft_id`. With multiple qualifying drafts per ticket, it sends one follow-up per draft per run.
+
+**How to apply:** The dedup should be ticket-level, not draft-level. Once a follow-up has been sent for a ticket, don't send another regardless of how many original drafts exist.
+
+### 2. Race with intake — poisons message list
+Follow-up messages sent via `gorgias.createTicketReply()` appear as real agent messages (`from_agent: true`, `via: 'api'`). When a customer replies and the webhook fires, `processTicket()` fetches all messages and sees the follow-up as the latest message — triggering the "agent already replied" skip. This caused Stacie's reply to be ignored entirely.
+
+**Fixed (partially):** The "agent already replied" check in `processTicket()` was rewritten (2026-04-13) to only skip for real human agent replies (excludes AI bot sender, Gorgias rules, internal notes). But follow-ups sent via API as care@rubyshines.com still look like human replies — they need to be sent by the AI bot user or tagged differently to be distinguishable.
+
+**How to apply:** When re-enabling follow-ups, either:
+- Send follow-ups using the AI bot user ID so the sender check catches them
+- Or add a tag/marker to follow-up messages so processTicket can identify them
+- Or use the `source: 'auto_follow_up'` field in cs_ai_drafts to check if the most recent agent message corresponds to an auto follow-up draft
+
+### 3. Doesn't detect customer replies
+The follow-up system only checks `snoozed_at` age — it doesn't check whether the customer has replied since the snooze. It should skip tickets where the customer sent a new message after the last agent message.
+
+**How to apply:** Before sending a follow-up, fetch messages and check if the latest message is from the customer. If so, skip — the customer already replied and intake should handle it.

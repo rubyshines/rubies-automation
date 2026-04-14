@@ -22,28 +22,33 @@ type: project
 
 **Passport Carrier Handling:** Scrapes two tracking URLs. Extracts local carrier (Royal Mail, Australia Post, DHL, etc.) and local tracking number. Flags customs holds vs cleared state.
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
 - **Production:** Daily unfulfilled order alerts. Shipping delay detection. Address hold auto-resolution. Multi-carrier tracking scraping. Delivery time estimation. Shipping info tool (pre-purchase). Passport claims tracking.
-- **Partial:** Tracking snapshots structure live but cache logic under development (2h active, 24h delivered). USPS Web Tools API registered but needs USPS_USER_ID env var. Shipping zone sync from Shopify ready but currently manual table seeding. Fulfillment checker stub exists, needs full wiring.
-- **Gaps:** No real-time Warehance webhooks (daily alerts miss mid-day issues). No USPS/OnTrac refund claim tracking (only Passport). No customs duty estimation for DDU orders. No auto-filing of Passport loss claims.
+- **Partial:** Tracking snapshots structure live but cache logic under development. Shipping zone sync from Shopify ready but currently manual table seeding.
+
+## Key Files
+
+- `customer-service/lib/tracking/` — Multi-carrier tracking (USPS, OnTrac, Passport).
+- `customer-service/lib/tools/shippingLookup.js` — Shipping tracking MCP tool.
+- `customer-service/lib/tools/deliveryEstimate.js` — Delivery time estimation tool.
+- `customer-service/alerts/` — Unfulfilled order detection and daily alerts.
+- `webhooks/handlers/` — Shopify fulfillment webhooks.
 
 ## Key Decisions
 
-- **Delivery estimates from order date, not fulfillment date.** Report shipping times from when customer placed the order, not from when warehouse fulfilled it. Customers experience the full wait.
-- **Deterministic Passport parser first, AI fallback second.** Passport pages have stable structure — regex extraction is zero cost. Sonnet only if parse fails. Saves ~$0.02/package.
-- **90-day rolling delivery stats, not all-time.** Seasonality matters (holiday delays). Recent patterns are more relevant.
-- **Province-level US granularity.** Warehouse in Portland OR, so West Coast 2-3 days, Northeast 4-5 days. State-level bucketing needed for accuracy.
-- **Pre-order detection via custom attributes, not just fulfillment status.** UNFULFILLED could be hold, stock, or pre-order. Custom attributes disambiguate.
-- **Passport since Aug 2025 for all international.** Pre-May 2025 customs complaints are legacy issues, not current.
+- **Delivery estimates from order date, not fulfillment date.** Customers experience the full wait.
+- **Deterministic Passport parser first, AI fallback second.** Stable structure = regex, Sonnet only if parse fails.
+- **90-day rolling delivery stats, not all-time.** Recent patterns more relevant than seasonal history.
+- **Passport since Aug 2025 for all international.** Pre-May 2025 customs complaints are legacy.
 
 ## What's Next
 
-- Wire up USPS Web Tools API (registered, needs env var)
-- Automate Passport loss claim filing at 30+ days
 - Real-time Warehance webhook integration
-- Shipping zone sync from Shopify (replace manual seeding)
+- Automate Passport loss claim filing at 30+ days
+
+## Backlog
+
+- Wire up USPS Web Tools API (registered, needs USPS_USER_ID env var)
+- Shipping zone sync from Shopify (replace manual table seeding)
+- Fulfillment checker stub needs full wiring

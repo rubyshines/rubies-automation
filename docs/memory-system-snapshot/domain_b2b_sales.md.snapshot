@@ -1,6 +1,6 @@
 ---
-name: Wholesale
-description: Retailer discovery, web scraping, lead scoring, wholesale orders, pricing
+name: B2B Sales
+description: Retailer discovery, web scraping, lead scoring, wholesale orders, B2B outreach, pricing
 type: project
 ---
 
@@ -20,26 +20,28 @@ type: project
 
 **Wholesale Orders (MCP tool):** Two-phase confirmation like exchanges. Pricing: US/AU 50% off, others 30% off, free shipping, AU auto-splits at $1k AUD. Currency override: hello@sockdrawerheroes.com always USD.
 
-## Advisor Prompt Candidates
-
-- Currently empty
-
 ## Current Status
 
 - **Production:** Tier 1 & 2 discovery complete. AI analysis and scoring automated. Wholesale orders working via MCP tools.
-- **Partial:** Sheet sync exists but unclear if continuous or one-time. Tier 3 (custom searches) mentioned but not implemented.
-- **Gaps:** No outreach tracking (which prospects contacted, response status). No feedback loop (sales results not fed back to scoring).
+- **Partial:** Sheet sync exists but unclear if continuous or one-time.
+
+## Key Files
+
+- `b2b-discovery/discover.js` — Prospect discovery pipeline entry point.
+- `b2b-discovery/lib/` — Scraping, contact finding, AI analysis, lead scoring.
+- `customer-service/lib/tools/wholesaleOrder.js` — Wholesale order MCP tool.
 
 ## Key Decisions
 
-- **Never manually parse CSV data** — always pass raw CSV to `parse_wholesale_input` tool. Caught off-by-one error on Illusions Lingerie order when manually parsed.
-- **Two-tier discovery:** Google Maps for breadth, then deep research for depth. Avoids scraping thousands of irrelevant sites.
-- **Pre-filter patterns:** Hotels, bookstores, vintage/thrift, community orgs auto-dismissed before scraping.
-- **Domain dedup:** If another prospect already has this domain, merge sources instead of duplicating.
-- **Content truncated to 15,000 chars** for AI analysis.
+- **Never manually parse CSV data** — always pass raw CSV to `parse_wholesale_input` tool.
+- **Two-tier discovery:** Google Maps for breadth, then deep research for depth.
+- **Domain dedup:** Merge sources if domain already exists, don't duplicate.
 
 ## What's Next
 
-- Build outreach tracking (contacted status, response tracking)
+- Outreach tracking (contacted status, response tracking)
 - Sales results feedback loop to improve scoring
-- Expand to Tier 3 custom searches
+- Tier 3 custom searches
+
+## Backlog
+(empty)
