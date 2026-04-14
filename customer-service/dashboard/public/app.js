@@ -9,7 +9,6 @@ let ticketsProcessedThisSession = 0;
 let lastActionTime = 0;
 let ticketNavStack = []; // for back-navigation from past ticket views
 
-// Legacy aliases for simulator compatibility
 let currentDraftId = null;
 let currentDraft = null;
 
@@ -102,42 +101,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   // Check for deep links before restoring tab
   const pendingTicketRestore = location.hash.match(/^#ticket-(\d+)$/);
-  const pendingSimRestore = location.hash.match(/^#sim-ticket-(\d+)$/);
 
   // Restore active tab (but don't clear selection if we're about to restore a ticket)
   const savedTab = localStorage.getItem('activeTab');
-  if (pendingSimRestore) {
-    // Will switch to test tab below
-  } else if (pendingTicketRestore) {
+  if (pendingTicketRestore) {
     // Set tab without clearing selection — we'll select the ticket right after
     currentTab = savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-    document.getElementById('panel-test').style.display = 'none';
-  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed', 'test'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab)) {
     switchTab(savedTab);
   }
-  simRestoreType();
-
-  // Restore simulator session if active
-  if (simRestore()) simRenderRestoredSession();
 
   loadTicketQueue().then(async () => {
-    if (pendingSimRestore) {
-      sim.active = false;
-      sim.turns = [];
-      sim.intake = null;
-      sim.previousResponses = [];
-      localStorage.removeItem('simState');
-      document.getElementById('sim-thread').innerHTML = '';
-      document.getElementById('sim-controls').innerHTML = '';
-      switchTab('test');
-      simLoadTicket(pendingSimRestore[1]);
-      return;
-    }
-
     if (pendingTicketRestore) {
       selectTicket(parseInt(pendingTicketRestore[1]));
     }
@@ -188,12 +166,10 @@ function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
 
-  const isTicketTab = ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(tab);
-  document.getElementById('panel-tickets').style.display = isTicketTab ? 'flex' : 'none';
-  document.getElementById('panel-test').style.display = tab === 'test' ? 'block' : 'none';
+  document.getElementById('panel-tickets').style.display = 'flex';
 
   localStorage.setItem('activeTab', tab);
-  if (isTicketTab) {
+  {
     // Clear selection when switching tabs
     currentTicketId = null;
     currentTicket = null;
@@ -271,7 +247,7 @@ async function loadTicketQueue() {
       const row2Parts = [];
       if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
       if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
-      if (t.turn_number > 1) row2Parts.push(`<span class="badge badge-muted">Turn ${t.turn_number}</span>`);
+      if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
 
       return `
       <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
@@ -282,6 +258,7 @@ async function loadTicketQueue() {
             <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
             <span class="queue-item-time">${timeStr}</span>
           </div>
+          ${t.summary ? `<div class="queue-item-summary">${esc(t.summary)}</div>` : ''}
           <div class="queue-item-row2">
             <span class="category-badge ${categoryClass}">${esc(categoryLabel)}</span>
             ${orderStr ? `<span class="queue-item-order">${esc(orderStr)}</span>` : ''}
@@ -311,6 +288,8 @@ function showSidebarQueue() {
   }
   document.getElementById('sidebar-context').style.display = 'none';
   document.getElementById('sidebar-queue').style.display = 'block';
+  location.hash = '';
+  currentTicketId = null;
 }
 
 function updateBackButton() {
@@ -1478,28 +1457,20 @@ async function refreshDraft() {
   }
 }
 
-async function trainDraft() {
+function snoozeNoReply() {
   if (!currentTicketId) return;
+  if (_actionsInFlight.has(currentTicketId)) return;
 
-  const response = document.getElementById('draft-editor').value;
-  const notes = document.getElementById('draft-notes').value || undefined;
+  const ticketId = currentTicketId;
+  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
 
-  const btn = document.getElementById('btn-train');
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
+  localStorage.removeItem(`draft-ticket-${ticketId}`);
+  localStorage.removeItem(`notes-ticket-${ticketId}`);
+  advanceToNextTicket(ticketId);
 
-  try {
-    await api(`/api/tickets/${currentTicketId}/train`, {
-      method: 'POST',
-      body: { response, notes },
-    });
-    btn.textContent = 'Trained';
-    setTimeout(() => { btn.textContent = 'Train'; btn.disabled = false; }, 2000);
-  } catch (err) {
-    btn.textContent = 'Train';
-    btn.disabled = false;
-    alert('Train failed: ' + err.message);
-  }
+  executeBackgroundAction(ticketId, `${ticketRef} — Snoozed`,
+    () => api(`/api/tickets/${ticketId}/snooze`, { method: 'POST' })
+  );
 }
 
 async function releaseDraft() {
@@ -2288,674 +2259,6 @@ function renderConversation(messages, ticket) {
   }
 
   return parts.join('');
-}
-
-// ---------------------------------------------------------------------------
-// Test tab
-// ---------------------------------------------------------------------------
-
-async function runTest() {
-  const email = document.getElementById('test-email').value.trim();
-  const order = document.getElementById('test-order').value.trim() || undefined;
-  const rawMessages = document.getElementById('test-messages').value.trim();
-  if (!email || !rawMessages) return alert('Enter customer email and at least one message');
-
-  const messages = rawMessages.split('\n').filter(l => l.trim());
-
-  document.getElementById('test-results').style.display = 'block';
-  document.getElementById('test-results').innerHTML = '<div class="test-summary"><h3>Running test...</h3></div>';
-
-  try {
-    const result = await api('/api/test', {
-      method: 'POST',
-      body: { customer_email: email, messages, order_number: order },
-    });
-    renderTestResults(result.turns, null);
-  } catch (err) {
-    document.getElementById('test-results').innerHTML = `<div class="test-summary" style="color:var(--red)">Test failed: ${esc(err.message)}</div>`;
-  }
-}
-
-async function replayTicket() {
-  const ticketId = document.getElementById('test-ticket-id').value.trim();
-  if (!ticketId) return alert('Enter a Gorgias ticket ID');
-
-  document.getElementById('test-results').style.display = 'block';
-  document.getElementById('test-results').innerHTML = '<div class="test-summary"><h3>Replaying ticket...</h3></div>';
-
-  try {
-    const result = await api('/api/replay', {
-      method: 'POST',
-      body: { ticket_id: parseInt(ticketId) },
-    });
-    renderTestResults(result.turns, result.customer_email);
-  } catch (err) {
-    document.getElementById('test-results').innerHTML = `<div class="test-summary" style="color:var(--red)">Replay failed: ${esc(err.message)}</div>`;
-  }
-}
-
-function renderTestResults(turns, customerEmail) {
-  const container = document.getElementById('test-results');
-  let html = '';
-
-  if (customerEmail) {
-    html += `<div class="test-summary"><h3>Replay: ${esc(customerEmail)}</h3><p>${turns.length} turns</p></div>`;
-  }
-
-  for (let i = 0; i < turns.length; i++) {
-    const t = turns[i];
-    const hasActual = t.actual_response != null;
-
-    html += `<div class="test-turn">`;
-    html += `<div class="test-turn-header">Turn ${i + 1} <span class="badge badge-${t.status || 'gathering'}" style="margin-left:8px">${t.status || '?'}</span></div>`;
-    html += `<div class="test-customer-msg">${esc(t.customer_message)}</div>`;
-    html += `<div class="test-turn-body">`;
-
-    // AI response
-    html += `<div class="test-turn-side">`;
-    html += `<div class="test-side-label">AI Draft</div>`;
-    html += esc(t.ai_response || '(no response)').replace(/\n/g, '<br>');
-    html += `</div>`;
-
-    // Actual response (only in replay mode)
-    if (hasActual) {
-      html += `<div class="test-turn-side">`;
-      html += `<div class="test-side-label">Jamie's Actual Reply</div>`;
-      html += esc(t.actual_response).replace(/\n/g, '<br>');
-      html += `</div>`;
-    }
-
-    html += `</div>`; // end turn-body
-
-    // Audit trail (collapsed)
-    if (t.audit?.length) {
-      html += `<details class="test-audit"><summary style="cursor:pointer;font-weight:600">Audit (${t.audit.length} steps)</summary>`;
-      html += esc(t.audit.join('\n'));
-      html += `</details>`;
-    }
-
-    html += `</div>`; // end test-turn
-  }
-
-  container.innerHTML = html;
-}
-
-function clearTest() {
-  document.getElementById('test-email').value = '';
-  document.getElementById('test-order').value = '';
-  document.getElementById('test-messages').value = '';
-  document.getElementById('test-ticket-id').value = '';
-  document.getElementById('test-results').style.display = 'none';
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Conversation Simulator
-// ---------------------------------------------------------------------------
-
-let simSelectedType = localStorage.getItem('simType') || 'exchange';
-
-function simSelectType(btn) {
-  document.querySelectorAll('.sim-type-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  simSelectedType = btn.dataset.type;
-  localStorage.setItem('simType', simSelectedType);
-}
-
-// Restore saved type on load
-function simRestoreType() {
-  const saved = localStorage.getItem('simType');
-  if (saved) {
-    const btn = document.querySelector(`.sim-type-btn[data-type="${saved}"]`);
-    if (btn) {
-      document.querySelectorAll('.sim-type-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      simSelectedType = saved;
-    }
-  }
-}
-
-let sim = {
-  active: false,
-  conversationId: null,
-  customerEmail: null,
-  orderNumber: null,
-  orderContext: null,
-  customerContext: null,
-  intake: null,
-  turns: [],
-  previousResponses: [],
-};
-
-function simSave() {
-  localStorage.setItem('simState', JSON.stringify(sim));
-}
-
-function simRestore() {
-  try {
-    const saved = localStorage.getItem('simState');
-    if (!saved) return false;
-    const s = JSON.parse(saved);
-    if (!s.active) return false;
-    Object.assign(sim, s);
-    return true;
-  } catch { return false; }
-}
-
-async function loadSimulatorContext(email, orderNumber) {
-  try {
-    const params = orderNumber ? `?order=${orderNumber}` : '';
-    const ctx = await api(`/api/customer/${encodeURIComponent(email)}/context${params}`);
-
-    // LTV stats
-    const l = ctx.ltv;
-    document.getElementById('sim-ltv-stats').innerHTML = `
-      <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.total_spent || 0).toFixed(0)}</span><span class="ltv-stat-label">spent</span></div>
-      <div class="ltv-stat"><span class="ltv-stat-value">${l.order_count || 0}</span><span class="ltv-stat-label">orders</span></div>
-      <div class="ltv-stat"><span class="ltv-stat-value">$${Number(l.avg_order_value || 0).toFixed(0)}</span><span class="ltv-stat-label">avg</span></div>
-    `;
-
-    // Order links (Shopify + Warehance)
-    if (ctx.ticket_order) {
-      let linksHtml = '';
-      const shopUrl = shopifyAdminUrl(ctx.ticket_order.shopify_order_id);
-      if (shopUrl) linksHtml += `<a href="${shopUrl}" target="_blank" class="order-link">Shopify</a>`;
-      if (ctx.ticket_order.warehance_url) linksHtml += `<a href="${esc(ctx.ticket_order.warehance_url)}" target="_blank" class="order-link">Warehance</a>`;
-      document.getElementById('sim-order-links').innerHTML = linksHtml;
-    }
-
-    // Past tickets
-    if (ctx.past_tickets?.length) {
-      const section = document.getElementById('sim-past-tickets');
-      section.style.display = '';
-      document.getElementById('sim-tickets-count').textContent = ctx.past_tickets.length;
-      document.getElementById('sim-tickets-list').innerHTML = ctx.past_tickets.map(t => {
-        const categoryClass = getCategoryClass(t.category);
-        const resIcon = t.resolution_successful === true ? '<span class="resolution-icon" style="color:var(--green)">&#10003;</span>'
-          : t.resolution_successful === false ? '<span class="resolution-icon" style="color:var(--red)">&#10007;</span>'
-          : '<span class="resolution-icon" style="color:var(--text-tertiary)">-</span>';
-        return `<div class="ticket-entry">
-          <div class="ticket-entry-header">
-            <span class="ticket-entry-date">${timeAgo(t.created_at)}</span>
-            <span class="category-badge ${categoryClass}">${esc(t.category || 'general')}</span>
-            ${t.ai_processed ? '<span class="badge-ai">AI</span>' : ''}
-            ${resIcon}
-          </div>
-          ${t.summary ? `<div class="ticket-entry-detail" style="display:none;margin-top:4px;font-size:11px;color:var(--text-secondary)">${esc(t.summary)}</div>` : ''}
-        </div>`;
-      }).join('');
-
-      document.querySelectorAll('#sim-tickets-list .ticket-entry').forEach(el => {
-        el.style.cursor = 'pointer';
-        el.onclick = () => {
-          const detail = el.querySelector('.ticket-entry-detail');
-          if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
-        };
-      });
-    }
-  } catch (err) {
-    console.warn('Failed to load simulator context:', err);
-  }
-}
-
-function simRenderRestoredSession() {
-  // Render context sidebar
-  const ci = sim.customerContext || {};
-  document.getElementById('sim-customer-info').innerHTML = `
-    <div>${esc(ci.name || 'Unknown')} (${esc(ci.pronouns || 'they/them')})</div>
-    <div>${esc(ci.email || sim.customerEmail)}</div>
-    <div>${esc(ci.country || '?')}</div>
-    ${ci.address ? `<div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">${formatAddress(ci.address)}</div>` : ''}
-  `;
-  const order = sim.orderContext;
-  if (order) {
-    const items = (order.items || []).map(i =>
-      `${i.quantity}x ${esc(i.title)} - ${esc(i.variant)} (SKU: ${esc(i.sku || 'n/a')})`
-    ).join('<br>');
-    document.getElementById('sim-order-info').innerHTML = `
-      <div>${esc(order.name)} (${esc(order.date)})</div>
-      <div style="font-size:12px;margin-top:4px">${items}</div>
-    `;
-  } else {
-    document.getElementById('sim-order-info').innerHTML = 'No order found';
-  }
-  document.getElementById('sim-source-info').textContent = `Source: ${sim.conversationId || '?'}`;
-
-  // Async: load enriched context
-  loadSimulatorContext(sim.customerEmail, sim.orderNumber);
-
-  // Switch to active view
-  document.getElementById('sim-idle').style.display = 'none';
-  document.getElementById('sim-active').style.display = 'flex';
-
-  // Render locked turns
-  const thread = document.getElementById('sim-thread');
-  thread.innerHTML = '';
-  for (const t of sim.turns) {
-    const wasEdited = t.edited_ai_response !== t.original_ai_response;
-    thread.innerHTML += `
-      <div class="sim-turn locked">
-        <div class="sim-turn-label">Turn ${t.turn_number} - Customer</div>
-        <div class="sim-customer-msg">${esc(t.customer_message)}</div>
-        <div class="sim-turn-label" style="margin-top:12px">Agent Response</div>
-        <div class="sim-ai-response">${esc(t.edited_ai_response)}</div>
-        ${wasEdited ? '<span class="sim-turn-edited">edited</span>' : ''}
-        ${t.notes ? `<div class="sim-turn-notes">${esc(t.notes)}</div>` : ''}
-      </div>
-    `;
-  }
-
-  // Show next customer input
-  const controls = document.getElementById('sim-controls');
-  controls.innerHTML = `
-    <div class="sim-next-input">
-      <label class="label">Next Customer Message</label>
-      <textarea class="sim-editor" id="sim-next-msg" rows="3" placeholder="Type the next customer message..."></textarea>
-      <div class="sim-turn-actions">
-        <button class="btn btn-primary" onclick="simSendNext()">Send</button>
-        <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
-      </div>
-    </div>
-  `;
-}
-
-async function simLoadTicket(ticketId) {
-  return simLoadRandom(ticketId);
-}
-
-async function simLoadRandom(specificTicketId) {
-  const btn = document.getElementById('sim-load-btn');
-  const loading = document.getElementById('sim-loading');
-  btn.disabled = true;
-  loading.style.display = 'block';
-  loading.textContent = 'Loading conversation...';
-
-  try {
-    const ticketParam = specificTicketId ? `&ticket=${specificTicketId}` : '';
-    const data = await api(`/api/simulator/random?category=${simSelectedType}${ticketParam}`);
-
-    sim.active = true;
-    sim.conversationId = data.conversation?.id;
-    sim.customerEmail = data.conversation?.customer_email;
-    sim.orderNumber = data.conversation?.order_number;
-    sim.referenceDate = data.conversation?.created_at || null;
-    sim.orderContext = data.orderContext;
-    sim.customerContext = data.customerContext;
-    sim.intake = null;
-    sim.turns = [];
-    sim.previousResponses = [];
-
-    // Render context sidebar
-    const ci = sim.customerContext || {};
-    document.getElementById('sim-customer-info').innerHTML = `
-      <div>${esc(ci.name || 'Unknown')} (${esc(ci.pronouns || 'they/them')})</div>
-      <div>${esc(ci.email || sim.customerEmail)}</div>
-      <div>${esc(ci.country || '?')}</div>
-      ${ci.address ? `<div style="margin-top:4px;font-size:12px;color:var(--text-secondary)">${formatAddress(ci.address)}</div>` : ''}
-    `;
-
-    const order = sim.orderContext;
-    if (order) {
-      const items = (order.items || []).map(i =>
-        `${i.quantity}x ${esc(i.title)} - ${esc(i.variant)} (SKU: ${esc(i.sku || 'n/a')})`
-      ).join('<br>');
-      document.getElementById('sim-order-info').innerHTML = `
-        <div>${esc(order.name)} (${esc(order.date)})</div>
-        <div style="font-size:12px;margin-top:4px">${items}</div>
-      `;
-    } else {
-      document.getElementById('sim-order-info').innerHTML = 'No order found';
-    }
-
-    document.getElementById('sim-source-info').textContent = `Source: ${data.conversation?.subject || sim.conversationId}`;
-
-    // Switch to active view
-    document.getElementById('sim-idle').style.display = 'none';
-    document.getElementById('sim-active').style.display = 'flex';
-
-    // Async: load enriched context (LTV, order links, past tickets)
-    loadSimulatorContext(sim.customerEmail, sim.orderNumber);
-
-    // Save session state before running first turn (survives page refresh)
-    simSave();
-
-    // Run first turn with the real customer message
-    await simRunTurn(data.firstMessage);
-
-  } catch (err) {
-    loading.textContent = 'Failed: ' + err.message;
-    btn.disabled = false;
-  }
-}
-
-async function simRunTurn(customerMessage) {
-  const thread = document.getElementById('sim-thread');
-  const controls = document.getElementById('sim-controls');
-  const turnNum = sim.turns.length + 1;
-
-  // Show customer message in thread
-  thread.innerHTML += `
-    <div class="sim-turn" id="sim-turn-${turnNum}">
-      <div class="sim-turn-label">Turn ${turnNum} - Customer</div>
-      <div class="sim-customer-msg">${esc(customerMessage)}</div>
-      <div class="sim-spinner">AI is thinking...</div>
-    </div>
-  `;
-  thread.scrollTop = thread.scrollHeight;
-
-  // Call advisor
-  try {
-    const result = await api('/api/simulator/turn', {
-      method: 'POST',
-      body: {
-        customer_email: sim.customerEmail,
-        issue_description: customerMessage,
-        order_number: sim.orderNumber,
-        intake: sim.intake,
-        previous_responses: sim.previousResponses,
-        reference_date: sim.referenceDate || undefined,
-      },
-    });
-
-    // Remove spinner, show editable response
-    const turnEl = document.getElementById(`sim-turn-${turnNum}`);
-    turnEl.querySelector('.sim-spinner').remove();
-
-    const status = result.structured?.status || '?';
-    const badgeClass = status === 'ready' ? 'badge-high' : status === 'needs_info' ? 'badge-medium' : 'badge-low';
-
-    turnEl.innerHTML += `
-      <div class="sim-turn-label" style="margin-top:12px">Agent Response <span class="badge ${badgeClass}">${status}</span> <button class="btn-refresh-inline" onclick="simRegenTurn(${turnNum})" title="Regenerate response">&#8635;</button></div>
-      <textarea class="sim-editor" id="sim-editor-${turnNum}" rows="6">${esc(result.ai_response || '')}</textarea>
-      <label class="label" style="margin-top:8px;display:block">Notes</label>
-      <textarea class="sim-notes" id="sim-notes-${turnNum}" rows="2" placeholder="Training notes for this turn"></textarea>
-      <details style="margin-top:8px">
-        <summary style="font-size:11px;color:var(--text-tertiary);cursor:pointer">Audit trail</summary>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-tertiary);white-space:pre-wrap;margin-top:4px">${esc((result.structured?.audit || []).join('\n'))}</div>
-      </details>
-    `;
-
-    controls.innerHTML = `
-      <div class="sim-turn-actions">
-        <button class="btn btn-primary" onclick="simAcceptTurn(${turnNum})">Submit</button>
-        <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
-      </div>
-    `;
-
-    // Save AI response to DB immediately (before user interacts)
-    try {
-      const saveResult = await api('/api/simulator/save-turn', {
-        method: 'POST',
-        body: {
-          source_conversation_id: sim.conversationId,
-          customer_email: sim.customerEmail,
-          order_number: sim.orderNumber,
-          order_context: sim.orderContext,
-          customer_context: sim.customerContext,
-          turn: {
-            turn_number: turnNum,
-            customer_message: customerMessage,
-            original_ai_response: result.ai_response || '',
-            edited_ai_response: null,
-            notes: null,
-            structured_output: result.structured,
-          },
-          reference_date: sim.referenceDate,
-        },
-      });
-      sim._currentDraftId = saveResult.draft_id;
-    } catch (err) {
-      console.error('Failed to auto-save turn:', err);
-    }
-
-    // Store current state for accept
-    sim._currentResult = result;
-    sim._currentCustomerMsg = customerMessage;
-
-    thread.scrollTop = thread.scrollHeight;
-
-  } catch (err) {
-    const turnEl = document.getElementById(`sim-turn-${turnNum}`);
-    turnEl.querySelector('.sim-spinner').textContent = 'Error: ' + err.message;
-  }
-}
-
-async function simAcceptTurn(turnNum) {
-  const editedResponse = document.getElementById(`sim-editor-${turnNum}`).value;
-  const notes = document.getElementById(`sim-notes-${turnNum}`).value;
-  const originalResponse = sim._currentResult?.ai_response || '';
-  const structured = sim._currentResult?.structured;
-
-  const turn = {
-    turn_number: turnNum,
-    customer_message: sim._currentCustomerMsg,
-    original_ai_response: originalResponse,
-    edited_ai_response: editedResponse,
-    notes: notes || null,
-    structured_output: structured,
-    accepted_at: new Date().toISOString(),
-  };
-
-  // Store turn locally
-  sim.turns.push(turn);
-
-  // Update the already-saved draft with edited response + notes
-  if (sim._currentDraftId) {
-    try {
-      await api(`/api/simulator/update-turn`, {
-        method: 'POST',
-        body: {
-          draft_id: sim._currentDraftId,
-          edited_response: editedResponse,
-          notes: notes || null,
-        },
-      });
-    } catch (err) {
-      console.error('Failed to update turn:', err);
-    }
-  }
-
-  // Update state
-  sim.intake = structured?.intake || sim.intake;
-  sim.previousResponses.push(editedResponse);
-  simSave();
-
-  // Lock the turn
-  const turnEl = document.getElementById(`sim-turn-${turnNum}`);
-  turnEl.classList.add('locked');
-  const editor = turnEl.querySelector('.sim-editor');
-  const notesEl = turnEl.querySelector('.sim-notes');
-  if (editor) {
-    const wasEdited = editedResponse !== originalResponse;
-    editor.replaceWith(Object.assign(document.createElement('div'), {
-      className: 'sim-ai-response',
-      textContent: editedResponse,
-    }));
-    if (wasEdited) {
-      turnEl.innerHTML += '<span class="sim-turn-edited">edited</span>';
-    }
-  }
-  if (notesEl && notes) {
-    notesEl.replaceWith(Object.assign(document.createElement('div'), {
-      className: 'sim-turn-notes',
-      textContent: notes,
-    }));
-  } else if (notesEl) {
-    notesEl.remove();
-  }
-
-  // Show next customer input
-  const controls = document.getElementById('sim-controls');
-  if (structured?.status === 'ready') {
-    controls.innerHTML = `
-      <div class="sim-next-input">
-        <p style="color:var(--green);font-weight:600;margin-bottom:8px">Exchange resolved! Enter another customer message or end the session.</p>
-        <textarea class="sim-editor" id="sim-next-msg" rows="3" placeholder="Type the next customer message..."></textarea>
-        <div class="sim-turn-actions">
-          <button class="btn btn-primary" onclick="simSendNext()">Send</button>
-          <button class="btn btn-close" onclick="simEndSession()">Finish Session</button>
-        </div>
-      </div>
-    `;
-  } else {
-    controls.innerHTML = `
-      <div class="sim-next-input">
-        <label class="label">Next Customer Message</label>
-        <textarea class="sim-editor" id="sim-next-msg" rows="3" placeholder="Type the next customer message..."></textarea>
-        <div class="sim-turn-actions">
-          <button class="btn btn-primary" onclick="simSendNext()">Send</button>
-          <button class="btn btn-dismiss" onclick="simEndSession()">End Session</button>
-        </div>
-      </div>
-    `;
-  }
-
-  document.getElementById('sim-next-msg')?.focus();
-}
-
-function simRegenTurn(turnNum) {
-  // Remove the current turn's response and re-run with same customer message
-  const turnEl = document.getElementById(`sim-turn-${turnNum}`);
-  if (!turnEl) return;
-  const customerMsg = sim._currentCustomerMsg;
-  if (!customerMsg) return;
-
-  // Remove the turn element and decrement
-  turnEl.remove();
-  document.getElementById('sim-controls').innerHTML = '';
-
-  // Re-run the turn
-  simRunTurn(customerMsg);
-}
-
-function simSendNext() {
-  const msg = document.getElementById('sim-next-msg')?.value?.trim();
-  if (!msg) return alert('Enter a customer message');
-  document.getElementById('sim-controls').innerHTML = '';
-  simRunTurn(msg);
-}
-
-async function simEndSession() {
-  if (sim.turns.length > 0) {
-    try {
-      await api('/api/simulator/save', {
-        method: 'POST',
-        body: {
-          source_conversation_id: sim.conversationId,
-          customer_email: sim.customerEmail,
-          order_number: sim.orderNumber,
-          order_context: sim.orderContext,
-          customer_context: sim.customerContext,
-          turns: sim.turns,
-          status: 'completed',
-        },
-      });
-    } catch (err) {
-      console.error('Failed to save session:', err);
-    }
-  }
-
-  // Reset
-  sim.active = false;
-  sim.turns = [];
-  sim.intake = null;
-  localStorage.removeItem('simState');
-  sim.previousResponses = [];
-  document.getElementById('sim-active').style.display = 'none';
-  document.getElementById('sim-idle').style.display = 'block';
-  document.getElementById('sim-load-btn').disabled = false;
-  document.getElementById('sim-loading').style.display = 'none';
-  document.getElementById('sim-thread').innerHTML = '';
-  document.getElementById('sim-controls').innerHTML = '';
-  document.getElementById('sim-ltv-stats').innerHTML = '';
-  document.getElementById('sim-order-links').innerHTML = '';
-  document.getElementById('sim-past-tickets').style.display = 'none';
-  document.getElementById('sim-tickets-list').innerHTML = '';
-  document.getElementById('sim-action-chat-messages').innerHTML = '';
-  _simActionChatHistory = [];
-}
-
-// ---------------------------------------------------------------------------
-// Simulator Action Chat
-// ---------------------------------------------------------------------------
-
-let _simActionChatHistory = [];
-
-function simAppendChatMessage(role, content) {
-  const container = document.getElementById('sim-action-chat-messages');
-  if (!container) return;
-  const div = document.createElement('div');
-  div.className = `action-msg action-msg-${role}`;
-  div.textContent = content;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-}
-
-async function simSendActionMessage() {
-  const input = document.getElementById('sim-action-chat-input');
-  const sendBtn = document.getElementById('sim-action-chat-send');
-  const message = input.value.trim();
-  if (!message) return;
-
-  simAppendChatMessage('user', message);
-  input.value = '';
-  input.disabled = true;
-  sendBtn.disabled = true;
-
-  // Show thinking indicator
-  const container = document.getElementById('sim-action-chat-messages');
-  const thinking = document.createElement('div');
-  thinking.className = 'action-msg action-msg-thinking';
-  thinking.id = 'sim-action-thinking';
-  thinking.textContent = 'Working...';
-  container.appendChild(thinking);
-  container.scrollTop = container.scrollHeight;
-
-  try {
-    // Build context from simulator state
-    const orderItems = sim.orderContext?.items || [];
-    const context = {
-      customer_email: sim.customerEmail,
-      order_number: sim.orderNumber,
-      order_items: orderItems,
-    };
-
-    const result = await api('/api/action-chat', {
-      method: 'POST',
-      body: { message, history: _simActionChatHistory, context },
-    });
-
-    // Remove thinking indicator
-    const thinkEl = document.getElementById('sim-action-thinking');
-    if (thinkEl) thinkEl.remove();
-
-    if (result.response) {
-      simAppendChatMessage('assistant', result.response);
-    }
-
-    if (result.tool_results?.length) {
-      for (const tr of result.tool_results) {
-        const label = tr.tool.replace(/_/g, ' ');
-        const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
-        const display = resultText.length > 400 ? resultText.substring(0, 400) + '...' : resultText;
-        simAppendChatMessage('tool', `[${label}]\n${display}`);
-      }
-    }
-
-    _simActionChatHistory = result.history || [];
-
-  } catch (err) {
-    const thinkEl = document.getElementById('sim-action-thinking');
-    if (thinkEl) thinkEl.remove();
-    simAppendChatMessage('assistant', `Error: ${err.message}`);
-  }
-
-  input.disabled = false;
-  sendBtn.disabled = false;
-  input.focus();
 }
 
 // ---------------------------------------------------------------------------
