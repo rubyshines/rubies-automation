@@ -376,9 +376,8 @@ function renderTicketDetail(ticket) {
     btnSendClose.disabled = false;
     btnCloseOnly.textContent = 'Close';
     btnCloseOnly.disabled = false;
-    btnTrain.textContent = 'Train';
-    btnTrain.disabled = false;
-    btnRefresh.disabled = false;
+    if (btnTrain) { btnTrain.textContent = 'Train'; btnTrain.disabled = false; }
+    if (btnRefresh) btnRefresh.disabled = false;
     btnRelease.textContent = 'Release';
     btnRelease.disabled = false;
     if (btnDelete) { btnDelete.textContent = 'Delete'; btnDelete.disabled = false; }
