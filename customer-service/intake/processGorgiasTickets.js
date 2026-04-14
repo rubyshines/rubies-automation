@@ -356,6 +356,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     conversation_history: conversationHistory,
     message_type: messageType,
     confidence,
+    summary: structured.summary || null,
     advisor_status: structured.status,
     source: ticketSource,
     updated_at: new Date().toISOString(),

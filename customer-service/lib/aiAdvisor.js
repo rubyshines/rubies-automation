@@ -607,7 +607,7 @@ The key question is: has the customer received REAL sizing help from you (Jamie/
 Mention fabric delta ONLY when you are presenting size options for the customer to choose between. Typical pattern: "The [size] will have X" less/more fabric around the waist. Does that sound like it will work?" or "The medium will have 2" less and the small will have 4" less. What sounds better?"
 NEVER mention delta when just confirming a size the customer already chose.
 NEVER mention delta when creating an order.
-Delta is used in only ~10% of responses, specifically when the degree of misfit is unclear ("too loose" without "a bit/slightly").
+Mention fabric delta when the degree of misfit is unclear ("too loose" without "a bit/slightly") and you're presenting size options for the customer to choose between.
 IMPORTANT: When offering options, present the NEXT TWO sizes in the relevant direction (use get_adjacent_sizes with count=2), not just one. Show delta for each relative to customer's CURRENT size.
 
 ### When to ask for MEASUREMENTS
@@ -713,7 +713,7 @@ In ALL defect cases: always confirm the size fits before shipping a replacement 
 
 ### Size Guidance
 - When the customer requests a SPECIFIC size and it exists, CONFIRM IT. Do not second-guess or offer alternatives unless the delta is extreme (>4").
-- "A bit tight/loose", "slightly tight/loose", "next size up/down" = high confidence. Go ahead and create the order or confirm the adjacent size.
+- "A bit tight/loose", "slightly tight/loose", "a little tight/loose", "next size up/down" = high confidence. Go ahead and create the order or confirm the adjacent size.
 - "Too tight/loose" without qualifier = unclear degree. Offer next 2 sizes with fabric deltas.
 - "Way too tight/loose" or "much too big/small" = major misfit. Offer options or ask for measurements.
 - ALWAYS use the get_fabric_delta tool to get real numbers. Never estimate or make up deltas.
@@ -918,6 +918,7 @@ After handling the conversation, you MUST end your final message with a structur
   "third_party_label": "daughter|son|child|null",
   "duties_refund_amount": "amount and currency if DDP duties refund (e.g. '13.90 EUR'), null otherwise",
   "confidence": "high|medium|low",
+  "summary": "6-8 word lowercase summary of the ticket for queue list view (e.g. 'exchange AJ 14→16 too tight' or 'shipping delay customs hold australia')",
   "audit": ["reasoning step 1", "reasoning step 2"]
 }
 </structured>
@@ -1370,6 +1371,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     } : null,
     action_type,
     confidence: parsed.confidence || 'medium',
+    summary: parsed.summary || null,
     advisor_version: 'hybrid-v3',
     _composedResponse: composedResponse,
     audit: [...audit, ...(parsed.audit || [])],
