@@ -337,11 +337,22 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     return { skipped: true };
   }
 
-  // Check if latest message is already from a real agent
-  const latestMsg = messages[messages.length - 1];
-  const isBot = latestMsg.sender?.email?.endsWith('@email.gorgias.com') || latestMsg.via === 'rule';
-  if (latestMsg.from_agent === true && !isBot) {
-    console.log(`[intake] Skip ${ticketId}: agent already replied`);
+  // Check if a real human agent replied AFTER the latest customer message.
+  // Skip bot messages (Gorgias rules), AI bot messages (our system), and
+  // auto follow-ups sent via API — only skip if a human actually handled it.
+  const messagesAfterCustomer = messages.filter(m =>
+    new Date(m.created_datetime) > new Date(latestCustomerMsg.created_datetime)
+    && m.from_agent === true
+  );
+  const humanRepliedAfter = messagesAfterCustomer.some(m => {
+    if (m.sender?.email?.endsWith('@email.gorgias.com')) return false; // Gorgias rule
+    if (m.via === 'rule') return false; // automation rule
+    if (m.channel === 'internal-note') return false; // internal notes don't count
+    if (aiBotId && m.sender?.id === aiBotId) return false; // our AI bot
+    return true;
+  });
+  if (humanRepliedAfter) {
+    console.log(`[intake] Skip ${ticketId}: human agent replied after latest customer message`);
     return { skipped: true };
   }
 
