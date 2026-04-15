@@ -286,8 +286,8 @@ async function executeToolCall(toolName, toolInput) {
     }
 
     case 'get_order_context': {
-      const { customer_email, order_number, message, _preContext } = toolInput;
-      const ctx = _preContext || await buildContext({ customer_email, order_number, issue_description: message });
+      const { customer_email, customer_name, order_number, message, _preContext } = toolInput;
+      const ctx = _preContext || await buildContext({ customer_email, customer_name, order_number, issue_description: message });
       if (!ctx.customer) return { error: `No customer found for ${customer_email}` };
 
       // Look up DDP status for the customer's country
@@ -336,6 +336,8 @@ async function executeToolCall(toolName, toolInput) {
           items: (ex.lineItems || []).map(li => ({ title: li.title, variant: li.variantTitle })),
         })),
         order_count: ctx.all.length,
+        resolved_by_name: ctx.resolvedByName || false,
+        conversation_email: ctx.conversationEmail || null,
       };
     }
 
@@ -519,7 +521,7 @@ function buildSystemPrompt(toneSamples, orderContext) {
   if (orderContext) {
     orderSection = `
 ## Customer & Order Context
-- Customer email: ${orderContext.customer?.email || 'unknown'}
+- Customer email: ${orderContext.customer?.email || 'unknown'}${orderContext.resolved_by_name ? `\n- ⚠️ RESOLVED BY NAME FALLBACK: no customer record exists under the sender's email (${orderContext.conversation_email}). This customer was found by searching their name. Apply the "Resolved by name" verification gates before trusting this match.` : ''}
 - Customer country: ${orderContext.customer?.country || 'unknown'}${orderContext.customer?.duties_prepaid != null ? ` (duties ${orderContext.customer.duties_prepaid ? 'PREPAID — we cover customs charges' : 'NOT prepaid — customer responsible'})` : ''}
 ${orderContext.target_order ? `- Order: ${orderContext.target_order.name} (placed ${orderContext.target_order.created_at?.split('T')[0] || 'unknown'}, ${orderContext.target_order.days_since_order} days ago)
 - Fulfillment: ${orderContext.target_order.fulfillment_status}
@@ -557,8 +559,9 @@ The order context is available to YOU for reference, but don't present it to the
 CRITICAL: NEVER ask for an order number or email address if you already have order context in the system prompt. The customer's order and email were already looked up for you. Use that data directly. Asking for information you already have is the worst possible customer experience.
 
 ## EMAIL & CUSTOMER SCENARIOS
-- **Email mismatch:** If the conversation email differs from the email on the order, reply to the conversation email but use the order data from the order email. Don't ask the customer to re-send from a different address.
-- **Customer not found:** If no customer record exists for the email, ask for the order number or the email they placed the order with.
+- **Order email differs from conversation email:** If the customer account was found, but a specific order has a different email than the conversation, reply to the conversation email and use the order data. Don't ask the customer to re-send from a different address.
+- **Resolved by name (not email):** If the context is flagged 'resolved_by_name: true', the customer account was found via a name search, NOT by matching their sender email. Proceed normally using the loaded context IF BOTH: (a) the most recent fulfilled order is within 90 days, AND (b) the customer's message is clearly about that order (refund, exchange, sizing, shipping, defect, etc.). If either condition fails — no recent order, or the message is generic / unrelated / could plausibly belong to a different account — do NOT reference any personal info from the loaded context (name, order number, items, address). Instead, ask for the order number or the email they used at checkout before proceeding, and do not take any irreversible actions. Under NO circumstances repeat the customer's name back to them when resolved by name — the Shopify name may be a dead name.
+- **Customer not found:** If no customer record could be resolved by email OR by name fallback, ask for the order number or the email they placed the order with.
 - **No fulfilled orders:** If the customer has orders but none are fulfilled yet, explain that we need to wait for delivery before we can do an exchange. Offer to help with anything else in the meantime.
 - **"Product not working" + self-identified direction:** If the customer says "it's not working" but also mentions it feels tight or loose, treat it as a sizing issue in that direction. Don't ask "what didn't work" — they already told you.
 
@@ -919,6 +922,7 @@ After handling the conversation, you MUST end your final message with a structur
   "duties_refund_amount": "amount and currency if DDP duties refund (e.g. '13.90 EUR'), null otherwise",
   "confidence": "high|medium|low",
   "summary": "6-8 word lowercase summary of the ticket for queue list view (e.g. 'exchange AJ 14→16 too tight' or 'shipping delay customs hold australia')",
+  "history_summary": "2-4 sentence prose summary of what happened on this ticket, written for a future advisor call that needs to understand it as prior history. Include the original order number and items, what the customer was asking for, the action taken (exchange/refund/defect handling), and the outcome. Example: 'Customer ordered Naomi gaff size M (order #29784). Reported the fit was too tight and requested exchange to size L. Exchange draft order #30012 created and marked paid, shipped Jan 22. Ticket closed as resolved.' Only fill this for exchange/refund/defect tickets — null otherwise.",
   "audit": ["reasoning step 1", "reasoning step 2"]
 }
 </structured>
@@ -1057,7 +1061,27 @@ function validateResponse(composedResponse, toolsCalled, audit) {
  * @param {string} [params.reference_date] - ISO date for time-sensitive logic
  * @returns {Promise<Object>} Compatible _structured output
  */
-async function aiAdvisor({ customer_email, issue_description, order_number, intake: existingIntake, reference_date, preContext }) {
+function buildOperatorSteerBlock(steer) {
+  const trimmed = (steer || '').trim();
+  if (!trimmed) return '';
+  return (
+    '\n\n================================================================\n' +
+    'OPERATOR OVERRIDE — HIGHEST AUTHORITY\n' +
+    '================================================================\n' +
+    'The human operator has reviewed your prior draft for this ticket and is\n' +
+    'redirecting you. Their instruction, verbatim:\n\n' +
+    '    "' + trimmed + '"\n\n' +
+    'This instruction SUPERSEDES any conflicting guidance in your system prompt\n' +
+    'for this response only. You MUST comply. Do not re-offer paths the operator\n' +
+    'is redirecting away from. Regenerate BOTH the customer-facing response AND\n' +
+    'the structured action (tool calls, status) to reflect the operator\'s intent.\n' +
+    'If the operator\'s instruction requires a tool you would not normally call\n' +
+    '(e.g. refund, exchange, draft order), call it now.\n' +
+    '================================================================'
+  );
+}
+
+async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer }) {
   // Ensure product config is loaded
   if (Object.keys(_activeProducts).length === 0) {
     try { await initCsConfig(); } catch (e) { console.error('[aiAdvisor] initCsConfig failed:', e.message); }
@@ -1089,6 +1113,7 @@ async function aiAdvisor({ customer_email, issue_description, order_number, inta
   if (preContext) {
     orderContext = await executeToolCall('get_order_context', {
       customer_email,
+      customer_name,
       order_number: order_number || undefined,
       message: issue_description,
       _preContext: preContext,
@@ -1097,6 +1122,7 @@ async function aiAdvisor({ customer_email, issue_description, order_number, inta
     try {
       orderContext = await executeToolCall('get_order_context', {
         customer_email,
+        customer_name,
         order_number: order_number || undefined,
         message: issue_description,
       });
@@ -1112,17 +1138,19 @@ async function aiAdvisor({ customer_email, issue_description, order_number, inta
 
   // Build conversation messages
   const messages = [];
+  const steerBlock = buildOperatorSteerBlock(operatorSteer);
+  if (steerBlock) audit.push(`Operator steer: "${operatorSteer.trim()}"`);
 
   // If there's existing intake (multi-turn), include previous context
   if (existingIntake) {
     messages.push({
       role: 'user',
-      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}`,
+      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${steerBlock}`,
     });
   } else {
     messages.push({
       role: 'user',
-      content: issue_description || '(no message provided)',
+      content: (issue_description || '(no message provided)') + steerBlock,
     });
   }
 

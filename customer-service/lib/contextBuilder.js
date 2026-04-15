@@ -196,6 +196,36 @@ async function buildContextFromShopify(customer_email) {
   return { customer, orders, source: 'shopify' };
 }
 
+// Name-fallback: used when no customer record was found under the sender's
+// email. Runs a Shopify name search and only accepts a unique match to avoid
+// wrong-person collisions. The caller must mark the returned context as
+// resolvedByName so the advisor prompt can apply its verification gates.
+function isValidFullName(name) {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  if (trimmed.length < 3) return false;
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return false;
+  const junk = /^(customer|guest|user|shopper|unknown|n\/?a)$/i;
+  if (parts.some(p => junk.test(p))) return false;
+  return true;
+}
+
+async function buildContextFromShopifyByName(customer_name) {
+  if (!isValidFullName(customer_name)) return null;
+  const customers = await searchCustomers(customer_name.trim());
+  if (customers.length !== 1) return null;
+  const customer = customers[0];
+
+  let orders = [];
+  try {
+    const result = await getCustomerOrders(customer.id, 20);
+    orders = result.orders;
+  } catch (err) { /* handled below */ }
+
+  return { customer, orders, source: 'shopify-name-fallback' };
+}
+
 // ---------------------------------------------------------------------------
 // Build full customer + order context from email / order number
 // ---------------------------------------------------------------------------
@@ -224,7 +254,7 @@ function extractOrderNumber(text) {
   return null;
 }
 
-async function buildContext({ customer_email, order_number, issue_description, existingIntake }) {
+async function buildContext({ customer_email, customer_name, order_number, issue_description, existingIntake }) {
   const messageOrderNumber = extractOrderNumber(issue_description);
 
   // Try Supabase first, fall back to Shopify
@@ -237,6 +267,20 @@ async function buildContext({ customer_email, order_number, issue_description, e
 
   if (!customerData) {
     customerData = await buildContextFromShopify(customer_email);
+  }
+
+  // Name fallback: sender's email isn't on any customer record. Try a Shopify
+  // name search and accept only a unique match. Flagged so the advisor can
+  // apply its verification gates (recent order + message-about-order) before
+  // trusting the match.
+  let resolvedByName = false;
+  if (!customerData && customer_name) {
+    const nameMatch = await buildContextFromShopifyByName(customer_name);
+    if (nameMatch) {
+      customerData = nameMatch;
+      resolvedByName = true;
+      console.log(`[context] ${customer_email} resolved by name fallback ("${customer_name}") → ${nameMatch.customer.email}`);
+    }
   }
 
   let customer = customerData?.customer || null;
@@ -308,6 +352,8 @@ async function buildContext({ customer_email, order_number, issue_description, e
     targetOrder,
     orderLineItems,
     effectiveOrderNumber,
+    resolvedByName,
+    conversationEmail: resolvedByName ? customer_email : null,
   };
 }
 

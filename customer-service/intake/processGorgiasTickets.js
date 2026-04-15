@@ -185,27 +185,34 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
 
   const customerEmail = ticket.customer?.email;
+  const senderName = [ticket.customer?.firstname, ticket.customer?.lastname]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || ticket.customer?.name || null;
 
   // Check for duplicate tickets from the same customer
   if (customerEmail) {
     const dupAction = await checkForDuplicateTicket(supabase, customerEmail, ticketId, messages);
     if (dupAction === 'close_new') {
       console.log(`[intake] Skip ${ticketId}: duplicate of existing ticket`);
-      // Close in Gorgias + add note
-      try {
-        await gorgias.addInternalNote(ticketId, 'Auto-closed: duplicate of existing open ticket for this customer.');
-        await gorgias.closeTicket(ticketId);
-      } catch (e) { console.warn(`[intake] Could not close duplicate ${ticketId}: ${e.message}`); }
+      // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
+      await gorgias.addInternalNote(ticketId, 'Auto-closed: duplicate of existing open ticket for this customer.');
+      await gorgias.closeTicket(ticketId);
       return { skipped: true, reason: 'duplicate' };
     }
     if (dupAction?.action === 'close_existing') {
       console.log(`[intake] Closing older ticket(s) — this one has more context`);
       for (const oldTicket of dupAction.ticketsToClose) {
-        try {
-          await supabase.from('cs_tickets').update({ status: 'closed', closed_at: new Date().toISOString() }).eq('id', oldTicket.id);
-          await gorgias.addInternalNote(oldTicket.gorgias_ticket_id, `Auto-closed: superseded by newer ticket #${ticketId} with more context.`);
-          await gorgias.closeTicket(oldTicket.gorgias_ticket_id);
-        } catch (e) { console.warn(`[intake] Could not close old ticket ${oldTicket.gorgias_ticket_id}: ${e.message}`); }
+        // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
+        await gorgias.addInternalNote(oldTicket.gorgias_ticket_id, `Auto-closed: superseded by newer ticket #${ticketId} with more context.`);
+        await gorgias.closeTicket(oldTicket.gorgias_ticket_id);
+
+        // Update DB only after Gorgias succeeded
+        const nowIso = new Date().toISOString();
+        await supabase
+          .from('cs_tickets')
+          .update({ status: 'closed', closed_at: nowIso, updated_at: nowIso })
+          .eq('id', oldTicket.id);
       }
     }
     // 'keep_both' or no action → continue processing normally
@@ -258,6 +265,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   try {
     preContext = await buildContext({
       customer_email: customerEmail,
+      customer_name: senderName,
       issue_description: issueDescription,
       existingIntake: previousIntake,
     });
@@ -357,6 +365,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     message_type: messageType,
     confidence,
     summary: structured.summary || null,
+    history_summary: structured.history_summary || null,
     advisor_status: structured.status,
     source: ticketSource,
     updated_at: new Date().toISOString(),

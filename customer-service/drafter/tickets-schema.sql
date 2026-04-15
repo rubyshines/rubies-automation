@@ -50,6 +50,12 @@ CREATE INDEX IF NOT EXISTS idx_tickets_status_turn ON cs_tickets (status, turn_n
 CREATE INDEX IF NOT EXISTS idx_tickets_updated ON cs_tickets (updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tickets_customer ON cs_tickets (customer_email);
 
+-- history_summary: 2-4 sentence prose summary of what happened on this ticket,
+-- used to inject prior ticket context into the advisor for second-round follow-ups.
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS history_summary text;
+CREATE INDEX IF NOT EXISTS idx_tickets_prior_lookup
+  ON cs_tickets (customer_email, status, message_type, closed_at DESC);
+
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts
 -- ============================================================

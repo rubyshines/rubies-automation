@@ -102,7 +102,7 @@ async function findOrCreateCustomer({ email, first_name, last_name, phone, addre
 async function handleCreateOrder({
   email, first_name, last_name, phone, address,
   customer_id,
-  items, custom_items, discount_percent, free, note, tags,
+  items, custom_items, discount_percent, free, donation, note, tags,
   confirmed,
 }) {
   const hasItems = items && items.length > 0;
@@ -135,7 +135,8 @@ async function handleCreateOrder({
   // Determine discount
   const isFree = free === true;
   const discountPct = isFree ? 100 : (discount_percent || 0);
-  const discountLabel = isFree ? 'Free (samples/gift)' : `${discountPct}% off`;
+  const freeLabel = donation ? 'Donation' : 'Free / Samples';
+  const discountLabel = isFree ? freeLabel : `${discountPct}% off`;
 
   // Calculate totals for preview
   let subtotal = 0;
@@ -169,27 +170,8 @@ async function handleCreateOrder({
       created: false,
     };
   } else if (email) {
-    if (!confirmed) {
-      // Preview: just check if they exist
-      const existing = await searchCustomers(`email:${email}`);
-      customerInfo = existing.length > 0
-        ? {
-            id: existing[0].id,
-            name: `${existing[0].firstName || ''} ${existing[0].lastName || ''}`.trim(),
-            email: existing[0].email,
-            address: existing[0].defaultAddress,
-            created: false,
-          }
-        : {
-            id: null,
-            name: `${first_name || ''} ${last_name || ''}`.trim() || '(new customer)',
-            email,
-            address: address || null,
-            created: true,
-          };
-    } else {
-      customerInfo = await findOrCreateCustomer({ email, first_name, last_name, phone, address });
-    }
+    // Always find or create the customer — the draft order needs a customerId
+    customerInfo = await findOrCreateCustomer({ email, first_name, last_name, phone, address });
   } else {
     return { content: [{ type: 'text', text: 'Must provide either email or customer_id.' }] };
   }
@@ -248,7 +230,7 @@ async function handleCreateOrder({
     }
     if (discountPct > 0) {
       li.appliedDiscount = {
-        title: isFree ? 'Free / Samples' : `${discountPct}% discount`,
+        title: isFree ? freeLabel : `${discountPct}% discount`,
         value: discountPct,
         valueType: 'PERCENTAGE',
       };
@@ -259,7 +241,7 @@ async function handleCreateOrder({
   const draftInput = {
     customerId: customerInfo.id,
     lineItems,
-    note: note || (isFree ? 'Free order created via CS MCP' : 'Order created via CS MCP'),
+    note: note || (isFree ? (donation ? 'Donation order created via CS MCP' : 'Free order created via CS MCP') : 'Order created via CS MCP'),
     tags: [...(tags || []), 'cs-mcp'],
   };
 
@@ -359,7 +341,11 @@ const tools = [
         },
         free: {
           type: 'boolean',
-          description: 'Set to true for a free order (samples, gifts). 100% discount, free shipping. Draft is created but NOT completed — must be confirmed via create_order_complete.',
+          description: 'Set to true for a free order (samples, gifts, donations). 100% discount, free shipping. Draft is created but NOT completed — must be confirmed via create_order_complete.',
+        },
+        donation: {
+          type: 'boolean',
+          description: 'Set to true for donation orders (e.g. community outreach). Changes the discount label from "Free / Samples" to "Donation". Requires free=true.',
         },
         discount_percent: {
           type: 'number',
