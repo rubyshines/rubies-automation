@@ -54,6 +54,37 @@ async function getAiBotUserId() {
 // Core polling logic
 // ---------------------------------------------------------------------------
 
+// Gorgias help-center chat flows arrive as one concatenated message: bot
+// prompt lines plus customer choices prefixed with `>`. Extract only the
+// real customer free-text so the dashboard card isn't full of bot copy.
+const HELP_CENTER_BUTTON_LABELS = new Set([
+  'help me with a return or exchange',
+  'start a return or exchange',
+  'learn about our returns and exchanges policy',
+  'sign in to continue',
+  'no, i need more help',
+  'exchange', 'return', 'refund',
+  'go back', 'no', 'yes',
+]);
+
+function cleanHelpCenterBody(body) {
+  if (!body) return body;
+  // `>` markers can appear at line start OR inline after bot copy on the
+  // same line, so match each `>` segment up to the next newline.
+  const keep = [];
+  for (const match of body.matchAll(/>\s*([^\n]+)/g)) {
+    const text = match[1].trim();
+    if (!text) continue;
+    const lower = text.toLowerCase();
+    if (HELP_CENTER_BUTTON_LABELS.has(lower)) continue;
+    if (/^#\d+\s*[-–]\s*\$[\d.,]+/.test(text)) continue; // order pick
+    if (/^\d+\s*x\s+/i.test(text)) continue; // selected line item
+    if (/^THE\s+[A-Z].*\s[-–]\s/.test(text)) continue; // variant label
+    keep.push(text);
+  }
+  return keep.join('\n').trim();
+}
+
 // ---------------------------------------------------------------------------
 // Duplicate ticket detection
 // ---------------------------------------------------------------------------
@@ -308,20 +339,32 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
 
   // Build conversation history snapshot (for dashboard display)
-  const conversationHistory = messages.map(m => ({
-    id: m.id,
-    sender: m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent',
-    is_bot: m.from_agent !== false && m.via !== 'api' && (
-      (m.sender?.email || '').endsWith('@email.gorgias.com') || m.via === 'rule'
-    ),
-    body_html: m.stripped_html || m.body_html || null,
-    body: gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || ''),
-    created_at: m.created_datetime,
-    channel: m.channel,
-    attachments: (m.attachments || []).map(a => ({
-      name: a.name, url: a.url, content_type: a.content_type,
-    })),
-  }));
+  const conversationHistory = messages.map(m => {
+    const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
+    let bodyHtml = m.stripped_html || m.body_html || null;
+    let bodyText = gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || '');
+    // Help-center flows arrive as one blob with bot prompts + `>` customer
+    // picks — strip the bot copy so the intake card shows only what the
+    // customer actually typed.
+    if (sender === 'customer' && m.channel === 'help-center') {
+      bodyText = cleanHelpCenterBody(bodyText);
+      bodyHtml = null; // force dashboard to render from cleaned plain text
+    }
+    return {
+      id: m.id,
+      sender,
+      is_bot: m.from_agent !== false && m.via !== 'api' && (
+        (m.sender?.email || '').endsWith('@email.gorgias.com') || m.via === 'rule'
+      ),
+      body_html: bodyHtml,
+      body: bodyText,
+      created_at: m.created_datetime,
+      channel: m.channel,
+      attachments: (m.attachments || []).map(a => ({
+        name: a.name, url: a.url, content_type: a.content_type,
+      })),
+    };
+  });
 
   // Count real messages (customer + non-bot agent, excluding internal notes and bot)
   const messageCount = conversationHistory.filter(m =>
