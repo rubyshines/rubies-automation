@@ -58,6 +58,24 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const ALLOWED_EMAIL = process.env.ALLOWED_EMAIL;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days in seconds
+const DASHBOARD_API_TOKEN = process.env.DASHBOARD_API_TOKEN;
+
+function isLocalRequest(req) {
+  const addr = req.socket && req.socket.remoteAddress;
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+function verifyBearerToken(req) {
+  if (!DASHBOARD_API_TOKEN) return false;
+  if (!isLocalRequest(req)) return false;
+  const header = req.headers.authorization || '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  if (!match) return false;
+  const provided = Buffer.from(match[1]);
+  const expected = Buffer.from(DASHBOARD_API_TOKEN);
+  if (provided.length !== expected.length) return false;
+  return crypto.timingSafeEqual(provided, expected);
+}
 
 let _oauthClient = null;
 async function verifyGoogleToken(idToken) {
@@ -377,10 +395,17 @@ async function apiRefreshDraft(id) {
     .single();
   if (fetchErr) throw fetchErr;
 
-  // Re-fetch messages from Gorgias and re-run advisor
-  const messages = await gorgiasClient.getTicketMessages(draft.gorgias_ticket_id);
+  // Re-fetch messages + ticket from Gorgias and re-run advisor
+  const [messages, gorgiasTicket] = await Promise.all([
+    gorgiasClient.getTicketMessages(draft.gorgias_ticket_id),
+    gorgiasClient.getTicket(draft.gorgias_ticket_id).catch(() => null),
+  ]);
   const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
   if (!lastCustomer) throw new Error('No customer message found');
+  const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || gorgiasTicket?.customer?.name || null;
 
   const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
 
@@ -394,12 +419,28 @@ async function apiRefreshDraft(id) {
   contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
   const issueDescription = contextParts.join('\n\n');
 
+  // Build context up front so we can update cs_tickets with the resolved
+  // customer/order (sidebar card), and pass it to the advisor as preContext.
+  const { buildContext } = require('../lib/contextBuilder');
+  let preContext = null;
+  try {
+    preContext = await buildContext({
+      customer_email: draft.customer_email,
+      customer_name: senderName,
+      issue_description: issueDescription,
+    });
+  } catch (err) {
+    console.warn(`[refresh] buildContext failed: ${err.message}`);
+  }
+
   // Run hybrid advisor (same as intake path)
   const { aiAdvisor } = require('../lib/aiAdvisor');
   const result = await aiAdvisor({
     customer_email: draft.customer_email,
+    customer_name: senderName,
     issue_description: issueDescription,
     intake: draft.intake_state || undefined,
+    preContext,
   });
 
   const s = result._structured;
@@ -446,6 +487,17 @@ async function apiRefreshDraft(id) {
     if (s?.action_type) ticketUpdates.action_type = s.action_type;
     if (s?.confidence) ticketUpdates.confidence = s.confidence;
     if (s?.status) ticketUpdates.advisor_status = s.status;
+    // Reconcile sidebar card with resolved customer/order from this refresh run.
+    const resolvedOrderName = s?.order?.name || preContext?.targetOrder?.name || null;
+    if (resolvedOrderName) {
+      ticketUpdates.order_number = resolvedOrderName.toString().startsWith('#')
+        ? resolvedOrderName
+        : `#${resolvedOrderName}`;
+    }
+    if (preContext?.customerCountry) ticketUpdates.customer_country = preContext.customerCountry;
+    if (preContext?.resolvedByName && preContext?.customer?.email) {
+      ticketUpdates.customer_email = preContext.customer.email;
+    }
     await supabase.from('cs_tickets').update(ticketUpdates).eq('id', draft.ticket_id);
   }
 
@@ -1696,22 +1748,32 @@ const paramRoutes = [
     await updateTicketStatus(supabase, t.gorgias_ticket_id, 'snoozed');
     return { success: true };
   }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: async (_, id) => {
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
+    const steer = (body?.steer || '').trim();
     const { data: t } = await supabase.from('cs_tickets')
       .select('active_draft_id, gorgias_ticket_id, customer_email, order_number')
       .eq('id', parseInt(id)).single();
-    if (t?.active_draft_id) return apiRefreshDraft(t.active_draft_id);
+    // Steered refresh always rebuilds from scratch (ignores existing draft)
+    if (!steer && t?.active_draft_id) return apiRefreshDraft(t.active_draft_id);
 
-    // No active draft — create a new one by running the advisor on the latest customer message
+    // No active draft (or steered) — create a new one by running the advisor on the latest customer message
     if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
     const gorgiasClient = require('../import/gorgiasClient');
     const { processTicket, getAiBotUserId, buildConversationContext } = require('../intake/processGorgiasTickets');
     const { aiAdvisor } = require('../lib/aiAdvisor');
 
-    const messages = await gorgiasClient.getTicketMessages(t.gorgias_ticket_id);
+    const [messages, gorgiasTicket] = await Promise.all([
+      gorgiasClient.getTicketMessages(t.gorgias_ticket_id),
+      gorgiasClient.getTicket(t.gorgias_ticket_id).catch(() => null),
+    ]);
     const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
     if (!lastCustomer) throw new Error('No customer message found');
+
+    const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
+      .filter(Boolean)
+      .join(' ')
+      .trim() || gorgiasTicket?.customer?.name || null;
 
     const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
     let contextParts = [];
@@ -1723,7 +1785,9 @@ const paramRoutes = [
 
     const result = await aiAdvisor({
       customer_email: t.customer_email,
+      customer_name: senderName,
       issue_description: contextParts.join('\n\n'),
+      operatorSteer: steer || undefined,
     });
 
     const s = result._structured;
@@ -1911,7 +1975,8 @@ async function handleRequest(req, res) {
   if (isAuthEnabled() && !isAuthWhitelisted(pathname)) {
     const cookies = parseCookies(req);
     const session = verifySession(cookies.session);
-    if (!session) {
+    const bearerOk = !session && pathname.startsWith('/api/') && verifyBearerToken(req);
+    if (!session && !bearerOk) {
       if (pathname.startsWith('/api/')) {
         res.setHeader('Content-Type', 'application/json');
         res.writeHead(401);

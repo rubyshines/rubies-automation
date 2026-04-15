@@ -1424,15 +1424,33 @@ function updateNavArrows() {
   nextBtn.style.display = idx < currentQueueTicketIds.length - 1 ? '' : 'none';
 }
 
-async function refreshDraft() {
+async function refreshDraft(steer) {
   if (!currentTicketId) return;
 
   const btn = document.getElementById('btn-refresh');
+  const steerInput = document.getElementById('steer-input');
+  const steerLast = document.getElementById('steer-last');
+  const cleanSteer = (typeof steer === 'string' ? steer : '').trim();
   btn.disabled = true;
+  if (steerInput) steerInput.disabled = true;
 
   try {
-    const result = await api(`/api/tickets/${currentTicketId}/refresh`, { method: 'POST', body: {} });
+    const result = await api(`/api/tickets/${currentTicketId}/refresh`, {
+      method: 'POST',
+      body: cleanSteer ? { steer: cleanSteer } : {},
+    });
     document.getElementById('draft-editor').value = result.draft_response;
+    if (steerInput) {
+      steerInput.value = '';
+      steerInput.disabled = false;
+    }
+    if (steerLast) {
+      if (cleanSteer) {
+        steerLast.textContent = `last steer: "${cleanSteer}" — click to reuse`;
+        steerLast.style.display = '';
+        steerLast.onclick = () => { if (steerInput) { steerInput.value = cleanSteer; steerInput.focus(); } };
+      }
+    }
     localStorage.setItem(`draft-ticket-${currentTicketId}`, result.draft_response);
 
     if (result.structured?.status) {
@@ -1452,9 +1470,21 @@ async function refreshDraft() {
     btn.disabled = false;
   } catch (err) {
     btn.disabled = false;
+    if (steerInput) steerInput.disabled = false;
     alert('Refresh failed: ' + err.message);
   }
 }
+
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    const input = document.getElementById('steer-input');
+    if (input && input.offsetParent !== null) {
+      e.preventDefault();
+      input.focus();
+      input.select();
+    }
+  }
+});
 
 function snoozeNoReply() {
   if (!currentTicketId) return;

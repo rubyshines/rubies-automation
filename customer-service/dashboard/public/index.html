@@ -27,7 +27,6 @@
       <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
       <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
-      <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
     </nav>
     <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
   </header>
@@ -109,7 +108,14 @@
 
           <!-- AI Draft (editable) -->
           <div id="detail-draft" class="detail-section">
-            <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span> <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft()" title="Regenerate draft">&#8635;</button></h3>
+            <h3>AI Draft <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span></h3>
+            <div class="steer-row">
+              <input type="text" id="steer-input" class="steer-input"
+                placeholder="redirect the advisor"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();refreshDraft(this.value)}else if(event.key==='Escape'){this.blur()}" />
+              <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft()" title="Regenerate draft (dev)">&#8635;</button>
+            </div>
+            <div id="steer-last" class="steer-last" style="display:none"></div>
             <textarea id="draft-editor" rows="8"></textarea>
             <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
             <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
@@ -120,7 +126,7 @@
               </div>
               <div class="btn-row btn-row-secondary">
                 <button id="btn-close-only" class="btn btn-ghost" onclick="closeNoReply()">Close</button>
-                <button id="btn-train" class="btn btn-ghost" onclick="trainDraft()">Train</button>
+                <button id="btn-snooze-only" class="btn btn-ghost" onclick="snoozeNoReply()">Snooze</button>
                 <button id="btn-park" class="btn btn-ghost" onclick="parkTicket()">Park</button>
                 <button id="btn-unpark" class="btn btn-ghost" onclick="unparkTicket()" style="display:none">Unpark</button>
                 <button id="btn-forward" class="btn btn-ghost" onclick="forwardTicket()">Forward</button>
@@ -137,107 +143,6 @@
       </div>
     </div>
 
-    <!-- Test panel (unified: simulator + manual test + replay) -->
-    <div id="panel-test" class="panel" style="display:none">
-      <!-- Idle state -->
-      <div id="sim-idle" style="padding:48px 24px;max-width:640px;margin:0 auto">
-        <h3 style="font-size:18px;margin-bottom:6px;text-align:center">Conversation Simulator</h3>
-        <p style="color:var(--text-secondary);margin-bottom:20px;text-align:center">Load a real conversation or create a manual test scenario.</p>
-
-        <!-- Message type picker -->
-        <div class="context-section-label" style="border:none;padding:0;margin-bottom:8px">Message Type</div>
-        <div id="sim-type-picker" class="sim-type-picker" style="justify-content:flex-start">
-          <button class="sim-type-btn active" data-type="exchange" onclick="simSelectType(this)">Exchange</button>
-          <button class="sim-type-btn" data-type="sizing" onclick="simSelectType(this)">Sizing</button>
-          <button class="sim-type-btn" data-type="shipping" onclick="simSelectType(this)">Shipping</button>
-          <button class="sim-type-btn" data-type="order_status" onclick="simSelectType(this)">Order Status</button>
-          <button class="sim-type-btn" data-type="product" onclick="simSelectType(this)">Product</button>
-          <button class="sim-type-btn" data-type="payment" onclick="simSelectType(this)">Payment</button>
-          <button class="sim-type-btn" data-type="general" onclick="simSelectType(this)">General</button>
-        </div>
-
-        <div style="display:flex;gap:12px;margin-top:20px;align-items:end">
-          <button class="btn btn-primary" onclick="simLoadRandom()" id="sim-load-btn" style="flex:1">Load Random</button>
-          <input id="sim-ticket-id" type="text" placeholder="Ticket ID" style="width:120px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-          <button class="btn btn-action" onclick="simLoadTicket(document.getElementById('sim-ticket-id').value)">Load Ticket</button>
-        </div>
-        <div id="sim-loading" style="display:none;margin-top:16px;color:var(--text-tertiary);text-align:center">Loading conversation...</div>
-
-        <!-- Manual test -->
-        <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border)">
-          <div class="context-section-label" style="border:none;padding:0;margin-bottom:10px">Manual Test</div>
-          <div style="display:flex;gap:12px;margin-bottom:10px">
-            <div style="flex:1">
-              <label class="label">Customer Email</label>
-              <input id="test-email" type="email" placeholder="customer@example.com" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-            </div>
-            <div style="flex:1">
-              <label class="label">Order # (optional)</label>
-              <input id="test-order" type="text" placeholder="e.g. 29238" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-            </div>
-          </div>
-          <label class="label">Customer Messages (one per line)</label>
-          <textarea id="test-messages" rows="3" placeholder="the AJ is too tight around the waist&#10;yes size 14 please" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset);resize:vertical"></textarea>
-          <div class="btn-row" style="margin-top:10px">
-            <button class="btn btn-primary" onclick="runTest()">Run Test</button>
-            <button class="btn btn-secondary" onclick="clearTest()">Clear</button>
-          </div>
-        </div>
-
-        <!-- Replay -->
-        <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border)">
-          <div class="context-section-label" style="border:none;padding:0;margin-bottom:10px">Replay Gorgias Ticket</div>
-          <div style="display:flex;gap:12px;align-items:end">
-            <div style="flex:1">
-              <label class="label">Ticket ID</label>
-              <input id="test-ticket-id" type="text" placeholder="e.g. 90842753" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;font-size:13px;background:var(--surface-inset)">
-            </div>
-            <button class="btn btn-action" onclick="replayTicket()">Replay</button>
-          </div>
-        </div>
-
-        <!-- Test results (shown inline below) -->
-        <div id="test-results" style="display:none;margin-top:24px"></div>
-      </div>
-
-        <!-- Active session -->
-        <div id="sim-active" style="display:none" class="sim-layout">
-          <div class="sim-sidebar">
-            <div class="detail-section">
-              <div class="label">Customer</div>
-              <div id="sim-customer-info"></div>
-              <div id="sim-ltv-stats" class="ltv-stats" style="margin-top:8px"></div>
-            </div>
-            <div class="detail-section">
-              <div class="label">Order</div>
-              <div id="sim-order-info"></div>
-              <div id="sim-order-links" class="order-links" style="margin-top:8px"></div>
-            </div>
-            <details id="sim-past-tickets" style="display:none;margin-top:12px" class="detail-section">
-              <summary>Past Tickets <span id="sim-tickets-count" class="badge badge-muted"></span></summary>
-              <div id="sim-tickets-list"></div>
-            </details>
-            <div id="sim-source-info" style="font-size:11px;color:var(--text-tertiary);margin-top:12px"></div>
-            <!-- Action Chat in simulator -->
-            <div id="sim-action-panel" class="detail-section" style="margin-top:12px">
-              <div class="label">Action</div>
-              <div class="action-chat-messages" id="sim-action-chat-messages" style="max-height:200px"></div>
-              <div class="action-chat-input-row">
-                <input type="text" class="action-chat-input" id="sim-action-chat-input"
-                  placeholder="exchange, refund, edit..."
-                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();simSendActionMessage()}" />
-                <button class="action-chat-send" id="sim-action-chat-send" onclick="simSendActionMessage()">Send</button>
-              </div>
-            </div>
-            <button class="btn btn-dismiss" onclick="simEndSession()" style="margin-top:16px;width:100%">End Session</button>
-          </div>
-          <div class="sim-main">
-            <div id="sim-thread"></div>
-            <div id="sim-controls"></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </main>
 
   <script src="/app.js"></script>
