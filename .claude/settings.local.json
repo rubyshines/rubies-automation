@@ -69,7 +69,11 @@
       "WebFetch(domain:shopify.dev)",
       "mcp__rubies-cs__check_follow_ups",
       "mcp__rubies-cs__shipping_delay_list",
-      "mcp__rubies-cs__passport_claims"
+      "mcp__rubies-cs__passport_claims",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(cp \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/CLAUDE.md\" \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/docs/memory-system-snapshot/CLAUDE.md.copy\")",
+      "Bash(cp \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.claude/commands/orient.md\" \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/docs/memory-system-snapshot/orient.md.copy\")"
     ]
   },
   "enableAllProjectMcpServers": true,
