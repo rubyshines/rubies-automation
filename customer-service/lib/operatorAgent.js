@@ -7,7 +7,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { getProductNickname, PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./sizingEngine');
+const { PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./sizingEngine');
 const { KNOWN_SIZES_UPPER } = require('./sizeUtils');
 
 let _anthropic;
@@ -185,18 +185,6 @@ async function operatorAgent(message, context, history = [], onEvent) {
           // The tool auto-finds the correct fulfilled order when this is omitted
           if (toolUse.input.original_order_id && !String(toolUse.input.original_order_id).includes('gid://')) {
             delete toolUse.input.original_order_id;
-          }
-          // Convert sku+target_size items to query items (more reliable with Option 1/2 products)
-          if (toolUse.input.items) {
-            toolUse.input.items = toolUse.input.items.map(item => {
-              if (item.sku && item.target_size && !item.query) {
-                // Find the product name from the order context
-                const orderItem = (context.order_items || []).find(oi => oi.sku === item.sku);
-                const productName = orderItem ? (getProductNickname(orderItem.title) || orderItem.title) : item.sku;
-                return { query: `${productName} ${item.target_size}`, quantity: item.quantity || 1 };
-              }
-              return item;
-            });
           }
         }
 
