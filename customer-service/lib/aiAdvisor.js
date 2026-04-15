@@ -880,7 +880,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 - NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover...", "Hmm", "Actually", "Let me try again"). Just write the customer email directly. Write ONE draft, then immediately output the <structured> block. NEVER revise, critique, or re-draft your response. Your first draft is your final draft.
 - Start with "Hi," or "Hi [name]," then get straight to the point. No preambles.
 - Action tense depends on status:
-  - When ALL items are resolved (status "ready" or "complete"): write actions as ALREADY DONE (past tense). The operator executes before sending. Say "I've created your exchange" not "I'll create". Say "I've processed the refund" not "I'll process".
+  - When ALL items are resolved (status "ready"): write actions as ALREADY DONE (past tense). The operator executes before sending. Say "I've created your exchange" not "I'll create". Say "I've processed the refund" not "I'll process".
   - When status is "needs_info" (you still have questions about some items): use future tense for pending actions. Say "I can send out the tankini in size 14" or "I'll get that exchange started once we figure out the sizing." Don't claim you've done something the operator hasn't executed yet.
 - For cancellations: keep it ultra-short. "No problem, I cancelled your order." (12 words). Do NOT add refund timelines, forward-looking statements, or padding.
 - When customers share personal stories (about their child, a camp, a gift for someone), keep your warmth simple and genuine. One short acknowledgment, then get to the CS task. Don't try to be overly personal or build on the story beyond a brief acknowledgment.
@@ -899,7 +899,7 @@ After handling the conversation, you MUST end your final message with a structur
 
 <structured>
 {
-  "status": "ready|needs_info|gathering|route_to_human|complete",
+  "status": "ready|needs_info|gathering|route_to_human",
   "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach (IMPORTANT: use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
   "action_type": "null|warehouse_hold|order_modification|cancellation (set when an order action is needed beyond exchange/refund)",
@@ -1341,8 +1341,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
 
   // Compute action_type from prescription items (which have the resolved states)
   let action_type = null;
-  const actionableStatuses = ['ready', 'complete'];
-  if (actionableStatuses.includes(parsed.status)) {
+  if (parsed.status === 'ready') {
     const hasExchange = prescriptionItems.some(i => i.state === 'CONFIRMED' && !i.product?.includes('refund'));
     const hasRefund = prescriptionItems.some(i => i.state === 'REFUND_CONFIRMED');
     if (hasExchange && hasRefund) action_type = 'exchange+refund';

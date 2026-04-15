@@ -51,10 +51,10 @@ async function handleTestConversation({ customer_email, messages, order_number }
       s = result?._structured;
 
       // Shipping/non-exchange responses have a different structure — handle directly
-      if (s && !s.intake && (s.results || s.status === 'route_to_human' || s.status === 'complete' || s.error)) {
+      if (s && !s.intake && (s.results || s.status === 'route_to_human' || s.status === 'ready' || s.error)) {
         const agentText = result._composedResponse || result.draft || s.results?.[0]?.summary || '(No response)';
         const cleanResponse = agentText;
-        conversationLog.push({ messageNum: i + 1, customer: customerMsg, agent: cleanResponse, status: s.status || 'complete', _structured: s, items: [], name: null, pronouns: null, flags: [] });
+        conversationLog.push({ messageNum: i + 1, customer: customerMsg, agent: cleanResponse, status: s.status || 'ready', _structured: s, items: [], name: null, pronouns: null, flags: [] });
         continue;
       }
 

@@ -452,7 +452,7 @@ async function apiRefreshDraft(id) {
     structured_output: s,
     audit_trail: s?.audit || [],
     advisor_status: s?.status,
-    confidence: ['ready', 'complete'].includes(s?.status) ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+    confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
     action_type: s?.action_type || null,
     message_type: s?.intake?.message_type || null,
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
@@ -1792,7 +1792,7 @@ const paramRoutes = [
 
     const s = result._structured;
     const newDraft = s?._composedResponse || '';
-    const confidence = ['ready', 'complete'].includes(s?.status) ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low';
+    const confidence = s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low';
 
     const { data: newDraftRow } = await supabase.from('cs_ai_drafts').insert({
       ticket_id: parseInt(id),

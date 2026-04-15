@@ -904,14 +904,6 @@ function renderActionPanel(draft) {
     // Restore chat history so follow-up messages have context
     _actionChatHistory = savedChat;
 
-    // If advisor says complete, action is done — no prefill needed
-    if (draft.advisor_status === 'complete') {
-      headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done</span>`;
-      input.placeholder = 'Request additional actions...';
-      input.value = '';
-      return;
-    }
-
     // Show updated prefill from re-draft if action type changed
     const newPrefill = buildActionPrefill(draft);
     input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
@@ -921,14 +913,6 @@ function renderActionPanel(draft) {
     if (chatResponse && isConfirmationPrompt(chatResponse)) {
       renderQuickReplies(['Yes, confirm', 'No, cancel']);
     }
-    return;
-  }
-
-  // Advisor says complete, no chat history — action was done in a prior pass
-  if (draft.advisor_status === 'complete') {
-    headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done</span>`;
-    input.placeholder = 'Request additional actions...';
-    input.value = '';
     return;
   }
 
@@ -1454,7 +1438,7 @@ async function refreshDraft(steer) {
     localStorage.setItem(`draft-ticket-${currentTicketId}`, result.draft_response);
 
     if (result.structured?.status) {
-      const conf = ['ready', 'complete'].includes(result.structured.status) ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
+      const conf = result.structured.status === 'ready' ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
       document.getElementById('detail-confidence').textContent = conf;
       document.getElementById('detail-confidence').className = `badge badge-${conf}`;
       document.getElementById('detail-status-badge').textContent = result.structured.status;
