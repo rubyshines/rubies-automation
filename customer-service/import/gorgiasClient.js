@@ -217,13 +217,27 @@ async function addTicketMessage(ticketId, { fromAddress, fromName, bodyText, fro
 
 /**
  * Add an internal note to a ticket (not visible to customer).
+ * Gorgias requires `sender` + `from_agent: true` for internal notes.
  */
+let _noteSenderId = null;
+async function getNoteSenderId() {
+  if (_noteSenderId) return _noteSenderId;
+  const query = process.env.GORGIAS_NOTE_SENDER || 'RUBIES AI';
+  const user = await findUser(query);
+  if (!user) throw new Error(`[gorgias] Could not resolve internal-note sender for "${query}"`);
+  _noteSenderId = user.id;
+  return _noteSenderId;
+}
+
 async function addInternalNote(ticketId, noteText) {
+  const senderId = await getNoteSenderId();
   return apiFetch(`/tickets/${ticketId}/messages`, {
     method: 'POST',
     body: JSON.stringify({
       channel: 'internal-note',
       via: 'api',
+      from_agent: true,
+      sender: { id: senderId },
       body_text: noteText,
       body_html: `<p>${noteText.replace(/\n/g, '<br>')}</p>`,
     }),

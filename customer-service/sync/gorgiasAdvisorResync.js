@@ -107,10 +107,16 @@ async function run() {
     }
 
     // Check status drift
-    const gStatus = gTicket.status; // trust the view — if it's in "All open", it's open
+    //  - Gorgias open: Advisor open/snoozed/parked are all fine (operator may have parked/snoozed on our side)
+    //  - Gorgias snoozed: Advisor must also be snoozed
+    const gStatus = gTicket.status;
     const aStatus = advisor.status;
-    if (gStatus === 'open' && aStatus !== 'open') {
+    if (gStatus === 'open' && !['open', 'snoozed', 'parked'].includes(aStatus)) {
       toProcess.push({ ticket: gTicket, reason: `status drift (G:open → A:${aStatus})`, existingIds });
+      continue;
+    }
+    if (gStatus === 'snoozed' && aStatus !== 'snoozed') {
+      toProcess.push({ ticket: gTicket, reason: `status drift (G:snoozed → A:${aStatus})`, existingIds });
       continue;
     }
 
@@ -205,8 +211,7 @@ async function run() {
             gorgias_status: ticket.status || 'open',
             gorgias_updated_at: ticket.updated_datetime || null,
             updated_at: new Date().toISOString(),
-            created_at: ticket.created_datetime || new Date().toISOString(),
-          }, { onConflict: 'gorgias_ticket_id' });
+          }, { onConflict: 'gorgias_ticket_id', ignoreDuplicates: false });
 
         if (upsertErr) {
           console.log(`    → skipped by processTicket, upsert failed: ${upsertErr.message}`);
