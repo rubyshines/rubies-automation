@@ -73,7 +73,13 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Bash(cp \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/CLAUDE.md\" \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/docs/memory-system-snapshot/CLAUDE.md.copy\")",
-      "Bash(cp \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.claude/commands/orient.md\" \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/docs/memory-system-snapshot/orient.md.copy\")"
+      "Bash(cp \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.claude/commands/orient.md\" \"/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/docs/memory-system-snapshot/orient.md.copy\")",
+      "Bash(cp .claude/plans/agile-splashing-giraffe.md ~/.claude/plans/agile-splashing-giraffe.project-copy.md)",
+      "Bash(rm .claude/plans/agile-splashing-giraffe.md)",
+      "Bash(rmdir .claude/plans)",
+      "Bash(ln -s ~/.claude/plans .claude/plans)",
+      "Bash(mkdir -p .claude/memory/archive)",
+      "Read(//Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.claude/memory/**)"
     ]
   },
   "enableAllProjectMcpServers": true,

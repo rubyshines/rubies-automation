@@ -28,5 +28,8 @@ exchange-rules-review.csv
 # Claude Code local settings
 .claude/settings.local.json
 .claude/projects/
+.claude/plans
 .claude/plans/
+.claude/memory
+.claude/memory/
 .ngrok/
