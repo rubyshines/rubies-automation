@@ -1,0 +1,159 @@
+
+========================================
+  RUBIES Gmail Inbox Discovery
+========================================
+
+Account: jamie@rubyshines.com
+Total messages: 70,028
+Total threads:  32,170
+History ID:     10594907
+
+Sampling 500 messages for analysis...
+
+  Listed 500 message IDs
+  Fetched metadata for 500 messages
+
+Counting messages by time period (this takes a moment)...
+
+========================================
+  MESSAGE VOLUME BY TIME PERIOD
+========================================
+
+  Last 30 days            977 messages
+  Last 90 days           2774 messages
+  Last 6 months          6480 messages
+  Last 1 year           16422 messages
+  Last 2 years          31560 messages
+  Last 3 years          45634 messages
+  All time              70028 messages
+
+========================================
+  SAMPLE ANALYSIS (most recent 500)
+========================================
+
+  Sent by you:     121 (24%)
+  Received:        379 (76%)
+  Unique threads:  326
+  Avg message size: 200.6 KB
+  Median msg size:  13.2 KB
+
+  Date range of sample:
+    2026 Q1     500 ##########################################################################################################################################################################################################################################################
+
+========================================
+  TIER 1 CLASSIFICATION (sample)
+========================================
+
+  Auto-skip (notifications/SaaS): 181 (48% of received)
+  Auto-classified (known domains): 64 (17% of received)
+  Needs AI classification:         134 (35% of received)
+
+========================================
+  TOP 30 SENDER DOMAINS
+========================================
+
+    32  microsoft.com [SKIP]
+    29  qq.com [PRODUCTION_ORDERS]
+    27  gmail.com
+        e.g. "Re: Sizing info: Cami Top, Sports Bra, One-Piece"
+    21  rubyshines.com
+        e.g. ""Because of RUBIES, my daughter grew up doing what any other"
+    18  amazonses.com [SKIP]
+    17  passportglobal.com [3PL_FULFILLMENT]
+    14  judge.me [SKIP]
+    13  fastmaildmarc.com [SKIP]
+    12  corp.mail.com [SKIP]
+    10  google.com [SKIP]
+     9  playbook.media
+        e.g. "New Email contact to use going forward"
+     7  alerts.comcast.net [SKIP]
+     7  au-1.mimecastreport.com [SKIP]
+     7  nitrologistics.co [3PL_FULFILLMENT]
+     6  us-4.mimecastreport.com [SKIP]
+     6  bell.ca
+        e.g. "Report Domain: rubyshines.com Submitter: bell.ca Report-ID: "
+     6  lolipop.jp [SKIP]
+     6  azaccounting.com [FINANCE_LEGAL]
+     5  warehance.com [3PL_FULFILLMENT]
+     5  slack.com [SKIP]
+     5  sheboptheshop.com
+        e.g. "Re: Referral from Searah Deysach of EarlyToBed re: gender af"
+     4  corp.mail.ru [SKIP]
+     4  hopeteammarketing.com
+        e.g. "Re: Your recommended name was selected for the new RUBIES Ga"
+     4  soverin.net [SKIP]
+     4  alln-inbound-h.cisco.com [SKIP]
+     3  github.com [SKIP]
+     3  news.railway.app [SKIP]
+     3  fashionzone.ca
+        e.g. "Fashion Zone's Latest 💌"
+     3  secureserver.net [SKIP]
+     3  booking.com [SKIP]
+
+========================================
+  ESTIMATED BACKFILL COSTS
+========================================
+
+  Last 30 days:
+    Messages: 977 (741 received, 262 need AI)
+    Est. threads to summarize: ~129
+    Classification:  $0.20
+    Summarization:   $2.34
+    Project cluster: $0.18
+    TOTAL:           $2.72
+
+  Last 90 days:
+    Messages: 2,774 (2,103 received, 744 need AI)
+    Est. threads to summarize: ~366
+    Classification:  $0.56
+    Summarization:   $6.65
+    Project cluster: $0.50
+    TOTAL:           $7.71
+
+  Last 6 months:
+    Messages: 6,480 (4,912 received, 1,737 need AI)
+    Est. threads to summarize: ~855
+    Classification:  $1.30
+    Summarization:   $15.54
+    Project cluster: $1.16
+    TOTAL:           $18.00
+
+  Last 1 year:
+    Messages: 16,422 (12,448 received, 4,401 need AI)
+    Est. threads to summarize: ~2,168
+    Classification:  $3.30
+    Summarization:   $39.40
+    Project cluster: $2.93
+    TOTAL:           $45.63
+
+  Last 2 years:
+    Messages: 31,560 (23,922 received, 8,458 need AI)
+    Est. threads to summarize: ~4,166
+    Classification:  $6.34
+    Summarization:   $75.71
+    Project cluster: $5.63
+    TOTAL:           $87.69
+
+  Last 3 years:
+    Messages: 45,634 (34,591 received, 12,230 need AI)
+    Est. threads to summarize: ~6,024
+    Classification:  $9.17
+    Summarization:   $109.48
+    Project cluster: $8.14
+    TOTAL:           $126.79
+
+  Daily incremental (est. 30 messages/day):
+    AI messages: ~8, threads: ~4
+    Daily cost:  $0.0787
+    Monthly est: $2.36
+
+========================================
+  RECOMMENDATION
+========================================
+
+  Your inbox is large (70K+). Consider starting with 2 years of history
+  to keep the backfill manageable and costs reasonable.
+
+  Next step: Review the domain list above and identify any domains
+  that should be added to Tier 1 rules (to reduce AI cost).
+
