@@ -21,6 +21,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
 const { autoLinkProducts } = require('../lib/autoLinker');
+const { canonicalMessageType } = require('../lib/messageTypes');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // Product config for auto-linking (loaded at startup)
@@ -428,6 +429,7 @@ async function apiRefreshDraft(id) {
       customer_email: draft.customer_email,
       customer_name: senderName,
       issue_description: issueDescription,
+      current_gorgias_ticket_id: draft.gorgias_ticket_id,
     });
   } catch (err) {
     console.warn(`[refresh] buildContext failed: ${err.message}`);
@@ -454,7 +456,7 @@ async function apiRefreshDraft(id) {
     advisor_status: s?.status,
     confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
     action_type: s?.action_type || null,
-    message_type: s?.intake?.message_type || null,
+    message_type: canonicalMessageType(s?.message_type, `draft ${id}`),
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
   };
 
@@ -483,7 +485,8 @@ async function apiRefreshDraft(id) {
   // Also update ticket row with latest classification
   if (draft.ticket_id) {
     const ticketUpdates = { updated_at: new Date().toISOString() };
-    if (s?.intake?.message_type) ticketUpdates.message_type = s.intake.message_type;
+    if (s?.message_type) ticketUpdates.message_type = canonicalMessageType(s.message_type, `ticket ${draft.ticket_id}`);
+    if (s?.customer_sentiment) ticketUpdates.customer_sentiment = s.customer_sentiment;
     if (s?.action_type) ticketUpdates.action_type = s.action_type;
     if (s?.confidence) ticketUpdates.confidence = s.confidence;
     if (s?.status) ticketUpdates.advisor_status = s.status;
@@ -1381,21 +1384,39 @@ async function apiGetCustomerContext(email, orderNumber) {
     })),
   }));
 
-  // Build past tickets with AI-processed flag
+  // Build past tickets with AI-processed flag.
+  // For AI-processed tickets, enrich with the advisor's summary + message_type
+  // from cs_tickets (the new ticket-centric store) — the cs_conversations
+  // subject/summary is from the older import and may lag the advisor output.
   const aiTicketIds = new Set((aiDraftsRes.data || []).map(d => String(d.gorgias_ticket_id)));
-  const pastTickets = (ticketsRes.data || []).map(t => ({
-    id: t.id,
-    gorgias_ticket_id: t.source_id,
-    created_at: t.created_at,
-    resolved_at: t.resolved_at,
-    category: t.category,
-    subject: t.subject,
-    summary: t.summary,
-    resolution_successful: t.resolution_successful,
-    resolution_type: t.resolution_type,
-    message_count: t.message_count,
-    ai_processed: aiTicketIds.has(String(t.source_id)),
-  }));
+  const csTicketSourceIds = (ticketsRes.data || []).map(t => t.source_id).filter(Boolean);
+  let csTicketEnrichment = {};
+  if (csTicketSourceIds.length) {
+    const { data: csTicketRows } = await supabase
+      .from('cs_tickets')
+      .select('gorgias_ticket_id, summary, message_type')
+      .in('gorgias_ticket_id', csTicketSourceIds);
+    for (const row of csTicketRows || []) {
+      csTicketEnrichment[String(row.gorgias_ticket_id)] = row;
+    }
+  }
+  const pastTickets = (ticketsRes.data || []).map(t => {
+    const enriched = csTicketEnrichment[String(t.source_id)];
+    return {
+      id: t.id,
+      gorgias_ticket_id: t.source_id,
+      created_at: t.created_at,
+      resolved_at: t.resolved_at,
+      category: enriched?.message_type || t.category,
+      subject: t.subject,
+      // Prefer advisor summary from cs_tickets when available (6-8 word tag).
+      summary: enriched?.summary || t.summary,
+      resolution_successful: t.resolution_successful,
+      resolution_type: t.resolution_type,
+      message_count: t.message_count,
+      ai_processed: aiTicketIds.has(String(t.source_id)),
+    };
+  });
 
   return { customer, ltv, ticket_order: ticketOrder, other_orders: otherOrders, past_tickets: pastTickets };
 }
@@ -1507,7 +1528,30 @@ async function apiGetTicket(id) {
     .eq('ticket_id', id)
     .order('created_at', { ascending: true });
 
-  return { ...ticket, active_draft: activeDraft, drafts: allDrafts || [] };
+  // Related ticket: the single most-recent closed exchange/refund/defect ticket
+  // for this customer within 60 days that has a populated history_summary.
+  // Matches exactly what the advisor injects via its [PRIOR TICKET] block —
+  // what the operator sees here is what the advisor sees. Legacy tickets from
+  // before the advisor reliably emitted history_summary are intentionally
+  // excluded; they still appear in the Past Tickets panel below.
+  let priorTickets = [];
+  if (ticket.customer_email) {
+    const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: priors } = await supabase
+      .from('cs_tickets')
+      .select('id, gorgias_ticket_id, message_type, order_number, closed_at, history_summary, summary')
+      .eq('customer_email', ticket.customer_email)
+      .eq('status', 'closed')
+      .in('message_type', ['exchange', 'refund', 'defect'])
+      .gte('closed_at', cutoff)
+      .not('history_summary', 'is', null)
+      .neq('id', id)
+      .order('closed_at', { ascending: false })
+      .limit(1);
+    priorTickets = priors || [];
+  }
+
+  return { ...ticket, active_draft: activeDraft, drafts: allDrafts || [], prior_tickets: priorTickets };
 }
 
 async function apiSendTicketMessage(ticketId, body) {
@@ -1805,7 +1849,7 @@ const paramRoutes = [
       audit_trail: s?.audit || [],
       confidence,
       advisor_status: s?.status,
-      message_type: s?.intake?.message_type || null,
+      message_type: canonicalMessageType(s?.message_type, `operator-redraft ticket ${id}`),
     }).select('id').single();
 
     if (newDraftRow) {

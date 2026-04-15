@@ -303,7 +303,7 @@ const tools = [
               audit_trail: [`[Follow-up] No customer reply ${days_threshold}+ days after agent response`],
               confidence: 'high',
               advisor_status: 'follow_up',
-              message_type: 'follow_up',
+              draft_kind: 'follow_up_care',
               status: 'pending',
               previous_draft_id: stale.id,
             })
@@ -510,7 +510,7 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
           .eq('gorgias_ticket_id', ticket.gorgias_ticket_id)
           .eq('status', 'sent')
           .is('follow_up_draft_id', null)
-          .not('message_type', 'in', '("follow_up","personal_follow_up")')
+          .eq('draft_kind', 'advisor_draft')
           .order('sent_at', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -571,7 +571,7 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
             audit_trail: ['[Auto Follow-up Stage 1] 3-day no-reply, sent via Gorgias'],
             confidence: 'high',
             advisor_status: 'follow_up',
-            message_type: 'follow_up',
+            draft_kind: 'follow_up_care',
             status: 'sent',
             sent_at: new Date().toISOString(),
             previous_draft_id: draft.id,
@@ -626,7 +626,7 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
           .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at, previous_draft_id')
           .eq('gorgias_ticket_id', ticket.gorgias_ticket_id)
           .eq('status', 'sent')
-          .eq('message_type', 'follow_up')
+          .eq('draft_kind', 'follow_up_care')
           .is('follow_up_draft_id', null)
           .order('sent_at', { ascending: false })
           .limit(1)
@@ -716,7 +716,7 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
             audit_trail: ['[Auto Follow-up Stage 2] 6-day no-reply, personal email from jamie@rubyshines.com'],
             confidence: 'high',
             advisor_status: 'follow_up',
-            message_type: 'personal_follow_up',
+            draft_kind: 'follow_up_personal',
             status: 'sent',
             sent_at: new Date().toISOString(),
             previous_draft_id: followUpDraft.id,

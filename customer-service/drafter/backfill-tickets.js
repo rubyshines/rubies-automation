@@ -11,6 +11,7 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { canonicalMessageType } = require('../lib/messageTypes');
 
 async function backfill() {
   const supabase = getSupabaseClient();
@@ -82,7 +83,7 @@ async function backfill() {
           conversation_history: latest.conversation_history,
           order_context: latest.order_context,
           customer_context: latest.customer_context,
-          message_type: latest.message_type,
+          message_type: canonicalMessageType(latest.message_type, `backfill ticket ${latest.gorgias_ticket_id}`),
           confidence: latest.confidence,
           advisor_status: latest.advisor_status,
           active_draft_id: pendingDraft?.id || null,

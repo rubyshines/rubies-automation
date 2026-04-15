@@ -77,6 +77,12 @@ CREATE INDEX IF NOT EXISTS idx_drafts_ticket ON cs_ai_drafts (gorgias_ticket_id)
 CREATE INDEX IF NOT EXISTS idx_drafts_created ON cs_ai_drafts (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_drafts_confidence ON cs_ai_drafts (confidence);
 
+-- draft_kind: distinguishes regular advisor drafts from follow-up drafts.
+-- Previously overloaded into message_type ('follow_up' / 'personal_follow_up').
+ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS draft_kind text DEFAULT 'advisor_draft';
+-- Allowed values: 'advisor_draft' | 'follow_up_care' | 'follow_up_personal'
+CREATE INDEX IF NOT EXISTS idx_drafts_kind ON cs_ai_drafts (draft_kind);
+
 -- ============================================================
 -- 3. Feedback log (one row per send/release action)
 -- ============================================================

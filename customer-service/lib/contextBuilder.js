@@ -15,6 +15,12 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 // Max age before falling back to Shopify (1 hour)
 const STALENESS_THRESHOLD_MS = 60 * 60 * 1000;
 
+// Prior-ticket lookup for second-round follow-up context injection.
+// Only pulls closed tickets in categories where a prior action might still
+// be relevant to a new message (exchange/refund/defect). See domain_cs.md.
+const PRIOR_TICKET_MESSAGE_TYPES = ['exchange', 'refund', 'defect'];
+const PRIOR_TICKET_LOOKBACK_DAYS = 60;
+
 // ---------------------------------------------------------------------------
 // Order analysis — split orders into fulfilled vs exchange vs all
 // ---------------------------------------------------------------------------
@@ -254,7 +260,47 @@ function extractOrderNumber(text) {
   return null;
 }
 
-async function buildContext({ customer_email, customer_name, order_number, issue_description, existingIntake }) {
+/**
+ * Fetch the most recent closed ticket (exchange/refund/defect) for a customer
+ * within the lookback window. Requires a populated history_summary — legacy
+ * tickets from before the advisor reliably emitted that field are skipped.
+ * Operators can surface legacy context manually via the dashboard's "Copy to
+ * steer" helper on the Prior Tickets panel.
+ */
+async function fetchPriorTicket(customer_email, exclude_gorgias_ticket_id) {
+  if (!customer_email) return null;
+  const supabase = getSupabaseClient();
+  const cutoff = new Date(Date.now() - PRIOR_TICKET_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  let q = supabase
+    .from('cs_tickets')
+    .select('id, gorgias_ticket_id, message_type, order_number, closed_at, history_summary')
+    .eq('customer_email', customer_email.toLowerCase().trim())
+    .eq('status', 'closed')
+    .in('message_type', PRIOR_TICKET_MESSAGE_TYPES)
+    .gte('closed_at', cutoff)
+    .not('history_summary', 'is', null)
+    .order('closed_at', { ascending: false })
+    .limit(1);
+
+  if (exclude_gorgias_ticket_id) {
+    q = q.neq('gorgias_ticket_id', exclude_gorgias_ticket_id);
+  }
+
+  const { data: rows } = await q;
+  const prior = rows?.[0];
+  if (!prior) return null;
+
+  return {
+    gorgias_ticket_id: prior.gorgias_ticket_id,
+    message_type: prior.message_type,
+    order_number: prior.order_number,
+    closed_at: prior.closed_at,
+    history_summary: prior.history_summary,
+  };
+}
+
+async function buildContext({ customer_email, customer_name, order_number, issue_description, existingIntake, current_gorgias_ticket_id }) {
   const messageOrderNumber = extractOrderNumber(issue_description);
 
   // Try Supabase first, fall back to Shopify
@@ -340,6 +386,15 @@ async function buildContext({ customer_email, customer_name, order_number, issue
     return { ...li, _skuSize: normalized, _rawSkuSize: raw };
   });
 
+  // Prior-ticket context (for second-round follow-ups). Safe to fail — absence
+  // of a prior ticket is the common case, not an error.
+  let priorTicket = null;
+  try {
+    priorTicket = await fetchPriorTicket(customer_email, current_gorgias_ticket_id);
+  } catch (err) {
+    console.warn(`[contextBuilder] fetchPriorTicket failed: ${err.message}`);
+  }
+
   return {
     customer,
     customerGid,
@@ -354,6 +409,7 @@ async function buildContext({ customer_email, customer_name, order_number, issue
     effectiveOrderNumber,
     resolvedByName,
     conversationEmail: resolvedByName ? customer_email : null,
+    priorTicket,
   };
 }
 

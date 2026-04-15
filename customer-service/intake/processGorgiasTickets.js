@@ -23,6 +23,7 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { buildContext } = require('../lib/contextBuilder');
 const gorgias = require('../import/gorgiasClient');
+const { canonicalMessageType } = require('../lib/messageTypes');
 
 // Lazy-load AI advisor
 let _advisorHandler = null;
@@ -299,6 +300,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       customer_name: senderName,
       issue_description: issueDescription,
       existingIntake: previousIntake,
+      current_gorgias_ticket_id: ticketId,
     });
   } catch (err) {
     console.warn(`[intake] Pre-context fetch failed for ${ticketId}: ${err.message}`);
@@ -375,7 +377,9 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const hasAgentReply = conversationHistory.some(m => m.sender === 'agent' && !m.is_bot);
 
   // Upsert cs_tickets row (ticket-centric model)
-  const messageType = structured.intake?.message_type || structured.intake?.items?.[0]?.issue || 'unknown';
+  // message_type is the canonical inquiry category — read from top-level structured output,
+  // validated against the allowed set. Non-canonical values are coerced to 'uncategorized'.
+  const messageType = canonicalMessageType(structured.message_type, `ticket ${ticketId}`);
   const confidence = structured.confidence || 'low';
 
   // Get customer name — AI extraction, then preContext, then Supabase fallback
@@ -409,6 +413,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     confidence,
     summary: structured.summary || null,
     history_summary: structured.history_summary || null,
+    customer_sentiment: structured.customer_sentiment || null,
     advisor_status: structured.status,
     source: ticketSource,
     updated_at: new Date().toISOString(),

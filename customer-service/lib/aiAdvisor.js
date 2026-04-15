@@ -738,6 +738,14 @@ If the customer already received a previous exchange for this product (visible a
 - Auto-confirm the next size in that direction. They've already been through this once — don't make them re-explain.
 - Reassure them and offer the exchange. Don't suggest a refund for repeat exchangers.
 
+### Second-Round Follow-Ups ([PRIOR TICKET] block)
+If the user message is preceded by a [PRIOR TICKET — #X, closed YYYY-MM-DD, order #Y, category: exchange/refund/defect] block, the customer had a previous resolved ticket in the same category. Use this as context for the current message:
+- Read the prior ticket's history summary. It tells you what they originally got, what they asked for, what action was taken, and the outcome.
+- If the current message suggests the prior resolution didn't work (e.g. the replacement still doesn't fit, the refund didn't arrive, the replacement had the same issue), treat this as a second round. Acknowledge the prior attempt briefly. Do not assume the prior resolution is still current.
+- Do not blindly re-execute the prior action. If the customer previously exchanged to size L and is saying L still doesn't fit, do not exchange to L again — offer the next size or ask for measurements.
+- If the current message is unrelated to the prior ticket (e.g. new product, new order), treat it as a fresh inquiry and ignore the prior ticket context.
+- When unclear what went wrong, ask. Don't guess.
+
 ### Multi-Size Purchase Detection
 If the customer bought MULTIPLE sizes of the SAME product on one order (e.g., AJ in size 10 and size 12 — they were trying to find the right fit):
 - "Too tight" → they want to exchange the LARGEST size they bought (the others were already too small). Only exchange that one.
@@ -900,7 +908,7 @@ After handling the conversation, you MUST end your final message with a structur
 <structured>
 {
   "status": "ready|needs_info|gathering|route_to_human",
-  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach (IMPORTANT: use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships)",
+  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. Use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships. If nothing fits, use 'uncategorized' — do not invent new values.)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
   "action_type": "null|warehouse_hold|order_modification|cancellation (set when an order action is needed beyond exchange/refund)",
   "items": [
@@ -923,6 +931,7 @@ After handling the conversation, you MUST end your final message with a structur
   "confidence": "high|medium|low",
   "summary": "6-8 word lowercase summary of the ticket for queue list view (e.g. 'exchange AJ 14→16 too tight' or 'shipping delay customs hold australia')",
   "history_summary": "2-4 sentence prose summary of what happened on this ticket, written for a future advisor call that needs to understand it as prior history. Include the original order number and items, what the customer was asking for, the action taken (exchange/refund/defect handling), and the outcome. Example: 'Customer ordered Naomi gaff size M (order #29784). Reported the fit was too tight and requested exchange to size L. Exchange draft order #30012 created and marked paid, shipped Jan 22. Ticket closed as resolved.' Only fill this for exchange/refund/defect tickets — null otherwise.",
+  "customer_sentiment": "positive|neutral|negative|null — overall tone of the customer across their messages. 'positive' = gratitude/satisfaction/resolved mood. 'negative' = frustration/upset/complaint. 'neutral' = matter-of-fact with no strong signal. null = no customer content to judge (bot-generated or internal). This is orthogonal to message_type — a refund ticket can still end positive.",
   "audit": ["reasoning step 1", "reasoning step 2"]
 }
 </structured>
@@ -1141,16 +1150,28 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const steerBlock = buildOperatorSteerBlock(operatorSteer);
   if (steerBlock) audit.push(`Operator steer: "${operatorSteer.trim()}"`);
 
+  // Prior-ticket context (second-round follow-up signal).
+  // Injected when the customer has a recent closed exchange/refund/defect ticket.
+  // See domain_cs.md for the second-round rule the advisor applies.
+  let priorTicketBlock = '';
+  const priorTicket = preContext?.priorTicket;
+  if (priorTicket) {
+    const closedDate = priorTicket.closed_at ? priorTicket.closed_at.substring(0, 10) : 'unknown';
+    const orderRef = priorTicket.order_number ? `, order ${priorTicket.order_number}` : '';
+    priorTicketBlock = `\n\n[PRIOR TICKET — #${priorTicket.gorgias_ticket_id}, closed ${closedDate}${orderRef}, category: ${priorTicket.message_type}]\n${priorTicket.history_summary}`;
+    audit.push(`Prior ticket injected: #${priorTicket.gorgias_ticket_id} (${priorTicket.message_type}, closed ${closedDate})`);
+  }
+
   // If there's existing intake (multi-turn), include previous context
   if (existingIntake) {
     messages.push({
       role: 'user',
-      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${steerBlock}`,
+      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}${priorTicketBlock}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${steerBlock}`,
     });
   } else {
     messages.push({
       role: 'user',
-      content: (issue_description || '(no message provided)') + steerBlock,
+      content: (issue_description || '(no message provided)') + priorTicketBlock + steerBlock,
     });
   }
 
@@ -1357,7 +1378,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
 
   // Post-process: detect outreach from AI's audit when message_type is generic
   // Check community FIRST (it may mention "not B2B" which would false-positive on business patterns)
-  if (intake.message_type === 'general_inquiry' || intake.message_type === 'unknown' || !intake.message_type) {
+  if (intake.message_type === 'general_inquiry' || intake.message_type === 'unknown' || intake.message_type === 'uncategorized' || !intake.message_type) {
     const auditText = (parsed.audit || []).join(' ').toLowerCase();
     if (/community.outreach|lgbtq.*org|queer.*org|pride.*org|gender.affirm.*partner|aligned with rubies/i.test(auditText)) {
       intake.message_type = 'community_outreach';
@@ -1399,6 +1420,12 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     action_type,
     confidence: parsed.confidence || 'medium',
     summary: parsed.summary || null,
+    // Expose top-level fields that processTicket / dashboard need to persist.
+    // message_type is the canonical category — kept in sync with intake.message_type
+    // (which sizingEngine and other internal consumers still read from).
+    message_type: intake.message_type || null,
+    history_summary: parsed.history_summary || null,
+    customer_sentiment: parsed.customer_sentiment || null,
     advisor_version: 'hybrid-v3',
     _composedResponse: composedResponse,
     audit: [...audit, ...(parsed.audit || [])],

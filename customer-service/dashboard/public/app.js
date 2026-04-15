@@ -443,6 +443,10 @@ function renderTicketDetail(ticket) {
   document.getElementById('other-orders-section').style.display = 'none';
   document.getElementById('past-tickets-section').style.display = 'none';
 
+  // Prior Tickets panel — recent closed exchange/refund/defect tickets for this
+  // customer. Mirrors what the advisor sees via its [PRIOR TICKET] injection.
+  renderPriorTicketsPanel(ticket.prior_tickets || []);
+
   // Async: load enriched customer context
   const orderNum = ticket.order_number ? String(ticket.order_number).replace('#', '') : null;
   loadCustomerContext(ticket.customer_email, orderNum);
@@ -654,17 +658,22 @@ async function loadCustomerContext(email, orderNumber) {
         const clickAction = t.gorgias_ticket_id
           ? `onclick="event.stopPropagation(); navigateToPastTicket('${t.gorgias_ticket_id}')"`
           : '';
-        const ticketRef = t.gorgias_ticket_id ? `#${t.gorgias_ticket_id}` : '';
+        // Truncate long/hash-style IDs (non-Gorgias imports) for layout consistency.
+        // Plain numeric Gorgias IDs are ~8 digits and pass through unchanged.
+        const rawId = t.gorgias_ticket_id ? String(t.gorgias_ticket_id) : '';
+        const displayId = rawId.length > 10 ? `${rawId.substring(0, 8)}…` : rawId;
+        const ticketRef = rawId ? `#${displayId}` : '';
 
+        const summaryText = esc(t.summary || t.subject || '');
         return `<div class="ticket-entry ticket-entry-navigable${recentClass}" ${clickAction}>
           <div class="ticket-entry-header">
             <span class="ticket-entry-id">${ticketRef}</span>
             <span class="ticket-entry-date">${timeAgo(t.created_at)}</span>
             <span class="category-badge ${categoryClass}">${esc(t.category || 'general')}</span>
             ${t.ai_processed ? '<span class="badge-ai">AI</span>' : ''}
-            <span class="ticket-entry-summary">${esc(t.subject || t.summary || '')}</span>
             ${resIcon}
           </div>
+          ${summaryText ? `<div class="ticket-entry-summary-row">${summaryText}</div>` : ''}
         </div>`;
       }).join('');
       pastSection.classList.remove('context-details-empty');
@@ -1849,10 +1858,47 @@ function formatTime(dateStr) {
   });
 }
 
+function renderPriorTicketsPanel(priorTickets) {
+  const section = document.getElementById('prior-tickets-section');
+  const listEl = document.getElementById('prior-tickets-list');
+  if (!section || !listEl) return;
+
+  if (!priorTickets.length) {
+    section.style.display = 'none';
+    listEl.innerHTML = '';
+    return;
+  }
+
+  section.style.display = '';
+
+  // Backend only returns rows with a populated history_summary — what appears
+  // here is exactly what the advisor injects via its [PRIOR TICKET] block.
+  listEl.innerHTML = priorTickets.map(p => {
+    const closedDate = p.closed_at ? new Date(p.closed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'unknown';
+    const category = p.message_type || 'unknown';
+    const categoryClass = getCategoryClass(category);
+    const order = p.order_number ? ` · ${esc(p.order_number)}` : '';
+    const gorgiasLink = `<a href="https://rubies.gorgias.com/app/ticket/${p.gorgias_ticket_id}" target="_blank" class="prior-ticket-link">#${p.gorgias_ticket_id} &#8599;</a>`;
+
+    return `<div class="prior-ticket-entry">
+      <div class="prior-ticket-header">
+        ${gorgiasLink}
+        <span class="category-badge ${categoryClass}">${esc(category.replace(/_/g, ' '))}</span>
+        <span class="prior-ticket-date">${closedDate}${order}</span>
+      </div>
+      <div class="prior-ticket-summary">${esc(p.history_summary)}</div>
+    </div>`;
+  }).join('');
+}
+
 function notifyNewDrafts(drafts) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  // Called with tickets (not drafts despite the name). Follow-up tab = follow-up
+  // notifications; new tab = new CS drafts. cs_tickets doesn't carry draft_kind,
+  // and follow-up state lives on the linked draft, so tab context is the signal.
+  const isFollowUpTab = typeof currentTab !== 'undefined' && currentTab === 'followup';
   for (const d of drafts) {
-    const title = d.message_type === 'follow_up' ? 'Follow-up needed' : 'New CS draft ready';
+    const title = isFollowUpTab ? 'Follow-up needed' : 'New CS draft ready';
     const body = `${d.customer_name || d.customer_email} — ${d.message_type || 'exchange'} (${d.confidence})`;
     const n = new Notification(title, { body, tag: `draft-${d.id}` });
     n.onclick = () => { window.focus(); selectDraft(d.id); n.close(); };

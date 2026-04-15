@@ -56,6 +56,11 @@ ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS history_summary text;
 CREATE INDEX IF NOT EXISTS idx_tickets_prior_lookup
   ON cs_tickets (customer_email, status, message_type, closed_at DESC);
 
+-- customer_sentiment: overall tone of the customer across their messages.
+-- Orthogonal to message_type (which is the inquiry category).
+-- Allowed values: 'positive' | 'neutral' | 'negative' | null
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS customer_sentiment text;
+
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts
 -- ============================================================
