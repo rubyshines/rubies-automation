@@ -1,6 +1,5 @@
 [build]
 builder = "NIXPACKS"
-nixpacksConfigPath = "nixpacks-no-chromium.toml"
 
 [deploy]
 startCommand = "node webhooks/server.js"
