@@ -67,6 +67,13 @@ header {
   z-index: 10;
 }
 
+.header-logo {
+  height: 32px;
+  width: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
 header h1 {
   font-size: 15px;
   font-weight: 600;
@@ -1510,7 +1517,7 @@ main { height: calc(100vh - 56px); }
   flex: 1 1 auto;
   min-width: 0;
   padding: 10px 14px;
-  background: var(--surface-inset);
+  background: #fff;
   color: var(--text);
   border: 1px solid var(--teal);
   border-radius: 8px;
@@ -1541,7 +1548,7 @@ main { height: calc(100vh - 56px); }
 
 #draft-editor {
   width: 100%;
-  background: var(--surface-inset);
+  background: #fff;
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
@@ -1561,7 +1568,7 @@ main { height: calc(100vh - 56px); }
 
 #draft-notes {
   width: 100%;
-  background: var(--surface-inset);
+  background: #fff;
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius);
