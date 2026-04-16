@@ -83,7 +83,10 @@ function cleanHelpCenterBody(body) {
     if (/^THE\s+[A-Z].*\s[-–]\s/.test(text)) continue; // variant label
     keep.push(text);
   }
-  return keep.join('\n').trim();
+  const cleaned = keep.join('\n').trim();
+  // If no `>` markers found, the message isn't a bot-guided flow —
+  // return the original body so direct customer messages aren't lost.
+  return cleaned || body;
 }
 
 // ---------------------------------------------------------------------------
