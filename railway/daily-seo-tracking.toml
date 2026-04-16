@@ -1,5 +1,6 @@
 [build]
 builder = "NIXPACKS"
+nixpacksConfigPath = "nixpacks-no-chromium.toml"
 
 [deploy]
 startCommand = "node scripts/write-service-account-key.js && node seo-tracking/daily-seo-tracking.js"

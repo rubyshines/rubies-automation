@@ -1,0 +1,9 @@
+# Nixpacks config for services that don't need Puppeteer/Chromium.
+# Overrides the auto-detected apt packages (chromium, libnss3, etc.)
+# that Nixpacks adds when it sees puppeteer in package.json.
+
+[phases.setup]
+aptPkgs = []
+
+[phases.install]
+cmds = ["PUPPETEER_SKIP_DOWNLOAD=true npm ci"]
