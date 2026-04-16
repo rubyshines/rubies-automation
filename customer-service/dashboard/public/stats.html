@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RUBIES Care — Stats</title>
+  <meta name="theme-color" content="#c0392b">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="/stats.css">
+</head>
+<body>
+  <header>
+    <a href="/" class="header-back" title="Back to dashboard">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <img src="/icons/icon-192.png" alt="RUBIES" class="header-logo">
+    <h1>RUBIES Care <span class="header-sep">—</span> Stats</h1>
+    <div class="header-spacer"></div>
+    <div class="header-date" id="header-date"></div>
+  </header>
+
+  <div class="tab-bar">
+    <button class="tab active" data-tab="today" onclick="switchTab('today')">Today</button>
+    <button class="tab" data-tab="trends" onclick="switchTab('trends')">Trends</button>
+  </div>
+
+  <!-- ─── Today Tab ──────────────────────────────────────── -->
+  <main id="tab-today" class="tab-content active">
+    <div class="kpi-row" id="kpi-row">
+      <div class="kpi-card" id="kpi-handled">
+        <div class="kpi-label">Tickets Handled</div>
+        <div class="kpi-value" id="kpi-handled-val">—</div>
+      </div>
+      <div class="kpi-card" id="kpi-noedit">
+        <div class="kpi-label">No-Edit Rate</div>
+        <div class="kpi-value" id="kpi-noedit-val">—</div>
+      </div>
+      <div class="kpi-card" id="kpi-redirect">
+        <div class="kpi-label">Redirect Rate</div>
+        <div class="kpi-value" id="kpi-redirect-val">—</div>
+      </div>
+      <div class="kpi-card" id="kpi-focus">
+        <div class="kpi-label">Avg Focus Time</div>
+        <div class="kpi-value" id="kpi-focus-val">—</div>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <div class="table-header">
+        <h2>Today's Tickets</h2>
+      </div>
+      <div id="tickets-table-wrap">
+        <div class="empty-state" id="today-empty">Loading...</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ─── Trends Tab ─────────────────────────────────────── -->
+  <main id="tab-trends" class="tab-content">
+    <div class="range-bar">
+      <button class="range-btn" data-days="7" onclick="setRange(7)">7d</button>
+      <button class="range-btn active" data-days="30" onclick="setRange(30)">30d</button>
+      <button class="range-btn" data-days="90" onclick="setRange(90)">90d</button>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Quality Rates</h3>
+        <div class="chart-wrap"><canvas id="chart-quality"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>Volume</h3>
+        <div class="chart-wrap"><canvas id="chart-volume"></canvas></div>
+      </div>
+    </div>
+
+    <div class="charts-row charts-row-single">
+      <div class="chart-card chart-card-donut" id="categories-card" style="display:none">
+        <h3>Edit Categories</h3>
+        <div class="donut-layout">
+          <div class="donut-wrap"><canvas id="chart-categories"></canvas></div>
+          <div class="donut-legend" id="donut-legend"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/stats.js"></script>
+</body>
+</html>

@@ -221,25 +221,41 @@ async function apiSendDraft(id, body) {
   const wasEdited = (draft.draft_response || '').trim() !== finalResponse.trim();
 
   // Update draft
-  await supabase.from('cs_ai_drafts').update({
+  const draftUpdate = {
     status: 'sent',
     sent_response: finalResponse,
     feedback_notes: notes,
     reviewed_at: new Date().toISOString(),
     sent_at: new Date().toISOString(),
     gorgias_reply_message_id: replyResult?.id || null,
-  }).eq('id', id);
+  };
+  if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
+  await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
 
   // Post-send action: snooze (default) or close
   const afterAction = body.after || 'snooze';
 
-  // Log feedback
-  const baseAction = wasEdited ? 'edited' : 'sent';
+  // Log feedback — original_response should be the FIRST draft for this ticket
+  // (pre-steer), not the active draft, so Haiku comparison captures the full delta
+  let originalResponse = draft.draft_response;
+  if (draft.ticket_id) {
+    const { data: firstDraft } = await supabase
+      .from('cs_ai_drafts')
+      .select('draft_response')
+      .eq('ticket_id', draft.ticket_id)
+      .is('operator_steer', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (firstDraft?.draft_response) originalResponse = firstDraft.draft_response;
+  }
+
+  const baseAction = wasEdited || originalResponse !== draft.draft_response ? 'edited' : 'sent';
   await supabase.from('cs_ai_feedback_log').insert({
     draft_id: id,
     gorgias_ticket_id: draft.gorgias_ticket_id,
     action: `${baseAction}_${afterAction}`,
-    original_response: draft.draft_response,
+    original_response: originalResponse,
     final_response: finalResponse,
     feedback_notes: notes,
     advisor_status: draft.advisor_status,
@@ -546,7 +562,7 @@ async function apiDeleteDraft(id) {
 
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts')
-    .select('gorgias_ticket_id')
+    .select('gorgias_ticket_id, message_type, confidence, advisor_status')
     .eq('id', id)
     .maybeSingle();
   if (fetchErr) throw fetchErr;
@@ -564,6 +580,16 @@ async function apiDeleteDraft(id) {
     reviewed_at: new Date().toISOString(),
   }).eq('id', id);
 
+  // Log feedback (filtered — excluded from quality rates)
+  await supabase.from('cs_ai_feedback_log').insert({
+    draft_id: id,
+    gorgias_ticket_id: draft.gorgias_ticket_id,
+    action: 'deleted',
+    message_type: draft.message_type,
+    confidence: draft.confidence,
+    advisor_status: draft.advisor_status,
+  });
+
   if (draft.gorgias_ticket_id) {
     await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
   }
@@ -576,7 +602,7 @@ async function apiMarkSpam(id) {
 
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts')
-    .select('gorgias_ticket_id')
+    .select('gorgias_ticket_id, message_type, confidence, advisor_status')
     .eq('id', id)
     .maybeSingle();
   if (fetchErr) throw fetchErr;
@@ -594,6 +620,16 @@ async function apiMarkSpam(id) {
     status: 'spam',
     reviewed_at: new Date().toISOString(),
   }).eq('id', id);
+
+  // Log feedback (filtered — excluded from quality rates)
+  await supabase.from('cs_ai_feedback_log').insert({
+    draft_id: id,
+    gorgias_ticket_id: draft.gorgias_ticket_id,
+    action: 'spam',
+    message_type: draft.message_type,
+    confidence: draft.confidence,
+    advisor_status: draft.advisor_status,
+  });
 
   if (draft.gorgias_ticket_id) {
     await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
@@ -618,8 +654,8 @@ async function apiGetStats() {
 
   const feedback = recentFeedback || [];
   const total = feedback.length;
-  const sent = feedback.filter(f => f.action === 'sent').length;
-  const edited = feedback.filter(f => f.action === 'edited').length;
+  const sent = feedback.filter(f => f.action?.startsWith('sent_')).length;
+  const edited = feedback.filter(f => f.action?.startsWith('edited_')).length;
   const released = feedback.filter(f => f.action === 'released').length;
   const bypassed = feedback.filter(f => f.action === 'bypassed').length;
 
@@ -628,6 +664,221 @@ async function apiGetStats() {
     last30Days: { total, sent, edited, released, bypassed },
     acceptanceRate: total > 0 ? ((sent / total) * 100).toFixed(1) + '%' : 'N/A',
   };
+}
+
+// ---------------------------------------------------------------------------
+// Performance analytics endpoints
+// ---------------------------------------------------------------------------
+
+const { dayBounds: _dayBounds, classifyFeedback: _classifyFeedback, pct: _pct, classifyOutcome: _classifyOutcome } = require('../lib/statsHelpers');
+
+async function _queryDayStats(supabase, dateStr) {
+  const { start, end, date } = _dayBounds(dateStr);
+
+  // Feedback log for the day
+  const { data: feedback } = await supabase
+    .from('cs_ai_feedback_log')
+    .select('id, action, original_response, final_response, message_type, confidence, draft_id, created_at')
+    .gte('created_at', start).lte('created_at', end)
+    .order('created_at', { ascending: true });
+
+  const rows = feedback || [];
+  const { noEdit, edited, released, closedNoReply, spam, deleted } = _classifyFeedback(rows);
+  const handled = noEdit + edited + released; // tickets with a resolution action (quality-rated)
+  const filtered = spam + deleted; // excluded from quality rates
+
+  // Redirects: drafts created today with operator_steer set
+  const { data: steeredDrafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('ticket_id')
+    .not('operator_steer', 'is', null)
+    .gte('created_at', start).lte('created_at', end);
+
+  const redirectTickets = new Set((steeredDrafts || []).map(d => d.ticket_id));
+  const redirectCount = redirectTickets.size;
+
+  // Focus time: from drafts that were sent today
+  const draftIds = rows.filter(r => r.draft_id).map(r => r.draft_id);
+  let avgFocusTime = null;
+  if (draftIds.length > 0) {
+    const { data: draftsWithFocus } = await supabase
+      .from('cs_ai_drafts')
+      .select('focus_time_seconds')
+      .in('id', draftIds)
+      .gt('focus_time_seconds', 0);
+    const focusTimes = (draftsWithFocus || []).map(d => d.focus_time_seconds);
+    if (focusTimes.length > 0) {
+      avgFocusTime = Math.round(focusTimes.reduce((a, b) => a + b, 0) / focusTimes.length);
+    }
+  }
+
+  // By message_type breakdown
+  const byType = {};
+  for (const r of rows) {
+    const mt = r.message_type || 'uncategorized';
+    if (!byType[mt]) byType[mt] = { total: 0, noEdit: 0, edited: 0, released: 0 };
+    byType[mt].total++;
+    if (r.action === 'released') byType[mt].released++;
+    else if (r.action?.startsWith('edited_')) byType[mt].edited++;
+    else if (r.action?.startsWith('sent_')) byType[mt].noEdit++;
+  }
+
+  return {
+    date,
+    tickets_handled: handled,
+    no_edit_count: noEdit,
+    edited_count: edited,
+    redirect_count: redirectCount,
+    released_count: released,
+    closed_no_reply_count: closedNoReply,
+    filtered_count: filtered,
+    spam_count: spam,
+    deleted_count: deleted,
+    no_edit_rate: _pct(noEdit, handled),
+    edit_rate: _pct(edited, handled),
+    redirect_rate: _pct(redirectCount, handled),
+    released_rate: _pct(released, handled),
+    avg_focus_time_seconds: avgFocusTime,
+    by_message_type: byType,
+  };
+}
+
+async function apiGetStatsDaily(query) {
+  const supabase = getSupabaseClient();
+  return _queryDayStats(supabase, query.get('date'));
+}
+
+async function apiGetStatsRange(query) {
+  const supabase = getSupabaseClient();
+  const startDate = query.get('start');
+  const endDate = query.get('end');
+  if (!startDate || !endDate) throw new Error('start and end query params required');
+
+  // Generate date range
+  const dates = [];
+  const cur = new Date(startDate);
+  const last = new Date(endDate);
+  while (cur <= last) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const dailyBreakdown = [];
+  let totalHandled = 0, totalNoEdit = 0, totalEdited = 0, totalRedirect = 0, totalReleased = 0;
+  const focusTimes = [];
+
+  for (const d of dates) {
+    const day = await _queryDayStats(supabase, d);
+    dailyBreakdown.push(day);
+    totalHandled += day.tickets_handled;
+    totalNoEdit += day.no_edit_count;
+    totalEdited += day.edited_count;
+    totalRedirect += day.redirect_count;
+    totalReleased += day.released_count;
+    if (day.avg_focus_time_seconds != null) focusTimes.push(day.avg_focus_time_seconds);
+  }
+
+  return {
+    start: startDate,
+    end: endDate,
+    tickets_handled: totalHandled,
+    no_edit_count: totalNoEdit,
+    edited_count: totalEdited,
+    redirect_count: totalRedirect,
+    released_count: totalReleased,
+    no_edit_rate: _pct(totalNoEdit, totalHandled),
+    edit_rate: _pct(totalEdited, totalHandled),
+    redirect_rate: _pct(totalRedirect, totalHandled),
+    released_rate: _pct(totalReleased, totalHandled),
+    avg_focus_time_seconds: focusTimes.length > 0
+      ? Math.round(focusTimes.reduce((a, b) => a + b, 0) / focusTimes.length) : null,
+    daily_breakdown: dailyBreakdown,
+  };
+}
+
+async function apiGetStatsTickets(query) {
+  const supabase = getSupabaseClient();
+  const { start, end } = _dayBounds(query.get('date'));
+
+  // Get feedback rows for the day with draft details
+  const { data: feedback } = await supabase
+    .from('cs_ai_feedback_log')
+    .select('id, draft_id, gorgias_ticket_id, action, message_type, confidence, haiku_category, haiku_summary, created_at')
+    .gte('created_at', start).lte('created_at', end)
+    .order('created_at', { ascending: true });
+
+  const rows = feedback || [];
+  if (rows.length === 0) return { date: _dayBounds(query.get('date')).date, tickets: [] };
+
+  // Get focus times and redirect counts for these drafts
+  const draftIds = rows.filter(r => r.draft_id).map(r => r.draft_id);
+  const { data: drafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('id, ticket_id, focus_time_seconds, operator_steer')
+    .in('id', draftIds);
+
+  const draftMap = {};
+  for (const d of (drafts || [])) draftMap[d.id] = d;
+
+  // Count redirects per ticket
+  const ticketIds = [...new Set((drafts || []).map(d => d.ticket_id).filter(Boolean))];
+  let redirectsByTicket = {};
+  if (ticketIds.length > 0) {
+    const { data: steered } = await supabase
+      .from('cs_ai_drafts')
+      .select('ticket_id')
+      .not('operator_steer', 'is', null)
+      .in('ticket_id', ticketIds);
+    for (const s of (steered || [])) {
+      redirectsByTicket[s.ticket_id] = (redirectsByTicket[s.ticket_id] || 0) + 1;
+    }
+  }
+
+  const tickets = rows.map(r => {
+    const draft = draftMap[r.draft_id] || {};
+    const outcome = _classifyOutcome(r.action, redirectsByTicket[draft.ticket_id] || 0);
+    return {
+      gorgias_ticket_id: r.gorgias_ticket_id,
+      ticket_id: draft.ticket_id,
+      message_type: r.message_type,
+      confidence: r.confidence,
+      outcome,
+      focus_time_seconds: draft.focus_time_seconds || null,
+      redirect_count: redirectsByTicket[draft.ticket_id] || 0,
+      haiku_category: r.haiku_category || null,
+      haiku_summary: r.haiku_summary || null,
+      created_at: r.created_at,
+    };
+  });
+
+  return { date: _dayBounds(query.get('date')).date, tickets };
+}
+
+async function apiGetStatsCategories(query) {
+  const supabase = getSupabaseClient();
+  const startDate = query.get('start');
+  const endDate = query.get('end');
+  if (!startDate || !endDate) throw new Error('start and end query params required');
+
+  const { data } = await supabase
+    .from('cs_ai_feedback_log')
+    .select('haiku_category, haiku_summary')
+    .not('haiku_category', 'is', null)
+    .gte('created_at', `${startDate}T00:00:00Z`)
+    .lte('created_at', `${endDate}T23:59:59.999Z`);
+
+  const rows = data || [];
+  const counts = {};
+  for (const r of rows) {
+    counts[r.haiku_category] = (counts[r.haiku_category] || 0) + 1;
+  }
+
+  const total = rows.length;
+  const categories = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, count]) => ({ category, count, pct: _pct(count, total) }));
+
+  return { start: startDate, end: endDate, total, categories };
 }
 
 
@@ -1729,6 +1980,10 @@ async function apiUnparkTicket(ticketId) {
 const routes = {
   'GET /api/drafts': (req) => apiGetDrafts(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/stats': () => apiGetStats(),
+  'GET /api/stats/daily': (req) => apiGetStatsDaily(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/stats/range': (req) => apiGetStatsRange(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/stats/tickets': (req) => apiGetStatsTickets(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/stats/categories': (req) => apiGetStatsCategories(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/history': (req) => apiGetHistory(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets': (req) => apiGetTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/stats': () => apiGetTicketStats(),
@@ -1850,6 +2105,7 @@ const paramRoutes = [
       confidence,
       advisor_status: s?.status,
       message_type: canonicalMessageType(s?.message_type, `operator-redraft ticket ${id}`),
+      operator_steer: steer || null,
     }).select('id').single();
 
     if (newDraftRow) {
@@ -2083,7 +2339,7 @@ async function handleRequest(req, res) {
   }
 
   // Static files
-  let filePath = pathname === '/' ? '/index.html' : pathname;
+  let filePath = pathname === '/' ? '/index.html' : pathname === '/stats' ? '/stats.html' : pathname;
   const fullPath = path.join(STATIC_DIR, filePath);
 
   // Prevent directory traversal

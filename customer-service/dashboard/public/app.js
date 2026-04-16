@@ -13,6 +13,79 @@ let currentDraftId = null;
 let currentDraft = null;
 
 // ---------------------------------------------------------------------------
+// Focus time tracking — measures active operator time per ticket
+// ---------------------------------------------------------------------------
+
+const _focusAccumulated = {};       // { ticketId: seconds }
+let _focusTicketId = null;
+let _focusStartTime = null;
+let _focusIdleTimer = null;
+let _focusIdleDebounce = null;
+const FOCUS_IDLE_TIMEOUT = 60000;   // 60s of no interaction = idle
+
+function _accumulateFocus() {
+  if (_focusTicketId && _focusStartTime) {
+    const elapsed = (Date.now() - _focusStartTime) / 1000;
+    _focusAccumulated[_focusTicketId] = (_focusAccumulated[_focusTicketId] || 0) + elapsed;
+    _focusStartTime = null;
+  }
+}
+
+function startFocusTimer(ticketId) {
+  _accumulateFocus(); // flush previous ticket
+  _focusTicketId = ticketId;
+  _focusStartTime = Date.now();
+  _resetIdleCountdown();
+}
+
+function pauseFocusTimer() {
+  _accumulateFocus();
+  clearTimeout(_focusIdleTimer);
+}
+
+function resumeFocusTimer() {
+  if (_focusTicketId && !_focusStartTime) {
+    _focusStartTime = Date.now();
+    _resetIdleCountdown();
+  }
+}
+
+function getFocusTime(ticketId) {
+  let total = _focusAccumulated[ticketId] || 0;
+  // Add in-progress time if this ticket is currently focused
+  if (_focusTicketId === ticketId && _focusStartTime) {
+    total += (Date.now() - _focusStartTime) / 1000;
+  }
+  return Math.round(total);
+}
+
+function clearFocusTime(ticketId) {
+  delete _focusAccumulated[ticketId];
+}
+
+function _resetIdleCountdown() {
+  clearTimeout(_focusIdleTimer);
+  _focusIdleTimer = setTimeout(() => {
+    _accumulateFocus(); // went idle — pause
+  }, FOCUS_IDLE_TIMEOUT);
+}
+
+function _onUserActivity() {
+  // Debounce activity events to avoid excessive timer resets
+  if (_focusIdleDebounce) return;
+  _focusIdleDebounce = setTimeout(() => { _focusIdleDebounce = null; }, 5000);
+
+  // If we were idle (no _focusStartTime), resume
+  if (_focusTicketId && !_focusStartTime) {
+    _focusStartTime = Date.now();
+  }
+  _resetIdleCountdown();
+}
+
+document.addEventListener('mousemove', _onUserActivity);
+document.addEventListener('keydown', _onUserActivity);
+
+// ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 
@@ -55,6 +128,7 @@ function startAutoRefresh() {
       // Pause auto-poll when hidden
       clearInterval(_autoRefreshInterval);
       _autoRefreshInterval = null;
+      pauseFocusTimer();
     } else {
       // Debounce: iOS fires multiple times
       _visibilityDebounce = setTimeout(() => {
@@ -62,6 +136,7 @@ function startAutoRefresh() {
         if (!_autoRefreshInterval) {
           _autoRefreshInterval = setInterval(autoRefreshTick, 30000);
         }
+        resumeFocusTimer();
       }, 500);
     }
   });
@@ -318,6 +393,7 @@ async function navigateToPastTicket(gorgiasTicketId) {
 async function selectTicket(id) {
   currentTicketId = id;
   location.hash = `ticket-${id}`;
+  startFocusTimer(id);
 
   // Highlight in queue
   document.querySelectorAll('.queue-item').forEach(el => el.classList.remove('active'));
@@ -1247,12 +1323,14 @@ function sendDraft(afterAction) {
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
   const draftId = currentDraftId;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
   const endpoint = draftId
     ? `/api/tickets/${ticketId}/send`
     : `/api/tickets/${ticketId}/message`;
   const body = draftId
-    ? { response, notes, after: afterAction }
-    : { message: response, after: afterAction };
+    ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds }
+    : { message: response, after: afterAction, focus_time_seconds: focusSeconds };
 
   // Optimistic: clear local state and advance immediately
   localStorage.removeItem(`draft-ticket-${ticketId}`);
@@ -1288,6 +1366,7 @@ function closeNoReply() {
 }
 
 function clearTicketSelection() {
+  pauseFocusTimer();
   currentTicketId = null;
   currentTicket = null;
   currentDraftId = null;
