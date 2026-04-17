@@ -2080,7 +2080,11 @@ const paramRoutes = [
       const ctx = buildConversationContext(messages, lastCustomer.id);
       if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
     }
-    contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
+    const attachments = lastCustomer.attachments || [];
+    const attachmentNote = attachments.length
+      ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
+      : '';
+    contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
 
     const result = await aiAdvisor({
       customer_email: t.customer_email,
@@ -2296,6 +2300,32 @@ async function handleRequest(req, res) {
       }
       return;
     }
+  }
+
+  // Attachment proxy — fetches a signed URL from Gorgias and redirects
+  if (pathname.startsWith('/api/attachment/')) {
+    const fileId = pathname.replace('/api/attachment/', '');
+    try {
+      const domain = process.env.GORGIAS_DOMAIN;
+      const apiKey = process.env.GORGIAS_API_KEY;
+      const email = process.env.GORGIAS_EMAIL;
+      const resp = await fetch(`https://${domain}.gorgias.com/api/attachment/download/${fileId}`, {
+        headers: { 'Authorization': 'Basic ' + Buffer.from(`${email}:${apiKey}`).toString('base64') },
+        redirect: 'manual',
+      });
+      const location = resp.headers.get('location');
+      if (location) {
+        res.writeHead(302, { Location: location });
+        res.end();
+      } else {
+        res.writeHead(resp.status);
+        res.end('Attachment not found');
+      }
+    } catch (err) {
+      res.writeHead(500);
+      res.end('Attachment proxy error');
+    }
+    return;
   }
 
   // API routes

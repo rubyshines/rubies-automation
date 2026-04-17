@@ -303,16 +303,18 @@ async function fetchPriorTicket(customer_email, exclude_gorgias_ticket_id) {
 async function buildContext({ customer_email, customer_name, order_number, issue_description, existingIntake, current_gorgias_ticket_id }) {
   const messageOrderNumber = extractOrderNumber(issue_description);
 
-  // Try Supabase first, fall back to Shopify
+  // Try Supabase first, fall back to Shopify (skip if no email — e.g. Facebook Messenger)
   let customerData = null;
-  try {
-    customerData = await buildContextFromSupabase(customer_email);
-  } catch (err) {
-    console.warn(`[context] Supabase lookup failed: ${err.message} — falling back to Shopify`);
-  }
+  if (customer_email) {
+    try {
+      customerData = await buildContextFromSupabase(customer_email);
+    } catch (err) {
+      console.warn(`[context] Supabase lookup failed: ${err.message} — falling back to Shopify`);
+    }
 
-  if (!customerData) {
-    customerData = await buildContextFromShopify(customer_email);
+    if (!customerData) {
+      customerData = await buildContextFromShopify(customer_email);
+    }
   }
 
   // Name fallback: sender's email isn't on any customer record. Try a Shopify

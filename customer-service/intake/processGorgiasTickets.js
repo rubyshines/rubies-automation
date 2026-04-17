@@ -405,12 +405,15 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   // Build upsert payload — only include fields with non-null values to avoid
   // clobbering good data from a previous turn when the AI parse fails
+  // Use resolved email from name fallback if Gorgias has no email (e.g. Facebook Messenger)
+  const resolvedEmail = customerEmail || preContext?.customer?.email || null;
+
   const ticketUpsert = {
     gorgias_ticket_id: ticketId,
     created_at: ticket.created_datetime || new Date().toISOString(),
     status: 'open',
     message_count: messageCount,
-    customer_email: customerEmail,
+    customer_email: resolvedEmail,
     conversation_history: conversationHistory,
     message_type: messageType,
     confidence,
@@ -479,6 +482,14 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   if (insertErr) {
     console.error(`[intake] Insert error for ticket ${ticketId}: ${insertErr.message}`);
+    // Restore the superseded draft so it's not orphaned without a replacement
+    if (previousDraftId) {
+      await supabase
+        .from('cs_ai_drafts')
+        .update({ status: 'pending' })
+        .eq('id', previousDraftId)
+        .eq('status', 'superseded');
+    }
     return { skipped: true };
   }
 

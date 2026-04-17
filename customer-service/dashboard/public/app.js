@@ -302,6 +302,7 @@ async function loadTicketQueue() {
       const isSpam = t.message_type === 'business_outreach';
       const isCommunity = t.message_type === 'community_outreach';
       const isGmail = t.source === 'gmail';
+      const ticketChannel = (t.conversation_history || [])[0]?.channel || null;
       const isParked = t.status === 'parked';
       const parked = isParked ? parkedAge(t.parked_at) : null;
       const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
@@ -320,7 +321,8 @@ async function loadTicketQueue() {
 
       // Row 2: secondary badges (only shown when there's content)
       const row2Parts = [];
-      if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
+      if (ticketChannel === 'facebook-messenger') row2Parts.push('<span class="badge badge-facebook">via Facebook</span>');
+      else if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
       if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
       if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
 
@@ -472,7 +474,7 @@ function renderTicketDetail(ticket) {
   document.getElementById('customer-card').innerHTML = `
     <div class="customer-compact">
       <div class="customer-compact-line1">
-        <span class="customer-name">${esc(ctx.name || 'Unknown')}</span>
+        <span class="customer-name">${esc(ctx.name || ticket.customer_name || 'Unknown')}</span>
         <span class="customer-pronouns">(${esc(ctx.pronouns || 'they/them')})</span>
         ${ctx.buying_for === 'third_party' ? ' <span class="badge badge-muted">Third-party</span>' : ''}
       </div>
@@ -2231,7 +2233,7 @@ function parseOrderFormItems(text) {
 function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attachments }) {
   if (!customerWords.length && !orderItems.length) return '';
 
-  const channelLabel = channel === 'chat' ? 'via chat' : 'via email';
+  const channelLabel = channel === 'chat' ? 'via chat' : channel === 'facebook-messenger' ? 'via Facebook' : 'via email';
   const time = timestamp ? timeAgo(timestamp, 'long') : '';
 
   let html = '<div class="intake-card">';
@@ -2256,9 +2258,10 @@ function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attac
   if (attachments && attachments.length) {
     html += `<div class="msg-attachments">${attachments.map(a => {
       const isImage = (a.content_type || '').startsWith('image/');
+      const url = proxyAttachmentUrl(a.url);
       return isImage
-        ? `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-thumb"><img src="${esc(a.url)}" alt="${esc(a.name)}" title="${esc(a.name)}"></a>`
-        : `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-file">${esc(a.name)}</a>`;
+        ? `<a href="${esc(url)}" target="_blank" class="msg-attachment-thumb"><img src="${esc(url)}" alt="${esc(a.name)}" title="${esc(a.name)}" onerror="this.parentElement.outerHTML='<span class=\\'msg-attachment-expired\\'>Image unavailable</span>'"></a>`
+        : `<a href="${esc(url)}" target="_blank" class="msg-attachment-file">${esc(a.name)}</a>`;
     }).join('')}</div>`;
   }
 
@@ -2277,6 +2280,13 @@ function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attac
 }
 
 /** Render a single message bubble */
+/** Rewrite Gorgias upload URLs to our authenticated proxy */
+function proxyAttachmentUrl(url) {
+  if (!url) return url;
+  const match = url.match(/^https:\/\/uploads\.gorgias\.io\/(.+)$/);
+  return match ? `/api/attachment/${match[1]}` : url;
+}
+
 function renderMessageBubble(m, ticket) {
   const rawHtml = m.body_html || esc(m.body).replace(/\n/g, '<br>');
   const cleaned = cleanMessageBody(rawHtml);
@@ -2284,9 +2294,10 @@ function renderMessageBubble(m, ticket) {
   const attachmentHtml = (m.attachments || []).length
     ? `<div class="msg-attachments">${m.attachments.map(a => {
         const isImage = (a.content_type || '').startsWith('image/');
+        const url = proxyAttachmentUrl(a.url);
         return isImage
-          ? `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-thumb"><img src="${esc(a.url)}" alt="${esc(a.name)}" title="${esc(a.name)}"></a>`
-          : `<a href="${esc(a.url)}" target="_blank" class="msg-attachment-file">${esc(a.name)}</a>`;
+          ? `<a href="${esc(url)}" target="_blank" class="msg-attachment-thumb"><img src="${esc(url)}" alt="${esc(a.name)}" title="${esc(a.name)}" onerror="this.parentElement.outerHTML='<span class=\\'msg-attachment-expired\\'>Image unavailable</span>'"></a>`
+          : `<a href="${esc(url)}" target="_blank" class="msg-attachment-file">${esc(a.name)}</a>`;
       }).join('')}</div>`
     : '';
   return `
@@ -2345,7 +2356,7 @@ function renderConversation(messages, ticket) {
   // boundary > 0: bot flow is messages[0..boundary-1]
   // boundary === -1: entire conversation is bot (no human agent yet)
   // boundary === 0: no bot flow (email-only ticket)
-  const botEnd = boundary > 0 ? boundary : (boundary === -1 ? messages.length : 0);
+  let botEnd = boundary > 0 ? boundary : (boundary === -1 ? messages.length : 0);
 
   if (botEnd > 0) {
     // --- Bot/chat intake path ---
@@ -2369,20 +2380,47 @@ function renderConversation(messages, ticket) {
       timestamp: firstCustomerMsg?.created_at,
     }));
   } else if (messages.length > 0 && messages[0].sender === 'customer') {
-    // --- Email intake path: show first customer email as intake card ---
-    const firstMsg = messages[0];
-    const body = (firstMsg.body || '').trim();
-    if (body) {
-      const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
-      const cleaned = cleanMessageBody(rawHtml);
-      const processed = collapseQuotedContent(cleaned);
-      parts.push(renderIntakeCard({
-        channel: 'email',
-        customerWords: [processed],
-        orderItems: [],
-        timestamp: firstMsg.created_at,
-        attachments: firstMsg.attachments,
-      }));
+    const firstChannel = messages[0].channel || 'email';
+    const isMessenger = firstChannel === 'facebook-messenger';
+
+    if (isMessenger) {
+      // --- Messenger intake: group all customer messages before first agent reply ---
+      const customerWords = [];
+      const allAttachments = [];
+      let messengerEnd = 0;
+      for (let i = 0; i < messages.length; i++) {
+        if (messages[i].sender !== 'customer') break;
+        messengerEnd = i + 1;
+        const text = (messages[i].body || '').trim();
+        if (text) customerWords.push(esc(text));
+        if (messages[i].attachments?.length) allAttachments.push(...messages[i].attachments);
+      }
+      if (customerWords.length || allAttachments.length) {
+        parts.push(renderIntakeCard({
+          channel: 'facebook-messenger',
+          customerWords,
+          orderItems: [],
+          timestamp: messages[0].created_at,
+          attachments: allAttachments,
+        }));
+      }
+      botEnd = messengerEnd; // reuse botEnd to set startIdx below
+    } else {
+      // --- Email intake: show first customer email as intake card ---
+      const firstMsg = messages[0];
+      const body = (firstMsg.body || '').trim();
+      if (body) {
+        const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
+        const cleaned = cleanMessageBody(rawHtml);
+        const processed = collapseQuotedContent(cleaned);
+        parts.push(renderIntakeCard({
+          channel: firstChannel,
+          customerWords: [processed],
+          orderItems: [],
+          timestamp: firstMsg.created_at,
+          attachments: firstMsg.attachments,
+        }));
+      }
     }
   }
 
@@ -2392,7 +2430,8 @@ function renderConversation(messages, ticket) {
   for (let i = startIdx; i < messages.length; i++) {
     const m = messages[i];
     const text = (m.body || '').trim();
-    if (!text) continue;
+    const hasAttachments = m.attachments && m.attachments.length > 0;
+    if (!text && !hasAttachments) continue;
     parts.push(renderMessageBubble(m, ticket));
   }
 

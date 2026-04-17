@@ -1181,6 +1181,11 @@ main { height: calc(100vh - 56px); }
   color: var(--text-secondary);
 }
 
+.intake-channel--facebook-messenger {
+  background: rgba(66, 103, 178, 0.12);
+  color: #4267b2;
+}
+
 .intake-time {
   font-size: 10px;
   color: var(--text-tertiary);
@@ -1353,6 +1358,7 @@ main { height: calc(100vh - 56px); }
 .msg-attachment-thumb img { max-width: 120px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; transition: opacity 0.15s; }
 .msg-attachment-thumb img:hover { opacity: 0.8; }
 .msg-attachment-file { display: inline-block; padding: 4px 8px; font-size: 12px; background: var(--surface-inset); border: 1px solid var(--border); border-radius: 4px; color: var(--teal); text-decoration: none; }
+.msg-attachment-expired { display: inline-block; padding: 6px 10px; font-size: 11px; background: var(--surface-inset); border: 1px dashed var(--border); border-radius: 4px; color: var(--text-tertiary); font-style: italic; }
 
 /* ─── Attachment Lightbox ──────────────────────────────── */
 .lightbox-overlay {
@@ -1640,6 +1646,14 @@ main { height: calc(100vh - 56px); }
 .badge-gmail {
   background: rgba(139, 92, 246, 0.12);
   color: #a78bfa;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: none;
+  font-weight: 500;
+}
+.badge-facebook {
+  background: rgba(66, 103, 178, 0.12);
+  color: #4267b2;
   font-size: 9px;
   letter-spacing: 0.05em;
   text-transform: none;
