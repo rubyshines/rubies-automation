@@ -6,7 +6,7 @@
  */
 
 const { createDraftOrder, sendDraftOrderInvoice, normalizeGid } = require('../shopify');
-const { searchProducts } = require('../productCache');
+const { resolveLineItems } = require('../resolveLineItems');
 
 const tools = [
   {
@@ -21,24 +21,28 @@ const tools = [
         },
         exchange_items: {
           type: 'array',
-          description: 'Items to include for free (exchange/replacement)',
+          description: 'Items to include for free (exchange/replacement). Prefer sku over query when known.',
           items: {
             type: 'object',
             properties: {
               variant_id: { type: 'string' },
-              query: { type: 'string' },
+              sku: { type: 'string', description: 'Exact SKU from the catalog (preferred)' },
+              target_size: { type: 'string', description: 'Target size when using sku to find a sibling variant in a different size' },
+              query: { type: 'string', description: 'Fuzzy search fallback' },
               quantity: { type: 'number' },
             },
           },
         },
         paid_items: {
           type: 'array',
-          description: 'Items to include at full price',
+          description: 'Items to include at full price. Prefer sku over query when known.',
           items: {
             type: 'object',
             properties: {
               variant_id: { type: 'string' },
-              query: { type: 'string' },
+              sku: { type: 'string', description: 'Exact SKU from the catalog (preferred)' },
+              target_size: { type: 'string', description: 'Target size when using sku to find a sibling variant in a different size' },
+              query: { type: 'string', description: 'Fuzzy search fallback' },
               quantity: { type: 'number' },
             },
           },
@@ -60,13 +64,13 @@ const tools = [
       }
 
       // Resolve exchange items
-      const resolvedExchange = allExchange.length > 0 ? await resolveItems(allExchange) : [];
+      const resolvedExchange = allExchange.length > 0 ? await resolveLineItems(allExchange) : [];
       if (resolvedExchange.error) {
         return { content: [{ type: 'text', text: resolvedExchange.error }] };
       }
 
       // Resolve paid items
-      const resolvedPaid = allPaid.length > 0 ? await resolveItems(allPaid) : [];
+      const resolvedPaid = allPaid.length > 0 ? await resolveLineItems(allPaid) : [];
       if (resolvedPaid.error) {
         return { content: [{ type: 'text', text: resolvedPaid.error }] };
       }
@@ -172,43 +176,5 @@ const tools = [
     },
   },
 ];
-
-async function resolveItems(items) {
-  const resolved = [];
-
-  for (const item of items) {
-    const quantity = item.quantity || 1;
-
-    if (item.variant_id) {
-      resolved.push({
-        variantId: normalizeGid(item.variant_id, 'ProductVariant'),
-        productTitle: '(by ID)',
-        variantTitle: item.variant_id,
-        sku: null,
-        price: item.price || '0',
-        quantity,
-      });
-    } else if (item.query) {
-      const results = searchProducts(item.query);
-      if (results.length === 0) {
-        return { error: `No products found matching "${item.query}". Try a different search.` };
-      }
-      const best = results[0];
-      resolved.push({
-        variantId: best.variantId,
-        productTitle: best.productTitle,
-        variantTitle: best.variantTitle,
-        sku: best.sku,
-        price: best.price,
-        inventoryQuantity: best.inventoryQuantity,
-        quantity,
-      });
-    } else {
-      return { error: 'Each item must have either variant_id or query' };
-    }
-  }
-
-  return resolved;
-}
 
 module.exports = tools;

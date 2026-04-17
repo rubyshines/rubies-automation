@@ -6,7 +6,8 @@
 
 const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
 const { getCustomerOrdersFromSupabase, getCustomerFulfilledOrdersFromSupabase } = require('../supabaseQueries');
-const { searchProducts, getVariantBySku, getSiblingVariant } = require('../productCache');
+const { resolveLineItems } = require('../resolveLineItems');
+const { formatAddressBlock, formatAddressLine } = require('../addressUtils');
 
 const tools = [
   {
@@ -87,8 +88,7 @@ const tools = [
             const items = (details.lineItems || []).map(li =>
               `  ${li.quantity}x ${li.title} — ${li.variantTitle || ''} (${li.sku || 'no SKU'})`
             ).join('\n');
-            const a = details.shippingAddress;
-            const addr = a ? [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join(', ') : 'No address';
+            const addr = formatAddressLine(details.shippingAddress);
             orderDetails = [
               `**Customer:** ${details.customer?.name || ''} (${details.customer?.email || ''})`,
               `**Ship to:** ${addr}`,
@@ -122,7 +122,7 @@ const tools = [
       }
 
       // Resolve items to variant IDs
-      const resolvedItems = await resolveItems(items);
+      const resolvedItems = await resolveLineItems(items);
       if (resolvedItems.error) {
         return { content: [{ type: 'text', text: resolvedItems.error }] };
       }
@@ -139,7 +139,7 @@ const tools = [
           customerName = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email;
           if (c.defaultAddress) {
             const a = c.defaultAddress;
-            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            addressBlock = formatAddressBlock(a);
             shippingAddress = {
               firstName: c.firstName || '',
               lastName: c.lastName || '',
@@ -208,7 +208,7 @@ const tools = [
           // Prefer shipping address from the original order over customer default
           if (match.shippingAddress) {
             const a = match.shippingAddress;
-            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            addressBlock = formatAddressBlock(a);
             shippingAddress = {
               firstName: shippingAddress?.firstName || '',
               lastName: shippingAddress?.lastName || '',
@@ -240,7 +240,7 @@ const tools = [
           // Prefer shipping address from the original order over customer default
           if (eligible.shippingAddress) {
             const a = eligible.shippingAddress;
-            addressBlock = [a.address1, a.address2, `${a.city}, ${a.province} ${a.zip}`, a.country].filter(Boolean).join('\n');
+            addressBlock = formatAddressBlock(a);
             shippingAddress = {
               firstName: shippingAddress?.firstName || '',
               lastName: shippingAddress?.lastName || '',
@@ -326,71 +326,5 @@ const tools = [
     },
   },
 ];
-
-async function resolveItems(items) {
-  const resolved = [];
-
-  for (const item of items) {
-    const quantity = item.quantity || 1;
-
-    if (item.variant_id) {
-      // Most precise — direct variant ID
-      resolved.push({
-        variantId: normalizeGid(item.variant_id, 'ProductVariant'),
-        productTitle: '(by ID)',
-        variantTitle: item.variant_id,
-        sku: null,
-        quantity,
-      });
-    } else if (item.sku && item.target_size) {
-      // Size exchange — find same product, different size
-      const sibling = getSiblingVariant(item.sku, item.target_size);
-      if (!sibling) {
-        return { error: `Could not find size "${item.target_size}" for SKU "${item.sku}". Check that the size exists for this product.` };
-      }
-      resolved.push({
-        variantId: sibling.variantId,
-        productTitle: sibling.productTitle,
-        variantTitle: sibling.variantTitle,
-        sku: sibling.sku,
-        inventoryQuantity: sibling.inventoryQuantity,
-        quantity,
-      });
-    } else if (item.sku) {
-      // Exact replacement — look up by SKU directly
-      const variant = getVariantBySku(item.sku);
-      if (!variant) {
-        return { error: `SKU "${item.sku}" not found in product catalog. It may be discontinued or misspelled.` };
-      }
-      resolved.push({
-        variantId: variant.variantId,
-        productTitle: variant.productTitle,
-        variantTitle: variant.variantTitle,
-        sku: variant.sku,
-        inventoryQuantity: variant.inventoryQuantity,
-        quantity,
-      });
-    } else if (item.query) {
-      // Fallback — fuzzy search (least precise)
-      const results = searchProducts(item.query);
-      if (results.length === 0) {
-        return { error: `No products found matching "${item.query}". Try a different search or use the SKU from the original order.` };
-      }
-      const best = results[0];
-      resolved.push({
-        variantId: best.variantId,
-        productTitle: best.productTitle,
-        variantTitle: best.variantTitle,
-        sku: best.sku,
-        inventoryQuantity: best.inventoryQuantity,
-        quantity,
-      });
-    } else {
-      return { error: 'Each item must have variant_id, sku, or query' };
-    }
-  }
-
-  return resolved;
-}
 
 module.exports = tools;

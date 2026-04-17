@@ -15,42 +15,7 @@ const {
   normalizeGid,
   getAdminUrl,
 } = require('../shopify');
-const { searchProducts } = require('../productCache');
-
-async function resolveItems(items) {
-  const resolved = [];
-  for (const item of items) {
-    const quantity = item.quantity || 1;
-    if (item.variant_id) {
-      resolved.push({
-        variantId: normalizeGid(item.variant_id, 'ProductVariant'),
-        productTitle: '(by ID)',
-        variantTitle: item.variant_id,
-        sku: null,
-        price: item.price || '0',
-        quantity,
-      });
-    } else if (item.query) {
-      const results = searchProducts(item.query);
-      if (results.length === 0) {
-        return { error: `No products found matching "${item.query}". Try a different search.` };
-      }
-      const best = results[0];
-      resolved.push({
-        variantId: best.variantId,
-        productTitle: best.productTitle,
-        variantTitle: best.variantTitle,
-        sku: best.sku,
-        price: best.price,
-        inventoryQuantity: best.inventoryQuantity,
-        quantity,
-      });
-    } else {
-      return { error: 'Each item must have either variant_id or query.' };
-    }
-  }
-  return resolved;
-}
+const { resolveLineItems } = require('../resolveLineItems');
 
 function fmtCurrency(n) {
   if (n == null || isNaN(n)) return '$0.00';
@@ -112,7 +77,7 @@ async function handleCreateOrder({
   }
 
   // Resolve catalog items
-  const resolved = hasItems ? await resolveItems(items) : [];
+  const resolved = hasItems ? await resolveLineItems(items) : [];
   if (resolved.error) {
     return { content: [{ type: 'text', text: resolved.error }] };
   }
@@ -316,12 +281,14 @@ const tools = [
         },
         items: {
           type: 'array',
-          description: 'Products to include in the order (real catalog items)',
+          description: 'Products to include in the order (real catalog items). Prefer sku over query when known.',
           items: {
             type: 'object',
             properties: {
-              query: { type: 'string', description: 'Product search query (e.g. "AJ Black 10")' },
-              variant_id: { type: 'string', description: 'Shopify variant ID (if known)' },
+              variant_id: { type: 'string', description: 'Shopify variant ID (most precise)' },
+              sku: { type: 'string', description: 'Exact SKU from the catalog' },
+              target_size: { type: 'string', description: 'Target size when using sku to find a sibling variant in a different size' },
+              query: { type: 'string', description: 'Fuzzy search fallback, e.g. "AJ Black 10"' },
               quantity: { type: 'number', description: 'Quantity (default: 1)' },
             },
           },
