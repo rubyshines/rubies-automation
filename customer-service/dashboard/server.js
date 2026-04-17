@@ -725,12 +725,16 @@ async function _queryDayStats(supabase, dateStr) {
 
   // Quality score: no-edit sends = 10, edited tickets use haiku_score
   const scores = [];
+  const steerScores = [];
   for (const r of rows) {
     if (r.action?.startsWith('sent_')) scores.push(10);
     else if (r.haiku_score != null) scores.push(r.haiku_score);
+    if (r.haiku_score_post_steer != null) steerScores.push(r.haiku_score_post_steer);
   }
   const avgQualityScore = scores.length > 0
     ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null;
+  const avgSteerAccuracy = steerScores.length > 0
+    ? Math.round(steerScores.reduce((a, b) => a + b, 0) / steerScores.length * 10) / 10 : null;
 
   return {
     date,
@@ -749,6 +753,7 @@ async function _queryDayStats(supabase, dateStr) {
     released_rate: _pct(released, handled),
     avg_focus_time_seconds: avgFocusTime,
     avg_quality_score: avgQualityScore,
+    avg_steer_accuracy: avgSteerAccuracy,
     by_message_type: byType,
   };
 }

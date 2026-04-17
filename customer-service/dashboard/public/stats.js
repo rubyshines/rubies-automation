@@ -125,6 +125,22 @@ function renderKPIs(data) {
     scoreSub.textContent = '';
   }
 
+  // Steer accuracy
+  const steerEl = document.getElementById('kpi-steer');
+  const steerVal = document.getElementById('kpi-steer-val');
+  const steerSub = document.getElementById('kpi-steer-sub');
+  steerEl.className = 'kpi-card';
+  if (data.avg_steer_accuracy != null) {
+    steerVal.textContent = data.avg_steer_accuracy.toFixed(1);
+    steerSub.textContent = 'out of 10';
+    if (data.avg_steer_accuracy >= 8) steerEl.classList.add('kpi-green');
+    else if (data.avg_steer_accuracy >= 6) steerEl.classList.add('kpi-yellow');
+    else steerEl.classList.add('kpi-red');
+  } else {
+    steerVal.textContent = '—';
+    steerSub.textContent = 'no steers today';
+  }
+
   // No-edit rate
   const noEditPct = parsePct(data.no_edit_rate);
   const noEditEl = document.getElementById('kpi-noedit');
