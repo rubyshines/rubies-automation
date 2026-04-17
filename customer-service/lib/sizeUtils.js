@@ -26,6 +26,8 @@ const LETTER_WITH_PLUS = LETTER_SIZES;
 const SIZE_ALIASES = {
   'XL': '1X', 'XXL': '2X', '2XL': '2X', '3XL': '3X', '4XL': '4X', '5XL': '5X',
   'XS1': 'XS+', 'XXS1': 'XXS+',  // SKU barcode format: + replaced with 1
+  // Word-form aliases (e.g. free-text wholesale input "Brooke Black Small")
+  'SMALL': 'S', 'MEDIUM': 'M', 'LARGE': 'L', 'XLARGE': '1X', 'XXLARGE': '2X',
 };
 
 /** Tall size SKU suffixes → canonical tall size labels (lowercase for variant matching). */
@@ -70,6 +72,8 @@ const KNOWN_SIZES = new Set([
   'xxs', 'xxs+', 'xs', 'xs+', 's', 'm', 'l', '1x', '2x', '3x', '4x', '5x',
   // Common aliases (so we recognize them as size tokens before normalizing)
   'xl', 'xxl', '2xl', '3xl', '4xl', '5xl',
+  // Word-form aliases (free-text inputs like "Brooke Black Small")
+  'small', 'medium', 'large', 'xlarge', 'xxlarge',
   // Tall SKU suffixes
   'st', 'mt', 'lt', 'xlt', '2xlt', '3xlt',
   // Tall display values

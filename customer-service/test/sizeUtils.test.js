@@ -62,6 +62,14 @@ describe('Size constants', () => {
     assert.equal(SIZE_ALIASES['XXS1'], 'XXS+');
   });
 
+  it('SIZE_ALIASES maps word-form sizes (SMALL→S, LARGE→L, XLARGE→1X)', () => {
+    assert.equal(SIZE_ALIASES['SMALL'], 'S');
+    assert.equal(SIZE_ALIASES['MEDIUM'], 'M');
+    assert.equal(SIZE_ALIASES['LARGE'], 'L');
+    assert.equal(SIZE_ALIASES['XLARGE'], '1X');
+    assert.equal(SIZE_ALIASES['XXLARGE'], '2X');
+  });
+
   it('TALL_ALIASES maps SKU suffixes to tall labels', () => {
     assert.equal(TALL_ALIASES['st'], 's tall');
     assert.equal(TALL_ALIASES['lt'], 'l tall');
@@ -107,6 +115,14 @@ describe('Size constants', () => {
     assert.ok(KNOWN_SIZES.has('xl'));    // alias
     assert.ok(KNOWN_SIZES.has('st'));    // tall SKU suffix
     assert.ok(KNOWN_SIZES.has('s tall'));  // tall display
+  });
+
+  it('KNOWN_SIZES contains word-form size aliases (small/medium/large/xlarge)', () => {
+    assert.ok(KNOWN_SIZES.has('small'));
+    assert.ok(KNOWN_SIZES.has('medium'));
+    assert.ok(KNOWN_SIZES.has('large'));
+    assert.ok(KNOWN_SIZES.has('xlarge'));
+    assert.ok(KNOWN_SIZES.has('xxlarge'));
   });
 
   it('KNOWN_SIZES_UPPER contains uppercase sizes for CSV parsing', () => {
@@ -183,6 +199,15 @@ describe('normalizeSize', () => {
     assert.equal(normalizeSize('XXS1'), 'XXS+');
   });
 
+  it('normalizes word-form sizes', () => {
+    assert.equal(normalizeSize('Small'), 'S');
+    assert.equal(normalizeSize('small'), 'S');
+    assert.equal(normalizeSize('Medium'), 'M');
+    assert.equal(normalizeSize('Large'), 'L');
+    assert.equal(normalizeSize('XLarge'), '1X');
+    assert.equal(normalizeSize('xxlarge'), '2X');
+  });
+
   it('strips tall modifiers', () => {
     assert.equal(normalizeSize('L Tall'), 'L');
     assert.equal(normalizeSize('LT'), 'L');
@@ -216,6 +241,13 @@ describe('normalizeSizeLower', () => {
   it('applies SIZE_ALIASES in lowercase', () => {
     assert.equal(normalizeSizeLower('XL'), '1x');
     assert.equal(normalizeSizeLower('XXL'), '2x');
+  });
+
+  it('normalizes word-form sizes to lowercase canonical', () => {
+    assert.equal(normalizeSizeLower('Small'), 's');
+    assert.equal(normalizeSizeLower('Medium'), 'm');
+    assert.equal(normalizeSizeLower('Large'), 'l');
+    assert.equal(normalizeSizeLower('XLarge'), '1x');
   });
 
   it('resolves tall SKU suffixes', () => {

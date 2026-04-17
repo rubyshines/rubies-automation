@@ -287,6 +287,66 @@ function getVariantBySku(sku) {
 }
 
 /**
+ * Segment-wise SKU resolver for when exact SKU lookup misses.
+ *
+ * RUBIES SKUs follow a PREFIX-COLOR-SIZE convention (e.g. RUBY-BLK-4XL).
+ * The size segment is sometimes written in a different alias than what the
+ * caller typed: "4XL" in the SKU but a user types "4X"; "XS1" in the SKU but
+ * a user types "XS+"; "XL" in the SKU but a user types "1X". This helper
+ * splits both the query and candidate SKUs on "-", requires the same number
+ * of segments, matches non-size segments literally (color codes, prefixes),
+ * and applies normalizeSizeLower() to any segment that normalizes to a known
+ * size. Returns the unique match or null if 0 / >1 candidates.
+ *
+ * Case-insensitive. Used by resolveLineItems.js as a fallback after the
+ * exact getVariantBySku() miss.
+ */
+function getVariantBySkuFuzzy(sku) {
+  if (!sku) return null;
+  const querySegs = sku.trim().toUpperCase().split('-').filter(Boolean);
+  if (querySegs.length < 2) return null;
+
+  const candidates = [];
+
+  for (const product of cachedProducts) {
+    for (const variant of product.variants) {
+      if (!variant.sku) continue;
+      const vSegs = variant.sku.trim().toUpperCase().split('-').filter(Boolean);
+      if (vSegs.length !== querySegs.length) continue;
+
+      let allMatch = true;
+      for (let i = 0; i < querySegs.length; i++) {
+        if (vSegs[i] === querySegs[i]) continue;
+        // Size-alias fallback: both segments normalize to the same canonical size
+        const qNorm = normalizeSizeLower(querySegs[i]);
+        const vNorm = normalizeSizeLower(vSegs[i]);
+        if (qNorm && vNorm && qNorm === vNorm) continue;
+        allMatch = false;
+        break;
+      }
+
+      if (allMatch) {
+        candidates.push({ product, variant });
+      }
+    }
+  }
+
+  if (candidates.length !== 1) return null; // 0 or ambiguous
+
+  const { product, variant } = candidates[0];
+  return {
+    productId: product.id,
+    productTitle: product.title,
+    variantId: variant.id,
+    variantTitle: variant.title,
+    sku: variant.sku,
+    price: variant.price,
+    inventoryQuantity: variant.inventoryQuantity,
+    options: variant.selectedOptions,
+  };
+}
+
+/**
  * Given a SKU, find a sibling variant in the same product with a different size.
  * Used for size exchanges ("one size up/down").
  * Returns null if the SKU or target size isn't found.
@@ -336,4 +396,4 @@ function getCacheAgeHours() {
   return (Date.now() - new Date(cacheTimestamp).getTime()) / (1000 * 60 * 60);
 }
 
-module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getSiblingVariant, getCacheAgeHours };
+module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours };
