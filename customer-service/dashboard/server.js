@@ -678,7 +678,7 @@ async function _queryDayStats(supabase, dateStr) {
   // Feedback log for the day
   const { data: feedback } = await supabase
     .from('cs_ai_feedback_log')
-    .select('id, action, original_response, final_response, message_type, confidence, draft_id, created_at')
+    .select('id, action, original_response, final_response, message_type, confidence, draft_id, haiku_score, created_at')
     .gte('created_at', start).lte('created_at', end)
     .order('created_at', { ascending: true });
 
@@ -723,6 +723,15 @@ async function _queryDayStats(supabase, dateStr) {
     else if (r.action?.startsWith('sent_')) byType[mt].noEdit++;
   }
 
+  // Quality score: no-edit sends = 10, edited tickets use haiku_score
+  const scores = [];
+  for (const r of rows) {
+    if (r.action?.startsWith('sent_')) scores.push(10);
+    else if (r.haiku_score != null) scores.push(r.haiku_score);
+  }
+  const avgQualityScore = scores.length > 0
+    ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null;
+
   return {
     date,
     tickets_handled: handled,
@@ -739,6 +748,7 @@ async function _queryDayStats(supabase, dateStr) {
     redirect_rate: _pct(redirectCount, handled),
     released_rate: _pct(released, handled),
     avg_focus_time_seconds: avgFocusTime,
+    avg_quality_score: avgQualityScore,
     by_message_type: byType,
   };
 }
@@ -803,7 +813,7 @@ async function apiGetStatsTickets(query) {
   // Get feedback rows for the day with draft details
   const { data: feedback } = await supabase
     .from('cs_ai_feedback_log')
-    .select('id, draft_id, gorgias_ticket_id, action, message_type, confidence, haiku_category, haiku_summary, created_at')
+    .select('id, draft_id, gorgias_ticket_id, action, message_type, confidence, haiku_category, haiku_summary, haiku_score, created_at')
     .gte('created_at', start).lte('created_at', end)
     .order('created_at', { ascending: true });
 
@@ -847,6 +857,7 @@ async function apiGetStatsTickets(query) {
       redirect_count: redirectsByTicket[draft.ticket_id] || 0,
       haiku_category: r.haiku_category || null,
       haiku_summary: r.haiku_summary || null,
+      haiku_score: r.haiku_score || null,
       created_at: r.created_at,
     };
   });

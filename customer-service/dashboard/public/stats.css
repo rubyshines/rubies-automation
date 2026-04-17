@@ -146,7 +146,7 @@ header h1 {
 
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -179,6 +179,13 @@ header h1 {
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
+}
+
+.kpi-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  margin-top: 4px;
 }
 
 .kpi-note {
@@ -272,10 +279,14 @@ header h1 {
 .stats-table .summary-cell {
   font-size: 12px;
   color: var(--text-secondary);
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 360px;
+  line-height: 1.4;
+}
+
+.stats-table .score-cell {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: center;
 }
 
 /* Outcome badges */

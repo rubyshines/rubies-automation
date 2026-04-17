@@ -64,7 +64,7 @@ async function getYesterdayStats(supabase, dateStr) {
   // Feedback log
   const { data: feedback } = await supabase
     .from('cs_ai_feedback_log')
-    .select('id, action, message_type, confidence, haiku_category, haiku_summary, draft_id, created_at')
+    .select('id, action, message_type, confidence, haiku_category, haiku_summary, haiku_score, draft_id, created_at')
     .gte('created_at', start).lte('created_at', end);
 
   const rows = feedback || [];
@@ -120,9 +120,18 @@ async function getYesterdayStats(supabase, dateStr) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
+  // Quality score: no-edit = 10, edited = haiku_score
+  const scores = [];
+  for (const r of rows) {
+    if (r.action?.startsWith('sent_')) scores.push(10);
+    else if (r.haiku_score != null) scores.push(r.haiku_score);
+  }
+  const avgQualityScore = scores.length > 0
+    ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null;
+
   return {
     handled, noEdit, edited, released, closedNoReply, filtered, spam, deleted,
-    redirectCount, avgFocusTime, byType, topCategories,
+    redirectCount, avgFocusTime, avgQualityScore, byType, topCategories,
   };
 }
 
@@ -133,12 +142,13 @@ async function getYesterdayStats(supabase, dateStr) {
 function buildEmail(dateStr, stats) {
   const {
     handled, noEdit, edited, released, filtered, spam, deleted,
-    redirectCount, avgFocusTime, byType, topCategories,
+    redirectCount, avgFocusTime, avgQualityScore, byType, topCategories,
   } = stats;
 
   const noEditRate = pct(noEdit, handled);
   const editRate = pct(edited, handled);
   const redirectRate = pct(redirectCount, handled);
+  const scoreColor = avgQualityScore >= 8 ? '#15803d' : avgQualityScore >= 6 ? '#a16207' : '#b91c1c';
 
   // KPI color
   const noEditColor = parseFloat(noEditRate) > 80 ? '#15803d' : parseFloat(noEditRate) >= 60 ? '#a16207' : '#b91c1c';
@@ -164,6 +174,11 @@ function buildEmail(dateStr, stats) {
       <td style="padding: 16px; text-align: center; background: #faf9f7; border-radius: 8px;">
         <div style="font-size: 28px; font-weight: 700; color: #1c1917;">${handled}</div>
         <div style="font-size: 11px; color: #78716c; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">Handled${filtered ? ` <span style="color: #a8a29e;">+${filtered} filtered</span>` : ''}</div>
+      </td>
+      <td style="width: 8px;"></td>
+      <td style="padding: 16px; text-align: center; background: #faf9f7; border-radius: 8px;">
+        <div style="font-size: 28px; font-weight: 700; color: ${scoreColor};">${avgQualityScore != null ? avgQualityScore.toFixed(1) : '—'}</div>
+        <div style="font-size: 11px; color: #78716c; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px;">Quality /10</div>
       </td>
       <td style="width: 8px;"></td>
       <td style="padding: 16px; text-align: center; background: #faf9f7; border-radius: 8px;">

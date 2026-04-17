@@ -43,8 +43,8 @@ async function classifyDelta(client, original, final) {
       role: 'user',
       content: `Compare these two customer service email drafts. The ORIGINAL is what the AI generated first. The FINAL is what was actually sent after operator corrections.
 
-Classify what the operator changed. Return JSON only, no other text:
-{"category": "<one of: ${CATEGORIES.join(', ')}>", "summary": "<one sentence explaining the key change>"}
+Classify what the operator changed and rate the quality of the ORIGINAL draft. Return JSON only, no other text:
+{"category": "<one of: ${CATEGORIES.join(', ')}>", "summary": "<one sentence explaining the key change>", "score": <1-10 integer, where 10 = perfect draft needing no changes, 7-9 = minor tweaks only, 4-6 = meaningful corrections needed, 1-3 = fundamentally wrong>}
 
 ORIGINAL DRAFT:
 ${(original || '').slice(0, 2000)}
@@ -61,9 +61,10 @@ ${(final || '').slice(0, 2000)}`,
     const parsed = JSON.parse(text);
     const category = CATEGORIES.includes(parsed.category) ? parsed.category : 'other';
     const summary = (parsed.summary || '').slice(0, 500);
-    return { category, summary };
+    const score = Number.isInteger(parsed.score) && parsed.score >= 1 && parsed.score <= 10 ? parsed.score : null;
+    return { category, summary, score };
   } catch {
-    return { category: 'other', summary: text.slice(0, 500) };
+    return { category: 'other', summary: text.slice(0, 500), score: null };
   }
 }
 
@@ -104,15 +105,17 @@ async function main() {
 
   for (const row of toCompare) {
     try {
-      const { category, summary } = await classifyDelta(client, row.original_response, row.final_response);
+      const { category, summary, score } = await classifyDelta(client, row.original_response, row.final_response);
 
+      const update = { haiku_category: category, haiku_summary: summary };
+      if (score != null) update.haiku_score = score;
       await supabase
         .from('cs_ai_feedback_log')
-        .update({ haiku_category: category, haiku_summary: summary })
+        .update(update)
         .eq('id', row.id);
 
       classified++;
-      console.log(`  [${row.id}] ${category}: ${summary.slice(0, 80)}`);
+      console.log(`  [${row.id}] ${score ?? '?'}/10 ${category}: ${summary.slice(0, 70)}`);
     } catch (err) {
       errors++;
       console.error(`  [${row.id}] Error: ${err.message}`);

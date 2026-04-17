@@ -95,6 +95,22 @@ function renderKPIs(data) {
     : `${data.tickets_handled || 0}`;
   document.getElementById('kpi-handled-val').innerHTML = handledStr;
 
+  // Quality score
+  const scoreEl = document.getElementById('kpi-score');
+  const scoreVal = document.getElementById('kpi-score-val');
+  const scoreSub = document.getElementById('kpi-score-sub');
+  scoreEl.className = 'kpi-card';
+  if (data.avg_quality_score != null) {
+    scoreVal.textContent = data.avg_quality_score.toFixed(1);
+    scoreSub.textContent = 'out of 10';
+    if (data.avg_quality_score >= 8) scoreEl.classList.add('kpi-green');
+    else if (data.avg_quality_score >= 6) scoreEl.classList.add('kpi-yellow');
+    else scoreEl.classList.add('kpi-red');
+  } else {
+    scoreVal.textContent = '—';
+    scoreSub.textContent = '';
+  }
+
   // No-edit rate
   const noEditPct = parsePct(data.no_edit_rate);
   const noEditEl = document.getElementById('kpi-noedit');
@@ -172,6 +188,7 @@ function renderTicketsTable() {
           <th class="${thClass('gorgias_ticket_id')}" onclick="sortTable('gorgias_ticket_id')">Ticket ${sortArrow('gorgias_ticket_id')}</th>
           <th class="${thClass('message_type')}" onclick="sortTable('message_type')">Type ${sortArrow('message_type')}</th>
           <th class="${thClass('outcome')}" onclick="sortTable('outcome')">Outcome ${sortArrow('outcome')}</th>
+          <th class="${thClass('haiku_score')}" onclick="sortTable('haiku_score')">Score ${sortArrow('haiku_score')}</th>
           <th class="${thClass('focus_time_seconds')}" onclick="sortTable('focus_time_seconds')">Focus Time ${sortArrow('focus_time_seconds')}</th>
           <th class="${thClass('haiku_category')}" onclick="sortTable('haiku_category')">Category ${sortArrow('haiku_category')}</th>
           <th>Summary</th>
@@ -183,9 +200,10 @@ function renderTicketsTable() {
             <td><a class="ticket-link" href="https://rubies.gorgias.com/app/ticket/${t.gorgias_ticket_id}" target="_blank" rel="noopener">#${t.gorgias_ticket_id}</a></td>
             <td class="type-cell">${(t.message_type || '—').replace(/_/g, ' ')}</td>
             <td>${outcomeBadge(t.redirect_count > 0 ? 'redirected' : t.outcome)}</td>
+            <td class="score-cell">${t.outcome === 'no_edit' ? '<span style="color:var(--green)">10</span>' : t.haiku_score != null ? `<span style="color:${t.haiku_score >= 8 ? 'var(--green)' : t.haiku_score >= 6 ? 'var(--yellow)' : 'var(--red)'}">${t.haiku_score}</span>` : '—'}</td>
             <td class="focus-cell">${formatFocusTime(t.focus_time_seconds)}</td>
             <td>${t.haiku_category ? `<span class="cat-badge">${t.haiku_category.replace(/_/g, ' ')}</span>` : '—'}</td>
-            <td class="summary-cell" title="${(t.haiku_summary || '').replace(/"/g, '&quot;')}">${t.haiku_summary || '—'}</td>
+            <td class="summary-cell">${t.haiku_summary || '—'}</td>
           </tr>
         `).join('')}
       </tbody>
