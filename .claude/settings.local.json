@@ -79,7 +79,8 @@
       "Bash(rmdir .claude/plans)",
       "Bash(ln -s ~/.claude/plans .claude/plans)",
       "Bash(mkdir -p .claude/memory/archive)",
-      "Read(//Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.claude/memory/**)"
+      "Read(//Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.claude/memory/**)",
+      "mcp__rubies-cs__set_product_prices"
     ]
   },
   "enableAllProjectMcpServers": true,
