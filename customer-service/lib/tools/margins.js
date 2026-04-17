@@ -8,6 +8,7 @@ const { searchProducts } = require('../productCache');
 const { getOrderByNumber } = require('../shopify');
 const { getOrderByNumberFromSupabase } = require('../supabaseQueries');
 const { getCostForSku, getCostByPrefix, getAllCosts } = require('../costsCache');
+const { getRatesForSku } = require('../returnRatesCache');
 
 function fmtCurrency(n) {
   if (n == null || isNaN(n)) return 'N/A';
@@ -33,6 +34,8 @@ async function handleProductMargins({ query }) {
   const seen = new Set();
   const rows = [];
 
+  // Collect unique SKU prefixes to batch-load return rates
+  const seenPrefixes = new Set();
   for (const r of results) {
     if (seen.has(r.variantId)) continue;
     seen.add(r.variantId);
@@ -43,6 +46,24 @@ async function handleProductMargins({ query }) {
     const marginDollar = cogs != null ? retail - cogs : null;
     const marginPct = cogs != null && retail > 0 ? marginDollar / retail : null;
 
+    // True margin after refunds/exchanges
+    const rates = await getRatesForSku(r.sku);
+    let trueMarginDollar = null;
+    let trueMarginPct = null;
+    let refundRate = null;
+    let exchangeRate = null;
+    if (rates && cogs != null) {
+      refundRate = rates.refundRate;
+      exchangeRate = rates.exchangeRate;
+      const effRevenue = retail * (1 - refundRate);
+      const effCogs = cogs * (1 + exchangeRate);
+      trueMarginDollar = effRevenue - effCogs;
+      trueMarginPct = retail > 0 ? trueMarginDollar / retail : null;
+    }
+
+    const prefix = r.sku ? r.sku.split('-')[0].toUpperCase() : null;
+    if (prefix && rates) seenPrefixes.add(prefix);
+
     rows.push({
       product: r.productTitle,
       variant: r.variantTitle,
@@ -51,15 +72,27 @@ async function handleProductMargins({ query }) {
       cogs,
       marginDollar,
       marginPct,
+      trueMarginDollar,
+      trueMarginPct,
+      refundRate,
+      exchangeRate,
     });
   }
 
   let md = `## Product Margins: "${query}"\n\n`;
-  md += '| Product | Variant | SKU | Retail | COGS | Margin $ | Margin % |\n';
-  md += '|---------|---------|-----|--------|------|----------|----------|\n';
+  md += '| Product | Variant | SKU | Retail | COGS | Margin $ | Margin % | True Margin $ | True Margin % |\n';
+  md += '|---------|---------|-----|--------|------|----------|----------|---------------|---------------|\n';
 
   for (const r of rows) {
-    md += `| ${r.product} | ${r.variant} | ${r.sku} | ${fmtCurrency(r.retail)} | ${fmtCurrency(r.cogs)} | ${fmtCurrency(r.marginDollar)} | ${fmtPct(r.marginPct)} |\n`;
+    md += `| ${r.product} | ${r.variant} | ${r.sku} | ${fmtCurrency(r.retail)} | ${fmtCurrency(r.cogs)} | ${fmtCurrency(r.marginDollar)} | ${fmtPct(r.marginPct)} | ${fmtCurrency(r.trueMarginDollar)} | ${fmtPct(r.trueMarginPct)} |\n`;
+  }
+
+  // Show return rates summary if available
+  if (seenPrefixes.size > 0) {
+    const first = rows.find(r => r.refundRate != null);
+    if (first) {
+      md += `\n*True margin accounts for refund rate (${fmtPct(first.refundRate)} — revenue lost) and exchange rate (${fmtPct(first.exchangeRate)} — extra COGS shipped). Returned product treated as total loss.*`;
+    }
   }
 
   if (rows.some(r => r.cogs == null)) {
@@ -211,7 +244,7 @@ async function handleWholesaleMargins({ query, country_code }) {
 const tools = [
   {
     name: 'get_product_margins',
-    description: 'Show retail price vs COGS (landed cost) margins for products. Search by product name, SKU, or SKU prefix. Returns a table with retail price, COGS, margin $ and margin %.',
+    description: 'Show retail price vs COGS (landed cost) margins for products, including true margin after refunds and exchanges. True margin accounts for lost revenue (refunds) and extra COGS (exchange replacements shipped for free). Search by product name, SKU, or SKU prefix.',
     inputSchema: {
       type: 'object',
       properties: {
