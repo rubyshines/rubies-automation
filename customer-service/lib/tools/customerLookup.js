@@ -35,6 +35,18 @@ const tools = [
       if (customers.length === 0) {
         return { content: [{ type: 'text', text: `No customers found matching "${query}"` }] };
       }
+
+      // Supabase `customers` mirror sometimes has `default_address` unpopulated
+      // (sync gap). Enrich missing addresses from Shopify live before returning.
+      for (const c of customers) {
+        if (c.defaultAddress || !c.email) continue;
+        try {
+          const live = await searchCustomers(`email:${c.email}`);
+          const match = live.find(sc => (sc.email || '').toLowerCase() === c.email.toLowerCase());
+          if (match?.defaultAddress) c.defaultAddress = match.defaultAddress;
+        } catch (_) { /* non-critical */ }
+      }
+
       const formatted = customers.map(c => ({
         id: c.id,
         name: [c.firstName, c.lastName].filter(Boolean).join(' ') || '(no name)',

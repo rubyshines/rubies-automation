@@ -348,3 +348,4 @@ async function getOrderLineItemIds(orderId) {
 }
 
 module.exports = tools;
+module.exports.getOrderParentTransaction = getOrderParentTransaction;
