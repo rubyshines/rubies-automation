@@ -66,7 +66,7 @@ const tools = [
       'Phase 2 (confirmed=true): Commits the staged edit, then auto-sends invoice (if customer owes more) or auto-refunds (if customer is owed money).',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
       'Each swap_items entry can: swap (remove_sku + add_query), remove only (remove_sku, no add), or add only (add_query, no remove_sku).',
-      'Discounts from original items are automatically preserved on replacement items.',
+      'Discounts from original items are automatically preserved on replacement items. You can also apply a custom discount (percent or fixed amount) to any added item — e.g. discount: { percent: 100 } to make it free.',
       'Use dry_run=true to test without committing (safe on any order).',
     ].join(' '),
     inputSchema: {
@@ -87,6 +87,16 @@ const tools = [
               add_query: { type: 'string', description: 'Product search query for replacement/addition (e.g. "Pink AJ Medium")' },
               add_variant_id: { type: 'string', description: 'Variant ID of replacement item (if known, skips search)' },
               add_quantity: { type: 'number', description: 'Quantity to add (default: same as removed, or 1 for add-only)' },
+              even_swap: { type: 'boolean', description: 'If true, auto-calculates discount on the added item so the swap is cost-neutral (new item priced same as the removed item after discounts). Requires both remove_sku and add_query/add_variant_id.' },
+              discount: {
+                type: 'object',
+                description: 'Custom discount to apply to the added item. Use percent (e.g. 100 for free) or fixed_amount (per-item dollar amount off). Overrides preserved discount from removed item. Ignored if even_swap is true.',
+                properties: {
+                  percent: { type: 'number', description: 'Percentage discount (e.g. 100 = free, 50 = half price)' },
+                  fixed_amount: { type: 'number', description: 'Fixed dollar amount off per item' },
+                  description: { type: 'string', description: 'Reason for discount (shown in Shopify admin)' },
+                },
+              },
             },
           },
         },
@@ -180,7 +190,8 @@ const tools = [
         const originalTotal = parseFloat(committedOrder.totalPriceSet.shopMoney.amount);
         const currentTotal = parseFloat(committedOrder.currentTotalPriceSet.shopMoney.amount);
         const currency = committedOrder.totalPriceSet.shopMoney.currencyCode;
-        const delta = currentTotal - originalTotal;
+        const hasEvenSwaps = _edit_data.swaps.some(s => s.even_swap);
+        const delta = hasEvenSwaps ? 0 : currentTotal - originalTotal;
 
         if (delta > 0.01) {
           // Customer owes more — send invoice
@@ -425,6 +436,8 @@ const tools = [
           add_price: addPrice,
           add_inventory: addInventory,
           discount_percent: discountPercent,
+          even_swap: swap.even_swap || false,
+          custom_discount: swap.discount || null,
         });
       }
 
@@ -462,11 +475,63 @@ const tools = [
             }
           }
 
-          // Apply discount if original item had one
+          // Apply discount: even_swap (deterministic) > custom discount > preserved discount
           let discountApplied = false;
           let discountDescription = '';
 
-          if (swap.discount_percent > 0 && addedLineItem) {
+          if (swap.even_swap && addedLineItem && swap.remove_sku) {
+            // Deterministic: calculate exact discount to make swap cost-neutral
+            const removedEffective = parseFloat(swap.remove_unit_price) * (1 - swap.discount_percent / 100);
+            const addedPrice = parseFloat(addedLineItem.originalUnitPriceSet?.shopMoney?.amount || swap.add_price);
+            const discountNeeded = addedPrice - removedEffective;
+
+            if (discountNeeded > 0.01) {
+              try {
+                // Round to 2 decimals for Shopify
+                const fixedOff = Math.round(discountNeeded * 100) / 100;
+                const currency = order.totalPriceSet.shopMoney.currencyCode;
+                await orderEditAddLineItemDiscount(calcOrder.id, addedLineItem.id, {
+                  description: `Even swap discount — matching original item price`,
+                  fixedValue: { amount: fixedOff.toFixed(2), currencyCode: currency },
+                });
+                discountApplied = true;
+                discountDescription = `$${fixedOff.toFixed(2)} off (even swap)`;
+                // Store as custom_discount for preview/estimate consistency
+                swap.custom_discount = { fixed_amount: fixedOff, description: 'Even swap' };
+              } catch (e) {
+                discountDescription = `Failed to apply even swap discount: ${e.message}`;
+              }
+            } else if (discountNeeded < -0.01) {
+              // New item is cheaper — no discount needed, swap saves money
+              discountDescription = 'New item is cheaper — no discount needed';
+            } else {
+              // Prices already match
+              discountDescription = 'Prices already match';
+            }
+          } else if (swap.custom_discount && addedLineItem) {
+            // Custom discount specified by caller
+            const cd = swap.custom_discount;
+            try {
+              const discountInput = {
+                description: cd.description || 'Custom discount applied via order edit',
+              };
+              if (cd.percent != null) {
+                discountInput.percentValue = cd.percent;
+              } else if (cd.fixed_amount != null) {
+                const currency = order.totalPriceSet.shopMoney.currencyCode;
+                discountInput.fixedValue = { amount: cd.fixed_amount.toFixed(2), currencyCode: currency };
+              }
+              await orderEditAddLineItemDiscount(calcOrder.id, addedLineItem.id, discountInput);
+              discountApplied = true;
+              if (cd.percent != null) {
+                discountDescription = `${cd.percent}% off (custom)`;
+              } else {
+                discountDescription = `$${cd.fixed_amount} off (custom)`;
+              }
+            } catch (e) {
+              discountDescription = `Failed to apply custom discount: ${e.message}`;
+            }
+          } else if (swap.discount_percent > 0 && addedLineItem) {
             if (hasAutoDiscount(addedLineItem)) {
               discountApplied = true;
               discountDescription = 'Auto-applied by Shopify';
@@ -568,9 +633,19 @@ const tools = [
         if (swap.add_title) {
           const addPrice = parseFloat(swap.add_price);
           let addPriceStr = `$${addPrice.toFixed(2)} each`;
-          if (swap.discount_applied && swap.discount_percent > 0) {
-            const discountedAdd = addPrice * (1 - swap.discount_percent / 100);
-            addPriceStr += ` (${swap.discount_description} = $${discountedAdd.toFixed(2)})`;
+          if (swap.discount_applied && swap.discount_description) {
+            // Calculate effective price after discount
+            let discountedAdd;
+            if (swap.custom_discount?.percent != null) {
+              discountedAdd = addPrice * (1 - swap.custom_discount.percent / 100);
+            } else if (swap.custom_discount?.fixed_amount != null) {
+              discountedAdd = Math.max(0, addPrice - swap.custom_discount.fixed_amount);
+            } else if (swap.discount_percent > 0) {
+              discountedAdd = addPrice * (1 - swap.discount_percent / 100);
+            }
+            if (discountedAdd != null) {
+              addPriceStr += ` (${swap.discount_description} = $${discountedAdd.toFixed(2)})`;
+            }
           }
           lines.push(`  ADD:    ${swap.add_quantity}x ${swap.add_title} — ${addPriceStr}`);
           if (swap.add_inventory != null && swap.add_inventory < swap.add_quantity) {
@@ -583,15 +658,22 @@ const tools = [
       // Price delta estimate
       let estimatedDelta = 0;
       for (const swap of stagedSwaps) {
-        const discountMult = swap.discount_percent > 0 ? (1 - swap.discount_percent / 100) : 1;
+        const preservedMult = swap.discount_percent > 0 ? (1 - swap.discount_percent / 100) : 1;
         if (swap.remove_title) {
           const removePrice = parseFloat(swap.remove_unit_price);
-          estimatedDelta -= removePrice * discountMult * swap.remove_quantity;
+          estimatedDelta -= removePrice * preservedMult * swap.remove_quantity;
         }
         if (swap.add_title) {
           const addPrice = parseFloat(swap.add_price);
-          const addMult = swap.discount_applied ? discountMult : 1;
-          estimatedDelta += addPrice * addMult * swap.add_quantity;
+          let effectiveAdd = addPrice;
+          if (swap.discount_applied && swap.custom_discount?.percent != null) {
+            effectiveAdd = addPrice * (1 - swap.custom_discount.percent / 100);
+          } else if (swap.discount_applied && swap.custom_discount?.fixed_amount != null) {
+            effectiveAdd = Math.max(0, addPrice - swap.custom_discount.fixed_amount);
+          } else if (swap.discount_applied) {
+            effectiveAdd = addPrice * preservedMult;
+          }
+          estimatedDelta += effectiveAdd * swap.add_quantity;
         }
       }
 

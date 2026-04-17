@@ -104,7 +104,7 @@ Sizing systems:
 
 **Refunds:** Use refund_order with the order number and item SKUs.
 
-**Order edits:** Use edit_order with swap_items for modifications.
+**Order edits:** Use edit_order with swap_items for modifications. When swapping items and the edit should be cost-neutral (no charge to customer), set \`even_swap: true\` on each swap entry — the tool auto-calculates the exact discount. You can also apply custom discounts with \`discount: { percent: 100 }\` (free) or \`discount: { fixed_amount: 5.00 }\` (dollars off).
 
 **Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold.
 
