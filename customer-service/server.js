@@ -45,6 +45,7 @@ const deliveryEstimateTools = require('./lib/tools/deliveryEstimate');
 const passportClaimsTools = require('./lib/tools/passportClaims');
 const editOrderTools = require('./lib/tools/editOrder');
 const deliveryTimeReportTools = require('./lib/tools/deliveryTimeReport');
+const setPricesTools = require('./lib/tools/setPrices');
 
 const allTools = [
   ...customerLookupTools,
@@ -76,6 +77,7 @@ const allTools = [
   ...passportClaimsTools,
   ...editOrderTools,
   ...deliveryTimeReportTools,
+  ...setPricesTools,
 ];
 
 /**

@@ -1217,6 +1217,32 @@ async function createProductVariants(productId, variants) {
 }
 
 /**
+ * Bulk-update variant prices on a product.
+ * @param {string} productId - Shopify product GID
+ * @param {Array<{id: string, price: string|number}>} variantPrices
+ * @returns {Array} Updated variants with { id, price }
+ */
+async function updateVariantPrices(productId, variantPrices) {
+  const variants = variantPrices.map(v => ({
+    id: v.id,
+    price: String(v.price),
+  }));
+  const data = await shopifyGraphQL(`
+    mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        productVariants {
+          id
+          sku
+          price
+        }
+        userErrors { field message }
+      }
+    }
+  `, { productId, variants });
+  return data.productVariantsBulkUpdate.productVariants;
+}
+
+/**
  * Update a product's status (e.g., DRAFT → ACTIVE).
  * @param {string} productId - Shopify product GID
  * @param {string} status - "ACTIVE" or "DRAFT"
@@ -1329,6 +1355,7 @@ module.exports = {
   createShopifyProduct,
   createProductVariants,
   updateProductStatus,
+  updateVariantPrices,
   // Order Edit API
   getOrderForEdit,
   orderEditBegin,
