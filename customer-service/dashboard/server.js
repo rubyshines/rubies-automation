@@ -813,7 +813,7 @@ async function apiGetStatsTickets(query) {
   // Get feedback rows for the day with draft details
   const { data: feedback } = await supabase
     .from('cs_ai_feedback_log')
-    .select('id, draft_id, gorgias_ticket_id, action, message_type, confidence, haiku_category, haiku_summary, haiku_score, created_at')
+    .select('id, draft_id, gorgias_ticket_id, action, message_type, confidence, haiku_category, haiku_summary, haiku_score, haiku_score_post_steer, created_at')
     .gte('created_at', start).lte('created_at', end)
     .order('created_at', { ascending: true });
 
@@ -858,6 +858,7 @@ async function apiGetStatsTickets(query) {
       haiku_category: r.haiku_category || null,
       haiku_summary: r.haiku_summary || null,
       haiku_score: r.haiku_score || null,
+      haiku_score_post_steer: r.haiku_score_post_steer || null,
       created_at: r.created_at,
     };
   });

@@ -30,6 +30,20 @@ function formatFocusTime(seconds) {
   return `${m}m ${s}s`;
 }
 
+function scoreColor(s) {
+  if (s >= 8) return 'var(--green)';
+  if (s >= 6) return 'var(--yellow)';
+  return 'var(--red)';
+}
+
+function formatScore(score, postSteerScore) {
+  const main = `<span style="color:${scoreColor(score)}">${score}</span>`;
+  if (postSteerScore != null) {
+    return `${main} <span style="color:var(--text-tertiary)">→</span> <span style="color:${scoreColor(postSteerScore)}">${postSteerScore}</span>`;
+  }
+  return main;
+}
+
 function parsePct(pctStr) {
   if (!pctStr || pctStr === 'N/A') return null;
   return parseFloat(pctStr);
@@ -200,7 +214,7 @@ function renderTicketsTable() {
             <td><a class="ticket-link" href="https://rubies.gorgias.com/app/ticket/${t.gorgias_ticket_id}" target="_blank" rel="noopener">#${t.gorgias_ticket_id}</a></td>
             <td class="type-cell">${(t.message_type || '—').replace(/_/g, ' ')}</td>
             <td>${outcomeBadge(t.redirect_count > 0 ? 'redirected' : t.outcome)}</td>
-            <td class="score-cell">${t.outcome === 'no_edit' ? '<span style="color:var(--green)">10</span>' : t.haiku_score != null ? `<span style="color:${t.haiku_score >= 8 ? 'var(--green)' : t.haiku_score >= 6 ? 'var(--yellow)' : 'var(--red)'}">${t.haiku_score}</span>` : '—'}</td>
+            <td class="score-cell">${t.outcome === 'no_edit' ? '<span style="color:var(--green)">10</span>' : t.haiku_score != null ? formatScore(t.haiku_score, t.haiku_score_post_steer) : '—'}</td>
             <td class="focus-cell">${formatFocusTime(t.focus_time_seconds)}</td>
             <td>${t.haiku_category ? `<span class="cat-badge">${t.haiku_category.replace(/_/g, ' ')}</span>` : '—'}</td>
             <td class="summary-cell">${t.haiku_summary || '—'}</td>

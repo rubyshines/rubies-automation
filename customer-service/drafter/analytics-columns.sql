@@ -9,3 +9,4 @@ ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS focus_time_seconds integer DEF
 ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS haiku_category text;
 ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS haiku_summary text;
 ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS haiku_score integer;
+ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS haiku_score_post_steer integer;
