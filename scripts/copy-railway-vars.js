@@ -22,6 +22,8 @@ const CRON_SERVICES = [
   { id: 'e5a96c06-af66-416d-ae3b-7ee65633f994', name: 'passport-tracking-sync' },
   { id: '6cbd67b4-6d71-40d4-9d88-c622a6ba41f8', name: 'weekly-seo-digest' },
   { id: 'aabbda71-37bc-4e5d-b291-539bda155d6c', name: 'monthly-competitor-pricing' },
+  { id: '2303e347-a55b-4f70-970d-298593e1f36b', name: 'daily-cs-comparison' },
+  { id: 'b0d922fa-b672-4c26-850a-e2b970ccb69e', name: 'daily-cs-stats' },
 ];
 
 function gql(query, variables) {
