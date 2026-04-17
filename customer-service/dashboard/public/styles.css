@@ -2587,6 +2587,29 @@ main { height: calc(100vh - 56px); }
 
 .test-summary h3 { margin-bottom: 8px; }
 
+/* ─── Stats Link ────────────────────────────────────────── */
+
+.btn-stats {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  text-decoration: none;
+  margin-left: auto;
+}
+.btn-stats:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
 /* ─── Logout Button ─────────────────────────────────────── */
 
 .btn-logout {
@@ -2601,7 +2624,7 @@ main { height: calc(100vh - 56px); }
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
-  margin-left: auto;
+  margin-left: 0;
 }
 .btn-logout:hover {
   border-color: var(--red);
