@@ -54,7 +54,9 @@ ${(final || '').slice(0, 2000)}`,
     }],
   });
 
-  const text = response.content[0]?.text || '';
+  let text = response.content[0]?.text || '';
+  // Strip markdown code fences Haiku sometimes wraps around JSON
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
   try {
     const parsed = JSON.parse(text);
     const category = CATEGORIES.includes(parsed.category) ? parsed.category : 'other';
