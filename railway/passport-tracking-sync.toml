@@ -1,13 +1,6 @@
 [build]
 builder = "NIXPACKS"
 
-[phases.setup]
-aptPkgs = ["chromium", "fonts-liberation", "libnss3", "libatk-bridge2.0-0", "libdrm2", "libxcomposite1", "libxdamage1", "libxrandr2", "libgbm1", "libasound2t64"]
-
-[variables]
-PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
-PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
-
 [deploy]
 startCommand = "node customer-service/sync/syncPassportDelivery.js --limit 50"
 cronSchedule = "37 * * * *"
