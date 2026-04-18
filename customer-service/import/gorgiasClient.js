@@ -163,27 +163,43 @@ async function createTicket({ customerEmail, customerName, subject, bodyText, ta
 /**
  * Create a reply message on a ticket (sent to customer via email).
  */
-async function createTicketReply(ticketId, { body_html, body_text }) {
+async function createTicketReply(ticketId, { body_html, body_text, attachments }) {
   const html = body_html || `<p>${(body_text || '').replace(/\n/g, '<br>')}</p>`;
   // Look up sender info from the ticket
   const ticket = await getTicket(ticketId);
+  const ticketChannel = ticket.channel || 'email';
   const senderEmail = process.env.GORGIAS_SENDER_EMAIL || 'care@rubyshines.com';
   const senderName = process.env.GORGIAS_SENDER_NAME || 'RUBIES Customer Care';
+  const payload = {
+    channel: ticketChannel,
+    via: 'api',
+    from_agent: true,
+    sender: { id: ticket.assignee_user?.id || undefined },
+    body_html: html,
+    body_text: body_text || '',
+  };
+  // Email channels need explicit from/to addresses in source;
+  // non-email channels (facebook-messenger, instagram, chat, etc.) inherit routing from the ticket
+  if (ticketChannel === 'email') {
+    payload.source = {
+      type: 'email',
+      from: { name: senderName, address: senderEmail },
+      to: [{ name: ticket.customer?.name || '', address: ticket.customer?.email || '' }],
+    };
+  }
+  // Gorgias accepts attachments as [{ url, name, content_type, size, extra }]
+  // with url being a data URI (base64) for inline uploads
+  if (attachments && attachments.length) {
+    payload.attachments = attachments.map(a => ({
+      url: `data:${a.content_type};base64,${a.base64}`,
+      name: a.name,
+      content_type: a.content_type,
+      size: Math.ceil((a.base64.length * 3) / 4),
+    }));
+  }
   return apiFetch(`/tickets/${ticketId}/messages`, {
     method: 'POST',
-    body: JSON.stringify({
-      channel: 'email',
-      via: 'api',
-      from_agent: true,
-      sender: { id: ticket.assignee_user?.id || undefined },
-      source: {
-        type: 'email',
-        from: { name: senderName, address: senderEmail },
-        to: [{ name: ticket.customer?.name || '', address: ticket.customer?.email || '' }],
-      },
-      body_html: html,
-      body_text: body_text || '',
-    }),
+    body: JSON.stringify(payload),
   });
 }
 

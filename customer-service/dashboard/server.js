@@ -216,6 +216,7 @@ async function apiSendDraft(id, body) {
   const replyResult = await gorgias.createTicketReply(draft.gorgias_ticket_id, {
     body_html: bodyHtml,
     body_text: finalResponse,
+    attachments: body.attachments,
   });
 
   const wasEdited = (draft.draft_response || '').trim() !== finalResponse.trim();
@@ -401,7 +402,7 @@ async function apiCloseDraft(id, body) {
 }
 
 
-async function apiRefreshDraft(id) {
+async function apiRefreshDraft(id, { steer } = {}) {
   const supabase = getSupabaseClient();
   const gorgiasClient = require('../import/gorgiasClient');
 
@@ -459,6 +460,7 @@ async function apiRefreshDraft(id) {
     issue_description: issueDescription,
     intake: draft.intake_state || undefined,
     preContext,
+    operatorSteer: steer || undefined,
   });
 
   const s = result._structured;
@@ -475,6 +477,7 @@ async function apiRefreshDraft(id) {
     message_type: canonicalMessageType(s?.message_type, `draft ${id}`),
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
   };
+  if (steer) updates.operator_steer = steer;
 
   // On re-draft: keep action chat history (don't lose operator work) but clear
   // execution state so the action panel reflects the new draft's recommendation.
@@ -520,7 +523,7 @@ async function apiRefreshDraft(id) {
     await supabase.from('cs_tickets').update(ticketUpdates).eq('id', draft.ticket_id);
   }
 
-  return { draft_response: newDraft, structured: s };
+  return { draft_response: newDraft, draft_id: id, structured: s };
 }
 
 async function apiReleaseDraft(id, body) {
@@ -1840,6 +1843,7 @@ async function apiSendTicketMessage(ticketId, body) {
   const replyResult = await gorgias.createTicketReply(ticket.gorgias_ticket_id, {
     body_html: bodyHtml,
     body_text: message,
+    attachments: body.attachments,
   });
 
   // Append to conversation history
@@ -2070,13 +2074,24 @@ const paramRoutes = [
     const { data: t } = await supabase.from('cs_tickets')
       .select('active_draft_id, gorgias_ticket_id, customer_email, order_number')
       .eq('id', parseInt(id)).single();
-    // Steered refresh always rebuilds from scratch (ignores existing draft)
-    if (!steer && t?.active_draft_id) return apiRefreshDraft(t.active_draft_id);
+    // Has an active draft — update it in place (with optional steer)
+    if (t?.active_draft_id) return apiRefreshDraft(t.active_draft_id, { steer: steer || undefined });
 
-    // No active draft (or steered) — create a new one by running the advisor on the latest customer message
+    // No active draft — check for an existing draft on this ticket (e.g. already sent/closed)
+    if (!t?.active_draft_id && t?.gorgias_ticket_id) {
+      const { data: existingDraft } = await supabase.from('cs_ai_drafts')
+        .select('id')
+        .eq('ticket_id', parseInt(id))
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existingDraft) return apiRefreshDraft(existingDraft.id, { steer: steer || undefined });
+    }
+
+    // No draft at all — create a new one by running the advisor on the latest customer message
     if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
     const gorgiasClient = require('../import/gorgiasClient');
-    const { processTicket, getAiBotUserId, buildConversationContext } = require('../intake/processGorgiasTickets');
+    const { buildConversationContext } = require('../intake/processGorgiasTickets');
     const { aiAdvisor } = require('../lib/aiAdvisor');
 
     const [messages, gorgiasTicket] = await Promise.all([
@@ -2114,7 +2129,7 @@ const paramRoutes = [
     const newDraft = s?._composedResponse || '';
     const confidence = s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low';
 
-    const { data: newDraftRow } = await supabase.from('cs_ai_drafts').insert({
+    const { data: newDraftRow, error: insertErr } = await supabase.from('cs_ai_drafts').insert({
       ticket_id: parseInt(id),
       gorgias_ticket_id: t.gorgias_ticket_id,
       gorgias_message_id: lastCustomer.id,
@@ -2129,11 +2144,14 @@ const paramRoutes = [
       operator_steer: steer || null,
     }).select('id').single();
 
-    if (newDraftRow) {
-      await supabase.from('cs_tickets').update({ active_draft_id: newDraftRow.id }).eq('id', parseInt(id));
+    if (insertErr) {
+      console.error(`[refresh] Failed to insert draft for ticket ${id}:`, insertErr);
+      throw new Error(`Draft save failed: ${insertErr.message}`);
     }
 
-    return { draft_response: newDraft, structured: s };
+    await supabase.from('cs_tickets').update({ active_draft_id: newDraftRow.id }).eq('id', parseInt(id));
+
+    return { draft_response: newDraft, draft_id: newDraftRow.id, structured: s };
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/release$/, handler: (body, id) => {
     const supabase = getSupabaseClient();

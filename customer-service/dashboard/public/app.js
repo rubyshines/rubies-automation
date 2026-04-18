@@ -230,6 +230,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('draft-notes').addEventListener('input', () => {
     if (currentTicketId) localStorage.setItem(`notes-ticket-${currentTicketId}`, document.getElementById('draft-notes').value);
   });
+
+  // ── Drag-and-drop attachments on draft editor ──────────────
+  initDraftAttachments();
 });
 
 // ---------------------------------------------------------------------------
@@ -1311,6 +1314,103 @@ function executeEditPhase1() {}
 function executeEditPhase2() {}
 
 // ---------------------------------------------------------------------------
+// Draft Attachments — drag-and-drop file/image attach
+// ---------------------------------------------------------------------------
+
+let _draftAttachments = []; // [{ file: File, dataUrl: string, name: string, type: string }]
+
+function initDraftAttachments() {
+  const wrap = document.getElementById('draft-editor-wrap');
+  const editor = document.getElementById('draft-editor');
+  let dragCounter = 0;
+
+  wrap.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    wrap.classList.add('drag-over');
+  });
+  wrap.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; wrap.classList.remove('drag-over'); }
+  });
+  wrap.addEventListener('dragover', (e) => e.preventDefault());
+  wrap.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    wrap.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) addDraftFiles(e.dataTransfer.files);
+  });
+
+  // Also allow paste into editor
+  editor.addEventListener('paste', (e) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length) {
+      e.preventDefault();
+      addDraftFiles(files);
+    }
+  });
+}
+
+function addDraftFiles(fileList) {
+  for (const file of fileList) {
+    if (file.size > 10 * 1024 * 1024) { alert(`${file.name} exceeds 10 MB limit`); continue; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      _draftAttachments.push({ file, dataUrl: reader.result, name: file.name, type: file.type });
+      renderDraftAttachments();
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function removeDraftAttachment(index) {
+  _draftAttachments.splice(index, 1);
+  renderDraftAttachments();
+}
+
+function clearDraftAttachments() {
+  _draftAttachments = [];
+  renderDraftAttachments();
+}
+
+function renderDraftAttachments() {
+  const strip = document.getElementById('draft-attachments');
+  if (!_draftAttachments.length) {
+    strip.classList.remove('has-files');
+    strip.innerHTML = '';
+    return;
+  }
+  strip.classList.add('has-files');
+  strip.innerHTML = _draftAttachments.map((att, i) => {
+    const isImage = att.type.startsWith('image/');
+    if (isImage) {
+      return `<div class="draft-attach-item">
+        <img class="draft-attach-thumb" src="${att.dataUrl}" alt="${esc(att.name)}" title="${esc(att.name)}">
+        <button class="draft-attach-remove" onclick="removeDraftAttachment(${i})" title="Remove">&times;</button>
+      </div>`;
+    }
+    return `<div class="draft-attach-item">
+      <div class="draft-attach-file" title="${esc(att.name)}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span>${esc(att.name)}</span>
+      </div>
+      <button class="draft-attach-remove" onclick="removeDraftAttachment(${i})" title="Remove">&times;</button>
+    </div>`;
+  }).join('') + `<button class="draft-attach-add" onclick="document.getElementById('draft-attach-input').click()" title="Add file">+</button>
+  <input type="file" id="draft-attach-input" multiple style="display:none" onchange="addDraftFiles(this.files);this.value=''">`;
+}
+
+function getDraftAttachmentsPayload() {
+  // Returns array of { base64, name, content_type } for the server
+  return _draftAttachments.map(att => ({
+    base64: att.dataUrl.split(',')[1],
+    name: att.name,
+    content_type: att.type,
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
@@ -1330,11 +1430,13 @@ function sendDraft(afterAction) {
   const endpoint = draftId
     ? `/api/tickets/${ticketId}/send`
     : `/api/tickets/${ticketId}/message`;
+  const attachments = getDraftAttachmentsPayload();
   const body = draftId
-    ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds }
-    : { message: response, after: afterAction, focus_time_seconds: focusSeconds };
+    ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) }
+    : { message: response, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
 
   // Optimistic: clear local state and advance immediately
+  clearDraftAttachments();
   localStorage.removeItem(`draft-ticket-${ticketId}`);
   localStorage.removeItem(`notes-ticket-${ticketId}`);
   advanceToNextTicket(ticketId);
@@ -1369,6 +1471,7 @@ function closeNoReply() {
 
 function clearTicketSelection() {
   pauseFocusTimer();
+  clearDraftAttachments();
   currentTicketId = null;
   currentTicket = null;
   currentDraftId = null;
@@ -1501,31 +1604,32 @@ function updateNavArrows() {
 async function refreshDraft(steer) {
   if (!currentTicketId) return;
 
+  const ticketId = currentTicketId; // snapshot — user may navigate away during the call
   const btn = document.getElementById('btn-refresh');
   const steerInput = document.getElementById('steer-input');
-  const steerLast = document.getElementById('steer-last');
   const cleanSteer = (typeof steer === 'string' ? steer : '').trim();
   btn.disabled = true;
   if (steerInput) steerInput.disabled = true;
 
   try {
-    const result = await api(`/api/tickets/${currentTicketId}/refresh`, {
+    const result = await api(`/api/tickets/${ticketId}/refresh`, {
       method: 'POST',
       body: cleanSteer ? { steer: cleanSteer } : {},
     });
+
+    // If user navigated away, don't touch the UI — just update localStorage for when they return
+    if (currentTicketId !== ticketId) {
+      localStorage.setItem(`draft-ticket-${ticketId}`, result.draft_response);
+      return;
+    }
+
     document.getElementById('draft-editor').value = result.draft_response;
+    if (result.draft_id) currentDraftId = result.draft_id;
     if (steerInput) {
       steerInput.value = '';
       steerInput.disabled = false;
     }
-    if (steerLast) {
-      if (cleanSteer) {
-        steerLast.textContent = `last steer: "${cleanSteer}" — click to reuse`;
-        steerLast.style.display = '';
-        steerLast.onclick = () => { if (steerInput) { steerInput.value = cleanSteer; steerInput.focus(); } };
-      }
-    }
-    localStorage.setItem(`draft-ticket-${currentTicketId}`, result.draft_response);
+    localStorage.setItem(`draft-ticket-${ticketId}`, result.draft_response);
 
     if (result.structured?.status) {
       const conf = result.structured.status === 'ready' ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';

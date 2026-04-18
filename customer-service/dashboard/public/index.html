@@ -121,8 +121,16 @@
                 onkeydown="if(event.key==='Enter'){event.preventDefault();refreshDraft(this.value)}else if(event.key==='Escape'){this.blur()}" />
               <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft(document.getElementById('steer-input').value)" title="Regenerate draft">&#8635;</button>
             </div>
-            <div id="steer-last" class="steer-last" style="display:none"></div>
-            <textarea id="draft-editor" rows="8"></textarea>
+            <div id="draft-editor-wrap" class="draft-editor-wrap">
+              <textarea id="draft-editor" rows="8"></textarea>
+              <div id="draft-drop-overlay" class="draft-drop-overlay">
+                <div class="draft-drop-inner">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span>Drop files to attach</span>
+                </div>
+              </div>
+            </div>
+            <div id="draft-attachments" class="draft-attachments"></div>
             <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
             <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
             <div id="draft-actions" class="draft-actions">

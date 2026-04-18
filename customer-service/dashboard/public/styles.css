@@ -1572,6 +1572,121 @@ main { height: calc(100vh - 56px); }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* ─── Draft Drop Zone & Attachments ─────────────────────── */
+.draft-editor-wrap {
+  position: relative;
+}
+.draft-drop-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius);
+  border: 2px dashed var(--teal);
+  background: rgba(26, 143, 125, 0.06);
+  z-index: 10;
+  pointer-events: none;
+}
+.draft-editor-wrap.drag-over .draft-drop-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.draft-editor-wrap.drag-over #draft-editor {
+  border-color: var(--teal);
+}
+.draft-drop-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--teal);
+  font-size: 13px;
+  font-weight: 600;
+}
+.draft-attachments {
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+.draft-attachments.has-files {
+  display: flex;
+}
+.draft-attach-item {
+  position: relative;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.draft-attach-item:hover {
+  border-color: var(--border-strong);
+}
+.draft-attach-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  display: block;
+  border-radius: 5px;
+}
+.draft-attach-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-width: 160px;
+}
+.draft-attach-file svg {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+.draft-attach-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draft-attach-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(28, 25, 23, 0.6);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  padding: 0;
+}
+.draft-attach-item:hover .draft-attach-remove {
+  opacity: 1;
+}
+.draft-attach-add {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, color 0.15s;
+}
+.draft-attach-add:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
 #draft-notes {
   width: 100%;
   background: #fff;
