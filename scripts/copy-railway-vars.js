@@ -24,6 +24,7 @@ const CRON_SERVICES = [
   { id: 'aabbda71-37bc-4e5d-b291-539bda155d6c', name: 'monthly-competitor-pricing' },
   { id: '2303e347-a55b-4f70-970d-298593e1f36b', name: 'daily-cs-comparison' },
   { id: 'b0d922fa-b672-4c26-850a-e2b970ccb69e', name: 'daily-cs-stats' },
+  { id: '3ea556ed-3087-4ef5-82cb-d5ab538a97b8', name: 'cs-dashboard' },
 ];
 
 function gql(query, variables) {
