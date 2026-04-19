@@ -2849,6 +2849,13 @@ main { height: calc(100vh - 56px); }
 
   /* ── Header ────────────────────────────────────────────── */
 
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+  }
+
   header {
     height: auto;
     padding: 8px 10px;
