@@ -330,12 +330,13 @@ async function snoozeTicket(ticketId, days = 3) {
 }
 
 /**
- * Close a ticket.
+ * Close a ticket. Also clears any pending snooze — otherwise Gorgias
+ * will reopen the ticket when the snooze timer expires.
  */
 async function closeTicket(ticketId) {
   return apiFetch(`/tickets/${ticketId}`, {
     method: 'PUT',
-    body: JSON.stringify({ status: 'closed' }),
+    body: JSON.stringify({ status: 'closed', snooze_datetime: null }),
   });
 }
 

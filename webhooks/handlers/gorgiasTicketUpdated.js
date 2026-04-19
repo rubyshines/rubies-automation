@@ -42,7 +42,7 @@ async function handle(payload) {
     }).eq('id', ourTicket.id);
     console.log(`[gorgias-ticket-updated] ${ticketId} — ${ourTicket.status} → closed`);
   } else if (gorgiasStatus === 'open' && ourTicket.status === 'closed') {
-    // Ticket reopened in Gorgias
+    // Ticket reopened in Gorgias (e.g. snooze expired, customer replied)
     await supabase.from('cs_tickets').update({
       status: 'open',
       updated_at: now,
