@@ -133,9 +133,17 @@ Sizing systems:
  *   type: 'thinking' | 'tool_call' | 'tool_result' | 'text'
  */
 async function operatorAgent(message, context, history = [], onEvent) {
+  const _t = { start: Date.now(), api_calls: [] };
   const { tools, handlers } = loadToolSchemas();
   const systemPrompt = buildSystemPrompt(context);
   const client = getAnthropic();
+
+  // Prompt caching — system prompt is static for the duration of an action-chat session
+  // (same ticket context across preview → confirm). Reliable win since operator always
+  // makes 2+ API calls within seconds.
+  const systemBlocks = [
+    { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+  ];
 
   let currentMessages = [...history, { role: 'user', content: message }];
   let finalResponse = '';
@@ -144,12 +152,31 @@ async function operatorAgent(message, context, history = [], onEvent) {
   const emit = onEvent || (() => {});
 
   for (let i = 0; i < maxIterations; i++) {
-    const response = await client.messages.create({
+    const _tApi = Date.now();
+    const apiParams = {
       model: 'claude-opus-4-6',
       max_tokens: 1024,
-      system: systemPrompt,
+      system: systemBlocks,
       tools,
       messages: currentMessages,
+    };
+
+    let response;
+    if (onEvent) {
+      // Streaming mode — emit text deltas as they arrive
+      const stream = client.messages.stream(apiParams);
+      stream.on('text', (text) => emit({ type: 'text_delta', data: text }));
+      response = await stream.finalMessage();
+    } else {
+      response = await client.messages.create(apiParams);
+    }
+
+    _t.api_calls.push({
+      duration_ms: Date.now() - _tApi,
+      input_tokens: response.usage?.input_tokens,
+      output_tokens: response.usage?.output_tokens,
+      cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
+      cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
     });
 
     const textBlocks = response.content.filter(b => b.type === 'text');
@@ -188,10 +215,11 @@ async function operatorAgent(message, context, history = [], onEvent) {
           }
         }
 
+        const _tTool = Date.now();
         const toolResult = await handler(toolUse.input);
         const text = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
         result = text;
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, result: text, _refund_data: toolResult._refund_data });
+        toolResults.push({ tool: toolUse.name, input: toolUse.input, result: text, _refund_data: toolResult._refund_data, _duration_ms: Date.now() - _tTool });
         emit({ type: 'tool_result', data: { tool: toolUse.name, result: text } });
       } catch (err) {
         result = JSON.stringify({ error: err.message });
@@ -215,11 +243,156 @@ async function operatorAgent(message, context, history = [], onEvent) {
     if (response.stop_reason === 'end_turn') continue;
   }
 
+  _t.total_ms = Date.now() - _t.start;
+
+  // Fire shadow Sonnet evaluation in background (diagnostic mode)
+  runOperatorShadowEval({
+    systemPrompt,
+    tools,
+    handlers,
+    initialMessages: [...history, { role: 'user', content: message }],
+    opusResult: { response: finalResponse, toolResults, timing: _t },
+    context,
+  }).catch(err => console.warn('[shadow] Operator evaluation error:', err.message));
+
   return {
     response: finalResponse,
     tool_results: toolResults,
     history: currentMessages,
+    _timing: _t,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shadow Sonnet evaluation for operator agent
+// ---------------------------------------------------------------------------
+
+async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMessages, opusResult, context }) {
+  if (process.env.CS_DIAGNOSTICS_DISABLED === 'true') return;
+
+  const { getSupabaseClient } = require('../../shared/supabaseClient');
+  const supabase = getSupabaseClient();
+  const client = getAnthropic();
+
+  // Verify diagnostic table exists
+  try {
+    const { error: probeErr } = await supabase.from('cs_diagnostic_runs').select('id').limit(0);
+    if (probeErr) return;
+  } catch (_) { return; }
+
+  const sonnetTiming = { start: Date.now(), api_calls: [] };
+  let sonnetMessages = [...initialMessages];
+  let sonnetResponse;
+  let sonnetFinalResponse = '';
+  let sonnetToolResults = [];
+
+  try {
+    for (let i = 0; i < 10; i++) {
+      const _tApi = Date.now();
+      sonnetResponse = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        tools,
+        messages: sonnetMessages,
+      });
+      sonnetTiming.api_calls.push({
+        duration_ms: Date.now() - _tApi,
+        input_tokens: sonnetResponse.usage?.input_tokens,
+        output_tokens: sonnetResponse.usage?.output_tokens,
+      });
+
+      const textBlocks = sonnetResponse.content.filter(b => b.type === 'text');
+      const toolUseBlocks = sonnetResponse.content.filter(b => b.type === 'tool_use');
+      if (textBlocks.length) sonnetFinalResponse = textBlocks.map(b => b.text).join('\n');
+      if (toolUseBlocks.length === 0) break;
+
+      const toolResultMessages = [];
+      for (const toolUse of toolUseBlocks) {
+        const handler = handlers[toolUse.name];
+        let result;
+        try {
+          if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
+          // Apply same Sonnet auto-fixes
+          if (toolUse.name === 'create_exchange_order' && !toolUse.input.confirmed) {
+            if (!toolUse.input.customer_id || toolUse.input.customer_id.includes('@')) {
+              const { searchCustomers } = require('./shopify');
+              const customers = await searchCustomers(context.customer_email);
+              if (customers?.[0]) toolUse.input.customer_id = customers[0].id;
+            }
+            if (toolUse.input.original_order_id && !String(toolUse.input.original_order_id).includes('gid://')) {
+              delete toolUse.input.original_order_id;
+            }
+          }
+          const toolResult = await handler(toolUse.input);
+          result = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
+          sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input });
+        } catch (err) {
+          result = JSON.stringify({ error: err.message });
+        }
+        toolResultMessages.push({ type: 'tool_result', tool_use_id: toolUse.id, content: result });
+      }
+      sonnetMessages = [...sonnetMessages, { role: 'assistant', content: sonnetResponse.content }, { role: 'user', content: toolResultMessages }];
+    }
+  } catch (err) {
+    console.warn('[shadow] Operator Sonnet call failed:', err.message);
+    return;
+  }
+
+  sonnetTiming.total_ms = Date.now() - sonnetTiming.start;
+
+  // Divergence detection — compare tool calls
+  const divergences = [];
+  const opusTools = opusResult.toolResults.map(t => t.tool).join(',');
+  const sonnetTools = sonnetToolResults.map(t => t.tool).join(',');
+  if (opusTools !== sonnetTools) divergences.push(`tools: [${opusTools}] vs [${sonnetTools}]`);
+
+  // AI judge for operator actions
+  let judgeResult = null;
+  try {
+    const judgeResponse = await client.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 512,
+      system: 'You are evaluating two operator agent action responses for a CS dashboard. Compare which tool calls were made and the final response. Be concise.',
+      messages: [{
+        role: 'user',
+        content: `Operator command: "${initialMessages[initialMessages.length - 1]?.content}"
+
+RESPONSE A (production): ${opusResult.response}
+Tools called: ${opusTools || 'none'}
+
+RESPONSE B (candidate): ${sonnetFinalResponse}
+Tools called: ${sonnetTools || 'none'}
+
+Rate: tool_selection (SAME/MINOR_DIFF/MAJOR_DIFF), response_quality (SAME/MINOR_DIFF/MAJOR_DIFF), verdict (EQUIVALENT/B_ACCEPTABLE/B_WORSE).
+Respond as JSON: { "tool_selection": {...}, "response_quality": {...}, "verdict": "..." }`,
+      }],
+    });
+    const judgeText = judgeResponse.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    const jsonMatch = judgeText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) judgeResult = JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.warn('[shadow] Operator judge failed:', err.message);
+  }
+
+  try {
+    await supabase.from('cs_diagnostic_runs').insert({
+      source: 'operator',
+      customer_email: context.customer_email,
+      opus_draft: opusResult.response,
+      opus_structured: null,
+      opus_timing: opusResult.timing,
+      opus_tools_called: opusResult.toolResults.map(t => t.tool),
+      sonnet_draft: sonnetFinalResponse,
+      sonnet_structured: null,
+      sonnet_timing: sonnetTiming,
+      sonnet_tools_called: sonnetToolResults.map(t => t.tool),
+      judge_result: judgeResult,
+      divergences,
+    });
+  } catch (err) {
+    console.warn('[shadow] Failed to save operator diagnostic:', err.message);
+  }
 }
 
 module.exports = { operatorAgent };

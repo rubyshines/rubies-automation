@@ -2377,6 +2377,207 @@ async function handleRequest(req, res) {
         return;
       }
 
+      // ---------------------------------------------------------------
+      // SSE streaming endpoints — handled before param routes so we can
+      // write directly to res instead of going through the JSON wrapper.
+      // ---------------------------------------------------------------
+
+      // Stream advisor redraft
+      const refreshStreamMatch = pathname.match(/^\/api\/tickets\/(\d+)\/refresh-stream$/);
+      if (req.method === 'POST' && refreshStreamMatch) {
+        const ticketId = parseInt(refreshStreamMatch[1]);
+        const body = await readBody(req);
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        });
+        const sendEvent = (data) => {
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        try {
+          const supabase = getSupabaseClient();
+          const steer = (body?.steer || '').trim();
+          const { data: t } = await supabase.from('cs_tickets')
+            .select('active_draft_id, gorgias_ticket_id, customer_email, order_number')
+            .eq('id', ticketId).single();
+
+          // Get the draft to refresh
+          const draftId = t?.active_draft_id;
+          if (!draftId) throw new Error('No active draft for this ticket');
+
+          const { data: draft, error: fetchErr } = await supabase
+            .from('cs_ai_drafts').select('*').eq('id', draftId).single();
+          if (fetchErr) throw fetchErr;
+
+          const gorgiasClient = require('../import/gorgiasClient');
+          const [messages, gorgiasTicket] = await Promise.all([
+            gorgiasClient.getTicketMessages(draft.gorgias_ticket_id),
+            gorgiasClient.getTicket(draft.gorgias_ticket_id).catch(() => null),
+          ]);
+          const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+          if (!lastCustomer) throw new Error('No customer message found');
+          const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
+            .filter(Boolean).join(' ').trim() || gorgiasTicket?.customer?.name || null;
+          const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
+          const { buildConversationContext } = require('../intake/processGorgiasTickets');
+          let contextParts = [];
+          if (typeof buildConversationContext === 'function') {
+            const ctx = buildConversationContext(messages, lastCustomer.id);
+            if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
+          }
+          contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
+          const issueDescription = contextParts.join('\n\n');
+
+          const { buildContext } = require('../lib/contextBuilder');
+          let preContext = null;
+          try {
+            preContext = await buildContext({
+              customer_email: draft.customer_email,
+              customer_name: senderName,
+              issue_description: issueDescription,
+              current_gorgias_ticket_id: draft.gorgias_ticket_id,
+            });
+          } catch (err) {
+            console.warn(`[refresh-stream] buildContext failed: ${err.message}`);
+          }
+
+          sendEvent({ type: 'status', text: 'Generating draft...' });
+
+          const { aiAdvisor } = require('../lib/aiAdvisor');
+          const result = await aiAdvisor({
+            customer_email: draft.customer_email,
+            customer_name: senderName,
+            issue_description: issueDescription,
+            intake: draft.intake_state || undefined,
+            preContext,
+            operatorSteer: steer || undefined,
+            onStream: (event) => sendEvent(event),
+          });
+
+          // Save the result (same as non-streaming path)
+          const s = result._structured;
+          const newDraft = s?._composedResponse || '[No response composed]';
+          const updates = {
+            draft_response: newDraft,
+            structured_output: s,
+            audit_trail: s?.audit || [],
+            advisor_status: s?.status,
+            confidence: s?.status === 'ready' ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low',
+            action_type: s?.action_type || null,
+            message_type: canonicalMessageType(s?.message_type, `draft ${draftId}`),
+            order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
+          };
+          if (steer) updates.operator_steer = steer;
+          const actionCompleted = draft.action_result?.phase === 'completed';
+          if (!actionCompleted) {
+            const prevChat = draft.action_result;
+            if (prevChat?.chat_history?.length) {
+              updates.action_result = { chat_history: prevChat.chat_history, chat_tool_results: prevChat.chat_tool_results, chat_response: prevChat.chat_response, chat_links: prevChat.chat_links };
+            } else {
+              updates.action_result = null;
+            }
+            updates.action_executed_at = null;
+          }
+          await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
+
+          if (draft.ticket_id) {
+            const ticketUpdates = { updated_at: new Date().toISOString() };
+            if (s?.message_type) ticketUpdates.message_type = canonicalMessageType(s.message_type, `ticket ${draft.ticket_id}`);
+            if (s?.customer_sentiment) ticketUpdates.customer_sentiment = s.customer_sentiment;
+            if (s?.action_type) ticketUpdates.action_type = s.action_type;
+            if (s?.confidence) ticketUpdates.confidence = s.confidence;
+            if (s?.status) ticketUpdates.advisor_status = s.status;
+            const resolvedOrderName = s?.order?.name || preContext?.targetOrder?.name || null;
+            if (resolvedOrderName) ticketUpdates.order_number = resolvedOrderName.toString().startsWith('#') ? resolvedOrderName : `#${resolvedOrderName}`;
+            if (preContext?.customerCountry) ticketUpdates.customer_country = preContext.customerCountry;
+            await supabase.from('cs_tickets').update(ticketUpdates).eq('id', draft.ticket_id);
+          }
+
+          sendEvent({ type: 'complete', draft_response: newDraft, draft_id: draftId, structured: s });
+        } catch (err) {
+          sendEvent({ type: 'error', message: err.message });
+        }
+        res.end();
+        return;
+      }
+
+      // Stream operator action-chat
+      const actionStreamMatch = pathname.match(/^\/api\/tickets\/(\d+)\/action-chat-stream$/);
+      if (req.method === 'POST' && actionStreamMatch) {
+        const ticketId = parseInt(actionStreamMatch[1]);
+        const body = await readBody(req);
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        });
+        const sendEvent = (data) => {
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        try {
+          const { operatorAgent } = require('../lib/operatorAgent');
+          const supabase = getSupabaseClient();
+          const { data: t } = await supabase.from('cs_tickets')
+            .select('active_draft_id, customer_email, order_number, order_context')
+            .eq('id', ticketId).single();
+
+          let draft = null;
+          let structured = {};
+          if (t?.active_draft_id) {
+            const { data: d } = await supabase.from('cs_ai_drafts').select('*').eq('id', t.active_draft_id).single();
+            draft = d;
+            structured = d?.structured_output || {};
+          }
+
+          const orderCtx = t?.order_context || {};
+          const context = {
+            draft,
+            customer_email: t?.customer_email,
+            order_number: (t?.order_number || '').replace('#', ''),
+            order_items: structured.order?.items || orderCtx.items || [],
+            fulfillment_status: structured.order?.fulfillment_status || orderCtx.fulfillment_status || null,
+            intake: structured.intake || null,
+          };
+
+          const result = await operatorAgent(body.message, context, body.history || [], (event) => {
+            sendEvent(event);
+          });
+
+          // Extract links and save (same as non-streaming path)
+          result.links = extractActionLinks(result.tool_results);
+          if (t?.active_draft_id) {
+            const prevResult = draft?.action_result || {};
+            const updates = {
+              action_result: {
+                ...prevResult,
+                chat_tool_results: result.tool_results,
+                chat_history: result.history,
+                chat_response: result.response,
+                chat_links: dedupeLinks([...(prevResult.chat_links || []), ...result.links]),
+              },
+            };
+            const completedAction = result.tool_results.some(tr =>
+              (tr.tool === 'refund_order' && tr.input?.confirmed) ||
+              (tr.tool === 'create_exchange_order' && tr.input?.confirmed) ||
+              (tr.tool === 'edit_order' && tr.input?.confirmed) ||
+              (tr.tool === 'warehouse_hold') ||
+              (tr.result && typeof tr.result === 'string' && /completed|refunded|created|hold placed/i.test(tr.result))
+            );
+            if (completedAction && !draft?.action_executed_at) {
+              updates.action_executed_at = new Date().toISOString();
+            }
+            await supabase.from('cs_ai_drafts').update(updates).eq('id', t.active_draft_id);
+          }
+
+          sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
+        } catch (err) {
+          sendEvent({ type: 'error', message: err.message });
+        }
+        res.end();
+        return;
+      }
+
       // Param routes
       for (const route of paramRoutes) {
         if (req.method !== route.method) continue;

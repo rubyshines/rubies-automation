@@ -1041,7 +1041,32 @@ function buildActionPrefill(draft) {
   if (actionType.includes('refund')) {
     const refundItems = prescription.filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
     const itemsToShow = refundItems.length ? refundItems : items;
-    const lines = itemsToShow.map(i => `- ${shortName(i.product)} ${i.size || ''}`);
+    const orderLines = structured.order?.items || [];
+    // Enrich with size/color from order line items (variant = "Black / L")
+    const enriched = itemsToShow.map(i => {
+      const intakeMatch = items.find(ii => ii.product === i.product);
+      const pName = shortName(i.product).toLowerCase();
+      const orderMatch = orderLines.find(ol => ol.title?.toLowerCase().includes(pName));
+      const variantParts = (orderMatch?.variant || '').split(/\s*\/\s*/);
+      const orderColor = variantParts.length >= 2 ? variantParts[0] : '';
+      const orderSize = variantParts.length >= 2 ? variantParts[variantParts.length - 1] : variantParts[0] || '';
+      return {
+        product: i.product,
+        size: i.size || intakeMatch?.size || orderSize || '',
+        color: i.color || intakeMatch?.color || orderColor || '',
+      };
+    });
+    // Group identical product/size/color combos and show quantity
+    const grouped = [];
+    for (const item of enriched) {
+      const key = `${item.product}|${item.size}|${item.color}`;
+      const existing = grouped.find(g => g.key === key);
+      if (existing) { existing.qty++; } else { grouped.push({ key, ...item, qty: 1 }); }
+    }
+    const lines = grouped.map(g => {
+      const parts = [g.qty > 1 ? `${g.qty}x` : '', shortName(g.product), g.color, g.size].filter(Boolean);
+      return `- ${parts.join(' / ')}`;
+    });
     return `refund on order #${orderNum}:\n${lines.join('\n')}`;
   }
 
@@ -1179,7 +1204,7 @@ function renderQuickReplies(options) {
 
 function appendChatMessage(role, content) {
   const container = document.getElementById('action-chat-messages');
-  if (!container) return;
+  if (!container) return null;
 
   const div = document.createElement('div');
   div.className = `action-msg action-msg-${role}`;
@@ -1190,10 +1215,11 @@ function appendChatMessage(role, content) {
     const full = esc(content);
     div.innerHTML = `<details class="action-tool-details"><summary class="action-tool-summary">${summary}</summary><pre class="action-tool-output">${full}</pre></details>`;
   } else {
-    div.innerHTML = simpleMarkdown(content);
+    div.innerHTML = `<span class="chat-text">${simpleMarkdown(content)}</span>`;
   }
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+  return div;
 }
 
 function appendChatThinking() {
@@ -1232,39 +1258,89 @@ async function sendActionMessage() {
   appendChatThinking();
 
   try {
-    const result = await api(`/api/tickets/${currentTicketId}/action-chat`, {
+    // Use streaming endpoint — shows tool calls and responses in real-time
+    const resp = await fetch(`/api/tickets/${currentTicketId}/action-chat-stream`, {
       method: 'POST',
-      body: { message, history: _actionChatHistory },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: _actionChatHistory }),
     });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let streamingAssistantText = '';
+    let streamingEl = null;
+    let finalResult = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'tool_call') {
+            removeChatThinking();
+            const label = (event.data?.tool || 'unknown').replace(/_/g, ' ');
+            appendChatMessage('tool', `[${label}] Running...`);
+            appendChatThinking();
+          } else if (event.type === 'tool_result') {
+            removeChatThinking();
+            const label = (event.data?.tool || 'unknown').replace(/_/g, ' ');
+            const resultText = event.data?.result || event.data?.error || 'Done';
+            const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
+            appendChatMessage('tool', `[${label}]\n${display}`);
+            appendChatThinking();
+          } else if (event.type === 'text_delta') {
+            removeChatThinking();
+            streamingAssistantText += event.data;
+            if (!streamingEl) {
+              streamingEl = appendChatMessage('assistant', streamingAssistantText);
+            } else {
+              streamingEl.querySelector('.chat-text').textContent = streamingAssistantText;
+            }
+          } else if (event.type === 'text') {
+            // Final text block (non-streaming fallback from operatorAgent)
+            removeChatThinking();
+            streamingAssistantText = event.data;
+            if (!streamingEl) {
+              streamingEl = appendChatMessage('assistant', streamingAssistantText);
+            } else {
+              streamingEl.querySelector('.chat-text').textContent = streamingAssistantText;
+            }
+          } else if (event.type === 'complete') {
+            finalResult = event;
+          } else if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e;
+        }
+      }
+    }
 
     removeChatThinking();
 
-    // Show tool calls first (like Claude Code — show the work before the answer)
-    if (result.tool_results?.length) {
-      for (const tr of result.tool_results) {
-        const label = (tr.tool || 'unknown').replace(/_/g, ' ');
-        const resultText = tr.result != null ? (typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2)) : (tr.error || 'No result');
-        const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
-        appendChatMessage('tool', `[${label}]\n${display}`);
+    // Apply final result
+    if (finalResult) {
+      // If no streaming text was shown, show the final response
+      if (!streamingEl && finalResult.response) {
+        appendChatMessage('assistant', finalResult.response);
       }
-      updateDraftFromActionResults(result.tool_results);
+      // Show tool results that weren't streamed
+      if (finalResult.tool_results?.length) {
+        updateDraftFromActionResults(finalResult.tool_results);
+      }
+      if (finalResult.links?.length) renderActionLinks(finalResult.links);
+      if (finalResult.response && isConfirmationPrompt(finalResult.response)) {
+        renderQuickReplies(['Yes, confirm', 'No, cancel']);
+      }
+      _actionChatHistory = finalResult.history || [];
     }
-
-    // Then show assistant response
-    if (result.response) {
-      appendChatMessage('assistant', result.response);
-    }
-
-    // Show action links (Shopify admin links for orders/drafts)
-    if (result.links?.length) renderActionLinks(result.links);
-
-    // Show quick-reply buttons when confirmation is needed
-    if (result.response && isConfirmationPrompt(result.response)) {
-      renderQuickReplies(['Yes, confirm', 'No, cancel']);
-    }
-
-    // Update history for next message
-    _actionChatHistory = result.history || [];
 
   } catch (err) {
     removeChatThinking();
@@ -1607,48 +1683,96 @@ async function refreshDraft(steer) {
   const ticketId = currentTicketId; // snapshot — user may navigate away during the call
   const btn = document.getElementById('btn-refresh');
   const steerInput = document.getElementById('steer-input');
+  const editor = document.getElementById('draft-editor');
   const cleanSteer = (typeof steer === 'string' ? steer : '').trim();
   btn.disabled = true;
   if (steerInput) steerInput.disabled = true;
 
   try {
-    const result = await api(`/api/tickets/${ticketId}/refresh`, {
+    // Use streaming endpoint — shows draft text as it generates
+    const resp = await fetch(`/api/tickets/${ticketId}/refresh-stream`, {
       method: 'POST',
-      body: cleanSteer ? { steer: cleanSteer } : {},
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cleanSteer ? { steer: cleanSteer } : {}),
     });
 
-    // If user navigated away, don't touch the UI — just update localStorage for when they return
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let streamedText = '';
+    let finalResult = null;
+
+    // Clear editor and show streaming text
+    editor.value = '';
+    editor.placeholder = 'Generating...';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE events from buffer
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line in buffer
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'text_delta') {
+            streamedText += event.text;
+            // Strip structured block from display (it appears at end)
+            const displayText = streamedText.replace(/<structured>[\s\S]*$/, '').trim();
+            if (currentTicketId === ticketId) editor.value = displayText;
+          } else if (event.type === 'tool_call') {
+            // Show tool call status briefly
+            editor.placeholder = `Calling ${event.tool}...`;
+          } else if (event.type === 'complete') {
+            finalResult = event;
+          } else if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e;
+        }
+      }
+    }
+
+    // If user navigated away, just cache the result
     if (currentTicketId !== ticketId) {
-      localStorage.setItem(`draft-ticket-${ticketId}`, result.draft_response);
+      if (finalResult?.draft_response) localStorage.setItem(`draft-ticket-${ticketId}`, finalResult.draft_response);
       return;
     }
 
-    document.getElementById('draft-editor').value = result.draft_response;
-    if (result.draft_id) currentDraftId = result.draft_id;
+    // Apply final result
+    if (finalResult) {
+      editor.value = finalResult.draft_response;
+      editor.placeholder = '';
+      if (finalResult.draft_id) currentDraftId = finalResult.draft_id;
+      localStorage.setItem(`draft-ticket-${ticketId}`, finalResult.draft_response);
+
+      if (finalResult.structured?.status) {
+        const conf = finalResult.structured.status === 'ready' ? 'high' : finalResult.structured.status === 'needs_info' ? 'medium' : 'low';
+        document.getElementById('detail-confidence').textContent = conf;
+        document.getElementById('detail-confidence').className = `badge badge-${conf}`;
+        document.getElementById('detail-status-badge').textContent = finalResult.structured.status;
+        document.getElementById('detail-status-badge').className = `badge badge-${finalResult.structured.status}`;
+      }
+      if (currentDraft && finalResult.structured) {
+        currentDraft.structured_output = finalResult.structured;
+        currentDraft.action_type = finalResult.structured.action_type || null;
+        renderActionPanel(currentDraft);
+      }
+    }
+
     if (steerInput) {
       steerInput.value = '';
       steerInput.disabled = false;
     }
-    localStorage.setItem(`draft-ticket-${ticketId}`, result.draft_response);
-
-    if (result.structured?.status) {
-      const conf = result.structured.status === 'ready' ? 'high' : result.structured.status === 'needs_info' ? 'medium' : 'low';
-      document.getElementById('detail-confidence').textContent = conf;
-      document.getElementById('detail-confidence').className = `badge badge-${conf}`;
-      document.getElementById('detail-status-badge').textContent = result.structured.status;
-      document.getElementById('detail-status-badge').className = `badge badge-${result.structured.status}`;
-    }
-    // Re-render action panel with updated draft data
-    if (currentDraft && result.structured) {
-      currentDraft.structured_output = result.structured;
-      currentDraft.action_type = result.structured.action_type || null;
-      renderActionPanel(currentDraft);
-    }
-
     btn.disabled = false;
   } catch (err) {
     btn.disabled = false;
     if (steerInput) steerInput.disabled = false;
+    editor.placeholder = '';
     alert('Refresh failed: ' + err.message);
   }
 }

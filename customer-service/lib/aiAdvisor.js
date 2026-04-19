@@ -543,7 +543,10 @@ Jamie: "${s.agent_message}"`).join('\n\n')}
 `;
   }
 
-  return `You are Jamie Alexander, founder of RUBIES, a gender-affirming underwear brand. You are responding to a customer service message.
+  // Split into static (cacheable) and dynamic parts.
+  // Static: rules + tone samples + product links + output format — identical across all tickets.
+  // Dynamic: order context — changes per ticket.
+  const staticPart = `You are Jamie Alexander, founder of RUBIES, a gender-affirming underwear brand. You are responding to a customer service message.
 
 ## Your Approach
 You read the customer's message, understand what they actually want, and respond directly. You have access to tools for looking up order details, size charts, fabric deltas, and donation routing. Use them when you need data.
@@ -899,7 +902,8 @@ When a customer says they were charged customs duties or import taxes on deliver
 - When a defect is reported: acknowledge it simply ("That shouldn't happen"). See the defect scenario rules above for how to handle different defect types.
 - If the customer writes in a language other than English, reply in THEIR language. Match whatever language they used.
 - When the situation is confusing or doesn't make sense (e.g., customer mentions products you don't recognize, claims something that contradicts order data), ASK CLARIFYING QUESTIONS before taking action. Don't assume and act on incomplete understanding.
-${orderSection}${toneSection}
+
+${toneSection}
 ## Product Links
 When you mention a product by name in your response, use a markdown link so the customer can click through to the product page. Use the nickname as the link text.
 ${Object.entries(_activeProducts).map(([handle, p]) => `- ${p.nickname}: [${p.nickname}](https://rubyshines.com/products/${handle})`).join('\n')}
@@ -941,6 +945,10 @@ After handling the conversation, you MUST end your final message with a structur
 </structured>
 
 The text BEFORE the <structured> tags is the actual response to send to the customer. Write it as if you are emailing them directly.`;
+
+  const dynamicPart = orderSection;
+
+  return { staticPart, dynamicPart };
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,7 +1102,9 @@ function buildOperatorSteerBlock(steer) {
   );
 }
 
-async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer }) {
+async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer, onStream }) {
+  const _t = { start: Date.now(), steps: {} };
+
   // Ensure product config is loaded
   if (Object.keys(_activeProducts).length === 0) {
     try { await initCsConfig(); } catch (e) { console.error('[aiAdvisor] initCsConfig failed:', e.message); }
@@ -1104,6 +1114,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const audit = [];
 
   // Load ALL tone samples — Opus needs to see Jamie's full voice range
+  const _tTone = Date.now();
   let toneSamples = [];
   try {
     const supabase = getSupabaseClient();
@@ -1119,9 +1130,11 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       }));
     }
   } catch (e) { /* tone table may not exist yet */ }
+  _t.steps.tone_fetch_ms = Date.now() - _tTone;
 
   // Pre-fetch order context for system prompt
   // Use preContext if caller already did the deterministic lookup (intake path)
+  const _tCtx = Date.now();
   let orderContext = null;
   if (preContext) {
     orderContext = await executeToolCall('get_order_context', {
@@ -1146,8 +1159,26 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       audit.push(`Order lookup failed: ${e.message}`);
     }
   }
+  _t.steps.context_build_ms = Date.now() - _tCtx;
 
-  const systemPrompt = buildSystemPrompt(toneSamples, orderContext);
+  const { staticPart, dynamicPart } = buildSystemPrompt(toneSamples, orderContext);
+
+  // Build system prompt with cache_control — static part is cacheable, dynamic part changes per ticket
+  const systemBlocks = [
+    { type: 'text', text: staticPart, cache_control: { type: 'ephemeral' } },
+  ];
+  if (dynamicPart) {
+    systemBlocks.push({ type: 'text', text: dynamicPart });
+  }
+
+  // Filter tools: remove redundant ones that waste tokens and can trigger unnecessary tool loops
+  // - get_tone_samples: never called (0% in production data) — all samples are in the system prompt
+  // - get_order_context: when preContext exists, data is already in the system prompt
+  const filteredTools = TOOLS.filter(t => {
+    if (t.name === 'get_tone_samples') return false;
+    if (t.name === 'get_order_context' && preContext) return false;
+    return true;
+  });
 
   // Build conversation messages
   const messages = [];
@@ -1185,18 +1216,42 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const MAX_TOOL_CALLS = 10;
   let currentMessages = [...messages];
   const toolsCalled = [];
+  _t.api_calls = [];
+
+  const _emit = onStream || (() => {});
+  const useStreaming = !!onStream;
 
   while (toolCallCount < MAX_TOOL_CALLS) {
-    response = await client.messages.create({
+    const _tApi = Date.now();
+    const apiParams = {
       model: 'claude-opus-4-6',
       max_tokens: 4096,
-      system: systemPrompt,
-      tools: TOOLS,
+      system: systemBlocks,
+      tools: filteredTools,
       messages: currentMessages,
-    });
+    };
+
+    if (useStreaming) {
+      // Streaming mode — emit text deltas as they arrive
+      const stream = client.messages.stream(apiParams);
+      stream.on('text', (text) => _emit({ type: 'text_delta', text }));
+      response = await stream.finalMessage();
+    } else {
+      response = await client.messages.create(apiParams);
+    }
+
+    const apiTiming = {
+      duration_ms: Date.now() - _tApi,
+      input_tokens: response.usage?.input_tokens,
+      output_tokens: response.usage?.output_tokens,
+      cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
+      cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
+    };
 
     // Check if there are tool calls
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+    apiTiming.tool_calls = toolUseBlocks.map(b => b.name);
+    _t.api_calls.push(apiTiming);
 
     if (toolUseBlocks.length === 0) {
       // No more tool calls, AI is done
@@ -1209,6 +1264,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       toolCallCount++;
       toolsCalled.push(toolBlock.name);
       audit.push(`Tool call: ${toolBlock.name}(${JSON.stringify(toolBlock.input).substring(0, 100)})`);
+      _emit({ type: 'tool_call', tool: toolBlock.name });
 
       // Auto-populate customer_address for donation routing from order context
       if (toolBlock.name === 'get_donation_partner' && !toolBlock.input.customer_address && orderContext?.target_order?.shipping_address) {
@@ -1216,12 +1272,15 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       }
 
       let result;
+      const _tTool = Date.now();
       try {
         result = await executeToolCall(toolBlock.name, toolBlock.input);
       } catch (e) {
         result = { error: e.message };
         audit.push(`Tool error: ${toolBlock.name} - ${e.message}`);
       }
+      if (!_t.steps.tool_executions) _t.steps.tool_executions = [];
+      _t.steps.tool_executions.push({ tool: toolBlock.name, duration_ms: Date.now() - _tTool });
 
       toolResults.push({
         type: 'tool_result',
@@ -1284,6 +1343,20 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     md += `\n### Intake State (pass back on next call)\n`;
     md += '```json\n' + JSON.stringify(structured.intake, null, 2) + '\n```\n';
   }
+
+  // Finalize timing data — persists on the draft record permanently
+  _t.total_ms = Date.now() - _t.start;
+  structured._timing = _t;
+
+  // Fire shadow Sonnet evaluation in background (diagnostic mode).
+  // Does not affect the response — runs asynchronously after Opus completes.
+  runShadowEvaluation({
+    systemBlocks,
+    filteredTools,
+    messages,
+    opusResult: { composedResponse, structured: parsedStructured, toolsCalled, timing: _t },
+    customer_email,
+  }).catch(err => console.warn('[shadow] Advisor evaluation error:', err.message));
 
   return {
     content: [{ type: 'text', text: md }],
@@ -1434,6 +1507,157 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     _composedResponse: composedResponse,
     audit: [...audit, ...(parsed.audit || [])],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shadow Sonnet evaluation — runs in background for diagnostics
+// ---------------------------------------------------------------------------
+
+async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opusResult, customer_email }) {
+  // Skip if diagnostic table doesn't exist or env flag is off
+  if (process.env.CS_DIAGNOSTICS_DISABLED === 'true') return;
+
+  const client = getClient();
+  const supabase = getSupabaseClient();
+
+  // Verify diagnostic table exists (fail silently if not yet created)
+  try {
+    const { error: probeErr } = await supabase.from('cs_diagnostic_runs').select('id').limit(0);
+    if (probeErr) return; // table doesn't exist yet
+  } catch (_) { return; }
+
+  // Run Sonnet on the same inputs
+  const sonnetTiming = { start: Date.now(), api_calls: [] };
+  let sonnetResponse;
+  let sonnetMessages = [...messages];
+  let sonnetToolsCalled = [];
+  const MAX_TOOL_CALLS = 10;
+  let toolCallCount = 0;
+
+  try {
+    while (toolCallCount < MAX_TOOL_CALLS) {
+      const _tApi = Date.now();
+      sonnetResponse = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4096,
+        system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for Sonnet
+        tools: filteredTools,
+        messages: sonnetMessages,
+      });
+      sonnetTiming.api_calls.push({
+        duration_ms: Date.now() - _tApi,
+        input_tokens: sonnetResponse.usage?.input_tokens,
+        output_tokens: sonnetResponse.usage?.output_tokens,
+      });
+
+      const toolUseBlocks = sonnetResponse.content.filter(b => b.type === 'tool_use');
+      if (toolUseBlocks.length === 0) break;
+
+      const toolResults = [];
+      for (const toolBlock of toolUseBlocks) {
+        toolCallCount++;
+        sonnetToolsCalled.push(toolBlock.name);
+        let result;
+        try { result = await executeToolCall(toolBlock.name, toolBlock.input); }
+        catch (e) { result = { error: e.message }; }
+        toolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: JSON.stringify(result) });
+      }
+      sonnetMessages.push({ role: 'assistant', content: sonnetResponse.content });
+      sonnetMessages.push({ role: 'user', content: toolResults });
+    }
+  } catch (err) {
+    console.warn('[shadow] Sonnet call failed:', err.message);
+    return;
+  }
+
+  sonnetTiming.total_ms = Date.now() - sonnetTiming.start;
+
+  // Parse Sonnet response
+  const sonnetText = sonnetResponse.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+  const sonnetStructuredMatch = sonnetText.match(/<structured>\s*([\s\S]*?)\s*<\/structured>/);
+  let sonnetParsed = null;
+  let sonnetDraft = sonnetText;
+  if (sonnetStructuredMatch) {
+    try {
+      sonnetParsed = JSON.parse(sonnetStructuredMatch[1]);
+      sonnetDraft = sonnetText.replace(/<structured>[\s\S]*?<\/structured>/, '').trim();
+    } catch (_) { /* parse failed */ }
+  }
+  sonnetDraft = stripInternalThinking(sonnetDraft);
+
+  // Run AI judge — Opus compares both drafts
+  let judgeResult = null;
+  try {
+    const judgeResponse = await client.messages.create({
+      model: 'claude-opus-4-6',
+      max_tokens: 1024,
+      system: `You are evaluating two customer service drafts for RUBIES, a gender-affirming underwear brand. Compare Draft A (production model) with Draft B (candidate model). Be concise.`,
+      messages: [{
+        role: 'user',
+        content: `Compare these two CS drafts for the same customer message.
+
+DRAFT A (production):
+${opusResult.composedResponse}
+
+STRUCTURED A:
+${JSON.stringify(opusResult.structured, null, 2)}
+
+---
+
+DRAFT B (candidate):
+${sonnetDraft}
+
+STRUCTURED B:
+${JSON.stringify(sonnetParsed, null, 2)}
+
+---
+
+Rate each dimension as SAME, MINOR_DIFF, or MAJOR_DIFF with a brief explanation:
+1. Tone (does it sound like a real person, not AI?)
+2. Action accuracy (correct exchange/refund/sizing recommendation?)
+3. Structured output (right message_type, status, items, action_type?)
+4. Response length (appropriate, not padded?)
+5. Rule compliance (anti-hallucination, pronoun sensitivity)
+
+Then give an overall verdict: EQUIVALENT, B_ACCEPTABLE, or B_WORSE.
+Respond as JSON: { "tone": { "rating": "...", "note": "..." }, "action": {...}, "structured": {...}, "length": {...}, "rules": {...}, "verdict": "..." }`,
+      }],
+    });
+    const judgeText = judgeResponse.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    const jsonMatch = judgeText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) judgeResult = JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.warn('[shadow] Judge call failed:', err.message);
+  }
+
+  // Auto-detect structured divergences
+  const divergences = [];
+  if (opusResult.structured && sonnetParsed) {
+    if (opusResult.structured.status !== sonnetParsed.status) divergences.push(`status: ${opusResult.structured.status} vs ${sonnetParsed.status}`);
+    if (opusResult.structured.message_type !== sonnetParsed.message_type) divergences.push(`message_type: ${opusResult.structured.message_type} vs ${sonnetParsed.message_type}`);
+    if (JSON.stringify(opusResult.structured.items?.map(i => i.state)) !== JSON.stringify(sonnetParsed.items?.map(i => i.state))) divergences.push('item states differ');
+    if (opusResult.structured.action_type !== sonnetParsed.action_type) divergences.push(`action_type: ${opusResult.structured.action_type} vs ${sonnetParsed.action_type}`);
+  }
+
+  // Store in diagnostic table
+  try {
+    await supabase.from('cs_diagnostic_runs').insert({
+      source: 'advisor',
+      customer_email,
+      opus_draft: opusResult.composedResponse,
+      opus_structured: opusResult.structured,
+      opus_timing: opusResult.timing,
+      opus_tools_called: opusResult.toolsCalled,
+      sonnet_draft: sonnetDraft,
+      sonnet_structured: sonnetParsed,
+      sonnet_timing: sonnetTiming,
+      sonnet_tools_called: sonnetToolsCalled,
+      judge_result: judgeResult,
+      divergences,
+    });
+  } catch (err) {
+    console.warn('[shadow] Failed to save diagnostic run:', err.message);
+  }
 }
 
 module.exports = { aiAdvisor };
