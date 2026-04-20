@@ -38,12 +38,16 @@ async function handle(topic, payload) {
   }
 
   // Build the new fulfillment entry
+  const now = new Date().toISOString();
   const newFulfillment = {
     status: payload.status?.toUpperCase() || null,
+    shipmentStatus: payload.shipment_status || null,
+    lastEventAt: now,
     createdAt: payload.created_at || null,
-    deliveredAt: null,
+    deliveredAt: payload.shipment_status === 'delivered' ? now : null,
     trackingNumber: payload.tracking_number || payload.tracking_numbers?.[0] || null,
     trackingUrl: payload.tracking_url || payload.tracking_urls?.[0] || null,
+    trackingCompany: payload.tracking_company || null,
     locationId: payload.location_id ? String(payload.location_id) : null,
   };
 
@@ -57,7 +61,10 @@ async function handle(topic, payload) {
     // Match by tracking number since we don't store fulfillment ID
     if (f.trackingNumber && f.trackingNumber === newFulfillment.trackingNumber) {
       found = true;
-      return { ...f, ...newFulfillment };
+      // Preserve existing deliveredAt if already set (e.g., by Passport scraper)
+      const merged = { ...f, ...newFulfillment };
+      if (f.deliveredAt && !newFulfillment.deliveredAt) merged.deliveredAt = f.deliveredAt;
+      return merged;
     }
     return f;
   });

@@ -218,6 +218,40 @@ async function sendPassportEmail(claims) {
 }
 
 // ---------------------------------------------------------------------------
+// Domestic shipping alert email to Jamie
+// ---------------------------------------------------------------------------
+
+async function sendDomesticAlertEmail(alerts) {
+  const sgMail = getSendgridClient();
+  if (!sgMail || alerts.length === 0) return;
+
+  const lines = alerts.map(a => {
+    const parts = [
+      `Order #${a.order_number} — ${a.carrier || '?'} — ${a.destination}`,
+      `  Shipped: ${a.ship_date || '?'} (${a.business_days}bd)`,
+      `  Tracking: ${a.tracking_url || a.tracking_number || '?'}`,
+    ];
+    for (const issue of a.issues) parts.push(`  ▸ ${issue}`);
+    return parts.join('\n');
+  });
+
+  const text = `The following domestic shipments need attention:\n\n${lines.join('\n\n')}`;
+
+  try {
+    await sgMail.send({
+      to: 'jamie@rubyshines.com',
+      from: 'pipeline@rubyshines.com',
+      subject: `RUBIES — ${alerts.length} domestic shipping alert${alerts.length > 1 ? 's' : ''}`,
+      text,
+      trackingSettings: { clickTracking: { enable: false, enableText: false } },
+    });
+    console.log(`  [Shipping] Domestic alert email sent (${alerts.length} orders)`);
+  } catch (e) {
+    console.error('  [Shipping] Failed to send domestic alert email:', e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Customs notification email to customer
 // ---------------------------------------------------------------------------
 
@@ -343,7 +377,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     } catch { /* table may not exist */ }
   }
 
-  // Load existing Passport claims
+  // Load existing Passport claims (for in-transit orders)
   const claimMap = {};
   try {
     const { data } = await supabase.from('passport_claims')
@@ -352,10 +386,48 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     for (const c of (data || [])) claimMap[c.order_number] = c;
   } catch { /* table may not exist */ }
 
-  // Fetch Shopify events for orders without snapshots
-  const needsShopify = orderNums.filter(n => !snapMap[n]);
-  console.log(`  [Shipping] Fetching Shopify events for ${needsShopify.length} orders without tracking snapshots...`);
-  const shopifyEventMap = needsShopify.length > 0 ? await fetchShopifyFulfillmentEvents(needsShopify) : {};
+  // Load ALL open claims — these need to appear even if tracking no longer triggers issues
+  let allOpenClaims = [];
+  try {
+    const { data } = await supabase.from('passport_claims')
+      .select('*')
+      .eq('status', 'open');
+    allOpenClaims = data || [];
+  } catch { /* table may not exist */ }
+
+  // Build fulfillment-based status for orders without snapshots (from stored webhook data)
+  const fulfillmentEventMap = {};
+  const noDataCount = { hasData: 0, noData: 0 };
+  for (const n of orderNums) {
+    if (snapMap[n]) continue; // has tracking snapshot, skip
+    const order = allOrders.find(o => o.order_number === n);
+    const f = (order?.fulfillments || []).find(fl => fl.trackingUrl || fl.trackingNumber);
+    if (!f?.shipmentStatus) { noDataCount.noData++; continue; }
+    noDataCount.hasData++;
+
+    const statusMap = {
+      delivered: 'delivered', in_transit: 'in_transit', out_for_delivery: 'out_for_delivery',
+      attempted_delivery: 'exception', failure: 'exception',
+      label_printed: 'pre_transit', label_purchased: 'pre_transit',
+      confirmed: 'pre_transit', ready_for_pickup: 'exception',
+    };
+    const currentStatus = statusMap[f.shipmentStatus] || 'unknown';
+    let lastEventDays = null;
+    if (f.lastEventAt) {
+      lastEventDays = Math.floor((Date.now() - new Date(f.lastEventAt).getTime()) / 86400000);
+    }
+
+    fulfillmentEventMap[n] = {
+      carrier: f.trackingCompany || '?',
+      currentStatus,
+      lastEventDays,
+      actionRequired: ['attempted_delivery', 'failure', 'ready_for_pickup'].includes(f.shipmentStatus)
+        ? `Carrier status: ${f.shipmentStatus.replace(/_/g, ' ')}`
+        : null,
+      lastEventDesc: f.lastEventAt ? `${f.lastEventAt.split('T')[0]}: ${f.shipmentStatus.replace(/_/g, ' ')}` : null,
+    };
+  }
+  console.log(`  [Shipping] ${orderNums.length - Object.keys(snapMap).length} orders without snapshots: ${noDataCount.hasData} with webhook data, ${noDataCount.noData} without`);
 
   // Load line items
   const itemMap = {};
@@ -370,9 +442,10 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     }
   }
 
-  // Track new claims and customs notifications
+  // Track new claims, customs notifications, and domestic alerts
   const newClaims = [];
   const customsAlerts = [];
+  const domesticAlerts = [];
 
   // Analyze each order
   for (const order of allOrders) {
@@ -382,7 +455,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     const bizDays = businessDaysSince(order.fulfilled_at);
     const calDays = calendarDaysSince(order.fulfilled_at);
     const snap = snapMap[order.order_number];
-    const shopifyEvt = shopifyEventMap[order.order_number];
+    const shopifyEvt = fulfillmentEventMap[order.order_number];
     const window = DELIVERY_WINDOWS[zone] || DELIVERY_WINDOWS.ddu;
 
     if (snap?.current_status === 'delivered') continue;
@@ -510,6 +583,11 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       newClaims.push(alert);
     }
 
+    // Check if this is a domestic likely-lost that hasn't been alerted yet
+    if (alert.severity === 'high' && !isPassport && !alert.note?.note?.includes('[auto-alert]')) {
+      domesticAlerts.push(alert);
+    }
+
     alert.note = noteMap[order.order_number] || null;
     alert.claim = claimMap[order.order_number] || null;
     alerts.push(alert);
@@ -562,6 +640,20 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     }
   }
 
+  // Send domestic alert email and mark as notified
+  if (domesticAlerts.length > 0) {
+    await sendDomesticAlertEmail(domesticAlerts);
+    for (const alert of domesticAlerts) {
+      await supabase.from('order_alert_notes').insert({
+        order_number: alert.order_number,
+        note: `[auto-alert] ${alert.issues.join('; ')}`,
+        author: 'auto',
+        alert_type: 'shipping',
+        resolved: false,
+      });
+    }
+  }
+
   // Categorize alerts
   const resolved = alerts.filter(a => a.note?.resolved || a.claim?.status === 'delivered' || a.claim?.status === 'resolved');
   const resolvedSet = new Set(resolved.map(a => a.order_number));
@@ -572,9 +664,55 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   const urgentNonPassport = active.filter(a => a.severity === 'high' && !a.claim);
   const delayed = active.filter(a => a.severity === 'medium' && !a.claim);
 
+  // Open claims that didn't make it into the alerts list (tracking no longer triggers issues)
+  const alertedOrderNums = new Set(alerts.map(a => a.order_number));
+  const missingClaims = allOpenClaims.filter(c => !alertedOrderNums.has(c.order_number));
+
+  // Look up order data for claims not already in allOrders
+  const orderDataMap = {};
+  for (const o of allOrders) orderDataMap[o.order_number] = o;
+  const needOrderData = missingClaims.filter(c => !orderDataMap[c.order_number]).map(c => c.order_number);
+  if (needOrderData.length > 0) {
+    const { data } = await supabase.from('orders')
+      .select('order_number, shopify_order_id, fulfilled_at, fulfillments')
+      .in('order_number', needOrderData);
+    for (const o of (data || [])) orderDataMap[o.order_number] = o;
+  }
+
+  const passportAwaitingResponse = missingClaims.map(c => {
+    const order = orderDataMap[c.order_number];
+    const shipDate = order?.fulfilled_at?.split('T')[0] || null;
+    const bizDays = order?.fulfilled_at ? businessDaysSince(order.fulfilled_at) : null;
+    const emailedDate = c.emailed_at?.split('T')[0] || null;
+    const daysSinceEmailed = c.emailed_at ? Math.round((Date.now() - new Date(c.emailed_at).getTime()) / 86400000) : null;
+    const trackingFulfillment = (order?.fulfillments || []).find(f => f.trackingUrl);
+
+    return {
+      order_number: c.order_number,
+      shopify_order_id: order?.shopify_order_id || null,
+      tracking_number: c.tracking_number,
+      tracking_url: trackingFulfillment?.trackingUrl || null,
+      customer_email: c.customer_email,
+      destination: c.destination,
+      country: c.country_code,
+      zone: c.shipping_zone,
+      ship_date: shipDate,
+      business_days: bizDays,
+      carrier: 'passport',
+      isPassport: true,
+      claim: c,
+      claimReason: c.claim_reason,
+      issues: [emailedDate
+        ? `Emailed Passport ${emailedDate} (${daysSinceEmailed}d ago) — no response yet`
+        : `Claim filed — Passport not yet emailed`],
+      severity: 'awaiting',
+    };
+  });
+
   const sortFn = (a, b) => (b.business_days || 0) - (a.business_days || 0);
   passportPending.sort(sortFn);
   passportLost.sort(sortFn);
+  passportAwaitingResponse.sort(sortFn);
   urgentNonPassport.sort(sortFn);
   delayed.sort(sortFn);
 
@@ -582,6 +720,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     `${active.length} shipping alerts`,
     urgentNonPassport.length ? `${urgentNonPassport.length} urgent` : null,
     passportPending.length ? `${passportPending.length} Passport claims` : null,
+    passportAwaitingResponse.length ? `${passportAwaitingResponse.length} awaiting Passport` : null,
     passportLost.length ? `${passportLost.length} lost` : null,
     delayed.length ? `${delayed.length} delayed` : null,
     resolved.length ? `${resolved.length} resolved` : null,
@@ -592,10 +731,10 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
   return {
     alerts: active,
-    urgentNonPassport, passportPending, passportLost, customsAlerts, delayed,
+    urgentNonPassport, passportPending, passportAwaitingResponse, passportLost, customsAlerts, domesticAlerts, delayed,
     resolved: showResolved ? resolved : [],
     summary, totalInTransit: allOrders.length, resolvedCount: resolved.length,
-    newClaimsCount: newClaims.length,
+    newClaims, newClaimsCount: newClaims.length,
   };
 }
 

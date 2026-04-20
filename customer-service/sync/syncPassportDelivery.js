@@ -447,6 +447,16 @@ async function scrapeOrder(supabase, order, snapMap) {
       await supabase.from('orders')
         .update({ fulfillments: updatedFulfillments })
         .eq('order_number', order.order_number);
+
+      // Auto-resolve any open passport claim for this order
+      await supabase.from('passport_claims')
+        .update({
+          status: 'delivered',
+          resolution: `Tracking confirmed delivered ${deliveredAt.split('T')[0]}`,
+          resolution_date: new Date().toISOString(),
+        })
+        .eq('order_number', order.order_number)
+        .eq('status', 'open');
     } else {
       console.warn(`  #${order.order_number}: date_error — page says delivered but could not extract a valid delivery date`);
       await supabase.from('tracking_snapshots')

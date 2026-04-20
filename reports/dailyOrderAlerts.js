@@ -41,11 +41,13 @@ const { checkShippingDelays } = require('./lib/shippingDelays');
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const opts = { showResolved: false, json: false, action: null };
+  const opts = { showResolved: false, json: false, shippingOnly: false, action: null };
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--show-resolved') {
       opts.showResolved = true;
+    } else if (args[i] === '--shipping-only') {
+      opts.shippingOnly = true;
     } else if (args[i] === '--json') {
       opts.json = true;
     } else if (['--note', '--resolve', '--unresolve'].includes(args[i]) && args[i + 1] && args[i + 2]) {
@@ -242,6 +244,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // --- Shipping buckets ---
   const shUrgent = sh.urgentNonPassport || [];
   const shPassportPending = sh.passportPending || [];
+  const shPassportAwaitingResponse = sh.passportAwaitingResponse || [];
   const shPassportLost = sh.passportLost || [];
   const shDelayed = sh.delayed || [];
   const shResolved = sh.resolved || [];
@@ -273,14 +276,23 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     ...shUrgent.map(a => shippingRow(a)),
   ];
 
-  // 2. Passport Claims
-  const passportPendingRows = shPassportPending.map(a => shippingRow(a, '#0891b2', 'claim open'));
+  // 2. Shipping emails sent today (Passport claims + customs notices + domestic alerts)
+  const shNewClaims = sh.newClaims || [];
+  const shCustomsAlerts = sh.customsAlerts || [];
+  const shDomesticAlerts = sh.domesticAlerts || [];
+  const passportEmailsSentRows = [
+    ...shNewClaims.map(a => shippingRow(a, '#0891b2', 'emailed Passport')),
+    ...shCustomsAlerts.map(a => shippingRow(a, '#0891b2', 'customs notice to customer')),
+    ...shDomesticAlerts.map(a => shippingRow(a, '#dc2626', 'domestic alert')),
+  ];
+
+  // 3. Waiting on response / lost
+  const passportAwaitingRows = shPassportAwaitingResponse.map(a => shippingRow(a, '#8b5cf6', 'awaiting response'));
   const passportLostRows = shPassportLost.map(a => shippingRow(a, '#dc2626', 'lost'));
 
-  // 3. Attention (unfulfilled + shipping delayed)
+  // 4. Attention (unfulfilled only — shipping delayed no longer shown)
   const attentionRows = [
     ...ufAttention.map(r => unfulfilledRow(r)),
-    ...shDelayed.map(a => shippingRow(a)),
   ];
 
   // 4. Auto-Resolved
@@ -331,7 +343,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   }
 
   // --- Counts ---
-  const totalIssues = urgentRows.length + passportPendingRows.length + passportLostRows.length + attentionRows.length;
+  const totalIssues = urgentRows.length + passportEmailsSentRows.length + passportAwaitingRows.length + passportLostRows.length + attentionRows.length;
   const hasUrgent = urgentRows.length > 0 || passportLostRows.length > 0;
   const hasErrors = (uf.errors?.length || 0) > 0;
 
@@ -346,7 +358,8 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (totalIssues > 0) {
     subjectParts.push(`${totalIssues} need attention`);
     if (urgentRows.length > 0) subjectParts.push(`${urgentRows.length} urgent`);
-    if (passportPendingRows.length > 0) subjectParts.push(`${passportPendingRows.length} Passport claims`);
+    const totalPassport = passportEmailsSentRows.length + passportAwaitingRows.length + passportLostRows.length;
+    if (totalPassport > 0) subjectParts.push(`${totalPassport} Passport`);
   } else {
     subjectParts.push('all clear');
   }
@@ -358,7 +371,8 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     `In transit: ${sh.totalInTransit}`,
   ];
   if (urgentRows.length) summaryParts.push(`<strong style="color:#dc2626;">Urgent: ${urgentRows.length}</strong>`);
-  if (passportPendingRows.length) summaryParts.push(`<span style="color:#0891b2;">Passport claims: ${passportPendingRows.length}</span>`);
+  if (passportEmailsSentRows.length) summaryParts.push(`<span style="color:#0891b2;">Passport emails sent: ${passportEmailsSentRows.length}</span>`);
+  if (passportAwaitingRows.length) summaryParts.push(`<span style="color:#8b5cf6;">Awaiting Passport: ${passportAwaitingRows.length}</span>`);
   if (passportLostRows.length) summaryParts.push(`<strong style="color:#dc2626;">Lost: ${passportLostRows.length}</strong>`);
   if (attentionRows.length) summaryParts.push(`<span style="color:#f59e0b;">Attention: ${attentionRows.length}</span>`);
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
@@ -405,7 +419,8 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
 
       ${allClearHtml}
       ${section('Urgent', '#dc2626', urgentRows)}
-      ${section('Passport Claims \u2014 Pending', '#0891b2', passportPendingRows)}
+      ${section('Shipping Emails Sent Today', '#0891b2', passportEmailsSentRows)}
+      ${section('Waiting on Response from Passport', '#8b5cf6', passportAwaitingRows)}
       ${section('Passport Claims \u2014 Lost', '#dc2626', passportLostRows)}
       ${section('Attention', '#f59e0b', attentionRows)}
       ${stockHtml}
@@ -433,7 +448,8 @@ function formatConsole(unfulfilled, shipping, opts) {
 
   lines.push(`\n=== RUBIES Daily Order Alerts -- ${today} ===\n`);
   lines.push(`Unfulfilled: ${uf.summary.total} | In transit: ${sh.totalInTransit}`);
-  lines.push(`Urgent: ${uf.summary.urgent + (sh.urgentNonPassport?.length || 0)} | Attention: ${uf.summary.attention + (sh.delayed?.length || 0)} | Passport claims: ${(sh.passportPending?.length || 0) + (sh.passportLost?.length || 0)}\n`);
+  const passportTotal = (sh.newClaims?.length || 0) + (sh.passportAwaitingResponse?.length || 0) + (sh.passportLost?.length || 0);
+  lines.push(`Urgent: ${uf.summary.urgent + (sh.urgentNonPassport?.length || 0)} | Attention: ${uf.summary.attention} | Passport: ${passportTotal}\n`);
 
   function printUnfulfilledSection(title, orders) {
     if (!orders.length) return;
@@ -480,10 +496,10 @@ function formatConsole(unfulfilled, shipping, opts) {
   // Combined urgent
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
   printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
-  printShippingSection('PASSPORT CLAIMS - PENDING', sh.passportPending || []);
+  printShippingSection('SHIPPING EMAILS SENT TODAY', [...(sh.newClaims || []), ...(sh.customsAlerts || []), ...(sh.domesticAlerts || [])]);
+  printShippingSection('WAITING ON RESPONSE FROM PASSPORT', sh.passportAwaitingResponse || []);
   printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
-  printShippingSection('DELAYED (shipping)', sh.delayed || []);
   printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
   printUnfulfilledSection('PRE-ORDER', preOrders);
@@ -608,11 +624,12 @@ async function run() {
     console.log('');
   }
 
-  console.log('RUBIES Daily Order Alerts -- fetching data...\n');
+  console.log(`RUBIES Daily Order Alerts${opts.shippingOnly ? ' (shipping only)' : ''} -- fetching data...\n`);
 
-  // Run both analyses
+  // Run analyses
+  const emptyUnfulfilled = { results: [], summary: { total: 0, urgent: 0, attention: 0 }, stockIssues: new Map(), errors: [] };
   const [unfulfilled, shipping] = await Promise.all([
-    checkUnfulfilledOrders(),
+    opts.shippingOnly ? emptyUnfulfilled : checkUnfulfilledOrders(),
     checkShippingDelays({ showResolved: opts.showResolved }),
   ]);
 
@@ -689,8 +706,8 @@ async function run() {
   }
 
   // Pipeline-compatible return
-  const shippingAlertCount = (shipping.urgentNonPassport?.length || 0) + (shipping.passportPending?.length || 0)
-    + (shipping.passportLost?.length || 0) + (shipping.delayed?.length || 0);
+  const shippingAlertCount = (shipping.urgentNonPassport?.length || 0) + (shipping.newClaims?.length || 0)
+    + (shipping.passportAwaitingResponse?.length || 0) + (shipping.passportLost?.length || 0);
   const detail = `${unfulfilled.summary.total} unfulfilled (${unfulfilled.summary.urgent + unfulfilled.summary.attention} need attention), ${shippingAlertCount} shipping alerts, ${shipping.totalInTransit} in transit`;
 
   return {
