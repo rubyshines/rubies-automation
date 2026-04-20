@@ -44,3 +44,21 @@ CREATE INDEX IF NOT EXISTS idx_tracking_scraped ON tracking_snapshots(scraped_at
 
 -- Migration: add raw_text column
 ALTER TABLE tracking_snapshots ADD COLUMN IF NOT EXISTS raw_text TEXT;
+
+-- Passport sync run log — one row per hourly run, read by daily order alerts
+CREATE TABLE IF NOT EXISTS passport_sync_runs (
+  id SERIAL PRIMARY KEY,
+  ran_at TIMESTAMPTZ DEFAULT NOW(),
+  backfill_scraped INTEGER DEFAULT 0,
+  backfill_delivered INTEGER DEFAULT 0,
+  updates_scraped INTEGER DEFAULT 0,
+  updates_delivered INTEGER DEFAULT 0,
+  expired INTEGER DEFAULT 0,
+  captcha INTEGER DEFAULT 0,
+  errors INTEGER DEFAULT 0,
+  backfill_remaining INTEGER DEFAULT 0,
+  updates_remaining INTEGER DEFAULT 0,
+  too_old_skipped INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_passport_sync_ran_at ON passport_sync_runs(ran_at);

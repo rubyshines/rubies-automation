@@ -28,7 +28,6 @@
 if (!process.env.SUPABASE_URL) require('dotenv').config();
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { getSendgridClient } = require('../../shared/sendgridClient');
 const { shopifyGraphQL } = require('../lib/shopify');
 const { scrapeTracking, closeBrowser } = require('../lib/tracking/scraper');
 const { parsePassportPage } = require('../lib/tracking/passportParser');
@@ -648,115 +647,33 @@ async function syncPassportDelivery({ full = false, limit = 0 } = {}) {
   const totalBatch = backfillBatch.length + updateBatch.length;
   const blocked = totalBatch - totalProcessed;
 
-  await sendRunSummary(result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped, blocked, orderResults });
+  await logRunToSupabase(supabase, result, { backfillTotal: backfill.length, updatesTotal: updates.length, tooOldSkipped });
   return result;
 }
 
 // ---------------------------------------------------------------------------
-// Email summary (temporary — remove when backlog is cleared)
+// Log run results to Supabase (read by daily order alerts)
 // ---------------------------------------------------------------------------
 
-async function sendRunSummary(result, { backfillTotal, updatesTotal, tooOldSkipped, blocked, orderResults }) {
-  const sgMail = getSendgridClient();
-  if (!sgMail) return;
-
-  // Skip email if nothing was processed or nothing meaningful happened
-  const totalParsedCheck = orderResults.filter(r => r.parseOk).length;
-  const totalDeliveredCheck = (result.backfill?.delivered || 0) + (result.updates?.delivered || 0);
-  if (orderResults.length === 0 || (totalParsedCheck === 0 && totalDeliveredCheck === 0)) return;
-
+async function logRunToSupabase(supabase, result, { backfillTotal, updatesTotal, tooOldSkipped }) {
   const { backfill: b, updates: u, expired, captcha, errors } = result;
-  const totalDelivered = b.delivered + u.delivered;
-  const totalParsed = orderResults.filter(r => r.parseOk).length;
-
-  const subject = `Passport Sync: ${totalParsed}/${orderResults.length} scraped OK, ${totalDelivered} delivered`;
-
-  const backfillRows = orderResults.filter(r => r.pool === 'backfill');
-  const updateRows = orderResults.filter(r => r.pool === 'updates');
-
-  const statusColor = (s) => {
-    if (s === 'delivered') return '#16a34a';
-    if (s === 'in_transit') return '#2563eb';
-    if (s === 'captcha' || s === 'error') return '#dc2626';
-    if (s === 'expired' || s === 'parse_error') return '#d97706';
-    return '#6b7280';
-  };
-
-  function buildTableHtml(rows) {
-    if (rows.length === 0) return '<p style="color:#9ca3af;font-size:13px;">None this run</p>';
-    const header = `<tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
-      <th style="padding:6px 10px;text-align:left;font-size:12px;">Order</th>
-      <th style="padding:6px 10px;text-align:left;font-size:12px;">Country</th>
-      <th style="padding:6px 10px;text-align:left;font-size:12px;">Fulfilled</th>
-      <th style="padding:6px 10px;text-align:left;font-size:12px;">Status</th>
-      <th style="padding:6px 10px;text-align:center;font-size:12px;">Parsed</th>
-      <th style="padding:6px 10px;text-align:left;font-size:12px;">Tracking</th>
-    </tr>`;
-    const trs = rows.map((r, i) => {
-      const bg = i % 2 === 0 ? '#ffffff' : '#f9fafb';
-      const link = `https://track.passportshipping.com/${r.tracking}`;
-      const check = r.parseOk ? '&#10003;' : '&#10007;';
-      const checkColor = r.parseOk ? '#16a34a' : '#dc2626';
-      const rawStatusNote = r.rawStatus
-        ? `<br><span style="font-size:11px;color:#991b1b;">Page says: "${r.rawStatus}"</span>`
-        : '';
-      return `<tr style="background:${bg};border-bottom:1px solid #e5e7eb;">
-        <td style="padding:5px 10px;font-size:13px;font-weight:600;">#${r.order_number}</td>
-        <td style="padding:5px 10px;font-size:13px;">${r.country || '?'}</td>
-        <td style="padding:5px 10px;font-size:13px;color:#6b7280;">${r.fulfilled_at || '?'}</td>
-        <td style="padding:5px 10px;font-size:13px;"><span style="color:${statusColor(r.result)};font-weight:600;">${r.result}</span>${rawStatusNote}</td>
-        <td style="padding:5px 10px;font-size:15px;text-align:center;color:${checkColor};">${check}</td>
-        <td style="padding:5px 10px;font-size:12px;"><a href="${link}" style="color:#2563eb;">${r.tracking}</a></td>
-      </tr>`;
-    });
-    return `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;">${header}${trs.join('')}</table>`;
-  }
-
-  const backfillParsed = backfillRows.filter(r => r.parseOk).length;
-  const updateParsed = updateRows.filter(r => r.parseOk).length;
-
-  // Summary badges
-  const badge = (label, value, color) =>
-    `<span style="display:inline-block;padding:4px 12px;margin:0 6px 6px 0;background:${color};color:#fff;border-radius:12px;font-size:12px;font-weight:600;">${label}: ${value}</span>`;
-
-  const badges = [
-    badge('Delivered', totalDelivered, '#16a34a'),
-    badge('In Transit', b.inTransit + u.inTransit, '#2563eb'),
-    expired > 0 ? badge('Expired', expired, '#d97706') : '',
-    captcha > 0 ? badge('CAPTCHA', captcha, '#dc2626') : '',
-    errors > 0 ? badge('Errors', errors, '#dc2626') : '',
-    blocked > 0 ? badge('Blocked', blocked, '#991b1b') : '',
-  ].filter(Boolean).join('');
-
-  const html = `
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:900px;margin:0 auto;">
-  <h2 style="margin-bottom:4px;">Passport Tracking Sync</h2>
-  <p style="color:#6b7280;margin-top:0;font-size:13px;">${new Date().toISOString()}</p>
-
-  <div style="margin:16px 0;">${badges}</div>
-
-  <h3 style="margin:20px 0 8px;color:#1e293b;">Backfill <span style="font-weight:normal;color:#6b7280;">(${backfillTotal} remaining, oldest first)</span></h3>
-  <p style="font-size:13px;color:#374151;margin:0 0 8px;">${backfillRows.length} processed, ${backfillParsed} scraped OK</p>
-  ${buildTableHtml(backfillRows)}
-
-  <h3 style="margin:20px 0 8px;color:#1e293b;">Updates <span style="font-weight:normal;color:#6b7280;">(${updatesTotal} active, most stale first)</span></h3>
-  <p style="font-size:13px;color:#374151;margin:0 0 8px;">${updateRows.length} processed, ${updateParsed} scraped OK</p>
-  ${buildTableHtml(updateRows)}
-
-  <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
-  <p style="font-size:12px;color:#9ca3af;">Remaining backfill: ~${backfillTotal - b.scraped - expired}</p>
-</div>`;
 
   try {
-    await sgMail.send({
-      to: 'jamie@rubyshines.com',
-      from: 'pipeline@rubyshines.com',
-      subject,
-      html,
-      trackingSettings: { clickTracking: { enable: false, enableText: false } },
+    const { error } = await supabase.from('passport_sync_runs').insert({
+      backfill_scraped: b.scraped,
+      backfill_delivered: b.delivered,
+      updates_scraped: u.scraped,
+      updates_delivered: u.delivered,
+      expired,
+      captcha,
+      errors,
+      backfill_remaining: backfillTotal - b.scraped - expired,
+      updates_remaining: updatesTotal - u.scraped,
+      too_old_skipped: tooOldSkipped,
     });
+    if (error) console.warn(`  [Passport] Failed to log run: ${error.message}`);
   } catch (e) {
-    console.error('Failed to send summary email:', e.message);
+    console.warn(`  [Passport] Failed to log run: ${e.message}`);
   }
 }
 

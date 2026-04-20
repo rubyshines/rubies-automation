@@ -402,6 +402,33 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       <div style="font-size:13px;">${parts.join('')}</div>`;
   }
 
+  // --- Passport tracking sync (last 24h) ---
+  let passportSyncHtml = '';
+  const psSync = extra.passportSyncSummary;
+  if (psSync) {
+    const badge = (label, value, color) =>
+      value > 0 ? `<span style="display:inline-block;padding:3px 10px;margin:0 4px 4px 0;background:${color};color:#fff;border-radius:10px;font-size:11px;font-weight:600;">${label}: ${value}</span>` : '';
+
+    const badges = [
+      badge('Scraped', psSync.totalScraped, '#6366f1'),
+      badge('Delivered', psSync.delivered, '#16a34a'),
+      badge('Expired', psSync.expired, '#d97706'),
+      badge('CAPTCHA', psSync.captcha, '#dc2626'),
+      badge('Errors', psSync.errors, '#dc2626'),
+    ].filter(Boolean).join('');
+
+    const details = [
+      `${psSync.runs} runs`,
+      psSync.backfillRemaining > 0 ? `${psSync.backfillRemaining} backfill remaining` : null,
+      `${psSync.updatesRemaining} active updates`,
+    ].filter(Boolean).join(' &middot; ');
+
+    passportSyncHtml = `
+      <h3 style="margin:24px 0 8px;color:#6366f1;">Passport Tracking Sync (last 24h)</h3>
+      <div style="margin:4px 0;">${badges}</div>
+      <p style="font-size:12px;color:#6b7280;margin:4px 0;">${details}</p>`;
+  }
+
   // --- Errors ---
   let errorsHtml = '';
   if (uf.errors?.length > 0) {
@@ -430,6 +457,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
       ${resolvedHtml}
       ${followUpHtml}
+      ${passportSyncHtml}
       ${errorsHtml}
     </div>`;
 
@@ -673,21 +701,42 @@ async function run() {
 
   // Fetch auto follow-up activity from last 24h
   let autoFollowUps = [];
+  let passportSyncSummary = null;
   try {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await supabase
-      .from('cs_ai_drafts')
-      .select('customer_email, customer_name, gorgias_ticket_id, message_type, sent_at')
-      .eq('source', 'auto_follow_up')
-      .gte('sent_at', yesterday)
-      .order('sent_at', { ascending: false });
-    autoFollowUps = data || [];
+    const [followUpResult, syncResult] = await Promise.all([
+      supabase
+        .from('cs_ai_drafts')
+        .select('customer_email, customer_name, gorgias_ticket_id, message_type, sent_at')
+        .eq('source', 'auto_follow_up')
+        .gte('sent_at', yesterday)
+        .order('sent_at', { ascending: false }),
+      supabase
+        .from('passport_sync_runs')
+        .select('*')
+        .gte('ran_at', yesterday)
+        .order('ran_at', { ascending: false }),
+    ]);
+    autoFollowUps = followUpResult.data || [];
+    const runs = syncResult.data || [];
+    if (runs.length > 0) {
+      passportSyncSummary = {
+        runs: runs.length,
+        totalScraped: runs.reduce((s, r) => s + (r.backfill_scraped || 0) + (r.updates_scraped || 0), 0),
+        delivered: runs.reduce((s, r) => s + (r.backfill_delivered || 0) + (r.updates_delivered || 0), 0),
+        expired: runs.reduce((s, r) => s + (r.expired || 0), 0),
+        captcha: runs.reduce((s, r) => s + (r.captcha || 0), 0),
+        errors: runs.reduce((s, r) => s + (r.errors || 0), 0),
+        backfillRemaining: runs[0].backfill_remaining || 0,
+        updatesRemaining: runs[0].updates_remaining || 0,
+      };
+    }
   } catch (err) {
-    console.warn(`[alerts] Could not fetch follow-up data: ${err.message}`);
+    console.warn(`[alerts] Could not fetch follow-up/sync data: ${err.message}`);
   }
 
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, passportSyncSummary });
 
   const sgMail = getSendgridClient();
   if (sgMail) {
