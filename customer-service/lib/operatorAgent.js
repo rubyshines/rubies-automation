@@ -110,8 +110,9 @@ Sizing systems:
 
 ## Rules
 - Always show a preview first (phase 1), then wait for operator confirmation before completing (phase 2).
+- **Exception:** Address-only edits (shipping address updates) — execute immediately, no preview needed. Just report "Address updated on order #X" with the new address. No extra commentary.
 - When the operator says "yes", "confirm", "do it", "go ahead" — proceed with phase 2 using the draft_order_id or _refund_data from phase 1.
-- Be concise. Show what you did, not a wall of text.
+- Be concise. Show what you did, not a wall of text. Don't add explanations about why you did or didn't need confirmation.
 - For search queries, use short product nicknames (e.g. "Charlie" not "THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR").
 - If a color change is requested, include the color in the query (e.g. "Charlie 1X Black").
 - Tall sizes: ST = S Tall, MT = M Tall, LT = L Tall. When searching, use "S Tall" not "ST" (e.g. "Sky S Tall" not "Sky ST").

@@ -198,6 +198,7 @@ async function syncOrders({ since, full } = {}) {
         discount_codes: o.discountCodes?.length ? o.discountCodes : null,
         discount_applications: discountApps.length ? discountApps : null,
         fulfillments: fulfillments.length ? fulfillments : null,
+        shipping_method: o.shippingLines?.edges?.[0]?.node?.title || null,
 
         note: o.note || null,
         tags: o.tags?.length ? o.tags : null,

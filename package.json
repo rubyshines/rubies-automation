@@ -2,6 +2,9 @@
   "name": "rubies-automations",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22"
+  },
   "description": "RUBIES SEO automations and one-time backfill",
   "scripts": {
     "backfill": "node seo-tracking/backfill.js",

@@ -561,13 +561,24 @@ function renderTicketDetail(ticket) {
     document.getElementById('draft-editor').value = savedDraft || d.draft_response;
     document.getElementById('draft-notes').value = savedNotes || '';
 
-    // Confidence + status badges
+    // Message type + confidence + status badges
+    const msgTypeEl = document.getElementById('detail-message-type');
+    const draftMsgType = d.message_type || ticket.message_type || '';
+    if (draftMsgType) {
+      msgTypeEl.textContent = draftMsgType.replace(/_/g, ' ');
+      msgTypeEl.className = `category-badge ${getCategoryClass(draftMsgType)}`;
+    } else {
+      msgTypeEl.textContent = '';
+      msgTypeEl.className = 'category-badge';
+    }
+
     const confEl = document.getElementById('detail-confidence');
     confEl.textContent = d.confidence;
     confEl.className = `badge badge-${d.confidence}`;
 
     const statusEl = document.getElementById('detail-status-badge');
-    statusEl.textContent = d.advisor_status;
+    const statusLabels = { action_needed: 'action needed', ready: 'ready', needs_info: 'needs info', gathering: 'gathering', route_to_human: 'route to human' };
+    statusEl.textContent = statusLabels[d.advisor_status] || d.advisor_status;
     statusEl.className = `badge badge-${d.advisor_status}`;
 
     // Action panel — intent-specific UIs
@@ -578,6 +589,9 @@ function renderTicketDetail(ticket) {
     document.getElementById('draft-editor').value = '';
     document.getElementById('draft-notes').value = '';
 
+    const msgTypeEl = document.getElementById('detail-message-type');
+    msgTypeEl.textContent = '';
+    msgTypeEl.className = 'category-badge';
     const confEl = document.getElementById('detail-confidence');
     confEl.textContent = '';
     confEl.className = 'badge';
@@ -704,7 +718,7 @@ async function loadCustomerContext(email, orderNumber) {
 
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
         `#${to.order_number}`, to.created_at, to.items,
-        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo
+        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo, to.shipping, to.shipping_method
       );
     }
 
@@ -820,7 +834,7 @@ function renderOtherOrders(showCount) {
   document.getElementById('other-orders-list').innerHTML = html;
 }
 
-function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo) {
+function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo, shipping, shippingMethod) {
   const statusColor = !fulfillmentStatus ? 'var(--text-tertiary)'
     : fulfillmentStatus.toLowerCase() === 'fulfilled' ? 'var(--green)'
     : fulfillmentStatus.toLowerCase() === 'unfulfilled' ? 'var(--yellow)'
@@ -887,6 +901,7 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     ${addressHtml}
     <table class="order-items-table">${itemsHtml}</table>
     ${trackingHtml}
+    ${shipping != null ? `<div class="ticket-order-shipping" style="font-size:12px;color:var(--text-secondary)">${shippingMethod || 'Shipping'}: ${Number(shipping) > 0 ? '$' + Number(shipping).toFixed(2) : 'Free'}</div>` : ''}
     ${total != null ? `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>` : ''}
     ${linksHtml ? `<div class="order-links" style="margin-top:8px">${linksHtml}</div>` : ''}
   `;
@@ -1151,6 +1166,8 @@ function simpleMarkdown(text) {
       const items = list.trim().split('\n').map(l => `<li>${l.replace(/^[•\-–]\s*/, '')}</li>`).join('');
       return `<ul class="action-list">${items}</ul>`;
     })
+    // Auto-link URLs
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" class="action-tool-link">$1</a>')
     // Line breaks (after list handling)
     .replace(/\n/g, '<br>');
 }
@@ -1209,11 +1226,11 @@ function appendChatMessage(role, content) {
   const div = document.createElement('div');
   div.className = `action-msg action-msg-${role}`;
   if (role === 'tool') {
-    // Collapsible tool output — show first line as summary
+    // Collapsible tool output — show first line as summary, render markdown in body
     const lines = content.trim().split('\n');
     const summary = esc(lines[0]).replace(/^\[|\]$/g, '');
-    const full = esc(content);
-    div.innerHTML = `<details class="action-tool-details"><summary class="action-tool-summary">${summary}</summary><pre class="action-tool-output">${full}</pre></details>`;
+    const body = lines.length > 1 ? simpleMarkdown(lines.slice(1).join('\n')) : '';
+    div.innerHTML = `<details class="action-tool-details"><summary class="action-tool-summary">${summary}</summary>${body ? `<div class="action-tool-output">${body}</div>` : ''}</details>`;
   } else {
     div.innerHTML = `<span class="chat-text">${simpleMarkdown(content)}</span>`;
   }
@@ -1286,7 +1303,7 @@ async function sendActionMessage() {
           if (event.type === 'tool_call') {
             removeChatThinking();
             const label = (event.data?.tool || 'unknown').replace(/_/g, ' ');
-            appendChatMessage('tool', `[${label}] Running...`);
+            appendChatMessage('tool', `${label}`);
             appendChatThinking();
           } else if (event.type === 'tool_result') {
             removeChatThinking();
@@ -1301,7 +1318,7 @@ async function sendActionMessage() {
             if (!streamingEl) {
               streamingEl = appendChatMessage('assistant', streamingAssistantText);
             } else {
-              streamingEl.querySelector('.chat-text').textContent = streamingAssistantText;
+              streamingEl.querySelector('.chat-text').innerHTML = simpleMarkdown(streamingAssistantText);
             }
           } else if (event.type === 'text') {
             // Final text block (non-streaming fallback from operatorAgent)
@@ -1310,7 +1327,7 @@ async function sendActionMessage() {
             if (!streamingEl) {
               streamingEl = appendChatMessage('assistant', streamingAssistantText);
             } else {
-              streamingEl.querySelector('.chat-text').textContent = streamingAssistantText;
+              streamingEl.querySelector('.chat-text').innerHTML = simpleMarkdown(streamingAssistantText);
             }
           } else if (event.type === 'complete') {
             finalResult = event;
@@ -1340,6 +1357,19 @@ async function sendActionMessage() {
         renderQuickReplies(['Yes, confirm', 'No, cancel']);
       }
       _actionChatHistory = finalResult.history || [];
+
+      // Reload ticket to pick up action_executed_at and re-render the panel
+      if (currentTicketId) {
+        const refreshed = await api(`/api/tickets/${currentTicketId}`);
+        if (refreshed?.active_draft) {
+          currentDraft = refreshed.active_draft;
+          currentTicket = refreshed;
+          // If action was completed, re-render panel to show "Done" state
+          if (currentDraft.action_executed_at) {
+            renderActionPanel(currentDraft);
+          }
+        }
+      }
     }
 
   } catch (err) {
@@ -1726,6 +1756,9 @@ async function refreshDraft(steer) {
           } else if (event.type === 'tool_call') {
             // Show tool call status briefly
             editor.placeholder = `Calling ${event.tool}...`;
+          } else if (event.type === 'warning') {
+            console.warn('[refresh]', event.message);
+            showRetryToast(event.message);
           } else if (event.type === 'complete') {
             finalResult = event;
           } else if (event.type === 'error') {
@@ -1743,25 +1776,10 @@ async function refreshDraft(steer) {
       return;
     }
 
-    // Apply final result
-    if (finalResult) {
-      editor.value = finalResult.draft_response;
-      editor.placeholder = '';
-      if (finalResult.draft_id) currentDraftId = finalResult.draft_id;
-      localStorage.setItem(`draft-ticket-${ticketId}`, finalResult.draft_response);
-
-      if (finalResult.structured?.status) {
-        const conf = finalResult.structured.status === 'ready' ? 'high' : finalResult.structured.status === 'needs_info' ? 'medium' : 'low';
-        document.getElementById('detail-confidence').textContent = conf;
-        document.getElementById('detail-confidence').className = `badge badge-${conf}`;
-        document.getElementById('detail-status-badge').textContent = finalResult.structured.status;
-        document.getElementById('detail-status-badge').className = `badge badge-${finalResult.structured.status}`;
-      }
-      if (currentDraft && finalResult.structured) {
-        currentDraft.structured_output = finalResult.structured;
-        currentDraft.action_type = finalResult.structured.action_type || null;
-        renderActionPanel(currentDraft);
-      }
+    // Apply final result — reload the full ticket so everything repaints
+    // (order card, action panel, badges, sidebar all may have changed)
+    if (finalResult && currentTicketId === ticketId) {
+      await selectTicket(ticketId);
     }
 
     if (steerInput) {
@@ -2634,9 +2652,11 @@ function renderConversation(messages, ticket) {
       }
       botEnd = messengerEnd; // reuse botEnd to set startIdx below
     } else {
-      // --- Email intake: show first customer email as intake card ---
+      // --- Email/contact form intake: show first customer email as intake card ---
       const firstMsg = messages[0];
-      const body = (firstMsg.body || '').trim();
+      let body = (firstMsg.body || '').trim();
+      // Strip contact form boilerplate header (e.g. "Product Question\n---\nActual message")
+      body = body.replace(/^[^\n]+\n-{3,}\n/s, '').trim();
       if (body) {
         const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
         const cleaned = cleanMessageBody(rawHtml);

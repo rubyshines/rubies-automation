@@ -15,6 +15,13 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 // Max age before falling back to Shopify (1 hour)
 const STALENESS_THRESHOLD_MS = 60 * 60 * 1000;
 
+// Gmail treats @googlemail.com as identical to @gmail.com. Normalize so
+// lookups match regardless of which alias the customer used.
+function normalizeEmail(email) {
+  if (!email) return email;
+  return email.toLowerCase().trim().replace(/@googlemail\.com$/, '@gmail.com');
+}
+
 // Prior-ticket lookup for second-round follow-up context injection.
 // Only pulls closed tickets in categories where a prior action might still
 // be relevant to a new message (exchange/refund/defect). See domain_cs.md.
@@ -302,6 +309,7 @@ async function fetchPriorTicket(customer_email, exclude_gorgias_ticket_id) {
 
 async function buildContext({ customer_email, customer_name, order_number, issue_description, existingIntake, current_gorgias_ticket_id }) {
   const messageOrderNumber = extractOrderNumber(issue_description);
+  customer_email = normalizeEmail(customer_email);
 
   // Try Supabase first, fall back to Shopify (skip if no email — e.g. Facebook Messenger)
   let customerData = null;

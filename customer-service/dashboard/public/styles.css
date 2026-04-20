@@ -2064,7 +2064,7 @@ main { height: calc(100vh - 56px); }
 
 .action-tool-summary {
   font-family: inherit;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-tertiary);
   padding: 6px 10px;
@@ -2081,11 +2081,13 @@ main { height: calc(100vh - 56px); }
 
 .action-tool-summary::before {
   content: '▸ ';
+  font-size: 17px;
   color: var(--text-tertiary);
 }
 
 .action-tool-details[open] .action-tool-summary::before {
   content: '▾ ';
+  font-size: 17px;
 }
 
 .action-tool-summary:hover {
@@ -2093,15 +2095,19 @@ main { height: calc(100vh - 56px); }
   color: var(--text-secondary);
 }
 
+.action-tool-link {
+  color: var(--blue, #2563eb);
+  word-break: break-all;
+}
+
 .action-tool-output {
-  font-family: 'JetBrains Mono', 'SF Mono', monospace;
-  font-size: 11px;
+  font-family: inherit;
+  font-size: 13px;
   line-height: 1.5;
   padding: 8px 12px;
   margin: 4px 0 0;
-  max-height: 150px;
+  max-height: 200px;
   overflow-y: auto;
-  white-space: pre-wrap;
   word-wrap: break-word;
   background: var(--surface-inset);
   border: 1px solid var(--border);
@@ -2320,6 +2326,7 @@ main { height: calc(100vh - 56px); }
 .badge-medium { background: var(--yellow-bg); color: var(--yellow); }
 .badge-low { background: var(--red-bg); color: var(--red); }
 .badge-ready { background: var(--green-bg); color: var(--green); }
+.badge-action_needed { background: #fff3e0; color: #e65100; }
 .badge-needs_info { background: var(--yellow-bg); color: var(--yellow); }
 .badge-gathering { background: var(--surface-inset); color: var(--text-tertiary); }
 .badge-route_to_human { background: #fce4ec; color: #c62828; }

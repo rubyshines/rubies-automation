@@ -636,6 +636,16 @@ async function fetchOrdersForSync(since = null, cursor = null) {
               location { legacyResourceId }
             }
 
+            # --- Shipping lines ---
+            shippingLines(first: 5) {
+              edges {
+                node {
+                  title
+                  originalPriceSet { shopMoney { amount currencyCode } }
+                }
+              }
+            }
+
             # --- Line items ---
             lineItems(first: 100) {
               edges {
