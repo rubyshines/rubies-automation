@@ -136,6 +136,14 @@ async function markAsSpam(gmail, messageId) {
   });
 }
 
+/**
+ * Move a message to the trash.
+ * Trashed messages are permanently deleted after 30 days by Gmail.
+ */
+async function trashMessage(gmail, messageId) {
+  await gmail.users.messages.trash({ userId: 'me', id: messageId });
+}
+
 // ---------------------------------------------------------------------------
 // Attachment helpers
 // ---------------------------------------------------------------------------
@@ -155,4 +163,4 @@ async function downloadAttachment(gmail, messageId, attachmentId, filename, mime
   return { data, filename, mimeType };
 }
 
-module.exports = { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam, downloadAttachment };
+module.exports = { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam, trashMessage, downloadAttachment };

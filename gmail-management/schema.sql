@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS email_messages (
   forwarded_to_gorgias_at TIMESTAMPTZ,  -- when CS email was forwarded to Gorgias
   gorgias_ticket_id BIGINT,             -- Gorgias ticket ID created from this email
   archived_at TIMESTAMPTZ,              -- when email was labeled + archived from inbox
+  trashed_at TIMESTAMPTZ,               -- when email was moved to Gmail trash by cleanup
   processed_at TIMESTAMPTZ              -- when email was processed (labeled/routed/archived/skipped)
 );
 

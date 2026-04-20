@@ -87,6 +87,7 @@ const CLASSIFICATION_LABELS = {
   '3pl_fulfillment': 'R/3PL',
   finance_legal: 'R/Finance',
   internal: 'R/Internal',
+  pipeline: 'R/Pipeline',
   spam: 'R/Spam',
   auto_reply: 'R/Auto-Reply',
   newsletter: 'R/Newsletter',

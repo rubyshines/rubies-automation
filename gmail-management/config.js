@@ -75,6 +75,11 @@ const KNOWN_DOMAINS = {
   'qq.com': 'production_orders',
 };
 
+// Known senders → specific classification (checked before domain rules — more specific wins)
+const KNOWN_SENDERS = {
+  'pipeline@rubyshines.com': 'pipeline',
+};
+
 // Sender patterns that should be skipped regardless of domain
 const SKIP_SENDER_PATTERNS = [
   /^noreply@/i,
@@ -132,6 +137,10 @@ const BUSINESS_AREAS = {
     label: 'Internal',
     description: 'Team communications, internal ops',
   },
+  pipeline: {
+    label: 'Pipeline',
+    description: 'Automated system reports and alerts from RUBIES internal tools',
+  },
   newsletter: {
     label: 'Newsletter',
     description: 'Recurring newsletters, digests, or updates — subscribed content, not direct communications',
@@ -172,14 +181,24 @@ const AREA_URGENCY = {
   internal: 1.0,
 };
 
+// ---------------------------------------------------------------------------
+// Inbox Cleanup — lifecycle rules for classified emails
+// ---------------------------------------------------------------------------
+
+const INBOX_CLEANUP = {
+  pipeline: { archive_after_days: 1, trash_after_days: 7 },
+};
+
 module.exports = {
   OUR_ADDRESS,
   OUR_DOMAIN,
   SKIP_DOMAINS,
   KNOWN_DOMAINS,
+  KNOWN_SENDERS,
   SKIP_SENDER_PATTERNS,
   BUSINESS_AREAS,
   CLASSIFICATION_LABELS,
   FOLLOW_UP_CADENCE,
   AREA_URGENCY,
+  INBOX_CLEANUP,
 };

@@ -18,6 +18,7 @@ const {
   OUR_DOMAIN,
   SKIP_DOMAINS,
   KNOWN_DOMAINS,
+  KNOWN_SENDERS,
   SKIP_SENDER_PATTERNS,
   CLASSIFICATION_LABELS,
 } = require('../config');
@@ -72,6 +73,11 @@ function extractDomain(email) {
 function classifyTier1(fromAddress) {
   if (!fromAddress) return null;
   const email = fromAddress.toLowerCase().trim();
+
+  // Known senders (before domain rules — more specific wins)
+  if (KNOWN_SENDERS[email]) {
+    return { classification: KNOWN_SENDERS[email], confidence: 1.0, tier: 1 };
+  }
 
   // Skip patterns (noreply, mailer-daemon, etc.)
   for (const pattern of SKIP_SENDER_PATTERNS) {

@@ -78,6 +78,10 @@ const PIPELINES = [
     run: () => require('./customer-service/intake/processGmailCs').run(),
   },
   {
+    name: 'Gmail Inbox Cleanup',
+    run: () => require('./gmail-management/sync/cleanupInbox').run(),
+  },
+  {
     name: 'Gmail Watch Renewal',
     run: async () => {
       if (!process.env.GMAIL_PUSH_TOPIC) return { sources: { gmail_watch: { success: true, skipped: true } }, status: 'ok' };
