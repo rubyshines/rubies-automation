@@ -8,7 +8,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { extractOrderNumber, analyzeOrders } = require('../lib/contextBuilder');
+const { extractOrderNumber, analyzeOrders, normalizeEmail } = require('../lib/contextBuilder');
 
 // ---------------------------------------------------------------------------
 // Order number extraction from customer messages
@@ -69,6 +69,33 @@ Agent: What order?
 [LATEST CUSTOMER MESSAGE]
 The order # was 29887.`;
     assert.equal(extractOrderNumber(text), '29887');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email normalization
+// ---------------------------------------------------------------------------
+
+describe('normalizeEmail', () => {
+  it('converts @googlemail.com to @gmail.com', () => {
+    assert.equal(normalizeEmail('user@googlemail.com'), 'user@gmail.com');
+  });
+
+  it('lowercases and trims', () => {
+    assert.equal(normalizeEmail('  User@GoogleMail.COM  '), 'user@gmail.com');
+  });
+
+  it('leaves @gmail.com unchanged', () => {
+    assert.equal(normalizeEmail('user@gmail.com'), 'user@gmail.com');
+  });
+
+  it('leaves other domains unchanged', () => {
+    assert.equal(normalizeEmail('user@yahoo.com'), 'user@yahoo.com');
+  });
+
+  it('handles null/undefined', () => {
+    assert.equal(normalizeEmail(null), null);
+    assert.equal(normalizeEmail(undefined), undefined);
   });
 });
 

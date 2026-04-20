@@ -423,4 +423,4 @@ async function buildContext({ customer_email, customer_name, order_number, issue
   };
 }
 
-module.exports = { buildContext, analyzeOrders, extractOrderNumber };
+module.exports = { buildContext, analyzeOrders, extractOrderNumber, normalizeEmail };
