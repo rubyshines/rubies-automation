@@ -90,11 +90,10 @@ const PIPELINES = [
       return { sources: { gmail_watch: result }, status: result.success ? 'ok' : 'error' };
     },
   },
-  // DISABLED 2026-04-13: Investigating sync drift — relying on webhooks only
-  // {
-  //   name: 'Ticket Reconciliation',
-  //   run: () => require('./customer-service/sync/reconcileTickets').run(),
-  // },
+  {
+    name: 'Ticket Reconciliation',
+    run: () => require('./customer-service/sync/gorgiasAdvisorResync').runPipeline(),
+  },
 ];
 
 // ---------------------------------------------------------------------------

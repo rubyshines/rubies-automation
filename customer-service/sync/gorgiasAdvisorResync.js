@@ -202,32 +202,67 @@ async function run() {
     console.log(`    → ${reason}`);
   }
 
-  if (!toProcess.length) {
+  if (!toProcess.length && !undelivered.length) {
     console.log('  ✓ Everything in sync — nothing to do.\n');
+  }
+
+  return {
+    openTickets: gorgiasTickets.length,
+    driftIssues: toProcess.map(({ ticket, reason }) => ({
+      ticketId: ticket.id,
+      email: ticket.customer?.email || '?',
+      reason,
+    })),
+    undelivered: undelivered.map(({ ticket, failedMessages }) => ({
+      ticketId: ticket.id,
+      email: ticket.customer?.email || '?',
+      failedCount: failedMessages.length,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Execute mode — reprocess drifted tickets (CLI only, never scheduled)
+// ---------------------------------------------------------------------------
+
+async function executeResync(detection) {
+  const gorgias = require('../import/gorgiasClient');
+  const { processTicket, getAiBotUserId } = require('../intake/processGorgiasTickets');
+  const supabase = getSupabaseClient();
+  const aiBotId = await getAiBotUserId();
+
+  // Re-fetch the tickets that need processing
+  const gorgiasIds = detection.driftIssues.map(d => d.ticketId);
+  if (!gorgiasIds.length) {
+    console.log('  Nothing to execute.');
     return;
   }
 
-  // ── Step 6: Process (or dry-run) ──
+  // Fetch existing draft message IDs
+  const { data: existingDrafts } = await supabase
+    .from('cs_ai_drafts')
+    .select('gorgias_ticket_id, gorgias_message_id')
+    .in('gorgias_ticket_id', gorgiasIds);
 
-  if (dryRun) {
-    console.log(`\n  ⏸  Dry run — no changes made.`);
-    console.log(`  Run with --execute to process these ${toProcess.length} tickets.\n`);
-    return;
+  const draftsByTicket = new Map();
+  for (const d of (existingDrafts || [])) {
+    if (!draftsByTicket.has(d.gorgias_ticket_id)) draftsByTicket.set(d.gorgias_ticket_id, new Set());
+    draftsByTicket.get(d.gorgias_ticket_id).add(d.gorgias_message_id);
   }
 
-  console.log(`\n  Processing ${toProcess.length} tickets...\n`);
+  console.log(`\n  Processing ${gorgiasIds.length} tickets...\n`);
 
   let processed = 0, skipped = 0, errors = 0;
 
-  for (const { ticket, reason, existingIds } of toProcess) {
-    const name = ticket.customer?.name || ticket.customer?.email || ticket.id;
+  for (let i = 0; i < gorgiasIds.length; i++) {
+    const ticketId = gorgiasIds[i];
+    const existingIds = draftsByTicket.get(ticketId) || new Set();
     try {
-      console.log(`  [${processed + skipped + errors + 1}/${toProcess.length}] #${ticket.id} ${name}...`);
+      const ticket = await gorgias.getTicket(ticketId);
+      console.log(`  [${i + 1}/${gorgiasIds.length}] #${ticketId} ${ticket.customer?.name || ticket.customer?.email || ticketId}...`);
       const result = await processTicket(supabase, ticket, aiBotId, existingIds);
       if (result?.skipped) {
-        // processTicket skipped — but we still need to fix the Advisor record.
-        // Ensure cs_tickets row exists and status/conversation_history are current.
-        const messages = await gorgias.getTicketMessages(ticket.id);
+        const messages = await gorgias.getTicketMessages(ticketId);
         const conversationHistory = messages
           .filter(m => m.channel !== 'internal-note')
           .map(m => ({
@@ -242,7 +277,7 @@ async function run() {
         const { error: upsertErr } = await supabase
           .from('cs_tickets')
           .upsert({
-            gorgias_ticket_id: ticket.id,
+            gorgias_ticket_id: ticketId,
             status: 'open',
             customer_email: ticket.customer?.email || null,
             customer_name: ticket.customer?.name || null,
@@ -276,7 +311,57 @@ async function run() {
   console.log(`${'═'.repeat(65)}\n`);
 }
 
-run().catch(err => {
-  console.error('Resync failed:', err);
-  process.exit(1);
-});
+// ---------------------------------------------------------------------------
+// Pipeline-compatible run() for daily-sync-all.js
+// ---------------------------------------------------------------------------
+
+async function runPipeline() {
+  try {
+    const detection = await run();
+    const driftCount = detection.driftIssues.length;
+    const undeliveredCount = detection.undelivered.length;
+    const detailParts = [`${detection.openTickets} open`];
+    if (driftCount) detailParts.push(`${driftCount} drift`);
+    if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
+    if (!driftCount && !undeliveredCount) detailParts.push('all in sync');
+
+    return {
+      sources: {
+        ticket_reconciliation: {
+          success: true,
+          rowsWritten: driftCount + undeliveredCount,
+          detail: detailParts.join(', '),
+        },
+      },
+      status: 'ok',
+    };
+  } catch (e) {
+    console.error('Ticket reconciliation error:', e.message);
+    return {
+      sources: {
+        ticket_reconciliation: { success: false, rowsWritten: 0, error: e.message },
+      },
+      status: 'error',
+    };
+  }
+}
+
+module.exports = { run, runPipeline };
+
+if (require.main === module) {
+  const execute = process.argv.includes('--execute');
+
+  run().then(async (detection) => {
+    if (execute && detection.driftIssues.length) {
+      await executeResync(detection);
+    } else if (execute) {
+      console.log('  Nothing to execute — all in sync.');
+    } else if (detection.driftIssues.length) {
+      console.log(`\n  ⏸  Dry run — no changes made.`);
+      console.log(`  Run with --execute to process these ${detection.driftIssues.length} tickets.\n`);
+    }
+  }).catch(err => {
+    console.error('Resync failed:', err);
+    process.exit(1);
+  });
+}
