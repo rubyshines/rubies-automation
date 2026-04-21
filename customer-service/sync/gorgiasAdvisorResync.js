@@ -149,7 +149,47 @@ async function run() {
     }
   }
 
+  // ── Step 4b: Check for undelivered agent messages ──
+
+  const undelivered = [];
+  for (const gTicket of gorgiasTickets) {
+    if (!gTicket.last_sent_message_not_delivered) continue;
+    const messages = await gorgias.getTicketMessages(gTicket.id);
+    const failedMsgs = messages.filter(m => m.from_agent && m.failed_datetime);
+    if (failedMsgs.length) {
+      undelivered.push({
+        ticket: gTicket,
+        failedMessages: failedMsgs.map(m => ({
+          id: m.id,
+          channel: m.channel,
+          failed_datetime: m.failed_datetime,
+          error: m.last_sending_error,
+          is_retriable: m.is_retriable,
+          body_preview: (m.body_text || m.stripped_text || '').substring(0, 80),
+        })),
+      });
+    }
+    await gorgias.delay(300);
+  }
+
   // ── Step 5: Report what we found ──
+
+  if (undelivered.length) {
+    console.log(`\n${'═'.repeat(65)}`);
+    console.log(`  ⚠️  ${undelivered.length} ticket(s) have UNDELIVERED agent messages`);
+    console.log(`${'═'.repeat(65)}\n`);
+
+    for (const { ticket, failedMessages } of undelivered) {
+      const name = ticket.customer?.name || '';
+      const email = ticket.customer?.email || '';
+      console.log(`  #${ticket.id}  ${name} (${email})`);
+      for (const fm of failedMessages) {
+        const err = fm.error ? JSON.stringify(fm.error) : 'unknown';
+        console.log(`    → MSG #${fm.id} [${fm.channel}] failed ${fm.failed_datetime} — ${err}`);
+        console.log(`      "${fm.body_preview}..."`);
+      }
+    }
+  }
 
   console.log(`\n${'═'.repeat(65)}`);
   console.log(`  ${toProcess.length} ticket(s) need reprocessing`);
@@ -194,7 +234,7 @@ async function run() {
             id: m.id,
             sender: m.from_agent ? 'agent' : 'customer',
             body: gorgias.stripHtml(m.stripped_text || m.body_text || ''),
-            body_html: m.stripped_html || m.body_html || '',
+            body_html: m.from_agent ? (m.stripped_html || m.body_html || '') : (m.body_html || m.stripped_html || ''),
             created_at: m.created_datetime,
             channel: m.channel,
           }));

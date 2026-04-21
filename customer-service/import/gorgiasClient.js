@@ -178,9 +178,13 @@ async function createTicketReply(ticketId, { body_html, body_text, attachments }
     body_html: html,
     body_text: body_text || '',
   };
-  // Email channels need explicit from/to addresses in source;
-  // non-email channels (facebook-messenger, instagram, chat, etc.) inherit routing from the ticket
-  if (ticketChannel === 'email') {
+  // Chat/offline-capture tickets: customer left the chat widget, so replies must go via email.
+  // Force channel to email when the customer has an email address on file.
+  if (ticketChannel !== 'email' && ticket.customer?.email) {
+    payload.channel = 'email';
+  }
+  // Email (or forced-to-email) channels need explicit from/to addresses in source
+  if (payload.channel === 'email') {
     payload.source = {
       type: 'email',
       from: { name: senderName, address: senderEmail },
