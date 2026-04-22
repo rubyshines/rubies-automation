@@ -255,6 +255,8 @@ function switchTab(tab) {
     currentDraft = null;
     ticketNavStack = [];
     location.hash = '';
+    // Mobile: exit detail view so sidebar is visible and clickable
+    document.body.classList.remove('mobile-detail-view');
     const ph = document.getElementById('detail-placeholder');
     ph.style.display = 'flex';
     ph.textContent = 'Select a ticket to review';
@@ -400,6 +402,10 @@ async function selectTicket(id) {
   location.hash = `ticket-${id}`;
   startFocusTimer(id);
 
+  // Re-open conversation (may have been collapsed by draft focus on mobile)
+  const convEl = document.getElementById('detail-conversation');
+  if (convEl && !convEl.open) convEl.setAttribute('open', '');
+
   // Highlight in queue
   document.querySelectorAll('.queue-item').forEach(el => el.classList.remove('active'));
   const matchEl = document.querySelector(`.queue-item[data-ticket-id="${id}"]`);
@@ -471,6 +477,16 @@ function renderTicketDetail(ticket) {
   const btnUnpark = document.getElementById('btn-unpark');
   if (btnPark) btnPark.style.display = (ticket.status === 'open' || ticket.status === 'snoozed') ? '' : 'none';
   if (btnUnpark) btnUnpark.style.display = ticket.status === 'parked' ? '' : 'none';
+
+  // Return button — only for gmail-sourced tickets
+  const btnReturnWrap = document.getElementById('btn-return-wrap');
+  if (btnReturnWrap) {
+    btnReturnWrap.style.display = ticket.source === 'gmail' ? '' : 'none';
+    const btnReturn = document.getElementById('btn-return');
+    if (btnReturn) { btnReturn.textContent = 'Return'; btnReturn.disabled = false; }
+    const dropdown = document.getElementById('return-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+  }
 
   // Customer info from ticket context (compact — enriched version loads async)
   const ctx = ticket.customer_context || {};
@@ -801,7 +817,10 @@ function renderOtherOrders(showCount) {
     const itemsHtml = (o.items || []).map(i =>
       `<div class="past-order-item">
         <span class="past-order-item-qty">${i.quantity}x</span>
-        <span class="past-order-item-name">${esc(i.title)}${i.variant ? ` <span class="past-order-item-variant">${esc(i.variant)}</span>` : ''}</span>
+        <div class="past-order-item-info">
+          <span class="past-order-item-name">${esc(i.title)}</span>
+          ${i.variant ? `<span class="past-order-item-variant">${esc(i.variant)}</span>` : ''}
+        </div>
         ${i.price != null ? `<span class="past-order-item-price">$${Number(i.price).toFixed(0)}</span>` : ''}
       </div>`
     ).join('');
@@ -1015,7 +1034,8 @@ function renderActionPanel(draft) {
     if (newPrefill) input.value = newPrefill;
     // Show quick-reply buttons if awaiting confirmation
     const chatResponse = draft.action_result?.chat_response || '';
-    if (chatResponse && isConfirmationPrompt(chatResponse)) {
+    if ((chatResponse && isConfirmationPrompt(chatResponse)) ||
+        hasAwaitingConfirmation(draft.action_result?.chat_tool_results)) {
       renderQuickReplies(['Yes, confirm', 'No, cancel']);
     }
     return;
@@ -1175,9 +1195,25 @@ function simpleMarkdown(text) {
 function renderActionLinks(links) {
   const container = document.getElementById('action-chat-messages');
   if (!container || !links?.length) return;
+
+  const orderLinks = links.filter(l => l.type === 'order');
+  // Hide draft links once the exchange order exists (draft became a real order)
+  let filtered = orderLinks.length > 1 ? links.filter(l => l.type !== 'draft') : links;
+  if (!filtered.length) return;
+
+  // Label orders: first = original, subsequent = new (exchange/edit)
+  let orderIdx = 0;
+  filtered = filtered.map(l => {
+    if (l.type === 'order') {
+      orderIdx++;
+      return { ...l, label: orderIdx === 1 ? l.label : `New ${l.label}` };
+    }
+    return l;
+  });
+
   const div = document.createElement('div');
   div.className = 'action-msg action-msg-links';
-  for (const l of links) {
+  for (const l of filtered) {
     const a = document.createElement('a');
     a.href = l.url;
     a.target = '_blank';
@@ -1192,6 +1228,14 @@ function renderActionLinks(links) {
 function isConfirmationPrompt(text) {
   if (/\b(done|completed|refunded|executed|success)\b/i.test(text)) return false;
   return /shall I (confirm|proceed|go ahead)|want me to (proceed|complete|go ahead)|ready to (confirm|proceed)|proceed\?|to confirm,?\s+(call|click|reply)/i.test(text);
+}
+
+/** Check if tool results contain a preview awaiting confirmation */
+function hasAwaitingConfirmation(toolResults) {
+  if (!toolResults?.length) return false;
+  return toolResults.some(tr =>
+    typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)
+  );
 }
 
 function renderQuickReplies(options) {
@@ -1353,7 +1397,8 @@ async function sendActionMessage() {
         updateDraftFromActionResults(finalResult.tool_results);
       }
       if (finalResult.links?.length) renderActionLinks(finalResult.links);
-      if (finalResult.response && isConfirmationPrompt(finalResult.response)) {
+      if ((finalResult.response && isConfirmationPrompt(finalResult.response)) ||
+          hasAwaitingConfirmation(finalResult.tool_results)) {
         renderQuickReplies(['Yes, confirm', 'No, cancel']);
       }
       _actionChatHistory = finalResult.history || [];
@@ -1520,7 +1565,7 @@ function getDraftAttachmentsPayload() {
 // Actions
 // ---------------------------------------------------------------------------
 
-function sendDraft(afterAction) {
+function sendDraft(afterAction, testSnooze) {
   if (!currentTicketId) return;
   if (_actionsInFlight.has(currentTicketId)) return;
 
@@ -1540,6 +1585,7 @@ function sendDraft(afterAction) {
   const body = draftId
     ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) }
     : { message: response, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
+  if (testSnooze) body.testSnooze = true;
 
   // Optimistic: clear local state and advance immediately
   clearDraftAttachments();
@@ -1547,7 +1593,7 @@ function sendDraft(afterAction) {
   localStorage.removeItem(`notes-ticket-${ticketId}`);
   advanceToNextTicket(ticketId);
 
-  const label = afterAction === 'close' ? `${ticketRef} — Sent & closed` : `${ticketRef} — Sent & snoozed`;
+  const label = afterAction === 'close' ? `${ticketRef} — Sent & closed` : testSnooze ? `${ticketRef} — Sent & snoozed (TEST ~5min)` : `${ticketRef} — Sent & snoozed`;
   executeBackgroundAction(ticketId, label,
     () => api(endpoint, { method: 'POST', body }),
     () => {
@@ -1871,6 +1917,74 @@ async function deleteDraft() {
     loadStats();
   } catch (err) {
     alert('Delete failed: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Return to Inbox
+// ---------------------------------------------------------------------------
+
+let _classificationOptions = null;
+
+async function toggleReturnDropdown() {
+  const dropdown = document.getElementById('return-dropdown');
+  if (!dropdown) return;
+
+  if (dropdown.style.display !== 'none') {
+    dropdown.style.display = 'none';
+    return;
+  }
+
+  // Load classification options on first use
+  if (!_classificationOptions) {
+    try {
+      _classificationOptions = await api('/api/classifications');
+    } catch (err) {
+      alert('Failed to load classifications: ' + err.message);
+      return;
+    }
+  }
+
+  dropdown.innerHTML = _classificationOptions.map(opt =>
+    `<div class="return-dropdown-item" onclick="returnToInbox('${opt.value}')">${opt.label}</div>`
+  ).join('');
+  dropdown.style.display = 'block';
+
+  // Close dropdown on outside click
+  const closeHandler = (e) => {
+    if (!e.target.closest('.btn-return-wrap')) {
+      dropdown.style.display = 'none';
+      document.removeEventListener('click', closeHandler);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeHandler), 0);
+}
+
+async function returnToInbox(classification) {
+  if (!currentTicketId) return;
+
+  const dropdown = document.getElementById('return-dropdown');
+  if (dropdown) dropdown.style.display = 'none';
+
+  const btn = document.getElementById('btn-return');
+  btn.disabled = true;
+  btn.textContent = 'Returning...';
+
+  try {
+    const returnedTicketId = currentTicketId;
+    await api(`/api/tickets/${returnedTicketId}/return`, {
+      method: 'POST',
+      body: { classification },
+    });
+    localStorage.removeItem(`draft-ticket-${returnedTicketId}`);
+    localStorage.removeItem(`notes-ticket-${returnedTicketId}`);
+    showToast('Returned to inbox');
+    advanceToNextTicket(returnedTicketId);
+    loadStats();
+  } catch (err) {
+    btn.textContent = 'Return';
+    btn.disabled = false;
+    alert('Return failed: ' + err.message);
   }
 }
 

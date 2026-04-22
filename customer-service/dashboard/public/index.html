@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RUBIES Care</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#c0392b">
@@ -81,12 +81,14 @@
             <button id="mobile-back-btn" class="mobile-back-arrow" onclick="mobileBackToQueue()">&larr;</button>
             <div class="mobile-header-info" onclick="toggleSummaryExpand()">
               <div class="mobile-header-line1">
-                <span id="summary-category" class="category-badge"></span>
                 <span id="summary-status-dot" class="status-dot"></span>
                 <span id="summary-name" class="summary-name"></span>
                 <span id="summary-order" class="summary-order"></span>
               </div>
-              <div id="summary-context" class="summary-context"></div>
+              <div class="mobile-header-pills">
+                <span id="summary-category" class="category-badge"></span>
+                <div id="summary-context" class="summary-context"></div>
+              </div>
             </div>
           </div>
           <div id="summary-expanded" class="summary-expanded" style="display:none">
@@ -136,6 +138,7 @@
             <div id="draft-actions" class="draft-actions">
               <div class="btn-row btn-row-primary">
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send &amp; Snooze</button>
+                <button id="btn-send-test" class="btn btn-primary" onclick="sendDraft('snooze', true)" style="background:#e67e22" title="Snooze for ~5 min (follow-up testing)">Test</button>
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
               </div>
               <div class="btn-row btn-row-secondary">
@@ -143,9 +146,14 @@
                 <button id="btn-snooze-only" class="btn btn-ghost" onclick="snoozeNoReply()">Snooze</button>
                 <button id="btn-park" class="btn btn-ghost" onclick="parkTicket()">Park</button>
                 <button id="btn-unpark" class="btn btn-ghost" onclick="unparkTicket()" style="display:none">Unpark</button>
-                <button id="btn-forward" class="btn btn-ghost" onclick="forwardTicket()">Forward</button>
                 <span class="btn-row-divider"></span>
+                <button id="btn-forward" class="btn btn-ghost" onclick="forwardTicket()">Forward</button>
+                <div id="btn-return-wrap" class="btn-return-wrap" style="display:none">
+                  <button id="btn-return" class="btn btn-ghost" onclick="toggleReturnDropdown()">Return</button>
+                  <div id="return-dropdown" class="return-dropdown" style="display:none"></div>
+                </div>
                 <button id="btn-release" class="btn btn-ghost" onclick="releaseDraft()">Release</button>
+                <span class="btn-row-divider"></span>
                 <button id="btn-spam" class="btn btn-ghost btn-ghost-danger" onclick="markSpam()">Spam</button>
                 <button id="btn-delete" class="btn btn-ghost btn-ghost-danger" onclick="deleteDraft()">Delete</button>
               </div>

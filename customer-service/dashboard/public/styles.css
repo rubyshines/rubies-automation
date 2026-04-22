@@ -851,9 +851,14 @@ main { height: calc(100vh - 56px); }
   width: 20px;
 }
 
-.past-order-item-name {
+.past-order-item-info {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.past-order-item-name {
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -862,6 +867,7 @@ main { height: calc(100vh - 56px); }
 
 .past-order-item-variant {
   color: var(--text-tertiary);
+  font-size: 10px;
   font-weight: 400;
 }
 
@@ -2011,6 +2017,11 @@ main { height: calc(100vh - 56px); }
   white-space: pre-wrap;
 }
 
+.action-msg-links {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .action-link {
   display: inline-block;
   padding: 4px 10px;
@@ -2018,6 +2029,7 @@ main { height: calc(100vh - 56px); }
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
+  white-space: nowrap;
   margin-right: 6px;
 }
 .action-link-order { background: var(--green); color: white; }
@@ -2184,7 +2196,7 @@ main { height: calc(100vh - 56px); }
   background: var(--teal);
   color: #fff;
   border: none;
-  border-radius: 6px;
+  border-radius: 20px;
   cursor: pointer;
   transition: background 0.15s;
   white-space: nowrap;
@@ -2255,6 +2267,34 @@ main { height: calc(100vh - 56px); }
 .btn-ghost-danger:hover {
   background: var(--red-bg);
   color: var(--red);
+}
+
+/* Return to Inbox dropdown */
+.btn-return-wrap {
+  position: relative;
+  display: inline-block;
+}
+.return-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  min-width: 180px;
+  z-index: 100;
+  margin-bottom: 4px;
+  padding: 4px 0;
+}
+.return-dropdown-item {
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.return-dropdown-item:hover {
+  background: var(--bg-hover);
 }
 
 .btn {
@@ -2854,6 +2894,12 @@ main { height: calc(100vh - 56px); }
 
 @media (max-width: 768px) {
 
+  /* ── Square corners on mobile ─────────────────────────── */
+  :root {
+    --radius: 0;
+    --radius-lg: 0;
+  }
+
   /* ── Header ────────────────────────────────────────────── */
 
   html, body {
@@ -2916,6 +2962,7 @@ main { height: calc(100vh - 56px); }
   #panel-tickets {
     position: relative;
     overflow: hidden;
+    height: 100%;
   }
 
   .sidebar {
@@ -2929,8 +2976,13 @@ main { height: calc(100vh - 56px); }
 
   .detail {
     width: 100%;
-    padding: 0 14px 14px;
+    padding: 0 0 14px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     display: none;
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* When a ticket is selected, show detail */
@@ -2951,8 +3003,8 @@ main { height: calc(100vh - 56px); }
     top: 0;
     z-index: 10;
     background: var(--surface);
-    margin: 0 -14px;
-    padding: 10px 14px;
+    margin: 0;
+    padding: 10px 12px;
     border-bottom: 1px solid var(--border);
     box-shadow: 0 2px 6px rgba(28, 25, 23, 0.08);
   }
@@ -2991,17 +3043,6 @@ main { height: calc(100vh - 56px); }
     line-height: 1.3;
   }
 
-  .mobile-header-line1 .category-badge {
-    margin-left: auto;
-    font-size: 10px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.02em;
-    padding: 1px 8px !important;
-    text-transform: uppercase;
-    border-radius: 12px;
-    line-height: 1.3;
-  }
-
   .summary-name {
     font-size: 14px;
     font-weight: 600;
@@ -3021,17 +3062,27 @@ main { height: calc(100vh - 56px); }
     flex-shrink: 0;
   }
 
-  .mobile-header-line1 .category-badge {
-    flex-shrink: 0;
+  /* Second line: all pills together */
+  .mobile-header-pills {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+    flex-wrap: wrap;
   }
-
-  /* Second line: context tags — right aligned */
+  .mobile-header-pills .category-badge {
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em;
+    padding: 1px 8px !important;
+    text-transform: uppercase;
+    border-radius: 12px;
+    line-height: 1.3;
+  }
   .summary-context {
     display: flex;
     gap: 5px;
     align-items: center;
-    justify-content: flex-end;
-    margin-top: 3px;
   }
   .summary-context:empty { display: none; }
 
@@ -3071,8 +3122,8 @@ main { height: calc(100vh - 56px); }
     top: 56px; /* below header bar */
     z-index: 9;
     background: var(--surface);
-    margin: 0 -14px;
-    padding: 12px 14px;
+    margin: 0;
+    padding: 12px;
     border-bottom: 1px solid var(--border);
     box-shadow: 0 2px 4px rgba(28, 25, 23, 0.06);
     max-height: 60vh;
@@ -3151,15 +3202,29 @@ main { height: calc(100vh - 56px); }
   /* ── Detail Sections ────────────────────────────────────── */
 
   .detail-section {
-    padding: 14px;
+    padding: 14px 12px;
     margin-bottom: 12px;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  /* Square corners on all content containers */
+  .msg,
+  .steer-input,
+  .action-chat-input,
+  .action-chat-send,
+  .action-msg,
+  .draft-attach-item,
+  .quoted-content {
+    border-radius: 0;
   }
 
   /* ── Conversation ──────────────────────────────────────── */
 
   .msg { max-width: 100%; }
-
-  .detail-section { margin-left: -4px; margin-right: -4px; }
 
   /* ── Button Row ────────────────────────────────────────── */
 
@@ -3167,9 +3232,15 @@ main { height: calc(100vh - 56px); }
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
+  .btn-row-primary {
+    flex-wrap: nowrap;
+  }
   .btn-row-primary .btn {
     min-height: 44px;
     font-size: 13px;
+    flex: 1;
+    padding: 9px 8px;
+    white-space: nowrap;
   }
 
   .btn-row-secondary {
@@ -3182,7 +3253,8 @@ main { height: calc(100vh - 56px); }
 
   .btn { padding: 9px 14px; }
 
-  /* ── Input Fields (16px prevents iOS zoom) ──────────────── */
+  /* ── Input Fields ────────────────────────────────────────── */
+  /* iOS zoom prevented via viewport meta (maximum-scale=1) */
 
   #draft-editor {
     font-size: 13px;
@@ -3191,16 +3263,12 @@ main { height: calc(100vh - 56px); }
   }
 
   #draft-notes {
-    font-size: 16px;
+    font-size: 13px;
     padding: 8px 12px;
   }
 
-  .action-chat-input {
-    font-size: 14px !important;
-  }
-
   #action-panel {
-    padding: 10px 12px;
+    padding: 12px;
     margin-bottom: 10px;
   }
 
@@ -3214,12 +3282,12 @@ main { height: calc(100vh - 56px); }
   }
 
   textarea, input[type="text"], input[type="email"] {
-    font-size: 16px;
+    font-size: 13px;
   }
 
   /* ── Action Panel ──────────────────────────────────────── */
 
-  .action-chat-messages { max-height: 250px; }
+  .action-chat-messages { max-height: none; overflow-y: visible; }
 
   /* ── Queue Items — larger touch targets ─────────────────── */
 
