@@ -139,6 +139,24 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       return { action: 'skipped', reason: 'duplicate' };
     }
 
+    // Skip replies to Stage 2 personal follow-up emails (sent from jamie@ via SendGrid).
+    // These customers didn't respond to care@ (likely spam-filtered), so routing back to
+    // Gorgias (which replies from care@) would repeat the spam loop. Leave in Jamie's inbox.
+    const { data: recentStage2 } = await supabase
+      .from('cs_tickets')
+      .select('id')
+      .eq('customer_email', msg.from_address)
+      .eq('follow_up_stage', 2)
+      .eq('status', 'closed')
+      .gte('closed_at', new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+      .limit(1);
+
+    if (recentStage2 && recentStage2.length > 0) {
+      console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: reply to Stage 2 follow-up for ${msg.from_address} — staying in Gmail`);
+      await markProcessed();
+      return { action: 'skipped', reason: 'stage2_follow_up_reply' };
+    }
+
     // Skip legacy threads — if we already replied in Gmail outside of Gorgias, Jamie handled it
     const { data: priorReplies } = await supabase
       .from('email_messages')

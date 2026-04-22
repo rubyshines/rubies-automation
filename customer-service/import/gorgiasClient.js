@@ -163,7 +163,7 @@ async function createTicket({ customerEmail, customerName, subject, bodyText, ta
 /**
  * Create a reply message on a ticket (sent to customer via email).
  */
-async function createTicketReply(ticketId, { body_html, body_text, attachments }) {
+async function createTicketReply(ticketId, { body_html, body_text, attachments, senderId }) {
   const html = body_html || `<p>${(body_text || '').replace(/\n/g, '<br>')}</p>`;
   // Look up sender info from the ticket
   const ticket = await getTicket(ticketId);
@@ -174,7 +174,7 @@ async function createTicketReply(ticketId, { body_html, body_text, attachments }
     channel: ticketChannel,
     via: 'api',
     from_agent: true,
-    sender: { id: ticket.assignee_user?.id || undefined },
+    sender: { id: senderId || ticket.assignee_user?.id || undefined },
     body_html: html,
     body_text: body_text || '',
   };

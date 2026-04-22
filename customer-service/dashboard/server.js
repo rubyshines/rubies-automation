@@ -294,11 +294,14 @@ async function apiSendDraft(id, body) {
     await gorgias.assignTicket(draft.gorgias_ticket_id, null);
     await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
   } else {
-    await gorgias.snoozeTicket(draft.gorgias_ticket_id, 3);
+    const snoozeDays = body.testSnooze ? 0.004 : 3; // ~5 min for testing, 3 days for production
+    await gorgias.snoozeTicket(draft.gorgias_ticket_id, snoozeDays);
   }
 
   // Update DB status LAST — only after Gorgias succeeded
-  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', { has_agent_reply: true });
+  const extraFields = { has_agent_reply: true };
+  if (body.testSnooze) extraFields.test_snooze = true;
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', extraFields);
 
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
 }
@@ -784,6 +787,47 @@ async function apiGetStatsRange(query) {
   const endDate = query.get('end');
   if (!startDate || !endDate) throw new Error('start and end query params required');
 
+  // Bulk-fetch all feedback and steered drafts for the full date range in 2 queries
+  // instead of 31 sequential per-day queries (was ~9s, now ~0.3s)
+  const rangeStart = `${startDate}T00:00:00Z`;
+  const rangeEnd = `${endDate}T23:59:59.999Z`;
+
+  const [{ data: allFeedback }, { data: allSteered }, { data: allDrafts }] = await Promise.all([
+    supabase.from('cs_ai_feedback_log')
+      .select('id, action, message_type, confidence, draft_id, haiku_score, haiku_score_post_steer, created_at')
+      .gte('created_at', rangeStart).lte('created_at', rangeEnd)
+      .order('created_at', { ascending: true }),
+    supabase.from('cs_ai_drafts')
+      .select('ticket_id, created_at')
+      .not('operator_steer', 'is', null)
+      .gte('created_at', rangeStart).lte('created_at', rangeEnd),
+    supabase.from('cs_ai_drafts')
+      .select('id, focus_time_seconds')
+      .gt('focus_time_seconds', 0)
+      .gte('created_at', rangeStart).lte('created_at', rangeEnd),
+  ]);
+
+  const feedbackRows = allFeedback || [];
+  const steeredRows = allSteered || [];
+  const draftFocusMap = {};
+  for (const d of (allDrafts || [])) draftFocusMap[d.id] = d.focus_time_seconds;
+
+  // Group feedback by date (UTC date from created_at)
+  const feedbackByDate = {};
+  for (const r of feedbackRows) {
+    const d = r.created_at.slice(0, 10);
+    if (!feedbackByDate[d]) feedbackByDate[d] = [];
+    feedbackByDate[d].push(r);
+  }
+
+  // Group steered drafts by date → unique ticket IDs per day
+  const redirectsByDate = {};
+  for (const s of steeredRows) {
+    const d = s.created_at.slice(0, 10);
+    if (!redirectsByDate[d]) redirectsByDate[d] = new Set();
+    redirectsByDate[d].add(s.ticket_id);
+  }
+
   // Generate date range
   const dates = [];
   const cur = new Date(startDate);
@@ -797,15 +841,58 @@ async function apiGetStatsRange(query) {
   let totalHandled = 0, totalNoEdit = 0, totalEdited = 0, totalRedirect = 0, totalReleased = 0;
   const focusTimes = [];
 
-  for (const d of dates) {
-    const day = await _queryDayStats(supabase, d);
+  for (const date of dates) {
+    const rows = feedbackByDate[date] || [];
+    const { noEdit, edited, released, closedNoReply, spam, deleted } = _classifyFeedback(rows);
+    const handled = noEdit + edited + released;
+    const filtered = spam + deleted;
+
+    const dayDraftIds = rows.filter(r => r.draft_id).map(r => r.draft_id);
+    const redirectCount = redirectsByDate[date] ? redirectsByDate[date].size : 0;
+
+    // Focus times for this day
+    const dayFocusTimes = dayDraftIds.map(id => draftFocusMap[id]).filter(Boolean);
+    const avgFocusTime = dayFocusTimes.length > 0
+      ? Math.round(dayFocusTimes.reduce((a, b) => a + b, 0) / dayFocusTimes.length) : null;
+
+    // Quality scores
+    const scores = [];
+    const steerScores = [];
+    for (const r of rows) {
+      if (r.action?.startsWith('sent_')) scores.push(10);
+      else if (r.haiku_score != null) scores.push(r.haiku_score);
+      if (r.haiku_score_post_steer != null) steerScores.push(r.haiku_score_post_steer);
+    }
+    const avgQualityScore = scores.length > 0
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length * 10) / 10 : null;
+    const avgSteerAccuracy = steerScores.length > 0
+      ? Math.round(steerScores.reduce((a, b) => a + b, 0) / steerScores.length * 10) / 10 : null;
+
+    const day = {
+      date,
+      tickets_handled: handled,
+      no_edit_count: noEdit,
+      edited_count: edited,
+      redirect_count: redirectCount,
+      released_count: released,
+      closed_no_reply_count: closedNoReply,
+      filtered_count: filtered,
+      no_edit_rate: _pct(noEdit, handled),
+      edit_rate: _pct(edited, handled),
+      redirect_rate: _pct(redirectCount, handled),
+      released_rate: _pct(released, handled),
+      avg_focus_time_seconds: avgFocusTime,
+      avg_quality_score: avgQualityScore,
+      avg_steer_accuracy: avgSteerAccuracy,
+    };
+
     dailyBreakdown.push(day);
-    totalHandled += day.tickets_handled;
-    totalNoEdit += day.no_edit_count;
-    totalEdited += day.edited_count;
-    totalRedirect += day.redirect_count;
-    totalReleased += day.released_count;
-    if (day.avg_focus_time_seconds != null) focusTimes.push(day.avg_focus_time_seconds);
+    totalHandled += handled;
+    totalNoEdit += noEdit;
+    totalEdited += edited;
+    totalRedirect += redirectCount;
+    totalReleased += released;
+    if (avgFocusTime != null) focusTimes.push(avgFocusTime);
   }
 
   return {

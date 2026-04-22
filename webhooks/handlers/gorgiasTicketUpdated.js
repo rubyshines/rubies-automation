@@ -1,11 +1,14 @@
 /**
  * Gorgias ticket-updated webhook handler
  *
- * Syncs ticket status changes from Gorgias → cs_tickets.
+ * Syncs ticket status changes from Gorgias -> cs_tickets.
  * Catches tickets closed/reopened outside the dashboard.
+ * Triggers auto follow-ups when snoozed tickets expire.
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const gorgias = require('../../customer-service/import/gorgiasClient');
+const { executeStage1, executeStage2 } = require('../../customer-service/lib/followUp');
 
 async function handle(payload) {
   const supabase = getSupabaseClient();
@@ -19,10 +22,10 @@ async function handle(payload) {
   const ticketId = ticket.id;
   const gorgiasStatus = ticket.status; // open | closed
 
-  // Look up our ticket
+  // Look up our ticket (include fields needed for follow-up)
   const { data: ourTicket } = await supabase
     .from('cs_tickets')
-    .select('id, status')
+    .select('id, status, follow_up_stage, gorgias_ticket_id, customer_email, customer_name, test_snooze')
     .eq('gorgias_ticket_id', ticketId)
     .maybeSingle();
 
@@ -41,8 +44,64 @@ async function handle(payload) {
       active_draft_id: null,
     }).eq('id', ourTicket.id);
     console.log(`[gorgias-ticket-updated] ${ticketId} — ${ourTicket.status} → closed`);
+
+  } else if (gorgiasStatus === 'open' && ourTicket.status === 'snoozed') {
+    // Snoozed ticket woke up — either snooze expired or customer replied.
+    // Check Gorgias messages to distinguish.
+    const messages = await gorgias.getTicketMessages(ticketId);
+    const latest = messages[messages.length - 1];
+
+    if (latest && !latest.from_agent) {
+      // Customer replied during snooze — reset follow-up stage, let intake handle
+      await supabase.from('cs_tickets').update({
+        status: 'open',
+        follow_up_stage: 0,
+        updated_at: now,
+      }).eq('id', ourTicket.id);
+      console.log(`[gorgias-ticket-updated] ${ticketId} — snoozed → open (customer replied, follow-up reset)`);
+      return;
+    }
+
+    // Pure snooze expiry — trigger follow-up based on stage
+    const stage = ourTicket.follow_up_stage || 0;
+
+    if (stage === 0) {
+      try {
+        const snoozeDays = ourTicket.test_snooze ? 0.004 : undefined; // ~5 min for test tickets
+        await executeStage1(gorgias, ourTicket, { snoozeDays });
+        console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 1 follow-up sent, re-snoozed`);
+      } catch (err) {
+        console.error(`[gorgias-ticket-updated] ${ticketId} — Stage 1 error: ${err.message}`);
+        // Leave ticket as snoozed so next expiry retries
+        await supabase.from('cs_tickets').update({
+          status: 'open',
+          updated_at: now,
+        }).eq('id', ourTicket.id);
+      }
+
+    } else if (stage === 1) {
+      try {
+        await executeStage2(gorgias, ourTicket);
+        console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 2 follow-up sent, ticket closed`);
+      } catch (err) {
+        console.error(`[gorgias-ticket-updated] ${ticketId} — Stage 2 error: ${err.message}`);
+        await supabase.from('cs_tickets').update({
+          status: 'open',
+          updated_at: now,
+        }).eq('id', ourTicket.id);
+      }
+
+    } else {
+      // Stage 2+ already done — just update status
+      await supabase.from('cs_tickets').update({
+        status: 'open',
+        updated_at: now,
+      }).eq('id', ourTicket.id);
+      console.log(`[gorgias-ticket-updated] ${ticketId} — follow_up_stage=${stage}, no further action`);
+    }
+
   } else if (gorgiasStatus === 'open' && ourTicket.status === 'closed') {
-    // Ticket reopened in Gorgias (e.g. snooze expired, customer replied)
+    // Ticket reopened in Gorgias (e.g. customer replied after close)
     await supabase.from('cs_tickets').update({
       status: 'open',
       updated_at: now,

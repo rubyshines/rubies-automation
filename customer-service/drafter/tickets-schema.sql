@@ -61,6 +61,15 @@ CREATE INDEX IF NOT EXISTS idx_tickets_prior_lookup
 -- Allowed values: 'positive' | 'neutral' | 'negative' | null
 ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS customer_sentiment text;
 
+-- follow_up_stage: tracks auto follow-up progress (event-driven off Gorgias snooze expiry).
+-- 0 = no follow-up sent, 1 = care@ follow-up sent, 2 = jamie@ personal email sent + closed.
+-- Reset to 0 when customer replies during snooze.
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS follow_up_stage integer DEFAULT 0;
+
+-- test_snooze: temporary flag for follow-up testing. When true, snooze durations use ~5 min
+-- instead of 3 days. Set per-ticket by the "Send & Snooze (Test)" button. Remove column after testing.
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS test_snooze boolean DEFAULT false;
+
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts
 -- ============================================================

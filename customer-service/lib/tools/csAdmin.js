@@ -248,78 +248,57 @@ const tools = [
   // -----------------------------------------------------------------------
   {
     name: 'check_follow_ups',
-    description: 'Check for stale CS conversations that need follow-up (sent >3 days ago with no customer reply). Returns a list of conversations needing follow-up drafts.',
+    description: 'Audit snoozed tickets and their follow-up stage. Reports which tickets are queued for auto follow-up (event-driven off Gorgias snooze expiry). Read-only — does not send or create anything.',
     inputSchema: {
       type: 'object',
       properties: {
-        days_threshold: {
-          type: 'number',
-          description: 'Days since last send before triggering follow-up (default: 3)',
-        },
-        dry_run: {
+        include_closed: {
           type: 'boolean',
-          description: 'If true, just list stale conversations without creating follow-up drafts',
+          description: 'Include recently closed tickets that completed the follow-up cycle (default: false)',
         },
       },
     },
-    handler: async ({ days_threshold = 3, dry_run = false }) => {
+    handler: async ({ include_closed = false }) => {
       const supabase = getSupabaseClient();
-      const cutoff = new Date(Date.now() - days_threshold * 24 * 60 * 60 * 1000).toISOString();
 
-      const { data: staleDrafts, error } = await supabase
-        .from('cs_ai_drafts')
-        .select('id, gorgias_ticket_id, customer_email, customer_name, order_number, sent_at')
-        .eq('status', 'sent')
-        .lt('sent_at', cutoff)
-        .is('follow_up_draft_id', null);
+      // Query snoozed tickets (and optionally recently closed follow-up-completed tickets)
+      let query = supabase
+        .from('cs_tickets')
+        .select('id, gorgias_ticket_id, customer_email, customer_name, status, follow_up_stage, snoozed_at, closed_at, updated_at')
+        .order('snoozed_at', { ascending: false });
 
-      if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }] };
-
-      const results = [];
-      for (const stale of (staleDrafts || [])) {
-        results.push({
-          draft_id: stale.id,
-          ticket_id: stale.gorgias_ticket_id,
-          customer: stale.customer_email,
-          name: stale.customer_name,
-          sent_at: stale.sent_at,
-          days_ago: Math.round((Date.now() - new Date(stale.sent_at).getTime()) / (24 * 60 * 60 * 1000)),
-        });
-
-        if (!dry_run) {
-          const greeting = stale.customer_name ? `Hi ${stale.customer_name}` : 'Hi there';
-          const followUpText = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.\n\nTalk soon,\nJamie Alexander, RUBIES Founder`;
-
-          const { data: newDraft } = await supabase
-            .from('cs_ai_drafts')
-            .insert({
-              gorgias_ticket_id: stale.gorgias_ticket_id,
-              gorgias_message_id: 0,
-              customer_email: stale.customer_email,
-              customer_name: stale.customer_name,
-              order_number: stale.order_number,
-              draft_response: followUpText,
-              structured_output: { status: 'follow_up', reason: `${days_threshold}-day no-reply` },
-              audit_trail: [`[Follow-up] No customer reply ${days_threshold}+ days after agent response`],
-              confidence: 'high',
-              advisor_status: 'follow_up',
-              draft_kind: 'follow_up_care',
-              status: 'pending',
-              previous_draft_id: stale.id,
-            })
-            .select('id')
-            .single();
-
-          if (newDraft) {
-            await supabase.from('cs_ai_drafts').update({ follow_up_draft_id: newDraft.id }).eq('id', stale.id);
-            results[results.length - 1].follow_up_created = newDraft.id;
-          }
-        }
+      if (include_closed) {
+        query = query.in('status', ['snoozed', 'closed']).gte('follow_up_stage', 0);
+      } else {
+        query = query.eq('status', 'snoozed');
       }
 
-      const summary = dry_run
-        ? `Found ${results.length} conversations needing follow-up (dry run)`
-        : `Created ${results.filter(r => r.follow_up_created).length} follow-up drafts out of ${results.length} stale conversations`;
+      const { data: tickets, error } = await query.limit(100);
+      if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }] };
+
+      const results = (tickets || []).map(t => {
+        const snoozedDaysAgo = t.snoozed_at
+          ? Math.round((Date.now() - new Date(t.snoozed_at).getTime()) / (24 * 60 * 60 * 1000))
+          : null;
+        const stageLabel = t.follow_up_stage === 0 ? 'awaiting stage 1'
+          : t.follow_up_stage === 1 ? 'stage 1 sent, awaiting stage 2'
+          : t.follow_up_stage === 2 ? 'complete (jamie@ sent, closed)'
+          : `stage ${t.follow_up_stage}`;
+        return {
+          ticket_id: t.gorgias_ticket_id,
+          customer: t.customer_email,
+          name: t.customer_name,
+          status: t.status,
+          follow_up_stage: t.follow_up_stage,
+          stage_label: stageLabel,
+          snoozed_days_ago: snoozedDaysAgo,
+        };
+      });
+
+      const snoozed = results.filter(r => r.status === 'snoozed');
+      const summary = `${snoozed.length} snoozed ticket(s) in follow-up pipeline` +
+        (include_closed ? `, ${results.length - snoozed.length} closed` : '') +
+        `\n\nFollow-ups are event-driven: Gorgias snooze expiry triggers the webhook handler.`;
 
       return { content: [{ type: 'text', text: `${summary}\n\n${JSON.stringify(results, null, 2)}` }] };
     },

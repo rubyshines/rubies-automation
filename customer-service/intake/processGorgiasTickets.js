@@ -346,8 +346,18 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   // Build conversation history snapshot (for dashboard display)
   const conversationHistory = messages.map(m => {
     const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
-    let bodyHtml = m.stripped_html || m.body_html || null;
-    let bodyText = gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || '');
+    // For customer messages, avoid Gorgias stripped_html — it aggressively removes
+    // sign-offs/signatures which can strip the customer's name, address, and even
+    // part of their message. Use body_html for display (dashboard collapses quoted
+    // content client-side) and stripped_text for plain text (preserves sign-offs,
+    // removes quoted email thread). For agent messages, stripped_html is fine.
+    const isCustomer = m.from_agent === false;
+    let bodyHtml = isCustomer
+      ? (m.body_html || m.stripped_html || null)
+      : (m.stripped_html || m.body_html || null);
+    let bodyText = isCustomer
+      ? gorgias.stripHtml(m.stripped_text || m.body_html || m.body_text || '')
+      : gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || '');
     // Help-center flows arrive as one blob with bot prompts + `>` customer
     // picks — strip the bot copy so the intake card shows only what the
     // customer actually typed.
@@ -412,6 +422,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     gorgias_ticket_id: ticketId,
     created_at: ticket.created_datetime || new Date().toISOString(),
     status: 'open',
+    follow_up_stage: 0, // Reset on every new customer message (restarts follow-up cycle)
     message_count: messageCount,
     customer_email: resolvedEmail,
     conversation_history: conversationHistory,
