@@ -4,10 +4,11 @@
  * Two-phase flow: Phase 1 creates draft + shows preview, Phase 2 (confirmed=true) marks it as paid.
  */
 
-const { createDraftOrder, completeDraftOrder, normalizeGid, searchCustomers, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
+const { createDraftOrder, completeDraftOrder, normalizeGid, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
 const { getCustomerOrdersFromSupabase, getCustomerFulfilledOrdersFromSupabase } = require('../supabaseQueries');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock, formatAddressLine } = require('../addressUtils');
+const { resolveCustomerForDraft, buildShippingAddress } = require('../orderUtils');
 
 const tools = [
   {
@@ -128,33 +129,7 @@ const tools = [
       }
 
       // Look up customer details for address
-      let customerName = customer_id;
-      let addressBlock = 'No address on file';
-      let shippingAddress = null;
-      try {
-        const numericId = customerGid.split('/').pop();
-        const customers = await searchCustomers(`id:${numericId}`);
-        if (customers.length > 0) {
-          const c = customers[0];
-          customerName = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email;
-          if (c.defaultAddress) {
-            const a = c.defaultAddress;
-            addressBlock = formatAddressBlock(a);
-            shippingAddress = {
-              firstName: c.firstName || '',
-              lastName: c.lastName || '',
-              address1: a.address1,
-              address2: a.address2 || '',
-              city: a.city,
-              province: a.province,
-              country: a.countryCodeV2 || a.country,
-              zip: a.zip,
-            };
-          }
-        }
-      } catch (_) {
-        // Non-critical
-      }
+      let { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
 
       // Find original order: use provided ID (validated as fulfilled) or auto-find most recent fulfilled non-cancelled.
       // CRITICAL: We ONLY consider FULFILLED, non-cancelled, non-refunded orders.
@@ -209,16 +184,7 @@ const tools = [
           if (match.shippingAddress) {
             const a = match.shippingAddress;
             addressBlock = formatAddressBlock(a);
-            shippingAddress = {
-              firstName: shippingAddress?.firstName || '',
-              lastName: shippingAddress?.lastName || '',
-              address1: a.address1,
-              address2: a.address2 || '',
-              city: a.city,
-              province: a.province,
-              country: a.countryCodeV2 || a.country,
-              zip: a.zip,
-            };
+            shippingAddress = buildShippingAddress(a, shippingAddress?.firstName, shippingAddress?.lastName);
           }
         } else {
           // Auto-find: try Supabase first, fall back to Shopify
@@ -239,18 +205,8 @@ const tools = [
           originalOrderName = eligible.name;
           // Prefer shipping address from the original order over customer default
           if (eligible.shippingAddress) {
-            const a = eligible.shippingAddress;
-            addressBlock = formatAddressBlock(a);
-            shippingAddress = {
-              firstName: shippingAddress?.firstName || '',
-              lastName: shippingAddress?.lastName || '',
-              address1: a.address1,
-              address2: a.address2 || '',
-              city: a.city,
-              province: a.province,
-              country: a.countryCodeV2 || a.country,
-              zip: a.zip,
-            };
+            addressBlock = formatAddressBlock(eligible.shippingAddress);
+            shippingAddress = buildShippingAddress(eligible.shippingAddress, shippingAddress?.firstName, shippingAddress?.lastName);
           }
         }
       } catch (err) {

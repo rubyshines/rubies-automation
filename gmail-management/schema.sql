@@ -54,7 +54,11 @@ CREATE TABLE IF NOT EXISTS email_messages (
   gorgias_ticket_id BIGINT,             -- Gorgias ticket ID created from this email
   archived_at TIMESTAMPTZ,              -- when email was labeled + archived from inbox
   trashed_at TIMESTAMPTZ,               -- when email was moved to Gmail trash by cleanup
-  processed_at TIMESTAMPTZ              -- when email was processed (labeled/routed/archived/skipped)
+  processed_at TIMESTAMPTZ,             -- when email was processed (labeled/routed/archived/skipped)
+  -- Reclassification tracking (operator corrected a misclassification)
+  reclassified_from TEXT,               -- original wrong classification before operator correction
+  reclassified_at TIMESTAMPTZ,          -- when the operator corrected it
+  returned_to_inbox_at TIMESTAMPTZ      -- when email was returned from CS to Gmail inbox (guards against re-routing)
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_msg_thread ON email_messages (gmail_thread_id);

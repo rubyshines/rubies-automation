@@ -108,6 +108,17 @@ async function labelMessage(gmail, messageId, labelId) {
 }
 
 /**
+ * Remove a label from a message.
+ */
+async function removeLabelFromMessage(gmail, messageId, labelId) {
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: messageId,
+    requestBody: { removeLabelIds: [labelId] },
+  });
+}
+
+/**
  * Add a label to a message and remove from INBOX (archive).
  */
 async function labelAndArchive(gmail, messageId, labelId) {
@@ -163,4 +174,4 @@ async function downloadAttachment(gmail, messageId, attachmentId, filename, mime
   return { data, filename, mimeType };
 }
 
-module.exports = { getGmail, getOrCreateLabel, labelMessage, labelAndArchive, markAsSpam, trashMessage, downloadAttachment };
+module.exports = { getGmail, getOrCreateLabel, labelMessage, removeLabelFromMessage, labelAndArchive, markAsSpam, trashMessage, downloadAttachment };

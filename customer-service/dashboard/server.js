@@ -656,6 +656,108 @@ async function apiMarkSpam(id) {
   return { success: true };
 }
 
+/**
+ * Return a misclassified ticket to the Gmail inbox with the correct classification.
+ * Deletes the Gorgias ticket, closes the CS ticket, swaps Gmail labels, and records
+ * the reclassification on email_messages for training data.
+ */
+async function apiReturnToInbox(ticketId, body) {
+  const newClassification = body?.classification;
+  if (!newClassification) throw new Error('classification is required');
+
+  const { BUSINESS_AREAS, CLASSIFICATION_LABELS: CL_LABELS } = require('../../gmail-management/config');
+  if (!BUSINESS_AREAS[newClassification]) throw new Error(`Unknown classification: ${newClassification}`);
+
+  const supabase = getSupabaseClient();
+
+  // Look up the CS ticket
+  const { data: ticket, error: tErr } = await supabase.from('cs_tickets')
+    .select('id, gorgias_ticket_id, customer_email, active_draft_id, source')
+    .eq('id', ticketId)
+    .single();
+  if (tErr || !ticket) throw new Error('Ticket not found');
+
+  // Find linked email_messages (gmail-import tickets)
+  const { data: emails } = await supabase.from('email_messages')
+    .select('gmail_message_id, classification')
+    .eq('gorgias_ticket_id', ticket.gorgias_ticket_id);
+
+  const now = new Date().toISOString();
+  const oldClassification = emails?.[0]?.classification || 'customer_support';
+
+  // 1. Delete Gorgias ticket FIRST — if this fails, nothing else changes
+  if (ticket.gorgias_ticket_id) {
+    await gorgias.deleteTicket(ticket.gorgias_ticket_id);
+  }
+
+  // 2. Swap Gmail labels (remove old, add new)
+  if (emails?.length) {
+    const { getGmail, getOrCreateLabel, labelMessage, removeLabelFromMessage } = require('../../gmail-management/lib/gmailClient');
+    const gmail = await getGmail();
+
+    const { CLASSIFICATION_LABELS } = require('../intake/processGmailCs');
+    const oldLabelName = CLASSIFICATION_LABELS[oldClassification];
+    const newLabelName = CLASSIFICATION_LABELS[newClassification];
+
+    const oldLabelId = oldLabelName ? await getOrCreateLabel(gmail, oldLabelName) : null;
+    const newLabelId = newLabelName ? await getOrCreateLabel(gmail, newLabelName) : null;
+
+    for (const email of emails) {
+      if (oldLabelId) await removeLabelFromMessage(gmail, email.gmail_message_id, oldLabelId);
+      // Add new label + restore to INBOX (may have been archived during CS routing)
+      const addLabels = [];
+      if (newLabelId) addLabels.push(newLabelId);
+      addLabels.push('INBOX');
+      await gmail.users.messages.modify({
+        userId: 'me',
+        id: email.gmail_message_id,
+        requestBody: { addLabelIds: addLabels },
+      });
+    }
+  }
+
+  // 3. Update email_messages — reclassify + mark returned
+  if (emails?.length) {
+    const gmailIds = emails.map(e => e.gmail_message_id);
+    await supabase.from('email_messages').update({
+      classification: newClassification,
+      reclassified_from: oldClassification,
+      reclassified_at: now,
+      returned_to_inbox_at: now,
+      forwarded_to_gorgias_at: null,
+      gorgias_ticket_id: null,
+    }).in('gmail_message_id', gmailIds);
+  }
+
+  // 4. Mark draft as returned + log feedback
+  if (ticket.active_draft_id) {
+    await supabase.from('cs_ai_drafts').update({
+      status: 'returned',
+      reviewed_at: now,
+    }).eq('id', ticket.active_draft_id);
+
+    const { data: draft } = await supabase.from('cs_ai_drafts')
+      .select('message_type, confidence, advisor_status')
+      .eq('id', ticket.active_draft_id)
+      .single();
+
+    await supabase.from('cs_ai_feedback_log').insert({
+      draft_id: ticket.active_draft_id,
+      gorgias_ticket_id: ticket.gorgias_ticket_id,
+      action: 'returned_to_inbox',
+      message_type: draft?.message_type,
+      confidence: draft?.confidence,
+      advisor_status: draft?.advisor_status,
+      feedback_notes: `Reclassified: ${oldClassification} → ${newClassification}`,
+    });
+  }
+
+  // 5. Close CS ticket in Supabase
+  await updateTicketStatus(supabase, ticket.gorgias_ticket_id, 'closed');
+
+  return { success: true, reclassified: { from: oldClassification, to: newClassification } };
+}
+
 async function apiGetStats() {
   const supabase = getSupabaseClient();
 
@@ -1906,7 +2008,7 @@ async function apiGetTicket(id) {
   // Get all drafts for this ticket (for history/training panel)
   const { data: allDrafts } = await supabase
     .from('cs_ai_drafts')
-    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, status, turn_number, sent_at, created_at')
+    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, action_executed_at, order_number, status, turn_number, sent_at, created_at')
     .eq('ticket_id', id)
     .order('created_at', { ascending: true });
 
@@ -2119,6 +2221,14 @@ const routes = {
   'GET /api/history': (req) => apiGetHistory(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets': (req) => apiGetTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/stats': () => apiGetTicketStats(),
+  'GET /api/classifications': () => {
+    const { BUSINESS_AREAS } = require('../../gmail-management/config');
+    const exclude = new Set(['customer_support', 'spam', 'auto_reply', 'newsletter', 'skip', 'pipeline', 'internal']);
+    const options = Object.entries(BUSINESS_AREAS)
+      .filter(([key]) => !exclude.has(key))
+      .map(([key, val]) => ({ value: key, label: val.label }));
+    return options;
+  },
 };
 
 // Routes with path params
@@ -2280,6 +2390,7 @@ const paramRoutes = [
         return apiMarkSpam(t.active_draft_id);
       });
   }},
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/return$/, handler: (body, id) => apiReturnToInbox(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/delete$/, handler: (_, id) => {
     const supabase = getSupabaseClient();
     return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()

@@ -1568,7 +1568,9 @@ main { height: calc(100vh - 56px); }
   font-family: inherit;
   font-size: 13px;
   line-height: 1.55;
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
+  min-height: 120px;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -1576,6 +1578,22 @@ main { height: calc(100vh - 56px); }
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ─── Draft Thinking Trace ─────────────────────────────── */
+.draft-thinking {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  font-style: italic;
+  border-left: 2px solid var(--border);
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: var(--surface-inset);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  max-height: 80px;
+  overflow-y: auto;
+  white-space: pre-wrap;
 }
 
 /* ─── Draft Drop Zone & Attachments ─────────────────────── */
@@ -1693,29 +1711,6 @@ main { height: calc(100vh - 56px); }
   color: var(--teal);
 }
 
-#draft-notes {
-  width: 100%;
-  background: #fff;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 14px;
-  font-family: inherit;
-  font-size: 13px;
-  resize: none;
-  margin-top: 6px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-#draft-notes:focus {
-  outline: none;
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px var(--teal-soft);
-}
-
-#draft-notes::placeholder {
-  color: var(--text-tertiary);
-}
 
 /* ─── Action Panel ───────────────────────────────────────── */
 
@@ -3259,13 +3254,8 @@ main { height: calc(100vh - 56px); }
   #draft-editor {
     font-size: 13px;
     padding: 10px 12px;
-    resize: none;
   }
 
-  #draft-notes {
-    font-size: 13px;
-    padding: 8px 12px;
-  }
 
   #action-panel {
     padding: 12px;

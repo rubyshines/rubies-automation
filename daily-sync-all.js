@@ -167,9 +167,10 @@ async function main() {
 
   const overallDuration = Date.now() - overallStart;
   const totalRows = results.reduce((sum, r) => sum + r.rows, 0);
+  const hasWarnings = results.some(r => r.status === 'warning');
   const overallStatus = anyFailure
     ? (results.every(r => r.status === 'failure') ? 'failure' : 'partial')
-    : 'success';
+    : hasWarnings ? 'warning' : 'success';
 
   // --- Console summary ---
   console.log('=== RUBIES Daily Sync — Summary ===\n');
@@ -177,7 +178,7 @@ async function main() {
   console.log('────────────────────────────────────────');
 
   for (const r of results) {
-    const icon = r.status === 'success' ? '\u2705' : r.status === 'partial' ? '\u26A0\uFE0F' : '\u274C';
+    const icon = r.status === 'success' ? '\u2705' : r.status === 'warning' ? '\u26A0\uFE0F' : r.status === 'partial' ? '\u26A0\uFE0F' : '\u274C';
     const name = r.name.padEnd(20);
     const rows = String(r.rows).padStart(5);
     const time = formatDuration(r.duration).padStart(6);
@@ -197,8 +198,79 @@ async function main() {
 }
 
 // ---------------------------------------------------------------------------
-// Email notification
+// Email notification (HTML)
 // ---------------------------------------------------------------------------
+
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function statusIcon(status) {
+  if (status === 'success') return '\u2705';
+  if (status === 'warning') return '\u26A0\uFE0F';
+  if (status === 'partial') return '\u26A0\uFE0F';
+  return '\u274C';
+}
+
+function statusColor(status) {
+  if (status === 'success') return '#22c55e';
+  if (status === 'warning') return '#f59e0b';
+  if (status === 'partial') return '#f59e0b';
+  return '#dc2626';
+}
+
+function statusWord(status) {
+  if (status === 'success') return 'OK';
+  if (status === 'warning') return 'Warning';
+  if (status === 'partial') return 'Partial';
+  return 'FAILED';
+}
+
+function buildTicketDriftHtml(results) {
+  const reconciliation = results.find(r => r.name === 'Ticket Reconciliation');
+  if (!reconciliation) return '';
+
+  const src = reconciliation.result?.sources?.ticket_reconciliation;
+  if (!src) return '';
+
+  const driftIssues = src.driftIssues || [];
+  const undelivered = src.undelivered || [];
+  if (!driftIssues.length && !undelivered.length) return '';
+
+  let html = '';
+
+  if (driftIssues.length) {
+    const cards = driftIssues.map(d => `
+      <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
+        <div style="font-weight:bold;font-size:14px;">#${esc(String(d.ticketId))} <span style="font-weight:normal;color:#6b7280;">${esc(d.email)}</span></div>
+        <div style="color:#dc2626;font-size:13px;margin-top:2px;">${esc(d.reason)}</div>
+      </div>`).join('');
+
+    html += `
+      <div style="margin:20px 0 0;">
+        <div style="background:#fef2f2;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #fecaca;border-bottom:2px solid #fecaca;">
+          <strong style="color:#dc2626;">Ticket Drift (${driftIssues.length})</strong>
+        </div>
+        <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
+      </div>`;
+  }
+
+  if (undelivered.length) {
+    const cards = undelivered.map(u => `
+      <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
+        <div style="font-weight:bold;font-size:14px;">#${esc(String(u.ticketId))} <span style="font-weight:normal;color:#6b7280;">${esc(u.email)}</span></div>
+        <div style="color:#dc2626;font-size:13px;margin-top:2px;">${u.failedCount} message${u.failedCount > 1 ? 's' : ''} failed to deliver</div>
+      </div>`).join('');
+
+    html += `
+      <div style="margin:20px 0 0;">
+        <div style="background:#fef2f2;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #fecaca;border-bottom:2px solid #fecaca;">
+          <strong style="color:#dc2626;">Undelivered Messages (${undelivered.length})</strong>
+        </div>
+        <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
+      </div>`;
+  }
+
+  return html;
+}
 
 async function sendSummaryEmail(overallStatus, results, totalRows, overallDuration) {
   const sgMail = getSendgridClient();
@@ -208,50 +280,81 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   }
 
   const date = todayDate();
-  const statusIcon = overallStatus === 'success' ? '\u2705' : overallStatus === 'partial' ? '\u26A0\uFE0F' : '\u274C';
-  const statusWord = overallStatus === 'success' ? 'OK' : overallStatus === 'partial' ? 'Partial' : 'FAILED';
+  const subject = `${statusIcon(overallStatus)} RUBIES Daily Sync \u2014 ${date} ${statusWord(overallStatus)}`;
 
-  const subject = `${statusIcon} RUBIES Daily Sync \u2014 ${date} ${statusWord}`;
+  // --- Pipeline rows (stacked layout — mobile-friendly) ---
+  const pipelineRows = results.map(r => {
+    const bg = r.status === 'success' ? '#fff' : r.status === 'warning' ? '#fffbeb' : r.status === 'partial' ? '#fffbeb' : '#fef2f2';
+    const detail = Object.values(r.result?.sources || {}).map(s => typeof s.detail === 'string' ? s.detail : '').filter(Boolean).join('; ');
+    const detailHtml = detail ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(detail)}</div>` : '';
+    return `
+      <tr style="border-bottom:1px solid #e5e7eb;background:${bg};">
+        <td style="padding:8px 12px;">
+          <div>${statusIcon(r.status)} <strong>${esc(r.name)}</strong></div>
+          ${detailHtml}
+        </td>
+        <td style="padding:8px 12px;text-align:right;white-space:nowrap;vertical-align:top;color:#6b7280;font-size:13px;">
+          ${r.rows} rows &middot; ${formatDuration(r.duration)}
+        </td>
+      </tr>`;
+  }).join('');
 
-  const lines = [
-    'Pipeline            Status  Rows   Time',
-    '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
-  ];
-
-  for (const r of results) {
-    const icon = r.status === 'success' ? '\u2705' : r.status === 'partial' ? '\u26A0\uFE0F' : '\u274C';
-    const name = r.name.padEnd(20);
-    const rows = String(r.rows).padStart(5);
-    const time = formatDuration(r.duration).padStart(6);
-    lines.push(`${name}${icon}  ${rows}  ${time}`);
-  }
-
-  lines.push('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500');
-  lines.push(`${'Total'.padEnd(20)}      ${String(totalRows).padStart(5)}  ${formatDuration(overallDuration).padStart(6)}`);
-
-  // Add error details if any failures
+  // --- Errors section ---
   const failures = results.filter(r => r.status === 'failure' || r.status === 'partial');
+  let errorsHtml = '';
   if (failures.length) {
-    lines.push('');
-    lines.push('Errors:');
+    const errorCards = [];
     for (const f of failures) {
-      const sources = f.result?.sources || {};
-      for (const [key, src] of Object.entries(sources)) {
-        if (src.error) {
-          lines.push(`  ${f.name} / ${key}: ${src.error}`);
-        }
+      for (const [key, src] of Object.entries(f.result?.sources || {})) {
+        if (src.error) errorCards.push(`
+          <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
+            <div style="font-weight:bold;">${esc(f.name)} / ${esc(key)}</div>
+            <div style="color:#dc2626;font-size:13px;margin-top:2px;">${esc(src.error)}</div>
+          </div>`);
       }
+    }
+    if (errorCards.length) {
+      errorsHtml = `
+        <div style="margin:20px 0 0;">
+          <div style="background:#fef2f2;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #fecaca;border-bottom:2px solid #fecaca;">
+            <strong style="color:#dc2626;">Errors (${errorCards.length})</strong>
+          </div>
+          <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${errorCards.join('')}</div>
+        </div>`;
     }
   }
 
-  const text = lines.join('\n');
+  // --- Drift / undelivered section ---
+  const driftHtml = buildTicketDriftHtml(results);
+
+  const html = `
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
+      <h2 style="margin-bottom:4px;font-size:18px;">Daily Sync \u2014 ${date}</h2>
+      <p style="color:#6b7280;margin-top:0;font-size:13px;">${results.length} pipelines &middot; ${totalRows} rows &middot; ${formatDuration(overallDuration)}</p>
+
+      ${driftHtml}
+      ${errorsHtml}
+
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
+        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
+          <td style="padding:8px 12px;font-weight:bold;">Pipeline</td>
+          <td style="padding:8px 12px;text-align:right;font-weight:bold;">Result</td>
+        </tr>
+        ${pipelineRows}
+        <tr style="background:#f9fafb;border-top:2px solid #e5e7eb;">
+          <td style="padding:8px 12px;font-weight:bold;">Total</td>
+          <td style="padding:8px 12px;text-align:right;font-weight:bold;font-size:13px;">${totalRows} rows &middot; ${formatDuration(overallDuration)}</td>
+        </tr>
+      </table>
+    </div>`;
 
   try {
     await sgMail.send({
       to: 'jamie@rubyshines.com',
       from: 'pipeline@rubyshines.com',
       subject,
-      text,
+      html,
+      trackingSettings: { clickTracking: { enable: false, enableText: false } },
     });
     console.log('Summary email sent.');
   } catch (err) {

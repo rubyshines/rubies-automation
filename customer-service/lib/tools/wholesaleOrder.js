@@ -12,10 +12,11 @@
  * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold)
  */
 
-const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, searchCustomers, normalizeGid, getAdminUrl } = require('../shopify');
+const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
 const { searchProducts } = require('../productCache');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
+const { resolveCustomerForDraft } = require('../orderUtils');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 
 const CURRENCY_OVERRIDES = {
@@ -273,6 +274,7 @@ const tools = [
           },
         },
         note: { type: 'string', description: 'Optional note for the draft order' },
+        discount_percent: { type: 'number', description: 'Override the default country-based discount percentage (e.g. 50 for 50% off). If omitted, uses 50% for US/AU, 30% for others.' },
         confirmed: {
           type: 'boolean',
           description: 'Set to true to complete previously created draft order(s) and send invoices (phase 2). Requires draft_order_ids.',
@@ -285,7 +287,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -325,7 +327,7 @@ const tools = [
       }
 
       const cc = (country_code || '').toUpperCase();
-      const discountPercent = (cc === 'US' || cc === 'AU') ? 50 : 30;
+      const discountPercent = discount_percent != null ? discount_percent : (cc === 'US' || cc === 'AU') ? 50 : 30;
 
       // Resolve items
       const resolvedItems = await resolveLineItems(items);
@@ -338,33 +340,7 @@ const tools = [
       const currencyOverride = CURRENCY_OVERRIDES[email];
 
       // Look up customer details for address
-      let customerName = customer_id;
-      let addressBlock = 'No address on file';
-      let shippingAddress = null;
-      try {
-        const numericId = customerGid.split('/').pop();
-        const customers = await searchCustomers(`id:${numericId}`);
-        if (customers.length > 0) {
-          const c = customers[0];
-          customerName = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.email;
-          if (c.defaultAddress) {
-            const a = c.defaultAddress;
-            addressBlock = formatAddressBlock(a);
-            shippingAddress = {
-              firstName: c.firstName || '',
-              lastName: c.lastName || '',
-              address1: a.address1,
-              address2: a.address2 || '',
-              city: a.city,
-              province: a.province,
-              country: a.countryCodeV2 || a.country,
-              zip: a.zip,
-            };
-          }
-        }
-      } catch (_) {
-        // Non-critical — continue with basic customer ID
-      }
+      const { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
 
       const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server`;
 

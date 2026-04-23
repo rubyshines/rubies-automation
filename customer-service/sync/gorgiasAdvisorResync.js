@@ -320,10 +320,11 @@ async function runPipeline() {
     const detection = await run();
     const driftCount = detection.driftIssues.length;
     const undeliveredCount = detection.undelivered.length;
+    const hasIssues = driftCount > 0 || undeliveredCount > 0;
     const detailParts = [`${detection.openTickets} open`];
     if (driftCount) detailParts.push(`${driftCount} drift`);
     if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
-    if (!driftCount && !undeliveredCount) detailParts.push('all in sync');
+    if (!hasIssues) detailParts.push('all in sync');
 
     return {
       sources: {
@@ -331,9 +332,11 @@ async function runPipeline() {
           success: true,
           rowsWritten: driftCount + undeliveredCount,
           detail: detailParts.join(', '),
+          driftIssues: detection.driftIssues,
+          undelivered: detection.undelivered,
         },
       },
-      status: 'ok',
+      status: hasIssues ? 'warning' : 'ok',
     };
   } catch (e) {
     console.error('Ticket reconciliation error:', e.message);

@@ -123,6 +123,7 @@
                 onkeydown="if(event.key==='Enter'){event.preventDefault();refreshDraft(this.value)}else if(event.key==='Escape'){this.blur()}" />
               <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft(document.getElementById('steer-input').value)" title="Regenerate draft">&#8635;</button>
             </div>
+            <div id="draft-thinking" class="draft-thinking" style="display:none"></div>
             <div id="draft-editor-wrap" class="draft-editor-wrap">
               <textarea id="draft-editor" rows="8"></textarea>
               <div id="draft-drop-overlay" class="draft-drop-overlay">
@@ -133,8 +134,6 @@
               </div>
             </div>
             <div id="draft-attachments" class="draft-attachments"></div>
-            <label for="draft-notes" class="label" style="margin-top:12px;display:block">Training Notes (optional)</label>
-            <textarea id="draft-notes" placeholder="e.g. 'wrong size recommendation', 'tone too formal', 'nailed it'" rows="2"></textarea>
             <div id="draft-actions" class="draft-actions">
               <div class="btn-row btn-row-primary">
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send &amp; Snooze</button>

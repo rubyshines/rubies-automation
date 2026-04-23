@@ -151,21 +151,20 @@ function unfulfilledRow(r) {
   if (r.note) {
     const noteDate = r.note.created_at?.split('T')[0] || '?';
     const tag = r.note.resolved ? ' <span style="color:#22c55e;">[RESOLVED]</span>' : '';
-    noteHtml = `<br><span style="color:#6b7280;font-size:12px;white-space:normal;">Note [${esc(noteDate)}]: ${esc(r.note.note)} -- ${esc(r.note.author)}${tag}</span>`;
+    noteHtml = `<div style="margin-top:4px;padding:3px 8px;background:#f9fafb;border-left:3px solid #d1d5db;font-size:12px;color:#6b7280;">Note [${esc(noteDate)}]: ${esc(r.note.note)} -- ${esc(r.note.author)}${tag}</div>`;
   }
 
-  return `<tr style="border-bottom:1px solid #e5e7eb;">
-    <td style="padding:6px 10px;font-weight:bold;vertical-align:top;">#${r.order.order_number}<br><span style="font-weight:normal;font-size:11px;color:#6b7280;">${links}</span></td>
-    <td style="padding:6px 10px;vertical-align:top;font-size:13px;">${esc(date)}</td>
-    <td style="padding:6px 10px;vertical-align:top;">${r.businessDays}bd</td>
-    <td style="padding:6px 10px;vertical-align:top;"><span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${esc(reasonLabel)}</span><br><span style="color:#9ca3af;font-size:10px;">unfulfilled</span></td>
-    <td style="padding:6px 10px;font-size:13px;vertical-align:top;">${esc(email)}</td>
-    <td style="padding:6px 10px;font-size:13px;vertical-align:top;">
-      ${itemLines.join('<br>')}
-      ${r.classification.detail ? `<br><span style="color:#6b7280;font-size:12px;white-space:normal;">${esc(r.classification.detail)}</span>` : ''}
-      ${noteHtml}
-    </td>
-  </tr>`;
+  return `<div style="padding:10px 12px;border-bottom:1px solid #e5e7eb;">
+    <div>
+      <strong>#${r.order.order_number}</strong>
+      <span style="color:#6b7280;font-size:12px;margin-left:6px;">${esc(date)} &middot; ${r.businessDays}bd</span>
+      <span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${esc(reasonLabel)}</span>
+    </div>
+    <div style="font-size:13px;margin-top:3px;">${esc(email)} <span style="color:#6b7280;font-size:11px;">${links}</span></div>
+    <div style="font-size:13px;color:#374151;margin-top:4px;">${itemLines.join('<br>')}</div>
+    ${r.classification.detail ? `<div style="color:#6b7280;font-size:12px;margin-top:2px;">${esc(r.classification.detail)}</div>` : ''}
+    ${noteHtml}
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +187,7 @@ function shippingRow(a, overrideColor, overrideLabel) {
 
   const carrierText = [a.carrier, a.local_carrier].filter(Boolean).join(' \u2192 ');
   const issuesHtml = a.issues.map(i => `<span style="color:${color};">\u25B8 ${esc(i)}</span>`).join('<br>');
-  const lastEventHtml = a.last_event ? `<br><span style="color:#6b7280;font-size:11px;">Last: ${esc(a.last_event)}</span>` : '';
+  const lastEventHtml = a.last_event ? `<div style="color:#6b7280;font-size:11px;margin-top:2px;">Last: ${esc(a.last_event)}</div>` : '';
 
   let noteHtml = '';
   if (a.note) {
@@ -196,28 +195,32 @@ function shippingRow(a, overrideColor, overrideLabel) {
     const border = a.note.resolved ? '#22c55e' : '#f59e0b';
     const textColor = a.note.resolved ? '#166534' : '#92400e';
     const tag = a.note.resolved ? ' [RESOLVED]' : '';
-    noteHtml = `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:${bg};border-left:3px solid ${border};font-size:11px;color:${textColor};">Note: ${esc(a.note.note)}${tag}</span>`;
+    noteHtml = `<div style="margin-top:4px;padding:3px 8px;background:${bg};border-left:3px solid ${border};font-size:11px;color:${textColor};">Note: ${esc(a.note.note)}${tag}</div>`;
   }
   if (a.claim?.customer_customs_notified_at) {
     const notifiedDate = a.claim.customer_customs_notified_at.split('T')[0];
-    noteHtml += `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:#f0fdfa;border-left:3px solid #0891b2;font-size:11px;color:#0891b2;">Customer emailed about customs: ${esc(notifiedDate)}</span>`;
+    noteHtml += `<div style="margin-top:4px;padding:3px 8px;background:#f0fdfa;border-left:3px solid #0891b2;font-size:11px;color:#0891b2;">Customer emailed about customs: ${esc(notifiedDate)}</div>`;
   }
   if (a.claim?.emailed_at) {
     const claimDate = a.claim.emailed_at.split('T')[0];
-    noteHtml += `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:#f0fdfa;border-left:3px solid #0891b2;font-size:11px;color:#0891b2;">Passport notified: ${esc(claimDate)}</span>`;
+    noteHtml += `<div style="margin-top:4px;padding:3px 8px;background:#f0fdfa;border-left:3px solid #0891b2;font-size:11px;color:#0891b2;">Passport notified: ${esc(claimDate)}</div>`;
   }
   if (a.claim?.resolution) {
-    noteHtml += `<br><span style="display:inline-block;margin-top:4px;padding:3px 8px;background:#f0fdf4;border-left:3px solid #22c55e;font-size:11px;color:#166534;">Claim: ${esc(a.claim.resolution)}</span>`;
+    noteHtml += `<div style="margin-top:4px;padding:3px 8px;background:#f0fdf4;border-left:3px solid #22c55e;font-size:11px;color:#166534;">Claim: ${esc(a.claim.resolution)}</div>`;
   }
 
-  return `<tr style="border-bottom:1px solid #e5e7eb;">
-    <td style="padding:6px 10px;font-weight:bold;vertical-align:top;">#${a.order_number}<br><span style="font-weight:normal;font-size:11px;color:#6b7280;">${links}</span></td>
-    <td style="padding:6px 10px;vertical-align:top;font-size:13px;">${esc(a.ship_date || '?')}</td>
-    <td style="padding:6px 10px;vertical-align:top;">${a.business_days}bd</td>
-    <td style="padding:6px 10px;vertical-align:top;"><span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">${esc(label)}</span><br><span style="color:#9ca3af;font-size:10px;">in transit &middot; ${esc(carrierText || '?')}</span></td>
-    <td style="padding:6px 10px;vertical-align:top;font-size:13px;">${esc(a.customer_email || '?')}<br><span style="color:#6b7280;font-size:12px;">${esc(a.destination)}</span></td>
-    <td style="padding:6px 10px;vertical-align:top;font-size:12px;">${issuesHtml}${lastEventHtml}${noteHtml}</td>
-  </tr>`;
+  return `<div style="padding:10px 12px;border-bottom:1px solid #e5e7eb;">
+    <div>
+      <strong>#${a.order_number}</strong>
+      <span style="color:#6b7280;font-size:12px;margin-left:6px;">${esc(a.ship_date || '?')} &middot; ${a.business_days}bd</span>
+      <span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${esc(label)}</span>
+    </div>
+    <div style="font-size:13px;margin-top:3px;">${esc(a.customer_email || '?')} <span style="color:#6b7280;">&middot; ${esc(a.destination)}</span> <span style="color:#6b7280;font-size:11px;">${links}</span></div>
+    <div style="font-size:12px;color:#9ca3af;margin-top:2px;">${esc(carrierText || '?')}</div>
+    <div style="font-size:12px;margin-top:4px;">${issuesHtml}</div>
+    ${lastEventHtml}
+    ${noteHtml}
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,24 +252,15 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const shDelayed = sh.delayed || [];
   const shResolved = sh.resolved || [];
 
-  // --- Table header ---
-  const tableHeader = `<tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
-    <th style="padding:6px 10px;text-align:left;">Order</th>
-    <th style="padding:6px 10px;text-align:left;">Date</th>
-    <th style="padding:6px 10px;text-align:left;">Age</th>
-    <th style="padding:6px 10px;text-align:left;">Status</th>
-    <th style="padding:6px 10px;text-align:left;">Customer</th>
-    <th style="padding:6px 10px;text-align:left;">Details</th>
-  </tr>`;
-
-  function section(title, color, rows) {
-    if (!rows.length) return '';
+  function section(title, color, cards) {
+    if (!cards.length) return '';
     return `
-      <h3 style="margin:24px 0 8px;color:${color};">${esc(title)} (${rows.length})</h3>
-      <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        ${tableHeader}
-        ${rows.join('\n')}
-      </table>`;
+      <div style="margin:20px 0 0;">
+        <div style="padding:8px 12px;border-bottom:2px solid ${color};">
+          <strong style="color:${color};">${esc(title)} (${cards.length})</strong>
+        </div>
+        <div style="font-size:13px;">${cards.join('')}</div>
+      </div>`;
   }
 
   // --- Build sections ---
@@ -304,29 +298,21 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // 6. Pre-Orders
   const preOrderRows = preOrders.map(r => unfulfilledRow(r));
 
-  // --- Stock issues table ---
+  // --- Stock issues ---
   let stockHtml = '';
   if (uf.stockIssues.size > 0) {
+    const stockCards = [...uf.stockIssues.values()].map(s => `
+      <div style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <div><strong style="font-family:monospace;">${esc(s.sku)}</strong> <span style="color:#dc2626;font-weight:bold;">${s.inventory} in stock</span> <span style="color:#6b7280;">&middot; ${s.ordersWaiting} waiting</span></div>
+        <div style="font-size:12px;color:#6b7280;">${esc(s.product)} / ${esc(s.variant)}</div>
+      </div>`).join('');
     stockHtml = `
-      <h3 style="margin:24px 0 8px;color:#dc2626;">Stock Issues</h3>
-      <table style="width:100%;border-collapse:collapse;font-family:monospace,monospace;font-size:13px;">
-        <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
-          <th style="padding:8px;text-align:left;">SKU</th>
-          <th style="padding:8px;text-align:left;">Product</th>
-          <th style="padding:8px;text-align:left;">Variant</th>
-          <th style="padding:8px;text-align:right;">Inventory</th>
-          <th style="padding:8px;text-align:right;">Orders Waiting</th>
-        </tr>
-        ${[...uf.stockIssues.values()].map(s => `
-          <tr style="border-bottom:1px solid #e5e7eb;">
-            <td style="padding:8px;">${esc(s.sku)}</td>
-            <td style="padding:8px;">${esc(s.product)}</td>
-            <td style="padding:8px;">${esc(s.variant)}</td>
-            <td style="padding:8px;text-align:right;color:#dc2626;font-weight:bold;">${s.inventory}</td>
-            <td style="padding:8px;text-align:right;">${s.ordersWaiting}</td>
-          </tr>
-        `).join('')}
-      </table>`;
+      <div style="margin:20px 0 0;">
+        <div style="padding:8px 12px;border-bottom:2px solid #dc2626;">
+          <strong style="color:#dc2626;">Stock Issues (${uf.stockIssues.size})</strong>
+        </div>
+        <div style="font-size:13px;">${stockCards}</div>
+      </div>`;
   }
 
   // --- Resolved sections ---
@@ -440,8 +426,8 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   }
 
   const html = `
-    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:1000px;margin:0 auto;">
-      <h2 style="margin-bottom:4px;">Daily Order Alerts \u2014 ${today}</h2>
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
+      <h2 style="margin-bottom:4px;font-size:18px;">Daily Order Alerts \u2014 ${today}</h2>
       <p style="color:#6b7280;margin-top:0;">${summaryParts.join(' &middot; ')}</p>
 
       ${allClearHtml}

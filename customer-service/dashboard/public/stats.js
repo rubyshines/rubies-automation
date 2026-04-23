@@ -61,6 +61,10 @@ function dateRange(days) {
 
 async function api(path) {
   const res = await fetch(path);
+  if (res.status === 401) {
+    window.location.href = '/login.html';
+    throw new Error('Session expired');
+  }
   if (!res.ok) throw new Error(`API ${res.status}`);
   return res.json();
 }
@@ -264,19 +268,57 @@ function setRange(days) {
 }
 
 async function loadTrends() {
+  if (typeof Chart === 'undefined') {
+    showTrendsError('Chart.js failed to load — check network/ad blocker');
+    return;
+  }
+
   const { start, end } = dateRange(currentRange);
+
+  // Show loading state
+  showTrendsLoading(true);
 
   try {
     const [range, categories] = await Promise.all([
       api(`/api/stats/range?start=${start}&end=${end}`),
       api(`/api/stats/categories?start=${start}&end=${end}`),
     ]);
+    showTrendsLoading(false);
     renderQualityChart(range.daily_breakdown || []);
     renderVolumeChart(range.daily_breakdown || []);
     renderCategoriesChart(categories);
   } catch (err) {
     console.error('Failed to load trends:', err);
+    showTrendsLoading(false);
+    showTrendsError('Failed to load trends: ' + err.message);
   }
+}
+
+function showTrendsLoading(on) {
+  document.querySelectorAll('.chart-wrap').forEach(el => {
+    const existing = el.querySelector('.chart-loading');
+    if (on && !existing) {
+      const div = document.createElement('div');
+      div.className = 'chart-loading';
+      div.textContent = 'Loading…';
+      div.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#a8a29e;font-size:13px;';
+      el.appendChild(div);
+    } else if (!on && existing) {
+      existing.remove();
+    }
+  });
+}
+
+function showTrendsError(msg) {
+  const tab = document.getElementById('tab-trends');
+  let errEl = tab.querySelector('.trends-error');
+  if (!errEl) {
+    errEl = document.createElement('div');
+    errEl.className = 'trends-error';
+    errEl.style.cssText = 'padding:24px;text-align:center;color:#b91c1c;font-size:14px;';
+    tab.insertBefore(errEl, tab.firstChild);
+  }
+  errEl.textContent = msg;
 }
 
 function chartDefaults() {

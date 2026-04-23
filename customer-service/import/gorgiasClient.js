@@ -344,6 +344,25 @@ async function closeTicket(ticketId) {
   });
 }
 
+async function deleteTicket(ticketId) {
+  const config = getConfig();
+  const url = `${config.baseUrl}/tickets/${ticketId}`;
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Basic ${config.auth}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gorgias API error ${response.status} on DELETE /tickets/${ticketId}: ${errText}`);
+  }
+  // DELETE may return 204 No Content
+  if (response.status === 204) return {};
+  return response.json();
+}
+
 /**
  * Fetch tickets from a Gorgias view (filtered ticket list).
  * Views use server-side filters (e.g. "All open" = view 28532).
@@ -417,6 +436,7 @@ module.exports = {
   assignTicket,
   snoozeTicket,
   closeTicket,
+  deleteTicket,
   // Utilities
   stripHtml,
   delay,

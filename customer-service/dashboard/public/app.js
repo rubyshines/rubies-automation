@@ -223,12 +223,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Autosave draft edits + notes to localStorage
-  document.getElementById('draft-editor').addEventListener('input', () => {
-    if (currentTicketId) localStorage.setItem(`draft-ticket-${currentTicketId}`, document.getElementById('draft-editor').value);
-  });
-  document.getElementById('draft-notes').addEventListener('input', () => {
-    if (currentTicketId) localStorage.setItem(`notes-ticket-${currentTicketId}`, document.getElementById('draft-notes').value);
+  // Autosave draft edits to localStorage + auto-expand textarea
+  const draftEditor = document.getElementById('draft-editor');
+  draftEditor.addEventListener('input', () => {
+    if (currentTicketId) localStorage.setItem(`draft-ticket-${currentTicketId}`, draftEditor.value);
+    autoExpandTextarea(draftEditor);
   });
 
   // ── Drag-and-drop attachments on draft editor ──────────────
@@ -573,9 +572,9 @@ function renderTicketDetail(ticket) {
   if (d) {
     // Draft editor — restore autosaved edits if any
     const savedDraft = localStorage.getItem(`draft-ticket-${ticket.id}`);
-    const savedNotes = localStorage.getItem(`notes-ticket-${ticket.id}`);
-    document.getElementById('draft-editor').value = savedDraft || d.draft_response;
-    document.getElementById('draft-notes').value = savedNotes || '';
+    const editor = document.getElementById('draft-editor');
+    editor.value = savedDraft || d.draft_response;
+    autoExpandTextarea(editor);
 
     // Message type + confidence + status badges
     const msgTypeEl = document.getElementById('detail-message-type');
@@ -603,7 +602,6 @@ function renderTicketDetail(ticket) {
   } else {
     // No active draft — show empty editor for manual compose
     document.getElementById('draft-editor').value = '';
-    document.getElementById('draft-notes').value = '';
 
     const msgTypeEl = document.getElementById('detail-message-type');
     msgTypeEl.textContent = '';
@@ -615,8 +613,15 @@ function renderTicketDetail(ticket) {
     statusEl.textContent = '';
     statusEl.className = 'badge';
 
-    // Show action panel with empty state
-    renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
+    // Show action history from the last sent draft if it had actions, otherwise empty
+    const lastActionDraft = (ticket.drafts || []).filter(dr => dr.action_type && dr.action_result).pop();
+    if (lastActionDraft) {
+      // Treat it as already-executed so renderActionPanel shows read-only history
+      if (!lastActionDraft.action_executed_at) lastActionDraft.action_executed_at = lastActionDraft.sent_at || true;
+      renderActionPanel(lastActionDraft);
+    } else {
+      renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
+    }
 
   }
 
@@ -625,10 +630,10 @@ function renderTicketDetail(ticket) {
     const detail = document.getElementById('draft-detail');
     if (!detail) return;
     const hasPendingDraft = d && ['pending', 'revised'].includes(d.status);
-    // Pending draft: bottom of viewport = top of training notes
-    // Already replied: bottom of viewport = top of action/draft section
+    // Pending draft: scroll to draft actions area
+    // Already replied: scroll to top of action/draft section
     const anchor = hasPendingDraft
-      ? document.querySelector('.label[for="draft-notes"]')
+      ? document.getElementById('draft-actions')
       : document.getElementById('detail-draft');
     if (anchor) {
       detail.scrollTop = anchor.offsetTop - detail.clientHeight;
@@ -1073,11 +1078,11 @@ function buildActionPrefill(draft) {
     return (name || '').replace(/^THE\s+/i, '').replace(/NO-TUCK SHAPING /i, '').trim();
   }
 
-  if (actionType.includes('refund')) {
+  // Helpers for building refund and exchange lines
+  function buildRefundLines() {
     const refundItems = prescription.filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
     const itemsToShow = refundItems.length ? refundItems : items;
     const orderLines = structured.order?.items || [];
-    // Enrich with size/color from order line items (variant = "Black / L")
     const enriched = itemsToShow.map(i => {
       const intakeMatch = items.find(ii => ii.product === i.product);
       const pName = shortName(i.product).toLowerCase();
@@ -1091,36 +1096,59 @@ function buildActionPrefill(draft) {
         color: i.color || intakeMatch?.color || orderColor || '',
       };
     });
-    // Group identical product/size/color combos and show quantity
     const grouped = [];
     for (const item of enriched) {
       const key = `${item.product}|${item.size}|${item.color}`;
       const existing = grouped.find(g => g.key === key);
       if (existing) { existing.qty++; } else { grouped.push({ key, ...item, qty: 1 }); }
     }
-    const lines = grouped.map(g => {
+    return grouped.map(g => {
       const parts = [g.qty > 1 ? `${g.qty}x` : '', shortName(g.product), g.color, g.size].filter(Boolean);
       return `- ${parts.join(' / ')}`;
     });
-    return `refund on order #${orderNum}:\n${lines.join('\n')}`;
   }
 
-  if (actionType.includes('exchange')) {
-    let exchangeItems = items.filter(i => i.resolved_size);
-    // Fallback: if intake items lack resolved_size (multi-turn bug), pull from prescription
+  function buildExchangeLines() {
+    let exchangeItems = items.filter(i => i.resolved_size || i.desired_size);
     if (!exchangeItems.length) {
       const rxItems = structured.prescription?.items || [];
       exchangeItems = rxItems
         .filter(i => i.state === 'CONFIRMED' && i.recommendation?.size)
         .map(i => ({ product: i.product, size: items.find(ii => ii.product === i.product)?.size, resolved_size: i.recommendation.size, resolved_product: null }));
     }
-    if (exchangeItems.length) {
-      const lines = exchangeItems.map(i => {
-        const color = i.resolved_color ? ` ${i.resolved_color}` : '';
-        return `- ${shortName(i.resolved_product || i.product)} ${i.size || ''} → ${i.resolved_size}${color}`;
-      });
-      return `exchange on order #${orderNum}:\n${lines.join('\n')}`;
-    }
+    const orderLines = structured.order?.items || [];
+    return exchangeItems.map(i => {
+      const targetSize = i.resolved_size || i.desired_size;
+      let color = i.resolved_color || '';
+      if (!color) {
+        const pName = shortName(i.product).toLowerCase();
+        const orderMatch = orderLines.find(ol => ol.title?.toLowerCase().includes(pName));
+        const variantParts = (orderMatch?.variant || '').split(/\s*\/\s*/);
+        if (variantParts.length >= 2) color = variantParts[0].trim();
+      }
+      const colorSuffix = color ? ` ${color}` : '';
+      return `- ${shortName(i.resolved_product || i.product)} ${i.size || ''} → ${targetSize}${colorSuffix}`;
+    });
+  }
+
+  // Handle combined exchange+refund first (otherwise 'includes' matches the wrong branch)
+  if (actionType.includes('exchange') && actionType.includes('refund')) {
+    const exLines = buildExchangeLines();
+    const rfLines = buildRefundLines();
+    const parts = [];
+    if (exLines.length) parts.push(`exchange:\n${exLines.join('\n')}`);
+    if (rfLines.length) parts.push(`refund:\n${rfLines.join('\n')}`);
+    return parts.length ? `on order #${orderNum}:\n${parts.join('\n')}` : '';
+  }
+
+  if (actionType.includes('exchange')) {
+    const lines = buildExchangeLines();
+    if (lines.length) return `exchange on order #${orderNum}:\n${lines.join('\n')}`;
+  }
+
+  if (actionType.includes('refund')) {
+    const lines = buildRefundLines();
+    if (lines.length) return `refund on order #${orderNum}:\n${lines.join('\n')}`;
   }
 
   if (actionType === 'order_modification') {
@@ -1571,7 +1599,7 @@ function sendDraft(afterAction, testSnooze) {
 
   const response = document.getElementById('draft-editor').value;
   if (!response.trim()) { alert('Please enter a message'); return; }
-  const notes = document.getElementById('draft-notes').value || undefined;
+  const notes = undefined;
 
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
@@ -1607,7 +1635,7 @@ function sendDraft(afterAction, testSnooze) {
 function closeNoReply() {
   if (!currentTicketId) return;
   if (_actionsInFlight.has(currentTicketId)) return;
-  const notes = document.getElementById('draft-notes').value || undefined;
+  const notes = undefined;
 
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
@@ -1636,7 +1664,6 @@ function clearTicketSelection() {
   // Clear stale content
   document.getElementById('conversation-thread').innerHTML = '';
   document.getElementById('draft-editor').value = '';
-  document.getElementById('draft-notes').value = '';
   document.getElementById('customer-card').innerHTML = '';
   document.getElementById('ticket-order').innerHTML = '';
   document.getElementById('current-ticket-header').innerHTML = '';
@@ -1753,6 +1780,27 @@ function updateNavArrows() {
   nextBtn.style.display = idx < currentQueueTicketIds.length - 1 ? '' : 'none';
 }
 
+// Split AI internal reasoning from the customer-facing email during streaming.
+// Mirrors the server-side stripInternalThinking() patterns so the thinking shows
+// in a trace element instead of polluting the draft textarea.
+function splitThinkingFromDraft(text) {
+  const emailStartPatterns = [
+    /^Hi[\s,]/m, /^Hey[\s,]/m, /^Hola[\s,]/m, /^No problem/m,
+    /^Thanks /m, /^Sorry /m, /^Ooops/m, /^Ok[, ]/m, /^Doh!/m,
+    /^D[eé]sol[eé]/m, /^For sure/m, /^That was really/m, /^Glad /m, /^Aww/m,
+  ];
+  for (const pattern of emailStartPatterns) {
+    const match = text.match(pattern);
+    if (match && match.index > 0) {
+      const before = text.substring(0, match.index).trim();
+      if (/\b(compose|respond|response|key points|cover|I('ll| need| should| have)|thinking|let me|now I|plan|analysis|context|approach|consider|confirm|measurement|customer|order history|looking at|verify|check|before I|want to make sure|inventory|stock|donation|put together|draft|tool|calling)\b/i.test(before)) {
+        return { thinking: before, draft: text.substring(match.index).trim() };
+      }
+    }
+  }
+  return { thinking: '', draft: text };
+}
+
 async function refreshDraft(steer) {
   if (!currentTicketId) return;
 
@@ -1778,9 +1826,11 @@ async function refreshDraft(steer) {
     let streamedText = '';
     let finalResult = null;
 
-    // Clear editor and show streaming text
+    // Clear editor and thinking trace
     editor.value = '';
     editor.placeholder = 'Generating...';
+    const thinkingEl = document.getElementById('draft-thinking');
+    if (thinkingEl) { thinkingEl.textContent = ''; thinkingEl.style.display = 'none'; }
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1798,7 +1848,15 @@ async function refreshDraft(steer) {
             streamedText += event.text;
             // Strip structured block from display (it appears at end)
             const displayText = streamedText.replace(/<structured>[\s\S]*$/, '').trim();
-            if (currentTicketId === ticketId) editor.value = displayText;
+            if (currentTicketId === ticketId) {
+              const { thinking, draft } = splitThinkingFromDraft(displayText);
+              if (thinking && thinkingEl) {
+                thinkingEl.textContent = thinking;
+                thinkingEl.style.display = 'block';
+              }
+              editor.value = draft;
+              autoExpandTextarea(editor);
+            }
           } else if (event.type === 'tool_call') {
             // Show tool call status briefly
             editor.placeholder = `Calling ${event.tool}...`;
@@ -1870,7 +1928,7 @@ function snoozeNoReply() {
 
 async function releaseDraft() {
   if (!currentTicketId) return;
-  const notes = document.getElementById('draft-notes').value || undefined;
+  const notes = undefined;
 
   try {
     const releasedTicketId = currentTicketId;
@@ -2411,6 +2469,9 @@ function collapseQuotedContent(html) {
 
   if (!splitNode) return html;
 
+  // Snapshot the full HTML before we mutate the DOM — used for the expandable toggle
+  const quotedHtml = html;
+
   // Remove everything from the split point onwards.
   // Strategy: walk up from splitNode, at each level remove all following siblings,
   // then continue up. This preserves content before the split at every nesting level.
@@ -2815,6 +2876,11 @@ function formatAddress(a) {
 
 function isMobile() {
   return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function autoExpandTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
 }
 
 function mobileBackToQueue() {

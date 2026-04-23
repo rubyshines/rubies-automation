@@ -409,9 +409,13 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     if (custRow) customerName = [custRow.first_name, custRow.last_name].filter(Boolean).join(' ') || null;
   }
 
-  // Detect gmail-import source from Gorgias tags
-  const ticketTags = (ticket.tags || []).map(tag => (tag.name || tag).toLowerCase());
-  const ticketSource = ticketTags.includes('gmail-import') ? 'gmail' : 'gorgias';
+  // Detect gmail-import source from email_messages (source of truth — not Gorgias tags, which race)
+  const { data: gmailOrigin } = await supabase
+    .from('email_messages')
+    .select('gmail_message_id')
+    .eq('gorgias_ticket_id', ticketId)
+    .limit(1);
+  const ticketSource = gmailOrigin?.length ? 'gmail' : 'gorgias';
 
   // Build upsert payload — only include fields with non-null values to avoid
   // clobbering good data from a previous turn when the AI parse fails
@@ -512,8 +516,12 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   console.log(`[intake] Draft created for ticket ${ticketId} (confidence: ${confidence}, status: ${structured.status}, type: ${messageType})`);
 
-  // Auto-dispose business outreach — close ticket, tag in Gorgias, mark draft as spam
+  // Auto-dispose business outreach — Gorgias first, then Supabase (consistent with key decision)
   if (messageType === 'business_outreach') {
+    await gorgias.addTicketTag(ticketId, 'business-outreach');
+    await gorgias.closeTicket(ticketId);
+    await gorgias.assignTicket(ticketId, null);
+
     const now = new Date().toISOString();
     await supabase.from('cs_tickets').update({
       status: 'closed',
@@ -523,14 +531,6 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     }).eq('id', ticketRow.id);
 
     await supabase.from('cs_ai_drafts').update({ status: 'spam' }).eq('id', newDraft.id);
-
-    try {
-      await gorgias.addTicketTag(ticketId, 'business-outreach');
-      await gorgias.closeTicket(ticketId);
-      await gorgias.assignTicket(ticketId, null);
-    } catch (err) {
-      console.warn(`[intake] Could not close outreach ticket ${ticketId}: ${err.message}`);
-    }
 
     console.log(`[intake] Auto-closed business outreach: ticket ${ticketId}`);
     return { drafted: true, outreach: true };

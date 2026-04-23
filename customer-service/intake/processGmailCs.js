@@ -124,6 +124,12 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       return { action: 'skipped', reason: 'already_forwarded' };
     }
 
+    // Skip if operator previously returned this email from CS to inbox
+    if (msg.returned_to_inbox_at) {
+      await markProcessed();
+      return { action: 'skipped', reason: 'returned_to_inbox' };
+    }
+
     // Skip old emails (don't flood Gorgias on first run)
     if (msg.date && msg.date.substring(0, 10) < CS_CUTOFF_DATE) {
       await markProcessed();

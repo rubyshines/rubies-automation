@@ -70,8 +70,26 @@ function buildSystemPrompt(context) {
     .slice(0, 20)
     .join('\n');
 
+  // Build advisor suggestion with full detail: product, size, color, product swaps
   const advisorSuggestion = intake?.items?.length
-    ? intake.items.map(i => `${i.product} ${i.size || ''} → ${i.resolved_size || '?'}`).join(', ')
+    ? intake.items.map(i => {
+        const target = i.resolved_size || i.desired_size || '?';
+        const toProduct = i.resolved_product || i.product || '';
+        // Color: explicit from advisor, or inferred from order items by nickname match
+        let color = i.resolved_color || '';
+        if (!color) {
+          const match = (order_items || []).find(oi =>
+            (oi.title || '').toLowerCase().includes((i.product || '').toLowerCase()));
+          if (match) {
+            const parts = (match.variant || '').split(/\s*\/\s*/);
+            if (parts.length >= 2) color = parts[0].trim();
+          }
+        }
+        const colorSuffix = color ? ` ${color}` : '';
+        return toProduct !== (i.product || '')
+          ? `${i.product} ${i.size || ''} → ${toProduct} ${target}${colorSuffix}`
+          : `${i.product || ''} ${i.size || ''} → ${target}${colorSuffix}`;
+      }).join(', ')
     : 'none';
 
   return `You are an action executor for the RUBIES customer service dashboard. You execute exchanges, refunds, order edits, holds, and cancellations.
@@ -102,11 +120,23 @@ Sizing systems:
 
 **Exchange + invoice (extra items):** When the customer is exchanging AND adding extra items, or when the operator says "invoice for the difference", use create_invoice_order. Put the replacement items in \`exchange_items\` (free, 100% discount) and the extra items in \`paid_items\` (full price). This creates ONE order with both free and paid items, then sends an invoice for the paid portion. Example: exchanging 3 items but customer wants 4 → 3 in exchange_items, 1 in paid_items.
 
+**Return + new order (credit against invoice):** When the customer is returning items from a previous order AND ordering different items (not a size swap), use create_invoice_order with \`return_credit\`. Put ALL the new items in \`paid_items\` (full price) and set \`return_credit\` to the dollar value of the items being returned. Set \`return_credit_note\` to describe the credit (e.g. "Stella return credit from order #20335"). The invoice total = new items - return credit. One email to the customer with the net amount. Do NOT process a separate refund — the credit IS the refund, applied as a discount.
+
+**New orders:** Use create_order for paid orders, free replacements, samples, or gifts. Use create_order_complete to finalize (mark as paid for free orders, send invoice for paid orders).
+
 **Refunds:** Use refund_order with the order number and item SKUs.
 
 **Order edits:** Use edit_order with swap_items for modifications. When swapping items and the edit should be cost-neutral (no charge to customer), set \`even_swap: true\` on each swap entry — the tool auto-calculates the exact discount. You can also apply custom discounts with \`discount: { percent: 100 }\` (free) or \`discount: { fixed_amount: 5.00 }\` (dollars off).
 
 **Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold.
+
+## Choosing the Right Tool
+- **Same product, different size/color:** create_exchange_order (all free, $0 draft)
+- **Replacements + extras:** create_invoice_order with exchange_items + paid_items
+- **Return items + order different items:** create_invoice_order with paid_items + return_credit
+- **Unfulfilled order changes:** edit_order (auto-handles invoice/refund for price diff)
+- **Pure refund:** refund_order
+- **New standalone order:** create_order
 
 ## Rules
 - Always show a preview first (phase 1), then wait for operator confirmation before completing (phase 2).
@@ -268,6 +298,23 @@ async function operatorAgent(message, context, history = [], onEvent) {
 // Shadow Sonnet evaluation for operator agent
 // ---------------------------------------------------------------------------
 
+// Action tools that create/modify real Shopify resources — must NOT run in shadow eval
+const SHADOW_BLOCKED_TOOLS = new Set([
+  'create_exchange_order',
+  'create_invoice_order',
+  'create_order',
+  'create_order_complete',
+  'create_wholesale_order',
+  'refund_order',
+  'edit_order',
+  'delete_draft_order',
+  'send_draft_order_invoice',
+  'warehouse_hold',
+  'release_warehouse_hold',
+  'release_address_hold',
+  'add_order_note',
+]);
+
 async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMessages, opusResult, context }) {
   if (process.env.CS_DIAGNOSTICS_DISABLED === 'true') return;
 
@@ -314,20 +361,16 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
         let result;
         try {
           if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
-          // Apply same Sonnet auto-fixes
-          if (toolUse.name === 'create_exchange_order' && !toolUse.input.confirmed) {
-            if (!toolUse.input.customer_id || toolUse.input.customer_id.includes('@')) {
-              const { searchCustomers } = require('./shopify');
-              const customers = await searchCustomers(context.customer_email);
-              if (customers?.[0]) toolUse.input.customer_id = customers[0].id;
-            }
-            if (toolUse.input.original_order_id && !String(toolUse.input.original_order_id).includes('gid://')) {
-              delete toolUse.input.original_order_id;
-            }
+
+          // Block action tools in shadow mode — record what Sonnet wanted to do without executing
+          if (SHADOW_BLOCKED_TOOLS.has(toolUse.name)) {
+            result = JSON.stringify({ shadow_blocked: true, tool: toolUse.name, input: toolUse.input, message: 'Action tool blocked in shadow evaluation mode — not executed.' });
+            sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input, blocked: true });
+          } else {
+            const toolResult = await handler(toolUse.input);
+            result = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
+            sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input });
           }
-          const toolResult = await handler(toolUse.input);
-          result = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
-          sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input });
         } catch (err) {
           result = JSON.stringify({ error: err.message });
         }

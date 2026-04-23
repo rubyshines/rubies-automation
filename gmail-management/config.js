@@ -73,6 +73,8 @@ const KNOWN_DOMAINS = {
   'warehance.com': '3pl_fulfillment',
   // Production / Suppliers (add more as discovered)
   'qq.com': 'production_orders',
+  // Government — NRC-IRAP
+  'nrc-cnrc.gc.ca': 'finance_legal',
 };
 
 // Known senders → specific classification (checked before domain rules — more specific wins)

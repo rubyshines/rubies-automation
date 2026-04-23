@@ -915,7 +915,7 @@ After handling the conversation, you MUST end your final message with a structur
 
 <structured>
 {
-  "status": "action_needed|ready|needs_info|gathering|route_to_human (use action_needed when you are setting an action_type — it means the operator must execute the action before sending. Use ready when no action is needed and the draft can be sent as-is.)",
+  "status": "ready|needs_info|gathering|route_to_human (use ready when ALL items are resolved OR when setting an explicit action_type below — the system automatically marks it action_needed for the operator. Use needs_info when waiting for customer input. Use gathering while still processing.)",
   "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. Use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships. If nothing fits, use 'uncategorized' — do not invent new values.)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
   "action_type": "null|warehouse_hold|order_modification|cancellation (set when an order action is needed beyond exchange/refund)",
@@ -1440,7 +1440,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
 
   // Compute action_type from prescription items (which have the resolved states)
   let action_type = null;
-  if (parsed.status === 'ready') {
+  if (parsed.status === 'ready' || parsed.status === 'action_needed') {
     const hasExchange = prescriptionItems.some(i => i.state === 'CONFIRMED' && !i.product?.includes('refund'));
     const hasRefund = prescriptionItems.some(i => i.state === 'REFUND_CONFIRMED');
     if (hasExchange && hasRefund) action_type = 'exchange+refund';
