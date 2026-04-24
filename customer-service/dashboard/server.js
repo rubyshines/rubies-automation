@@ -1934,7 +1934,7 @@ async function apiGetTickets(query) {
 
   let q = supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at')
     .order(tab === 'parked' ? 'parked_at' : 'updated_at', { ascending: tab === 'parked' })
     .limit(limit);
 
@@ -2034,6 +2034,11 @@ async function apiGetTicket(id) {
       .limit(1);
     priorTickets = priors || [];
   }
+
+  // Mark ticket as viewed (for unread indicator in queue)
+  await supabase.from('cs_tickets')
+    .update({ viewed_at: new Date().toISOString() })
+    .eq('id', id);
 
   return { ...ticket, active_draft: activeDraft, drafts: allDrafts || [], prior_tickets: priorTickets };
 }

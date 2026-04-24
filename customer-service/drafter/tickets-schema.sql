@@ -70,6 +70,10 @@ ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS follow_up_stage integer DEFAULT 
 -- instead of 3 days. Set per-ticket by the "Send & Snooze (Test)" button. Remove column after testing.
 ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS test_snooze boolean DEFAULT false;
 
+-- viewed_at: tracks when the operator last viewed this ticket's detail in the dashboard.
+-- A ticket is "unread" when viewed_at IS NULL or viewed_at < updated_at (customer replied since last view).
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS viewed_at timestamptz;
+
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts
 -- ============================================================
