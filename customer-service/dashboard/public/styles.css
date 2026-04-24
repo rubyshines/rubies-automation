@@ -3249,13 +3249,26 @@ main { height: calc(100vh - 56px); }
   .btn { padding: 9px 14px; }
 
   /* ── Input Fields ────────────────────────────────────────── */
-  /* iOS zoom prevented via viewport meta (maximum-scale=1) */
+  /* iOS ignores maximum-scale=1 for input zoom — 16px is the only reliable fix */
 
-  #draft-editor {
-    font-size: 13px;
-    padding: 10px 12px;
+  textarea, input[type="text"], input[type="email"], select {
+    font-size: 16px !important;
   }
 
+  #draft-editor {
+    font-size: 16px !important;
+    padding: 10px 12px;
+    min-height: 35vh;
+    min-height: 35dvh;
+  }
+
+  .steer-input {
+    font-size: 16px !important;
+  }
+
+  .action-chat-input {
+    font-size: 16px !important;
+  }
 
   #action-panel {
     padding: 12px;
@@ -3269,10 +3282,6 @@ main { height: calc(100vh - 56px); }
 
   .action-chat-send {
     padding: 10px 14px;
-  }
-
-  textarea, input[type="text"], input[type="email"] {
-    font-size: 13px;
   }
 
   /* ── Action Panel ──────────────────────────────────────── */
