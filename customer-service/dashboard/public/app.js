@@ -226,7 +226,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Autosave draft edits to localStorage + auto-expand textarea
   const draftEditor = document.getElementById('draft-editor');
   draftEditor.addEventListener('input', () => {
-    if (currentTicketId) localStorage.setItem(`draft-ticket-${currentTicketId}`, draftEditor.value);
+    if (currentTicketId) {
+      localStorage.setItem(`draft-ticket-${currentTicketId}`, draftEditor.value);
+      if (currentDraftId) localStorage.setItem(`draft-id-ticket-${currentTicketId}`, currentDraftId);
+    }
     autoExpandTextarea(draftEditor);
   });
 
@@ -323,6 +326,10 @@ async function loadTicketQueue() {
         ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
         : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>${lastReplyAgo && t.snoozed_at ? `<span class="queue-item-replied">replied ${lastReplyAgo}</span>` : ''}`;
 
+      // Unread: never viewed, or customer replied since last view
+      const isUnread = !t.viewed_at || new Date(t.viewed_at) < new Date(t.updated_at);
+      const readClass = isUnread ? 'unread' : 'read';
+
       // Row 2: secondary badges (only shown when there's content)
       const row2Parts = [];
       if (ticketChannel === 'facebook-messenger') row2Parts.push('<span class="badge badge-facebook">via Facebook</span>');
@@ -331,7 +338,7 @@ async function loadTicketQueue() {
       if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
 
       return `
-      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
+      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${readClass} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
         ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
         <div class="queue-item-inner">
           <div class="queue-item-row1">
@@ -405,10 +412,14 @@ async function selectTicket(id) {
   const convEl = document.getElementById('detail-conversation');
   if (convEl && !convEl.open) convEl.setAttribute('open', '');
 
-  // Highlight in queue
+  // Highlight in queue and mark as read
   document.querySelectorAll('.queue-item').forEach(el => el.classList.remove('active'));
   const matchEl = document.querySelector(`.queue-item[data-ticket-id="${id}"]`);
-  if (matchEl) matchEl.classList.add('active');
+  if (matchEl) {
+    matchEl.classList.add('active');
+    matchEl.classList.remove('unread');
+    matchEl.classList.add('read');
+  }
 
   try {
     currentTicket = await api(`/api/tickets/${id}`);
@@ -570,10 +581,15 @@ function renderTicketDetail(ticket) {
   }
 
   if (d) {
-    // Draft editor — restore autosaved edits if any
+    // Draft editor — restore autosaved edits if any, but only if it matches the current draft
     const savedDraft = localStorage.getItem(`draft-ticket-${ticket.id}`);
+    const savedDraftId = localStorage.getItem(`draft-id-ticket-${ticket.id}`);
     const editor = document.getElementById('draft-editor');
-    editor.value = savedDraft || d.draft_response;
+    // Only use localStorage version if it was saved against the SAME draft ID
+    const useLocal = savedDraft && savedDraftId && parseInt(savedDraftId) === d.id;
+    editor.value = useLocal ? savedDraft : d.draft_response;
+    // DEBUG: log what's being rendered (remove after confirming fix)
+    console.log(`[draft-diag] ticket=${ticket.id} active_draft_id=${d.id} savedDraftId=${savedDraftId} useLocal=${useLocal} preview="${editor.value.substring(0, 80)}"`);
     autoExpandTextarea(editor);
 
     // Message type + confidence + status badges
@@ -1090,17 +1106,20 @@ function buildActionPrefill(draft) {
       const variantParts = (orderMatch?.variant || '').split(/\s*\/\s*/);
       const orderColor = variantParts.length >= 2 ? variantParts[0] : '';
       const orderSize = variantParts.length >= 2 ? variantParts[variantParts.length - 1] : variantParts[0] || '';
+      // For post-exchange refunds, use the exchanged size (resolved/desired), not original order size
+      const refundSize = i.size || intakeMatch?.resolved_size || intakeMatch?.desired_size || intakeMatch?.size || orderSize || '';
       return {
         product: i.product,
-        size: i.size || intakeMatch?.size || orderSize || '',
+        size: refundSize,
         color: i.color || intakeMatch?.color || orderColor || '',
+        qty: orderMatch?.quantity || 1,
       };
     });
     const grouped = [];
     for (const item of enriched) {
       const key = `${item.product}|${item.size}|${item.color}`;
       const existing = grouped.find(g => g.key === key);
-      if (existing) { existing.qty++; } else { grouped.push({ key, ...item, qty: 1 }); }
+      if (existing) { existing.qty += item.qty; } else { grouped.push({ key, ...item }); }
     }
     return grouped.map(g => {
       const parts = [g.qty > 1 ? `${g.qty}x` : '', shortName(g.product), g.color, g.size].filter(Boolean);
@@ -2878,9 +2897,21 @@ function isMobile() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
 
+// iOS detection for zoom-prevention height compensation
+const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
 function autoExpandTextarea(el) {
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
+  // iOS zoom fix: containers use transform: scale(0.8125), creating a layout gap.
+  // Compensate with negative margin-bottom based on actual container height.
+  if (_isIOS && isMobile()) {
+    const wrap = el.closest('.draft-editor-wrap, .action-chat-input-row');
+    if (wrap) {
+      wrap.style.marginBottom = -(wrap.offsetHeight * 0.1875) + 'px';
+    }
+  }
 }
 
 function mobileBackToQueue() {
