@@ -103,7 +103,10 @@ async function handle(payload) {
     if (d.status === 'spam') isSpammed = true;
   }
 
-  if (isSpammed) {
+  // Only skip spammed tickets if the incoming message already has a draft.
+  // If a new message arrived (e.g. outreach follow-up), reprocess so the
+  // advisor can re-classify and re-close in Gorgias.
+  if (isSpammed && message?.id && existingMessageIds.has(message.id)) {
     console.log(`[gorgias-webhook] Skip ${ticketId}: spammed in our system`);
     return;
   }
