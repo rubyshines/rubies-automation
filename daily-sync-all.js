@@ -233,7 +233,8 @@ function buildTicketDriftHtml(results) {
 
   const driftIssues = src.driftIssues || [];
   const undelivered = src.undelivered || [];
-  if (!driftIssues.length && !undelivered.length) return '';
+  const followUps = src.followUps || [];
+  if (!driftIssues.length && !undelivered.length && !followUps.length) return '';
 
   let html = '';
 
@@ -266,6 +267,22 @@ function buildTicketDriftHtml(results) {
           <strong style="color:#dc2626;">Undelivered Messages (${undelivered.length})</strong>
         </div>
         <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
+      </div>`;
+  }
+
+  if (followUps.length) {
+    const cards = followUps.map(f => `
+      <div style="padding:10px 12px;border-bottom:1px solid #bbf7d0;">
+        <div style="font-weight:bold;font-size:14px;">#${esc(String(f.ticketId))} <span style="font-weight:normal;color:#6b7280;">${esc(f.email)}</span></div>
+        <div style="color:#16a34a;font-size:13px;margin-top:2px;">${esc(f.action)}</div>
+      </div>`).join('');
+
+    html += `
+      <div style="margin:20px 0 0;">
+        <div style="background:#f0fdf4;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #bbf7d0;border-bottom:2px solid #bbf7d0;">
+          <strong style="color:#16a34a;">Auto Follow-ups (${followUps.length})</strong>
+        </div>
+        <div style="border:1px solid #bbf7d0;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
       </div>`;
   }
 

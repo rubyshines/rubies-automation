@@ -3,4 +3,4 @@ builder = "NIXPACKS"
 
 [deploy]
 startCommand = "node scripts/write-service-account-key.js && node daily-sync-all.js"
-cronSchedule = "0 9 * * *"
+cronSchedule = "30 12 * * *"

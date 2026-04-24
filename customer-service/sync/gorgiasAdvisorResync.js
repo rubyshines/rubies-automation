@@ -25,8 +25,8 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const VIEW_ALL_OPEN = 28532;
 const VIEW_UNASSIGNED = 28531;
 
-async function run() {
-  const dryRun = !process.argv.includes('--execute');
+async function run({ execute = false } = {}) {
+  const dryRun = !execute;
 
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
   console.log(`║   RUBIES — Gorgias → CS Advisor Resync  ${dryRun ? '(DRY RUN)' : '⚡ EXECUTING'}        ║`);
@@ -172,6 +172,118 @@ async function run() {
     await gorgias.delay(300);
   }
 
+  // ── Step 4c: Process expired snoozes → auto follow-ups ──
+  //    Only runs when called from runPipeline (daily sync), not CLI dry runs.
+
+  const followUps = [];
+
+  if (!dryRun) {
+  const { executeStage1, executeStage2 } = require('../lib/followUp');
+
+  // Find tickets we consider snoozed
+  const { data: snoozedTickets } = await supabase
+    .from('cs_tickets')
+    .select('id, gorgias_ticket_id, status, customer_email, customer_name, follow_up_stage, snoozed_at, test_snooze')
+    .eq('status', 'snoozed');
+
+  for (const st of (snoozedTickets || [])) {
+    try {
+      const gTicket = await gorgias.getTicket(st.gorgias_ticket_id);
+
+      // Check if Gorgias snooze has expired by looking at snooze_datetime.
+      // Gorgias status stays 'open' even while snoozed — only snooze_datetime tells the truth.
+      const snoozeDt = gTicket.snooze_datetime ? new Date(gTicket.snooze_datetime) : null;
+      const snoozeExpired = !snoozeDt || snoozeDt < new Date();
+
+      if (!snoozeExpired) continue; // still snoozed in Gorgias, nothing to do
+
+      // Check for activity after snoozed_at
+      const messages = await gorgias.getTicketMessages(st.gorgias_ticket_id);
+      const snoozedAt = new Date(st.snoozed_at);
+
+      // Agent messages after snooze that aren't from the AI bot (i.e. Jamie replied manually)
+      const manualAgentReplies = messages.filter(m =>
+        m.from_agent &&
+        m.channel !== 'internal-note' &&
+        new Date(m.created_datetime) > snoozedAt &&
+        m.sender?.id !== aiBotId
+      );
+
+      // Customer messages after snooze
+      const customerReplies = messages.filter(m =>
+        !m.from_agent &&
+        m.channel !== 'internal-note' &&
+        new Date(m.created_datetime) > snoozedAt
+      );
+
+      if (customerReplies.length > 0) {
+        console.log(`  [follow-up] Skip #${st.gorgias_ticket_id}: customer replied after snooze`);
+        continue;
+      }
+
+      if (manualAgentReplies.length > 0) {
+        // Jamie replied manually — reset snoozed_at to that reply time, start new cycle
+        const latestReply = manualAgentReplies[manualAgentReplies.length - 1];
+        const replyTime = new Date(latestReply.created_datetime);
+        const daysSinceReply = (Date.now() - replyTime.getTime()) / (1000 * 60 * 60 * 24);
+
+        if (daysSinceReply < 3) {
+          // Manual reply is recent enough — re-snooze from that point
+          await supabase.from('cs_tickets').update({
+            snoozed_at: latestReply.created_datetime,
+            updated_at: new Date().toISOString(),
+          }).eq('id', st.id);
+          await gorgias.snoozeTicket(st.gorgias_ticket_id, 3 - daysSinceReply);
+          console.log(`  [follow-up] #${st.gorgias_ticket_id}: Jamie replied manually, re-snoozed (${(3 - daysSinceReply).toFixed(1)}d remaining)`);
+          followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: 're-snoozed (manual reply)' });
+          continue;
+        }
+        // Manual reply was >3 days ago — fall through to follow-up
+        await supabase.from('cs_tickets').update({
+          snoozed_at: latestReply.created_datetime,
+        }).eq('id', st.id);
+      }
+
+      // Run follow-up
+      const stage = st.follow_up_stage || 0;
+      if (stage === 0) {
+        const snoozeDays = st.test_snooze ? 0.004 : undefined;
+        const result = await executeStage1(gorgias, st, { snoozeDays });
+        if (result.sent) {
+          console.log(`  [follow-up] #${st.gorgias_ticket_id}: Stage 1 sent to ${st.customer_email}`);
+          followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: 'stage1_sent' });
+        } else {
+          console.log(`  [follow-up] #${st.gorgias_ticket_id}: Stage 1 skipped — ${result.reason}`);
+          followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: `stage1_skip: ${result.reason}` });
+        }
+      } else if (stage === 1) {
+        const result = await executeStage2(gorgias, st);
+        if (result.sent) {
+          console.log(`  [follow-up] #${st.gorgias_ticket_id}: Stage 2 sent to ${st.customer_email}, ticket closed`);
+          followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: 'stage2_sent' });
+        } else {
+          console.log(`  [follow-up] #${st.gorgias_ticket_id}: Stage 2 skipped — ${result.reason}`);
+          followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: `stage2_skip: ${result.reason}` });
+        }
+      }
+
+      await gorgias.delay(1000); // longer delay to avoid Gorgias rate limits
+    } catch (e) {
+      console.error(`  [follow-up] #${st.gorgias_ticket_id} error: ${e.message}`);
+      followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: `error: ${e.message}` });
+    }
+  }
+
+  if (followUps.length) {
+    console.log(`\n${'═'.repeat(65)}`);
+    console.log(`  ${followUps.length} follow-up action(s) taken`);
+    console.log(`${'═'.repeat(65)}\n`);
+    for (const f of followUps) {
+      console.log(`  #${f.ticketId}  ${f.email}  → ${f.action}`);
+    }
+  }
+  } // end if (!dryRun)
+
   // ── Step 5: Report what we found ──
 
   if (undelivered.length) {
@@ -218,6 +330,7 @@ async function run() {
       email: ticket.customer?.email || '?',
       failedCount: failedMessages.length,
     })),
+    followUps,
   };
 }
 
@@ -317,26 +430,29 @@ async function executeResync(detection) {
 
 async function runPipeline() {
   try {
-    const detection = await run();
+    const detection = await run({ execute: true });
     const driftCount = detection.driftIssues.length;
     const undeliveredCount = detection.undelivered.length;
+    const followUpCount = detection.followUps.length;
     const hasIssues = driftCount > 0 || undeliveredCount > 0;
     const detailParts = [`${detection.openTickets} open`];
     if (driftCount) detailParts.push(`${driftCount} drift`);
     if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
-    if (!hasIssues) detailParts.push('all in sync');
+    if (followUpCount) detailParts.push(`${followUpCount} follow-ups`);
+    if (!hasIssues && !followUpCount) detailParts.push('all in sync');
 
     return {
       sources: {
         ticket_reconciliation: {
           success: true,
-          rowsWritten: driftCount + undeliveredCount,
+          rowsWritten: driftCount + undeliveredCount + followUpCount,
           detail: detailParts.join(', '),
           driftIssues: detection.driftIssues,
           undelivered: detection.undelivered,
+          followUps: detection.followUps,
         },
       },
-      status: hasIssues ? 'warning' : 'ok',
+      status: hasIssues ? 'warning' : followUpCount ? 'success' : 'ok',
     };
   } catch (e) {
     console.error('Ticket reconciliation error:', e.message);
@@ -354,7 +470,7 @@ module.exports = { run, runPipeline };
 if (require.main === module) {
   const execute = process.argv.includes('--execute');
 
-  run().then(async (detection) => {
+  run({ execute }).then(async (detection) => {
     if (execute && detection.driftIssues.length) {
       await executeResync(detection);
     } else if (execute) {
