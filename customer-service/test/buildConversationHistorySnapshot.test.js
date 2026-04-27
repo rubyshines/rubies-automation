@@ -22,7 +22,11 @@ const CUSTOMER_BODY_HTML_WITH_QUOTE = `<div dir="auto">Hello the discount code I
 const CUSTOMER_STRIPPED_HTML = `<html><body><div dir="auto">Hello the discount code I forgot to apply was <strong>WELCOME10-88ZJ6G1I</strong></div></body></html>`;
 
 describe('buildConversationHistorySnapshot', () => {
-  it('prefers stripped_html over body_html for customer email messages', () => {
+  it('prefers body_html over stripped_html for customer email messages (preserves signatures)', () => {
+    // Gorgias stripped_html is too aggressive on customer sign-offs (can remove
+    // names/addresses needed for exchanges). We keep body_html and let the
+    // dashboard collapse the quoted reply chain client-side. The plain-text
+    // body field uses stripped_text — no quoted thread, signatures preserved.
     const [snapshot] = buildConversationHistorySnapshot([{
       id: 1,
       from_agent: false,
@@ -34,13 +38,10 @@ describe('buildConversationHistorySnapshot', () => {
       stripped_text: 'Hello the discount code I forgot to apply was WELCOME10-88ZJ6G1I',
       body_text: 'Hello the discount code I forgot to apply was WELCOME10-88ZJ6G1I',
     }]);
-    assert.equal(snapshot.body_html, CUSTOMER_STRIPPED_HTML);
+    assert.equal(snapshot.body_html, CUSTOMER_BODY_HTML_WITH_QUOTE);
     assert.equal(snapshot.sender, 'customer');
-    // The quoted "Please provide us..." must NOT appear in stored html.
-    assert.ok(!snapshot.body_html.includes('Please provide us with'),
-      'quoted reply content leaked into stored body_html');
-    assert.ok(!snapshot.body_html.includes('gmail_quote'),
-      'gmail_quote wrapper leaked into stored body_html');
+    // Plain-text body comes from stripped_text — no quoted reply chain.
+    assert.equal(snapshot.body, 'Hello the discount code I forgot to apply was WELCOME10-88ZJ6G1I');
   });
 
   it('prefers stripped_html over body_html for agent email messages', () => {
@@ -60,16 +61,16 @@ describe('buildConversationHistorySnapshot', () => {
     assert.equal(snapshot.sender, 'agent');
   });
 
-  it('falls back to body_html when stripped_html is empty', () => {
-    const html = '<div>Only have raw body</div>';
+  it('falls back to stripped_html when body_html is empty for customer', () => {
+    const html = '<div>Only have stripped</div>';
     const [snapshot] = buildConversationHistorySnapshot([{
       id: 3,
       from_agent: false,
       channel: 'email',
       via: 'email',
       created_datetime: '2026-04-24T21:15:24+00:00',
-      body_html: html,
-      stripped_html: '',
+      body_html: '',
+      stripped_html: html,
     }]);
     assert.equal(snapshot.body_html, html);
   });

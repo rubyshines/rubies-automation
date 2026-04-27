@@ -180,8 +180,15 @@ Rules:
 function buildConversationHistorySnapshot(messages) {
   return messages.map(m => {
     const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
+    // For customer messages, avoid Gorgias stripped_html — it aggressively removes
+    // sign-offs/signatures which can strip the customer's name, address, and even
+    // part of their message. Use body_html for display (dashboard collapses quoted
+    // content client-side) and stripped_text for plain text (preserves sign-offs,
+    // removes quoted email thread). For agent messages, stripped_html is fine.
     const isCustomer = m.from_agent === false;
-    let bodyHtml = m.stripped_html || m.body_html || null;
+    let bodyHtml = isCustomer
+      ? (m.body_html || m.stripped_html || null)
+      : (m.stripped_html || m.body_html || null);
     let bodyText = isCustomer
       ? gorgias.stripHtml(m.stripped_text || m.body_html || m.body_text || '')
       : gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || '');

@@ -2769,10 +2769,16 @@ function notifyNewDrafts(drafts) {
 function cleanMessageBody(html) {
   if (!html) return html;
 
-  // Remove long dash separators and everything after them (Gorgias order notification template)
-  // Matches: ----...---- followed by Order: #XXXX or Fulfillment: etc.
-  html = html.replace(/-{5,}.*$/s, '');
-  html = html.replace(/-{5,}<br\s*\/?>.*$/si, '');
+  // Remove Gorgias intake template footer (long dash separator + order metadata).
+  // Only strip when there's no quoted/forwarded block — if the body contains a
+  // <blockquote> or gmail_quote, dashes inside it belong to a quoted earlier
+  // message (e.g. a help-center form quoted in a Gmail reply) and must be left
+  // for collapseQuotedContent to hide. A greedy /-{5,}.*$/s match here would
+  // chop closing tags out of the quote tree and break the DOM.
+  if (!/<blockquote|gmail_quote/i.test(html)) {
+    html = html.replace(/-{5,}.*$/s, '');
+    html = html.replace(/-{5,}<br\s*\/?>.*$/si, '');
+  }
 
   // Remove "Subject: ... Message: ..." blocks from agent auto-replies
   html = html.replace(/<strong>Subject:<\/strong>[\s\S]*$/i, '');
