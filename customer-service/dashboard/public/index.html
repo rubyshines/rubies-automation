@@ -30,6 +30,7 @@
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
     </nav>
     <a href="/stats" class="btn-stats" title="Performance stats">Stats</a>
+    <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
     <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
   </header>
 
@@ -123,7 +124,7 @@
                 onkeydown="if(event.key==='Enter'){event.preventDefault();refreshDraft(this.value)}else if(event.key==='Escape'){this.blur()}" />
               <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft(document.getElementById('steer-input').value)" title="Regenerate draft">&#8635;</button>
             </div>
-            <div id="draft-thinking" class="draft-thinking" style="display:none"></div>
+            <div id="draft-reasoning" class="reasoning-trace" hidden></div>
             <div id="draft-editor-wrap" class="draft-editor-wrap">
               <textarea id="draft-editor" rows="8"></textarea>
               <div id="draft-drop-overlay" class="draft-drop-overlay">
