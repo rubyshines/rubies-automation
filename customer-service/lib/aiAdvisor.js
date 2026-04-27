@@ -920,9 +920,10 @@ When a customer says they were charged customs duties or import taxes on deliver
 - NEVER say "Shall I set that up?" or "Would you like me to proceed?" Say "Does that sound right?" or "Does that sound like it will work?"
 - NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover...", "Hmm", "Actually", "Let me try again"). Just write the customer email directly. Write ONE draft, then immediately output the <structured> block. NEVER revise, critique, or re-draft your response. Your first draft is your final draft.
 - Start with "Hi," or "Hi [name]," then get straight to the point. No preambles.
-- Action tense depends on status:
-  - When ALL items are resolved (status "ready"): write actions as ALREADY DONE (past tense). The operator executes before sending. Say "I've created your exchange" not "I'll create". Say "I've processed the refund" not "I'll process". Say "I've updated the shipping address" not "I can update". This applies to ALL action types including order edits, address changes, cancellations, and warehouse holds.
-  - When status is "needs_info" (you still have questions about some items): use future tense for pending actions. Say "I can send out the tankini in size 14" or "I'll get that exchange started once we figure out the sizing." Don't claim you've done something the operator hasn't executed yet.
+- Action tense and structured fields MUST agree. The prose and the structured block are read together by the operator — they cannot contradict each other.
+  - When status is "ready" (ALL items resolved, action committed): prose uses past tense ("I've created your exchange", "I've processed the refund", "I've updated the shipping address"). The items array MUST contain CONFIRMED entries with resolved sizes/products. operator_action_summary MUST be populated describing the exact order/profile change. Applies to ALL action types including exchanges, refunds, order edits, address changes, cancellations, warehouse holds.
+  - When status is "needs_info" (any detail still pending — color choice, size between options, product-style choice, measurement, address): prose MUST use future tense ("I'll get that exchange started once you let me know the color", "I can send out the tankini in size 14 once you confirm"). operator_action_summary MUST be null. The items array MUST contain entries with state AWAITING_DECISION (or NEEDS_MEASUREMENT) describing what's pending. Do NOT pre-commit by writing past-tense prose or filling operator_action_summary — the operator must not see a populated action box until the customer answers.
+  - Common trap (operator-steered exchanges): when the operator redirects you to a specific product but the customer still needs to pick color/size, this is needs_info, not ready. The steer commits to the product, not to the action. Future tense in the prose, no operator_action_summary, AWAITING_DECISION in items.
 - For cancellations (confirmed — second message after hold): keep it ultra-short. "No problem, I cancelled your order." (12 words). Do NOT add refund timelines, forward-looking statements, or padding.
 - When customers share personal stories (about their child, a camp, a gift for someone), keep your warmth simple and genuine. One short acknowledgment, then get to the CS task. Don't try to be overly personal or build on the story beyond a brief acknowledgment.
 - When a defect is reported: acknowledge it simply ("That shouldn't happen"). See the defect scenario rules above for how to handle different defect types.
@@ -969,7 +970,7 @@ After handling the conversation, you MUST end your final message with a structur
   "summary": "6-8 word lowercase summary of the ticket for queue list view (e.g. 'exchange AJ 14→16 too tight' or 'shipping delay customs hold australia')",
   "history_summary": "2-4 sentence prose summary of what happened on this ticket, written for a future advisor call that needs to understand it as prior history. Include the original order number and items, what the customer was asking for, the action taken (exchange/refund/defect handling), and the outcome. Example: 'Customer ordered Naomi gaff size M (order #29784). Reported the fit was too tight and requested exchange to size L. Exchange draft order #30012 created and marked paid, shipped Jan 22. Ticket closed as resolved.' Only fill this for exchange/refund/defect tickets — null otherwise.",
   "customer_sentiment": "positive|neutral|negative|null — overall tone of the customer across their messages. 'positive' = gratitude/satisfaction/resolved mood. 'negative' = frustration/upset/complaint. 'neutral' = matter-of-fact with no strong signal. null = no customer content to judge (bot-generated or internal). This is orthogonal to message_type — a refund ticket can still end positive.",
-  "operator_action_summary": "null OR a single-line natural-language description of the exact action the operator's tools must execute, matching the order changes the draft promises. Required when action_type is set OR when the draft tells the customer an exchange/refund/edit/profile-update will happen. Examples: 'exchange on order #29863: 2x AJ 10→8 Sandstone, 1x AJ 10→Flo 8 Sandstone, 1x Ruby 10→8 Black' / 'refund order #29812 for the 2x Brooke 2X' / 'update customer profile: email to laura.helpline830@passmail.com'. INCLUDE: products, quantities, sizes, colors, product swaps, order numbers — every order/profile change the draft promises. EXCLUDE: customer-facing instructions (donation drop-off addresses, washing instructions, shipping ETAs, kind words, signoffs) — those are in the draft prose, not operator tool actions. Keep it strictly to what the operator's tools will do.",
+  "operator_action_summary": "null OR a single-line natural-language description of the exact action the operator's tools must execute, matching the order changes the draft promises. MUST be null whenever status is 'needs_info' or 'gathering' — a populated summary signals the action is committed and ready to execute. Required when action_type is set OR when the draft tells the customer (in past tense) an exchange/refund/edit/profile-update has happened. Examples: 'exchange on order #29863: 2x AJ 10→8 Sandstone, 1x AJ 10→Flo 8 Sandstone, 1x Ruby 10→8 Black' / 'refund order #29812 for the 2x Brooke 2X' / 'update customer profile: email to laura.helpline830@passmail.com'. INCLUDE: products, quantities, sizes, colors, product swaps, order numbers — every order/profile change the draft promises. EXCLUDE: customer-facing instructions (donation drop-off addresses, washing instructions, shipping ETAs, kind words, signoffs) — those are in the draft prose, not operator tool actions. Keep it strictly to what the operator's tools will do.",
   "audit": ["reasoning step 1", "reasoning step 2"]
 }
 </structured>
@@ -1031,9 +1032,15 @@ function stripInternalThinking(text) {
 // Post-generation validation — catch obvious hallucinations
 // ---------------------------------------------------------------------------
 
-function validateResponse(composedResponse, toolsCalled, audit) {
+function validateResponse(composedResponse, toolsCalled, audit, opts = {}) {
   const warnings = [];
   let corrected = composedResponse;
+
+  // Skip the donation-address strip when the advisor is intentionally echoing
+  // a shipping address back to the customer (order_modification flow). In that
+  // case the address in the prose is the customer's own new address, not a
+  // hallucinated donation address.
+  const isAddressEchoFlow = !!opts.expectsCustomerAddress;
 
   // Check if response mentions a donation address but get_donation_partner was never called
   // Detect specific address patterns (street addresses, PO Boxes, c/o lines, multi-line addresses)
@@ -1051,7 +1058,7 @@ function validateResponse(composedResponse, toolsCalled, audit) {
     /\d+\s+[A-Z][a-z]+[^\n]{5,60}\n[A-Z][a-z]+[^\n]{3,40}\n?[A-Z]{2}\s+\d{4,6}/gi,
   ];
 
-  if (!calledDonationTool) {
+  if (!calledDonationTool && !isAddressEchoFlow) {
     for (const pattern of addressPatterns) {
       if (pattern.test(corrected)) {
         warnings.push('HALLUCINATION_FIX: Stripped hallucinated donation address (get_donation_partner was never called)');
@@ -1348,8 +1355,14 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // Pattern: anything before "Hi," or "Hi [Name]," is internal thinking.
   composedResponse = stripInternalThinking(composedResponse);
 
-  // Validate for hallucinations (may correct the response)
-  const validation = validateResponse(composedResponse, toolsCalled, audit);
+  // Validate for hallucinations (may correct the response).
+  // expectsCustomerAddress: skip the donation-address strip when the advisor
+  // is echoing the customer's own new shipping address back (order_modification
+  // with new_address populated). Without this flag, the validator's broad
+  // address-pattern regex strips the legitimate echoed address.
+  const expectsCustomerAddress = parsedStructured?.action_type === 'order_modification'
+    && !!parsedStructured?.new_address;
+  const validation = validateResponse(composedResponse, toolsCalled, audit, { expectsCustomerAddress });
   composedResponse = validation.corrected;
 
   // Build compatible _structured output

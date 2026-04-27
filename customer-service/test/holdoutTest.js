@@ -22,6 +22,69 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function truncate(s, len = 500) { return s?.length > len ? s.substring(0, len) + '...' : (s || ''); }
 function wordCount(s) { return (s || '').split(/\s+/).filter(Boolean).length; }
 
+// Phase 2 visibility helpers — surface structured-output shape per ticket so
+// drift between prose and structured fields can be spotted without changing
+// the AI judge. See project_structured_output_consistency.md.
+function summarizeStructured(structured) {
+  if (!structured) return null;
+  const items = structured.prescription?.items || structured.items || [];
+  return {
+    status: structured.status || null,
+    message_type: structured.message_type || null,
+    action_type: structured.action_type || null,
+    operator_action_summary: structured.operator_action_summary || null,
+    items_count: items.length,
+    item_states: items.map(it => it?.state || null),
+    item_products: items.map(it => it?.product || it?.resolved_product || null),
+    item_resolved_sizes: items.map(it => it?.resolved_size || null),
+  };
+}
+
+const PAST_TENSE_ACTION = /\bI(?:'ve| have)\s+(created|processed|issued|refunded|cancelled|canceled|updated|placed|shipped|set up|put|sent|made|added|removed|swapped)\b/i;
+const FUTURE_TENSE_ACTION = /\bI(?:'ll| will| can)\s+(create|process|issue|refund|cancel|update|place|ship|set up|put|send|make|add|remove|swap|get)\b/i;
+
+function detectProseTense(prose) {
+  if (!prose) return 'none';
+  const past = PAST_TENSE_ACTION.test(prose);
+  const future = FUTURE_TENSE_ACTION.test(prose);
+  if (past && future) return 'mixed';
+  if (past) return 'past';
+  if (future) return 'future';
+  return 'none';
+}
+
+// Returns array of human-readable drift flags. Empty = consistent.
+function checkConsistency({ status, action_type, operator_action_summary, items_count, item_states }, proseTense) {
+  const flags = [];
+  const isReady = status === 'ready' || status === 'action_needed';
+  const isPending = status === 'needs_info' || status === 'gathering';
+  const hasAwaitingItem = (item_states || []).some(s => s === 'AWAITING_DECISION' || s === 'NEEDS_MEASUREMENT');
+  const hasConfirmedItem = (item_states || []).some(s => s === 'CONFIRMED' || s === 'REFUND_CONFIRMED');
+
+  if (proseTense === 'past' && isPending) {
+    flags.push('past_tense_with_needs_info');
+  }
+  if (proseTense === 'future' && isReady && action_type) {
+    flags.push('future_tense_with_ready_action');
+  }
+  if (operator_action_summary && isPending) {
+    flags.push('oas_populated_with_needs_info');
+  }
+  if (proseTense === 'past' && !operator_action_summary && (action_type || hasConfirmedItem)) {
+    flags.push('past_tense_no_oas');
+  }
+  if (isPending && items_count === 0 && (action_type || operator_action_summary)) {
+    flags.push('action_committed_but_no_items');
+  }
+  if (isReady && action_type && !operator_action_summary) {
+    flags.push('ready_action_no_oas');
+  }
+  if (isPending && !hasAwaitingItem && items_count > 0 && hasConfirmedItem && proseTense === 'future') {
+    flags.push('needs_info_but_all_items_confirmed');
+  }
+  return flags;
+}
+
 async function judge(client, customerMessage, hybridResponse, actualReply) {
   try {
     const result = await client.messages.create({
@@ -130,6 +193,9 @@ async function main() {
     let hybridResponse = '';
     let hybridStatus = 'error';
     let hybridError = null;
+    let structuredSummary = null;
+    let proseTense = 'none';
+    let driftFlags = [];
 
     try {
       const result = await aiAdvisor({
@@ -140,6 +206,11 @@ async function main() {
       });
       hybridResponse = result?._structured?._composedResponse || '';
       hybridStatus = result?._structured?.status || 'unknown';
+      structuredSummary = summarizeStructured(result?._structured);
+      proseTense = detectProseTense(hybridResponse);
+      if (structuredSummary) {
+        driftFlags = checkConsistency(structuredSummary, proseTense);
+      }
     } catch (e) {
       hybridError = e.message;
       console.log(`  Hybrid error: ${e.message.substring(0, 80)}`);
@@ -173,6 +244,9 @@ async function main() {
       hybridStatus,
       hybridError,
       scores,
+      structured: structuredSummary,
+      proseTense,
+      driftFlags,
     };
 
     results.push(entry);
@@ -181,6 +255,9 @@ async function main() {
       ? `act=${scores.action} tone=${scores.tone} len=${scores.length} acc=${scores.accuracy} match=${scores.match}`
       : 'no scores';
     console.log(`  Jamie: ${wordCount(jamieReply)}w | Hybrid: ${wordCount(hybridResponse)}w | ${scoreSummary}`);
+    if (structuredSummary) {
+      console.log(`  Structured: status=${structuredSummary.status} action=${structuredSummary.action_type || '-'} oas=${structuredSummary.operator_action_summary ? 'set' : 'null'} items=${structuredSummary.items_count}[${structuredSummary.item_states.join(',') || '-'}] tense=${proseTense}${driftFlags.length ? ' DRIFT=' + driftFlags.join(',') : ''}`);
+    }
     console.log(`  Running: close=${closeCount} partial=${partialCount} diff=${diffCount}\n`);
 
     // Save progress after each
@@ -210,6 +287,29 @@ async function main() {
   const jamieAvg = Math.round(scored.reduce((s, r) => s + r.jamieWordCount, 0) / scored.length);
   const hybridAvg = Math.round(scored.reduce((s, r) => s + r.hybridWordCount, 0) / scored.length);
   console.log(`\nWord counts: Jamie avg=${jamieAvg}, Hybrid avg=${hybridAvg}`);
+
+  // Phase 2 visibility: structured-output drift summary
+  const withStructured = results.filter(r => r.structured);
+  const drifted = withStructured.filter(r => r.driftFlags && r.driftFlags.length > 0);
+  console.log('\n----------------------------------------');
+  console.log('  STRUCTURED-OUTPUT VISIBILITY');
+  console.log('----------------------------------------');
+  console.log(`Drafts with structured block: ${withStructured.length}`);
+  console.log(`Drafts with drift flags:      ${drifted.length}`);
+  if (drifted.length > 0) {
+    const flagCounts = {};
+    for (const r of drifted) {
+      for (const f of r.driftFlags) flagCounts[f] = (flagCounts[f] || 0) + 1;
+    }
+    console.log('\nFlag breakdown:');
+    for (const [flag, n] of Object.entries(flagCounts).sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${n}x  ${flag}`);
+    }
+    console.log('\nDrifted tickets:');
+    for (const r of drifted) {
+      console.log(`  ${r.ticket}  status=${r.structured.status} oas=${r.structured.operator_action_summary ? 'set' : 'null'} items=${r.structured.items_count} tense=${r.proseTense}  flags=${r.driftFlags.join(',')}`);
+    }
+  }
 
   console.log(`\nResults saved: customer-service/test/holdout-results.json`);
 
