@@ -2769,25 +2769,23 @@ function notifyNewDrafts(drafts) {
 function cleanMessageBody(html) {
   if (!html) return html;
 
-  // Remove Gorgias intake template footer (long dash separator + order metadata).
-  // Only strip when there's no quoted/forwarded block — if the body contains a
-  // <blockquote> or gmail_quote, dashes inside it belong to a quoted earlier
-  // message (e.g. a help-center form quoted in a Gmail reply) and must be left
-  // for collapseQuotedContent to hide. A greedy /-{5,}.*$/s match here would
-  // chop closing tags out of the quote tree and break the DOM.
+  // Skip the greedy template-footer strips when the body contains a quoted
+  // block (<blockquote>, gmail_quote). Markers like the dash separator,
+  // "Subject:/Message:", and the team-name footer often appear *inside* a
+  // quoted earlier message — stripping greedily from there to end-of-string
+  // chops closing tags out of the quote tree and breaks the DOM, which
+  // prevents collapseQuotedContent from cleanly hiding the quote.
+  // collapseQuotedContent will handle the quote (and everything inside it)
+  // on its own.
   if (!/<blockquote|gmail_quote/i.test(html)) {
     html = html.replace(/-{5,}.*$/s, '');
     html = html.replace(/-{5,}<br\s*\/?>.*$/si, '');
+    html = html.replace(/<strong>Subject:<\/strong>[\s\S]*$/i, '');
+    html = html.replace(/\bSubject:\s*\n.*Message:\s*\n/gi, '');
+    html = html.replace(/The RUBIES Customer Care team\s*$/i, '');
   }
 
-  // Remove "Subject: ... Message: ..." blocks from agent auto-replies
-  html = html.replace(/<strong>Subject:<\/strong>[\s\S]*$/i, '');
-  html = html.replace(/\bSubject:\s*\n.*Message:\s*\n/gi, '');
-
-  // Remove Gorgias template footers
-  html = html.replace(/The RUBIES Customer Care team\s*$/i, '');
-
-  // Clean up trailing whitespace/breaks
+  // Always safe: trim trailing whitespace/breaks.
   html = html.replace(/(<br\s*\/?\s*>|\s)+$/gi, '');
 
   return html;
