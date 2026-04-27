@@ -185,7 +185,7 @@ function getVariantSize(variant) {
   const opts = variant.selectedOptions || [];
   // Explicit "Size" or "Youth Size" option name
   const sizeOpt = opts.find(o => o.name.toLowerCase().includes('size'));
-  if (sizeOpt) return sizeOpt.value.toLowerCase().trim();
+  if (sizeOpt) return normalizeSizeLower(sizeOpt.value);
   // Fallback: find option whose value is a known size
   for (const o of opts) {
     const val = o.value.toLowerCase().trim();

@@ -17,6 +17,17 @@ if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: path.resolve(__dirname, '../..', '.env') });
 }
 
+const { execSync } = require('child_process');
+
+// Capture git version at startup
+let GIT_VERSION;
+try {
+  const hash = execSync('git rev-parse HEAD', { cwd: __dirname, encoding: 'utf8' }).trim();
+  const short = hash.slice(0, 7);
+  const date = execSync('git log -1 --format=%ci', { cwd: __dirname, encoding: 'utf8' }).trim();
+  GIT_VERSION = { hash, short, date, started: new Date().toISOString() };
+} catch { GIT_VERSION = { hash: 'unknown', short: '???', date: '', started: new Date().toISOString() }; }
+
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
@@ -304,70 +315,6 @@ async function apiSendDraft(id, body) {
   await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', extraFields);
 
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
-}
-
-async function apiExecuteAction(id) {
-  const supabase = getSupabaseClient();
-
-  const { data: draft, error: fetchErr } = await supabase
-    .from('cs_ai_drafts')
-    .select('*')
-    .eq('id', id)
-    .single();
-  if (fetchErr) throw fetchErr;
-
-  if (!draft.action_type) throw new Error('No action to execute for this draft');
-  if (draft.action_executed_at) throw new Error('Action already executed');
-
-  const structured = draft.structured_output;
-  const results = {};
-
-  // Import the MCP tool handlers
-  const exchangeOrderTools = require('../lib/tools/exchangeOrder');
-  const refundOrderTools = require('../lib/tools/refundOrder');
-  const exchangeHandler = exchangeOrderTools.find(t => t.name === 'create_exchange_order')?.handler;
-  const refundHandler = refundOrderTools.find(t => t.name === 'refund_order')?.handler;
-
-  if (draft.action_type.includes('exchange') && exchangeHandler) {
-    // Build exchange params from structured output
-    const items = (structured.intake?.items || []).filter(i => i.resolved_size);
-    if (items.length > 0) {
-      try {
-        const exchangeResult = await exchangeHandler({
-          customer_email: draft.customer_email,
-          items: items.map(i => ({
-            product: i.resolved_product || i.product,
-            size: i.resolved_size,
-            color: i._orderColors?.[0] || i.color,
-            quantity: i._orderQty || 1,
-          })),
-        });
-        results.exchange = exchangeResult;
-      } catch (err) {
-        results.exchange = { error: err.message };
-      }
-    }
-  }
-
-  if (draft.action_type.includes('refund') && refundHandler) {
-    try {
-      const refundResult = await refundHandler({
-        customer_email: draft.customer_email,
-        order_number: draft.order_number,
-      });
-      results.refund = refundResult;
-    } catch (err) {
-      results.refund = { error: err.message };
-    }
-  }
-
-  // Update draft with action result
-  await supabase.from('cs_ai_drafts').update({
-    action_result: results,
-    action_executed_at: new Date().toISOString(),
-  }).eq('id', id);
-
-  return results;
 }
 
 async function apiCloseDraft(id, body) {
@@ -1450,6 +1397,12 @@ function extractActionLinks(toolResults) {
       const draftNum = text.match(/#D(\d+)/);
       links.push({ type: 'draft', label: `Draft ${draftNum ? draftNum[0] : ''}`, url: m[0] });
     }
+    // Shopify discount code links — code string is on a separate line in tool output
+    const discountMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+\/discounts\/(\d+)/g);
+    for (const m of discountMatches) {
+      const codeMatch = text.match(/`([A-F0-9]{10})`/i);
+      links.push({ type: 'discount', label: codeMatch ? `Code ${codeMatch[1]}` : 'Discount code', url: m[0] });
+    }
   }
   // Dedupe by URL
   return dedupeLinks(links);
@@ -1505,14 +1458,20 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
     },
   };
 
-  // Detect if a completing action was performed
-  const completedAction = result.tool_results.some(tr =>
-    (tr.tool === 'refund_order' && tr.input?.confirmed) ||
-    (tr.tool === 'create_exchange_order' && tr.input?.confirmed) ||
-    (tr.tool === 'edit_order' && tr.input?.confirmed) ||
-    (tr.tool === 'warehouse_hold') ||
-    (tr.result && typeof tr.result === 'string' && /completed|refunded|created|hold placed/i.test(tr.result))
-  );
+  // Detect if a completing action was performed.
+  // CRITICAL: phase-1 previews include words like "Created" (e.g. "**Exchange Draft
+  // Order Created — Awaiting Confirmation**") so we must exclude any tool result
+  // still flagged as awaiting confirmation, otherwise the dashboard locks the panel
+  // into "executed" mode and the Yes/No confirm buttons never render.
+  const completedAction = result.tool_results.some(tr => {
+    if (tr.result && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)) return false;
+    if (tr.tool === 'refund_order' && tr.input?.confirmed) return true;
+    if (tr.tool === 'create_exchange_order' && tr.input?.confirmed) return true;
+    if (tr.tool === 'edit_order' && tr.input?.confirmed) return true;
+    if (tr.tool === 'warehouse_hold') return true;
+    return tr.result && typeof tr.result === 'string'
+      && /\b(completed|refunded|hold placed|edit committed|address updated)\b/i.test(tr.result);
+  });
   if (completedAction && !draft.action_executed_at) {
     updates.action_executed_at = new Date().toISOString();
     // Transition status: action_needed → ready (action has been executed)
@@ -1704,7 +1663,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     // 2. Recent orders
     supabase
       .from('orders')
-      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments')
+      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
       .eq('customer_email', email)
       .order('created_at', { ascending: false })
       .limit(10),
@@ -1772,7 +1731,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     if (!matchedOrder) {
       const { data: directOrder } = await supabase
         .from('orders')
-        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments')
+        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
         .eq('order_number', orderNum)
         .maybeSingle();
       if (directOrder) matchedOrder = directOrder;
@@ -1801,6 +1760,12 @@ async function apiGetCustomerContext(email, orderNumber) {
         order_number: matchedOrder.order_number,
         created_at: matchedOrder.created_at,
         total: matchedOrder.current_total_price || matchedOrder.total_price,
+        subtotal: matchedOrder.subtotal_price,
+        total_discounts: matchedOrder.total_discounts,
+        tags: matchedOrder.tags || [],
+        discount_applications: matchedOrder.discount_applications || [],
+        discount_codes: matchedOrder.discount_codes || [],
+        note: matchedOrder.note || null,
         shipping: matchedOrder.total_shipping || 0,
         shipping_method: matchedOrder.shipping_method || null,
         currency: matchedOrder.shop_currency,
@@ -1851,6 +1816,12 @@ async function apiGetCustomerContext(email, orderNumber) {
     order_number: o.order_number,
     created_at: o.created_at,
     total: o.current_total_price || o.total_price,
+    subtotal: o.subtotal_price,
+    total_discounts: o.total_discounts,
+    tags: o.tags || [],
+    discount_applications: o.discount_applications || [],
+    discount_codes: o.discount_codes || [],
+    note: o.note || null,
     currency: o.shop_currency,
     fulfillment_status: o.fulfillment_status,
     financial_status: o.financial_status,
@@ -1934,7 +1905,7 @@ async function apiGetTickets(query) {
 
   let q = supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at, last_customer_message_at, auto_close_path')
     .order(tab === 'parked' ? 'parked_at' : 'updated_at', { ascending: tab === 'parked' })
     .limit(limit);
 
@@ -2244,7 +2215,6 @@ const paramRoutes = [
   }},
   { method: 'GET', pattern: /^\/api\/drafts\/(\d+)$/, handler: (_, id) => apiGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/send$/, handler: (body, id) => apiSendDraft(parseInt(id), body) },
-  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute$/, handler: (body, id) => apiExecuteAction(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/exchange$/, handler: (body, id) => apiExecuteExchange(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/refund$/, handler: (body, id) => apiExecuteRefund(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
@@ -2466,11 +2436,11 @@ async function handleRequest(req, res) {
   const pathname = url.pathname;
   const host = req.headers.host || '';
 
-  // ── Health check ──
-  if (pathname === '/health') {
+  // ── Health check + version ──
+  if (pathname === '/health' || pathname === '/api/version') {
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(200);
-    res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
+    res.end(JSON.stringify({ status: 'ok', version: GIT_VERSION }));
     return;
   }
 

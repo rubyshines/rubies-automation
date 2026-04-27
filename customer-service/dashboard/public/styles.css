@@ -680,6 +680,20 @@ main { height: calc(100vh - 56px); }
   white-space: nowrap;
 }
 
+/* Strike-through original line item price when the order was a free exchange.
+   Sits inline next to the effective ($0) paid amount so both are visible. */
+.order-item-price-original {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  margin-right: 6px;
+}
+
+.order-item-price-effective {
+  color: var(--green);
+  font-weight: 700;
+}
+
 .order-tracking {
   display: flex;
   align-items: center;
@@ -724,6 +738,72 @@ main { height: calc(100vh - 56px); }
   text-align: right;
   padding-top: 6px;
   border-top: 1px solid var(--border);
+}
+
+/* "(was $X)" inline annotation next to the total on free exchanges */
+.ticket-order-total-was {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+/* Subtotal struck through on partial-discount orders, sits inline before the total */
+.ticket-order-subtotal-strike {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+/* "Discount applied: −$X.XX" row above the total on partial-discount orders */
+.ticket-order-discount-row {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+  text-align: right;
+  padding-top: 4px;
+}
+
+/* Small pill in the order-card header indicating discount state */
+.ticket-order-discount-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  vertical-align: middle;
+}
+.ticket-order-discount-pill--exchange {
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+.ticket-order-discount-pill--partial {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+/* Secondary line under the order header: source order # for exchanges,
+   or the actual discount code for partial promos. */
+.ticket-order-discount-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.ticket-order-discount-meta code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: var(--surface-inset);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
 }
 
 .context-details {
@@ -832,6 +912,21 @@ main { height: calc(100vh - 56px); }
   font-size: 11px;
 }
 
+/* Past-order summary amount: original (strike-through) and effective ($0/total) shown together
+   so the operator sees both the list price and what the customer actually paid. */
+.past-order-amount-original {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-size: 11px;
+  text-decoration: line-through;
+  margin-right: 3px;
+}
+.past-order-amount-effective {
+  color: var(--green);
+  font-weight: 700;
+  font-size: 12px;
+}
+
 .past-order-status {
   font-size: 10px;
   font-weight: 600;
@@ -885,6 +980,53 @@ main { height: calc(100vh - 56px); }
   color: var(--text-secondary);
   font-weight: 500;
   flex-shrink: 0;
+}
+
+/* Strike-through original line item price for past orders that were free
+   exchanges. Sits next to .past-order-item-price-effective showing the $0. */
+.past-order-item-price-original {
+  color: var(--text-tertiary);
+  font-weight: 400;
+  flex-shrink: 0;
+  text-decoration: line-through;
+  margin-right: 4px;
+}
+
+.past-order-item-price-effective {
+  color: var(--green);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Inline discount pill in the past-order summary row (partial-discount orders) */
+.past-order-discount-pill {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+/* Footer line in expanded past-order body summarizing the savings */
+.past-order-savings {
+  margin-top: 6px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--green);
+}
+.past-order-savings code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: var(--surface-inset);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--text);
 }
 
 .past-order-load-more {
@@ -1590,20 +1732,296 @@ main { height: calc(100vh - 56px); }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* ─── Draft Thinking Trace ─────────────────────────────── */
-.draft-thinking {
+/* ─── Reasoning Trace ──────────────────────────────────────
+   Shared component for AI Draft refresh + Operator Agent.
+   A quiet, breathing timeline of what the model is doing.
+   ─────────────────────────────────────────────────────────── */
+.reasoning-trace {
+  --trace-rail: var(--border);
+  --trace-dot-rest: var(--text-tertiary);
+  --trace-dot-active: var(--teal);
+  --trace-dot-error: var(--red);
+  --trace-glow: rgba(26, 143, 125, 0.22);
+  position: relative;
+  margin: 4px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #fbfaf8 0%, #f6f4f0 100%);
   font-size: 12px;
-  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.reasoning-trace[data-state="live"] {
+  border-color: rgba(26, 143, 125, 0.35);
+  box-shadow: 0 0 0 3px rgba(26, 143, 125, 0.05);
+}
+.reasoning-trace[data-state="error"] {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: linear-gradient(180deg, #fef9f8 0%, #fdeeec 100%);
+}
+.reasoning-trace[data-collapsed="true"] .trace-body { display: none; }
+.reasoning-trace[data-collapsed="false"] .trace-summary-bar { display: none; }
+
+.trace-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.5);
+}
+.trace-header-mark {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--teal);
+  flex-shrink: 0;
+}
+.reasoning-trace[data-state="live"] .trace-header-mark {
+  animation: trace-mark-spin 2.4s linear infinite;
+}
+.reasoning-trace[data-state="error"] .trace-header-mark { color: var(--red); }
+.trace-header-label {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.trace-header-meta {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
   color: var(--text-tertiary);
-  font-style: italic;
-  border-left: 2px solid var(--border);
-  padding: 6px 10px;
-  margin-bottom: 6px;
+}
+.trace-header-meta .trace-pulse {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 0 var(--trace-glow);
+  animation: trace-pulse 1.4s ease-in-out infinite;
+}
+.reasoning-trace:not([data-state="live"]) .trace-pulse { display: none; }
+
+.trace-body {
+  padding: 10px 14px 12px;
+}
+
+/* Steps timeline */
+.trace-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+.trace-steps::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: var(--trace-rail);
+}
+.trace-steps:empty { display: none; }
+
+.trace-step {
+  position: relative;
+  padding: 4px 0 4px 24px;
+  min-height: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trace-step + .trace-step { margin-top: 2px; }
+
+.trace-step::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 9px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1.5px solid var(--trace-dot-rest);
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+.trace-step[data-status="running"]::before {
+  background: var(--trace-dot-active);
+  border-color: var(--trace-dot-active);
+  box-shadow: 0 0 0 0 var(--trace-glow);
+  animation: trace-pulse 1.4s ease-in-out infinite;
+}
+.trace-step[data-status="done"]::before {
+  background: var(--trace-dot-active);
+  border-color: var(--trace-dot-active);
+}
+.trace-step[data-status="error"]::before {
+  background: var(--trace-dot-error);
+  border-color: var(--trace-dot-error);
+}
+
+.trace-step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  cursor: default;
+}
+.trace-step.has-detail .trace-step-row {
+  cursor: pointer;
+  user-select: none;
+}
+.trace-step.has-detail .trace-step-row::after {
+  content: '▸';
+  font-size: 9px;
+  color: var(--text-tertiary);
+  margin-left: 2px;
+  transition: transform 0.15s ease;
+}
+.trace-step.has-detail[data-open="true"] .trace-step-row::after {
+  transform: rotate(90deg);
+}
+
+.trace-step-kind {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 1px 6px;
+  border-radius: 3px;
   background: var(--surface-inset);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  max-height: 80px;
-  overflow-y: auto;
+}
+.trace-step[data-kind="tool"] .trace-step-kind { color: var(--teal); background: var(--teal-soft); }
+.trace-step[data-kind="status"] .trace-step-kind { color: var(--text-secondary); }
+.trace-step[data-status="error"] .trace-step-kind { color: var(--red); background: var(--red-bg); }
+
+.trace-step-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+  word-break: break-word;
+}
+.trace-step[data-kind="status"] .trace-step-label {
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.trace-step-meta {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.trace-step-detail {
+  display: none;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-height: 240px;
+  overflow: auto;
   white-space: pre-wrap;
+  word-break: break-word;
+}
+.trace-step[data-open="true"] .trace-step-detail { display: block; }
+
+/* Live "thinking aloud" panel */
+.trace-live {
+  margin-top: 10px;
+  padding: 9px 12px 9px 14px;
+  border-left: 2px solid var(--teal);
+  background: rgba(26, 143, 125, 0.05);
+  border-radius: 0 6px 6px 0;
+  font-style: italic;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+  position: relative;
+}
+.trace-live:empty { display: none; }
+.trace-live::after {
+  content: '';
+  display: inline-block;
+  width: 6px; height: 13px;
+  vertical-align: -2px;
+  margin-left: 2px;
+  background: var(--teal);
+  opacity: 0.7;
+  animation: trace-caret 1s steps(2) infinite;
+}
+.reasoning-trace:not([data-state="live"]) .trace-live::after { display: none; }
+
+/* Collapsed summary bar */
+.trace-summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.15s ease;
+}
+.trace-summary-bar:hover { background: rgba(0,0,0,0.02); }
+.trace-summary-icon {
+  color: var(--teal);
+  font-size: 13px;
+  line-height: 1;
+}
+.reasoning-trace[data-state="error"] .trace-summary-icon { color: var(--red); }
+.trace-summary-text { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+.trace-summary-expand {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.trace-summary-expand::after { content: ' ▾'; }
+
+@keyframes trace-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--trace-glow); }
+  70%  { box-shadow: 0 0 0 6px rgba(26, 143, 125, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(26, 143, 125, 0); }
+}
+@keyframes trace-mark-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes trace-caret {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 0; }
+}
+
+/* Inside operator chat: tighter, transparent shell */
+.action-chat-messages .reasoning-trace {
+  align-self: stretch;
+  margin: 2px 0;
+  background: transparent;
+  border-color: var(--border);
+}
+.action-chat-messages .reasoning-trace .trace-header {
+  background: transparent;
 }
 
 /* ─── Draft Drop Zone & Attachments ─────────────────────── */
@@ -1784,6 +2202,14 @@ main { height: calc(100vh - 56px); }
   letter-spacing: 0.05em;
   text-transform: none;
   font-weight: 500;
+}
+.badge-auto-closed {
+  background: rgba(20, 184, 166, 0.12);
+  color: var(--teal);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 /* Queue items — spam gets visually deprioritized */
@@ -2776,6 +3202,21 @@ main { height: calc(100vh - 56px); }
   color: var(--accent);
   background: var(--accent-soft);
 }
+
+/* ─── Version Badge ─────────────────────────────────────── */
+
+.version-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  background: var(--surface-inset);
+  padding: 2px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.version-badge:hover { color: var(--text-secondary); background: var(--border); }
 
 /* ─── Logout Button ─────────────────────────────────────── */
 

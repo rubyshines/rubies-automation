@@ -33,6 +33,8 @@ function loadToolSchemas() {
     require('./tools/editOrder'),
     require('./tools/orderNotes'),
     require('./tools/createOrder'),
+    require('./tools/updateCustomer'),
+    require('./tools/discountCode'),
   ];
 
   const tools = [];
@@ -58,7 +60,8 @@ function loadToolSchemas() {
 // ---------------------------------------------------------------------------
 
 function buildSystemPrompt(context) {
-  const { customer_email, order_number, order_items, fulfillment_status, intake } = context;
+  const { customer_email, order_number, order_items, fulfillment_status, intake, draft } = context;
+  const draftResponse = draft?.draft_response || '';
 
   const itemList = (order_items || [])
     .map(i => `  - ${i.quantity || 1}x ${i.title} (SKU: ${i.sku}, size: ${i.variant || ''})`)
@@ -101,7 +104,18 @@ function buildSystemPrompt(context) {
 - Order items:
 ${itemList || '  (no items)'}
 
-## AI Advisor Suggestion
+## Authority Order (CRITICAL)
+1. **The operator's command is final.** The operator types directly into the action box, often correcting or extending the AI's draft. If the command says "2 AJs and 1 Flo" and the draft says "3 AJs", do what the operator says.
+2. **If the executed action diverges from what the draft promises the customer**, include a brief one-line "⚠️ Note:" at the bottom of the preview message — e.g. "⚠️ Note: draft text says 3 AJs but executed 2 AJs + 1 Flo. You may want to update the draft before sending." This is a heads-up, not a refusal. The two-phase preview→confirm flow lets the operator catch the discrepancy and either update the draft or proceed. Do NOT lecture or argue.
+3. The AI draft below is reference context — useful when the operator's command is terse (e.g. operator says "exchange like the draft"). Read the draft to fill gaps the operator's command leaves implicit. Never override explicit operator instructions.
+4. The structured hint is the weakest signal — informational only.
+
+Gap filling: if the operator's command leaves something unspecified that the draft addresses (e.g. operator says "exchange the AJ" without specifying size, draft promised size 8), use the draft. If the operator was explicit and the draft disagrees, the operator wins — execute and flag.
+
+## AI Draft Reply (reference — what the customer will receive)
+${draftResponse ? `"""\n${draftResponse}\n"""` : '(no draft)'}
+
+## Structured Hint (advisor's items array — may be incomplete)
 ${advisorSuggestion}
 
 ## RUBIES Product Knowledge
@@ -130,6 +144,8 @@ Sizing systems:
 
 **Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold.
 
+**Discount codes:** Use create_discount_code when the operator says "discount", "give them X% off", "comp", "free product", or "make it free". Two modes: percent off the Discounts collection (default 10), or free_product (fixed amount = highest variant price, scoped to one product). The advisor already auto-issues 10% codes for discount_request tickets — only call this tool when the operator explicitly asks for a higher discount or a free product. Always two-phase confirmation when percent_off > 10 or mode=free_product.
+
 ## Choosing the Right Tool
 - **Same product, different size/color:** create_exchange_order (all free, $0 draft)
 - **Replacements + extras:** create_invoice_order with exchange_items + paid_items
@@ -137,6 +153,7 @@ Sizing systems:
 - **Unfulfilled order changes:** edit_order (auto-handles invoice/refund for price diff)
 - **Pure refund:** refund_order
 - **New standalone order:** create_order
+- **Discount code (>10% or free product):** create_discount_code
 
 ## Rules
 - Always show a preview first (phase 1), then wait for operator confirmation before completing (phase 2).

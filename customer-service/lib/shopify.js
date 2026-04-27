@@ -384,6 +384,27 @@ async function createCustomer(input) {
   return data.customerCreate.customer;
 }
 
+async function updateCustomer(customerId, input) {
+  const data = await shopifyGraphQL(`
+    mutation customerUpdate($input: CustomerInput!) {
+      customerUpdate(input: $input) {
+        customer {
+          id
+          firstName
+          lastName
+          email
+          phone
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `, { input: { id: normalizeGid(customerId, 'Customer'), ...input } });
+  return data.customerUpdate.customer;
+}
+
 // --- Draft order mutations ---
 
 async function createDraftOrder(input) {
@@ -1176,7 +1197,50 @@ function getAdminUrl(gid) {
   if (gid.includes('/DraftOrder/')) {
     return `https://admin.shopify.com/store/${storeName}/draft_orders/${numericId}`;
   }
+  if (gid.includes('/DiscountCodeNode/') || gid.includes('/DiscountAutomaticNode/')) {
+    return `https://admin.shopify.com/store/${storeName}/discounts/${numericId}`;
+  }
   return `https://admin.shopify.com/store/${storeName}/orders/${numericId}`;
+}
+
+/**
+ * Generate a random discount code string. 10 hex chars uppercase via
+ * crypto.randomBytes — neutral format that fits any discount type
+ * (10%, 20%, free product, etc.). The Shopify discount's `title` field
+ * carries the descriptive name for admin search; the code itself is opaque.
+ */
+function randomDiscountCode() {
+  const crypto = require('crypto');
+  return crypto.randomBytes(5).toString('hex').toUpperCase();
+}
+
+/**
+ * Create a Shopify discount code via the discountCodeBasicCreate mutation.
+ * Caller assembles the BasicCodeDiscount input — this helper just wraps the call,
+ * surfaces userErrors, and returns the created node so callers can build admin
+ * links via getAdminUrl(node.id).
+ */
+async function createDiscountCode(input) {
+  const data = await shopifyGraphQL(`
+    mutation discountCodeBasicCreate($basicCodeDiscount: DiscountCodeBasicInput!) {
+      discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+        codeDiscountNode {
+          id
+          codeDiscount {
+            ... on DiscountCodeBasic {
+              title
+              status
+              startsAt
+              endsAt
+              codes(first: 1) { nodes { code } }
+            }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { basicCodeDiscount: input });
+  return data.discountCodeBasicCreate.codeDiscountNode;
 }
 
 // --- Product creation ---
@@ -1358,6 +1422,9 @@ module.exports = {
   listDraftOrders,
   normalizeGid,
   createCustomer,
+  updateCustomer,
+  createDiscountCode,
+  randomDiscountCode,
   normalizeOrderNumber,
   calculateRefund,
   createRefund,

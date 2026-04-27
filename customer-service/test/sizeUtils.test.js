@@ -329,6 +329,26 @@ describe('getVariantSize', () => {
     assert.equal(getVariantSize(variant), '12');
   });
 
+  it('normalizes word-form sizes from explicit Size option (Large→l)', () => {
+    const variant = { selectedOptions: [{ name: 'Size', value: 'Large' }] };
+    assert.equal(getVariantSize(variant), 'l');
+  });
+
+  it('normalizes word-form sizes from explicit Size option (Medium→m)', () => {
+    const variant = { selectedOptions: [{ name: 'Size', value: 'Medium' }] };
+    assert.equal(getVariantSize(variant), 'm');
+  });
+
+  it('normalizes word-form sizes from explicit Size option (Small→s)', () => {
+    const variant = { selectedOptions: [{ name: 'Size', value: 'Small' }] };
+    assert.equal(getVariantSize(variant), 's');
+  });
+
+  it('normalizes aliases from explicit Size option (XL→1x)', () => {
+    const variant = { selectedOptions: [{ name: 'Size', value: 'XL' }] };
+    assert.equal(getVariantSize(variant), '1x');
+  });
+
   it('normalizes aliases in generic options (XL→1x)', () => {
     const variant = { selectedOptions: [{ name: 'Option 1', value: 'Pink' }, { name: 'Option 2', value: 'XL' }] };
     // "xl" is in KNOWN_SIZES so it matches, then normalizeSizeLower("xl") → "1x"

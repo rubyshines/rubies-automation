@@ -196,6 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   loadStats();
+  loadVersion();
   // Smart auto-refresh: polls every 30s when visible, pauses when hidden,
   // refreshes immediately on visibility change (tab switch / app foreground)
   startAutoRefresh();
@@ -326,8 +327,9 @@ async function loadTicketQueue() {
         ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
         : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>${lastReplyAgo && t.snoozed_at ? `<span class="queue-item-replied">replied ${lastReplyAgo}</span>` : ''}`;
 
-      // Unread: never viewed, or customer replied since last view
-      const isUnread = !t.viewed_at || new Date(t.viewed_at) < new Date(t.updated_at);
+      // Unread: there's a customer message that hasn't been viewed yet
+      const isUnread = t.last_customer_message_at
+        && (!t.viewed_at || new Date(t.viewed_at) < new Date(t.last_customer_message_at));
       const readClass = isUnread ? 'unread' : 'read';
 
       // Row 2: secondary badges (only shown when there's content)
@@ -336,6 +338,7 @@ async function loadTicketQueue() {
       else if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
       if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
       if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
+      if (t.auto_close_path === 'thank_you') row2Parts.push('<span class="badge badge-auto-closed">auto-closed</span>');
 
       return `
       <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${readClass} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
@@ -755,7 +758,8 @@ async function loadCustomerContext(email, orderNumber) {
 
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
         `#${to.order_number}`, to.created_at, to.items,
-        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo, to.shipping, to.shipping_method
+        to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo, to.shipping, to.shipping_method,
+        { tags: to.tags, total_discounts: to.total_discounts, subtotal: to.subtotal, discount_applications: to.discount_applications, discount_codes: to.discount_codes, note: to.note }
       );
     }
 
@@ -830,21 +834,54 @@ function renderOtherOrders(showCount) {
 
   let html = visible.map(o => {
     const shopUrl = shopifyAdminUrl(o.shopify_order_id);
-    const isExchange = parseFloat(o.total) === 0;
+    const discount = classifyOrderDiscount({
+      tags: o.tags,
+      total: o.total,
+      total_discounts: o.total_discounts,
+      subtotal: o.subtotal,
+      discount_applications: o.discount_applications,
+      discount_codes: o.discount_codes,
+      note: o.note,
+    });
+    const isExchange = discount.type === 'exchange';
+    const isPartialDiscount = discount.type === 'partial';
     const statusLower = (o.fulfillment_status || '').toLowerCase();
     const statusColor = statusLower === 'fulfilled' ? 'var(--green)' : statusLower === 'unfulfilled' ? 'var(--yellow)' : 'var(--text-tertiary)';
-    const amountStr = isExchange ? '<span class="past-order-exchange">Exch</span>' : `$${Number(o.total).toFixed(0)}`;
+    const amountStr = isExchange
+      ? `<span class="past-order-amount-original">$${discount.discounts.toFixed(0)}</span> <span class="past-order-amount-effective">$0</span>`
+      : isPartialDiscount
+      ? `<span class="past-order-amount-original">$${discount.subtotal.toFixed(0)}</span> <span class="past-order-amount-effective">$${Number(o.total).toFixed(0)}</span>`
+      : `$${Number(o.total).toFixed(0)}`;
 
-    const itemsHtml = (o.items || []).map(i =>
-      `<div class="past-order-item">
+    const itemsHtml = (o.items || []).map(i => {
+      let priceCell = '';
+      if (i.price != null) {
+        if (isExchange) {
+          // Original price struck through next to the effective $0
+          priceCell = `<span class="past-order-item-price-original">$${Number(i.price).toFixed(0)}</span> <span class="past-order-item-price-effective">$0</span>`;
+        } else {
+          priceCell = `<span class="past-order-item-price">$${Number(i.price).toFixed(0)}</span>`;
+        }
+      }
+      return `<div class="past-order-item">
         <span class="past-order-item-qty">${i.quantity}x</span>
         <div class="past-order-item-info">
           <span class="past-order-item-name">${esc(i.title)}</span>
           ${i.variant ? `<span class="past-order-item-variant">${esc(i.variant)}</span>` : ''}
         </div>
-        ${i.price != null ? `<span class="past-order-item-price">$${Number(i.price).toFixed(0)}</span>` : ''}
-      </div>`
-    ).join('');
+        ${priceCell}
+      </div>`;
+    }).join('');
+
+    // Footer line: surfaces the discount label, savings, and (for exchanges) source order
+    let savingsRow = '';
+    if (isExchange && discount.discounts > 0) {
+      const sourceBit = discount.sourceOrder ? ` · from #${esc(discount.sourceOrder)}` : '';
+      savingsRow = `<div class="past-order-savings">Free exchange · saved $${discount.discounts.toFixed(2)}${sourceBit}</div>`;
+    } else if (isPartialDiscount) {
+      const codeBit = discount.code ? ` · code <code>${esc(discount.code)}</code>` : '';
+      savingsRow = `<div class="past-order-savings">Discount applied · saved $${discount.discounts.toFixed(2)}${codeBit}</div>`;
+    }
 
     // Build links row for expanded view
     let orderLinks = '';
@@ -861,6 +898,7 @@ function renderOtherOrders(showCount) {
       <div class="past-order-items">
         ${o.shipping_address ? `<div class="past-order-address">${formatAddress(o.shipping_address)}</div>` : ''}
         ${itemsHtml || '<span style="color:var(--text-tertiary);font-size:11px">No items</span>'}
+        ${savingsRow}
         ${orderLinks ? `<div class="past-order-links">${orderLinks}</div>` : ''}
       </div>
     </details>`;
@@ -874,20 +912,72 @@ function renderOtherOrders(showCount) {
   document.getElementById('other-orders-list').innerHTML = html;
 }
 
-function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo, shipping, shippingMethod) {
+/**
+ * Classify an order's discount state. Returns:
+ *   { type, discounts, subtotal, label, percent, code, sourceOrder }
+ *
+ * type:        'exchange' | 'partial' | 'none'
+ * label:       human-readable discount title (e.g. "Exchange", "Welcome 10", or the code itself)
+ * percent:     percentage discounted, when discount_applications uses percentage type
+ * code:        first discount code applied, when present (paid promos)
+ * sourceOrder: source order number extracted from `note` for exchange orders
+ *              (e.g. "Exchange from #29444 — ..." → "29444")
+ */
+function classifyOrderDiscount({ tags, total, total_discounts, subtotal, discount_applications, discount_codes, note } = {}) {
+  const tagSet = new Set(tags || []);
+  const hasExchangeTag = tagSet.has('exchange');
+  const totalNum = Number(total || 0);
+  const subtotalNum = Number(subtotal || 0);
+  const discountsNum = Number(total_discounts || 0);
+  const firstApp = (discount_applications || [])[0];
+  const code = (discount_codes || [])[0] || null;
+  const label = firstApp?.title || code || null;
+  const percent = firstApp?.value?.type === 'percentage' ? Number(firstApp.value.value) : null;
+  const noteMatch = note && /from\s+#(\d{4,7})/i.exec(note);
+  const sourceOrder = noteMatch ? noteMatch[1] : null;
+
+  if (hasExchangeTag || (totalNum === 0 && discountsNum > 0)) {
+    return { type: 'exchange', discounts: discountsNum, subtotal: subtotalNum, label, percent, code, sourceOrder };
+  }
+  if (discountsNum > 0 && totalNum < subtotalNum) {
+    return { type: 'partial', discounts: discountsNum, subtotal: subtotalNum, label, percent, code, sourceOrder };
+  }
+  return { type: 'none', label: null, percent: null, code: null, sourceOrder: null };
+}
+
+function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo, shipping, shippingMethod, discountInfo) {
   const statusColor = !fulfillmentStatus ? 'var(--text-tertiary)'
     : fulfillmentStatus.toLowerCase() === 'fulfilled' ? 'var(--green)'
     : fulfillmentStatus.toLowerCase() === 'unfulfilled' ? 'var(--yellow)'
     : 'var(--text-secondary)';
 
+  const discount = classifyOrderDiscount({
+    tags: discountInfo?.tags,
+    total,
+    total_discounts: discountInfo?.total_discounts,
+    subtotal: discountInfo?.subtotal,
+    discount_applications: discountInfo?.discount_applications,
+    discount_codes: discountInfo?.discount_codes,
+    note: discountInfo?.note,
+  });
+  const isExchange = discount.type === 'exchange';
+  const isPartialDiscount = discount.type === 'partial';
+
   const itemsHtml = (items || []).map(i => {
     const price = i.price != null ? `$${Number(i.price).toFixed(2)}` : '';
     const itemTotal = (i.price != null && i.quantity > 1) ? `$${(Number(i.price) * i.quantity).toFixed(2)}` : price;
+    let priceCell;
+    if (isExchange && i.price != null) {
+      // Strike-through original beside the effective $0.00 paid price
+      priceCell = `<span class="order-item-price-original">${itemTotal}</span> <span class="order-item-price-effective">$0.00</span>`;
+    } else {
+      priceCell = itemTotal;
+    }
     return `<tr class="order-item-row">
       <td class="order-item-qty">${i.quantity}x</td>
       <td class="order-item-name">${esc(i.title)}${i.variant ? ` <span class="order-item-variant">${esc(i.variant)}</span>` : ''}</td>
       <td class="order-item-sku">${esc(i.sku || '')}</td>
-      <td class="order-item-price">${itemTotal}</td>
+      <td class="order-item-price">${priceCell}</td>
     </tr>`;
   }).join('');
 
@@ -932,17 +1022,62 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     trackingHtml = `<div class="order-tracking">${parts.join('')}</div>${extraHtml}`;
   }
 
+  // Badge label uses the discount title from Shopify when richer than the
+  // generic "Free exchange" / "Discount applied" defaults. For exchanges
+  // the title is usually "Exchange"; for promos it's the code.
+  let discountBadge = '';
+  if (isExchange) {
+    discountBadge = `<span class="ticket-order-discount-pill ticket-order-discount-pill--exchange">Free exchange</span>`;
+  } else if (isPartialDiscount) {
+    const partialLabel = discount.code ? `Code ${esc(discount.code)}` : (discount.label ? esc(discount.label) : 'Discount applied');
+    discountBadge = `<span class="ticket-order-discount-pill ticket-order-discount-pill--partial">${partialLabel}${discount.percent ? ` · ${discount.percent}% off` : ''}</span>`;
+  }
+
+  // Optional secondary line under the order header surfacing where the
+  // exchange came from (parsed from the order note) — gives the operator
+  // a clickable hint of the original order.
+  let discountMeta = '';
+  if (isExchange && discount.sourceOrder) {
+    discountMeta = `<div class="ticket-order-discount-meta">Exchange of order #${esc(discount.sourceOrder)}</div>`;
+  } else if (isPartialDiscount && discount.code) {
+    discountMeta = `<div class="ticket-order-discount-meta">Code applied: <code>${esc(discount.code)}</code>${discount.percent ? ` · ${discount.percent}% off` : ''}</div>`;
+  }
+
+  // Total row varies by discount state. For exchanges we show $0.00 with the
+  // pre-discount value struck through beside it; partial discounts show a
+  // discount row above the total and strike the subtotal.
+  let totalRow = '';
+  if (total != null) {
+    if (isExchange && discount.discounts > 0) {
+      totalRow = `<div class="ticket-order-total">
+        Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
+        <span class="ticket-order-total-was">was $${discount.discounts.toFixed(2)}</span>
+      </div>`;
+    } else if (isPartialDiscount) {
+      const dropLabel = discount.code ? `Discount (${esc(discount.code)})` : 'Discount applied';
+      totalRow = `<div class="ticket-order-discount-row">${dropLabel}: −$${discount.discounts.toFixed(2)}</div>
+        <div class="ticket-order-total">
+          <span class="ticket-order-subtotal-strike">$${discount.subtotal.toFixed(2)}</span>
+          Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
+        </div>`;
+    } else {
+      totalRow = `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>`;
+    }
+  }
+
   return `
     <div class="ticket-order-header">
       <span class="ticket-order-title">Order ${esc(name)}</span>
       <span style="margin-left:8px;font-size:12px;color:var(--text-secondary)">${date ? timeAgo(date) : ''}</span>
       ${fulfillmentStatus ? `<span class="ticket-order-status" style="margin-left:8px;color:${statusColor}">${esc(fulfillmentStatus)}</span>` : ''}
+      ${discountBadge}
     </div>
+    ${discountMeta}
     ${addressHtml}
     <table class="order-items-table">${itemsHtml}</table>
     ${trackingHtml}
     ${shipping != null ? `<div class="ticket-order-shipping" style="font-size:12px;color:var(--text-secondary)">${shippingMethod || 'Shipping'}: ${Number(shipping) > 0 ? '$' + Number(shipping).toFixed(2) : 'Free'}</div>` : ''}
-    ${total != null ? `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>` : ''}
+    ${totalRow}
     ${linksHtml ? `<div class="order-links" style="margin-top:8px">${linksHtml}</div>` : ''}
   `;
 }
@@ -986,8 +1121,8 @@ function renderActionPanel(draft) {
 
   // Header badge
   if (actionType) {
-    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'fulfillment_check' ? 'hold' : 'edit';
-    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', fulfillment_check: 'Fulfillment Check' };
+    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'fulfillment_check' ? 'hold' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
+    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', fulfillment_check: 'Fulfillment Check', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
     const badgeLabel = badgeLabels[actionType] || actionType;
     headerEl.innerHTML = `
       <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>
@@ -1088,6 +1223,14 @@ function buildActionPrefill(draft) {
   const orderNum = (draft.order_number || '').replace('#', '');
 
   if (!actionType) return '';
+
+  // Prefer the advisor's operator_action_summary when present — it's authored
+  // alongside the draft prose and reflects everything the draft promises,
+  // including multi-item exchanges and product swaps that the items[] array
+  // sometimes under-emits.
+  if (structured.operator_action_summary && structured.operator_action_summary.trim()) {
+    return structured.operator_action_summary.trim();
+  }
 
   // Shorten product names for the command line
   function shortName(name) {
@@ -1210,6 +1353,27 @@ function buildActionPrefill(draft) {
     return `check fulfillment for order #${orderNum}`;
   }
 
+  if (actionType === 'customer_profile_update') {
+    const profile = structured.customer_profile_update || {};
+    const changes = [];
+    if (profile.new_email) changes.push(`email to ${profile.new_email}`);
+    if (profile.new_first_name || profile.new_last_name) {
+      const name = [profile.new_first_name, profile.new_last_name].filter(Boolean).join(' ');
+      changes.push(`name to ${name}`);
+    }
+    if (changes.length) return `update customer profile: ${changes.join(', ')}`;
+    return 'update customer profile';
+  }
+
+  if (actionType === 'discount_code') {
+    const dc = structured.discount_code || {};
+    if (dc.mode === 'free_product' && dc.product_query) {
+      return `create discount code: free ${dc.product_query}`;
+    }
+    const pct = typeof dc.percent_off === 'number' ? dc.percent_off : 10;
+    return `create discount code: ${pct}% off`;
+  }
+
   return '';
 }
 
@@ -1330,20 +1494,14 @@ function appendChatMessage(role, content) {
   return div;
 }
 
-function appendChatThinking() {
+function appendActionTrace() {
   const container = document.getElementById('action-chat-messages');
-  if (!container) return;
-  const div = document.createElement('div');
-  div.className = 'action-msg action-msg-thinking';
-  div.id = 'action-chat-thinking';
-  div.textContent = 'Working...';
-  container.appendChild(div);
+  if (!container) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'reasoning-trace';
+  container.appendChild(wrap);
   container.scrollTop = container.scrollHeight;
-}
-
-function removeChatThinking() {
-  const el = document.getElementById('action-chat-thinking');
-  if (el) el.remove();
+  return createReasoningTrace(wrap, { title: 'Operator Agent' });
 }
 
 async function sendActionMessage() {
@@ -1363,7 +1521,8 @@ async function sendActionMessage() {
   input.value = '';
   input.disabled = true;
   sendBtn.disabled = true;
-  appendChatThinking();
+  const trace = appendActionTrace();
+  let activeTool = null;
 
   try {
     // Use streaming endpoint — shows tool calls and responses in real-time
@@ -1392,19 +1551,12 @@ async function sendActionMessage() {
         try {
           const event = JSON.parse(line.slice(6));
           if (event.type === 'tool_call') {
-            removeChatThinking();
-            const label = (event.data?.tool || 'unknown').replace(/_/g, ' ');
-            appendChatMessage('tool', `${label}`);
-            appendChatThinking();
+            activeTool = trace?.startTool(event.data?.tool || 'tool', event.data?.input);
           } else if (event.type === 'tool_result') {
-            removeChatThinking();
-            const label = (event.data?.tool || 'unknown').replace(/_/g, ' ');
-            const resultText = event.data?.result || event.data?.error || 'Done';
-            const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
-            appendChatMessage('tool', `[${label}]\n${display}`);
-            appendChatThinking();
+            if (event.data?.error) activeTool?.error(event.data.error);
+            else activeTool?.done({ result: event.data?.result });
+            activeTool = null;
           } else if (event.type === 'text_delta') {
-            removeChatThinking();
             streamingAssistantText += event.data;
             if (!streamingEl) {
               streamingEl = appendChatMessage('assistant', streamingAssistantText);
@@ -1413,7 +1565,6 @@ async function sendActionMessage() {
             }
           } else if (event.type === 'text') {
             // Final text block (non-streaming fallback from operatorAgent)
-            removeChatThinking();
             streamingAssistantText = event.data;
             if (!streamingEl) {
               streamingEl = appendChatMessage('assistant', streamingAssistantText);
@@ -1423,6 +1574,7 @@ async function sendActionMessage() {
           } else if (event.type === 'complete') {
             finalResult = event;
           } else if (event.type === 'error') {
+            trace?.error(event.message);
             throw new Error(event.message);
           }
         } catch (e) {
@@ -1431,7 +1583,7 @@ async function sendActionMessage() {
       }
     }
 
-    removeChatThinking();
+    trace?.finalize();
 
     // Apply final result
     if (finalResult) {
@@ -1465,7 +1617,7 @@ async function sendActionMessage() {
     }
 
   } catch (err) {
-    removeChatThinking();
+    if (trace) { trace.error(err.message); trace.finalize(); }
     console.error('[action-chat] Error:', err);
     appendChatMessage('assistant', `Error: ${err.message}`);
   }
@@ -1799,6 +1951,180 @@ function updateNavArrows() {
   nextBtn.style.display = idx < currentQueueTicketIds.length - 1 ? '' : 'none';
 }
 
+// ---------------------------------------------------------------------------
+// Reasoning Trace — shared component for AI Draft refresh + Operator Agent.
+// A vertical timeline of model activity (status/tool steps) plus a live
+// "thinking aloud" panel for streamed reasoning text.
+// ---------------------------------------------------------------------------
+
+const REASONING_SPARK_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M12 16v6M2 12h6M16 12h6M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3"/></svg>';
+
+function _formatTraceDuration(ms) {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function createReasoningTrace(container, opts = {}) {
+  const startedAt = Date.now();
+  let toolCount = 0;
+  let lastRunningStep = null;
+  let collapseTimer = null;
+
+  container.hidden = false;
+  container.dataset.state = 'live';
+  container.dataset.collapsed = 'false';
+  container.innerHTML = `
+    <div class="trace-header">
+      <span class="trace-header-mark">${REASONING_SPARK_SVG}</span>
+      <span class="trace-header-label">${esc(opts.title || 'Reasoning')}</span>
+      <span class="trace-header-meta">
+        <span class="trace-pulse"></span>
+        <span class="trace-elapsed">0.0s</span>
+      </span>
+    </div>
+    <div class="trace-body">
+      <ol class="trace-steps"></ol>
+      <div class="trace-live"></div>
+    </div>
+    <div class="trace-summary-bar" title="Show full reasoning trace">
+      <span class="trace-summary-icon">&#10038;</span>
+      <span class="trace-summary-text"></span>
+      <span class="trace-summary-expand">trace</span>
+    </div>
+  `;
+
+  const stepsEl = container.querySelector('.trace-steps');
+  const liveEl = container.querySelector('.trace-live');
+  const elapsedEl = container.querySelector('.trace-elapsed');
+  const summaryBar = container.querySelector('.trace-summary-bar');
+  const summaryText = container.querySelector('.trace-summary-text');
+  const headerEl = container.querySelector('.trace-header');
+
+  summaryBar.onclick = () => { container.dataset.collapsed = 'false'; };
+  headerEl.onclick = () => {
+    if (container.dataset.state === 'live') return;
+    container.dataset.collapsed = container.dataset.collapsed === 'true' ? 'false' : 'true';
+  };
+
+  const elapsedTimer = setInterval(() => {
+    if (container.dataset.state !== 'live') return;
+    elapsedEl.textContent = ((Date.now() - startedAt) / 1000).toFixed(1) + 's';
+  }, 100);
+
+  function _markPrevDone() {
+    if (lastRunningStep && lastRunningStep.dataset.status === 'running') {
+      lastRunningStep.dataset.status = 'done';
+      const startedStr = lastRunningStep.dataset.startedAt;
+      const meta = lastRunningStep.querySelector('.trace-step-meta');
+      if (meta && !meta.textContent && startedStr) {
+        meta.textContent = _formatTraceDuration(Date.now() - parseInt(startedStr));
+      }
+    }
+    lastRunningStep = null;
+  }
+
+  function _attachDetail(li, contentText) {
+    li.classList.add('has-detail');
+    if (!li.dataset.open) li.dataset.open = 'false';
+    let detail = li.querySelector('.trace-step-detail');
+    if (!detail) {
+      detail = document.createElement('div');
+      detail.className = 'trace-step-detail';
+      li.appendChild(detail);
+      li.querySelector('.trace-step-row').addEventListener('click', () => {
+        li.dataset.open = li.dataset.open === 'true' ? 'false' : 'true';
+      });
+    }
+    const text = typeof contentText === 'string' ? contentText : JSON.stringify(contentText, null, 2);
+    detail.textContent = text.length > 4000 ? text.slice(0, 4000) + '\n…(truncated)' : text;
+  }
+
+  return {
+    status(text) {
+      _markPrevDone();
+      const li = document.createElement('li');
+      li.className = 'trace-step';
+      li.dataset.kind = 'status';
+      li.dataset.status = 'done';
+      li.innerHTML = `<div class="trace-step-row"><span class="trace-step-kind">step</span><span class="trace-step-label">${esc(text)}</span></div>`;
+      stepsEl.appendChild(li);
+    },
+    startTool(name, input) {
+      _markPrevDone();
+      toolCount++;
+      const li = document.createElement('li');
+      li.className = 'trace-step';
+      li.dataset.kind = 'tool';
+      li.dataset.status = 'running';
+      li.dataset.startedAt = String(Date.now());
+      li.innerHTML = `<div class="trace-step-row"><span class="trace-step-kind">tool</span><span class="trace-step-label">${esc((name || 'unknown').replace(/_/g, ' '))}</span><span class="trace-step-meta">running…</span></div>`;
+      stepsEl.appendChild(li);
+      lastRunningStep = li;
+      if (input && typeof input === 'object' && Object.keys(input).length) {
+        _attachDetail(li, input);
+      }
+      return {
+        done(payload) {
+          li.dataset.status = 'done';
+          const dur = Date.now() - parseInt(li.dataset.startedAt);
+          li.querySelector('.trace-step-meta').textContent = _formatTraceDuration(dur);
+          if (payload && payload.result != null) _attachDetail(li, payload.result);
+          if (lastRunningStep === li) lastRunningStep = null;
+        },
+        error(msg) {
+          li.dataset.status = 'error';
+          li.querySelector('.trace-step-meta').textContent = 'failed';
+          if (msg) { li.dataset.open = 'true'; _attachDetail(li, msg); }
+          if (lastRunningStep === li) lastRunningStep = null;
+        },
+      };
+    },
+    delta(text) {
+      liveEl.textContent += text;
+      liveEl.scrollTop = liveEl.scrollHeight;
+    },
+    setLive(text) {
+      liveEl.textContent = text;
+      liveEl.scrollTop = liveEl.scrollHeight;
+    },
+    error(msg) {
+      _markPrevDone();
+      container.dataset.state = 'error';
+      const li = document.createElement('li');
+      li.className = 'trace-step';
+      li.dataset.kind = 'status';
+      li.dataset.status = 'error';
+      li.innerHTML = `<div class="trace-step-row"><span class="trace-step-kind">error</span><span class="trace-step-label">${esc(msg || 'failed')}</span></div>`;
+      stepsEl.appendChild(li);
+      clearInterval(elapsedTimer);
+    },
+    finalize({ autoCollapse = true, keepLive = false } = {}) {
+      _markPrevDone();
+      clearInterval(elapsedTimer);
+      const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1) + 's';
+      elapsedEl.textContent = elapsed;
+      const isError = container.dataset.state === 'error';
+      container.dataset.state = isError ? 'error' : 'done';
+      if (!keepLive) liveEl.textContent = '';
+      const parts = [];
+      if (toolCount) parts.push(`${toolCount} tool${toolCount === 1 ? '' : 's'}`);
+      parts.push(elapsed);
+      summaryText.textContent = parts.join(' · ');
+      if (autoCollapse && !isError) {
+        collapseTimer = setTimeout(() => { container.dataset.collapsed = 'true'; }, 1500);
+      }
+    },
+    destroy() {
+      clearInterval(elapsedTimer);
+      if (collapseTimer) clearTimeout(collapseTimer);
+      container.hidden = true;
+      container.innerHTML = '';
+      delete container.dataset.state;
+      delete container.dataset.collapsed;
+    },
+  };
+}
+
 // Split AI internal reasoning from the customer-facing email during streaming.
 // Mirrors the server-side stripInternalThinking() patterns so the thinking shows
 // in a trace element instead of polluting the draft textarea.
@@ -1845,11 +2171,11 @@ async function refreshDraft(steer) {
     let streamedText = '';
     let finalResult = null;
 
-    // Clear editor and thinking trace
+    // Clear editor and mount reasoning trace
     editor.value = '';
     editor.placeholder = 'Generating...';
-    const thinkingEl = document.getElementById('draft-thinking');
-    if (thinkingEl) { thinkingEl.textContent = ''; thinkingEl.style.display = 'none'; }
+    const traceContainer = document.getElementById('draft-reasoning');
+    const trace = createReasoningTrace(traceContainer, { title: 'AI Draft' });
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1869,22 +2195,34 @@ async function refreshDraft(steer) {
             const displayText = streamedText.replace(/<structured>[\s\S]*$/, '').trim();
             if (currentTicketId === ticketId) {
               const { thinking, draft } = splitThinkingFromDraft(displayText);
-              if (thinking && thinkingEl) {
-                thinkingEl.textContent = thinking;
-                thinkingEl.style.display = 'block';
+              // Routing rule: the editor textarea only ever receives the
+              // customer-facing email. Pre-email reasoning goes to the trace
+              // panel, even if splitThinkingFromDraft hasn't detected an email
+              // start pattern yet (otherwise reasoning text leaks into the draft).
+              if (thinking) {
+                trace.setLive(thinking);
+                editor.value = draft;
+              } else {
+                // No split detected. Either it's pure email (starts with greeting)
+                // or pure pre-email reasoning. Probe the first line.
+                const startsWithEmail = /^(Hi[\s,]|Hey[\s,]|Hola[\s,]|No problem|Thanks |Sorry |Ooops|Ok[, ]|Doh!|D[eé]sol[eé]|For sure|That was really|Glad |Aww)/m.test(displayText);
+                if (startsWithEmail) editor.value = displayText;
+                else trace.setLive(displayText);
               }
-              editor.value = draft;
               autoExpandTextarea(editor);
             }
+          } else if (event.type === 'status') {
+            trace.status(event.text || 'working...');
           } else if (event.type === 'tool_call') {
-            // Show tool call status briefly
-            editor.placeholder = `Calling ${event.tool}...`;
+            trace.startTool(event.tool || 'tool', event.input);
           } else if (event.type === 'warning') {
             console.warn('[refresh]', event.message);
+            trace.status(`warning: ${event.message}`);
             showRetryToast(event.message);
           } else if (event.type === 'complete') {
             finalResult = event;
           } else if (event.type === 'error') {
+            trace.error(event.message);
             throw new Error(event.message);
           }
         } catch (e) {
@@ -1892,6 +2230,7 @@ async function refreshDraft(steer) {
         }
       }
     }
+    trace.finalize();
 
     // If user navigated away, just cache the result
     if (currentTicketId !== ticketId) {
@@ -2567,8 +2906,17 @@ function findFirstHumanAgentIndex(messages) {
   if (hasFlags) {
     const hasBotMessages = messages.some(m => m.sender === 'agent' && m.is_bot === true);
     if (!hasBotMessages) return 0; // No bot flow — email-only ticket
+    // Bot intake ends at whichever comes first:
+    //  (a) first non-bot agent message (the human handoff)
+    //  (b) first customer email reply that follows a bot agent message
+    //      — chat button clicks stay inside the bot region; an email reply
+    //      is always real conversation, never part of bot intake.
+    let seenBotAgent = false;
     for (let i = 0; i < messages.length; i++) {
-      if (messages[i].sender === 'agent' && messages[i].is_bot === false) return i;
+      const m = messages[i];
+      if (m.sender === 'agent' && m.is_bot === false) return i;
+      if (m.sender === 'agent' && m.is_bot === true) { seenBotAgent = true; continue; }
+      if (seenBotAgent && m.sender === 'customer' && m.channel === 'email') return i;
     }
     return -1;
   }
@@ -2631,31 +2979,84 @@ function parseHandoffTemplate(text) {
 function isOrderFormOutput(text) {
   if (!text) return false;
   const lower = text.toLowerCase();
-  return (lower.includes('order number:') && lower.includes('selected items:'))
-    || (lower.includes('selected items:') && lower.includes('total:'))
+  // Plural ("selected items:") and singular ("selected item:") variants both occur
+  return (lower.includes('order number:') && /selected items?:/.test(lower))
+    || (/selected items?:/.test(lower) && lower.includes('total:'))
     || /^#\d+\s*[-–]\s*\$[\d,.]+\s*[-–]/.test(text.trim());
 }
 
-/** Parse order form text into compact item lines with product nicknames */
+/**
+ * Help-center contact form template — single customer message with a `-----` divider
+ * separating the customer's free-text question from a metadata block (Order: / Item names: / etc.).
+ * Distinct from the chat order-form output (which is its own message).
+ */
+function isHelpCenterForm(text) {
+  if (!text) return false;
+  if (!/\n\s*-{5,}\s*\n/.test(text)) return false;
+  return /(?:^|\n)\s*(?:Order|Order number|Item names|Order placed|Shipping address)\s*:/i.test(text);
+}
+
+/** Split a help-center form body into { question, metadata } strings. */
+function splitHelpCenterForm(text) {
+  const m = text.match(/\n\s*-{5,}\s*\n/);
+  if (!m) return { question: text.trim(), metadata: '' };
+  const before = text.slice(0, m.index).trim();
+  const after = text.slice(m.index + m[0].length).trim();
+  const labelRe = /(?:^|\n)\s*(?:Order|Order number|Item names|Order placed|Shipping address|Tracking number|Fulfillment|Total)\s*:/i;
+  const beforeIsMeta = labelRe.test(before);
+  const afterIsMeta = labelRe.test(after);
+  if (afterIsMeta && !beforeIsMeta) return { question: before, metadata: after };
+  if (beforeIsMeta && !afterIsMeta) return { question: after, metadata: before };
+  // Both or neither look like metadata — default to "metadata is on the longer side"
+  return before.length >= after.length ? { question: after, metadata: before } : { question: before, metadata: after };
+}
+
+const PRODUCT_NICKNAMES = {
+  'CHARLIE': 'Charlie', 'AJ': 'AJ', 'SERENA': 'Serena', 'RUBY': 'Ruby',
+  'BROOKE': 'Brooke', 'AVA': 'Ava', 'CHEEKY': 'Cheeky', 'SASSY': 'Sassy',
+  'FLO': 'Flo', 'BIKINI': 'Bikini', 'SKY': 'Sky', 'STELLA': 'Stella',
+  'MIA': 'Mia', 'NAOMI': 'Naomi',
+};
+
+function pickNickname(rawName) {
+  const upper = rawName.toUpperCase();
+  for (const [key, nick] of Object.entries(PRODUCT_NICKNAMES)) {
+    if (upper.includes(key)) return nick;
+  }
+  return rawName;
+}
+
+/** Parse "PRODUCT - VARIANT" into { name, variant } using nicknames. */
+function parseProductVariant(raw, qty = '1') {
+  const rest = raw.trim();
+  const variantMatch = rest.match(/[-–]\s*([^-–]+)$/);
+  const variant = variantMatch ? variantMatch[1].trim() : '';
+  return { qty, name: pickNickname(rest), variant };
+}
+
+/**
+ * Parse order form text into compact item lines.
+ * Handles two templates:
+ *  - Chat order form: "1x THE BROOKE SHAPING BRA - Sandstone / 2X" lines
+ *  - Help-center form: "Item names: A - X, B - Y, C - Z" comma-separated
+ *  - Help-center return form: "Items requested for return: 1x A - X"
+ */
 function parseOrderFormItems(text) {
-  const itemLines = text.match(/\d+x\s+.+/gi) || [];
-  const nicknames = {
-    'CHARLIE': 'Charlie', 'AJ': 'AJ', 'SERENA': 'Serena', 'RUBY': 'Ruby',
-    'BROOKE': 'Brooke', 'AVA': 'Ava', 'CHEEKY': 'Cheeky', 'SASSY': 'Sassy',
-    'FLO': 'Flo', 'BIKINI': 'Bikini', 'SKY': 'Sky', 'STELLA': 'Stella',
-    'MIA': 'Mia',
-  };
+  if (!text) return [];
+
+  // Help-center "Item names:" comma-separated list (no qty prefix)
+  const itemNamesMatch = text.match(/Item names?\s*:\s*([\s\S]*?)(?=\n\s*[A-Z][^:\n]*:|$)/i);
+  if (itemNamesMatch && !/\d+x\s+/i.test(itemNamesMatch[1])) {
+    return itemNamesMatch[1].trim().split(/,\s*/).filter(Boolean).map(p => parseProductVariant(p));
+  }
+
+  // "Items requested for return: 1x ... 1x ..." or chat "1x A - X" lines
+  const itemLines = text.match(/\d+x\s+[^\n]+/gi) || [];
   return itemLines.map(line => {
     const qtyMatch = line.match(/^(\d+)x\s+/i);
     const qty = qtyMatch ? qtyMatch[1] : '1';
-    const rest = line.replace(/^\d+x\s+/i, '');
-    let name = rest;
-    for (const [key, nick] of Object.entries(nicknames)) {
-      if (rest.toUpperCase().includes(key)) { name = nick; break; }
-    }
-    const variantMatch = rest.match(/[-–]\s*([^-–]+)$/);
-    const variant = variantMatch ? variantMatch[1].trim() : '';
-    return { qty, name, variant };
+    const rest = line.replace(/^\d+x\s+/i, '').trim();
+    return parseProductVariant(rest, qty);
   });
 }
 
@@ -2766,22 +3167,36 @@ function extractCustomerWords(botMessages) {
     if (BOT_BUTTON_LABELS.has(text.toLowerCase())) continue;
     if (/^#\d+\s*-\s*\$[\d.]+\s*-\s*/i.test(text)) continue;
     if (isOrderFormOutput(text)) continue;
+    // Help-center contact form: push only the customer's free-text question.
+    // The order metadata is parsed separately by extractOrderItems and rendered as chips.
+    if (isHelpCenterForm(text)) {
+      const { question } = splitHelpCenterForm(text);
+      if (question) words.push(esc(question).replace(/\n/g, '<br>'));
+      continue;
+    }
     // Use body_html if available (preserves formatting for HTML emails)
     if (m.body_html) {
       const cleaned = cleanMessageBody(m.body_html);
       words.push(collapseQuotedContent(cleaned));
     } else {
-      words.push(esc(text));
+      words.push(esc(text).replace(/\n/g, '<br>'));
     }
   }
   return words;
 }
 
-/** Extract order items from bot flow messages */
+/** Extract order items from bot flow messages (chat order form OR help-center form) */
 function extractOrderItems(botMessages) {
   for (const m of botMessages) {
-    if (m.sender === 'customer' && isOrderFormOutput(m.body)) {
-      const items = parseOrderFormItems(m.body);
+    if (m.sender !== 'customer') continue;
+    const body = m.body || '';
+    if (isHelpCenterForm(body)) {
+      const { metadata } = splitHelpCenterForm(body);
+      const items = parseOrderFormItems(metadata);
+      if (items.length) return items;
+    }
+    if (isOrderFormOutput(body)) {
+      const items = parseOrderFormItems(body);
       if (items.length) return items;
     }
   }
@@ -2887,6 +3302,30 @@ function renderConversation(messages, ticket) {
 function formatAddress(a) {
   if (!a) return '';
   return [a.address1, a.address2, a.city, a.province, a.zip, a.country].filter(Boolean).join(', ');
+}
+
+// ---------------------------------------------------------------------------
+// Version
+// ---------------------------------------------------------------------------
+
+let _serverVersion = null;
+
+async function loadVersion() {
+  try {
+    const res = await fetch('/api/version');
+    const data = await res.json();
+    _serverVersion = data.version;
+    const badge = document.getElementById('version-badge');
+    if (badge && _serverVersion) badge.textContent = _serverVersion.short;
+  } catch { /* ignore */ }
+}
+
+function showVersionInfo() {
+  if (!_serverVersion) return;
+  const v = _serverVersion;
+  const started = v.started ? new Date(v.started).toLocaleString('en-US', { timeZone: 'America/New_York' }) : '?';
+  const committed = v.date || '?';
+  alert(`Version: ${v.hash}\nCommitted: ${committed}\nServer started: ${started}`);
 }
 
 // ---------------------------------------------------------------------------
