@@ -38,7 +38,7 @@ async function run({ execute = false } = {}) {
   }
 
   const gorgias = require('../import/gorgiasClient');
-  const { processTicket, getAiBotUserId } = require('../intake/processGorgiasTickets');
+  const { processTicket, getAiBotUserId, buildConversationHistorySnapshot } = require('../intake/processGorgiasTickets');
   const supabase = getSupabaseClient();
 
   // ── Step 1: Fetch all open tickets from Gorgias views ──
@@ -340,7 +340,7 @@ async function run({ execute = false } = {}) {
 
 async function executeResync(detection) {
   const gorgias = require('../import/gorgiasClient');
-  const { processTicket, getAiBotUserId } = require('../intake/processGorgiasTickets');
+  const { processTicket, getAiBotUserId, buildConversationHistorySnapshot } = require('../intake/processGorgiasTickets');
   const supabase = getSupabaseClient();
   const aiBotId = await getAiBotUserId();
 
@@ -376,16 +376,9 @@ async function executeResync(detection) {
       const result = await processTicket(supabase, ticket, aiBotId, existingIds);
       if (result?.skipped) {
         const messages = await gorgias.getTicketMessages(ticketId);
-        const conversationHistory = messages
-          .filter(m => m.channel !== 'internal-note')
-          .map(m => ({
-            id: m.id,
-            sender: m.from_agent ? 'agent' : 'customer',
-            body: gorgias.stripHtml(m.stripped_text || m.body_text || ''),
-            body_html: m.from_agent ? (m.stripped_html || m.body_html || '') : (m.body_html || m.stripped_html || ''),
-            created_at: m.created_datetime,
-            channel: m.channel,
-          }));
+        const conversationHistory = buildConversationHistorySnapshot(
+          messages.filter(m => m.channel !== 'internal-note')
+        );
 
         const { error: upsertErr } = await supabase
           .from('cs_tickets')
