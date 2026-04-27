@@ -71,8 +71,20 @@ ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS follow_up_stage integer DEFAULT 
 ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS test_snooze boolean DEFAULT false;
 
 -- viewed_at: tracks when the operator last viewed this ticket's detail in the dashboard.
--- A ticket is "unread" when viewed_at IS NULL or viewed_at < updated_at (customer replied since last view).
+-- last_customer_message_at: timestamp of the most recent customer message in conversation_history.
+-- A ticket is "unread" when viewed_at IS NULL or viewed_at < last_customer_message_at.
+-- We use last_customer_message_at instead of updated_at because updated_at gets bumped by
+-- agent actions, syncs, and status changes — not just new customer messages.
 ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS viewed_at timestamptz;
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS last_customer_message_at timestamptz;
+
+-- auto_close_path: marks tickets closed by an automated fast path (no human review).
+-- Mirrors the column on cs_ai_drafts so the dashboard queue can show a pill without
+-- joining. Values: 'thank_you' for the thank-you closer fast path. Null for tickets
+-- closed normally.
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS auto_close_path text;
+CREATE INDEX IF NOT EXISTS idx_tickets_auto_close_path ON cs_tickets (auto_close_path)
+  WHERE auto_close_path IS NOT NULL;
 
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts

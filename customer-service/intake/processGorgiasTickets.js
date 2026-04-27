@@ -24,6 +24,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { buildContext } = require('../lib/contextBuilder');
 const gorgias = require('../import/gorgiasClient');
 const { canonicalMessageType } = require('../lib/messageTypes');
+const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankYouClassifier');
 
 // Lazy-load AI advisor
 let _advisorHandler = null;
@@ -173,6 +174,223 @@ Rules:
 }
 
 // ---------------------------------------------------------------------------
+// Conversation history snapshot — shared between advisor and auto-close paths
+// ---------------------------------------------------------------------------
+
+function buildConversationHistorySnapshot(messages) {
+  return messages.map(m => {
+    const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
+    const isCustomer = m.from_agent === false;
+    let bodyHtml = m.stripped_html || m.body_html || null;
+    let bodyText = isCustomer
+      ? gorgias.stripHtml(m.stripped_text || m.body_html || m.body_text || '')
+      : gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || '');
+    if (sender === 'customer' && m.channel === 'help-center') {
+      bodyText = cleanHelpCenterBody(bodyText);
+      bodyHtml = null;
+    }
+    return {
+      id: m.id,
+      sender,
+      is_bot: m.from_agent !== false && m.via !== 'api' && (
+        (m.sender?.email || '').endsWith('@email.gorgias.com') || m.via === 'rule'
+      ),
+      body_html: bodyHtml,
+      body: bodyText,
+      created_at: m.created_datetime,
+      channel: m.channel,
+      attachments: (m.attachments || []).map(a => ({
+        name: a.name, url: a.url, content_type: a.content_type,
+      })),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auto-close fast path: thank-you closer
+//
+// When the customer's latest message is a pure thank-you with no new ask AND
+// our last reply already resolved the ticket (no open exchange/refund in
+// flight), skip the full advisor draft and just send a templated reply +
+// close the ticket. Always-on; failures fall through to the regular advisor.
+// ---------------------------------------------------------------------------
+
+const AUTO_CLOSE_TEMPLATES = [
+  "You're so welcome! Take care.",
+  "Anytime, happy to help.",
+  "My pleasure. Reach out anytime.",
+];
+
+function pickAutoCloseTemplate() {
+  return AUTO_CLOSE_TEMPLATES[Math.floor(Math.random() * AUTO_CLOSE_TEMPLATES.length)];
+}
+
+async function tryAutoCloseThankYou({ supabase, ticketId, messages, latestCustomerMsg }) {
+  // Precondition: there must be a prior SENT advisor reply on this ticket.
+  const { data: lastSentDraft } = await supabase
+    .from('cs_ai_drafts')
+    .select('id, sent_response, draft_response, action_type, action_executed_at, draft_kind, sent_at')
+    .eq('gorgias_ticket_id', ticketId)
+    .eq('status', 'sent')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!lastSentDraft) return { handled: false, reason: 'no_prior_sent_reply' };
+
+  // Don't auto-close after a follow-up nudge — that's a different state machine.
+  if (lastSentDraft.draft_kind && lastSentDraft.draft_kind !== 'advisor_draft') {
+    return { handled: false, reason: `prior_was_${lastSentDraft.draft_kind}` };
+  }
+
+  // Open action carve-out: never auto-close if we drafted an action that was never executed.
+  if (lastSentDraft.action_type && !lastSentDraft.action_executed_at) {
+    return { handled: false, reason: 'open_action_in_flight' };
+  }
+
+  // Cheap length guard — pure thank-you closers are short. Skips classifier on
+  // long messages where it would almost certainly return false anyway.
+  const latestText = String(latestCustomerMsg.stripped_text || latestCustomerMsg.body_text || '').trim();
+  if (!latestText) return { handled: false, reason: 'empty_message' };
+  if (latestText.length > 400) return { handled: false, reason: 'message_too_long' };
+
+  // Run classifier
+  const recent = formatMessagesForClassifier(messages, 6);
+  const priorReply = lastSentDraft.sent_response || lastSentDraft.draft_response || '';
+  const cls = await classifyThankYou({ recentMessages: recent, priorAgentReply: priorReply });
+
+  if (!cls.auto_close) {
+    return { handled: false, reason: 'classifier_negative', classifier: cls };
+  }
+
+  await sendAutoCloseReply({
+    supabase, ticketId, messages, latestCustomerMsg, lastSentDraft, classifier: cls,
+  });
+  return { handled: true, classifier: cls };
+}
+
+async function sendAutoCloseReply({ supabase, ticketId, messages, latestCustomerMsg, lastSentDraft, classifier }) {
+  const reply = pickAutoCloseTemplate();
+  const replyHtml = `<p>${reply}</p>`;
+
+  // Gorgias writes FIRST (per domain key decision: errors propagate, no split-brain).
+  const replyResult = await gorgias.createTicketReply(ticketId, {
+    body_text: reply,
+    body_html: replyHtml,
+  });
+  await gorgias.closeTicket(ticketId);
+  await gorgias.assignTicket(ticketId, null);
+  await gorgias.addTicketTag(ticketId, 'ai-resolved');
+  await gorgias.addTicketTag(ticketId, 'auto-closed-thank-you');
+
+  // Pull current ticket row so we can preserve fields we don't compute here
+  // (customer_email/name/pronouns/country, order_number, history_summary, etc).
+  const { data: existingTicket } = await supabase
+    .from('cs_tickets')
+    .select('id, customer_email, customer_name')
+    .eq('gorgias_ticket_id', ticketId)
+    .maybeSingle();
+
+  const history = buildConversationHistorySnapshot(messages);
+  history.push({
+    id: replyResult?.id || null,
+    sender: 'agent',
+    is_bot: false,
+    body: reply,
+    body_html: replyHtml,
+    created_at: new Date().toISOString(),
+    channel: 'email',
+  });
+
+  const customerMsgTimes = history
+    .filter(m => m.sender === 'customer' && m.created_at)
+    .map(m => m.created_at);
+  const lastCustomerMessageAt = customerMsgTimes.length
+    ? customerMsgTimes.sort().slice(-1)[0]
+    : null;
+
+  const now = new Date().toISOString();
+
+  const { data: ticketRow, error: ticketErr } = await supabase
+    .from('cs_tickets')
+    .upsert({
+      gorgias_ticket_id: ticketId,
+      status: 'closed',
+      closed_at: now,
+      message_type: 'closing',
+      customer_sentiment: 'positive',
+      advisor_status: 'ready',
+      confidence: 'high',
+      conversation_history: history,
+      has_agent_reply: true,
+      last_customer_message_at: lastCustomerMessageAt,
+      viewed_at: now,
+      updated_at: now,
+      gorgias_status: 'closed',
+      active_draft_id: null,
+      auto_close_path: 'thank_you',
+    }, { onConflict: 'gorgias_ticket_id' })
+    .select('id')
+    .single();
+
+  if (ticketErr) {
+    console.error(`[intake] Auto-close ticket upsert error for ${ticketId}: ${ticketErr.message}`);
+  }
+
+  const draftRow = {
+    ticket_id: ticketRow?.id || null,
+    gorgias_ticket_id: ticketId,
+    gorgias_message_id: latestCustomerMsg.id,
+    customer_email: existingTicket?.customer_email || null,
+    customer_name: existingTicket?.customer_name || null,
+    draft_response: reply,
+    sent_response: reply,
+    structured_output: {
+      auto_close_path: 'thank_you',
+      classifier: {
+        model: classifier?._usage?.model || null,
+        reason: classifier?.reason || null,
+        input_tokens: classifier?._usage?.input_tokens || null,
+        output_tokens: classifier?._usage?.output_tokens || null,
+      },
+    },
+    audit_trail: [`auto_close_thank_you: ${classifier?.reason || 'classifier_positive'}`],
+    confidence: 'high',
+    advisor_status: 'ready',
+    message_type: 'closing',
+    conversation_history: history,
+    status: 'sent',
+    reviewed_at: now,
+    sent_at: now,
+    gorgias_reply_message_id: replyResult?.id || null,
+    auto_close_path: 'thank_you',
+    previous_draft_id: lastSentDraft.id,
+  };
+
+  const { data: newDraft, error: insertErr } = await supabase
+    .from('cs_ai_drafts')
+    .insert(draftRow)
+    .select('id')
+    .single();
+
+  if (insertErr) {
+    console.error(`[intake] Auto-close draft insert error for ${ticketId}: ${insertErr.message}`);
+    return;
+  }
+
+  await supabase.from('cs_ai_feedback_log').insert({
+    draft_id: newDraft?.id,
+    gorgias_ticket_id: ticketId,
+    action: 'auto_close_thank_you',
+    original_response: reply,
+    final_response: reply,
+    advisor_status: 'ready',
+    confidence: 'high',
+    message_type: 'closing',
+  });
+}
+
+// ---------------------------------------------------------------------------
 // processTicket — extracted from run() for reuse by webhook handler
 // ---------------------------------------------------------------------------
 
@@ -280,6 +498,26 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const messageText = gorgias.stripHtml(latestCustomerMsg.stripped_text || latestCustomerMsg.body_text || '');
   if (!messageText.trim()) return { skipped: true };
 
+  // === Auto-close fast path: pure thank-you closer ===
+  // When the customer's latest message is a pure thank-you with no new ask AND
+  // our last reply already resolved the ticket, skip the full advisor draft
+  // and just send a templated reply + close. Fail-closed: any precondition or
+  // classifier error falls through to the normal advisor flow.
+  try {
+    const gateResult = await tryAutoCloseThankYou({
+      supabase,
+      ticketId,
+      messages,
+      latestCustomerMsg,
+    });
+    if (gateResult.handled) {
+      console.log(`[intake] Auto-closed thank-you ticket ${ticketId}: ${gateResult.classifier?.reason || 'positive'}`);
+      return { drafted: true, autoClosed: true };
+    }
+  } catch (err) {
+    console.warn(`[intake] Auto-close gate error on ticket ${ticketId}: ${err.message}`);
+  }
+
   // Build conversation context from all previous messages (input preparation)
   const conversationContext = buildConversationContext(messages, latestCustomerMsg.id);
   const previousDraftContext = await buildPreviousDraftContext(supabase, ticketId);
@@ -344,42 +582,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
 
   // Build conversation history snapshot (for dashboard display)
-  const conversationHistory = messages.map(m => {
-    const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
-    // For customer messages, avoid Gorgias stripped_html — it aggressively removes
-    // sign-offs/signatures which can strip the customer's name, address, and even
-    // part of their message. Use body_html for display (dashboard collapses quoted
-    // content client-side) and stripped_text for plain text (preserves sign-offs,
-    // removes quoted email thread). For agent messages, stripped_html is fine.
-    const isCustomer = m.from_agent === false;
-    let bodyHtml = isCustomer
-      ? (m.body_html || m.stripped_html || null)
-      : (m.stripped_html || m.body_html || null);
-    let bodyText = isCustomer
-      ? gorgias.stripHtml(m.stripped_text || m.body_html || m.body_text || '')
-      : gorgias.stripHtml(m.stripped_html || m.stripped_text || m.body_html || m.body_text || '');
-    // Help-center flows arrive as one blob with bot prompts + `>` customer
-    // picks — strip the bot copy so the intake card shows only what the
-    // customer actually typed.
-    if (sender === 'customer' && m.channel === 'help-center') {
-      bodyText = cleanHelpCenterBody(bodyText);
-      bodyHtml = null; // force dashboard to render from cleaned plain text
-    }
-    return {
-      id: m.id,
-      sender,
-      is_bot: m.from_agent !== false && m.via !== 'api' && (
-        (m.sender?.email || '').endsWith('@email.gorgias.com') || m.via === 'rule'
-      ),
-      body_html: bodyHtml,
-      body: bodyText,
-      created_at: m.created_datetime,
-      channel: m.channel,
-      attachments: (m.attachments || []).map(a => ({
-        name: a.name, url: a.url, content_type: a.content_type,
-      })),
-    };
-  });
+  const conversationHistory = buildConversationHistorySnapshot(messages);
 
   // Count real messages (customer + non-bot agent, excluding internal notes and bot)
   const messageCount = conversationHistory.filter(m =>
@@ -388,6 +591,14 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   // Detect if an agent has replied (from conversation history — catches replies made outside dashboard)
   const hasAgentReply = conversationHistory.some(m => m.sender === 'agent' && !m.is_bot);
+
+  // Latest customer message timestamp — drives the unread indicator in the dashboard
+  const customerMsgTimes = conversationHistory
+    .filter(m => m.sender === 'customer' && m.created_at)
+    .map(m => m.created_at);
+  const lastCustomerMessageAt = customerMsgTimes.length
+    ? customerMsgTimes.sort().slice(-1)[0]
+    : null;
 
   // Upsert cs_tickets row (ticket-centric model)
   // message_type is the canonical inquiry category — read from top-level structured output,
@@ -438,6 +649,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     advisor_status: structured.status,
     source: ticketSource,
     updated_at: new Date().toISOString(),
+    last_customer_message_at: lastCustomerMessageAt,
     gorgias_status: ticket.status || 'open',
     gorgias_updated_at: ticket.updated_datetime || null,
   };
@@ -652,4 +864,12 @@ function buildConversationContext(messages, latestMsgId) {
 // Draft formatting
 // ---------------------------------------------------------------------------
 
-module.exports = { processTicket, getAiBotUserId, buildConversationContext, buildPreviousDraftContext, checkForDuplicateTicket };
+module.exports = {
+  processTicket,
+  getAiBotUserId,
+  buildConversationContext,
+  buildPreviousDraftContext,
+  checkForDuplicateTicket,
+  tryAutoCloseThankYou,
+  buildConversationHistorySnapshot,
+};

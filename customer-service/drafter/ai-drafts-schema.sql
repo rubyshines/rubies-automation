@@ -83,6 +83,14 @@ ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS draft_kind text DEFAULT 'advis
 -- Allowed values: 'advisor_draft' | 'follow_up_care' | 'follow_up_personal'
 CREATE INDEX IF NOT EXISTS idx_drafts_kind ON cs_ai_drafts (draft_kind);
 
+-- auto_close_path: marks drafts created by an automated fast path that bypassed
+-- the full advisor + dashboard review. Null on regular advisor drafts.
+-- Values: 'thank_you' (sent + closed live), 'thank_you_shadow' (classifier ran in
+-- shadow mode, did not act). Reuse the column for future fast paths.
+ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS auto_close_path text;
+CREATE INDEX IF NOT EXISTS idx_drafts_auto_close_path ON cs_ai_drafts (auto_close_path)
+  WHERE auto_close_path IS NOT NULL;
+
 -- ============================================================
 -- 3. Feedback log (one row per send/release action)
 -- ============================================================
