@@ -199,7 +199,11 @@ describe('fulfill_items — phase 2 (execute)', () => {
     // Step 3: new pre-order
     assert.equal(createDraftOrderCalls.length, 1);
     assert.equal(createDraftOrderCalls[0].customerId, 'gid://shopify/Customer/77');
-    assert.deepEqual(createDraftOrderCalls[0].lineItems, [{ variantId: 'gid://shopify/ProductVariant/v-sassy', quantity: 1 }]);
+    assert.deepEqual(createDraftOrderCalls[0].lineItems, [{
+      variantId: 'gid://shopify/ProductVariant/v-sassy',
+      quantity: 1,
+      customAttributes: [{ key: 'Pre-order', value: 'Will ship when in stock' }],
+    }]);
     assert.deepEqual(createDraftOrderCalls[0].tags, ['pre-order', 'cs-mcp', 'pre-order-from-30267']);
     assert.equal(createDraftOrderCalls[0].appliedDiscount.value, 100);
     assert.equal(completeDraftOrderCalls.length, 1);

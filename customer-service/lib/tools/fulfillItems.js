@@ -228,6 +228,9 @@ const tools = [
         newOrderLineItems.push({
           variantId: target.lineItem.variant.id,
           quantity: requestedQty,
+          customAttributes: [
+            { key: 'Pre-order', value: 'Will ship when in stock' },
+          ],
         });
       }
 
@@ -286,7 +289,7 @@ const tools = [
               : '\n**Remaining on original:** none — original will become fully fulfilled.',
             '',
             '**New pre-order to create:**',
-            `  Items: ${itemSummary}`,
+            `  Items: ${itemSummary} — each tagged with line-item property "Pre-order: Will ship when in stock"`,
             `  Total: $0 (already paid via ${order.name})`,
             `  Tags: \`${newOrderTags.join('`, `')}\``,
             `  Customer: ${order.customer?.email || customerName}`,
