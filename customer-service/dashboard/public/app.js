@@ -180,13 +180,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restore active tab (but don't clear selection if we're about to restore a ticket)
   const savedTab = localStorage.getItem('activeTab');
   if (pendingTicketRestore) {
-    // Set tab without clearing selection — we'll select the ticket right after
+    // Restoring a ticket — coerce helm back to a ticket tab since we're showing the ticket panel
     currentTab = savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed', 'helm'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -246,28 +246,74 @@ function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+  // Sync mobile bottom nav active state
+  document.querySelectorAll('.bottom-tab').forEach(t => t.classList.remove('active'));
+  const bottomDirect = document.querySelector(`.bottom-tab[data-bottom-tab="${tab}"]`);
+  if (bottomDirect) {
+    bottomDirect.classList.add('active');
+  } else {
+    // Tab lives under "More" (e.g. parked, snoozed) — highlight the More button
+    const more = document.querySelector('.bottom-tab[data-bottom-tab="more"]');
+    if (more) more.classList.add('active');
+  }
+  // Hide the more popover when switching
+  const pop = document.getElementById('bottom-more-popover');
+  if (pop) pop.style.display = 'none';
 
-  document.getElementById('panel-tickets').style.display = 'flex';
+  const ticketsPanel = document.getElementById('panel-tickets');
+  const helmPanel = document.getElementById('panel-helm');
+
+  if (tab === 'helm') {
+    ticketsPanel.style.display = 'none';
+    helmPanel.style.display = 'flex';
+    localStorage.setItem('activeTab', tab);
+    // Focus the input so Jamie can type immediately
+    setTimeout(() => {
+      const input = document.getElementById('helm-chat-input');
+      if (input && !isMobile()) input.focus();
+    }, 50);
+    return;
+  }
+
+  ticketsPanel.style.display = 'flex';
+  helmPanel.style.display = 'none';
 
   localStorage.setItem('activeTab', tab);
-  {
-    // Clear selection when switching tabs
-    currentTicketId = null;
-    currentTicket = null;
-    currentDraftId = null;
-    currentDraft = null;
-    ticketNavStack = [];
-    location.hash = '';
-    // Mobile: exit detail view so sidebar is visible and clickable
-    document.body.classList.remove('mobile-detail-view');
-    const ph = document.getElementById('detail-placeholder');
-    ph.style.display = 'flex';
-    ph.textContent = 'Select a ticket to review';
-    document.getElementById('detail-content').style.display = 'none';
-    showSidebarQueue();
-    loadTicketQueue();
-  }
+  // Clear selection when switching tabs
+  currentTicketId = null;
+  currentTicket = null;
+  currentDraftId = null;
+  currentDraft = null;
+  ticketNavStack = [];
+  location.hash = '';
+  // Mobile: exit detail view so sidebar is visible and clickable
+  document.body.classList.remove('mobile-detail-view');
+  const ph = document.getElementById('detail-placeholder');
+  ph.style.display = 'flex';
+  ph.textContent = 'Select a ticket to review';
+  document.getElementById('detail-content').style.display = 'none';
+  showSidebarQueue();
+  loadTicketQueue();
 }
+
+function toggleBottomMore(event) {
+  event?.stopPropagation();
+  const pop = document.getElementById('bottom-more-popover');
+  if (!pop) return;
+  pop.style.display = pop.style.display === 'none' ? 'flex' : 'none';
+}
+
+function bottomMoreSelect(tab) {
+  const pop = document.getElementById('bottom-more-popover');
+  if (pop) pop.style.display = 'none';
+  switchTab(tab);
+}
+
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('bottom-more-popover');
+  if (!pop || pop.style.display === 'none') return;
+  if (!e.target.closest('#bottom-nav')) pop.style.display = 'none';
+});
 
 // ---------------------------------------------------------------------------
 // Queue
@@ -1139,7 +1185,7 @@ function renderActionPanel(draft) {
       _actionChatHistory = savedChat;
       for (const msg of savedChat) {
         if (msg.role === 'user' && typeof msg.content === 'string') {
-          appendChatMessage('user', msg.content);
+          appendChatMessage(messagesEl, 'user', msg.content);
         }
       }
     }
@@ -1148,12 +1194,12 @@ function renderActionPanel(draft) {
       const label = tr.tool.replace(/_/g, ' ');
       const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
       const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
-      appendChatMessage('tool', `[${label}]\n${display}`);
+      appendChatMessage(messagesEl, 'tool', `[${label}]\n${display}`);
     }
     if (draft.action_result?.chat_response) {
-      appendChatMessage('assistant', draft.action_result.chat_response);
+      appendChatMessage(messagesEl, 'assistant', draft.action_result.chat_response);
     }
-    renderActionLinks(draft.action_result?.chat_links);
+    renderActionLinks(messagesEl, draft.action_result?.chat_links);
     headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done ${timeAgo(draft.action_executed_at)}</span>`;
     input.placeholder = 'Request additional actions...';
     input.value = '';
@@ -1165,7 +1211,7 @@ function renderActionPanel(draft) {
   if (savedChat?.length) {
     for (const msg of savedChat) {
       if (msg.role === 'user' && typeof msg.content === 'string') {
-        appendChatMessage('user', msg.content);
+        appendChatMessage(messagesEl, 'user', msg.content);
       }
     }
     const toolResults = draft.action_result?.chat_tool_results || [];
@@ -1173,13 +1219,13 @@ function renderActionPanel(draft) {
       const label = tr.tool.replace(/_/g, ' ');
       const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
       const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
-      appendChatMessage('tool', `[${label}]\n${display}`);
+      appendChatMessage(messagesEl, 'tool', `[${label}]\n${display}`);
     }
     if (draft.action_result?.chat_response) {
-      appendChatMessage('assistant', draft.action_result.chat_response);
+      appendChatMessage(messagesEl, 'assistant', draft.action_result.chat_response);
     }
     // Restore action links (e.g. Shopify order links)
-    renderActionLinks(draft.action_result?.chat_links);
+    renderActionLinks(messagesEl, draft.action_result?.chat_links);
 
     // Restore chat history so follow-up messages have context
     _actionChatHistory = savedChat;
@@ -1192,7 +1238,7 @@ function renderActionPanel(draft) {
     const chatResponse = draft.action_result?.chat_response || '';
     if ((chatResponse && isConfirmationPrompt(chatResponse)) ||
         hasAwaitingConfirmation(draft.action_result?.chat_tool_results)) {
-      renderQuickReplies(['Yes, confirm', 'No, cancel']);
+      renderQuickReplies(messagesEl, ['Yes, confirm', 'No, cancel'], { inputEl: input, onSend: sendActionMessage });
     }
     return;
   }
@@ -1403,8 +1449,8 @@ function simpleMarkdown(text) {
     .replace(/\n/g, '<br>');
 }
 
-function renderActionLinks(links) {
-  const container = document.getElementById('action-chat-messages');
+function renderActionLinks(containerEl, links) {
+  const container = containerEl;
   if (!container || !links?.length) return;
 
   const orderLinks = links.filter(l => l.type === 'order');
@@ -1449,8 +1495,8 @@ function hasAwaitingConfirmation(toolResults) {
   );
 }
 
-function renderQuickReplies(options) {
-  const container = document.getElementById('action-chat-messages');
+function renderQuickReplies(containerEl, options, { inputEl, onSend }) {
+  const container = containerEl;
   if (!container) return;
   // Remove any existing quick-reply row
   const existing = container.querySelector('.action-quick-replies');
@@ -1464,9 +1510,8 @@ function renderQuickReplies(options) {
     btn.textContent = label;
     btn.onclick = () => {
       row.remove();
-      const input = document.getElementById('action-chat-input');
-      input.value = label.toLowerCase().includes('no') ? 'no, cancel' : 'yes confirm';
-      sendActionMessage();
+      inputEl.value = label.toLowerCase().includes('no') ? 'no, cancel' : 'yes confirm';
+      onSend();
     };
     row.appendChild(btn);
   }
@@ -1474,8 +1519,8 @@ function renderQuickReplies(options) {
   container.scrollTop = container.scrollHeight;
 }
 
-function appendChatMessage(role, content) {
-  const container = document.getElementById('action-chat-messages');
+function appendChatMessage(containerEl, role, content) {
+  const container = containerEl;
   if (!container) return null;
 
   const div = document.createElement('div');
@@ -1494,42 +1539,50 @@ function appendChatMessage(role, content) {
   return div;
 }
 
-function appendActionTrace() {
-  const container = document.getElementById('action-chat-messages');
+function appendActionTrace(containerEl, { title = 'Operator Agent' } = {}) {
+  const container = containerEl;
   if (!container) return null;
   const wrap = document.createElement('div');
   wrap.className = 'reasoning-trace';
   container.appendChild(wrap);
   container.scrollTop = container.scrollHeight;
-  return createReasoningTrace(wrap, { title: 'Operator Agent' });
+  return createReasoningTrace(wrap, { title });
 }
 
-async function sendActionMessage() {
-  if (!currentTicketId) return;
-
-  const input = document.getElementById('action-chat-input');
-  const sendBtn = document.getElementById('action-chat-send');
-  const message = input.value.trim();
-  if (!message) return;
-
-  // Remove quick-reply buttons if present
-  const qr = document.querySelector('.action-quick-replies');
+/**
+ * Streaming chat turn — shared by ticket action-chat and Helm console.
+ * Renders user message, runs SSE stream, renders assistant + tool results,
+ * appends quick-reply buttons when confirmation is pending. Returns
+ * { finalResult, history } for caller-side post-processing.
+ */
+async function runChatTurn({
+  endpoint,
+  message,
+  history,
+  containerEl,
+  inputEl,
+  sendBtnEl,
+  onSend,
+  onToolResults,
+  traceTitle = 'Operator Agent',
+}) {
+  const qr = containerEl.querySelector('.action-quick-replies');
   if (qr) qr.remove();
 
-  // Show user message
-  appendChatMessage('user', message);
-  input.value = '';
-  input.disabled = true;
-  sendBtn.disabled = true;
-  const trace = appendActionTrace();
+  appendChatMessage(containerEl, 'user', message);
+  inputEl.value = '';
+  inputEl.disabled = true;
+  sendBtnEl.disabled = true;
+  const trace = appendActionTrace(containerEl, { title: traceTitle });
   let activeTool = null;
+  let nextHistory = history;
+  let finalResult = null;
 
   try {
-    // Use streaming endpoint — shows tool calls and responses in real-time
-    const resp = await fetch(`/api/tickets/${currentTicketId}/action-chat-stream`, {
+    const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history: _actionChatHistory }),
+      body: JSON.stringify({ message, history }),
     });
 
     const reader = resp.body.getReader();
@@ -1537,7 +1590,6 @@ async function sendActionMessage() {
     let buffer = '';
     let streamingAssistantText = '';
     let streamingEl = null;
-    let finalResult = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1559,7 +1611,7 @@ async function sendActionMessage() {
           } else if (event.type === 'text_delta') {
             streamingAssistantText += event.data;
             if (!streamingEl) {
-              streamingEl = appendChatMessage('assistant', streamingAssistantText);
+              streamingEl = appendChatMessage(containerEl, 'assistant', streamingAssistantText);
             } else {
               streamingEl.querySelector('.chat-text').innerHTML = simpleMarkdown(streamingAssistantText);
             }
@@ -1567,7 +1619,7 @@ async function sendActionMessage() {
             // Final text block (non-streaming fallback from operatorAgent)
             streamingAssistantText = event.data;
             if (!streamingEl) {
-              streamingEl = appendChatMessage('assistant', streamingAssistantText);
+              streamingEl = appendChatMessage(containerEl, 'assistant', streamingAssistantText);
             } else {
               streamingEl.querySelector('.chat-text').innerHTML = simpleMarkdown(streamingAssistantText);
             }
@@ -1585,46 +1637,110 @@ async function sendActionMessage() {
 
     trace?.finalize();
 
-    // Apply final result
     if (finalResult) {
-      // If no streaming text was shown, show the final response
       if (!streamingEl && finalResult.response) {
-        appendChatMessage('assistant', finalResult.response);
+        appendChatMessage(containerEl, 'assistant', finalResult.response);
       }
-      // Show tool results that weren't streamed
-      if (finalResult.tool_results?.length) {
-        updateDraftFromActionResults(finalResult.tool_results);
+      if (finalResult.tool_results?.length && onToolResults) {
+        onToolResults(finalResult.tool_results);
       }
-      if (finalResult.links?.length) renderActionLinks(finalResult.links);
+      if (finalResult.links?.length) renderActionLinks(containerEl, finalResult.links);
       if ((finalResult.response && isConfirmationPrompt(finalResult.response)) ||
           hasAwaitingConfirmation(finalResult.tool_results)) {
-        renderQuickReplies(['Yes, confirm', 'No, cancel']);
+        renderQuickReplies(containerEl, ['Yes, confirm', 'No, cancel'], { inputEl, onSend });
       }
-      _actionChatHistory = finalResult.history || [];
-
-      // Reload ticket to pick up action_executed_at and re-render the panel
-      if (currentTicketId) {
-        const refreshed = await api(`/api/tickets/${currentTicketId}`);
-        if (refreshed?.active_draft) {
-          currentDraft = refreshed.active_draft;
-          currentTicket = refreshed;
-          // If action was completed, re-render panel to show "Done" state
-          if (currentDraft.action_executed_at) {
-            renderActionPanel(currentDraft);
-          }
-        }
-      }
+      nextHistory = finalResult.history || nextHistory;
     }
-
   } catch (err) {
     if (trace) { trace.error(err.message); trace.finalize(); }
-    console.error('[action-chat] Error:', err);
-    appendChatMessage('assistant', `Error: ${err.message}`);
+    console.error('[chat] Error:', err);
+    appendChatMessage(containerEl, 'assistant', `Error: ${err.message}`);
+  } finally {
+    inputEl.disabled = false;
+    sendBtnEl.disabled = false;
+    inputEl.focus();
   }
 
-  input.disabled = false;
-  sendBtn.disabled = false;
-  input.focus();
+  return { finalResult, history: nextHistory };
+}
+
+async function sendActionMessage() {
+  if (!currentTicketId) return;
+
+  const messagesEl = document.getElementById('action-chat-messages');
+  const input = document.getElementById('action-chat-input');
+  const sendBtn = document.getElementById('action-chat-send');
+  const message = input.value.trim();
+  if (!message) return;
+
+  const { finalResult, history } = await runChatTurn({
+    endpoint: `/api/tickets/${currentTicketId}/action-chat-stream`,
+    message,
+    history: _actionChatHistory,
+    containerEl: messagesEl,
+    inputEl: input,
+    sendBtnEl: sendBtn,
+    onSend: sendActionMessage,
+    onToolResults: (toolResults) => updateDraftFromActionResults(toolResults),
+  });
+
+  _actionChatHistory = history;
+
+  // Reload ticket to pick up action_executed_at and re-render the panel
+  if (finalResult && currentTicketId) {
+    const refreshed = await api(`/api/tickets/${currentTicketId}`);
+    if (refreshed?.active_draft) {
+      currentDraft = refreshed.active_draft;
+      currentTicket = refreshed;
+      if (currentDraft.action_executed_at) {
+        renderActionPanel(currentDraft);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helm — standalone operator console (no ticket context)
+// ---------------------------------------------------------------------------
+
+let _helmChatHistory = [];
+
+async function sendHelmMessage() {
+  const messagesEl = document.getElementById('helm-chat-messages');
+  const input = document.getElementById('helm-chat-input');
+  const sendBtn = document.getElementById('helm-chat-send');
+  const message = input.value.trim();
+  if (!message) return;
+
+  // Clear the empty-state hint on first send
+  const empty = messagesEl.querySelector('.helm-empty');
+  if (empty) empty.remove();
+
+  const { history } = await runChatTurn({
+    endpoint: '/api/console/chat-stream',
+    message,
+    history: _helmChatHistory,
+    containerEl: messagesEl,
+    inputEl: input,
+    sendBtnEl: sendBtn,
+    onSend: sendHelmMessage,
+    traceTitle: 'Helm',
+  });
+
+  _helmChatHistory = history;
+}
+
+function resetHelm() {
+  _helmChatHistory = [];
+  const messagesEl = document.getElementById('helm-chat-messages');
+  if (messagesEl) {
+    messagesEl.innerHTML = '<div class="helm-empty">Type anything — refunds, lookups, exchanges, customer history, margins, klaviyo, reviews, discount codes, inventory&hellip;</div>';
+  }
+  const input = document.getElementById('helm-chat-input');
+  if (input) {
+    input.value = '';
+    if (!isMobile()) input.focus();
+  }
 }
 
 function updateDraftFromActionResults(toolResults) {
@@ -2422,11 +2538,19 @@ async function loadStats() {
     if (s.followup > 0) parts.push(`${s.followup} follow-up${s.followup > 1 ? 's' : ''}`);
     document.getElementById('stat-attention').textContent = parts.length ? parts.join(', ') : 'All clear';
 
-    // Update tab badges
-    document.getElementById('tab-count-new').textContent = s.new || '';
-    document.getElementById('tab-count-followup').textContent = s.followup || '';
-    document.getElementById('tab-count-parked').textContent = s.parked || '';
-    document.getElementById('tab-count-snoozed').textContent = s.snoozed || '';
+    // Update tab badges (top nav + mobile bottom nav)
+    const setCount = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value || '';
+    };
+    setCount('tab-count-new', s.new);
+    setCount('tab-count-followup', s.followup);
+    setCount('tab-count-parked', s.parked);
+    setCount('tab-count-snoozed', s.snoozed);
+    setCount('bottom-count-new', s.new);
+    setCount('bottom-count-followup', s.followup);
+    setCount('bottom-count-parked', s.parked);
+    setCount('bottom-count-snoozed', s.snoozed);
   } catch (err) {
     console.error('Stats failed:', err);
   }

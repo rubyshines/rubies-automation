@@ -1255,133 +1255,6 @@ function getAnthropic() {
   return _anthropicClient;
 }
 
-// Tool definitions for Claude (simplified schemas matching our MCP handlers)
-const ACTION_CHAT_TOOLS = [
-  {
-    name: 'create_exchange_order',
-    description: 'Create a free exchange draft order. Returns a preview first. Call again with confirmed=true and draft_order_id to complete.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        customer_email: { type: 'string', description: 'Customer email address' },
-        items: {
-          type: 'array', description: 'Items for the exchange',
-          items: {
-            type: 'object',
-            properties: {
-              sku: { type: 'string', description: 'Original SKU (e.g. AJ-BLK-M)' },
-              target_size: { type: 'string', description: 'New size (e.g. L, XL, 14)' },
-              query: { type: 'string', description: 'Product search query if SKU unknown' },
-              quantity: { type: 'number', description: 'Quantity (default 1)' },
-            },
-          },
-        },
-        confirmed: { type: 'boolean', description: 'Set true to complete a previously created draft' },
-        draft_order_id: { type: 'string', description: 'Draft order ID from preview (required when confirmed=true)' },
-        note: { type: 'string', description: 'Note for the order' },
-      },
-      required: ['customer_email'],
-    },
-  },
-  {
-    name: 'refund_order',
-    description: 'Refund specific items on an order. Returns a preview first. Call again with confirmed=true and _refund_data to execute.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        order_number: { type: 'string', description: 'Order number (e.g. "29119")' },
-        items: {
-          type: 'array', description: 'Items to refund',
-          items: {
-            type: 'object',
-            properties: {
-              sku: { type: 'string', description: 'SKU of the item' },
-              quantity: { type: 'number', description: 'Quantity to refund (default 1)' },
-            },
-          },
-        },
-        confirmed: { type: 'boolean', description: 'Set true to execute the refund' },
-        _refund_data: { type: 'object', description: 'Refund data from preview (required when confirmed=true)' },
-        note: { type: 'string', description: 'Refund note' },
-      },
-      required: ['order_number'],
-    },
-  },
-  {
-    name: 'edit_order',
-    description: 'Edit an unfulfilled order by swapping, removing, or adding line items, and/or updating shipping address. Returns preview first. Call again with confirmed=true to commit.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        order_number: { type: 'string', description: 'Order number' },
-        swap_items: {
-          type: 'array', description: 'Items to swap/remove/add',
-          items: {
-            type: 'object',
-            properties: {
-              remove_sku: { type: 'string', description: 'SKU to remove' },
-              add_query: { type: 'string', description: 'Product search for replacement' },
-              add_quantity: { type: 'number' },
-            },
-          },
-        },
-        shipping_address: {
-          type: 'object', description: 'New shipping address (for address changes)',
-          properties: {
-            first_name: { type: 'string' },
-            last_name: { type: 'string' },
-            address1: { type: 'string' },
-            address2: { type: 'string' },
-            city: { type: 'string' },
-            province: { type: 'string' },
-            country: { type: 'string' },
-            zip: { type: 'string' },
-          },
-        },
-        confirmed: { type: 'boolean', description: 'Set true to commit the edit' },
-        note: { type: 'string', description: 'Staff note' },
-      },
-      required: ['order_number'],
-    },
-  },
-  {
-    name: 'warehouse_hold',
-    description: 'Place a warehouse hold on an unfulfilled order to prevent shipment. Use when resolving address changes, edits, or other issues before the order ships.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        order_number: { type: 'number', description: 'Order number (e.g. 29887)' },
-        reason: { type: 'string', description: 'Reason for hold (e.g. "Customer requested address change")' },
-      },
-      required: ['order_number', 'reason'],
-    },
-  },
-  {
-    name: 'release_warehouse_hold',
-    description: 'Release a warehouse hold on an order, allowing it to proceed to fulfillment. Use after an issue has been resolved.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        order_number: { type: 'number', description: 'Order number (e.g. 29887)' },
-        reason: { type: 'string', description: 'Reason for release (e.g. "Address updated, ready to ship")' },
-      },
-      required: ['order_number', 'reason'],
-    },
-  },
-  {
-    name: 'release_address_hold',
-    description: 'Release an address validation hold on an order. Use when address has been verified or corrected.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        order_number: { type: 'number', description: 'Order number (e.g. 29887)' },
-        reason: { type: 'string', description: 'Reason (e.g. "Address confirmed by customer")' },
-      },
-      required: ['order_number', 'reason'],
-    },
-  },
-];
-
 function extractActionLinks(toolResults) {
   const links = [];
   for (const tr of (toolResults || [])) {
@@ -1487,141 +1360,24 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   return result;
 }
 
-async function executeActionTool(toolName, input, draft) {
-  if (toolName === 'create_exchange_order') {
-    const exchangeTools = require('../lib/tools/exchangeOrder');
-    const handler = exchangeTools.find(t => t.name === 'create_exchange_order')?.handler;
-    if (!handler) throw new Error('Exchange tool not found');
+// ---------------------------------------------------------------------------
+// Helm — standalone operator console (no ticket context)
+// ---------------------------------------------------------------------------
 
-    // Resolve customer_id from email
-    if (!input.confirmed) {
-      const { searchCustomers } = require('../lib/shopify');
-      const customers = await searchCustomers(input.customer_email || draft.customer_email);
-      const customer = customers?.[0];
-      if (!customer) throw new Error(`Customer not found: ${input.customer_email || draft.customer_email}`);
-      input.customer_id = customer.id;
-    }
-
-    const result = await handler(input);
-    return result.content?.[0]?.text || JSON.stringify(result);
-  }
-
-  if (toolName === 'refund_order') {
-    const refundTools = require('../lib/tools/refundOrder');
-    const handler = refundTools.find(t => t.name === 'refund_order')?.handler;
-    if (!handler) throw new Error('Refund tool not found');
-    const result = await handler(input);
-    // Extract _refund_data if present (needed for phase 2)
-    const text = result.content?.[0]?.text || '';
-    if (result._refund_data) {
-      return JSON.stringify({ text, _refund_data: result._refund_data });
-    }
-    return text;
-  }
-
-  if (toolName === 'edit_order') {
-    const editTools = require('../lib/tools/editOrder');
-    const handler = editTools.find(t => t.name === 'edit_order')?.handler;
-    if (!handler) throw new Error('Edit tool not found');
-    const result = await handler(input);
-    return result.content?.[0]?.text || JSON.stringify(result);
-  }
-
-  if (toolName === 'warehouse_hold' || toolName === 'release_warehouse_hold' || toolName === 'release_address_hold') {
-    const orderNotesTools = require('../lib/tools/orderNotes');
-    const handler = orderNotesTools.find(t => t.name === toolName)?.handler;
-    if (!handler) throw new Error(`${toolName} tool not found`);
-    const result = await handler(input);
-    return result.content?.[0]?.text || JSON.stringify(result);
-  }
-
-  throw new Error(`Unknown tool: ${toolName}`);
-}
-
-/**
- * Standalone action chat — works without a draft (for ad-hoc use).
- * Accepts context directly instead of looking up a draft.
- */
-async function apiActionChatStandalone(body) {
-  const userMessage = body.message;
+async function apiConsoleChat(body, { onStream } = {}) {
+  const { operatorAgentStandalone } = require('../lib/operatorAgentStandalone');
+  const message = body.message;
   const history = body.history || [];
-  const ctx = body.context || {};
-
-  const orderItems = (ctx.order_items || [])
-    .map(i => `  - ${i.title || ''} ${i.variant || ''} (SKU: ${i.sku || '?'}, qty: ${i.quantity || 1})`).join('\n');
-
-  const systemPrompt = `You are an action executor for the RUBIES CS dashboard. You help the operator execute exchanges, refunds, and order edits.
-
-CONTEXT:
-- Customer: ${ctx.customer_email || 'unknown'}
-- Order: #${ctx.order_number || '?'}
-- Order items:
-${orderItems || '  (no items)'}
-
-RULES:
-- Be concise. Show what you're about to do and ask for confirmation before executing.
-- For exchanges: call create_exchange_order with the customer_email and items array. Use SKU + target_size.
-- For refunds: call refund_order with order_number and items array.
-- For edits: call edit_order with order_number and swap_items.
-- Always show a preview first (phase 1), then ask for confirmation before completing (phase 2).
-- When the operator says "yes", "confirm", "do it", etc. — proceed with phase 2.
-- After completing an action, summarize what was done.
-- If the operator wants multiple actions (exchange + refund), do them sequentially.`;
-
-  const messages = [...history, { role: 'user', content: userMessage }];
-  const client = getAnthropic();
-
-  let currentMessages = messages;
-  let finalResponse = '';
-  let toolResults = [];
-
-  for (let i = 0; i < 10; i++) {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      tools: ACTION_CHAT_TOOLS,
-      messages: currentMessages,
-    });
-
-    const textBlocks = response.content.filter(b => b.type === 'text');
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-
-    if (textBlocks.length) {
-      finalResponse += textBlocks.map(b => b.text).join('\n');
-    }
-
-    if (toolUseBlocks.length === 0) break;
-
-    const toolResultMessages = [];
-    for (const toolUse of toolUseBlocks) {
-      let result;
-      try {
-        result = await executeActionTool(toolUse.name, toolUse.input, { customer_email: ctx.customer_email, order_number: ctx.order_number });
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, result });
-      } catch (err) {
-        result = { error: err.message };
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, error: err.message });
-      }
-
-      toolResultMessages.push({
-        type: 'tool_result',
-        tool_use_id: toolUse.id,
-        content: typeof result === 'string' ? result : JSON.stringify(result),
-      });
-    }
-
-    currentMessages = [
-      ...currentMessages,
-      { role: 'assistant', content: response.content },
-      { role: 'user', content: toolResultMessages },
-    ];
+  if (!message || typeof message !== 'string') {
+    throw new Error('message is required');
   }
-
+  const result = await operatorAgentStandalone(message, history, onStream);
+  const links = extractActionLinks(result.tool_results);
   return {
-    response: finalResponse,
-    tool_results: toolResults,
-    history: currentMessages,
+    response: result.response,
+    tool_results: result.tool_results,
+    history: result.history,
+    links,
   };
 }
 
@@ -2223,7 +1979,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/refund$/, handler: (body, id) => apiExecuteRefund(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/action-chat$/, handler: (body, id) => apiActionChat(parseInt(id), body) },
-  { method: 'POST', pattern: /^\/api\/action-chat$/, handler: (body) => apiActionChatStandalone(body) },
+  { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
@@ -2641,6 +2397,28 @@ async function handleRequest(req, res) {
           sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
         } catch (err) {
           sendEvent({ type: 'error', message: err.message });
+        }
+        res.end();
+        return;
+      }
+
+      // Stream Helm console chat — thin SSE wrapper around apiConsoleChat
+      if (req.method === 'POST' && pathname === '/api/console/chat-stream') {
+        const body = await readBody(req);
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        });
+        const sendEvent = (data) => {
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        try {
+          const result = await apiConsoleChat(body, { onStream: sendEvent });
+          sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
+        } catch (err) {
+          console.error(`[console/chat-stream] error:`, err.message || err);
+          sendEvent({ type: 'error', message: err.message || String(err) });
         }
         res.end();
         return;
