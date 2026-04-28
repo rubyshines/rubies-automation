@@ -17,44 +17,10 @@ function getAnthropic() {
 }
 
 // ---------------------------------------------------------------------------
-// Load real tool schemas from the MCP tool modules
+// Load tool schemas — shared with the Helm standalone agent
 // ---------------------------------------------------------------------------
 
-function loadToolSchemas() {
-  const toolModules = [
-    // Lookup & search tools (same ones Claude Code uses to gather info first)
-    require('./tools/customerLookup'),
-    require('./tools/productSearch'),
-    require('./tools/draftOrders'),
-    // Action tools
-    require('./tools/exchangeOrder'),
-    require('./tools/invoiceOrder'),
-    require('./tools/refundOrder'),
-    require('./tools/editOrder'),
-    require('./tools/orderNotes'),
-    require('./tools/createOrder'),
-    require('./tools/updateCustomer'),
-    require('./tools/discountCode'),
-    require('./tools/cancelOrder'),
-  ];
-
-  const tools = [];
-  const handlers = {};
-
-  for (const mod of toolModules) {
-    for (const tool of mod) {
-      // Convert MCP schema format (inputSchema) to Anthropic tool format (input_schema)
-      tools.push({
-        name: tool.name,
-        description: tool.description,
-        input_schema: tool.inputSchema,
-      });
-      handlers[tool.name] = tool.handler;
-    }
-  }
-
-  return { tools, handlers };
-}
+const { loadAllOperatorTools } = require('./operatorTools');
 
 // ---------------------------------------------------------------------------
 // Build system prompt with full RUBIES context
@@ -184,7 +150,7 @@ Sizing systems:
  */
 async function operatorAgent(message, context, history = [], onEvent) {
   const _t = { start: Date.now(), api_calls: [] };
-  const { tools, handlers } = loadToolSchemas();
+  const { tools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt(context);
   const client = getAnthropic();
 

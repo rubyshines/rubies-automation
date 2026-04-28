@@ -16,63 +16,10 @@ function getAnthropic() {
 }
 
 // ---------------------------------------------------------------------------
-// Load the full RUBIES tool catalog
+// Load tool schemas — shared with the ticket-bound operator agent
 // ---------------------------------------------------------------------------
-// Mirrors customer-service/server.js's tool module list. Skips two:
-//   - csAdvisorMcp:  would let the operator call the advisor on itself
-//   - advisorTester: dev-only harness, not useful in the console
 
-function loadAllToolSchemas() {
-  const toolModules = [
-    require('./tools/customerLookup'),
-    require('./tools/productSearch'),
-    require('./tools/exchangeOrder'),
-    require('./tools/wholesaleOrder'),
-    require('./tools/invoiceOrder'),
-    require('./tools/reloadProducts'),
-    require('./tools/seoTrends'),
-    require('./tools/klaviyo'),
-    require('./tools/csHistory'),
-    require('./tools/csKnowledge'),
-    require('./tools/csAdmin'),
-    require('./tools/margins'),
-    require('./tools/reviews'),
-    require('./tools/inventory'),
-    require('./tools/blogResearch'),
-    require('./tools/draftOrders'),
-    require('./tools/adminTools'),
-    require('./tools/ltv'),
-    require('./tools/createOrder'),
-    require('./tools/refundOrder'),
-    require('./tools/shippingLookup'),
-    require('./tools/shippingInfo'),
-    require('./tools/orderNotes'),
-    require('./tools/deliveryEstimate'),
-    require('./tools/passportClaims'),
-    require('./tools/editOrder'),
-    require('./tools/deliveryTimeReport'),
-    require('./tools/setPrices'),
-    require('./tools/updateCustomer'),
-    require('./tools/discountCode'),
-    require('./tools/cancelOrder'),
-  ];
-
-  const tools = [];
-  const handlers = {};
-
-  for (const mod of toolModules) {
-    for (const tool of mod) {
-      tools.push({
-        name: tool.name,
-        description: tool.description,
-        input_schema: tool.inputSchema,
-      });
-      handlers[tool.name] = tool.handler;
-    }
-  }
-
-  return { tools, handlers };
-}
+const { loadAllOperatorTools } = require('./operatorTools');
 
 // ---------------------------------------------------------------------------
 // System prompt — no ticket framing, full catalog awareness
@@ -139,7 +86,7 @@ ${nicknames || '  (not loaded)'}`;
  */
 async function operatorAgentStandalone(message, history = [], onEvent) {
   const _t = { start: Date.now(), api_calls: [] };
-  const { tools, handlers } = loadAllToolSchemas();
+  const { tools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt();
   const client = getAnthropic();
 

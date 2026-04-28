@@ -1392,6 +1392,139 @@ async function fetchProductById(numericId) {
  * Update shipping address on an order.
  */
 /**
+ * Fetch an order with its open fulfillment orders + line items, for use
+ * with fulfillmentCreate. Modern Shopify API requires routing fulfillments
+ * through fulfillmentOrder ids, not order line item ids directly.
+ */
+async function getOrderWithFulfillmentOrders(orderNumber) {
+  const normalized = normalizeOrderNumber(orderNumber);
+  const data = await shopifyGraphQL(`
+    query getOrderFulfillmentOrders($query: String!) {
+      orders(first: 1, query: $query) {
+        edges {
+          node {
+            id
+            name
+            displayFinancialStatus
+            displayFulfillmentStatus
+            cancelledAt
+            tags
+            note
+            customer { firstName lastName email }
+            fulfillmentOrders(first: 20) {
+              edges {
+                node {
+                  id
+                  status
+                  requestStatus
+                  lineItems(first: 50) {
+                    edges {
+                      node {
+                        id
+                        remainingQuantity
+                        totalQuantity
+                        lineItem {
+                          id
+                          title
+                          variantTitle
+                          sku
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `, { query: `name:${normalized}` });
+  const order = data.orders.edges[0]?.node;
+  if (!order) throw new Error(`Order not found: ${orderNumber}`);
+  return {
+    ...order,
+    fulfillmentOrders: (order.fulfillmentOrders?.edges || []).map(e => ({
+      ...e.node,
+      lineItems: (e.node.lineItems?.edges || []).map(li => li.node),
+    })),
+  };
+}
+
+/**
+ * Create a fulfillment via Shopify's fulfillmentCreate mutation.
+ * @param {object} input - FulfillmentInput
+ * @param {Array<{fulfillmentOrderId: string, fulfillmentOrderLineItems: Array<{id: string, quantity: number}>}>} input.lineItemsByFulfillmentOrder
+ * @param {boolean} [input.notifyCustomer=false]
+ * @param {object} [input.trackingInfo] - { number, url, company } — omit for placeholder fulfillments
+ */
+async function createFulfillment(input) {
+  const data = await shopifyGraphQL(`
+    mutation fulfillmentCreate($fulfillment: FulfillmentInput!) {
+      fulfillmentCreate(fulfillment: $fulfillment) {
+        fulfillment {
+          id
+          status
+          createdAt
+        }
+        userErrors { field message }
+      }
+    }
+  `, { fulfillment: input });
+  const result = data.fulfillmentCreate;
+  if (result.userErrors?.length) {
+    const msg = result.userErrors.map(e => `${(e.field || []).join('.') || 'error'}: ${e.message}`).join('; ');
+    throw new Error(`fulfillmentCreate failed: ${msg}`);
+  }
+  return result.fulfillment;
+}
+
+/**
+ * Add tags to a Shopify resource (Order, Product, etc.) via tagsAdd.
+ */
+async function addTags(resourceId, tags) {
+  const data = await shopifyGraphQL(`
+    mutation tagsAdd($id: ID!, $tags: [String!]!) {
+      tagsAdd(id: $id, tags: $tags) {
+        node { id }
+        userErrors { field message }
+      }
+    }
+  `, { id: resourceId, tags });
+  const result = data.tagsAdd;
+  if (result.userErrors?.length) {
+    const msg = result.userErrors.map(e => e.message).join('; ');
+    throw new Error(`tagsAdd failed: ${msg}`);
+  }
+  return result.node;
+}
+
+/**
+ * Append text to an order's note via orderUpdate, preserving any existing
+ * note content (separates with a blank line).
+ */
+async function appendOrderNote(orderId, additionalNote) {
+  const existing = await shopifyGraphQL(`
+    query getNote($id: ID!) { order(id: $id) { note } }
+  `, { id: orderId });
+  const prior = existing.order?.note || '';
+  const merged = prior ? `${prior}\n\n${additionalNote}` : additionalNote;
+  const data = await shopifyGraphQL(`
+    mutation orderUpdate($input: OrderInput!) {
+      orderUpdate(input: $input) {
+        order { id note }
+        userErrors { field message }
+      }
+    }
+  `, { input: { id: orderId, note: merged } });
+  if (data.orderUpdate.userErrors?.length) {
+    const msg = data.orderUpdate.userErrors.map(e => e.message).join('; ');
+    throw new Error(`orderUpdate (note) failed: ${msg}`);
+  }
+  return data.orderUpdate.order;
+}
+
+/**
  * Cancel an order via Shopify's orderCancel mutation. Runs as a background
  * job in Shopify — we return the job id; the order may take a few seconds
  * to show as cancelled in admin.
@@ -1478,5 +1611,9 @@ module.exports = {
   sendOrderInvoice,
   updateOrderShippingAddress,
   cancelOrder,
+  getOrderWithFulfillmentOrders,
+  createFulfillment,
+  addTags,
+  appendOrderNote,
   fetchProductById,
 };

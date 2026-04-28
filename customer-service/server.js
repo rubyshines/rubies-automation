@@ -49,6 +49,7 @@ const setPricesTools = require('./lib/tools/setPrices');
 const updateCustomerTools = require('./lib/tools/updateCustomer');
 const discountCodeTools = require('./lib/tools/discountCode');
 const cancelOrderTools = require('./lib/tools/cancelOrder');
+const fulfillItemsTools = require('./lib/tools/fulfillItems');
 
 const allTools = [
   ...customerLookupTools,
@@ -84,6 +85,7 @@ const allTools = [
   ...updateCustomerTools,
   ...discountCodeTools,
   ...cancelOrderTools,
+  ...fulfillItemsTools,
 ];
 
 /**
