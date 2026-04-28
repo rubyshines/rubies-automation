@@ -69,6 +69,7 @@ See domain files in MEMORY.md for systems detail. Deployment: Railway (scheduled
 
 - **Pronoun sensitivity:** Never use Shopify profile names (dead name risk). Default they/them for customers. Detect whether the buyer is purchasing for themselves or someone else.
 - **Brand voice:** All customer-facing content must be playful/supportive, never political, righteous, or judgmental.
+- **No em dashes in customer-facing copy.** Use commas, parentheses, or short sentences instead. Applies to advisor drafts, marketing emails, blog content, and any AI-generated customer text.
 - **Always use Opus** (claude-opus-4-6) for AI features — never Sonnet or Haiku for tool-calling.
 - **Run tests** before and after changes: `node --test customer-service/test/*.test.js`
 - **Memory directory location:** Memory lives at `~/.claude/projects/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/memory/` and is symlinked into the project at `.claude/memory/` (gitignored). Reference memory files in chat using the workspace-relative path `.claude/memory/<file>.md` so Jamie can click them open in VSCode — both paths resolve to the same files. Do NOT edit memory files at any other location — duplicates elsewhere are stale artifacts.
