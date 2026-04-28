@@ -1,18 +1,21 @@
 /**
  * Fulfill items tool: fulfill_items
  *
- * Marks specific line items on an order as fulfilled in Shopify (placeholder
- * fulfillment — no tracking, customer not notified). Built for the pre-order
- * split case: if an order has 1+ out-of-stock items blocking the warehouse
- * from shipping the in-stock portion, mark the OOS items as fulfilled here so
- * the warehouse can ship the rest. Tags the order `pre-order-pending` and
- * appends an explanatory staff note.
- *
- * When the OOS item comes back in stock, create a NEW order for it (using
- * create_order) with a note referencing the original — do NOT try to
- * "unfulfill" the placeholder.
+ * Splits an order for the pre-order case in one operation:
+ *   1. Marks the held items as fulfilled on the original order (placeholder
+ *      fulfillment — no tracking, customer not notified) so the warehouse can
+ *      ship the in-stock portion.
+ *   2. Tags the original order `pre-order-pending` and appends a staff note
+ *      explaining the split.
+ *   3. Creates a new $0 order for the held items, tagged `pre-order` and
+ *      `pre-order-from-<original>`, with a note referencing the original.
+ *      The new order queues with Warehance and ships automatically when
+ *      inventory arrives.
  *
  * Two-phase: phase 1 previews; phase 2 (confirmed=true) executes.
+ *
+ * NOT for manual shipment recording with real tracking — that is a different
+ * flow that doesn't yet exist as a tool.
  */
 
 const {
@@ -20,40 +23,43 @@ const {
   createFulfillment,
   addTags,
   appendOrderNote,
+  createDraftOrder,
+  completeDraftOrder,
   getAdminUrl,
 } = require('../shopify');
 
-const PRE_ORDER_TAG = 'pre-order-pending';
+const PRE_ORDER_PENDING_TAG = 'pre-order-pending';
+const NEW_ORDER_TAGS = ['pre-order', 'cs-mcp'];
 
 const tools = [
   {
     name: 'fulfill_items',
     description: [
-      'Mark specific line items on an order as fulfilled in Shopify, with no tracking and no customer notification.',
-      'Use this for the pre-order split case: when an order has out-of-stock items blocking the warehouse from shipping the in-stock items, fulfill the OOS items here so the warehouse can ship the rest.',
-      'Always tags the order `pre-order-pending` and appends an explanatory staff note.',
+      'Split an order for the pre-order case: marks specified out-of-stock line items as fulfilled (placeholder, no tracking, no customer notification) on the original order so the warehouse can ship the in-stock items, AND immediately creates a new $0 pre-order for the held items so they queue for shipment when inventory arrives.',
+      'Tags the original order `pre-order-pending` and appends a staff note. Tags the new pre-order `pre-order` + `pre-order-from-<original>` with a referencing note.',
       'Two-phase: phase 1 (confirmed omitted/false) previews; phase 2 (confirmed=true) executes.',
       'You MUST present the phase 1 preview to the operator and receive explicit confirmation before calling phase 2.',
-      'Do NOT use this tool for manual shipment recording with real tracking — that is a different flow.',
-      'When the held items eventually come back in stock, create a NEW order for them via create_order (with a note referencing this order) — do not try to unfulfill the placeholder.',
+      'Use this when an order has out-of-stock items blocking the warehouse from shipping the in-stock items, AND the operator wants the held items queued as a separate pre-order rather than refunded.',
+      'Do NOT use this for refunds — the customer pays nothing extra and receives nothing less; this just splits the shipment timing.',
+      'Do NOT use for manual shipment recording with real tracking — that is a different flow.',
     ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
-        order_number: { type: 'string', description: 'Order number (e.g. "30267", "#30267")' },
+        order_number: { type: 'string', description: 'Original order number (e.g. "30267", "#30267")' },
         items: {
           type: 'array',
-          description: 'Line items to mark as fulfilled. Each item: { sku, quantity? } — quantity defaults to the full unfulfilled quantity for that SKU.',
+          description: 'Line items to mark as fulfilled on the original AND move into a new pre-order. Each item: { sku, quantity? } — quantity defaults to the full unfulfilled quantity for that SKU.',
           items: {
             type: 'object',
             properties: {
-              sku: { type: 'string', description: 'SKU of the item to fulfill' },
-              quantity: { type: 'number', description: 'Quantity to fulfill (default: all remaining)' },
+              sku: { type: 'string', description: 'SKU of the held item' },
+              quantity: { type: 'number', description: 'Quantity (default: all remaining)' },
             },
             required: ['sku'],
           },
         },
-        staff_note: { type: 'string', description: 'Optional additional context appended to the order note' },
+        staff_note: { type: 'string', description: 'Optional additional context appended to both the original-order note and the new pre-order note' },
         confirmed: { type: 'boolean', description: 'Set true in phase 2 to execute' },
         _fulfill_data: {
           type: 'object',
@@ -65,33 +71,100 @@ const tools = [
     handler: async ({ order_number, items, staff_note, confirmed, _fulfill_data }) => {
       // --- Phase 2: execute ---
       if (confirmed && _fulfill_data) {
+        const {
+          order_id,
+          order_name,
+          line_items_by_fo,
+          item_summary,
+          customer_id,
+          shipping_address,
+          new_order_line_items,
+        } = _fulfill_data;
+
+        const originalShortName = (order_name || '').replace(/^#/, '');
+
+        // Step 1: placeholder fulfillment on original order
         const fulfillment = await createFulfillment({
-          lineItemsByFulfillmentOrder: _fulfill_data.line_items_by_fo,
+          lineItemsByFulfillmentOrder: line_items_by_fo,
           notifyCustomer: false,
         });
 
-        const noteText = [
-          `Pre-order: ${_fulfill_data.item_summary} marked as fulfilled (out of stock); will ship as a new order when inventory arrives.`,
-          staff_note ? staff_note : null,
+        // Step 2: tag + note original order
+        const originalNote = [
+          `Pre-order split: ${item_summary} marked as fulfilled (out of stock); a new $0 pre-order has been queued and will ship when inventory arrives.`,
+          staff_note || null,
         ].filter(Boolean).join(' — ');
+        await appendOrderNote(order_id, originalNote);
+        await addTags(order_id, [PRE_ORDER_PENDING_TAG]);
 
-        await appendOrderNote(_fulfill_data.order_id, noteText);
-        await addTags(_fulfill_data.order_id, [PRE_ORDER_TAG]);
+        // Step 3: create the new pre-order. If this fails after step 1 succeeded,
+        // surface a clear recovery instruction to the operator.
+        let newOrder = null;
+        let newOrderError = null;
+        try {
+          const draftInput = {
+            customerId: customer_id,
+            lineItems: new_order_line_items,
+            shippingAddress: shipping_address || undefined,
+            tags: [...NEW_ORDER_TAGS, `pre-order-from-${originalShortName}`],
+            note: [
+              `Pre-order release from order #${originalShortName}. The following items were out of stock when the original order was placed; they will ship from this order when inventory arrives. Customer has already paid via the original order.`,
+              staff_note || null,
+            ].filter(Boolean).join(' — '),
+            useCustomerDefaultAddress: !shipping_address,
+          };
+          // Apply 100% discount so the new order totals $0
+          draftInput.appliedDiscount = {
+            valueType: 'PERCENTAGE',
+            value: 100,
+            description: 'Pre-order release — paid in original order',
+          };
+          const draft = await createDraftOrder(draftInput);
+          const completed = await completeDraftOrder(draft.id);
+          newOrder = completed.order || completed;
+        } catch (err) {
+          newOrderError = err.message || String(err);
+        }
+
+        if (newOrderError) {
+          return {
+            content: [{
+              type: 'text',
+              text: [
+                '**Partial success — placeholder fulfillment done, new pre-order failed**',
+                '',
+                `**Original order:** ${order_name} — ${getAdminUrl(order_id)}`,
+                `**Held items marked fulfilled:** ${item_summary}`,
+                `**Tag added:** \`${PRE_ORDER_PENDING_TAG}\``,
+                '',
+                `**Pre-order creation failed:** ${newOrderError}`,
+                '',
+                `Recovery: manually create a $0 order for the held items via \`create_order\` (customer ${customer_id}, items as listed above, tag \`pre-order\` and \`pre-order-from-${originalShortName}\`, note referencing #${originalShortName}).`,
+              ].join('\n'),
+            }],
+          };
+        }
+
+        const newOrderUrl = newOrder?.id ? getAdminUrl(newOrder.id) : '(no admin url)';
+        const newOrderName = newOrder?.name || '(no order name returned)';
 
         return {
           content: [{
             type: 'text',
             text: [
-              '**Items marked as fulfilled (placeholder)**',
+              '**Order split for pre-order**',
               '',
-              `**Order:** ${_fulfill_data.order_name} — ${getAdminUrl(_fulfill_data.order_id)}`,
-              `**Items:** ${_fulfill_data.item_summary}`,
-              `**Tag added:** \`${PRE_ORDER_TAG}\``,
-              `**Customer notified:** no`,
-              `**Tracking:** none (placeholder)`,
-              `**Fulfillment:** ${fulfillment?.id || '(no id returned)'}`,
+              `**Original order:** ${order_name} — ${getAdminUrl(order_id)}`,
+              `  - Held items marked fulfilled (placeholder): ${item_summary}`,
+              `  - Tag added: \`${PRE_ORDER_PENDING_TAG}\``,
+              `  - Fulfillment id: ${fulfillment?.id || '(none)'}`,
               '',
-              `Warehance will now see the remaining items as the only ones needing pick + ship. When the held items come back in stock, create a new order for them via \`create_order\` and reference this order in the note.`,
+              `**New pre-order:** ${newOrderName} — ${newOrderUrl}`,
+              `  - Items: ${item_summary}`,
+              `  - Tags: \`${[...NEW_ORDER_TAGS, `pre-order-from-${originalShortName}`].join('`, `')}\``,
+              `  - Total: $0 (already paid via original)`,
+              '',
+              `Warehance will ship the in-stock items on ${order_name} now, and the new pre-order automatically when inventory arrives.`,
             ].join('\n'),
           }],
         };
@@ -110,6 +183,9 @@ const tools = [
       if (order.displayFulfillmentStatus === 'FULFILLED') {
         return { content: [{ type: 'text', text: `Error: order ${order.name} is already fully fulfilled.` }] };
       }
+      if (!order.customer?.id) {
+        return { content: [{ type: 'text', text: `Error: order ${order.name} has no associated customer — cannot create a new pre-order without a customer.` }] };
+      }
 
       // Map requested SKUs to fulfillment-order line items with remaining > 0
       const allFoLineItems = order.fulfillmentOrders.flatMap(fo =>
@@ -122,9 +198,9 @@ const tools = [
         return { content: [{ type: 'text', text: `Error: order ${order.name} has no unfulfilled line items in any open fulfillment order.` }] };
       }
 
-      // Group selected line items by fulfillment order id
       const byFo = new Map();
       const matchedSummary = [];
+      const newOrderLineItems = [];
       const errors = [];
 
       for (const requested of items) {
@@ -135,18 +211,24 @@ const tools = [
           errors.push(`SKU not found in unfulfilled items: ${sku}`);
           continue;
         }
-        // For simplicity, fulfill from the first matching FO entry — RUBIES orders almost
-        // never split a single SKU across multiple fulfillment orders.
         const target = matches[0];
         const requestedQty = requested.quantity ?? target.remainingQuantity;
         if (requestedQty > target.remainingQuantity) {
           errors.push(`SKU ${sku}: requested ${requestedQty} but only ${target.remainingQuantity} unfulfilled.`);
           continue;
         }
+        if (!target.lineItem.variant?.id) {
+          errors.push(`SKU ${sku}: no variant id on original line item — cannot create pre-order line item. Likely a custom/manual item.`);
+          continue;
+        }
         const list = byFo.get(target.fulfillmentOrderId) || [];
         list.push({ id: target.id, quantity: requestedQty });
         byFo.set(target.fulfillmentOrderId, list);
         matchedSummary.push(`${requestedQty}x ${target.lineItem.title}${target.lineItem.variantTitle ? ` — ${target.lineItem.variantTitle}` : ''} (${sku})`);
+        newOrderLineItems.push({
+          variantId: target.lineItem.variant.id,
+          quantity: requestedQty,
+        });
       }
 
       if (errors.length) {
@@ -159,20 +241,24 @@ const tools = [
       }));
 
       const itemSummary = matchedSummary.join('; ');
+      const originalShortName = (order.name || '').replace(/^#/, '');
+
       const fulfillData = {
         order_id: order.id,
         order_name: order.name,
         line_items_by_fo: lineItemsByFulfillmentOrder,
         item_summary: itemSummary,
+        customer_id: order.customer.id,
+        shipping_address: order.shippingAddress || null,
+        new_order_line_items: newOrderLineItems,
       };
 
-      // Show what stays unfulfilled so the operator sees the resulting state
       const stayingUnfulfilled = allFoLineItems
         .filter(li => {
           const list = byFo.get(li.fulfillmentOrderId) || [];
           const claimed = list.find(x => x.id === li.id);
-          if (!claimed) return true; // not selected at all
-          return claimed.quantity < li.remainingQuantity; // partially selected
+          if (!claimed) return true;
+          return claimed.quantity < li.remainingQuantity;
         })
         .map(li => {
           const list = byFo.get(li.fulfillmentOrderId) || [];
@@ -182,28 +268,33 @@ const tools = [
         });
 
       const customerName = [order.customer?.firstName, order.customer?.lastName].filter(Boolean).join(' ').trim() || '(no name)';
+      const newOrderTags = [...NEW_ORDER_TAGS, `pre-order-from-${originalShortName}`];
 
       return {
         content: [{
           type: 'text',
           text: [
-            '**Fulfill Items Preview — Awaiting Confirmation**',
+            '**Order Split Preview — Awaiting Confirmation**',
             '',
-            `**Order:** ${order.name} — ${getAdminUrl(order.id)}`,
+            `**Original order:** ${order.name} — ${getAdminUrl(order.id)}`,
             `**Customer:** ${customerName} (${order.customer?.email || 'no email'})`,
             '',
-            '**Will be marked fulfilled (placeholder, no tracking, no customer email):**',
+            '**On the original order — mark fulfilled (placeholder, no tracking, no customer email):**',
             `  ${itemSummary}`,
-            '',
             stayingUnfulfilled.length
-              ? '**Remaining unfulfilled (Warehance will ship these):**\n' + stayingUnfulfilled.map(l => `  ${l}`).join('\n')
-              : '**Remaining unfulfilled:** none — this will mark the entire order as fulfilled.',
+              ? '\n**On the original order — remaining (Warehance will ship now):**\n' + stayingUnfulfilled.map(l => `  ${l}`).join('\n')
+              : '\n**Remaining on original:** none — original will become fully fulfilled.',
             '',
-            `**Tag to add:** \`${PRE_ORDER_TAG}\``,
-            `**Note to append:** "Pre-order: ${itemSummary} marked as fulfilled (out of stock); will ship as a new order when inventory arrives."${staff_note ? ` — ${staff_note}` : ''}`,
+            '**New pre-order to create:**',
+            `  Items: ${itemSummary}`,
+            `  Total: $0 (already paid via ${order.name})`,
+            `  Tags: \`${newOrderTags.join('`, `')}\``,
+            `  Customer: ${order.customer?.email || customerName}`,
+            '  Shipping address: ' + (order.shippingAddress ? `same as ${order.name}` : 'customer default'),
             '',
+            staff_note ? `**Staff note (added to both orders):** ${staff_note}\n` : '',
             `To confirm, call fulfill_items again with confirmed=true, order_number="${order_number}", items=${JSON.stringify(items)}, and _fulfill_data=${JSON.stringify(fulfillData)}.`,
-          ].join('\n'),
+          ].filter(Boolean).join('\n'),
         }],
       };
     },

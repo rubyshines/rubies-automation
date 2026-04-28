@@ -1410,7 +1410,21 @@ async function getOrderWithFulfillmentOrders(orderNumber) {
             cancelledAt
             tags
             note
-            customer { firstName lastName email }
+            customer { id firstName lastName email }
+            shippingAddress {
+              firstName
+              lastName
+              company
+              address1
+              address2
+              city
+              province
+              provinceCode
+              country
+              countryCode
+              zip
+              phone
+            }
             fulfillmentOrders(first: 20) {
               edges {
                 node {
@@ -1428,6 +1442,7 @@ async function getOrderWithFulfillmentOrders(orderNumber) {
                           title
                           variantTitle
                           sku
+                          variant { id }
                         }
                       }
                     }
