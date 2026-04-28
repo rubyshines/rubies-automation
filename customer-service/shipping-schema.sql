@@ -45,6 +45,30 @@ CREATE INDEX IF NOT EXISTS idx_tracking_scraped ON tracking_snapshots(scraped_at
 -- Migration: add raw_text column
 ALTER TABLE tracking_snapshots ADD COLUMN IF NOT EXISTS raw_text TEXT;
 
+-- Shipping zones history — append-only log of rate/threshold/zone changes
+-- The shipping_zones table is upsert-overwrite (current state only). This table
+-- captures every detected change so we can reconstruct timelines.
+CREATE TABLE IF NOT EXISTS shipping_zones_history (
+  id BIGSERIAL PRIMARY KEY,
+  country_code TEXT NOT NULL,
+  zone TEXT NOT NULL,
+  free_shipping_threshold NUMERIC,
+  standard_rate NUMERIC,
+  expedited_rate NUMERIC,
+  currency TEXT,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  change_type TEXT NOT NULL,           -- 'initial' | 'rate_change' | 'threshold_change' | 'zone_change' | 'multi_change'
+  prev_zone TEXT,
+  prev_free_shipping_threshold NUMERIC,
+  prev_standard_rate NUMERIC,
+  prev_expedited_rate NUMERIC,
+  prev_currency TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_szh_country ON shipping_zones_history(country_code);
+CREATE INDEX IF NOT EXISTS idx_szh_observed ON shipping_zones_history(observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_szh_country_observed ON shipping_zones_history(country_code, observed_at DESC);
+
 -- Passport sync run log — one row per hourly run, read by daily order alerts
 CREATE TABLE IF NOT EXISTS passport_sync_runs (
   id SERIAL PRIMARY KEY,

@@ -112,12 +112,71 @@ async function syncShippingZones() {
     }
   }
 
-  // Upsert all rows
+  // Detect changes vs current shipping_zones state, then write history rows
+  // BEFORE the upsert (so we can compare incoming vs stored).
+  const { data: existingRows, error: existingErr } = await supabase
+    .from('shipping_zones')
+    .select('country_code, zone, free_shipping_threshold, standard_rate, expedited_rate, currency');
+  if (existingErr) throw new Error(`Failed to fetch existing zones: ${existingErr.message}`);
+
+  const existing = new Map((existingRows || []).map(r => [r.country_code, r]));
+  const numEq = (a, b) => {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return Math.abs(Number(a) - Number(b)) < 0.001;
+  };
+  const historyRows = [];
+  const observedAt = new Date().toISOString();
+  for (const r of rows) {
+    const prev = existing.get(r.country_code);
+    if (!prev) {
+      // New country (or first-ever sync)
+      historyRows.push({
+        country_code: r.country_code, zone: r.zone,
+        free_shipping_threshold: r.free_shipping_threshold,
+        standard_rate: r.standard_rate, expedited_rate: r.expedited_rate, currency: r.currency,
+        observed_at: observedAt, change_type: 'initial',
+      });
+      continue;
+    }
+    const changes = [];
+    if (prev.zone !== r.zone) changes.push('zone');
+    if (!numEq(prev.free_shipping_threshold, r.free_shipping_threshold)) changes.push('threshold');
+    if (!numEq(prev.standard_rate, r.standard_rate)) changes.push('rate');
+    if (!numEq(prev.expedited_rate, r.expedited_rate)) changes.push('rate');
+    if ((prev.currency || '') !== (r.currency || '')) changes.push('currency');
+    if (changes.length === 0) continue;
+    const changeType = changes.length > 1 ? 'multi_change' :
+      changes[0] === 'zone' ? 'zone_change' :
+      changes[0] === 'threshold' ? 'threshold_change' :
+      'rate_change';
+    historyRows.push({
+      country_code: r.country_code, zone: r.zone,
+      free_shipping_threshold: r.free_shipping_threshold,
+      standard_rate: r.standard_rate, expedited_rate: r.expedited_rate, currency: r.currency,
+      observed_at: observedAt, change_type: changeType,
+      prev_zone: prev.zone,
+      prev_free_shipping_threshold: prev.free_shipping_threshold,
+      prev_standard_rate: prev.standard_rate,
+      prev_expedited_rate: prev.expedited_rate,
+      prev_currency: prev.currency,
+    });
+  }
+
+  // Upsert current state
   if (rows.length > 0) {
     const { error } = await supabase
       .from('shipping_zones')
       .upsert(rows, { onConflict: 'country_code' });
     if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
+  }
+
+  // Insert history rows (only for actual changes; zero-change days write nothing)
+  if (historyRows.length > 0) {
+    const { error: histErr } = await supabase
+      .from('shipping_zones_history')
+      .insert(historyRows);
+    if (histErr) throw new Error(`Supabase history insert failed: ${histErr.message}`);
   }
 
   const zoneCounts = {};
@@ -129,6 +188,7 @@ async function syncShippingZones() {
     success: true,
     totalCountries,
     zones: zoneCounts,
+    historyRowsWritten: historyRows.length,
   };
 }
 
