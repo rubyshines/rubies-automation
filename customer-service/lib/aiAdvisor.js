@@ -1592,7 +1592,8 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
       const _tApi = Date.now();
       sonnetResponse = await client.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+        max_tokens: 8192,
+        thinking: { type: 'enabled', budget_tokens: 4000 },
         system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for Sonnet
         tools: filteredTools,
         messages: sonnetMessages,
