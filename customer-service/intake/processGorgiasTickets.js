@@ -248,11 +248,8 @@ async function tryAutoCloseThankYou({ supabase, ticketId, messages, latestCustom
     return { handled: false, reason: 'open_action_in_flight' };
   }
 
-  // Cheap length guard — pure thank-you closers are short. Skips classifier on
-  // long messages where it would almost certainly return false anyway.
   const latestText = String(latestCustomerMsg.stripped_text || latestCustomerMsg.body_text || '').trim();
   if (!latestText) return { handled: false, reason: 'empty_message' };
-  if (latestText.length > 400) return { handled: false, reason: 'message_too_long' };
 
   // Run classifier
   const recent = formatMessagesForClassifier(messages, 6);

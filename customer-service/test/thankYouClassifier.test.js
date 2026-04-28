@@ -252,19 +252,6 @@ describe('tryAutoCloseThankYou — preconditions', () => {
     assert.equal(lastClassifierInput, null);
   });
 
-  it('returns message_too_long for messages over 400 chars', async () => {
-    setLastSentDraft({
-      id: 104, sent_response: 'hi', draft_response: 'hi',
-      action_type: null, action_executed_at: null, draft_kind: 'advisor_draft',
-    });
-    const long = 'x'.repeat(450);
-    const result = await tryAutoCloseThankYou(makeOpts({
-      latestCustomerMsg: { id: 3, stripped_text: long, body_text: long },
-    }));
-    assert.equal(result.handled, false);
-    assert.equal(result.reason, 'message_too_long');
-    assert.equal(lastClassifierInput, null);
-  });
 });
 
 describe('tryAutoCloseThankYou — classifier outcomes', () => {

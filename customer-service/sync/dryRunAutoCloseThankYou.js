@@ -81,7 +81,6 @@ async function evaluateTicket(supabase, ticket) {
 
   const latestText = String(latestCustomerMsg.body || '').trim();
   if (!latestText) return { ticketId, skip: 'empty_message' };
-  if (latestText.length > 400) return { ticketId, skip: 'message_too_long' };
 
   // Build classifier input from the stored conversation_history (instead of
   // re-fetching from Gorgias). Map to the shape the formatter expects.
