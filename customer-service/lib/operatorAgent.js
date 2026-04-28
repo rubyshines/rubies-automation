@@ -35,6 +35,7 @@ function loadToolSchemas() {
     require('./tools/createOrder'),
     require('./tools/updateCustomer'),
     require('./tools/discountCode'),
+    require('./tools/cancelOrder'),
   ];
 
   const tools = [];

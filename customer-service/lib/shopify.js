@@ -1391,6 +1391,41 @@ async function fetchProductById(numericId) {
 /**
  * Update shipping address on an order.
  */
+/**
+ * Cancel an order via Shopify's orderCancel mutation. Runs as a background
+ * job in Shopify — we return the job id; the order may take a few seconds
+ * to show as cancelled in admin.
+ *
+ * @param {string} orderId - Shopify order GID
+ * @param {object} opts
+ * @param {('CUSTOMER'|'DECLINED'|'FRAUD'|'INVENTORY'|'OTHER'|'STAFF')} [opts.reason='CUSTOMER']
+ * @param {boolean} [opts.refund=true] - Refund the customer
+ * @param {boolean} [opts.restock=true] - Restock line items
+ * @param {boolean} [opts.notifyCustomer=true] - Email the customer
+ * @param {string} [opts.staffNote] - Internal note attached to the cancellation
+ */
+async function cancelOrder(orderId, { reason = 'CUSTOMER', refund = true, restock = true, notifyCustomer = true, staffNote } = {}) {
+  const data = await shopifyGraphQL(`
+    mutation orderCancel($orderId: ID!, $reason: OrderCancelReason!, $refund: Boolean!, $restock: Boolean!, $notifyCustomer: Boolean, $staffNote: String) {
+      orderCancel(orderId: $orderId, reason: $reason, refund: $refund, restock: $restock, notifyCustomer: $notifyCustomer, staffNote: $staffNote) {
+        job { id done }
+        orderCancelUserErrors { code field message }
+        userErrors { field message }
+      }
+    }
+  `, { orderId, reason, refund, restock, notifyCustomer, staffNote });
+  const result = data.orderCancel;
+  const errors = [
+    ...(result.orderCancelUserErrors || []),
+    ...(result.userErrors || []),
+  ];
+  if (errors.length) {
+    const msg = errors.map(e => `${(e.field || []).join('.') || e.code || 'error'}: ${e.message}`).join('; ');
+    throw new Error(`orderCancel failed: ${msg}`);
+  }
+  return result.job;
+}
+
 async function updateOrderShippingAddress(orderId, shippingAddress) {
   const data = await shopifyGraphQL(`
     mutation orderUpdate($input: OrderInput!) {
@@ -1442,5 +1477,6 @@ module.exports = {
   orderEditCommit,
   sendOrderInvoice,
   updateOrderShippingAddress,
+  cancelOrder,
   fetchProductById,
 };
