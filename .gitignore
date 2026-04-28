@@ -24,6 +24,10 @@ customer-service/product-cache.json
 email-intelligence/
 exchange-tree-*.json
 exchange-rules-review.csv
+*.csv
+
+# Throwaway exploration scripts — leading underscore convention
+scripts/_*.js
 
 # Claude Code local settings
 .claude/settings.local.json
