@@ -28,7 +28,7 @@
       <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
       <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
-      <button class="tab" data-tab="helm" onclick="switchTab('helm')">Helm</button>
+      <button class="tab" data-tab="helm" onclick="switchTab('helm')">Ad Hoc</button>
     </nav>
     <a href="/stats" class="btn-stats" title="Performance stats">Stats</a>
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
@@ -170,18 +170,12 @@
     <div id="panel-helm" class="panel" style="display:none">
       <div class="helm-container">
         <div class="helm-header">
-          <div class="helm-title">
-            <span class="helm-title-text">Helm</span>
-            <span class="helm-subtitle">Ad-hoc operator — full RUBIES toolset, no ticket context</span>
-          </div>
-          <button class="btn btn-ghost helm-reset" onclick="resetHelm()" title="Clear conversation">Reset</button>
+          <span class="helm-title-text">Ad Hoc Operator</span>
+          <button class="btn btn-ghost helm-reset" onclick="resetHelm()" title="Clear conversation history">Reset</button>
         </div>
-        <div class="action-chat-messages helm-messages" id="helm-chat-messages">
-          <div class="helm-empty">Type anything — refunds, lookups, exchanges, customer history, margins, klaviyo, reviews, discount codes, inventory&hellip;</div>
-        </div>
+        <div class="action-chat-messages helm-messages" id="helm-chat-messages"></div>
         <div class="action-chat-input-row">
           <textarea class="action-chat-input" id="helm-chat-input" rows="3"
-            placeholder="e.g. refund order 29887 $20, what did jamie@example.com order last month, charlie XL inventory"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendHelmMessage()}"></textarea>
           <button class="action-chat-send" id="helm-chat-send" onclick="sendHelmMessage()">Send</button>
         </div>
@@ -204,7 +198,7 @@
       <span class="bottom-tab-label">Closed</span>
     </button>
     <button class="bottom-tab" data-bottom-tab="helm" onclick="switchTab('helm')">
-      <span class="bottom-tab-label">Helm</span>
+      <span class="bottom-tab-label">Ad Hoc</span>
     </button>
     <button class="bottom-tab bottom-tab-more" data-bottom-tab="more" onclick="toggleBottomMore(event)">
       <span class="bottom-tab-label">More</span>

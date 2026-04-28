@@ -3858,28 +3858,25 @@ main { height: calc(100vh - 56px); }
   padding: 20px 24px 16px;
   height: 100%;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .helm-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
-.helm-title { display: flex; flex-direction: column; gap: 2px; }
 .helm-title-text {
   font-size: 18px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.01em;
-}
-.helm-subtitle {
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 
 .helm-reset {
@@ -3891,7 +3888,13 @@ main { height: calc(100vh - 56px); }
   flex: 1;
   max-height: none;
   min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   margin-bottom: 14px;
+}
+
+.helm-container .action-chat-input-row {
+  flex-shrink: 0;
 }
 
 .helm-empty {
@@ -3908,8 +3911,9 @@ main { height: calc(100vh - 56px); }
     padding: 12px 14px 10px;
   }
   .helm-title-text { font-size: 16px; }
-  .helm-subtitle { font-size: 11px; }
   .helm-empty { padding: 16px 6px; font-size: 12px; }
+  /* Override the legacy mobile rule that disables internal scroll on action-chat-messages — Helm needs internal scroll so the input stays anchored at the bottom */
+  .helm-messages { overflow-y: auto !important; }
 }
 
 /* ---------------------------------------------------------------------------

@@ -1712,10 +1712,6 @@ async function sendHelmMessage() {
   const message = input.value.trim();
   if (!message) return;
 
-  // Clear the empty-state hint on first send
-  const empty = messagesEl.querySelector('.helm-empty');
-  if (empty) empty.remove();
-
   const { history } = await runChatTurn({
     endpoint: '/api/console/chat-stream',
     message,
@@ -1724,7 +1720,7 @@ async function sendHelmMessage() {
     inputEl: input,
     sendBtnEl: sendBtn,
     onSend: sendHelmMessage,
-    traceTitle: 'Helm',
+    traceTitle: 'Ad Hoc Operator',
   });
 
   _helmChatHistory = history;
@@ -1733,9 +1729,7 @@ async function sendHelmMessage() {
 function resetHelm() {
   _helmChatHistory = [];
   const messagesEl = document.getElementById('helm-chat-messages');
-  if (messagesEl) {
-    messagesEl.innerHTML = '<div class="helm-empty">Type anything — refunds, lookups, exchanges, customer history, margins, klaviyo, reviews, discount codes, inventory&hellip;</div>';
-  }
+  if (messagesEl) messagesEl.innerHTML = '';
   const input = document.getElementById('helm-chat-input');
   if (input) {
     input.value = '';
