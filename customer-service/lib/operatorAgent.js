@@ -458,6 +458,8 @@ Respond as JSON: { "tool_selection": { "rating": "...", "direction": "...", "not
       sonnet_tools_called: sonnetToolResults.map(t => t.tool),
       judge_result: judgeResult,
       divergences,
+      ticket_id: context.gorgias_ticket_id || context.ticket_id || null,
+      draft_id: context.draft_id || (context.draft && context.draft.id) || null,
     });
   } catch (err) {
     console.warn('[shadow] Failed to save operator diagnostic:', err.message);

@@ -1441,6 +1441,8 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
     order_items: structured.order?.items || ticketOrderCtx.items || [],
     fulfillment_status: structured.order?.fulfillment_status || ticketOrderCtx.fulfillment_status || null,
     intake: structured.intake || null,
+    gorgias_ticket_id: draft.gorgias_ticket_id,
+    draft_id: draft.id,
   };
 
   const result = await operatorAgent(userMessage, context, history, onStream);
@@ -2404,7 +2406,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/action-chat$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
     const { data: t } = await supabase.from('cs_tickets')
-      .select('active_draft_id, customer_email, order_number, order_context')
+      .select('active_draft_id, customer_email, order_number, order_context, gorgias_ticket_id')
       .eq('id', parseInt(id)).single();
     if (t?.active_draft_id) return apiActionChat(t.active_draft_id, body);
 
@@ -2417,6 +2419,7 @@ const paramRoutes = [
       order_items: orderCtx.items || [],
       fulfillment_status: orderCtx.fulfillment_status || null,
       intake: null,
+      gorgias_ticket_id: t?.gorgias_ticket_id,
     };
     try {
       const result = await operatorAgent(body.message, context, body.history || []);
