@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:codepen.io)",
+      "WebFetch(domain:lukeplant.me.uk)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:defensivecss.dev)"
+    ]
+  }
+}

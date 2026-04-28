@@ -49,6 +49,7 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 // ---------------------------------------------------------------------------
 
 async function prescribeDonationRouting(intake, context) {
+  const customerRequestedPartner = !!context.customerRequestedPartner;
   // Skip for defects
   const nonDefectItems = intake.items.filter(i => i.issue !== 'defect');
   if (nonDefectItems.length === 0) {
@@ -149,7 +150,7 @@ async function prescribeDonationRouting(intake, context) {
     };
   }
 
-  if (itemCount <= 1) {
+  if (itemCount <= 1 && !customerRequestedPartner) {
     return {
       phase: 'donation_routing',
       type: 'local_single',
