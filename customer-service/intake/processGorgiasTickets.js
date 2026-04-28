@@ -555,6 +555,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       issue_description: issueDescription,
       intake: previousIntake || undefined,
       preContext,
+      ticket_id: ticketId,
     });
   } catch (err) {
     console.error(`[intake] AI advisor error on ticket ${ticketId}: ${err.message}`);

@@ -1139,7 +1139,7 @@ function buildOperatorSteerBlock(steer) {
   );
 }
 
-async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer, onStream }) {
+async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer, onStream, ticket_id, draft_id }) {
   const _t = { start: Date.now(), steps: {} };
 
   // Ensure product config is loaded
@@ -1399,6 +1399,8 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     messages,
     opusResult: { composedResponse, structured: parsedStructured, toolsCalled, timing: _t },
     customer_email,
+    ticket_id,
+    draft_id,
   }).catch(err => console.warn('[shadow] Advisor evaluation error:', err.message));
 
   return {
@@ -1566,7 +1568,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
 // Shadow Sonnet evaluation — runs in background for diagnostics
 // ---------------------------------------------------------------------------
 
-async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opusResult, customer_email }) {
+async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opusResult, customer_email, ticket_id, draft_id }) {
   // Skip if diagnostic table doesn't exist or env flag is off
   if (process.env.CS_DIAGNOSTICS_DISABLED === 'true') return;
 
@@ -1714,6 +1716,8 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
       sonnet_tools_called: sonnetToolsCalled,
       judge_result: judgeResult,
       divergences,
+      ticket_id: ticket_id || null,
+      draft_id: draft_id || null,
     });
   } catch (err) {
     console.warn('[shadow] Failed to save diagnostic run:', err.message);

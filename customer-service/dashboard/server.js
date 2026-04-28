@@ -416,6 +416,8 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
     preContext,
     operatorSteer: steer || undefined,
     onStream: onStream ? (event) => _emit(event) : undefined,
+    ticket_id: draft.gorgias_ticket_id,
+    draft_id: draft.id,
   });
 
   const _tPost = Date.now();
@@ -2319,6 +2321,7 @@ const paramRoutes = [
       customer_name: senderName,
       issue_description: contextParts.join('\n\n'),
       operatorSteer: steer || undefined,
+      ticket_id: t.gorgias_ticket_id,
     });
 
     const s = result._structured;
