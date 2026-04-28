@@ -63,16 +63,19 @@ function getKlaviyoClient() {
 
   // ── campaigns ────────────────────────────────────────────────────────
 
-  async function getCampaigns({ status = 'sent', limit = 20, maxPages = MAX_PAGES } = {}) {
+  // Fetch sent email campaigns ordered by recency.
+  // Provide `updatedSince` (ISO date) to stop pagination at a cutoff — best for daily syncs.
+  // Provide `limit` to cap the absolute number returned (used by callers wanting a small recent window).
+  async function getCampaigns({ status = 'sent', limit = null, updatedSince = null, maxPages = 50 } = {}) {
     const filter = `equals(messages.channel,'email')`;
     let url = `/api/campaigns?filter=${encodeURIComponent(filter)}&sort=-updated_at&include=campaign-messages`;
     const campaigns = [];
     let pages = 0;
+    let stopped = false;
 
-    while (url && pages < maxPages) {
+    while (url && pages < maxPages && !stopped) {
       const data = await apiFetch(url);
       const pageCampaigns = data.data || [];
-      // Attach message data (subject, preview) to each campaign
       const included = data.included || [];
       for (const c of pageCampaigns) {
         const msgRel = c.relationships?.['campaign-messages']?.data?.[0];
@@ -80,14 +83,19 @@ function getKlaviyoClient() {
           const msg = included.find(m => m.id === msgRel.id);
           if (msg) c._message = msg;
         }
+        // Stop if we've crossed the updatedSince cutoff (campaigns are sorted by -updated_at).
+        if (updatedSince) {
+          const upd = c.attributes?.updated_at || c.attributes?.send_time || c.attributes?.created_at;
+          if (upd && upd < updatedSince) { stopped = true; break; }
+        }
+        campaigns.push(c);
+        if (limit && campaigns.length >= limit) { stopped = true; break; }
       }
-      campaigns.push(...pageCampaigns);
-      if (campaigns.length >= limit) break;
       url = data.links?.next || null;
       pages++;
     }
 
-    return campaigns.slice(0, limit);
+    return limit ? campaigns.slice(0, limit) : campaigns;
   }
 
   async function getCampaignMessage(campaignId) {

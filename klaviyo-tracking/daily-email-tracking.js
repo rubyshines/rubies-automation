@@ -231,22 +231,25 @@ async function runCampaignStats(results) {
   let rowsWritten = 0;
 
   try {
-    // Get campaigns with messages (for subject lines)
-    const campaigns = await client.getCampaigns({ limit: 50 });
+    // Fetch any campaign updated in the last 90 days. Stats for older campaigns are
+    // stable and live in Supabase from the historical backfill.
+    const updatedSince = new Date(Date.now() - 90 * 86400_000).toISOString();
+    const campaigns = await client.getCampaigns({ updatedSince });
+    console.log(`  Fetched ${campaigns.length} campaigns updated since ${updatedSince.slice(0, 10)}`);
 
     if (!campaigns.length) {
       results[sourceKey] = { success: true, rowsWritten: 0, error: null };
       return;
     }
 
-    // Get campaign performance report
+    // Stats: use last_90_days timeframe (covers any campaign whose stats are still moving).
     let statsMap = {};
     try {
       const reportBody = {
         data: {
           type: 'campaign-values-report',
           attributes: {
-            timeframe: { key: 'last_365_days' },
+            timeframe: { key: 'last_90_days' },
             conversion_metric_id: PLACED_ORDER_METRIC_ID,
             filter: "equals(send_channel,'email')",
             statistics: [
@@ -272,7 +275,7 @@ async function runCampaignStats(results) {
       }
     } catch (err) {
       console.error(`  ⚠ Campaign values report failed: ${err.message}`);
-      // Continue without stats — we'll still store campaign metadata
+      // Continue without stats — metadata still gets refreshed below.
     }
 
     // ── Backfill content_text for campaigns missing it (up to 10 per run) ──
@@ -314,17 +317,32 @@ async function runCampaignStats(results) {
       console.error(`  ⚠ Content backfill check failed: ${err.message}`);
     }
 
-    // Build rows
-    const rows = campaigns.map(c => {
-      const attrs = c.attributes;
-      const stats = statsMap[c.id] || {};
-      const subject = c._message?.attributes?.content?.subject || attrs.name || '';
+    // Two-pass write to avoid wiping historical stats:
+    //   Pass 1 — upsert metadata for ALL fetched campaigns (always safe)
+    //   Pass 2 — UPDATE stats only for campaigns where the report returned values
+    const now = new Date().toISOString();
 
+    const metadataRows = campaigns.map(c => {
+      const attrs = c.attributes;
+      const subject = c._message?.attributes?.content?.subject || attrs.name || '';
       const row = {
         campaign_id: c.id,
         campaign_name: attrs.name || '',
         subject,
         send_date: (attrs.send_time || attrs.created_at || '').split('T')[0] || null,
+        updated_at: now,
+      };
+      if (contentMap[c.id]) row.content_text = contentMap[c.id];
+      return row;
+    });
+
+    const metadataWritten = await upsert('klaviyo_campaigns', metadataRows, ['campaign_id']);
+
+    let statsUpdated = 0;
+    for (const c of campaigns) {
+      const stats = statsMap[c.id];
+      if (!stats) continue; // no fresh stats — leave existing row untouched
+      const update = {
         recipients: stats.recipients || 0,
         opens: stats.opens || 0,
         clicks: stats.clicks || 0,
@@ -336,15 +354,18 @@ async function runCampaignStats(results) {
         conversion_value: Math.round((stats.conversion_value || 0) * 100) / 100,
         conversion_rate: Math.round((stats.conversion_rate || 0) * 10000) / 100,
         average_order_value: Math.round((stats.average_order_value || 0) * 100) / 100,
-        updated_at: new Date().toISOString(),
+        updated_at: now,
       };
+      const { error } = await supabase
+        .from('klaviyo_campaigns')
+        .update(update)
+        .eq('campaign_id', c.id);
+      if (!error) statsUpdated++;
+      else console.error(`  ✗ stats update ${c.id}: ${error.message}`);
+    }
 
-      row.content_text = contentMap[c.id] || '';
-
-      return row;
-    });
-
-    rowsWritten = await upsert('klaviyo_campaigns', rows, ['campaign_id']);
+    rowsWritten = metadataWritten;
+    console.log(`  Metadata upserts: ${metadataWritten}, stats updates: ${statsUpdated}`);
     results[sourceKey] = { success: true, rowsWritten, error: null };
   } catch (err) {
     console.error(`  ✗ Campaigns error: ${err.message}`);
