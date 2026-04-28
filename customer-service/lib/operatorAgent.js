@@ -425,8 +425,16 @@ Tools called: ${opusTools || 'none'}
 RESPONSE B (candidate): ${sonnetFinalResponse}
 Tools called: ${sonnetTools || 'none'}
 
-Rate: tool_selection (SAME/MINOR_DIFF/MAJOR_DIFF), response_quality (SAME/MINOR_DIFF/MAJOR_DIFF), verdict (EQUIVALENT/B_ACCEPTABLE/B_WORSE).
-Respond as JSON: { "tool_selection": {...}, "response_quality": {...}, "verdict": "..." }`,
+Rate tool_selection (SAME/MINOR_DIFF/MAJOR_DIFF) and response_quality (SAME/MINOR_DIFF/MAJOR_DIFF). For each, note direction (B_BETTER, B_WORSE, or N/A if SAME).
+
+Then give Response B an overall score from 1 to 5, where 3 is baseline (tied with A):
+- 5 = significantly better (correct tool sequence A missed, materially better customer-facing reply)
+- 4 = modestly better
+- 3 = equivalent
+- 2 = modestly worse (suboptimal tool choice, slight reply issue)
+- 1 = significantly worse (wrong/missing tool call, harmful or incorrect response)
+
+Respond as JSON: { "tool_selection": { "rating": "...", "direction": "...", "note": "..." }, "response_quality": {...}, "score": <1-5>, "score_reason": "one sentence" }`,
       }],
     });
     const judgeText = judgeResponse.content.filter(b => b.type === 'text').map(b => b.text).join('');

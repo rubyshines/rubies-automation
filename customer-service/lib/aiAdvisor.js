@@ -1666,15 +1666,21 @@ ${JSON.stringify(sonnetParsed, null, 2)}
 
 ---
 
-Rate each dimension as SAME, MINOR_DIFF, or MAJOR_DIFF with a brief explanation:
+Rate each dimension as SAME, MINOR_DIFF, or MAJOR_DIFF with a brief explanation. For each dimension also note direction (B_BETTER, B_WORSE, or N/A if SAME):
 1. Tone (does it sound like a real person, not AI?)
 2. Action accuracy (correct exchange/refund/sizing recommendation?)
 3. Structured output (right message_type, status, items, action_type?)
 4. Response length (appropriate, not padded?)
 5. Rule compliance (anti-hallucination, pronoun sensitivity)
 
-Then give an overall verdict: EQUIVALENT, B_ACCEPTABLE, or B_WORSE.
-Respond as JSON: { "tone": { "rating": "...", "note": "..." }, "action": {...}, "structured": {...}, "length": {...}, "rules": {...}, "verdict": "..." }`,
+Then give Draft B an overall score from 1 to 5, where 3 is the baseline (tied with Draft A):
+- 5 = significantly better than A on ≥1 dimension, no regression on any others. Catches a detail A missed, makes a clearly more appropriate decision, or noticeably better customer-facing reply.
+- 4 = modestly better than A — slight edge on ≥1 dimension, no regression.
+- 3 = equivalent to A. Either same content or different in form but no quality difference either way.
+- 2 = modestly worse than A. Minor tone slip, slightly off action, missing detail — inferior but not harmful.
+- 1 = significantly worse than A. Wrong action, hallucinated detail (e.g. fabric delta without tool call), broken structured output, major tone failure, or rule violation. Would be a real problem if shipped.
+
+Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." }, "action": {...}, "structured": {...}, "length": {...}, "rules": {...}, "score": <1-5>, "score_reason": "one sentence" }`,
       }],
     });
     const judgeText = judgeResponse.content.filter(b => b.type === 'text').map(b => b.text).join('');
