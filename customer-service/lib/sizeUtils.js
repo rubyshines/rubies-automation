@@ -142,9 +142,11 @@ function normalizeSizeLower(s) {
   const lower = s.toLowerCase().trim();
   // Check tall aliases first (only relevant for lowercase/SKU contexts)
   if (TALL_ALIASES[lower]) return TALL_ALIASES[lower];
-  // Standard aliases
-  const upper = normalizeSize(s);
-  return upper ? upper.toLowerCase() : lower;
+  // Preserve Tall modifier when present so "M Tall"/"MT" don't collapse to "m"
+  const { base, modifier } = parseSizeVariant(s);
+  if (!base) return lower;
+  const canonical = (SIZE_ALIASES[base.toUpperCase()] || base.toUpperCase()).toLowerCase();
+  return modifier === 'Tall' ? `${canonical} tall` : canonical;
 }
 
 /**

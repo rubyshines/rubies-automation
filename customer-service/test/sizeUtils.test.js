@@ -257,6 +257,24 @@ describe('normalizeSizeLower', () => {
     assert.equal(normalizeSizeLower('2xlt'), '2x tall');
   });
 
+  it('preserves Tall modifier on spaced/word inputs', () => {
+    assert.equal(normalizeSizeLower('M Tall'), 'm tall');
+    assert.equal(normalizeSizeLower('L Tall'), 'l tall');
+    assert.equal(normalizeSizeLower('2X Tall'), '2x tall');
+    assert.equal(normalizeSizeLower('XL Tall'), '1x tall');
+    assert.equal(normalizeSizeLower('Medium Tall'), 'm tall');
+  });
+
+  it('preserves Tall modifier on coded T-suffix inputs', () => {
+    assert.equal(normalizeSizeLower('MT'), 'm tall');
+    assert.equal(normalizeSizeLower('LT'), 'l tall');
+  });
+
+  it('preserves Tall modifier on numeric Talls', () => {
+    assert.equal(normalizeSizeLower('14 Tall'), '14 tall');
+    assert.equal(normalizeSizeLower('16 Tall'), '16 tall');
+  });
+
   it('returns null for null/undefined', () => {
     assert.equal(normalizeSizeLower(null), null);
     assert.equal(normalizeSizeLower(undefined), null);
@@ -354,6 +372,13 @@ describe('getVariantSize', () => {
     // "xl" is in KNOWN_SIZES so it matches, then normalizeSizeLower("xl") → "1x"
     const result = getVariantSize(variant);
     assert.equal(result, '1x');
+  });
+
+  it('distinguishes Tall variants from regular (M Tall → "m tall", M → "m")', () => {
+    const tall = { selectedOptions: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'M Tall' }] };
+    const regular = { selectedOptions: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'M' }] };
+    assert.equal(getVariantSize(tall), 'm tall');
+    assert.equal(getVariantSize(regular), 'm');
   });
 
   it('returns null when no size option found', () => {
