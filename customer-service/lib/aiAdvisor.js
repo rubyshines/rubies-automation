@@ -1277,9 +1277,22 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     };
 
     if (useStreaming) {
-      // Streaming mode — emit text deltas as they arrive
+      // Streaming mode — emit text deltas as they arrive. When the structured
+      // block opens we emit prose_complete so the client can switch the editor
+      // out of "Generating…" and into "Finalizing…" — the visible prose is
+      // done; the model is still streaming the structured JSON block (~500
+      // invisible tokens, ~7-9s at Opus rates).
+      let runningText = '';
+      let proseDone = false;
       const stream = client.messages.stream(apiParams);
-      stream.on('text', (text) => _emit({ type: 'text_delta', text }));
+      stream.on('text', (text) => {
+        runningText += text;
+        _emit({ type: 'text_delta', text });
+        if (!proseDone && runningText.includes('<structured>')) {
+          proseDone = true;
+          _emit({ type: 'prose_complete' });
+        }
+      });
       response = await stream.finalMessage();
     } else {
       response = await client.messages.create(apiParams);

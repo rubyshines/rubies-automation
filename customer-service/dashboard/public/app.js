@@ -2215,6 +2215,12 @@ async function refreshDraft(steer) {
             trace.status(event.text || 'working...');
           } else if (event.type === 'tool_call') {
             trace.startTool(event.tool || 'tool', event.input);
+          } else if (event.type === 'prose_complete') {
+            // Visible prose finished; structured JSON block is still streaming
+            // (~7-9s at Opus rates). Update the reasoning trace status so the
+            // operator knows the gap between visible-finish and full-finish
+            // is the model emitting the structured block, not a stall.
+            trace.status('finalizing structured output...');
           } else if (event.type === 'warning') {
             console.warn('[refresh]', event.message);
             trace.status(`warning: ${event.message}`);
