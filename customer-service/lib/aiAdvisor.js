@@ -103,6 +103,7 @@ const TOOLS = [
           },
         },
         has_defect: { type: 'boolean', description: 'True if any item has a defect (skip donation for defects)' },
+        customer_requested_partner: { type: 'boolean', description: 'Set true ONLY when the customer has explicitly accepted a prior offer of partner org info on a single-item donation. Bypasses the default "donate locally" response and returns a partner address. Leave false/omitted otherwise — the tool handles the default single vs multi-item routing.' },
       },
       required: ['customer_country', 'item_count'],
     },
@@ -259,7 +260,7 @@ async function executeToolCall(toolName, toolInput) {
     }
 
     case 'get_donation_partner': {
-      const { customer_country, item_count, customer_address, has_defect } = toolInput;
+      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner } = toolInput;
       // Reuse the deterministic donation routing from decisionTree
       const intake = {
         items: has_defect
@@ -270,6 +271,7 @@ async function executeToolCall(toolName, toolInput) {
         customerCountry: customer_country,
         customer: customer_address ? { defaultAddress: customer_address } : null,
         targetOrder: { lineItems: intake.items.map(() => ({ title: 'item', quantity: 1 })) },
+        customerRequestedPartner: !!customer_requested_partner,
       };
       const result = await prescribeDonationRouting(intake, context);
       return {
@@ -893,6 +895,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 - Wash instructions: only include when the tool returns a named partner with an address (not for local donations).
 - No partners in customer's country: the tool will suggest donating locally and ask if they know an LGBTQ+ org. Relay that.
 - Single item with partners available: the tool will suggest donating locally but offer our partner org info. Relay that.
+- Single item — customer accepts the partner offer: when the customer's reply explicitly asks for the partner info we offered (e.g. "yes please send the info", "I'd appreciate the donation address"), call get_donation_partner again with customer_requested_partner=true. The tool will return a real partner name and address — include the full address block, just like the multi-item case. Do NOT re-relay the "donate locally" offer.
 - Multiple items with partners available: the tool returns the specific partner name, address, and description. Include the full address block.
 
 ### Kids & Third-Party Purchases
@@ -919,6 +922,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 - For measurements: ask for waist "around the belly and just under the belly button" for bottoms. For tops, ask for "the measurement around the chest where a bikini band sits".
 - NEVER say "Shall I set that up?" or "Would you like me to proceed?" Say "Does that sound right?" or "Does that sound like it will work?"
 - NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover...", "Hmm", "Actually", "Let me try again"). Just write the customer email directly. Write ONE draft, then immediately output the <structured> block. NEVER revise, critique, or re-draft your response. Your first draft is your final draft.
+- **Tool calls precede customer-facing prose.** Do not write any customer-facing email content (anything starting with "Hi," "Hey," "Hola," "Thanks," "Sorry," "No problem," "Ooops," or any other greeting/apology/acknowledgement directed at the customer) until you have called every tool you intend to call. Internal planning narration is encouraged before tool calls — operators see this in the reasoning trace and rely on it. Useful pre-tool narration includes things like "Let me check inventory for the Serena in 1X...", "Looking up the donation partner for ZIP 90210...", "Need to confirm the order before drafting...". But the customer-facing email itself must be a single uninterrupted draft written in your final response after all tool results are in. If you need information from a tool, call the tool first and write the entire customer reply afterward.
 - Start with "Hi," or "Hi [name]," then get straight to the point. No preambles.
 - Action tense and structured fields MUST agree. The prose and the structured block are read together by the operator — they cannot contradict each other.
   - When status is "ready" (ALL items resolved, action committed): prose uses past tense ("I've created your exchange", "I've processed the refund", "I've updated the shipping address"). The items array MUST contain CONFIRMED entries with resolved sizes/products. operator_action_summary MUST be populated describing the exact order/profile change. Applies to ALL action types including exchanges, refunds, order edits, address changes, cancellations, warehouse holds.
@@ -1134,7 +1138,11 @@ function buildOperatorSteerBlock(steer) {
     'is redirecting away from. Regenerate BOTH the customer-facing response AND\n' +
     'the structured action (tool calls, status) to reflect the operator\'s intent.\n' +
     'If the operator\'s instruction requires a tool you would not normally call\n' +
-    '(e.g. refund, exchange, draft order), call it now.\n' +
+    '(e.g. refund, exchange, draft order), call it now.\n\n' +
+    'Even though this instruction tells you what to say, do not begin the\n' +
+    'customer-facing email until after you have called every tool the response\n' +
+    'requires (donation routing, order context, etc.). The customer-facing draft\n' +
+    'must be written once, in full, in your final round.\n' +
     '================================================================'
   );
 }
@@ -1288,6 +1296,14 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     // Check if there are tool calls
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
     apiTiming.tool_calls = toolUseBlocks.map(b => b.name);
+    // Capture a preview of this round's text content for debugging multi-round
+    // prose drift. The "tool calls precede customer-facing prose" rule means
+    // pre-final rounds should never contain greeting-prefixed text — this
+    // preview makes that observable in the saved draft's _timing.
+    apiTiming.text_preview = response.content
+      .filter(b => b.type === 'text')
+      .map(b => (b.text || '').substring(0, 120))
+      .join(' || ');
     _t.api_calls.push(apiTiming);
 
     if (toolUseBlocks.length === 0) {
