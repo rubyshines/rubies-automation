@@ -504,8 +504,21 @@ function renderTicketDetail(ticket) {
 
   const d = ticket.active_draft; // may be null for snoozed/closed
 
-  // Always show draft panel
-  document.getElementById('detail-draft').style.display = 'block';
+  // Reopen card vs draft panel — closed/snoozed without a draft show the reopen card instead
+  const reopenCard = document.getElementById('detail-reopen');
+  const showReopen = !d && (ticket.status === 'closed' || ticket.status === 'snoozed');
+  document.getElementById('detail-draft').style.display = showReopen ? 'none' : 'block';
+  if (reopenCard) {
+    reopenCard.style.display = showReopen ? 'block' : 'none';
+    if (showReopen) {
+      const isClosed = ticket.status === 'closed';
+      const stamp = isClosed ? ticket.closed_at : ticket.snoozed_at;
+      const ago = stamp ? timeAgo(stamp, 'long') : '';
+      document.getElementById('reopen-card-title').textContent = isClosed ? 'This ticket is closed.' : 'This ticket is snoozed.';
+      document.getElementById('reopen-card-subtitle').textContent = ago ? (isClosed ? `Closed ${ago}.` : `Snoozed ${ago}.`) : '';
+      document.getElementById('reopen-card-btn-label').textContent = isClosed ? 'Reopen ticket' : 'Bring back to inbox';
+    }
+  }
 
   // Reset button states for draft panel
   if (d) {
@@ -1909,7 +1922,8 @@ function sendDraft(afterAction, testSnooze) {
       // Restore draft to localStorage on failure so it's not lost
       localStorage.setItem(`draft-ticket-${ticketId}`, response);
       if (notes) localStorage.setItem(`notes-ticket-${ticketId}`, notes);
-    }
+    },
+    { undoable: afterAction === 'close' }
   );
 }
 
@@ -1926,7 +1940,9 @@ function closeNoReply() {
   advanceToNextTicket(ticketId);
 
   executeBackgroundAction(ticketId, `${ticketRef} — Closed`,
-    () => api(`/api/tickets/${ticketId}/close`, { method: 'POST', body: { notes } })
+    () => api(`/api/tickets/${ticketId}/close`, { method: 'POST', body: { notes } }),
+    null,
+    { undoable: true }
   );
 }
 
@@ -2692,11 +2708,15 @@ async function api(url, opts = {}) {
 // Optimistic action execution
 // ---------------------------------------------------------------------------
 
-function executeBackgroundAction(ticketId, label, apiCall, onError) {
+function executeBackgroundAction(ticketId, label, apiCall, onError, options = {}) {
   _actionsInFlight.add(ticketId);
   apiCall()
     .then(() => {
-      showToast(label);
+      if (options.undoable) {
+        showUndoToast(label, ticketId);
+      } else {
+        showToast(label);
+      }
       loadStats();
     })
     .catch(err => {
@@ -2704,7 +2724,7 @@ function executeBackgroundAction(ticketId, label, apiCall, onError) {
       if (onError) onError(err);
       showRetryToast(
         `${label} failed: ${err.message}`,
-        () => executeBackgroundAction(ticketId, label, apiCall, onError)
+        () => executeBackgroundAction(ticketId, label, apiCall, onError, options)
       );
       reinsertTicket(ticketId);
     })
@@ -2753,6 +2773,45 @@ function showRetryToast(message, retryFn) {
   container.appendChild(toast);
   setTimeout(() => toast.classList.add('toast-visible'), 10);
   // No auto-dismiss — user must interact
+}
+
+function showUndoToast(message, ticketId) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-undo';
+
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'toast-message';
+  msgSpan.textContent = message;
+  toast.appendChild(msgSpan);
+
+  const undoBtn = document.createElement('button');
+  undoBtn.className = 'toast-undo-btn';
+  undoBtn.innerHTML = '↺ Undo';
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 300);
+  };
+  undoBtn.addEventListener('click', async () => {
+    dismiss();
+    try {
+      await api(`/api/tickets/${ticketId}/reopen`, { method: 'POST', body: {} });
+      showToast('Reopened', 'info');
+      reinsertTicket(ticketId);
+      loadStats();
+    } catch (err) {
+      showToast('Undo failed: ' + err.message, 'error');
+    }
+  });
+  toast.appendChild(undoBtn);
+
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('toast-visible'), 10);
+  setTimeout(dismiss, 3000);
 }
 
 function showToast(message, type = 'success') {

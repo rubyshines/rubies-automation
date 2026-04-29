@@ -116,6 +116,16 @@
             <div id="action-result" style="display:none"></div>
           </div>
 
+          <!-- Reopen card — shown when ticket is closed/snoozed (no active draft) -->
+          <div id="detail-reopen" class="reopen-card" style="display:none">
+            <div class="reopen-card-title" id="reopen-card-title"></div>
+            <div class="reopen-card-subtitle" id="reopen-card-subtitle"></div>
+            <button class="reopen-card-btn" onclick="reopenTicket()">
+              <span class="reopen-card-btn-icon">↺</span>
+              <span id="reopen-card-btn-label">Reopen ticket</span>
+            </button>
+          </div>
+
           <!-- AI Draft (editable) -->
           <div id="detail-draft" class="detail-section">
             <h3>AI Draft <span id="detail-message-type" class="category-badge"></span> <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span></h3>
@@ -219,6 +229,22 @@
 .toast-success { background: #16a34a; }
 .toast-error   { background: #dc2626; }
 .toast-info    { background: #2563eb; }
+.toast-undo    { background: #c0392b; display: flex; align-items: center; gap: 14px; }
+.toast-undo .toast-message { white-space: nowrap; }
+.toast-undo-btn {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.toast-undo-btn:hover { background: rgba(255,255,255,0.32); }
 </style>
 
 <!-- Attachment Lightbox -->

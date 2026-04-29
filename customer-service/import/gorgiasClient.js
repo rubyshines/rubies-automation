@@ -344,6 +344,16 @@ async function closeTicket(ticketId) {
   });
 }
 
+/**
+ * Reopen a ticket — set status back to open and clear any snooze.
+ */
+async function reopenTicket(ticketId) {
+  return apiFetch(`/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status: 'open', snooze_datetime: null }),
+  });
+}
+
 async function deleteTicket(ticketId) {
   const config = getConfig();
   const url = `${config.baseUrl}/tickets/${ticketId}`;
@@ -436,6 +446,7 @@ module.exports = {
   assignTicket,
   snoozeTicket,
   closeTicket,
+  reopenTicket,
   deleteTicket,
   // Utilities
   stripHtml,

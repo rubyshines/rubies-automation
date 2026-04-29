@@ -437,6 +437,45 @@ main { height: calc(100vh - 56px); }
   margin-bottom: 14px;
 }
 
+/* ─── Reopen Card (closed/snoozed tickets) ─────────────────── */
+
+.reopen-card {
+  margin-bottom: 16px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 36px 24px;
+  text-align: center;
+}
+.reopen-card-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.reopen-card-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 20px;
+}
+.reopen-card-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.15s;
+}
+.reopen-card-btn:hover { background: var(--accent-hover); }
+.reopen-card-btn-icon { font-size: 16px; line-height: 1; }
+
 /* ─── Customer Context Panel ─────────────────────────────── */
 
 /* (context is now in sidebar, not detail header) */

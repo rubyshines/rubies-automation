@@ -1832,11 +1832,22 @@ async function apiSendTicketMessage(ticketId, body) {
 
 async function apiReopenTicket(ticketId) {
   const supabase = getSupabaseClient();
-  const now = new Date().toISOString();
+
+  const { data: t, error } = await supabase.from('cs_tickets')
+    .select('gorgias_ticket_id')
+    .eq('id', ticketId)
+    .single();
+  if (error) throw error;
+  if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
+
+  // Gorgias first — if this fails, Supabase stays consistent with Gorgias
+  await gorgias.reopenTicket(t.gorgias_ticket_id);
 
   await supabase.from('cs_tickets').update({
     status: 'open',
-    updated_at: now,
+    closed_at: null,
+    snoozed_at: null,
+    updated_at: new Date().toISOString(),
   }).eq('id', ticketId);
 
   return { success: true };
