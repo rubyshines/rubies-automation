@@ -91,6 +91,27 @@ ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS auto_close_path text;
 CREATE INDEX IF NOT EXISTS idx_drafts_auto_close_path ON cs_ai_drafts (auto_close_path)
   WHERE auto_close_path IS NOT NULL;
 
+-- actions: append-only log of completed operator actions on this draft.
+-- Each entry: { executed_at, action_type, summary, links: [{label, url}] }.
+-- Multiple entries are possible if the operator runs more than one action on
+-- the same draft (e.g. edit then warehouse hold) before a customer reply
+-- spawns a new draft. Rendered inline in the dashboard ticket timeline so
+-- completed actions appear chronologically alongside messages.
+ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS actions jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+-- Backfill: synthesize a single actions entry for drafts that already executed
+-- under the old (overwriting) action_result model. Idempotent — only runs on
+-- drafts where actions is still empty.
+UPDATE cs_ai_drafts
+SET actions = jsonb_build_array(jsonb_build_object(
+  'executed_at', action_executed_at,
+  'action_type', action_type,
+  'summary',     COALESCE(action_result->>'chat_response', ''),
+  'links',       COALESCE(action_result->'chat_links', '[]'::jsonb)
+))
+WHERE action_executed_at IS NOT NULL
+  AND (actions IS NULL OR actions = '[]'::jsonb);
+
 -- ============================================================
 -- 3. Feedback log (one row per send/release action)
 -- ============================================================

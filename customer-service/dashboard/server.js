@@ -1323,7 +1323,9 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   // Extract Shopify admin links from tool results before saving
   result.links = extractActionLinks(result.tool_results);
 
-  // Update draft with action results
+  // Update draft with in-progress action chat (the bottom panel renders this
+  // until the action completes; on completion we file the entry into `actions`
+  // and clear this scratchpad so the panel returns to idle).
   const prevResult = draft.action_result || {};
   const updates = {
     action_result: {
@@ -1340,7 +1342,7 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   // Order Created — Awaiting Confirmation**") so we must exclude any tool result
   // still flagged as awaiting confirmation, otherwise the dashboard locks the panel
   // into "executed" mode and the Yes/No confirm buttons never render.
-  const completedAction = result.tool_results.some(tr => {
+  const completingTool = result.tool_results.find(tr => {
     if (tr.result && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)) return false;
     if (tr.tool === 'refund_order' && tr.input?.confirmed) return true;
     if (tr.tool === 'create_exchange_order' && tr.input?.confirmed) return true;
@@ -1349,15 +1351,40 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
     return tr.result && typeof tr.result === 'string'
       && /\b(completed|refunded|hold placed|edit committed|address updated)\b/i.test(tr.result);
   });
-  if (completedAction && !draft.action_executed_at) {
-    updates.action_executed_at = new Date().toISOString();
-    // Transition status: action_needed → ready (action has been executed)
-    updates.advisor_status = 'ready';
+  if (completingTool) {
+    const now = new Date().toISOString();
+    const entry = {
+      executed_at: now,
+      action_type: actionTypeFromTool(completingTool.tool) || draft.action_type || null,
+      summary:     result.response || '',
+      links:       result.links || [],
+    };
+    updates.actions = [...(Array.isArray(draft.actions) ? draft.actions : []), entry];
+    // Clear the in-progress chat scratchpad — the action is now filed in the
+    // timeline and the bottom panel should return to idle for the next action.
+    updates.action_result = null;
+    if (!draft.action_executed_at) {
+      updates.action_executed_at = now;
+      updates.advisor_status = 'ready';
+    }
   }
 
   await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
 
   return result;
+}
+
+function actionTypeFromTool(toolName) {
+  switch (toolName) {
+    case 'create_exchange_order': return 'exchange';
+    case 'refund_order':          return 'refund';
+    case 'edit_order':            return 'order_modification';
+    case 'warehouse_hold':        return 'warehouse_hold';
+    case 'cancel_order':          return 'cancellation';
+    case 'update_customer':       return 'customer_profile_update';
+    case 'create_discount_code':  return 'discount_code';
+    default:                      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1739,7 +1766,7 @@ async function apiGetTicket(id) {
   // Get all drafts for this ticket (for history/training panel)
   const { data: allDrafts } = await supabase
     .from('cs_ai_drafts')
-    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, action_executed_at, order_number, status, turn_number, sent_at, created_at')
+    .select('id, draft_response, sent_response, feedback_notes, confidence, advisor_status, message_type, action_type, action_result, action_executed_at, actions, order_number, status, turn_number, sent_at, created_at')
     .eq('ticket_id', id)
     .order('created_at', { ascending: true });
 
