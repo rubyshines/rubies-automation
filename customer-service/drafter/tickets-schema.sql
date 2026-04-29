@@ -86,6 +86,14 @@ ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS auto_close_path text;
 CREATE INDEX IF NOT EXISTS idx_tickets_auto_close_path ON cs_tickets (auto_close_path)
   WHERE auto_close_path IS NOT NULL;
 
+-- initiated_by: who started the conversation. Default 'customer' for the inbound
+-- pipeline (customer messages → webhook → cs_tickets row). Set to 'operator' for
+-- proactive outbound tickets created via customerOutreach.sendIncidentOutreach()
+-- and similar operator-initiated paths. Used for analytics and dashboard badges;
+-- not consulted by intake or follow-up logic.
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS initiated_by text DEFAULT 'customer';
+CREATE INDEX IF NOT EXISTS idx_tickets_initiated_by ON cs_tickets (initiated_by);
+
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts
 -- ============================================================
