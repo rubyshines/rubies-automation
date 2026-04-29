@@ -317,7 +317,9 @@ describe('sendIncidentOutreach — live mode', () => {
     assert.equal(draftsInsert.payload.confidence, 'high');
     assert.equal(draftsInsert.payload.advisor_status, 'ready');
     assert.equal(draftsInsert.payload.message_type, 'outbound_outreach');
-    assert.equal(draftsInsert.payload.draft_response, 'Hi,\n\nBody.');
+    // Outbound-initiated tickets seed an empty draft_response (nothing to send
+    // until the customer replies). sent_response preserves the audit record.
+    assert.equal(draftsInsert.payload.draft_response, '');
     assert.equal(draftsInsert.payload.sent_response, 'Hi,\n\nBody.');
     assert.ok(draftsInsert.payload.sent_at, 'sent_at should be set');
     assert.equal(draftsInsert.payload.structured_output.status, 'outbound_initiated');

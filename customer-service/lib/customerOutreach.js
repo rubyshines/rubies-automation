@@ -248,7 +248,12 @@ async function registerOutboundWithAdvisorPipeline({ supabase, ticket, outreach,
         customer_email: recipientEmail,
         customer_name: recipientName || null,
         order_number: orderNumber,
-        draft_response: draftBody,
+        // draft_response is what the dashboard renders in the AI Draft box as
+        // "what to send next." For an outbound-initiated ticket we've already
+        // sent our message and are waiting on the customer — nothing to send
+        // next until they reply, so leave the draft box empty. sent_response
+        // preserves the audit record of what we sent.
+        draft_response: '',
         sent_response: draftBody,
         structured_output: {
           status: 'outbound_initiated',
