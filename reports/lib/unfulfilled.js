@@ -51,7 +51,11 @@ async function fetchUnfulfilledFromSupabase(supabase) {
     .not('financial_status', 'in', '("REFUNDED","VOIDED")')
     .is('cancelled_at', null)
     .is('closed_at', null)
-    .order('created_at', { ascending: true });
+    // Newest first so the daily report surfaces today's orders at the top of
+    // each section — easier to spot fresh issues without scrolling past stale
+    // pre-orders. Downstream auto-resolve/auto-cancel logic doesn't depend on
+    // sort order.
+    .order('created_at', { ascending: false });
 
   if (error) throw new Error(`Orders query failed: ${error.message}`);
   return data || [];
@@ -243,12 +247,7 @@ function classifyOrder(order, whOrder, inventoryInfo, bd) {
 
   // Warehance status checks
   if (whOrder) {
-    if (whOrder.fulfillment_status === 'in_progress') {
-      return { reason: 'in_progress', severity: 'normal', detail: 'Being picked/packed at warehouse' };
-    }
-    if (whOrder.ready_to_ship) {
-      return { reason: 'ready_to_ship', severity: 'normal', detail: 'Ready to ship' };
-    }
+    // Hold types mean attention regardless of age.
     if (whOrder.not_ready_to_ship_types) {
       const types = Object.entries(whOrder.not_ready_to_ship_types)
         .filter(([, v]) => v)
@@ -258,10 +257,22 @@ function classifyOrder(order, whOrder, inventoryInfo, bd) {
         return { reason: 'not_ready', severity: 'attention', detail: `Not ready: ${types}` };
       }
     }
+    // Otherwise severity is driven by age, not by Warehance's self-reported
+    // pick/pack status — until it ships, "in progress" is just as overdue as
+    // "sitting at warehouse".
+    let reason = 'at_warehouse';
+    let detail = 'In Warehance, no holds detected';
+    if (whOrder.fulfillment_status === 'in_progress') {
+      reason = 'in_progress';
+      detail = 'Being picked/packed at warehouse';
+    } else if (whOrder.ready_to_ship) {
+      reason = 'ready_to_ship';
+      detail = 'Ready to ship';
+    }
     return {
-      reason: 'at_warehouse',
-      severity: bd > 3 ? 'attention' : 'normal',
-      detail: 'In Warehance, no holds detected',
+      reason,
+      severity: bd > 7 ? 'urgent' : bd > 3 ? 'attention' : 'normal',
+      detail,
     };
   }
 
