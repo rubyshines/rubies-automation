@@ -234,9 +234,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     autoExpandTextarea(draftEditor);
   });
 
+  // ── Voice input + auto-grow on every prose input ───────────
+  if (window.voiceInput) {
+    voiceInput.attachVoiceInput(draftEditor, document.getElementById('draft-editor-mic'));
+    voiceInput.attachVoiceInput(document.getElementById('steer-input'), document.getElementById('steer-mic'));
+    voiceInput.attachAutoGrow(document.getElementById('steer-input'), { minRows: 1, maxRows: 8 });
+    voiceInput.attachVoiceInput(document.getElementById('action-chat-input'), document.getElementById('action-chat-mic'));
+    voiceInput.attachAutoGrow(document.getElementById('action-chat-input'), { minRows: 4, maxRows: 12 });
+    voiceInput.attachVoiceInput(document.getElementById('helm-chat-input'), document.getElementById('helm-chat-mic'));
+    voiceInput.attachAutoGrow(document.getElementById('helm-chat-input'), { minRows: 3, maxRows: 12 });
+
+    // Stop voice when any action button is clicked (covers all the secondary
+    // ticket actions: close, snooze, park, release, delete, spam, forward, etc.)
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn, .btn-refresh-inline, .action-chat-send, .reopen-card-btn');
+      if (btn && !btn.classList.contains('voice-mic')) voiceInput.stopActive();
+    });
+  }
+
   // ── Drag-and-drop attachments on draft editor ──────────────
   initDraftAttachments();
 });
+
+function handleSteerKeydown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (window.voiceInput) voiceInput.stopActive();
+    refreshDraft(e.target.value);
+  } else if (e.key === 'Escape') {
+    e.target.blur();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Tab switching
@@ -267,6 +295,8 @@ function switchTab(tab) {
     ticketsPanel.style.display = 'none';
     helmPanel.style.display = 'flex';
     localStorage.setItem('activeTab', tab);
+    // Clear any stale ticket hash so a refresh restores Ad Hoc, not the prior ticket
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
     // Focus the input so Jamie can type immediately
     setTimeout(() => {
       const input = document.getElementById('helm-chat-input');
@@ -1679,6 +1709,7 @@ async function runChatTurn({
 
 async function sendActionMessage() {
   if (!currentTicketId) return;
+  if (window.voiceInput) voiceInput.stopActive();
 
   const messagesEl = document.getElementById('action-chat-messages');
   const input = document.getElementById('action-chat-input');
@@ -1719,6 +1750,7 @@ async function sendActionMessage() {
 let _helmChatHistory = [];
 
 async function sendHelmMessage() {
+  if (window.voiceInput) voiceInput.stopActive();
   const messagesEl = document.getElementById('helm-chat-messages');
   const input = document.getElementById('helm-chat-input');
   const sendBtn = document.getElementById('helm-chat-send');
@@ -1890,6 +1922,7 @@ function getDraftAttachmentsPayload() {
 function sendDraft(afterAction, testSnooze) {
   if (!currentTicketId) return;
   if (_actionsInFlight.has(currentTicketId)) return;
+  if (window.voiceInput) voiceInput.stopActive();
 
   const response = document.getElementById('draft-editor').value;
   if (!response.trim()) { alert('Please enter a message'); return; }
@@ -2274,6 +2307,7 @@ function splitThinkingFromDraft(text) {
 
 async function refreshDraft(steer) {
   if (!currentTicketId) return;
+  if (window.voiceInput) voiceInput.stopActive();
 
   const ticketId = currentTicketId; // snapshot — user may navigate away during the call
   const btn = document.getElementById('btn-refresh');
@@ -2379,6 +2413,7 @@ async function refreshDraft(steer) {
     if (steerInput) {
       steerInput.value = '';
       steerInput.disabled = false;
+      steerInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
     btn.disabled = false;
   } catch (err) {

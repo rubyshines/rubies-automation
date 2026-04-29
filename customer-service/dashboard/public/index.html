@@ -110,6 +110,7 @@
               <textarea class="action-chat-input" id="action-chat-input" rows="4"
                 placeholder="e.g. exchange the AJ to size L, refund the Ruby..."
                 onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendActionMessage()}"></textarea>
+              <button class="voice-mic" id="action-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
               <button class="action-chat-send" id="action-chat-send" onclick="sendActionMessage()">Send</button>
             </div>
             <div id="action-preview" style="display:none"></div>
@@ -130,14 +131,16 @@
           <div id="detail-draft" class="detail-section">
             <h3>AI Draft <span id="detail-message-type" class="category-badge"></span> <span id="detail-confidence" class="badge"></span> <span id="detail-status-badge" class="badge"></span></h3>
             <div class="steer-row">
-              <input type="text" id="steer-input" class="steer-input"
+              <textarea id="steer-input" class="steer-input" rows="1"
                 placeholder="redirect the advisor"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();refreshDraft(this.value)}else if(event.key==='Escape'){this.blur()}" />
+                onkeydown="handleSteerKeydown(event)"></textarea>
+              <button class="voice-mic" id="steer-mic" data-state="idle" type="button" aria-label="Voice input"></button>
               <button id="btn-refresh" class="btn-refresh-inline" onclick="refreshDraft(document.getElementById('steer-input').value)" title="Regenerate draft">&#8635;</button>
             </div>
             <div id="draft-reasoning" class="reasoning-trace" hidden></div>
             <div id="draft-editor-wrap" class="draft-editor-wrap">
               <textarea id="draft-editor" rows="8"></textarea>
+              <button class="voice-mic voice-mic-floating" id="draft-editor-mic" data-state="idle" type="button" aria-label="Voice input"></button>
               <div id="draft-drop-overlay" class="draft-drop-overlay">
                 <div class="draft-drop-inner">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -187,6 +190,7 @@
         <div class="action-chat-input-row">
           <textarea class="action-chat-input" id="helm-chat-input" rows="3"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendHelmMessage()}"></textarea>
+          <button class="voice-mic" id="helm-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
           <button class="action-chat-send" id="helm-chat-send" onclick="sendHelmMessage()">Send</button>
         </div>
       </div>
@@ -220,6 +224,7 @@
     </div>
   </nav>
 
+  <script src="/voiceInput.js"></script>
   <script src="/app.js"></script>
 <div id="toast-container"></div>
 <style>
