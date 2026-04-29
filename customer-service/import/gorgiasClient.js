@@ -161,6 +161,57 @@ async function createTicket({ customerEmail, customerName, subject, bodyText, ta
 }
 
 /**
+ * Create a new ticket whose first message is OUTBOUND from us to the customer.
+ * Gorgias delivers the email. Use for proactive outreach (incident notifications,
+ * feedback campaigns, etc.) where there's no existing thread to reply to.
+ *
+ * Contrast with createTicket() above, which creates an inbound-style ticket
+ * (used by Gmail import to replay customer messages into Gorgias).
+ */
+async function createOutboundTicket({ customerEmail, customerName, subject, bodyHtml, bodyText, tags = [] }) {
+  const senderEmail = process.env.GORGIAS_SENDER_EMAIL || 'care@rubyshines.com';
+  const senderName = process.env.GORGIAS_SENDER_NAME || 'RUBIES Customer Care';
+  const html = bodyHtml || `<p>${(bodyText || '').replace(/\n/g, '<br>')}</p>`;
+
+  const message = {
+    channel: 'email',
+    via: 'api',
+    from_agent: true,
+    source: {
+      type: 'email',
+      from: { name: senderName, address: senderEmail },
+      to: [{ name: customerName || '', address: customerEmail }],
+    },
+    body_html: html,
+    body_text: bodyText || '',
+  };
+
+  const ticket = await apiFetch('/tickets', {
+    method: 'POST',
+    body: JSON.stringify({
+      channel: 'email',
+      via: 'api',
+      subject: subject || '(no subject)',
+      customer: {
+        email: customerEmail,
+        name: customerName || undefined,
+      },
+      messages: [message],
+    }),
+  });
+
+  for (const tagName of tags) {
+    try {
+      await addTicketTag(ticket.id, tagName);
+    } catch (err) {
+      console.warn(`[gorgias] Could not tag ticket ${ticket.id} with '${tagName}': ${err.message}`);
+    }
+  }
+
+  return ticket;
+}
+
+/**
  * Create a reply message on a ticket (sent to customer via email).
  */
 async function createTicketReply(ticketId, { body_html, body_text, attachments, senderId }) {
@@ -439,6 +490,7 @@ module.exports = {
   findUser,
   // Write
   createTicket,
+  createOutboundTicket,
   createTicketReply,
   addTicketMessage,
   addInternalNote,
