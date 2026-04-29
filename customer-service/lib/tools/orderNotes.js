@@ -21,6 +21,101 @@ const US_SHIPPING_METHODS = {
 // Handlers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// list_pending_orders — pure bucket+filter helper, tested independently
+// ---------------------------------------------------------------------------
+
+const BUCKET_LABELS = {
+  urgent: 'Urgent',
+  attention: 'Attention',
+  waiting_on_response: 'Waiting on Response',
+  normal: 'Normal',
+  pre_orders: 'Pre-Orders',
+  auto_resolved: 'Auto-Resolved',
+};
+
+/**
+ * Pure function: takes the result of checkUnfulfilledOrders() and returns
+ * a bucketed view that mirrors the daily order report. Filters by bucket
+ * name and/or minimum business days. Same precedence rule as the report —
+ * an unresolved operator note pulls a pre-order out of Pre-Orders into the
+ * actionable flow.
+ */
+function bucketPendingOrders(unfulfilledResult, { bucket, minBusinessDays } = {}) {
+  const u = unfulfilledResult?.results || [];
+  const preOrders = u.filter(r => r.isPreOrder && !r.note);
+  const ufActionable = u.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
+  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
+  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
+  const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
+  const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
+
+  const buckets = {
+    urgent: ufRest.filter(r => r.classification.severity === 'urgent'),
+    attention: ufRest.filter(r => r.classification.severity === 'attention'),
+    waiting_on_response: ufWaiting,
+    normal: ufRest.filter(r => r.classification.severity === 'normal'),
+    pre_orders: preOrders,
+    auto_resolved: ufAutoResolved,
+  };
+
+  if (bucket) {
+    if (!Object.prototype.hasOwnProperty.call(buckets, bucket)) {
+      throw new Error(`Unknown bucket "${bucket}". Valid: ${Object.keys(buckets).join(', ')}`);
+    }
+    const filtered = {};
+    filtered[bucket] = buckets[bucket];
+    return applyMinBusinessDays(filtered, minBusinessDays);
+  }
+  return applyMinBusinessDays(buckets, minBusinessDays);
+}
+
+function applyMinBusinessDays(buckets, minBusinessDays) {
+  if (minBusinessDays == null) return buckets;
+  const out = {};
+  for (const [name, rows] of Object.entries(buckets)) {
+    out[name] = rows.filter(r => (r.businessDays || 0) >= minBusinessDays);
+  }
+  return out;
+}
+
+async function handleListPendingOrders({ bucket, min_business_days }) {
+  const { checkUnfulfilledOrders } = require('../../../reports/lib/unfulfilled');
+  let unfulfilledResult;
+  try {
+    unfulfilledResult = await checkUnfulfilledOrders();
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to fetch pending orders: ${err.message}` }], isError: true };
+  }
+
+  let bucketed;
+  try {
+    bucketed = bucketPendingOrders(unfulfilledResult, { bucket, minBusinessDays: min_business_days });
+  } catch (err) {
+    return { content: [{ type: 'text', text: err.message }], isError: true };
+  }
+
+  let md = `## Pending Orders\n\n`;
+  let total = 0;
+  for (const [name, rows] of Object.entries(bucketed)) {
+    if (!rows.length) continue;
+    md += `### ${BUCKET_LABELS[name]} (${rows.length})\n\n`;
+    md += '| Order # | Date | Customer | Biz Days | Note / Reason |\n|---|---|---|---|---|\n';
+    for (const r of rows) {
+      const date = r.order.created_at?.split('T')[0] || '-';
+      const email = r.order.customer_email || '-';
+      const bd = r.businessDays ?? 0;
+      const noteOrReason = r.note ? r.note.note : (r.classification?.detail || r.classification?.reason || '-');
+      md += `| ${r.order.order_number} | ${date} | ${email} | ${bd} | ${String(noteOrReason).replace(/\|/g, '\\|').slice(0, 80)} |\n`;
+      total++;
+    }
+    md += '\n';
+  }
+  if (!total) md += '_No matching pending orders._\n';
+
+  return { content: [{ type: 'text', text: md }] };
+}
+
 async function handleAddNote({ order_number, note, author }) {
   const supabase = getSupabaseClient();
   const { error } = await supabase
@@ -449,6 +544,27 @@ const tools = [
     },
     handler: handleUpdateShippingSpeed,
   },
+  {
+    name: 'list_pending_orders',
+    description: 'List orders currently flagged on the daily order alert report, grouped by bucket. Use for "what\'s pending today?", "what am I waiting on?", or "anything urgent?". Buckets mirror the daily report: urgent, attention, waiting_on_response, normal, pre_orders, auto_resolved. Note text shows on each row so you can see why an order is flagged.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bucket: {
+          type: 'string',
+          enum: ['urgent', 'attention', 'waiting_on_response', 'normal', 'pre_orders', 'auto_resolved'],
+          description: 'Narrow to a single bucket. Omit to see all buckets.',
+        },
+        min_business_days: {
+          type: 'number',
+          description: 'Only include orders aged at least this many business days. E.g. 5 = orders 5+ business days old.',
+        },
+      },
+    },
+    handler: handleListPendingOrders,
+  },
 ];
 
+// Pure helper exported for testing the bucket+filter logic without Supabase
 module.exports = tools;
+module.exports._bucketPendingOrders = bucketPendingOrders;
