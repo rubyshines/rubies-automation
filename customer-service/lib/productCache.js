@@ -396,4 +396,70 @@ function getCacheAgeHours() {
   return (Date.now() - new Date(cacheTimestamp).getTime()) / (1000 * 60 * 60);
 }
 
-module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours };
+/**
+ * Render a customer-friendly product reference from a SKU.
+ *
+ * Examples:
+ *   "HLA-SND-S"   -> "the Sassy in Sandstone, size S"
+ *   "GAF-BLK-2XL" -> "the Naomi in Black, size 2X"
+ *   "AJ-BLK-M"    -> "the AJ in Black, size M"
+ *   "MPAD-S"      -> "the Magical, size S"   (size-only product)
+ *
+ * Why this exists: customer-facing text everywhere needs short, friendly product
+ * names. Three traps the codebase has hit before:
+ *   1. Some Shopify variant `selectedOptions` are named "Option 1" / "Option 2"
+ *      generically, not "Color" / "Size" — don't rely on option names.
+ *   2. Product titles are verbose all-caps (e.g. "THE SASSY NO-TUCK SHAPING
+ *      UNDERWEAR"). Use the handle's first non-"the" segment for short name.
+ *   3. SKU prefix is a reliable cross-system key today (verified all unique
+ *      across products as of Apr 2026). Don't try to parse SKU shape; use
+ *      getVariantBySku() and read structured fields.
+ *
+ * Strategy: look up the variant by exact SKU, derive short name from product
+ * handle, derive color+size from variant.title (which is consistently formatted
+ * as "Color / Size", or just "Size" for size-only products).
+ *
+ * Returns null if SKU is not found in the cache (caller decides fallback).
+ */
+function renderVariantForCustomer(sku) {
+  if (!sku) return null;
+  const target = String(sku).trim().toUpperCase();
+  for (const product of cachedProducts) {
+    for (const variant of product.variants) {
+      if ((variant.sku || '').trim().toUpperCase() !== target) continue;
+      return formatVariantReference(product, variant);
+    }
+  }
+  return null;
+}
+
+function formatVariantReference(product, variant) {
+  const shortName = shortNameFromHandle(product.handle) || product.title || 'item';
+  const variantTitle = (variant.title || '').trim();
+  // Variant title patterns:
+  //   "Black / S"          -> color=Black, size=S
+  //   "Sandstone / 2X Tall"-> color=Sandstone, size=2X Tall
+  //   "S"                  -> size only (e.g. chest pads)
+  //   "Default Title"      -> no variant — fallback to just the short name
+  if (!variantTitle || /^default(\s+title)?$/i.test(variantTitle)) {
+    return `the ${shortName}`;
+  }
+  const parts = variantTitle.split('/').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 1) return `the ${shortName}, size ${parts[0]}`;
+  if (parts.length >= 2) return `the ${shortName} in ${parts[0]}, size ${parts.slice(1).join(' / ')}`;
+  return `the ${shortName}`;
+}
+
+function shortNameFromHandle(handle) {
+  if (!handle) return null;
+  const segments = handle.split('-').filter(Boolean);
+  if (!segments.length) return null;
+  const idx = segments[0].toLowerCase() === 'the' ? 1 : 0;
+  const raw = segments[idx];
+  if (!raw) return null;
+  // Short acronyms (length <= 2) like "AJ" stay all-caps; otherwise title-case.
+  if (raw.length <= 2) return raw.toUpperCase();
+  return raw[0].toUpperCase() + raw.slice(1).toLowerCase();
+}
+
+module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours, renderVariantForCustomer, _formatVariantReferenceForTesting: formatVariantReference };
