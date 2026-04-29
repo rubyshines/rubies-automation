@@ -546,14 +546,14 @@ const tools = [
   },
   {
     name: 'list_pending_orders',
-    description: 'List orders currently flagged on the daily order alert report, grouped by bucket. Use for "what\'s pending today?", "what am I waiting on?", or "anything urgent?". Buckets mirror the daily report: urgent, attention, waiting_on_response, normal, pre_orders, auto_resolved. Note text shows on each row so you can see why an order is flagged.',
+    description: 'List unfulfilled orders flagged on the daily order alert report, grouped by bucket: urgent, attention, waiting_on_response (orders with an unresolved operator note — e.g. incident outreach awaiting customer reply, address verification, in-flight exchanges), normal, pre_orders, auto_resolved. Use this for: "what\'s pending?", "what needs resolution?", "what am I waiting on?", "what\'s in the queue today?", "anything urgent?", "show me orders awaiting customer reply", "list outreaches awaiting a response", "what did I flag for follow-up?". Note text on each row explains why each order is flagged. Use bucket=waiting_on_response to narrow to operator-flagged orders only. This is the canonical tool for unfulfilled-order queue state — distinct from shipping_delay_list (shipping/Passport claim queue) and check_follow_ups (auto-followup pipeline cadence).',
     inputSchema: {
       type: 'object',
       properties: {
         bucket: {
           type: 'string',
           enum: ['urgent', 'attention', 'waiting_on_response', 'normal', 'pre_orders', 'auto_resolved'],
-          description: 'Narrow to a single bucket. Omit to see all buckets.',
+          description: 'Narrow to a single bucket. Use "waiting_on_response" to filter to orders the operator has explicitly flagged with an unresolved note. Omit to see all buckets.',
         },
         min_business_days: {
           type: 'number',
