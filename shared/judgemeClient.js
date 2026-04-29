@@ -5,6 +5,8 @@
  * Auth: api_token + shop_domain as query params on every request.
  */
 
+require('dotenv').config();
+
 const BASE_URL = 'https://judge.me/api/v1';
 
 let client = null;

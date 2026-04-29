@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { BetaAnalyticsDataClient } = require('@google-analytics/data');
 
 let ga4Client = null;

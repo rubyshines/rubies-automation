@@ -4,6 +4,8 @@
  * Uses Node built-in fetch. Returns null if no API key configured.
  */
 
+require('dotenv').config();
+
 const BASE_URL = 'https://a.klaviyo.com';
 const REVISION = '2024-10-15';
 const MAX_PAGES = 10;

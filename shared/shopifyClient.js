@@ -16,6 +16,8 @@
  * Requires "read_reports" permission on your Shopify API credentials.
  */
 
+require('dotenv').config();
+
 // Minimal date helper (only used when callers omit explicit dates)
 function getYesterdayDate() {
   const d = new Date();

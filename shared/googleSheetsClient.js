@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { google } = require('googleapis');
 
 async function getSheetsClient() {

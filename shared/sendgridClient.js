@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 let sgMailClient = null;
 
 function getSendgridClient() {
