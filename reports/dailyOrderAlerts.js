@@ -233,9 +233,13 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const sh = shipping;
 
   // --- Unfulfilled buckets ---
-  const preOrders = uf.results.filter(r => r.isPreOrder);
-  const ufResolved = uf.results.filter(r => !r.isPreOrder && r.note?.resolved);
-  const ufActionable = uf.results.filter(r => !r.isPreOrder && !r.note?.resolved);
+  // Pre-order classification is auto-derived from line item attributes/tags. An
+  // unresolved operator note overrides it — once the operator has explicitly
+  // flagged an order for follow-up (e.g. mistaken pre-order, defect outreach),
+  // it belongs in the actionable/waiting flow, not the silent Pre-Orders silo.
+  const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
+  const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
+  const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
   const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
   const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
@@ -497,15 +501,16 @@ function formatConsole(unfulfilled, shipping, opts) {
     }
   }
 
-  // Unfulfilled sections
-  const ufActionable = uf.results.filter(r => !r.isPreOrder && !r.note?.resolved);
+  // Unfulfilled sections — same override as the HTML formatter: an unresolved
+  // operator note pulls the order out of Pre-Orders into the actionable flow.
+  const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
   const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
   const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
   const ufAttention = ufRest.filter(r => r.classification.severity === 'attention');
   const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
-  const preOrders = uf.results.filter(r => r.isPreOrder);
+  const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
 
   // Combined urgent
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
@@ -519,7 +524,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   printUnfulfilledSection('PRE-ORDER', preOrders);
 
   if (opts.showResolved) {
-    const ufResolved = uf.results.filter(r => !r.isPreOrder && r.note?.resolved);
+    const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
     printUnfulfilledSection('RESOLVED (unfulfilled)', ufResolved);
     printShippingSection('RESOLVED (shipping)', sh.resolved || []);
   }
