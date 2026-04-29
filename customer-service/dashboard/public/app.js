@@ -180,13 +180,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restore active tab (but don't clear selection if we're about to restore a ticket)
   const savedTab = localStorage.getItem('activeTab');
   if (pendingTicketRestore) {
-    // Restoring a ticket — coerce helm back to a ticket tab since we're showing the ticket panel
+    // Restoring a ticket — coerce adhoc back to a ticket tab since we're showing the ticket panel
     currentTab = savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed', 'helm'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed', 'adhoc'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -241,8 +241,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     voiceInput.attachAutoGrow(document.getElementById('steer-input'), { minRows: 1, maxRows: 8 });
     voiceInput.attachVoiceInput(document.getElementById('action-chat-input'), document.getElementById('action-chat-mic'));
     voiceInput.attachAutoGrow(document.getElementById('action-chat-input'), { minRows: 4, maxRows: 12 });
-    voiceInput.attachVoiceInput(document.getElementById('helm-chat-input'), document.getElementById('helm-chat-mic'));
-    voiceInput.attachAutoGrow(document.getElementById('helm-chat-input'), { minRows: 3, maxRows: 12 });
+    voiceInput.attachVoiceInput(document.getElementById('adhoc-chat-input'), document.getElementById('adhoc-chat-mic'));
+    voiceInput.attachAutoGrow(document.getElementById('adhoc-chat-input'), { minRows: 3, maxRows: 12 });
 
     // Stop voice when any action button is clicked (covers all the secondary
     // ticket actions: close, snooze, park, release, delete, spam, forward, etc.)
@@ -289,24 +289,31 @@ function switchTab(tab) {
   if (pop) pop.style.display = 'none';
 
   const ticketsPanel = document.getElementById('panel-tickets');
-  const helmPanel = document.getElementById('panel-helm');
+  const adhocPanel = document.getElementById('panel-adhoc');
 
-  if (tab === 'helm') {
+  if (tab === 'adhoc') {
     ticketsPanel.style.display = 'none';
-    helmPanel.style.display = 'flex';
+    adhocPanel.style.display = 'flex';
     localStorage.setItem('activeTab', tab);
     // Clear any stale ticket hash so a refresh restores Ad Hoc, not the prior ticket
     if (location.hash) history.replaceState(null, '', location.pathname + location.search);
-    // Focus the input so Jamie can type immediately
+    // Focus the input so Jamie can type immediately. Also dispatch an input
+    // event to re-trigger autogrow now that the textarea is visible — the
+    // initial measurement at page load happens while the panel is display:none
+    // and returns scrollHeight=0, so without this the textarea stays at its
+    // min-height even after typing fills past the visible rows.
     setTimeout(() => {
-      const input = document.getElementById('helm-chat-input');
-      if (input && !isMobile()) input.focus();
+      const input = document.getElementById('adhoc-chat-input');
+      if (input) {
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        if (!isMobile()) input.focus();
+      }
     }, 50);
     return;
   }
 
   ticketsPanel.style.display = 'flex';
-  helmPanel.style.display = 'none';
+  adhocPanel.style.display = 'none';
 
   localStorage.setItem('activeTab', tab);
   // Clear selection when switching tabs
@@ -721,15 +728,10 @@ function renderTicketDetail(ticket) {
     statusEl.textContent = '';
     statusEl.className = 'badge';
 
-    // Show action history from the last sent draft if it had actions, otherwise empty
-    const lastActionDraft = (ticket.drafts || []).filter(dr => dr.action_type && dr.action_result).pop();
-    if (lastActionDraft) {
-      // Treat it as already-executed so renderActionPanel shows read-only history
-      if (!lastActionDraft.action_executed_at) lastActionDraft.action_executed_at = lastActionDraft.sent_at || true;
-      renderActionPanel(lastActionDraft);
-    } else {
-      renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
-    }
+    // No active draft — historical actions are already rendered inline in the
+    // conversation timeline by renderConversation. Render an idle panel so the
+    // operator can request additional actions if needed.
+    renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
 
   }
 
@@ -1221,33 +1223,10 @@ function renderActionPanel(draft) {
     headerEl.innerHTML = `<span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--yellow)">Action</span>`;
   }
 
-  // If action is already executed, show history but no prefill — nothing left to do
-  if (draft.action_executed_at) {
-    const savedChat = draft.action_result?.chat_history;
-    if (savedChat?.length) {
-      _actionChatHistory = savedChat;
-      for (const msg of savedChat) {
-        if (msg.role === 'user' && typeof msg.content === 'string') {
-          appendChatMessage(messagesEl, 'user', msg.content);
-        }
-      }
-    }
-    const toolResults = draft.action_result?.chat_tool_results || [];
-    for (const tr of toolResults) {
-      const label = tr.tool.replace(/_/g, ' ');
-      const resultText = typeof tr.result === 'string' ? tr.result : JSON.stringify(tr.result, null, 2);
-      const display = resultText.length > 500 ? resultText.substring(0, 500) + '...' : resultText;
-      appendChatMessage(messagesEl, 'tool', `[${label}]\n${display}`);
-    }
-    if (draft.action_result?.chat_response) {
-      appendChatMessage(messagesEl, 'assistant', draft.action_result.chat_response);
-    }
-    renderActionLinks(messagesEl, draft.action_result?.chat_links);
-    headerEl.innerHTML += `<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:600">Done ${timeAgo(draft.action_executed_at)}</span>`;
-    input.placeholder = 'Request additional actions...';
-    input.value = '';
-    return;
-  }
+  // Completed actions are filed into the conversation timeline (rendered by
+  // renderConversation as `.timeline-action` blocks). The bottom panel only
+  // shows in-progress chat or a fresh advisor proposal — never replays
+  // historical actions.
 
   // Restore saved chat history (action in progress, not yet executed)
   const savedChat = draft.action_result?.chat_history;
@@ -1286,8 +1265,12 @@ function renderActionPanel(draft) {
     return;
   }
 
-  // Build prefill command from structured output
-  const prefill = buildActionPrefill(draft);
+  // Build prefill command from structured output. Only prefill on a fresh draft
+  // that hasn't executed any action yet — once an action lands in the timeline,
+  // the panel goes idle and waits for the operator to type a follow-up.
+  const hasExecutedAction = (Array.isArray(draft.actions) && draft.actions.length > 0)
+    || draft.action_executed_at;
+  const prefill = hasExecutedAction ? '' : buildActionPrefill(draft);
 
   if (prefill) {
     input.value = prefill;
@@ -1300,7 +1283,9 @@ function renderActionPanel(draft) {
     if (!isMobile()) setTimeout(() => { input.focus(); input.select(); }, 100);
   } else {
     input.value = '';
-    input.placeholder = 'e.g. exchange the AJ to size L, refund the Ruby...';
+    input.placeholder = hasExecutedAction
+      ? 'Request additional actions...'
+      : 'e.g. exchange the AJ to size L, refund the Ruby...';
   }
 }
 
@@ -1593,7 +1578,7 @@ function appendActionTrace(containerEl, { title = 'Operator Agent' } = {}) {
 }
 
 /**
- * Streaming chat turn — shared by ticket action-chat and Helm console.
+ * Streaming chat turn — shared by ticket action-chat and ad hoc console.
  * Renders user message, runs SSE stream, renders assistant + tool results,
  * appends quick-reply buttons when confirmation is pending. Returns
  * { finalResult, history } for caller-side post-processing.
@@ -1730,54 +1715,64 @@ async function sendActionMessage() {
 
   _actionChatHistory = history;
 
-  // Reload ticket to pick up action_executed_at and re-render the panel
+  // Reload ticket so a newly-completed action shows up inline in the timeline
+  // and the bottom panel returns to idle.
   if (finalResult && currentTicketId) {
     const refreshed = await api(`/api/tickets/${currentTicketId}`);
     if (refreshed?.active_draft) {
       currentDraft = refreshed.active_draft;
       currentTicket = refreshed;
-      if (currentDraft.action_executed_at) {
-        renderActionPanel(currentDraft);
-      }
+      const history = (refreshed.conversation_history || []).filter(m => m.channel !== 'internal-note');
+      const threadEl = document.getElementById('conversation-thread');
+      if (threadEl) threadEl.innerHTML = renderConversation(history, refreshed);
+      renderActionPanel(currentDraft);
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Helm — standalone operator console (no ticket context)
+// Ad Hoc — standalone operator console (no ticket context)
 // ---------------------------------------------------------------------------
 
-let _helmChatHistory = [];
+let _adhocChatHistory = [];
 
-async function sendHelmMessage() {
+async function sendAdhocMessage() {
   if (window.voiceInput) voiceInput.stopActive();
-  const messagesEl = document.getElementById('helm-chat-messages');
-  const input = document.getElementById('helm-chat-input');
-  const sendBtn = document.getElementById('helm-chat-send');
+  const messagesEl = document.getElementById('adhoc-chat-messages');
+  const input = document.getElementById('adhoc-chat-input');
+  const sendBtn = document.getElementById('adhoc-chat-send');
   const message = input.value.trim();
   if (!message) return;
+
+  // First message in this session — drop the empty-state centering so the
+  // messages box reveals and the input snaps to the bottom.
+  const container = document.querySelector('.adhoc-container');
+  if (container) container.classList.remove('empty');
 
   const { history } = await runChatTurn({
     endpoint: '/api/console/chat-stream',
     message,
-    history: _helmChatHistory,
+    history: _adhocChatHistory,
     containerEl: messagesEl,
     inputEl: input,
     sendBtnEl: sendBtn,
-    onSend: sendHelmMessage,
+    onSend: sendAdhocMessage,
     traceTitle: 'Ad Hoc Operator',
   });
 
-  _helmChatHistory = history;
+  _adhocChatHistory = history;
 }
 
-function resetHelm() {
-  _helmChatHistory = [];
-  const messagesEl = document.getElementById('helm-chat-messages');
+function resetAdhoc() {
+  _adhocChatHistory = [];
+  const messagesEl = document.getElementById('adhoc-chat-messages');
   if (messagesEl) messagesEl.innerHTML = '';
-  const input = document.getElementById('helm-chat-input');
+  const container = document.querySelector('.adhoc-container');
+  if (container) container.classList.add('empty');
+  const input = document.getElementById('adhoc-chat-input');
   if (input) {
     input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true })); // reset autogrow height
     if (!isMobile()) input.focus();
   }
 }
@@ -3503,18 +3498,56 @@ function renderConversation(messages, ticket) {
     }
   }
 
-  // Render messages after the intake section
+  // Collect all completed operator actions across drafts on this ticket so we
+  // can weave them into the timeline at their `executed_at` position.
+  const actions = (ticket.drafts || []).flatMap(d =>
+    (Array.isArray(d.actions) ? d.actions : []).map(a => ({ ...a, _draft_id: d.id }))
+  );
+
+  // Render messages after the intake section, interleaved with actions.
   // For bot path: start after bot flow. For email path: start at index 1 (skip first, already in card)
   const startIdx = botEnd > 0 ? botEnd : (parts.length > 0 ? 1 : 0);
+  const events = [];
   for (let i = startIdx; i < messages.length; i++) {
     const m = messages[i];
     const text = (m.body || '').trim();
     const hasAttachments = m.attachments && m.attachments.length > 0;
     if (!text && !hasAttachments) continue;
-    parts.push(renderMessageBubble(m, ticket));
+    events.push({ kind: 'msg', ts: m.created_at, render: () => renderMessageBubble(m, ticket) });
   }
+  for (const a of actions) {
+    if (!a.executed_at) continue;
+    events.push({ kind: 'action', ts: a.executed_at, render: () => renderTimelineActionBlock(a) });
+  }
+  events.sort((x, y) => new Date(x.ts) - new Date(y.ts));
+  for (const e of events) parts.push(e.render());
 
   return parts.join('');
+}
+
+/** Render a completed operator action inline in the conversation timeline.
+ *  Non-interactive yellow block. Visual is intentionally minimal here — final
+ *  styling is handled in styles.css under `.timeline-action`. */
+function renderTimelineActionBlock(action) {
+  const labels = {
+    exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit',
+    warehouse_hold: 'Hold Order', cancellation: 'Cancel',
+    customer_profile_update: 'Profile Update', discount_code: 'Discount Code',
+  };
+  const label = labels[action.action_type] || (action.action_type || 'Action').replace(/_/g, ' ');
+  const summaryHtml = action.summary ? simpleMarkdown(action.summary) : '';
+  const linksHtml = (action.links || []).map(l =>
+    `<a class="timeline-action-link" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`
+  ).join('');
+  return `
+    <div class="timeline-action">
+      <div class="timeline-action-header">
+        <span class="timeline-action-badge">${esc(label)}</span>
+        <span class="timeline-action-time">${timeAgo(action.executed_at, 'long')}</span>
+      </div>
+      ${summaryHtml ? `<div class="timeline-action-body">${summaryHtml}</div>` : ''}
+      ${linksHtml ? `<div class="timeline-action-links">${linksHtml}</div>` : ''}
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
