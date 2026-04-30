@@ -105,6 +105,32 @@ test('Non-product markdown link also converts',
   ['>size guide</a>', 'rubyshines.com/pages/size-guide'],
 );
 
+// --- Bold markdown ---
+
+test('Bold markdown converts to <strong>',
+  '**Split the shipment.** I can ship the Chest Pads now.',
+  ['<strong>Split the shipment.</strong>', 'I can ship the Chest Pads now'],
+  ['**'],
+);
+
+test('Multiple bold markers in numbered options',
+  '1. **Split the shipment.** Now.\n2. **Swap the Sassy for something in stock.** Available.\n3. **Refund just the 2x Sassy** ship rest.',
+  ['<strong>Split the shipment.</strong>', '<strong>Swap the Sassy for something in stock.</strong>', '<strong>Refund just the 2x Sassy</strong>'],
+  ['**'],
+);
+
+test('Bold across links is preserved',
+  '**Try the [AJ](https://rubyshines.com/products/the-aj-shaping-underwear) in M.**',
+  ['<strong>', '</strong>', '>AJ</a>'],
+  ['**'],
+);
+
+test('Single asterisk is left alone (not bold)',
+  'Try size M* (close to L).',
+  ['<p>Try size M* (close to L).</p>'],
+  ['<strong>', '</strong>'],
+);
+
 // --- Summary ---
 console.log('\n========================');
 console.log(`Results: ${passed} passed, ${failed} failed out of ${passed + failed}`);

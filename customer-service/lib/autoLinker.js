@@ -19,11 +19,18 @@ const LINK_STYLE = 'color:#1a7f64;text-decoration:underline';
 function autoLinkProducts(text) {
   if (!text) return '';
 
-  // Convert markdown links [text](url) to <a> tags
+  // Convert markdown links [text](url) to <a> tags. Done before bold so a
+  // link's display text containing ** still gets bold-converted afterward.
   let html = text.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
     `<a href="$2" style="${LINK_STYLE}">$1</a>`
   );
+
+  // Convert **bold** to <strong>. The advisor uses bold to label option items
+  // ("**Split the shipment.**"); without conversion, customers see literal
+  // asterisks in the email. Single * is intentionally not handled — too risky
+  // (false matches in product names, etc.).
+  html = html.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
 
   // Convert newlines to <br> and wrap in <p>
   return `<p>${html.replace(/\n/g, '<br>')}</p>`;
