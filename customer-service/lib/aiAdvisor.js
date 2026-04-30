@@ -864,7 +864,7 @@ When a customer asks about a delayed or unshipped order:
 2. If UNFULFILLED: call check_unfulfilled_order to investigate why
 3. Use the investigation results to give an honest, specific response:
 
-**Pre-order item on order:** Each `pre_order` issue from check_unfulfilled_order may include a `preOrderTarget` value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
+**Pre-order item on order:** Each pre_order issue from check_unfulfilled_order may include a preOrderTarget value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
 
   - **Target is in the future** (still upcoming): "When you placed your order you would have seen that the [item] is a pre-order, target availability [date]. We're still waiting for inventory to arrive." The customer would have seen at checkout that orders ship together when all items are ready. Offer to split the shipment so we send what's in stock now and the pre-order item separately when it arrives, OR to refund the pre-order item if they'd prefer not to wait. Set status to "needs_info", action_type to "fulfillment_check".
 
