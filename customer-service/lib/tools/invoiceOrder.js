@@ -9,7 +9,7 @@
 
 const { createDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { resolveCustomerForDraft, getFedExTag, isUSCountry } = require('../orderUtils');
+const { resolveCustomerForDraft, getShippingMethodTitle } = require('../orderUtils');
 const { formatAddressBlock } = require('../addressUtils');
 
 const tools = [
@@ -67,9 +67,10 @@ const tools = [
           description: 'Description for the return credit (e.g. "Stella return credit from order #20335"). Shown on the invoice.',
         },
         note: { type: 'string', description: 'Optional note for the draft order' },
-        ship_fedex: {
-          type: 'boolean',
-          description: 'Request FedEx shipping. Adds a FedEx tag to the draft order: "ship fedex ddp" for Canada or DDP-zone destinations (duties prepaid), "ship fedex ddu" for DDU-zone destinations. ONLY applied for orders shipping outside the US — US orders are blocked from any FedEx tag and the request is ignored with a warning.',
+        shipping_speed: {
+          type: 'string',
+          enum: ['standard', 'expedited'],
+          description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate at $0. Default: "standard".',
         },
         confirmed: {
           type: 'boolean',
@@ -82,7 +83,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, ship_fedex, confirmed, draft_order_id }) => {
+    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, shipping_speed, confirmed, draft_order_id }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Send invoice for existing draft ---
@@ -137,24 +138,20 @@ const tools = [
         lineItems.push({ variantId: r.variantId, quantity: r.quantity });
       }
 
-      // FedEx tag — only applied for non-US orders. Canada / DDP zone → ddp tag, DDU zone → ddu tag.
-      const fedexRequested = ship_fedex === true;
+      // Shipping line title is driven by destination + speed. Price is always $0;
+      // Warehance auto-maps the title to the correct carrier method.
+      const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
       const shipCountry = shippingAddress?.country || '';
-      const fedexBlockedUS = fedexRequested && isUSCountry(shipCountry);
-      const fedexTag = fedexRequested ? await getFedExTag(shipCountry) : null;
-      const fedexApplied = !!fedexTag;
-
-      const draftTags = ['invoice', 'cs-mcp'];
-      if (fedexApplied) draftTags.push(fedexTag);
+      const shippingTitle = await getShippingMethodTitle(shipCountry, speed);
 
       // Build draft input
       const defaultNote = 'Invoice order (exchange + paid items) created via CS MCP server';
       const draftInput = {
         customerId: customerGid,
         lineItems,
-        shippingLine: { title: 'Free Shipping', price: '0.00' },
+        shippingLine: { title: shippingTitle, price: '0.00' },
         note: note || defaultNote,
-        tags: draftTags,
+        tags: ['invoice', 'cs-mcp'],
       };
       if (shippingAddress) {
         draftInput.shippingAddress = shippingAddress;
@@ -215,11 +212,8 @@ const tools = [
         lines.push(`**Return credit:** -$${return_credit.toFixed(2)}${return_credit_note ? ` (${return_credit_note})` : ''}`);
       }
 
-      lines.push(`**Shipping:** Free${fedexApplied ? ` (${fedexTag === 'ship fedex ddp' ? 'FedEx DDP' : 'FedEx DDU'} requested)` : ''}`);
+      lines.push(`**Shipping:** ${shippingTitle} ($0.00)`);
       lines.push(`**Total:** $${draftOrder.totalPrice}`);
-      if (fedexBlockedUS) {
-        lines.push(`⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry a FedEx tag.`);
-      }
       lines.push('');
       lines.push(`Review the draft order above, then call create_invoice_order again with confirmed=true and draft_order_id="${draftOrder.id}" to send the invoice.`);
 

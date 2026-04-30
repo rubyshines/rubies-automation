@@ -11,10 +11,11 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
 
-// Warehance shipping method IDs (from /shipping-methods endpoint)
+// Warehance shipping method IDs (from /shipping-methods endpoint).
+// Refreshed 2026-04-30 — earlier IDs (231185182253 / 231185182258) were stale.
 const US_SHIPPING_METHODS = {
-  standard: { id: 231185182253, name: 'US Standard Shipping (2-7 bus days)' },
-  expedited: { id: 231185182258, name: 'US Expedited Shipping (2-3 bus days)' },
+  standard: { id: 231185182340, name: 'US Standard Shipping' },
+  expedited: { id: 231185182342, name: 'US Expedited Shipping' },
 };
 
 // ---------------------------------------------------------------------------
@@ -388,15 +389,21 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
     return { content: [{ type: 'text', text: `Order #${order_number} not found in Warehance.` }], isError: true };
   }
 
-  // US orders only
+  // Programmatic update only supports US. Non-US speed changes (Passport ↔ FedEx,
+  // Incoterms tweaks) are handled in the Warehance UI — return a link.
   const countryCode = whOrder.ship_to_address?.country_code;
   if (countryCode !== 'US') {
     return {
       content: [{
         type: 'text',
-        text: `**Cannot update shipping speed** — order #${order_number} is shipping to ${countryCode || 'unknown'}, not US. This tool only supports US orders.\n\nWarehance: ${whUrl}`,
+        text: [
+          `**Non-US shipping speed must be updated in Warehance directly.**`,
+          ``,
+          `Order #${order_number} ships to ${countryCode || 'unknown'}. The carrier swap (Passport ↔ Fedex) and Incoterms (DDP / DDU) are configured in the Warehance UI.`,
+          ``,
+          `Open the order: ${whUrl}`,
+        ].join('\n'),
       }],
-      isError: true,
     };
   }
 
@@ -532,7 +539,7 @@ const tools = [
   },
   {
     name: 'update_shipping_speed',
-    description: 'Update the shipping speed on an unfulfilled US order in Warehance. Options: "expedited" (US Expedited 2-3 bus days) or "standard" (US Standard 2-7 bus days). Only works for US orders that are not yet in progress.',
+    description: 'Update the shipping speed on an unfulfilled US order in Warehance. Options: "expedited" (US Expedited 2-3 bus days) or "standard" (US Standard 2-7 bus days). Only works for US orders that are not yet in progress. For non-US orders, returns a Warehance link — non-US speed changes (Passport ↔ Fedex, Incoterms) must be done in the Warehance UI.',
     inputSchema: {
       type: 'object',
       properties: {

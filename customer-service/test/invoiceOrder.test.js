@@ -51,20 +51,25 @@ require.cache[shopifyPath] = {
 let stubCustomerCountry = 'US';
 function setStubCustomerCountry(c) { stubCustomerCountry = c; }
 
-// Pure in-memory FedEx tag stub — mirrors the real ddp/ddu logic without the
-// Supabase round-trip the production helper does.
+// Pure in-memory shipping title stub — mirrors the real (zone, speed) → title
+// map without touching Supabase.
 const FAKE_DDP = new Set(['AU', 'GB', 'DE', 'FR', 'NZ']);
-async function fakeGetFedExTag(country) {
+const TITLES = {
+  us:     { standard: 'Free US Standard Shipping',                                       expedited: 'US Expedited Shipping' },
+  canada: { standard: 'Free Canada Standard Shipping',                                   expedited: 'Canada Expedited Shipping' },
+  ddp:    { standard: 'Free International Shipping - All Duties and Import Fees Included', expedited: 'Expedited International Shipping - All Duties and Import Fees Included' },
+  ddu:    { standard: 'Free Standard International Shipping',                             expedited: 'Expedited International Shipping' },
+};
+async function fakeGetShippingMethodTitle(country, speed) {
+  const s = speed === 'expedited' ? 'expedited' : 'standard';
   const c = (country || '').toUpperCase().trim();
-  if (!c) return null;
-  if (['US', 'USA', 'UNITED STATES'].includes(c)) return null;
-  if (['CA', 'CANADA'].includes(c)) return 'ship fedex ddp';
-  if (FAKE_DDP.has(c)) return 'ship fedex ddp';
-  return 'ship fedex ddu';
+  if (c === 'US') return TITLES.us[s];
+  if (c === 'CA') return TITLES.canada[s];
+  if (FAKE_DDP.has(c)) return TITLES.ddp[s];
+  return TITLES.ddu[s];
 }
 
 const orderUtilsPath = require.resolve('../lib/orderUtils');
-const realOrderUtils = require('../lib/orderUtils');
 require.cache[orderUtilsPath] = {
   id: orderUtilsPath,
   filename: orderUtilsPath,
@@ -80,9 +85,7 @@ require.cache[orderUtilsPath] = {
       address1: a.address1, address2: a.address2 || '',
       city: a.city, province: a.province, country: a.countryCodeV2 || a.country, zip: a.zip,
     }),
-    // Pass through the real US guard; stub the async tag resolver so tests don't touch Supabase.
-    isUSCountry: realOrderUtils.isUSCountry,
-    getFedExTag: fakeGetFedExTag,
+    getShippingMethodTitle: fakeGetShippingMethodTitle,
   },
 };
 
@@ -162,14 +165,15 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
     assert.match(result.content[0].text, /123 Main St/);
   });
 
-  it('passes a free shipping line to createDraftOrder', async () => {
+  it('passes a $0 shipping line to createDraftOrder using the zone-appropriate title', async () => {
+    setStubCustomerCountry('US');
     await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
     assert.ok(lastCreateDraftOrderArgs, 'expected createDraftOrder to be called');
     assert.deepEqual(lastCreateDraftOrderArgs.shippingLine, {
-      title: 'Free Shipping',
+      title: 'Free US Standard Shipping',
       price: '0.00',
     });
   });
@@ -218,56 +222,57 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp']);
   });
 
-  it('does NOT add any FedEx tag when ship_fedex is omitted (non-US)', async () => {
+  it('default shipping_speed=standard for Canada uses Free Canada Standard Shipping', async () => {
     setStubCustomerCountry('CA');
     await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free Canada Standard Shipping');
+    // No FedEx tags — routing is driven by Shopify shipping method title.
     assert.ok(!lastCreateDraftOrderArgs.tags.some(t => t.startsWith('ship fedex')));
   });
 
-  it('adds ship fedex ddp tag when ship_fedex=true and destination is Canada', async () => {
+  it('shipping_speed=expedited for Canada uses Canada Expedited Shipping', async () => {
     setStubCustomerCountry('CA');
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
-      ship_fedex: true,
+      shipping_speed: 'expedited',
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddp']);
-    assert.match(result.content[0].text, /FedEx DDP requested/);
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Canada Expedited Shipping');
+    assert.match(result.content[0].text, /Canada Expedited Shipping/);
   });
 
-  it('adds ship fedex ddp tag when ship_fedex=true and destination is in DDP zone (e.g. AU)', async () => {
+  it('shipping_speed=expedited for DDP zone (AU) uses Expedited International title', async () => {
     setStubCustomerCountry('AU');
     await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
-      ship_fedex: true,
+      shipping_speed: 'expedited',
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddp']);
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title,
+      'Expedited International Shipping - All Duties and Import Fees Included');
   });
 
-  it('adds ship fedex ddu tag when ship_fedex=true and destination is in DDU zone (e.g. AR)', async () => {
+  it('shipping_speed=expedited for DDU zone (AR) uses Expedited International Shipping', async () => {
     setStubCustomerCountry('AR');
-    const result = await runHandler({
+    await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
-      ship_fedex: true,
+      shipping_speed: 'expedited',
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddu']);
-    assert.match(result.content[0].text, /FedEx DDU requested/);
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Expedited International Shipping');
   });
 
-  it('skips any FedEx tag and warns when ship_fedex=true but order is US', async () => {
+  it('shipping_speed=expedited for US uses US Expedited Shipping', async () => {
     setStubCustomerCountry('US');
-    const result = await runHandler({
+    await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
-      ship_fedex: true,
+      shipping_speed: 'expedited',
     });
-    assert.ok(!lastCreateDraftOrderArgs.tags.some(t => t.startsWith('ship fedex')));
-    assert.match(result.content[0].text, /FedEx tag skipped/);
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'US Expedited Shipping');
   });
 
   it('normalizes numeric customer_id to a Customer GID', async () => {

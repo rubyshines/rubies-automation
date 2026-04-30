@@ -1,5 +1,7 @@
 /**
- * Unit tests for lib/orderUtils.js — country-based helpers used by order-creation tools.
+ * Unit tests for lib/orderUtils.js — shipping rate title resolver used by
+ * order-creation tools (create_order, create_exchange_order,
+ * create_invoice_order, create_wholesale_order).
  *
  * Run: node --test customer-service/test/orderUtils.test.js
  */
@@ -8,7 +10,7 @@ const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 // Stub shippingLookup before requiring orderUtils so the lazy require inside
-// getFedExTag picks up the stub instead of touching Supabase.
+// getShippingMethodTitle picks up the stub instead of touching Supabase.
 const shippingLookupPath = require.resolve('../lib/tools/shippingLookup');
 let stubZone = null;
 require.cache[shippingLookupPath] = {
@@ -16,75 +18,59 @@ require.cache[shippingLookupPath] = {
   filename: shippingLookupPath,
   loaded: true,
   exports: {
-    getShippingZone: async () => stubZone,
+    getShippingZone: async (countryCode) => {
+      if (!countryCode) return null;
+      if (stubZone) return stubZone;
+      const c = countryCode.toUpperCase();
+      if (c === 'US') return 'us';
+      if (c === 'CA') return 'canada';
+      return null;
+    },
   },
 };
 
-const { isUSCountry, getFedExTag } = require('../lib/orderUtils');
+const { getShippingMethodTitle, SHIPPING_METHOD_TITLES } = require('../lib/orderUtils');
 
-describe('isUSCountry', () => {
-  it('matches the 2-letter ISO code', () => {
-    assert.equal(isUSCountry('US'), true);
-    assert.equal(isUSCountry('us'), true);
-  });
-
-  it('matches USA and the full country name', () => {
-    assert.equal(isUSCountry('USA'), true);
-    assert.equal(isUSCountry('United States'), true);
-    assert.equal(isUSCountry('  united states  '), true);
-  });
-
-  it('returns false for non-US countries', () => {
-    assert.equal(isUSCountry('CA'), false);
-    assert.equal(isUSCountry('AU'), false);
-    assert.equal(isUSCountry('GB'), false);
-    assert.equal(isUSCountry('Australia'), false);
-  });
-
-  it('returns false for empty/missing values', () => {
-    assert.equal(isUSCountry(''), false);
-    assert.equal(isUSCountry(null), false);
-    assert.equal(isUSCountry(undefined), false);
-  });
-});
-
-describe('getFedExTag', () => {
+describe('getShippingMethodTitle', () => {
   beforeEach(() => { stubZone = null; });
 
-  it('returns null for US in any form (US never carries a FedEx tag)', async () => {
-    assert.equal(await getFedExTag('US'), null);
-    assert.equal(await getFedExTag('usa'), null);
-    assert.equal(await getFedExTag('United States'), null);
+  it('returns US titles for US country', async () => {
+    assert.equal(await getShippingMethodTitle('US', 'standard'), 'Free US Standard Shipping');
+    assert.equal(await getShippingMethodTitle('US', 'expedited'), 'US Expedited Shipping');
   });
 
-  it('returns null when country is missing — never tag without a known destination', async () => {
-    assert.equal(await getFedExTag(''), null);
-    assert.equal(await getFedExTag(null), null);
-    assert.equal(await getFedExTag(undefined), null);
+  it('returns Canada titles for Canada country', async () => {
+    assert.equal(await getShippingMethodTitle('CA', 'standard'), 'Free Canada Standard Shipping');
+    assert.equal(await getShippingMethodTitle('CA', 'expedited'), 'Canada Expedited Shipping');
   });
 
-  it('returns ddp tag for Canada short-circuit (no zone lookup needed)', async () => {
-    stubZone = 'should-not-be-used';
-    assert.equal(await getFedExTag('CA'), 'ship fedex ddp');
-    assert.equal(await getFedExTag('ca'), 'ship fedex ddp');
-    assert.equal(await getFedExTag('Canada'), 'ship fedex ddp');
-  });
-
-  it('returns ddp tag when zone lookup says ddp', async () => {
+  it('returns DDP titles when zone lookup says ddp', async () => {
     stubZone = 'ddp';
-    assert.equal(await getFedExTag('AU'), 'ship fedex ddp');
-    assert.equal(await getFedExTag('GB'), 'ship fedex ddp');
-    assert.equal(await getFedExTag('DE'), 'ship fedex ddp');
+    assert.equal(await getShippingMethodTitle('AU', 'standard'),
+      'Free International Shipping - All Duties and Import Fees Included');
+    assert.equal(await getShippingMethodTitle('GB', 'expedited'),
+      'Expedited International Shipping - All Duties and Import Fees Included');
   });
 
-  it('returns ddu tag when zone lookup says ddu', async () => {
+  it('returns DDU titles when zone lookup says ddu', async () => {
     stubZone = 'ddu';
-    assert.equal(await getFedExTag('AR'), 'ship fedex ddu');
-    assert.equal(await getFedExTag('JP'), 'ship fedex ddu');
+    assert.equal(await getShippingMethodTitle('AR', 'standard'), 'Free Standard International Shipping');
+    assert.equal(await getShippingMethodTitle('JP', 'expedited'), 'Expedited International Shipping');
   });
 
-  it('falls back to ddu when zone lookup returns null (unknown country)', async () => {
+  it('falls back to DDU titles when zone is unknown', async () => {
     stubZone = null;
-    assert.equal(await getFedExTag('XX'), 'ship fedex ddu');
+    assert.equal(await getShippingMethodTitle('XX', 'standard'), 'Free Standard International Shipping');
+    assert.equal(await getShippingMethodTitle('XX', 'expedited'), 'Expedited International Shipping');
+  });
+
+  it('treats unknown speed as standard', async () => {
+    assert.equal(await getShippingMethodTitle('US'), 'Free US Standard Shipping');
+    assert.equal(await getShippingMethodTitle('US', 'unknown-speed'), 'Free US Standard Shipping');
+  });
+
+  it('falls back to DDU for missing country', async () => {
+    assert.equal(await getShippingMethodTitle(null, 'standard'), SHIPPING_METHOD_TITLES.ddu.standard);
+    assert.equal(await getShippingMethodTitle('', 'expedited'), SHIPPING_METHOD_TITLES.ddu.expedited);
   });
 });

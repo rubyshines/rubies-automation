@@ -54,30 +54,28 @@ function buildShippingAddress(a, firstName, lastName) {
   };
 }
 
-// FedEx is the carrier of choice for international orders. US orders ship via
-// the default US carrier and must never carry a FedEx tag. The DDP/DDU split
-// follows the shipping_zones table: Canada and DDP zone (Passport duties
-// prepaid) get "ship fedex ddp"; everything else non-US gets "ship fedex ddu".
-const US_COUNTRY_VALUES = new Set(['US', 'USA', 'UNITED STATES']);
-const CANADA_COUNTRY_VALUES = new Set(['CA', 'CANADA']);
+// Shopify shipping rate titles per (zone, speed). These match what's configured
+// in the Shopify admin; Warehance auto-maps the title to the correct carrier
+// (US Standard / US Expedited / Passport DDP / Passport DDU / Fedex). Operator-
+// created drafts always set price = $0 (RUBIES covers shipping for free and
+// wholesale orders), so the title is the only signal that drives routing.
+const SHIPPING_METHOD_TITLES = {
+  us:     { standard: 'Free US Standard Shipping',                                       expedited: 'US Expedited Shipping' },
+  canada: { standard: 'Free Canada Standard Shipping',                                   expedited: 'Canada Expedited Shipping' },
+  ddp:    { standard: 'Free International Shipping - All Duties and Import Fees Included', expedited: 'Expedited International Shipping - All Duties and Import Fees Included' },
+  ddu:    { standard: 'Free Standard International Shipping',                             expedited: 'Expedited International Shipping' },
+};
 
-function isUSCountry(country) {
+async function getShippingMethodTitle(country, speed) {
+  const s = speed === 'expedited' ? 'expedited' : 'standard';
   const c = (country || '').toUpperCase().trim();
-  return US_COUNTRY_VALUES.has(c);
-}
-
-async function getFedExTag(country) {
-  const c = (country || '').toUpperCase().trim();
-  if (!c) return null;
-  if (US_COUNTRY_VALUES.has(c)) return null;
-  if (CANADA_COUNTRY_VALUES.has(c)) return 'ship fedex ddp';
+  if (!c) return SHIPPING_METHOD_TITLES.ddu[s];
 
   // Lazy-require to avoid circular import (shippingLookup pulls in the same
   // shopify/supabase clients that some order-creation tools also rely on).
   const { getShippingZone } = require('./tools/shippingLookup');
   const zone = await getShippingZone(c);
-  if (zone === 'ddp' || zone === 'canada') return 'ship fedex ddp';
-  return 'ship fedex ddu';
+  return (SHIPPING_METHOD_TITLES[zone] || SHIPPING_METHOD_TITLES.ddu)[s];
 }
 
-module.exports = { resolveCustomerForDraft, buildShippingAddress, isUSCountry, getFedExTag };
+module.exports = { resolveCustomerForDraft, buildShippingAddress, getShippingMethodTitle, SHIPPING_METHOD_TITLES };

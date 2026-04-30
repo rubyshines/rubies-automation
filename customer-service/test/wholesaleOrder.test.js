@@ -1,7 +1,7 @@
 /**
- * Unit tests for lib/tools/wholesaleOrder.js — focuses on FedEx auto-tagging
- * behaviour (non-US wholesale always gets a FedEx tag; Canada / DDP zone get
- * "ship fedex ddp", DDU zone gets "ship fedex ddu").
+ * Unit tests for lib/tools/wholesaleOrder.js — focuses on shipping_speed
+ * behaviour (default standard for US wholesale, default expedited for non-US,
+ * Shopify shipping line title set to the zone-appropriate rate at $0).
  *
  * Run: node --test customer-service/test/wholesaleOrder.test.js
  */
@@ -74,16 +74,22 @@ require.cache[resolveLineItemsPath] = {
   },
 };
 
-// Pure in-memory FedEx tag stub — mirrors the real ddp/ddu logic without the
-// Supabase round-trip the production helper does.
+// In-memory shipping title resolver — mirrors the real (zone, speed) → title map
+// so the wholesale tool's preview / draft-input can be verified without Supabase.
+const TITLES = {
+  us:     { standard: 'Free US Standard Shipping',                                       expedited: 'US Expedited Shipping' },
+  canada: { standard: 'Free Canada Standard Shipping',                                   expedited: 'Canada Expedited Shipping' },
+  ddp:    { standard: 'Free International Shipping - All Duties and Import Fees Included', expedited: 'Expedited International Shipping - All Duties and Import Fees Included' },
+  ddu:    { standard: 'Free Standard International Shipping',                             expedited: 'Expedited International Shipping' },
+};
 const FAKE_DDP = new Set(['AU', 'GB', 'DE', 'FR', 'NZ']);
-async function fakeGetFedExTag(country) {
+async function fakeGetShippingMethodTitle(country, speed) {
+  const s = speed === 'expedited' ? 'expedited' : 'standard';
   const c = (country || '').toUpperCase().trim();
-  if (!c) return null;
-  if (['US', 'USA', 'UNITED STATES'].includes(c)) return null;
-  if (['CA', 'CANADA'].includes(c)) return 'ship fedex ddp';
-  if (FAKE_DDP.has(c)) return 'ship fedex ddp';
-  return 'ship fedex ddu';
+  if (c === 'US') return TITLES.us[s];
+  if (c === 'CA') return TITLES.canada[s];
+  if (FAKE_DDP.has(c)) return TITLES.ddp[s];
+  return TITLES.ddu[s];
 }
 
 const realOrderUtils = require('../lib/orderUtils');
@@ -96,8 +102,7 @@ require.cache[orderUtilsPath] = {
       shippingAddress: { firstName: 'Test', lastName: 'Wholesale', address1: '1 Wholesale Way', city: 'X', province: 'X', country: 'CA', zip: '00000' },
     }),
     buildShippingAddress: realOrderUtils.buildShippingAddress,
-    isUSCountry: realOrderUtils.isUSCountry,
-    getFedExTag: fakeGetFedExTag,
+    getShippingMethodTitle: fakeGetShippingMethodTitle,
   },
 };
 
@@ -118,44 +123,69 @@ async function runHandler(args) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('create_wholesale_order — FedEx auto-tagging', () => {
+describe('create_wholesale_order — shipping_speed defaults & title selection', () => {
   beforeEach(() => { lastCreateDraftOrderArgs = null; });
 
-  it('US wholesale draft: tags only wholesale + cs-mcp (no FedEx tag)', async () => {
+  it('US wholesale defaults to standard (Free US Standard Shipping at $0)', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'US',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free US Standard Shipping');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.price, '0.00');
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp']);
   });
 
-  it('Canadian wholesale draft: auto-adds ship fedex ddp tag', async () => {
+  it('Canadian wholesale defaults to expedited (Canada Expedited Shipping)', async () => {
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'CA',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp', 'ship fedex ddp']);
-    assert.match(result.content[0].text, /FedEx DDP — non-US wholesale/);
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Canada Expedited Shipping');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.price, '0.00');
+    assert.match(result.content[0].text, /Canada Expedited Shipping/);
+    // No FedEx tag — routing is now driven entirely by Shopify shipping method.
+    assert.ok(!lastCreateDraftOrderArgs.tags.some(t => t.startsWith('ship fedex')));
   });
 
-  it('DDP-zone wholesale draft (GB): auto-adds ship fedex ddp tag (lowercase country also handled)', async () => {
+  it('DDP-zone wholesale (GB) defaults to expedited International title', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
-      country_code: 'gb',
+      country_code: 'GB',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.ok(lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title,
+      'Expedited International Shipping - All Duties and Import Fees Included');
   });
 
-  it('DDU-zone wholesale draft (e.g. AR): auto-adds ship fedex ddu tag', async () => {
-    const result = await runHandler({
+  it('DDU-zone wholesale (AR) defaults to expedited International title', async () => {
+    await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'AR',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp', 'ship fedex ddu']);
-    assert.match(result.content[0].text, /FedEx DDU — non-US wholesale/);
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Expedited International Shipping');
+  });
+
+  it('operator can override non-US wholesale to standard', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'CA',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+      shipping_speed: 'standard',
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free Canada Standard Shipping');
+  });
+
+  it('operator can override US wholesale to expedited', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+      shipping_speed: 'expedited',
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'US Expedited Shipping');
   });
 });

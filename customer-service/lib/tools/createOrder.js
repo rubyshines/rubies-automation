@@ -16,7 +16,7 @@ const {
   getAdminUrl,
 } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { getFedExTag, isUSCountry } = require('../orderUtils');
+const { getShippingMethodTitle } = require('../orderUtils');
 
 function fmtCurrency(n) {
   if (n == null || isNaN(n)) return '$0.00';
@@ -69,7 +69,7 @@ async function handleCreateOrder({
   email, first_name, last_name, phone, address,
   customer_id,
   items, custom_items, discount_percent, free, donation, note, tags,
-  ship_fedex,
+  shipping_speed,
   confirmed,
 }) {
   const hasItems = items && items.length > 0;
@@ -143,16 +143,16 @@ async function handleCreateOrder({
     return { content: [{ type: 'text', text: 'Must provide either email or customer_id.' }] };
   }
 
-  // Determine shipping country and resolve ship_fedex tag (US orders never get the tag)
+  // Resolve shipping rate title from destination + speed. Operator-created drafts
+  // always get $0 shipping (RUBIES covers it for free / wholesale flows); the title
+  // is what drives Warehance carrier routing.
   const shipCountry =
     customerInfo.address?.countryCodeV2 ||
     customerInfo.address?.country ||
     address?.country ||
     '';
-  const fedexRequested = ship_fedex === true;
-  const fedexBlockedUS = fedexRequested && isUSCountry(shipCountry);
-  const fedexTag = fedexRequested ? await getFedExTag(shipCountry) : null;
-  const fedexApplied = !!fedexTag;
+  const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
+  const shippingTitle = await getShippingMethodTitle(shipCountry, speed);
 
   // Build preview markdown
   let md = `**Order Preview**\n\n`;
@@ -186,10 +186,7 @@ async function handleCreateOrder({
 
   if (discountPct > 0) md += `\n**Discount:** ${discountLabel}\n`;
   md += `**Subtotal:** ${fmtCurrency(subtotal)}\n`;
-  md += `**Shipping:** ${isFree ? 'Free' : 'Standard (Shopify-calculated)'}${fedexApplied ? ` — ${fedexTag === 'ship fedex ddp' ? 'FedEx DDP' : 'FedEx DDU'} requested` : ''}\n`;
-  if (fedexBlockedUS) {
-    md += `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry a FedEx tag.\n`;
-  }
+  md += `**Shipping:** ${shippingTitle} ($0.00 — covered by RUBIES)\n`;
   if (note) md += `**Note:** ${note}\n`;
 
   // Build line items for Shopify draft
@@ -219,19 +216,13 @@ async function handleCreateOrder({
     lineItems.push(li);
   }
 
-  const draftTags = [...(tags || []), 'cs-mcp'];
-  if (fedexApplied) draftTags.push(fedexTag);
-
   const draftInput = {
     customerId: customerInfo.id,
     lineItems,
     note: note || (isFree ? (donation ? 'Donation order created via CS MCP' : 'Free order created via CS MCP') : 'Order created via CS MCP'),
-    tags: draftTags,
+    tags: [...(tags || []), 'cs-mcp'],
+    shippingLine: { title: shippingTitle, price: '0.00' },
   };
-
-  if (isFree) {
-    draftInput.shippingLine = { title: 'Free Shipping', price: '0.00' };
-  }
 
   // Pass shipping address if available
   const addr = customerInfo.address || address;
@@ -343,9 +334,10 @@ const tools = [
           description: 'Additional tags (cs-mcp is always added)',
           items: { type: 'string' },
         },
-        ship_fedex: {
-          type: 'boolean',
-          description: 'Request FedEx shipping. Adds a FedEx tag to the draft order: "ship fedex ddp" for Canada or DDP-zone destinations (duties prepaid), "ship fedex ddu" for DDU-zone destinations. ONLY applied for orders shipping outside the US — US orders are blocked from any FedEx tag and the request is ignored with a warning.',
+        shipping_speed: {
+          type: 'string',
+          enum: ['standard', 'expedited'],
+          description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate (US Standard / US Expedited / Free Canada Standard / Canada Expedited / Free International / Expedited International). Price is always $0 — RUBIES covers shipping on operator-created orders. Default: "standard".',
         },
         confirmed: {
           type: 'boolean',

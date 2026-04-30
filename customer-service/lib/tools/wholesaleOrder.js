@@ -16,7 +16,7 @@ const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderIn
 const { searchProducts } = require('../productCache');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
-const { resolveCustomerForDraft, getFedExTag } = require('../orderUtils');
+const { resolveCustomerForDraft, getShippingMethodTitle } = require('../orderUtils');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 
 const CURRENCY_OVERRIDES = {
@@ -242,7 +242,7 @@ const tools = [
       'Phase 1 (confirmed omitted or false): creates draft order(s) in Shopify and returns a preview with clickable admin links, shipping address, and item breakdown. For AU orders, auto-splits if total exceeds $1,000 AUD.',
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
-      'Tagged with "wholesale" and "cs-mcp". Non-US wholesale orders also get a FedEx tag: "ship fedex ddp" for Canada / DDP zone, "ship fedex ddu" for DDU zone.',
+      'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for non-US wholesale (FedEx routing); operator can override via shipping_speed.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -275,6 +275,11 @@ const tools = [
         },
         note: { type: 'string', description: 'Optional note for the draft order' },
         discount_percent: { type: 'number', description: 'Override the default country-based discount percentage (e.g. 50 for 50% off). If omitted, uses 50% for US/AU, 30% for others.' },
+        shipping_speed: {
+          type: 'string',
+          enum: ['standard', 'expedited'],
+          description: 'Shipping speed. Default: "standard" for US wholesale, "expedited" for non-US wholesale (FedEx routing via the expedited Shopify shipping rate). Sets the Shopify shipping line title at $0; Warehance auto-maps to the carrier.',
+        },
         confirmed: {
           type: 'boolean',
           description: 'Set to true to complete previously created draft order(s) and send invoices (phase 2). Requires draft_order_ids.',
@@ -287,7 +292,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -344,9 +349,12 @@ const tools = [
 
       const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server`;
 
-      const tags = ['wholesale', 'cs-mcp'];
-      const fedexTag = await getFedExTag(cc);
-      if (fedexTag) tags.push(fedexTag);
+      // Resolve shipping speed. Default: standard for US wholesale, expedited for non-US
+      // wholesale (matches the prior "non-US wholesale always FedEx" rule).
+      const speed = shipping_speed === 'expedited' || shipping_speed === 'standard'
+        ? shipping_speed
+        : (cc === 'US' ? 'standard' : 'expedited');
+      const shippingTitle = await getShippingMethodTitle(cc, speed);
 
       function buildDraftInput(itemList, orderNote) {
         const lineItems = itemList.map(r => ({
@@ -362,8 +370,8 @@ const tools = [
           customerId: customerGid,
           lineItems,
           note: orderNote,
-          shippingLine: { title: 'Free Shipping', price: '0.00' },
-          tags: [...tags],
+          shippingLine: { title: shippingTitle, price: '0.00' },
+          tags: ['wholesale', 'cs-mcp'],
         };
         if (shippingAddress) {
           input.shippingAddress = shippingAddress;
@@ -530,7 +538,7 @@ const tools = [
         outputLines.push(`**Total:** ${currency} $${total.toFixed(2)} (${totalUnits} units)`);
       }
       outputLines.push('');
-      outputLines.push(`**Shipping:** Free${fedexTag ? ` (${fedexTag === 'ship fedex ddp' ? 'FedEx DDP' : 'FedEx DDU'} — non-US wholesale)` : ''}`);
+      outputLines.push(`**Shipping:** ${shippingTitle} ($0.00)`);
       outputLines.push('');
       outputLines.push(`⏳ **ACTION REQUIRED:** Show this entire preview to the user and wait for their approval before proceeding.`);
       outputLines.push(`To confirm, call create_wholesale_order with confirmed=true and draft_order_ids=${JSON.stringify(draftOrderIds)}.`);
