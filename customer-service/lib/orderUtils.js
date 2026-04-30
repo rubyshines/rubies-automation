@@ -54,4 +54,19 @@ function buildShippingAddress(a, firstName, lastName) {
   };
 }
 
-module.exports = { resolveCustomerForDraft, buildShippingAddress };
+// FedEx is the carrier of choice for international orders. US orders ship via
+// the default US carrier and must never carry this tag.
+const US_COUNTRY_VALUES = new Set(['US', 'USA', 'UNITED STATES']);
+
+function isUSCountry(country) {
+  const c = (country || '').toUpperCase().trim();
+  return US_COUNTRY_VALUES.has(c);
+}
+
+function shouldAddFedExTag(country) {
+  const c = (country || '').toUpperCase().trim();
+  if (!c) return false;
+  return !US_COUNTRY_VALUES.has(c);
+}
+
+module.exports = { resolveCustomerForDraft, buildShippingAddress, isUSCountry, shouldAddFedExTag };

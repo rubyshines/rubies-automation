@@ -16,7 +16,7 @@ const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderIn
 const { searchProducts } = require('../productCache');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
-const { resolveCustomerForDraft } = require('../orderUtils');
+const { resolveCustomerForDraft, shouldAddFedExTag } = require('../orderUtils');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 
 const CURRENCY_OVERRIDES = {
@@ -242,7 +242,7 @@ const tools = [
       'Phase 1 (confirmed omitted or false): creates draft order(s) in Shopify and returns a preview with clickable admin links, shipping address, and item breakdown. For AU orders, auto-splits if total exceeds $1,000 AUD.',
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
-      'Tagged with "wholesale" and "cs-mcp".',
+      'Tagged with "wholesale" and "cs-mcp". Non-US wholesale orders are also tagged with "ship fedex".',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -344,6 +344,9 @@ const tools = [
 
       const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server`;
 
+      const tags = ['wholesale', 'cs-mcp'];
+      if (shouldAddFedExTag(cc)) tags.push('ship fedex');
+
       function buildDraftInput(itemList, orderNote) {
         const lineItems = itemList.map(r => ({
           variantId: r.variantId,
@@ -359,7 +362,7 @@ const tools = [
           lineItems,
           note: orderNote,
           shippingLine: { title: 'Free Shipping', price: '0.00' },
-          tags: ['wholesale', 'cs-mcp'],
+          tags: [...tags],
         };
         if (shippingAddress) {
           input.shippingAddress = shippingAddress;
@@ -526,7 +529,7 @@ const tools = [
         outputLines.push(`**Total:** ${currency} $${total.toFixed(2)} (${totalUnits} units)`);
       }
       outputLines.push('');
-      outputLines.push(`**Shipping:** Free`);
+      outputLines.push(`**Shipping:** Free${tags.includes('ship fedex') ? ' (FedEx — non-US wholesale)' : ''}`);
       outputLines.push('');
       outputLines.push(`⏳ **ACTION REQUIRED:** Show this entire preview to the user and wait for their approval before proceeding.`);
       outputLines.push(`To confirm, call create_wholesale_order with confirmed=true and draft_order_ids=${JSON.stringify(draftOrderIds)}.`);

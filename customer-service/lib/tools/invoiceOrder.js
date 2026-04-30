@@ -9,7 +9,7 @@
 
 const { createDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { resolveCustomerForDraft } = require('../orderUtils');
+const { resolveCustomerForDraft, shouldAddFedExTag, isUSCountry } = require('../orderUtils');
 const { formatAddressBlock } = require('../addressUtils');
 
 const tools = [
@@ -67,6 +67,10 @@ const tools = [
           description: 'Description for the return credit (e.g. "Stella return credit from order #20335"). Shown on the invoice.',
         },
         note: { type: 'string', description: 'Optional note for the draft order' },
+        ship_fedex: {
+          type: 'boolean',
+          description: 'Request FedEx shipping. Adds the "ship fedex" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
+        },
         confirmed: {
           type: 'boolean',
           description: 'Set to true to send the invoice for a previously created draft (phase 2). Requires draft_order_id.',
@@ -78,7 +82,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, confirmed, draft_order_id }) => {
+    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, ship_fedex, confirmed, draft_order_id }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Send invoice for existing draft ---
@@ -133,6 +137,15 @@ const tools = [
         lineItems.push({ variantId: r.variantId, quantity: r.quantity });
       }
 
+      // FedEx tag — only applied for non-US orders
+      const fedexRequested = ship_fedex === true;
+      const shipCountry = shippingAddress?.country || '';
+      const fedexBlockedUS = fedexRequested && isUSCountry(shipCountry);
+      const fedexApplied = fedexRequested && shouldAddFedExTag(shipCountry);
+
+      const draftTags = ['invoice', 'cs-mcp'];
+      if (fedexApplied) draftTags.push('ship fedex');
+
       // Build draft input
       const defaultNote = 'Invoice order (exchange + paid items) created via CS MCP server';
       const draftInput = {
@@ -140,7 +153,7 @@ const tools = [
         lineItems,
         shippingLine: { title: 'Free Shipping', price: '0.00' },
         note: note || defaultNote,
-        tags: ['invoice', 'cs-mcp'],
+        tags: draftTags,
       };
       if (shippingAddress) {
         draftInput.shippingAddress = shippingAddress;
@@ -201,8 +214,11 @@ const tools = [
         lines.push(`**Return credit:** -$${return_credit.toFixed(2)}${return_credit_note ? ` (${return_credit_note})` : ''}`);
       }
 
-      lines.push(`**Shipping:** Free`);
+      lines.push(`**Shipping:** Free${fedexApplied ? ' (FedEx requested)' : ''}`);
       lines.push(`**Total:** $${draftOrder.totalPrice}`);
+      if (fedexBlockedUS) {
+        lines.push(`⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex" tag.`);
+      }
       lines.push('');
       lines.push(`Review the draft order above, then call create_invoice_order again with confirmed=true and draft_order_id="${draftOrder.id}" to send the invoice.`);
 

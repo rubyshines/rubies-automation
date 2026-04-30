@@ -16,6 +16,7 @@ const {
   getAdminUrl,
 } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
+const { shouldAddFedExTag, isUSCountry } = require('../orderUtils');
 
 function fmtCurrency(n) {
   if (n == null || isNaN(n)) return '$0.00';
@@ -68,6 +69,7 @@ async function handleCreateOrder({
   email, first_name, last_name, phone, address,
   customer_id,
   items, custom_items, discount_percent, free, donation, note, tags,
+  ship_fedex,
   confirmed,
 }) {
   const hasItems = items && items.length > 0;
@@ -141,6 +143,16 @@ async function handleCreateOrder({
     return { content: [{ type: 'text', text: 'Must provide either email or customer_id.' }] };
   }
 
+  // Determine shipping country and resolve ship_fedex tag (US orders never get the tag)
+  const shipCountry =
+    customerInfo.address?.countryCodeV2 ||
+    customerInfo.address?.country ||
+    address?.country ||
+    '';
+  const fedexRequested = ship_fedex === true;
+  const fedexBlockedUS = fedexRequested && isUSCountry(shipCountry);
+  const fedexApplied = fedexRequested && shouldAddFedExTag(shipCountry);
+
   // Build preview markdown
   let md = `**Order Preview**\n\n`;
   md += `**Customer:** ${customerInfo.name}`;
@@ -173,7 +185,10 @@ async function handleCreateOrder({
 
   if (discountPct > 0) md += `\n**Discount:** ${discountLabel}\n`;
   md += `**Subtotal:** ${fmtCurrency(subtotal)}\n`;
-  md += `**Shipping:** ${isFree ? 'Free' : 'Standard (Shopify-calculated)'}\n`;
+  md += `**Shipping:** ${isFree ? 'Free' : 'Standard (Shopify-calculated)'}${fedexApplied ? ' — FedEx requested' : ''}\n`;
+  if (fedexBlockedUS) {
+    md += `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex" tag.\n`;
+  }
   if (note) md += `**Note:** ${note}\n`;
 
   // Build line items for Shopify draft
@@ -203,11 +218,14 @@ async function handleCreateOrder({
     lineItems.push(li);
   }
 
+  const draftTags = [...(tags || []), 'cs-mcp'];
+  if (fedexApplied) draftTags.push('ship fedex');
+
   const draftInput = {
     customerId: customerInfo.id,
     lineItems,
     note: note || (isFree ? (donation ? 'Donation order created via CS MCP' : 'Free order created via CS MCP') : 'Order created via CS MCP'),
-    tags: [...(tags || []), 'cs-mcp'],
+    tags: draftTags,
   };
 
   if (isFree) {
@@ -323,6 +341,10 @@ const tools = [
           type: 'array',
           description: 'Additional tags (cs-mcp is always added)',
           items: { type: 'string' },
+        },
+        ship_fedex: {
+          type: 'boolean',
+          description: 'Request FedEx shipping. Adds the "ship fedex" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
         },
         confirmed: {
           type: 'boolean',

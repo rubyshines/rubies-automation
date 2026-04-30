@@ -8,7 +8,7 @@ const { createDraftOrder, completeDraftOrder, normalizeGid, getCustomerOrders, g
 const { getCustomerOrdersFromSupabase, getCustomerFulfilledOrdersFromSupabase } = require('../supabaseQueries');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock, formatAddressLine } = require('../addressUtils');
-const { resolveCustomerForDraft, buildShippingAddress } = require('../orderUtils');
+const { resolveCustomerForDraft, buildShippingAddress, shouldAddFedExTag, isUSCountry } = require('../orderUtils');
 
 const tools = [
   {
@@ -22,7 +22,7 @@ const tools = [
       'Do NOT pass original_order_id unless explicitly given an order number by the user. Let the tool auto-find the correct fulfilled order.',
       'If no original_order_id is provided, automatically finds the customer\'s most recent FULFILLED, non-cancelled order.',
       'If an original_order_id IS provided, validates that it is fulfilled before proceeding.',
-      'Tagged with "exchange" and "cs-mcp".',
+      'Tagged with "exchange" and "cs-mcp". Optionally adds "ship fedex" tag when ship_fedex=true and the order ships outside the US.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -53,6 +53,10 @@ const tools = [
           type: 'string',
           description: 'Original order GID or numeric ID to link back to. If omitted, the most recent fulfilled non-cancelled order is used. If provided, must be a fulfilled order.',
         },
+        ship_fedex: {
+          type: 'boolean',
+          description: 'Request FedEx shipping. Adds the "ship fedex" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
+        },
         confirmed: {
           type: 'boolean',
           description: 'Set to true to complete a previously created draft order (phase 2). Requires draft_order_id.',
@@ -64,7 +68,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, items, note, original_order_id, confirmed, draft_order_id }) => {
+    handler: async ({ customer_id, items, note, original_order_id, ship_fedex, confirmed, draft_order_id }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm and complete an existing draft ---
@@ -238,12 +242,20 @@ const tools = [
         },
       }));
 
+      const fedexRequested = ship_fedex === true;
+      const shipCountry = shippingAddress?.country || '';
+      const fedexBlockedUS = fedexRequested && isUSCountry(shipCountry);
+      const fedexApplied = fedexRequested && shouldAddFedExTag(shipCountry);
+
+      const draftTags = ['exchange', 'cs-mcp'];
+      if (fedexApplied) draftTags.push('ship fedex');
+
       const draftInput = {
         customerId: customerGid,
         lineItems,
         note: (note ? `${note}${originalOrderName ? ` from order ${originalOrderName}` : ''}` : `Exchange order from ${originalOrderName || 'unknown order'} via CS MCP server`),
         shippingLine: { title: 'Free Shipping', price: '0.00' },
-        tags: ['exchange', 'cs-mcp'],
+        tags: draftTags,
       };
       if (shippingAddress) {
         draftInput.shippingAddress = shippingAddress;
@@ -267,8 +279,15 @@ const tools = [
         '',
         `**Items:**`,
         itemLines,
-        `**Shipping:** Free`,
+        `**Shipping:** Free${fedexApplied ? ' (FedEx requested)' : ''}`,
         `**Total:** $${draftOrder.totalPrice}`,
+      );
+      if (fedexBlockedUS) {
+        outputLines.push(
+          `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex" tag.`,
+        );
+      }
+      outputLines.push(
         '',
         `Review the draft order above, then call create_exchange_order again with confirmed=true and draft_order_id="${draftOrder.id}" to complete it.`,
       );

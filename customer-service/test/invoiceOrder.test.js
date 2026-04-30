@@ -47,8 +47,12 @@ require.cache[shopifyPath] = {
   },
 };
 
-// Stub orderUtils (resolveCustomerForDraft)
+// Stub orderUtils (resolveCustomerForDraft) — country is mutable so tests can switch destinations.
+let stubCustomerCountry = 'US';
+function setStubCustomerCountry(c) { stubCustomerCountry = c; }
+
 const orderUtilsPath = require.resolve('../lib/orderUtils');
+const realOrderUtils = require('../lib/orderUtils');
 require.cache[orderUtilsPath] = {
   id: orderUtilsPath,
   filename: orderUtilsPath,
@@ -57,13 +61,16 @@ require.cache[orderUtilsPath] = {
     resolveCustomerForDraft: async () => ({
       customerName: 'Test Customer',
       addressBlock: '123 Main St\nPortland, OR 97227',
-      shippingAddress: { firstName: 'Test', lastName: 'Customer', address1: '123 Main St', city: 'Portland', province: 'OR', country: 'US', zip: '97227' },
+      shippingAddress: { firstName: 'Test', lastName: 'Customer', address1: '123 Main St', city: 'Portland', province: 'OR', country: stubCustomerCountry, zip: '97227' },
     }),
     buildShippingAddress: (a, fn, ln) => ({
       firstName: fn || '', lastName: ln || '',
       address1: a.address1, address2: a.address2 || '',
       city: a.city, province: a.province, country: a.countryCodeV2 || a.country, zip: a.zip,
     }),
+    // Pass through the real country helpers so the tool's guard logic runs unmodified.
+    isUSCountry: realOrderUtils.isUSCountry,
+    shouldAddFedExTag: realOrderUtils.shouldAddFedExTag,
   },
 };
 
@@ -191,11 +198,43 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
   });
 
   it('tags draft orders with invoice + cs-mcp', async () => {
+    setStubCustomerCountry('US');
     await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp']);
+  });
+
+  it('does NOT add ship fedex tag when ship_fedex is omitted (non-US)', async () => {
+    setStubCustomerCountry('CA');
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex'));
+  });
+
+  it('adds ship fedex tag when ship_fedex=true and order is non-US', async () => {
+    setStubCustomerCountry('CA');
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
+      ship_fedex: true,
+    });
+    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex']);
+    assert.match(result.content[0].text, /FedEx requested/);
+  });
+
+  it('skips ship fedex tag and warns when ship_fedex=true but order is US', async () => {
+    setStubCustomerCountry('US');
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
+      ship_fedex: true,
+    });
+    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex'));
+    assert.match(result.content[0].text, /FedEx tag skipped/);
   });
 
   it('normalizes numeric customer_id to a Customer GID', async () => {
