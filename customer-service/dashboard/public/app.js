@@ -1471,8 +1471,10 @@ function simpleMarkdown(text) {
       const items = list.trim().split('\n').map(l => `<li>${l.replace(/^[•\-–]\s*/, '')}</li>`).join('');
       return `<ul class="action-list">${items}</ul>`;
     })
-    // Auto-link URLs
-    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" class="action-tool-link">$1</a>')
+    // Markdown links [text](url) — must precede bare-URL auto-link below
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" class="action-tool-link">$1</a>')
+    // Auto-link bare URLs; skip ones already wrapped above, and exclude trailing `)` so `(see https://x)` works
+    .replace(/(?<!href=")(https?:\/\/[^\s<)]+)/g, '<a href="$1" target="_blank" class="action-tool-link">$1</a>')
     // Line breaks (after list handling)
     .replace(/\n/g, '<br>');
 }
