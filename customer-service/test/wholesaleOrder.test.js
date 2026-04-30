@@ -1,6 +1,7 @@
 /**
  * Unit tests for lib/tools/wholesaleOrder.js — focuses on FedEx auto-tagging
- * behaviour (non-US wholesale always gets the "ship fedex ddp" tag).
+ * behaviour (non-US wholesale always gets a FedEx tag; Canada / DDP zone get
+ * "ship fedex ddp", DDU zone gets "ship fedex ddu").
  *
  * Run: node --test customer-service/test/wholesaleOrder.test.js
  */
@@ -73,6 +74,18 @@ require.cache[resolveLineItemsPath] = {
   },
 };
 
+// Pure in-memory FedEx tag stub — mirrors the real ddp/ddu logic without the
+// Supabase round-trip the production helper does.
+const FAKE_DDP = new Set(['AU', 'GB', 'DE', 'FR', 'NZ']);
+async function fakeGetFedExTag(country) {
+  const c = (country || '').toUpperCase().trim();
+  if (!c) return null;
+  if (['US', 'USA', 'UNITED STATES'].includes(c)) return null;
+  if (['CA', 'CANADA'].includes(c)) return 'ship fedex ddp';
+  if (FAKE_DDP.has(c)) return 'ship fedex ddp';
+  return 'ship fedex ddu';
+}
+
 const realOrderUtils = require('../lib/orderUtils');
 require.cache[orderUtilsPath] = {
   id: orderUtilsPath, filename: orderUtilsPath, loaded: true,
@@ -84,7 +97,7 @@ require.cache[orderUtilsPath] = {
     }),
     buildShippingAddress: realOrderUtils.buildShippingAddress,
     isUSCountry: realOrderUtils.isUSCountry,
-    shouldAddFedExTag: realOrderUtils.shouldAddFedExTag,
+    getFedExTag: fakeGetFedExTag,
   },
 };
 
@@ -108,7 +121,7 @@ async function runHandler(args) {
 describe('create_wholesale_order — FedEx auto-tagging', () => {
   beforeEach(() => { lastCreateDraftOrderArgs = null; });
 
-  it('US wholesale draft: tags only wholesale + cs-mcp (no ship fedex ddp)', async () => {
+  it('US wholesale draft: tags only wholesale + cs-mcp (no FedEx tag)', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'US',
@@ -124,15 +137,25 @@ describe('create_wholesale_order — FedEx auto-tagging', () => {
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp', 'ship fedex ddp']);
-    assert.match(result.content[0].text, /FedEx — non-US wholesale/);
+    assert.match(result.content[0].text, /FedEx DDP — non-US wholesale/);
   });
 
-  it('GB wholesale draft: auto-adds ship fedex ddp tag (lowercase country also handled)', async () => {
+  it('DDP-zone wholesale draft (GB): auto-adds ship fedex ddp tag (lowercase country also handled)', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'gb',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
     assert.ok(lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
+  });
+
+  it('DDU-zone wholesale draft (e.g. AR): auto-adds ship fedex ddu tag', async () => {
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'AR',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp', 'ship fedex ddu']);
+    assert.match(result.content[0].text, /FedEx DDU — non-US wholesale/);
   });
 });

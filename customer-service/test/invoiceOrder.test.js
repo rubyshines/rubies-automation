@@ -51,6 +51,18 @@ require.cache[shopifyPath] = {
 let stubCustomerCountry = 'US';
 function setStubCustomerCountry(c) { stubCustomerCountry = c; }
 
+// Pure in-memory FedEx tag stub — mirrors the real ddp/ddu logic without the
+// Supabase round-trip the production helper does.
+const FAKE_DDP = new Set(['AU', 'GB', 'DE', 'FR', 'NZ']);
+async function fakeGetFedExTag(country) {
+  const c = (country || '').toUpperCase().trim();
+  if (!c) return null;
+  if (['US', 'USA', 'UNITED STATES'].includes(c)) return null;
+  if (['CA', 'CANADA'].includes(c)) return 'ship fedex ddp';
+  if (FAKE_DDP.has(c)) return 'ship fedex ddp';
+  return 'ship fedex ddu';
+}
+
 const orderUtilsPath = require.resolve('../lib/orderUtils');
 const realOrderUtils = require('../lib/orderUtils');
 require.cache[orderUtilsPath] = {
@@ -68,9 +80,9 @@ require.cache[orderUtilsPath] = {
       address1: a.address1, address2: a.address2 || '',
       city: a.city, province: a.province, country: a.countryCodeV2 || a.country, zip: a.zip,
     }),
-    // Pass through the real country helpers so the tool's guard logic runs unmodified.
+    // Pass through the real US guard; stub the async tag resolver so tests don't touch Supabase.
     isUSCountry: realOrderUtils.isUSCountry,
-    shouldAddFedExTag: realOrderUtils.shouldAddFedExTag,
+    getFedExTag: fakeGetFedExTag,
   },
 };
 
@@ -206,16 +218,16 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp']);
   });
 
-  it('does NOT add ship fedex ddp tag when ship_fedex is omitted (non-US)', async () => {
+  it('does NOT add any FedEx tag when ship_fedex is omitted (non-US)', async () => {
     setStubCustomerCountry('CA');
     await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
+    assert.ok(!lastCreateDraftOrderArgs.tags.some(t => t.startsWith('ship fedex')));
   });
 
-  it('adds ship fedex ddp tag when ship_fedex=true and order is non-US', async () => {
+  it('adds ship fedex ddp tag when ship_fedex=true and destination is Canada', async () => {
     setStubCustomerCountry('CA');
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/42',
@@ -223,17 +235,38 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
       ship_fedex: true,
     });
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddp']);
-    assert.match(result.content[0].text, /FedEx requested/);
+    assert.match(result.content[0].text, /FedEx DDP requested/);
   });
 
-  it('skips ship fedex ddp tag and warns when ship_fedex=true but order is US', async () => {
+  it('adds ship fedex ddp tag when ship_fedex=true and destination is in DDP zone (e.g. AU)', async () => {
+    setStubCustomerCountry('AU');
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
+      ship_fedex: true,
+    });
+    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddp']);
+  });
+
+  it('adds ship fedex ddu tag when ship_fedex=true and destination is in DDU zone (e.g. AR)', async () => {
+    setStubCustomerCountry('AR');
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
+      ship_fedex: true,
+    });
+    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddu']);
+    assert.match(result.content[0].text, /FedEx DDU requested/);
+  });
+
+  it('skips any FedEx tag and warns when ship_fedex=true but order is US', async () => {
     setStubCustomerCountry('US');
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
       ship_fedex: true,
     });
-    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
+    assert.ok(!lastCreateDraftOrderArgs.tags.some(t => t.startsWith('ship fedex')));
     assert.match(result.content[0].text, /FedEx tag skipped/);
   });
 

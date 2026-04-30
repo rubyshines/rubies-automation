@@ -4,10 +4,23 @@
  * Run: node --test customer-service/test/orderUtils.test.js
  */
 
-const { describe, it } = require('node:test');
+const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isUSCountry, shouldAddFedExTag } = require('../lib/orderUtils');
+// Stub shippingLookup before requiring orderUtils so the lazy require inside
+// getFedExTag picks up the stub instead of touching Supabase.
+const shippingLookupPath = require.resolve('../lib/tools/shippingLookup');
+let stubZone = null;
+require.cache[shippingLookupPath] = {
+  id: shippingLookupPath,
+  filename: shippingLookupPath,
+  loaded: true,
+  exports: {
+    getShippingZone: async () => stubZone,
+  },
+};
+
+const { isUSCountry, getFedExTag } = require('../lib/orderUtils');
 
 describe('isUSCountry', () => {
   it('matches the 2-letter ISO code', () => {
@@ -35,24 +48,43 @@ describe('isUSCountry', () => {
   });
 });
 
-describe('shouldAddFedExTag', () => {
-  it('returns true for non-US countries', () => {
-    assert.equal(shouldAddFedExTag('CA'), true);
-    assert.equal(shouldAddFedExTag('AU'), true);
-    assert.equal(shouldAddFedExTag('GB'), true);
-    assert.equal(shouldAddFedExTag('Australia'), true);
+describe('getFedExTag', () => {
+  beforeEach(() => { stubZone = null; });
+
+  it('returns null for US in any form (US never carries a FedEx tag)', async () => {
+    assert.equal(await getFedExTag('US'), null);
+    assert.equal(await getFedExTag('usa'), null);
+    assert.equal(await getFedExTag('United States'), null);
   });
 
-  it('returns false for US in any form', () => {
-    assert.equal(shouldAddFedExTag('US'), false);
-    assert.equal(shouldAddFedExTag('us'), false);
-    assert.equal(shouldAddFedExTag('USA'), false);
-    assert.equal(shouldAddFedExTag('United States'), false);
+  it('returns null when country is missing — never tag without a known destination', async () => {
+    assert.equal(await getFedExTag(''), null);
+    assert.equal(await getFedExTag(null), null);
+    assert.equal(await getFedExTag(undefined), null);
   });
 
-  it('returns false when country is missing — never tag without a known destination', () => {
-    assert.equal(shouldAddFedExTag(''), false);
-    assert.equal(shouldAddFedExTag(null), false);
-    assert.equal(shouldAddFedExTag(undefined), false);
+  it('returns ddp tag for Canada short-circuit (no zone lookup needed)', async () => {
+    stubZone = 'should-not-be-used';
+    assert.equal(await getFedExTag('CA'), 'ship fedex ddp');
+    assert.equal(await getFedExTag('ca'), 'ship fedex ddp');
+    assert.equal(await getFedExTag('Canada'), 'ship fedex ddp');
+  });
+
+  it('returns ddp tag when zone lookup says ddp', async () => {
+    stubZone = 'ddp';
+    assert.equal(await getFedExTag('AU'), 'ship fedex ddp');
+    assert.equal(await getFedExTag('GB'), 'ship fedex ddp');
+    assert.equal(await getFedExTag('DE'), 'ship fedex ddp');
+  });
+
+  it('returns ddu tag when zone lookup says ddu', async () => {
+    stubZone = 'ddu';
+    assert.equal(await getFedExTag('AR'), 'ship fedex ddu');
+    assert.equal(await getFedExTag('JP'), 'ship fedex ddu');
+  });
+
+  it('falls back to ddu when zone lookup returns null (unknown country)', async () => {
+    stubZone = null;
+    assert.equal(await getFedExTag('XX'), 'ship fedex ddu');
   });
 });

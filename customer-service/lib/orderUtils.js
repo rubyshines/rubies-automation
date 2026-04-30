@@ -55,18 +55,29 @@ function buildShippingAddress(a, firstName, lastName) {
 }
 
 // FedEx is the carrier of choice for international orders. US orders ship via
-// the default US carrier and must never carry this tag.
+// the default US carrier and must never carry a FedEx tag. The DDP/DDU split
+// follows the shipping_zones table: Canada and DDP zone (Passport duties
+// prepaid) get "ship fedex ddp"; everything else non-US gets "ship fedex ddu".
 const US_COUNTRY_VALUES = new Set(['US', 'USA', 'UNITED STATES']);
+const CANADA_COUNTRY_VALUES = new Set(['CA', 'CANADA']);
 
 function isUSCountry(country) {
   const c = (country || '').toUpperCase().trim();
   return US_COUNTRY_VALUES.has(c);
 }
 
-function shouldAddFedExTag(country) {
+async function getFedExTag(country) {
   const c = (country || '').toUpperCase().trim();
-  if (!c) return false;
-  return !US_COUNTRY_VALUES.has(c);
+  if (!c) return null;
+  if (US_COUNTRY_VALUES.has(c)) return null;
+  if (CANADA_COUNTRY_VALUES.has(c)) return 'ship fedex ddp';
+
+  // Lazy-require to avoid circular import (shippingLookup pulls in the same
+  // shopify/supabase clients that some order-creation tools also rely on).
+  const { getShippingZone } = require('./tools/shippingLookup');
+  const zone = await getShippingZone(c);
+  if (zone === 'ddp' || zone === 'canada') return 'ship fedex ddp';
+  return 'ship fedex ddu';
 }
 
-module.exports = { resolveCustomerForDraft, buildShippingAddress, isUSCountry, shouldAddFedExTag };
+module.exports = { resolveCustomerForDraft, buildShippingAddress, isUSCountry, getFedExTag };

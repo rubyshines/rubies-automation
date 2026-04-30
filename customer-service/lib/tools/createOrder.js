@@ -16,7 +16,7 @@ const {
   getAdminUrl,
 } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { shouldAddFedExTag, isUSCountry } = require('../orderUtils');
+const { getFedExTag, isUSCountry } = require('../orderUtils');
 
 function fmtCurrency(n) {
   if (n == null || isNaN(n)) return '$0.00';
@@ -151,7 +151,8 @@ async function handleCreateOrder({
     '';
   const fedexRequested = ship_fedex === true;
   const fedexBlockedUS = fedexRequested && isUSCountry(shipCountry);
-  const fedexApplied = fedexRequested && shouldAddFedExTag(shipCountry);
+  const fedexTag = fedexRequested ? await getFedExTag(shipCountry) : null;
+  const fedexApplied = !!fedexTag;
 
   // Build preview markdown
   let md = `**Order Preview**\n\n`;
@@ -185,9 +186,9 @@ async function handleCreateOrder({
 
   if (discountPct > 0) md += `\n**Discount:** ${discountLabel}\n`;
   md += `**Subtotal:** ${fmtCurrency(subtotal)}\n`;
-  md += `**Shipping:** ${isFree ? 'Free' : 'Standard (Shopify-calculated)'}${fedexApplied ? ' — FedEx requested' : ''}\n`;
+  md += `**Shipping:** ${isFree ? 'Free' : 'Standard (Shopify-calculated)'}${fedexApplied ? ` — ${fedexTag === 'ship fedex ddp' ? 'FedEx DDP' : 'FedEx DDU'} requested` : ''}\n`;
   if (fedexBlockedUS) {
-    md += `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex ddp" tag.\n`;
+    md += `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry a FedEx tag.\n`;
   }
   if (note) md += `**Note:** ${note}\n`;
 
@@ -219,7 +220,7 @@ async function handleCreateOrder({
   }
 
   const draftTags = [...(tags || []), 'cs-mcp'];
-  if (fedexApplied) draftTags.push('ship fedex ddp');
+  if (fedexApplied) draftTags.push(fedexTag);
 
   const draftInput = {
     customerId: customerInfo.id,
@@ -344,7 +345,7 @@ const tools = [
         },
         ship_fedex: {
           type: 'boolean',
-          description: 'Request FedEx shipping. Adds the "ship fedex ddp" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
+          description: 'Request FedEx shipping. Adds a FedEx tag to the draft order: "ship fedex ddp" for Canada or DDP-zone destinations (duties prepaid), "ship fedex ddu" for DDU-zone destinations. ONLY applied for orders shipping outside the US — US orders are blocked from any FedEx tag and the request is ignored with a warning.',
         },
         confirmed: {
           type: 'boolean',
