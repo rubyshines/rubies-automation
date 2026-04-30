@@ -1252,10 +1252,8 @@ function renderActionPanel(draft) {
     // Restore chat history so follow-up messages have context
     _actionChatHistory = savedChat;
 
-    // Show updated prefill from re-draft if action type changed
-    const newPrefill = buildActionPrefill(draft);
+    input.value = '';
     input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
-    if (newPrefill) input.value = newPrefill;
     // Show quick-reply buttons if awaiting confirmation
     const chatResponse = draft.action_result?.chat_response || '';
     if ((chatResponse && isConfirmationPrompt(chatResponse)) ||
