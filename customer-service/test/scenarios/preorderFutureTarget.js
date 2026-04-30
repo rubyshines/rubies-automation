@@ -45,6 +45,11 @@ const FORBIDDEN_NAOMI_BLAME_RE = /(naomi.{0,40}(out of stock|pre.?order|delay|ho
 // Pre-order wait was disclosed at checkout — apologizing for it implies fault.
 // Allow generic empathy elsewhere, but flag delay/wait apologies anywhere in the draft.
 const FORBIDDEN_DELAY_APOLOGY_RE = /(sorry (for|about) the (wait|delay)|apologi[sz]e (for|about) the (wait|delay)|we apologi[sz]e for)/i;
+// Validating frustration as if WE caused it is the specific failure mode for
+// the future-target branch — the customer chose the wait at checkout. A brief
+// "thanks for reaching out" or "appreciate your patience" is fine; framing
+// the wait as our fault is not.
+const FORBIDDEN_FRUSTRATION_VALIDATION_RE = /(completely understand (the |your )?frustration|sorry to hear about (the wait|the delay|how long))/i;
 
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }
@@ -111,9 +116,23 @@ function pass(msg) { console.log('  ✓ ' + msg); }
   if (!FORBIDDEN_DELAY_APOLOGY_RE.test(draft)) pass('draft does not apologize for the wait — pre-order was disclosed at checkout');
   else fail('draft apologizes for the wait/delay — implies our fault when the customer chose a pre-order item');
 
-  // Assertion 8: draft offers a swap alternative (sibling color or different product)
+  // Assertion 8: swap option offered (this customer's order has plenty of
+  // in-stock alternatives in M — AJ, Charlie, sibling Pink — so the swap
+  // option should appear). For orders without alternatives, swap can be
+  // omitted; we don't assert that here because it's not testable from a
+  // single ticket.
   if (SWAP_ALTERNATIVE_RE.test(draft)) pass('draft offers a swap option naming an in-stock alternative (Pink / AJ / Charlie)');
-  else fail('draft does not offer a swap alternative — pre-order branch should suggest something in stock as a third option');
+  else fail('draft does not offer a swap alternative — this customer has plenty of in-stock options in M');
+
+  // Assertion 9: at least one numbered option present
+  const optionCount = (draft.match(/^\s*\d+\.\s/gm) || []).length;
+  if (optionCount >= 1) pass(`draft offers ${optionCount} numbered option(s)`);
+  else fail('draft offers no numbered options — needs at least one path forward');
+
+  // Assertion 10: no validating-frustration framing (a chosen wait is not
+  // our fault — empathy that frames it as our fault is the failure mode)
+  if (!FORBIDDEN_FRUSTRATION_VALIDATION_RE.test(draft)) pass('draft does not frame the wait as our fault via frustration-validation');
+  else fail('draft validates the customer\'s frustration as if we caused the wait — pre-order was disclosed at checkout');
 
   if (process.exitCode === 1) {
     console.log('');
