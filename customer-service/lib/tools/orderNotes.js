@@ -18,6 +18,10 @@ const US_SHIPPING_METHODS = {
   expedited: { id: 231185182342, name: 'US Expedited Shipping' },
 };
 
+// Non-US expedited routes through Fedex regardless of zone (Incoterms is set
+// manually in the Warehance UI for now — operator handles DDP/DDU there).
+const FEDEX_METHOD = { id: 231185182476, name: 'Fedex' };
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -370,9 +374,8 @@ async function handleReleaseWarehouseHold({ order_number, reason }) {
 
 async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
   const supabase = getSupabaseClient();
-  const method = US_SHIPPING_METHODS[speed];
 
-  if (!method) {
+  if (speed !== 'standard' && speed !== 'expedited') {
     return { content: [{ type: 'text', text: `Invalid speed "${speed}". Use "standard" or "expedited".` }], isError: true };
   }
 
@@ -389,17 +392,28 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
     return { content: [{ type: 'text', text: `Order #${order_number} not found in Warehance.` }], isError: true };
   }
 
-  // Programmatic update only supports US. Non-US speed changes (Passport ↔ FedEx,
-  // Incoterms tweaks) are handled in the Warehance UI — return a link.
   const countryCode = whOrder.ship_to_address?.country_code;
-  if (countryCode !== 'US') {
+
+  // Pick the Warehance method to apply:
+  //   US: standard ↔ expedited (US Standard / US Expedited)
+  //   Non-US expedited: Fedex (Incoterms is set manually in the Warehance UI for now)
+  //   Non-US standard: skip — Passport DDP vs DDU is configured per-order in
+  //     Warehance, return a link instead of guessing.
+  let method;
+  let extraNote = '';
+  if (countryCode === 'US') {
+    method = US_SHIPPING_METHODS[speed];
+  } else if (speed === 'expedited') {
+    method = FEDEX_METHOD;
+    extraNote = `\n\n⚠️ Verify Incoterms (DDP / DDU) on this order in Warehance — that field isn't set programmatically.`;
+  } else {
     return {
       content: [{
         type: 'text',
         text: [
-          `**Non-US shipping speed must be updated in Warehance directly.**`,
+          `**Non-US standard shipping must be updated in Warehance directly.**`,
           ``,
-          `Order #${order_number} ships to ${countryCode || 'unknown'}. The carrier swap (Passport ↔ Fedex) and Incoterms (DDP / DDU) are configured in the Warehance UI.`,
+          `Order #${order_number} ships to ${countryCode || 'unknown'}. Standard non-US routing splits between Passport DDP and Passport DDU per-zone — configure in the Warehance UI.`,
           ``,
           `Open the order: ${whUrl}`,
         ].join('\n'),
@@ -434,7 +448,7 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
   return {
     content: [{
       type: 'text',
-      text: `**Shipping speed updated** on order #${order_number}\n\n**New method:** ${method.name}\nReason: ${reason}\n\nWarehance: ${whUrl}`,
+      text: `**Shipping speed updated** on order #${order_number}\n\n**New method:** ${method.name}\nReason: ${reason}\n\nWarehance: ${whUrl}${extraNote}`,
     }],
   };
 }
@@ -539,7 +553,7 @@ const tools = [
   },
   {
     name: 'update_shipping_speed',
-    description: 'Update the shipping speed on an unfulfilled US order in Warehance. Options: "expedited" (US Expedited 2-3 bus days) or "standard" (US Standard 2-7 bus days). Only works for US orders that are not yet in progress. For non-US orders, returns a Warehance link — non-US speed changes (Passport ↔ Fedex, Incoterms) must be done in the Warehance UI.',
+    description: 'Update the shipping speed on an unfulfilled order in Warehance. US: "expedited" (US Expedited 2-3 bus days) or "standard" (US Standard 2-7 bus days). Non-US "expedited" sets the Warehance method to Fedex; the operator must still set Incoterms (DDP / DDU) manually in the Warehance UI. Non-US "standard" returns a Warehance link (Passport DDP vs DDU split is configured per-order in the UI). Only works for orders that are not yet in progress.',
     inputSchema: {
       type: 'object',
       properties: {
