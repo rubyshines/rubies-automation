@@ -59,7 +59,8 @@ async function checkInventory(order) {
       ) || 0;
 
       const tags = variant.product?.tags || [];
-      const isPreOrder = tags.some(t => /pre-?order|backorder|coming soon/i.test(t));
+      const preOrderAttr = (item.customAttributes || []).find(a => /pre-?order/i.test(a.key || ''));
+      const isPreOrder = !!preOrderAttr || tags.some(t => /pre-?order|backorder|coming soon/i.test(t));
 
       results.push({
         title: variant.product?.title || item.title,
@@ -69,6 +70,7 @@ async function checkInventory(order) {
         available: totalAvailable,
         inventoryQuantity: variant.inventoryQuantity,
         isPreOrder,
+        preOrderTarget: preOrderAttr?.value || null,
         tags,
         locations: variant.inventoryItem?.inventoryLevels?.edges?.map(e => {
           const avail = e.node.quantities?.find(q => q.name === 'available');
@@ -131,8 +133,11 @@ async function analyzeUnfulfilledOrder(order) {
       investigation.hasPreOrderItems = true;
       investigation.issues.push({
         type: 'pre_order',
-        description: `${item.title} (${item.variant}) is tagged as pre-order.`,
+        description: item.preOrderTarget
+          ? `${item.title} (${item.variant}) is a pre-order. ${item.preOrderTarget}`
+          : `${item.title} (${item.variant}) is tagged as pre-order.`,
         item: item.title,
+        preOrderTarget: item.preOrderTarget || null,
       });
     }
 

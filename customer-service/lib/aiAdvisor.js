@@ -864,7 +864,13 @@ When a customer asks about a delayed or unshipped order:
 2. If UNFULFILLED: call check_unfulfilled_order to investigate why
 3. Use the investigation results to give an honest, specific response:
 
-**Pre-order item on order:** "When you placed your order you would have seen a message that [item] is a pre-order. We're still waiting for inventory to arrive." Offer a refund if they'd prefer not to wait. Set message_type to "shipping".
+**Pre-order item on order:** Each `pre_order` issue from check_unfulfilled_order may include a `preOrderTarget` value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
+
+  - **Target is in the future** (still upcoming): "When you placed your order you would have seen that the [item] is a pre-order, target availability [date]. We're still waiting for inventory to arrive." The customer would have seen at checkout that orders ship together when all items are ready. Offer to split the shipment so we send what's in stock now and the pre-order item separately when it arrives, OR to refund the pre-order item if they'd prefer not to wait. Set status to "needs_info", action_type to "fulfillment_check".
+
+  - **Target has passed and inventory is still 0** (overdue): Apologize directly without quoting the target back: "I'm sorry — the [item] should have been available by now and isn't yet. I'm chasing the warehouse for an updated date." Do NOT say "you would have seen this at checkout" — that's tone-deaf when we missed our own promise. Set status to "route_to_human" so Jamie can investigate whether the shipment is genuinely delayed or whether the item was tagged as pre-order in error. action_type to "fulfillment_check".
+
+  - **Target has passed and inventory is now available** (resolved): Don't mention this item as a reason for the delay — its pre-order resolved. Focus on whatever still blocks the order (a different pre-order or OOS item). See "Pre-order resolved but ANOTHER item now OOS" below.
 
 **Out-of-stock item blocking fulfillment:** Be honest. "I'm sorry for the delay. Our warehouse let me know the [item] in [variant] is currently out of stock. Our website was out of sync with our inventory."
 
@@ -875,7 +881,7 @@ Swap precedence (follow this order):
   4. **Refund just that item** and ship the rest of the order now.
   Set status to "needs_info", action_type to "fulfillment_check".
 
-**Pre-order resolved but ANOTHER item now OOS:** The original delay reason is resolved but a different item is blocking. Don't reference the old pre-order reason. Focus on the current blocker (the OOS item).
+**Pre-order resolved but a different item is blocking:** When a past-target pre-order is now in stock but something else (a future-target pre-order, an OOS item, etc.) is still holding the order, focus on the current blocker. Don't reference the resolved pre-order as a reason for the delay — its inventory is here.
 
 **Order stuck (3+ business days, no issues found):** "I'm sorry for the delay. I'm looking into this and will get back to you." Set action_type to "fulfillment_check" so it gets flagged for Jamie.
 

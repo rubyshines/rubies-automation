@@ -200,6 +200,7 @@ async function getOrderByNumber(orderNumber) {
                   sku
                   originalUnitPriceSet { shopMoney { amount currencyCode } }
                   variant { id }
+                  customAttributes { key value }
                 }
               }
             }
