@@ -69,7 +69,7 @@ const tools = [
         note: { type: 'string', description: 'Optional note for the draft order' },
         ship_fedex: {
           type: 'boolean',
-          description: 'Request FedEx shipping. Adds the "ship fedex" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
+          description: 'Request FedEx shipping. Adds the "ship fedex ddp" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
         },
         confirmed: {
           type: 'boolean',
@@ -144,7 +144,7 @@ const tools = [
       const fedexApplied = fedexRequested && shouldAddFedExTag(shipCountry);
 
       const draftTags = ['invoice', 'cs-mcp'];
-      if (fedexApplied) draftTags.push('ship fedex');
+      if (fedexApplied) draftTags.push('ship fedex ddp');
 
       // Build draft input
       const defaultNote = 'Invoice order (exchange + paid items) created via CS MCP server';
@@ -217,7 +217,7 @@ const tools = [
       lines.push(`**Shipping:** Free${fedexApplied ? ' (FedEx requested)' : ''}`);
       lines.push(`**Total:** $${draftOrder.totalPrice}`);
       if (fedexBlockedUS) {
-        lines.push(`⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex" tag.`);
+        lines.push(`⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex ddp" tag.`);
       }
       lines.push('');
       lines.push(`Review the draft order above, then call create_invoice_order again with confirmed=true and draft_order_id="${draftOrder.id}" to send the invoice.`);

@@ -206,34 +206,34 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp']);
   });
 
-  it('does NOT add ship fedex tag when ship_fedex is omitted (non-US)', async () => {
+  it('does NOT add ship fedex ddp tag when ship_fedex is omitted (non-US)', async () => {
     setStubCustomerCountry('CA');
     await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex'));
+    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
   });
 
-  it('adds ship fedex tag when ship_fedex=true and order is non-US', async () => {
+  it('adds ship fedex ddp tag when ship_fedex=true and order is non-US', async () => {
     setStubCustomerCountry('CA');
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
       ship_fedex: true,
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex']);
+    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['invoice', 'cs-mcp', 'ship fedex ddp']);
     assert.match(result.content[0].text, /FedEx requested/);
   });
 
-  it('skips ship fedex tag and warns when ship_fedex=true but order is US', async () => {
+  it('skips ship fedex ddp tag and warns when ship_fedex=true but order is US', async () => {
     setStubCustomerCountry('US');
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/42',
       exchange_items: [{ sku: 'rub0001-S', quantity: 1 }],
       ship_fedex: true,
     });
-    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex'));
+    assert.ok(!lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
     assert.match(result.content[0].text, /FedEx tag skipped/);
   });
 

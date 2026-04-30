@@ -1,6 +1,6 @@
 /**
  * Unit tests for lib/tools/wholesaleOrder.js — focuses on FedEx auto-tagging
- * behaviour (non-US wholesale always gets the "ship fedex" tag).
+ * behaviour (non-US wholesale always gets the "ship fedex ddp" tag).
  *
  * Run: node --test customer-service/test/wholesaleOrder.test.js
  */
@@ -108,7 +108,7 @@ async function runHandler(args) {
 describe('create_wholesale_order — FedEx auto-tagging', () => {
   beforeEach(() => { lastCreateDraftOrderArgs = null; });
 
-  it('US wholesale draft: tags only wholesale + cs-mcp (no ship fedex)', async () => {
+  it('US wholesale draft: tags only wholesale + cs-mcp (no ship fedex ddp)', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'US',
@@ -117,22 +117,22 @@ describe('create_wholesale_order — FedEx auto-tagging', () => {
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp']);
   });
 
-  it('Canadian wholesale draft: auto-adds ship fedex tag', async () => {
+  it('Canadian wholesale draft: auto-adds ship fedex ddp tag', async () => {
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'CA',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp', 'ship fedex']);
+    assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp', 'ship fedex ddp']);
     assert.match(result.content[0].text, /FedEx — non-US wholesale/);
   });
 
-  it('GB wholesale draft: auto-adds ship fedex tag (lowercase country also handled)', async () => {
+  it('GB wholesale draft: auto-adds ship fedex ddp tag (lowercase country also handled)', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'gb',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.ok(lastCreateDraftOrderArgs.tags.includes('ship fedex'));
+    assert.ok(lastCreateDraftOrderArgs.tags.includes('ship fedex ddp'));
   });
 });

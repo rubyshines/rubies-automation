@@ -22,7 +22,7 @@ const tools = [
       'Do NOT pass original_order_id unless explicitly given an order number by the user. Let the tool auto-find the correct fulfilled order.',
       'If no original_order_id is provided, automatically finds the customer\'s most recent FULFILLED, non-cancelled order.',
       'If an original_order_id IS provided, validates that it is fulfilled before proceeding.',
-      'Tagged with "exchange" and "cs-mcp". Optionally adds "ship fedex" tag when ship_fedex=true and the order ships outside the US.',
+      'Tagged with "exchange" and "cs-mcp". Optionally adds "ship fedex ddp" tag when ship_fedex=true and the order ships outside the US.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -55,7 +55,7 @@ const tools = [
         },
         ship_fedex: {
           type: 'boolean',
-          description: 'Request FedEx shipping. Adds the "ship fedex" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
+          description: 'Request FedEx shipping. Adds the "ship fedex ddp" tag to the draft order. ONLY applied for orders shipping outside the US — US orders are blocked from this tag and the request is ignored with a warning.',
         },
         confirmed: {
           type: 'boolean',
@@ -248,7 +248,7 @@ const tools = [
       const fedexApplied = fedexRequested && shouldAddFedExTag(shipCountry);
 
       const draftTags = ['exchange', 'cs-mcp'];
-      if (fedexApplied) draftTags.push('ship fedex');
+      if (fedexApplied) draftTags.push('ship fedex ddp');
 
       const draftInput = {
         customerId: customerGid,
@@ -284,7 +284,7 @@ const tools = [
       );
       if (fedexBlockedUS) {
         outputLines.push(
-          `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex" tag.`,
+          `⚠️ **FedEx tag skipped:** ship_fedex was requested but order ships to US. Only non-US orders may carry the "ship fedex ddp" tag.`,
         );
       }
       outputLines.push(
