@@ -56,6 +56,7 @@
     "cs-reconcile-tickets": "node customer-service/sync/reconcileTickets.js",
     "cs-drift-check": "node customer-service/sync/hourlyDriftCheck.js",
     "dashboard": "node customer-service/dashboard/server.js",
+    "dashboard:dev": "node --watch customer-service/dashboard/server.js",
     "cs-seed-shipping-regions": "node customer-service/sync/seedShippingRegions.js",
     "cs-sync-delivery-times": "node customer-service/sync/syncDeliveryTimes.js",
     "cs-sync-passport-delivery": "node customer-service/sync/syncPassportDelivery.js",
