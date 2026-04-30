@@ -28,10 +28,18 @@ const { getSupabaseClient } = require('../shared/supabaseClient');
 
   if (result && typeof result === 'object' && 'data' in result && 'error' in result) {
     if (result.error) {
-      console.error('Supabase error:', result.error);
+      const status = result.status ? ` [HTTP ${result.status}${result.statusText ? ' ' + result.statusText : ''}]` : '';
+      console.error(`Supabase error${status}:`, result.error);
+      if (result.status === 400 && (!result.error.message || result.error.message === '')) {
+        console.error('  Hint: HTTP 400 with empty error usually means a bad column name (PostgREST swallows the body when head:true). Check schema.');
+      }
       process.exit(1);
     }
-    console.log(JSON.stringify(result.data, null, 2));
+    if (result.count !== undefined && result.count !== null) {
+      console.log(JSON.stringify({ data: result.data, count: result.count }, null, 2));
+    } else {
+      console.log(JSON.stringify(result.data, null, 2));
+    }
   } else {
     console.log(JSON.stringify(result, null, 2));
   }
