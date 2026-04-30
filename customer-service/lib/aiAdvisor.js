@@ -866,24 +866,9 @@ When a customer asks about a delayed or unshipped order:
 
 **Pre-order item on order:** Each pre_order issue from check_unfulfilled_order may include a preOrderTarget value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
 
-  - **Target is in the future** (still upcoming): The customer chose a pre-order item that hasn't arrived yet — the wait was disclosed at checkout, so this is NOT our fault. Set status to "needs_info", action_type to "fulfillment_check".
+  - **Target is in the future** (still upcoming): "When you placed your order, you would have seen a message that the [item] in [variant] is a pre-order, with target availability [date]. Pre-orders ship along with the rest of the order once everything is in stock." Call compare_products to find what's available, then offer up to three options based on what applies: split the shipment (when there are in-stock items to ship now), swap the pre-order item for something in stock (apply the OOS swap precedence — sibling color first, then a different product in the same size), or refund just the pre-order item and ship the rest. Set status to "needs_info", action_type to "fulfillment_check".
 
-    OPENING — keep it warm but don't take blame:
-    - DO NOT open with "I'm sorry for the wait", "sorry for the delay", or any phrase that apologizes for the timeline.
-    - DO NOT validate the customer's frustration as if we caused it (e.g. "I completely understand the frustration" right before explaining something they already agreed to at checkout). A brief greeting is fine; sympathy framing for a chosen wait is not.
-    - DO lead with the disclosure paragraph as the first substantive sentence.
-
-    DISCLOSURE PARAGRAPH (first paragraph after the greeting):
-    "When you placed your order, you would have seen a message that the [item] in [variant] is a pre-order, with target availability [date]. Pre-orders ship along with the rest of the order once everything is in stock, which is what's holding things up."
-
-    OPTIONS — offer whichever apply, in this order. Call compare_products before drafting so you know whether the swap option has anything to suggest:
-    1. **Split the shipment** — only when there are other in-stock items on the order. Name them; say they go now and the pre-order ships separately when it arrives.
-    2. **Swap the pre-order item for something in stock** — only when compare_products returns at least one in-stock alternative. Apply the OOS swap precedence (sibling color first, then a different product in the same size). Name the specific alternative.
-    3. **Refund just the [item]** and ship the rest of the order right away — always offer this.
-
-    For most multi-item orders with available alternatives, that's three options. For a single-item order with no alternatives, refund alone is fine. Don't pad with options that don't apply.
-
-  - **Target has passed and inventory is still 0** (overdue): Apologize directly without quoting the target back: "I'm sorry — the [item] should have been available by now and isn't yet. I'm chasing the warehouse for an updated date." Do NOT say "you would have seen this at checkout" — that's tone-deaf when we missed our own promise. Set status to "route_to_human" so Jamie can investigate whether the shipment is genuinely delayed or whether the item was tagged as pre-order in error. action_type to "fulfillment_check".
+  - **Target has passed and inventory is still 0** (overdue): The shipment missed its target. Apologize for the delay and route to a human so Jamie can investigate (could be a delayed shipment or a mis-tagged pre-order). Set status to "route_to_human", action_type to "fulfillment_check".
 
   - **Target has passed and inventory is now available** (resolved): Don't mention this item as a reason for the delay — its pre-order resolved. Focus on whatever still blocks the order (a different pre-order or OOS item). See "Pre-order resolved but ANOTHER item now OOS" below.
 
@@ -1342,14 +1327,15 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     // Check if there are tool calls
     const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
     apiTiming.tool_calls = toolUseBlocks.map(b => b.name);
-    // Capture a preview of this round's text content for debugging multi-round
-    // prose drift. The "tool calls precede customer-facing prose" rule means
-    // pre-final rounds should never contain greeting-prefixed text — this
-    // preview makes that observable in the saved draft's _timing.
-    apiTiming.text_preview = response.content
+    // Capture this round's text content for debugging multi-round prose drift.
+    // text_preview kept for back-compat with steerProseLoss scenario; full_text
+    // captures the entire round so we can see whether pre-final rounds wrote
+    // a clean draft that the final round threw away.
+    const roundTextBlocks = response.content
       .filter(b => b.type === 'text')
-      .map(b => (b.text || '').substring(0, 120))
-      .join(' || ');
+      .map(b => b.text || '');
+    apiTiming.text_preview = roundTextBlocks.map(t => t.substring(0, 120)).join(' || ');
+    apiTiming.full_text = roundTextBlocks.join('\n\n---\n\n');
     _t.api_calls.push(apiTiming);
 
     if (toolUseBlocks.length === 0) {

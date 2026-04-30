@@ -112,6 +112,13 @@ SET actions = jsonb_build_array(jsonb_build_object(
 WHERE action_executed_at IS NOT NULL
   AND (actions IS NULL OR actions = '[]'::jsonb);
 
+-- Diagnostic: capture each regeneration's prior draft before it gets overwritten.
+-- Each entry: { regenerated_at, draft_response, structured_output, operator_steer, _timing }.
+-- Used to study advisor drift across regenerations (whether the same draft is
+-- produced repeatedly, varies wildly, or drifts toward a particular pattern).
+-- Pure observability — no behavior change.
+ALTER TABLE cs_ai_drafts ADD COLUMN IF NOT EXISTS draft_history jsonb NOT NULL DEFAULT '[]'::jsonb;
+
 -- ============================================================
 -- 3. Feedback log (one row per send/release action)
 -- ============================================================

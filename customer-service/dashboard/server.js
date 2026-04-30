@@ -455,6 +455,23 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
     updates.action_executed_at = null;
   }
 
+  // Diagnostic: capture the prior draft on the draft_history array before we
+  // overwrite. Lets us study advisor drift across regenerations (whether the
+  // same draft is produced repeatedly, varies wildly, or drifts toward a
+  // particular pattern). Skip when there's no prior draft (initial fill).
+  if (draft.draft_response && draft.draft_response.trim()) {
+    const prevHistory = Array.isArray(draft.draft_history) ? draft.draft_history : [];
+    updates.draft_history = [
+      ...prevHistory,
+      {
+        regenerated_at: new Date().toISOString(),
+        draft_response: draft.draft_response,
+        structured_output: draft.structured_output,
+        operator_steer: draft.operator_steer || null,
+      },
+    ];
+  }
+
   const _tWrite1 = Date.now();
   await supabase.from('cs_ai_drafts').update(updates).eq('id', id);
   const _tWrite1Done = Date.now();
