@@ -36,6 +36,9 @@ const PREORDER_RE = /(pre[\s-]?order)/i;
 const TARGET_DATE_RE = /(end of June|June[ ,]+2026|June 2026|target availability)/i;
 const CHECKOUT_FRAMING_RE = /(you (would|might) have seen|when you placed|at checkout|on the (product|item) page)/i;
 const SPLIT_OR_REFUND_RE = /(ship.{0,40}(separate|now|in the meantime)|send.{0,40}(separate|right away|now)|refund.{0,40}(sassy|pre.?order|item)|partial refund)/i;
+// Swap option should suggest at least one in-stock alternative — sibling
+// color (Pink) or a different product in the same size (AJ / Charlie).
+const SWAP_ALTERNATIVE_RE = /\b(AJ|Charlie|Pink)\b/;
 
 const FORBIDDEN_OOS_FRAMING_RE = /(out of sync|website (was )?out of sync|out of stock.{0,40}(sassy|sass)|sassy.{0,40}out of stock)/i;
 const FORBIDDEN_NAOMI_BLAME_RE = /(naomi.{0,40}(out of stock|pre.?order|delay|holding|blocking|wait))/i;
@@ -107,6 +110,10 @@ function pass(msg) { console.log('  ✓ ' + msg); }
   // Assertion 7: no apology for the wait/delay (customer chose a pre-order)
   if (!FORBIDDEN_DELAY_APOLOGY_RE.test(draft)) pass('draft does not apologize for the wait — pre-order was disclosed at checkout');
   else fail('draft apologizes for the wait/delay — implies our fault when the customer chose a pre-order item');
+
+  // Assertion 8: draft offers a swap alternative (sibling color or different product)
+  if (SWAP_ALTERNATIVE_RE.test(draft)) pass('draft offers a swap option naming an in-stock alternative (Pink / AJ / Charlie)');
+  else fail('draft does not offer a swap alternative — pre-order branch should suggest something in stock as a third option');
 
   if (process.exitCode === 1) {
     console.log('');
