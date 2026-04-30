@@ -2400,8 +2400,14 @@ async function refreshDraft(steer) {
     }
 
     // Apply final result — reload the full ticket so everything repaints
-    // (order card, action panel, badges, sidebar all may have changed)
+    // (order card, action panel, badges, sidebar all may have changed).
+    // Update localStorage with the freshly streamed draft so selectTicket's
+    // "prefer-local-edits" branch doesn't render a stale pre-regen version.
     if (finalResult && currentTicketId === ticketId) {
+      if (finalResult.draft_response) {
+        localStorage.setItem(`draft-ticket-${ticketId}`, finalResult.draft_response);
+        if (finalResult.draft_id) localStorage.setItem(`draft-id-ticket-${ticketId}`, String(finalResult.draft_id));
+      }
       await selectTicket(ticketId);
     }
 
