@@ -18,10 +18,19 @@ const assert = require('node:assert/strict');
 
 const supabaseClientPath = require.resolve('../../shared/supabaseClient');
 const warehanceClientPath = require.resolve('../../reports/lib/warehanceClient');
+const shippingLookupPath = require.resolve('../lib/tools/shippingLookup');
 
 let stubOrder = null;
 let lastUpdateShippingMethod = null;
 let lastSupabaseInsert = null;
+let stubZone = null;
+
+require.cache[shippingLookupPath] = {
+  id: shippingLookupPath, filename: shippingLookupPath, loaded: true,
+  exports: {
+    getShippingZone: async () => stubZone,
+  },
+};
 
 require.cache[warehanceClientPath] = {
   id: warehanceClientPath, filename: warehanceClientPath, loaded: true,
@@ -129,12 +138,33 @@ describe('update_shipping_speed — non-US orders', () => {
     assert.match(result.content[0].text, /Verify Incoterms/);
   });
 
-  it('non-US standard returns Warehance link without updating the method', async () => {
+  it('non-US standard for Canada/DDP zone sets Warehance method to Passport DDP (id 231185182424)', async () => {
     stubOrder = makeOrder({ country: 'CA', id: 77 });
+    stubZone = 'canada';
     const result = await run({ order_number: 1, speed: 'standard', reason: 'downgrade' });
-    assert.equal(lastUpdateShippingMethod, null);
-    assert.match(result.content[0].text, /Non-US standard shipping must be updated in Warehance directly/);
-    assert.match(result.content[0].text, /staging\.warehance\.com\/orders\/77/);
+    assert.deepEqual(lastUpdateShippingMethod, { orderId: 77, methodId: 231185182424 });
+    assert.match(result.content[0].text, /Passport DDP/);
+  });
+
+  it('non-US standard for a DDP-zone country (e.g. AU) sets Warehance method to Passport DDP', async () => {
+    stubOrder = makeOrder({ country: 'AU', id: 78 });
+    stubZone = 'ddp';
+    await run({ order_number: 1, speed: 'standard', reason: 'downgrade' });
+    assert.equal(lastUpdateShippingMethod.methodId, 231185182424);
+  });
+
+  it('non-US standard for a DDU-zone country (e.g. AR) sets Warehance method to Passport DDU (id 231185182425)', async () => {
+    stubOrder = makeOrder({ country: 'AR', id: 79 });
+    stubZone = 'ddu';
+    await run({ order_number: 1, speed: 'standard', reason: 'downgrade' });
+    assert.equal(lastUpdateShippingMethod.methodId, 231185182425);
+  });
+
+  it('non-US standard with unknown zone falls back to Passport DDU', async () => {
+    stubOrder = makeOrder({ country: 'XX', id: 80 });
+    stubZone = null;
+    await run({ order_number: 1, speed: 'standard', reason: 'downgrade' });
+    assert.equal(lastUpdateShippingMethod.methodId, 231185182425);
   });
 
   it('non-US expedited works for any non-US country (e.g. GB, AU)', async () => {

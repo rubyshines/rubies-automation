@@ -10,6 +10,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
+const { getShippingZone } = require('./shippingLookup');
 
 // Warehance shipping method IDs (from /shipping-methods endpoint).
 // Refreshed 2026-04-30 — earlier IDs (231185182253 / 231185182258) were stale.
@@ -21,6 +22,13 @@ const US_SHIPPING_METHODS = {
 // Non-US expedited routes through Fedex regardless of zone (Incoterms is set
 // manually in the Warehance UI for now — operator handles DDP/DDU there).
 const FEDEX_METHOD = { id: 231185182476, name: 'Fedex' };
+
+// Non-US standard: Passport with duties prepaid (Canada / DDP zone) or duties
+// unpaid (DDU zone). Method name encodes the Incoterms, so no separate field.
+const PASSPORT_METHODS = {
+  ddp: { id: 231185182424, name: 'Passport DDP' },
+  ddu: { id: 231185182425, name: 'Passport DDU' },
+};
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -397,8 +405,8 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
   // Pick the Warehance method to apply:
   //   US: standard ↔ expedited (US Standard / US Expedited)
   //   Non-US expedited: Fedex (Incoterms is set manually in the Warehance UI for now)
-  //   Non-US standard: skip — Passport DDP vs DDU is configured per-order in
-  //     Warehance, return a link instead of guessing.
+  //   Non-US standard: Passport DDP for Canada / DDP zone, Passport DDU for DDU
+  //     zone (zone determined from shipping_zones; falls back to DDU when unknown).
   let method;
   let extraNote = '';
   if (countryCode === 'US') {
@@ -407,18 +415,8 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
     method = FEDEX_METHOD;
     extraNote = `\n\n⚠️ Verify Incoterms (DDP / DDU) on this order in Warehance — that field isn't set programmatically.`;
   } else {
-    return {
-      content: [{
-        type: 'text',
-        text: [
-          `**Non-US standard shipping must be updated in Warehance directly.**`,
-          ``,
-          `Order #${order_number} ships to ${countryCode || 'unknown'}. Standard non-US routing splits between Passport DDP and Passport DDU per-zone — configure in the Warehance UI.`,
-          ``,
-          `Open the order: ${whUrl}`,
-        ].join('\n'),
-      }],
-    };
+    const zone = await getShippingZone(countryCode);
+    method = (zone === 'ddp' || zone === 'canada') ? PASSPORT_METHODS.ddp : PASSPORT_METHODS.ddu;
   }
 
   if (whOrder.fulfillment_status === 'in_progress') {
@@ -553,7 +551,7 @@ const tools = [
   },
   {
     name: 'update_shipping_speed',
-    description: 'Update the shipping speed on an unfulfilled order in Warehance. US: "expedited" (US Expedited 2-3 bus days) or "standard" (US Standard 2-7 bus days). Non-US "expedited" sets the Warehance method to Fedex; the operator must still set Incoterms (DDP / DDU) manually in the Warehance UI. Non-US "standard" returns a Warehance link (Passport DDP vs DDU split is configured per-order in the UI). Only works for orders that are not yet in progress.',
+    description: 'Update the shipping speed on an unfulfilled order in Warehance. US: "expedited" (US Expedited) or "standard" (US Standard). Non-US "expedited" sets the Warehance method to Fedex; the operator must still set Incoterms (DDP / DDU) manually in the Warehance UI. Non-US "standard" sets the Warehance method to Passport DDP (Canada / DDP zone) or Passport DDU (DDU zone), determined from shipping_zones. Only works for orders that are not yet in progress.',
     inputSchema: {
       type: 'object',
       properties: {
