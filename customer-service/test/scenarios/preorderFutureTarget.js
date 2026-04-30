@@ -39,6 +39,9 @@ const SPLIT_OR_REFUND_RE = /(ship.{0,40}(separate|now|in the meantime)|send.{0,4
 
 const FORBIDDEN_OOS_FRAMING_RE = /(out of sync|website (was )?out of sync|out of stock.{0,40}(sassy|sass)|sassy.{0,40}out of stock)/i;
 const FORBIDDEN_NAOMI_BLAME_RE = /(naomi.{0,40}(out of stock|pre.?order|delay|holding|blocking|wait))/i;
+// Pre-order wait was disclosed at checkout — apologizing for it implies fault.
+// Allow generic empathy elsewhere, but flag delay/wait apologies anywhere in the draft.
+const FORBIDDEN_DELAY_APOLOGY_RE = /(sorry (for|about) the (wait|delay)|apologi[sz]e (for|about) the (wait|delay)|we apologi[sz]e for)/i;
 
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }
@@ -100,6 +103,10 @@ function pass(msg) { console.log('  ✓ ' + msg); }
   // Assertion 6: Naomi not blamed
   if (!FORBIDDEN_NAOMI_BLAME_RE.test(draft)) pass('draft does not blame Naomi for the delay');
   else fail('draft references Naomi as a delay reason — its pre-order resolved (41 units in stock)');
+
+  // Assertion 7: no apology for the wait/delay (customer chose a pre-order)
+  if (!FORBIDDEN_DELAY_APOLOGY_RE.test(draft)) pass('draft does not apologize for the wait — pre-order was disclosed at checkout');
+  else fail('draft apologizes for the wait/delay — implies our fault when the customer chose a pre-order item');
 
   if (process.exitCode === 1) {
     console.log('');
