@@ -19,8 +19,7 @@ const US_SHIPPING_METHODS = {
   expedited: { id: 231185182342, name: 'US Expedited Shipping' },
 };
 
-// Non-US expedited routes through Fedex regardless of zone (Incoterms is set
-// manually in the Warehance UI for now — operator handles DDP/DDU there).
+// Non-US expedited routes through Fedex regardless of zone.
 const FEDEX_METHOD = { id: 231185182476, name: 'Fedex' };
 
 // Non-US standard: Passport with duties prepaid (Canada / DDP zone) or duties
@@ -404,16 +403,14 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
 
   // Pick the Warehance method to apply:
   //   US: standard ↔ expedited (US Standard / US Expedited)
-  //   Non-US expedited: Fedex (Incoterms is set manually in the Warehance UI for now)
+  //   Non-US expedited: Fedex
   //   Non-US standard: Passport DDP for Canada / DDP zone, Passport DDU for DDU
   //     zone (zone determined from shipping_zones; falls back to DDU when unknown).
   let method;
-  let extraNote = '';
   if (countryCode === 'US') {
     method = US_SHIPPING_METHODS[speed];
   } else if (speed === 'expedited') {
     method = FEDEX_METHOD;
-    extraNote = `\n\n⚠️ Verify Incoterms (DDP / DDU) on this order in Warehance — that field isn't set programmatically.`;
   } else {
     const zone = await getShippingZone(countryCode);
     method = (zone === 'ddp' || zone === 'canada') ? PASSPORT_METHODS.ddp : PASSPORT_METHODS.ddu;
@@ -446,7 +443,7 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
   return {
     content: [{
       type: 'text',
-      text: `**Shipping speed updated** on order #${order_number}\n\n**New method:** ${method.name}\nReason: ${reason}\n\nWarehance: ${whUrl}${extraNote}`,
+      text: `**Shipping speed updated** on order #${order_number}\n\n**New method:** ${method.name}\nReason: ${reason}\n\nWarehance: ${whUrl}`,
     }],
   };
 }
@@ -551,7 +548,7 @@ const tools = [
   },
   {
     name: 'update_shipping_speed',
-    description: 'Update the shipping speed on an unfulfilled order in Warehance. US: "expedited" (US Expedited) or "standard" (US Standard). Non-US "expedited" sets the Warehance method to Fedex; the operator must still set Incoterms (DDP / DDU) manually in the Warehance UI. Non-US "standard" sets the Warehance method to Passport DDP (Canada / DDP zone) or Passport DDU (DDU zone), determined from shipping_zones. Only works for orders that are not yet in progress.',
+    description: 'Update the shipping speed on an unfulfilled order in Warehance. US: "expedited" (US Expedited) or "standard" (US Standard). Non-US "expedited" sets the Warehance method to Fedex. Non-US "standard" sets the Warehance method to Passport DDP (Canada / DDP zone) or Passport DDU (DDU zone), determined from shipping_zones. Only works for orders that are not yet in progress.',
     inputSchema: {
       type: 'object',
       properties: {

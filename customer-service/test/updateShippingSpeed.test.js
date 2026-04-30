@@ -130,12 +130,11 @@ describe('update_shipping_speed — US orders', () => {
 });
 
 describe('update_shipping_speed — non-US orders', () => {
-  it('non-US expedited sets Warehance method to Fedex (id 231185182476) and warns about Incoterms', async () => {
+  it('non-US expedited sets Warehance method to Fedex (id 231185182476)', async () => {
     stubOrder = makeOrder({ country: 'CA', id: 77 });
     const result = await run({ order_number: 1, speed: 'expedited', reason: 'urgent' });
     assert.deepEqual(lastUpdateShippingMethod, { orderId: 77, methodId: 231185182476 });
     assert.match(result.content[0].text, /Fedex/);
-    assert.match(result.content[0].text, /Verify Incoterms/);
   });
 
   it('non-US standard for Canada/DDP zone sets Warehance method to Passport DDP (id 231185182424)', async () => {
