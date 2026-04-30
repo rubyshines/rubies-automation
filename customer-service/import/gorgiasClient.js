@@ -114,6 +114,26 @@ async function getTicket(ticketId) {
 }
 
 /**
+ * Find non-closed Gorgias tickets for a customer email created within the last
+ * `withinMinutes` minutes. Used by Gmail intake to avoid creating a duplicate
+ * ticket when Gorgias's native email integration has already ingested the same
+ * email.
+ */
+async function findOpenTicketsByEmail(email, { withinMinutes = 10, limit = 10 } = {}) {
+  if (!email) return [];
+  const customers = await apiFetch(`/customers?email=${encodeURIComponent(email)}`);
+  const customerId = customers.data?.[0]?.id;
+  if (!customerId) return [];
+  const result = await apiFetch(`/tickets?customer_id=${customerId}&order_by=created_datetime:desc&limit=${limit}`);
+  const cutoff = Date.now() - withinMinutes * 60 * 1000;
+  return (result.data || []).filter(t => {
+    if (t.status === 'closed') return false;
+    const created = new Date(t.created_datetime).getTime();
+    return created >= cutoff;
+  });
+}
+
+/**
  * Create a new ticket from an external email (e.g., Gmail import).
  * Returns the created ticket object.
  */
@@ -483,6 +503,7 @@ module.exports = {
   getTickets,
   getTicket,
   getTicketMessages,
+  findOpenTicketsByEmail,
   getViewItems,
   getMacros,
   getTags,

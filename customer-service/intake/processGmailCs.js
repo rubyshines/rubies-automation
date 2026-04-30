@@ -124,6 +124,26 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       return { action: 'skipped', reason: 'already_forwarded' };
     }
 
+    // Atomic claim: only one concurrent caller can own this gmail_message_id.
+    // Gmail Pub/Sub delivers at-least-once, so duplicate webhook deliveries are
+    // expected. The conditional UPDATE ... WHERE processed_at IS NULL is atomic
+    // in Postgres — losers see 0 rows updated and bail out before doing any
+    // work, preventing duplicate Gorgias tickets from concurrent runs.
+    const { data: claim, error: claimErr } = await supabase
+      .from('email_messages')
+      .update({ processed_at: now })
+      .is('processed_at', null)
+      .eq('gmail_message_id', msg.gmail_message_id)
+      .select('gmail_message_id');
+    if (claimErr) {
+      console.warn(`[gmail-cs] Claim failed for ${msg.gmail_message_id}: ${claimErr.message}`);
+      return { action: 'skipped', reason: 'claim_error' };
+    }
+    if (!claim?.length) {
+      console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: already claimed by another worker`);
+      return { action: 'skipped', reason: 'already_claimed' };
+    }
+
     // Skip if operator previously returned this email from CS to inbox
     if (msg.returned_to_inbox_at) {
       await markProcessed();
@@ -136,7 +156,21 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       return { action: 'skipped', reason: 'before_cutoff' };
     }
 
-    // Dedup check against existing open tickets
+    // Race-safe dedup against Gorgias itself: if Gorgias's native email
+    // integration just ingested this same email, an open ticket will already
+    // exist for the customer. Skip before we create a second one.
+    try {
+      const recentGorgiasTickets = await gorgias.findOpenTicketsByEmail(msg.from_address, { withinMinutes: 10 });
+      if (recentGorgiasTickets.length) {
+        console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: Gorgias already has open ticket #${recentGorgiasTickets[0].id} for ${msg.from_address}`);
+        await markProcessed();
+        return { action: 'skipped', reason: 'gorgias_already_handling' };
+      }
+    } catch (err) {
+      console.warn(`[gmail-cs] Gorgias dedup lookup failed for ${msg.from_address}: ${err.message} — falling through to Supabase dedup`);
+    }
+
+    // Dedup check against existing open tickets in Supabase
     const newMessages = [{ from_agent: false, stripped_text: msg.body_text || '', body_text: msg.body_text || '' }];
     const dupAction = await checkForDuplicateTicket(supabase, msg.from_address, 0, newMessages);
     if (dupAction === 'close_new') {
