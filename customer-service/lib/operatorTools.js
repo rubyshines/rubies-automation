@@ -1,7 +1,7 @@
 /**
  * Shared tool loader for the operator agents.
  *
- * Both the ticket-bound operator (operatorAgent.js) and the Helm standalone
+ * Both the ticket-bound operator (operatorAgent.js) and the ad hoc standalone
  * console (operatorAgentStandalone.js) call this so they always have an
  * identical tool surface. Mirrors customer-service/server.js's full tool
  * registration list, minus two self-referential modules:

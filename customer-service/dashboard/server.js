@@ -1388,7 +1388,7 @@ function actionTypeFromTool(toolName) {
 }
 
 // ---------------------------------------------------------------------------
-// Helm — standalone operator console (no ticket context)
+// Ad Hoc — standalone operator console (no ticket context)
 // ---------------------------------------------------------------------------
 
 async function apiConsoleChat(body, { onStream } = {}) {
@@ -2440,7 +2440,7 @@ async function handleRequest(req, res) {
         return;
       }
 
-      // Stream Helm console chat — thin SSE wrapper around apiConsoleChat
+      // Stream ad hoc console chat — thin SSE wrapper around apiConsoleChat
       if (req.method === 'POST' && pathname === '/api/console/chat-stream') {
         const body = await readBody(req);
         res.writeHead(200, {

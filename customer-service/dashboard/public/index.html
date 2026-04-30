@@ -28,7 +28,7 @@
       <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
       <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
-      <button class="tab" data-tab="helm" onclick="switchTab('helm')">Ad Hoc</button>
+      <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
     </nav>
     <a href="/stats" class="btn-stats" title="Performance stats">Stats</a>
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
@@ -179,19 +179,22 @@
       </div>
     </div>
 
-    <!-- Helm panel — standalone operator console (no ticket context) -->
-    <div id="panel-helm" class="panel" style="display:none">
-      <div class="helm-container">
-        <div class="helm-header">
-          <span class="helm-title-text">Ad Hoc Operator</span>
-          <button class="btn btn-ghost helm-reset" onclick="resetHelm()" title="Clear conversation history">Reset</button>
+    <!-- Ad Hoc panel — standalone operator console (no ticket context) -->
+    <div id="panel-adhoc" class="panel" style="display:none">
+      <div class="adhoc-container empty">
+        <div class="adhoc-header">
+          <span class="adhoc-title-text">Ad Hoc Operator</span>
+          <button class="btn btn-ghost adhoc-reset" onclick="resetAdhoc()" title="Clear conversation history">Reset</button>
         </div>
-        <div class="action-chat-messages helm-messages" id="helm-chat-messages"></div>
-        <div class="action-chat-input-row">
-          <textarea class="action-chat-input" id="helm-chat-input" rows="3"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendHelmMessage()}"></textarea>
-          <button class="voice-mic" id="helm-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
-          <button class="action-chat-send" id="helm-chat-send" onclick="sendHelmMessage()">Send</button>
+        <div class="action-chat-messages adhoc-messages" id="adhoc-chat-messages"></div>
+        <div class="adhoc-input-block">
+          <div class="adhoc-empty-hint">What can I help with?</div>
+          <div class="action-chat-input-row">
+            <textarea class="action-chat-input" id="adhoc-chat-input" rows="3"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdhocMessage()}"></textarea>
+            <button class="voice-mic" id="adhoc-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
+            <button class="action-chat-send" id="adhoc-chat-send" onclick="sendAdhocMessage()">Send</button>
+          </div>
         </div>
       </div>
     </div>
@@ -211,7 +214,7 @@
     <button class="bottom-tab" data-bottom-tab="closed" onclick="switchTab('closed')">
       <span class="bottom-tab-label">Closed</span>
     </button>
-    <button class="bottom-tab" data-bottom-tab="helm" onclick="switchTab('helm')">
+    <button class="bottom-tab" data-bottom-tab="adhoc" onclick="switchTab('adhoc')">
       <span class="bottom-tab-label">Ad Hoc</span>
     </button>
     <button class="bottom-tab bottom-tab-more" data-bottom-tab="more" onclick="toggleBottomMore(event)">

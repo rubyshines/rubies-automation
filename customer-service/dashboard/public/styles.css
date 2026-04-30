@@ -4053,16 +4053,16 @@ main { height: calc(100vh - 56px); }
 }
 
 /* ---------------------------------------------------------------------------
-   Helm — standalone operator console
+   Ad Hoc — standalone operator console
    --------------------------------------------------------------------------- */
 
-#panel-helm {
+#panel-adhoc {
   display: none;
   height: 100%;
   overflow: hidden;
 }
 
-.helm-container {
+.adhoc-container {
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -4074,7 +4074,7 @@ main { height: calc(100vh - 56px); }
   overflow: hidden;
 }
 
-.helm-header {
+.adhoc-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4085,19 +4085,19 @@ main { height: calc(100vh - 56px); }
   flex-shrink: 0;
 }
 
-.helm-title-text {
+.adhoc-title-text {
   font-size: 18px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.01em;
 }
 
-.helm-reset {
+.adhoc-reset {
   font-size: 12px;
   padding: 4px 10px;
 }
 
-.helm-messages {
+.adhoc-messages {
   flex: 1;
   max-height: none;
   min-height: 0;
@@ -4106,27 +4106,45 @@ main { height: calc(100vh - 56px); }
   margin-bottom: 14px;
 }
 
-.helm-container .action-chat-input-row {
+.adhoc-input-block {
   flex-shrink: 0;
 }
 
-.helm-empty {
+.adhoc-empty-hint {
+  display: none;
   color: var(--text-tertiary);
-  font-style: italic;
-  font-size: 13px;
-  padding: 24px 8px;
+  font-size: 15px;
   text-align: center;
-  line-height: 1.6;
+  margin-bottom: 14px;
+  letter-spacing: -0.005em;
+}
+
+/* Empty state: hide the messages box and center the input vertically. */
+.adhoc-container.empty {
+  justify-content: center;
+}
+
+.adhoc-container.empty .adhoc-messages {
+  display: none;
+}
+
+.adhoc-container.empty .adhoc-input-block {
+  margin-top: -64px; /* optical lift so input sits at visual center, not geometric */
+}
+
+.adhoc-container.empty .adhoc-empty-hint {
+  display: block;
 }
 
 @media (max-width: 768px) {
-  .helm-container {
+  .adhoc-container {
     padding: 12px 14px 10px;
   }
-  .helm-title-text { font-size: 16px; }
-  .helm-empty { padding: 16px 6px; font-size: 12px; }
-  /* Override the legacy mobile rule that disables internal scroll on action-chat-messages — Helm needs internal scroll so the input stays anchored at the bottom */
-  .helm-messages { overflow-y: auto !important; }
+  .adhoc-title-text { font-size: 16px; }
+  .adhoc-empty-hint { font-size: 14px; margin-bottom: 10px; }
+  .adhoc-container.empty .adhoc-input-block { margin-top: -32px; }
+  /* Override the legacy mobile rule that disables internal scroll on action-chat-messages — ad hoc needs internal scroll so the input stays anchored at the bottom */
+  .adhoc-messages { overflow-y: auto !important; }
 }
 
 /* ---------------------------------------------------------------------------

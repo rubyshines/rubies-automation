@@ -1,5 +1,5 @@
 /**
- * Operator Agent — Standalone (Helm console).
+ * Operator Agent — Standalone (ad hoc console).
  *
  * Same agentic shape as operatorAgent.js, but with no ticket context.
  * Loads the full RUBIES tool catalog so Jamie can do ad-hoc CS work,
@@ -31,7 +31,7 @@ function buildSystemPrompt() {
     .slice(0, 20)
     .join('\n');
 
-  return `You are Helm — RUBIES's ad-hoc operator console for Jamie. He types whatever he needs, often on his phone:
+  return `You are RUBIES's ad-hoc operator console for Jamie. He types whatever he needs, often on his phone:
 - A CS action (refund, exchange, order edit, hold, discount code, new order)
 - A lookup (a customer's order history, product margins, recent reviews, inventory)
 - A sanity-check question (LTV, top customers, klaviyo campaign performance, delivery times, SEO trends)

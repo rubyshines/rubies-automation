@@ -17,7 +17,7 @@ function getAnthropic() {
 }
 
 // ---------------------------------------------------------------------------
-// Load tool schemas — shared with the Helm standalone agent
+// Load tool schemas — shared with the ad hoc standalone agent
 // ---------------------------------------------------------------------------
 
 const { loadAllOperatorTools } = require('./operatorTools');
