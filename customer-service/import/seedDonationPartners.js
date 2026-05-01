@@ -111,6 +111,14 @@ const PARTNERS = [
     description: 'Operates a free community closet for gender-affirming products.',
   },
   {
+    name: 'RISE @ Los Angeles LGBT Center',
+    country_code: 'US',
+    region: 'California',
+    city: 'Los Angeles',
+    address: '1125 N. McCadden Place, Los Angeles, CA 90038',
+    description: "Runs the Rainbow Boutique providing free gender-affirming clothing to LA County foster youth ages 24 and younger, including tucking underwear, binders, shapewear, and everyday apparel. Actively seeks donations especially in extended sizes.",
+  },
+  {
     name: 'Transformation Closet with Sexual Health Nova Scotia',
     country_code: 'CA',
     region: 'Nova Scotia',

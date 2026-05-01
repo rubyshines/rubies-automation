@@ -6,7 +6,7 @@
  * Also includes log_donation_routing (standalone, not advisor-dependent).
  */
 
-const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { logDonationRouting } = require('../donationRouting');
 
 // Lazy-load to avoid circular deps
 let _hybridAdvisor = null;
@@ -45,35 +45,13 @@ async function handleCsAdvisor({ customer_email, issue_description, order_number
 }
 
 async function handleLogDonationRouting({ customer_email, order_number, partner_id, items_count, routing_type }) {
-  const supabase = getSupabaseClient();
-
-  const { error: logErr } = await supabase
-    .from('donation_routings')
-    .insert({
-      customer_email,
-      order_number: order_number || null,
-      partner_id: partner_id || null,
-      items_count: items_count || 1,
-      routing_type: routing_type || 'partner',
-    });
-
-  if (logErr) throw new Error(`Failed to log routing: ${logErr.message}`);
-
-  if (partner_id) {
-    const { data: partner } = await supabase
-      .from('donation_partners')
-      .select('donations_routed')
-      .eq('id', partner_id)
-      .single();
-
-    if (partner) {
-      await supabase
-        .from('donation_partners')
-        .update({ donations_routed: (partner.donations_routed || 0) + 1, updated_at: new Date().toISOString() })
-        .eq('id', partner_id);
-    }
-  }
-
+  await logDonationRouting({
+    customer_email,
+    order_number,
+    partner_id,
+    items_count,
+    routing_type: routing_type || 'partner',
+  });
   return {
     content: [{ type: 'text', text: `## Donation Routing Logged\n\n**Customer:** ${customer_email}\n**Order:** ${order_number || 'N/A'}\n**Items:** ${items_count || 1}\n**Type:** ${routing_type}\n${partner_id ? '**Partner ID:** ' + partner_id + '\n' : ''}` }],
   };

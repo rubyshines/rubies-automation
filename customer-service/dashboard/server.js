@@ -314,6 +314,33 @@ async function apiSendDraft(id, body) {
   if (body.testSnooze) extraFields.test_snooze = true;
   await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', extraFields);
 
+  // Donation audit log + counter increment. Runs once per ticket: only the
+  // first send that contains a donation routing decision counts; later sends
+  // on the same ticket (re-sends, follow-ups) do NOT double-count. Failures
+  // here must NOT roll back the send — log and continue.
+  try {
+    const donation = draft.structured_output?.prescription?.donation;
+    if (donation?.type && donation.type !== 'skip_defect') {
+      const { count } = await supabase
+        .from('donation_routings')
+        .select('id', { count: 'exact', head: true })
+        .eq('customer_email', draft.customer_email)
+        .eq('order_number', String(draft.order_number || '').replace('#', '') || null);
+      if (!count) {
+        const { logDonationRouting } = require('../lib/donationRouting');
+        await logDonationRouting({
+          customer_email: draft.customer_email,
+          order_number: String(draft.order_number || '').replace('#', '') || null,
+          partner_id: donation.partner_id || null,
+          items_count: donation.items_count || 1,
+          routing_type: donation.type,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(`[donation-routing] log failed for draft ${id}: ${err.message}`);
+  }
+
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
 }
 

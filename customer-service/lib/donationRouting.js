@@ -197,4 +197,45 @@ async function prescribeDonationRouting(intake, context) {
   };
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance };
+// ---------------------------------------------------------------------------
+// Audit logging — call after a customer reply containing donation info is
+// SENT (not just drafted). Inserts an audit row in `donation_routings` and
+// increments `donation_partners.donations_routed` for the chosen partner so
+// future routings load-balance across the closest 3.
+// ---------------------------------------------------------------------------
+async function logDonationRouting({ customer_email, order_number, partner_id, items_count, routing_type }) {
+  if (!customer_email || !routing_type) {
+    throw new Error('logDonationRouting requires customer_email and routing_type');
+  }
+  const supabase = getSupabaseClient();
+
+  const { error: logErr } = await supabase
+    .from('donation_routings')
+    .insert({
+      customer_email,
+      order_number: order_number || null,
+      partner_id: partner_id || null,
+      items_count: items_count || 1,
+      routing_type,
+    });
+  if (logErr) throw new Error(`Failed to log routing: ${logErr.message}`);
+
+  if (partner_id) {
+    const { data: partner } = await supabase
+      .from('donation_partners')
+      .select('donations_routed')
+      .eq('id', partner_id)
+      .single();
+    if (partner) {
+      await supabase
+        .from('donation_partners')
+        .update({
+          donations_routed: (partner.donations_routed || 0) + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', partner_id);
+    }
+  }
+}
+
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting };

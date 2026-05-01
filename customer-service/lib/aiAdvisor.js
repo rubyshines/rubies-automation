@@ -274,8 +274,21 @@ async function executeToolCall(toolName, toolInput) {
         customerRequestedPartner: !!customer_requested_partner,
       };
       const result = await prescribeDonationRouting(intake, context);
+      // Side-channel: stash routing metadata (partner_id + items_count) on the
+      // executing context so the post-processor can attach it to
+      // prescription.donation. Send-time log_donation_routing reads this to
+      // increment donations_routed for closest-3 load balancing.
+      const routingType = result.type || (result.skip ? 'skip_defect' : 'unknown');
+      if (toolInput.__routingSink) {
+        toolInput.__routingSink.routing = {
+          type: routingType,
+          partner_id: result.partner?.id || null,
+          partner_name: result.partner?.name || null,
+          items_count: item_count || 1,
+        };
+      }
       return {
-        type: result.type || (result.skip ? 'skip_defect' : 'unknown'),
+        type: routingType,
         response_text: result.response_text || null,
         partner: result.partner ? {
           name: result.partner.name,
@@ -1298,6 +1311,12 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const _emit = onStream || (() => {});
   const useStreaming = !!onStream;
 
+  // Side-channel sink for the donation routing decision (partner_id, type,
+  // items_count). Populated when the agent calls get_donation_partner; read
+  // after the loop and attached to prescription.donation so the dashboard's
+  // send-time logger can call logDonationRouting() with the right partner.
+  const donationRoutingSink = {};
+
   while (toolCallCount < MAX_TOOL_CALLS) {
     const _tApi = Date.now();
     const apiParams = {
@@ -1369,6 +1388,11 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       if (toolBlock.name === 'get_donation_partner' && !toolBlock.input.customer_address && orderContext?.target_order?.shipping_address) {
         toolBlock.input.customer_address = orderContext.target_order.shipping_address;
       }
+      // Inject routing sink so the tool can record the chosen partner_id +
+      // routing type for post-loop attachment to prescription.donation.
+      if (toolBlock.name === 'get_donation_partner') {
+        toolBlock.input.__routingSink = donationRoutingSink;
+      }
 
       let result;
       const _tTool = Date.now();
@@ -1433,6 +1457,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     orderContext,
     existingIntake,
     audit,
+    donationRouting: donationRoutingSink.routing || null,
   });
 
   // Build markdown summary
@@ -1594,7 +1619,9 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     intake,
     prescription: {
       items: prescriptionItems,
-      donation: parsed.donation_needed ? { pending: true } : null,
+      donation: (parsed.donation_needed || opts?.donationRouting)
+        ? { pending: true, ...(opts?.donationRouting || {}) }
+        : null,
       shipping_address: parsed.new_address || null,
       crossover_note: null,
       still_needed: [],
