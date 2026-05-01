@@ -268,6 +268,11 @@ async function syncOrders({ since, full } = {}) {
           discount_allocations: allocations.length ? allocations : null,
 
           refunded_quantity: refundedQty,
+
+          // Per-item customAttributes from Shopify (e.g. Pre-order target).
+          custom_attributes: (li.customAttributes && li.customAttributes.length)
+            ? li.customAttributes.map(a => ({ key: a.key, value: a.value }))
+            : null,
         };
       });
 
@@ -287,22 +292,26 @@ async function syncOrders({ since, full } = {}) {
       // Orphan cleanup: remove rows for this order that are NOT in the current
       // Shopify response. Catches (a) line items removed by order edits and
       // (b) legacy rows missing shopify_line_item_id from before the migration.
+      //
+      // Defensive: only run when the current set is non-empty. If lineItemRows
+      // is empty (Shopify returned no items for some reason — API hiccup,
+      // unusual order state, future filter bug) we'd otherwise blow away
+      // every row for the order. Skip and log instead — the item table either
+      // already matches or will be reconciled the next time we see real items.
       const currentLineItemIds = lineItemRows.map(r => r.shopify_line_item_id).filter(Boolean);
-      let orphanQuery = supabase
-        .from('order_line_items')
-        .delete()
-        .eq('shopify_order_id', o.id);
       if (currentLineItemIds.length > 0) {
-        // Delete rows whose id is NOT in the current set, OR whose id is null (legacy).
-        orphanQuery = orphanQuery.or(
-          `shopify_line_item_id.is.null,shopify_line_item_id.not.in.(${currentLineItemIds.map(s => `"${s}"`).join(',')})`
-        );
-      }
-      // If currentLineItemIds is empty (order has no line items in Shopify),
-      // delete all rows for this order — fall through with no extra filter.
-      const { error: orphanErr } = await orphanQuery;
-      if (orphanErr) {
-        console.error(`[OrderSync] Orphan cleanup error for ${o.name}:`, orphanErr.message);
+        const { error: orphanErr } = await supabase
+          .from('order_line_items')
+          .delete()
+          .eq('shopify_order_id', o.id)
+          .or(
+            `shopify_line_item_id.is.null,shopify_line_item_id.not.in.(${currentLineItemIds.map(s => `"${s}"`).join(',')})`
+          );
+        if (orphanErr) {
+          console.error(`[OrderSync] Orphan cleanup error for ${o.name}:`, orphanErr.message);
+        }
+      } else if (lineItemRows.length === 0) {
+        console.warn(`[OrderSync] Skipping orphan cleanup for ${o.name} — Shopify returned no line items (defensive: would otherwise wipe table for this order)`);
       }
 
       totalOrders++;

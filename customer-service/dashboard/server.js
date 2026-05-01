@@ -1585,7 +1585,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     // 2. Recent orders
     supabase
       .from('orders')
-      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_refunded, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
+      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_refunded, total_shipping, total_tax, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
       .eq('customer_email', email)
       .order('created_at', { ascending: false })
       .limit(10),
@@ -1653,17 +1653,30 @@ async function apiGetCustomerContext(email, orderNumber) {
     if (!matchedOrder) {
       const { data: directOrder } = await supabase
         .from('orders')
-        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_refunded, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
+        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_refunded, total_shipping, total_tax, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
         .eq('order_number', orderNum)
         .maybeSingle();
       if (directOrder) matchedOrder = directOrder;
     }
     if (matchedOrder) {
-      // Fetch line items for this specific order
-      const { data: items } = await supabase
+      // Fetch line items for this specific order. We pull refunded_quantity
+      // (drives the strikethrough treatment in the order card) and try
+      // custom_attributes (pre-order target dates). The custom_attributes
+      // column was added in the 2026-05-01 line-item-attributes migration —
+      // if it hasn't been run yet, the query fails with a known error code.
+      // Fall back to the same select without the column so the rest of the
+      // card still renders.
+      let items, itemsErr;
+      ({ data: items, error: itemsErr } = await supabase
         .from('order_line_items')
-        .select('title, variant_title, sku, quantity, unit_price, unit_price_currency')
-        .eq('shopify_order_id', matchedOrder.shopify_order_id);
+        .select('title, variant_title, sku, quantity, unit_price, unit_price_currency, refunded_quantity, custom_attributes')
+        .eq('shopify_order_id', matchedOrder.shopify_order_id));
+      if (itemsErr && /custom_attributes/.test(itemsErr.message || '')) {
+        ({ data: items } = await supabase
+          .from('order_line_items')
+          .select('title, variant_title, sku, quantity, unit_price, unit_price_currency, refunded_quantity')
+          .eq('shopify_order_id', matchedOrder.shopify_order_id));
+      }
 
       const trackingInfo = extractTrackingInfo(matchedOrder.fulfillments);
 
@@ -1678,6 +1691,37 @@ async function apiGetCustomerContext(email, orderNumber) {
         if (snap) trackingSnapshot = snap;
       }
 
+      // Fallback: when order_line_items has no rows for this order (sync gap
+      // or pre-migration legacy nulls were cleaned up), reach into the
+      // ticket's stored order_context. The advisor captured items + variants
+      // at intake; better than rendering an empty items table.
+      let resolvedItems = items || [];
+      let itemsSource = 'order_line_items';
+      if (resolvedItems.length === 0) {
+        const { data: ctxRow } = await supabase
+          .from('cs_tickets')
+          .select('order_context')
+          .eq('customer_email', email)
+          .eq('order_number', `#${orderNum}`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const ctxItems = ctxRow?.order_context?.items;
+        if (Array.isArray(ctxItems) && ctxItems.length) {
+          resolvedItems = ctxItems.map(it => ({
+            title: it.title,
+            variant_title: it.variant,
+            sku: it.sku,
+            quantity: it.quantity,
+            unit_price: null,
+            unit_price_currency: matchedOrder.shop_currency,
+            refunded_quantity: 0,
+            custom_attributes: null,
+          }));
+          itemsSource = 'cs_tickets.order_context';
+        }
+      }
+
       ticketOrder = {
         order_number: matchedOrder.order_number,
         created_at: matchedOrder.created_at,
@@ -1686,6 +1730,7 @@ async function apiGetCustomerContext(email, orderNumber) {
         total_refunded: matchedOrder.total_refunded,
         subtotal: matchedOrder.subtotal_price,
         total_discounts: matchedOrder.total_discounts,
+        total_tax: matchedOrder.total_tax,
         tags: matchedOrder.tags || [],
         discount_applications: matchedOrder.discount_applications || [],
         discount_codes: matchedOrder.discount_codes || [],
@@ -1707,11 +1752,14 @@ async function apiGetCustomerContext(email, orderNumber) {
         tracking_estimated_delivery: trackingSnapshot?.estimated_delivery || null,
         tracking_last_location: trackingSnapshot?.last_location || null,
         tracking_summary: trackingSnapshot?.summary || null,
-        items: (items || []).map(i => ({
+        items_source: itemsSource,
+        items: resolvedItems.map(i => ({
           title: i.title,
           variant: i.variant_title,
           sku: i.sku,
           quantity: i.quantity,
+          refunded_quantity: i.refunded_quantity || 0,
+          custom_attributes: i.custom_attributes || null,
           price: i.unit_price,
           currency: i.unit_price_currency,
         })),
@@ -1722,14 +1770,23 @@ async function apiGetCustomerContext(email, orderNumber) {
   // Build all orders list (sorted by date, includes ticket's order)
   const otherOrdersRaw = allOrders;
 
-  // Batch-fetch line items for other orders (first 10)
+  // Batch-fetch line items for other orders (first 10). Same custom_attributes
+  // fallback as the ticket-order query above — pre-migration deploys
+  // gracefully drop to the smaller column set.
   let otherLineItems = {};
   if (otherOrdersRaw.length) {
     const otherIds = otherOrdersRaw.slice(0, 10).map(o => o.shopify_order_id);
-    const { data: allItems } = await supabase
+    let allItems, allItemsErr;
+    ({ data: allItems, error: allItemsErr } = await supabase
       .from('order_line_items')
-      .select('shopify_order_id, title, variant_title, sku, quantity, unit_price, unit_price_currency')
-      .in('shopify_order_id', otherIds);
+      .select('shopify_order_id, title, variant_title, sku, quantity, unit_price, unit_price_currency, refunded_quantity, custom_attributes')
+      .in('shopify_order_id', otherIds));
+    if (allItemsErr && /custom_attributes/.test(allItemsErr.message || '')) {
+      ({ data: allItems } = await supabase
+        .from('order_line_items')
+        .select('shopify_order_id, title, variant_title, sku, quantity, unit_price, unit_price_currency, refunded_quantity')
+        .in('shopify_order_id', otherIds));
+    }
     for (const item of (allItems || [])) {
       if (!otherLineItems[item.shopify_order_id]) otherLineItems[item.shopify_order_id] = [];
       otherLineItems[item.shopify_order_id].push(item);
@@ -1744,6 +1801,9 @@ async function apiGetCustomerContext(email, orderNumber) {
     total_refunded: o.total_refunded,
     subtotal: o.subtotal_price,
     total_discounts: o.total_discounts,
+    total_tax: o.total_tax,
+    shipping: o.total_shipping || 0,
+    shipping_method: o.shipping_method || null,
     tags: o.tags || [],
     discount_applications: o.discount_applications || [],
     discount_codes: o.discount_codes || [],
@@ -1761,6 +1821,8 @@ async function apiGetCustomerContext(email, orderNumber) {
       variant: i.variant_title,
       sku: i.sku,
       quantity: i.quantity,
+      refunded_quantity: i.refunded_quantity || 0,
+      custom_attributes: i.custom_attributes || null,
       price: i.unit_price,
     })),
   }));

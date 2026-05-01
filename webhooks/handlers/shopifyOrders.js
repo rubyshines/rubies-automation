@@ -54,19 +54,23 @@ async function handle(topic, payload) {
     }
   }
 
+  // Defensive orphan cleanup — only run when the current set is non-empty,
+  // otherwise we'd wipe every line item row for the order on a payload that
+  // happens to lack line_items (malformed webhook, future filter bug, etc).
   const currentLineItemIds = lineItemRows.map(r => r.shopify_line_item_id).filter(Boolean);
-  let orphanQuery = supabase
-    .from('order_line_items')
-    .delete()
-    .eq('shopify_order_id', orderRow.shopify_order_id);
   if (currentLineItemIds.length > 0) {
-    orphanQuery = orphanQuery.or(
-      `shopify_line_item_id.is.null,shopify_line_item_id.not.in.(${currentLineItemIds.map(s => `"${s}"`).join(',')})`
-    );
-  }
-  const { error: orphanErr } = await orphanQuery;
-  if (orphanErr) {
-    console.error(`[shopify-orders] Orphan cleanup error: ${orphanErr.message}`);
+    const { error: orphanErr } = await supabase
+      .from('order_line_items')
+      .delete()
+      .eq('shopify_order_id', orderRow.shopify_order_id)
+      .or(
+        `shopify_line_item_id.is.null,shopify_line_item_id.not.in.(${currentLineItemIds.map(s => `"${s}"`).join(',')})`
+      );
+    if (orphanErr) {
+      console.error(`[shopify-orders] Orphan cleanup error: ${orphanErr.message}`);
+    }
+  } else if (lineItemRows.length === 0) {
+    console.warn(`[shopify-orders] Skipping orphan cleanup for #${orderRow.order_number} — payload had no line_items (defensive)`);
   }
 
   console.log(`[shopify-orders] Upserted order #${orderRow.order_number} with ${lineItemRows.length} line items`);

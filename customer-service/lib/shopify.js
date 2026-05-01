@@ -683,6 +683,7 @@ async function fetchOrdersForSync(since = null, cursor = null) {
                   quantity
                   currentQuantity
                   variant { id }
+                  customAttributes { key value }
                   originalUnitPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
                   discountAllocations {
                     allocatedAmountSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
@@ -734,13 +735,9 @@ async function fetchOrdersForSync(since = null, cursor = null) {
   const orders = data.orders.edges.map(e => {
     const o = e.node;
 
-    // Flatten line items — filter out items removed by order edits (currentQuantity = 0)
-    o.lineItems = o.lineItems.edges.map(li => li.node).filter(li => li.currentQuantity == null || li.currentQuantity > 0);
-
-    // Flatten discount applications
-    o.discountApplications = (o.discountApplications?.edges || []).map(e => e.node);
-
-    // Build per-line-item refunded quantity map from refunds
+    // Build per-line-item refunded quantity map from refunds first — we need
+    // it to decide whether a currentQuantity=0 item was removed by an order
+    // edit (drop) vs fully refunded (keep, with strikethrough on the card).
     const refundedBySkuVariant = {};
     for (const refund of (o.refunds || [])) {
       for (const rli of (refund.refundLineItems?.edges || []).map(e => e.node)) {
@@ -749,6 +746,22 @@ async function fetchOrdersForSync(since = null, cursor = null) {
       }
     }
     o._refundedBySkuVariant = refundedBySkuVariant;
+
+    // Flatten line items — keep when:
+    //   • currentQuantity is null (untouched) or > 0 (still in the order), OR
+    //   • the item appears in the refunds map (fully refunded — Shopify drops
+    //     currentQuantity to 0 even on NO_RESTOCK refunds; we still want to
+    //     show it on the order card with strikethrough).
+    // Items genuinely removed by order edits (currentQuantity=0, no refund
+    // record) are correctly dropped.
+    o.lineItems = o.lineItems.edges.map(li => li.node).filter(li => {
+      if (li.currentQuantity == null || li.currentQuantity > 0) return true;
+      const key = `${li.sku || ''}::${li.variantTitle || ''}`;
+      return (refundedBySkuVariant[key] || 0) > 0;
+    });
+
+    // Flatten discount applications
+    o.discountApplications = (o.discountApplications?.edges || []).map(e => e.node);
 
     // Earliest fulfillment date
     const fulfillmentDates = (o.fulfillments || [])

@@ -335,7 +335,16 @@ async function executeToolCall(toolName, toolInput) {
           days_since_order: Math.floor((Date.now() - new Date(ctx.targetOrder.createdAt).getTime()) / 86400000),
           fulfillment_status: ctx.targetOrder.displayFulfillmentStatus,
           financial_status: ctx.targetOrder.displayFinancialStatus,
+          total_paid: ctx.targetOrder.totalPriceSet?.shopMoney?.amount || '0',
+          current_total: ctx.targetOrder.currentTotalPriceSet?.shopMoney?.amount || ctx.targetOrder.totalPriceSet?.shopMoney?.amount || '0',
+          subtotal: ctx.targetOrder.subtotalPriceSet?.shopMoney?.amount || '0',
+          total_discounts: ctx.targetOrder.totalDiscountsSet?.shopMoney?.amount || '0',
+          discount_codes: ctx.targetOrder.discountCodes || [],
+          total_shipping: ctx.targetOrder.totalShippingPriceSet?.shopMoney?.amount || '0',
+          shipping_method: ctx.targetOrder.shippingLines?.[0]?.title || null,
+          total_tax: ctx.targetOrder.totalTaxSet?.shopMoney?.amount || '0',
           total_refunded: ctx.targetOrder.totalRefundedSet?.shopMoney?.amount || '0',
+          currency: ctx.targetOrder.totalPriceSet?.shopMoney?.currencyCode || null,
           shipping_address: ctx.targetOrder.shippingAddress || null,
           line_items: ctx.orderLineItems.map(li => ({
             title: li.title,
@@ -344,6 +353,7 @@ async function executeToolCall(toolName, toolInput) {
             sku: li.sku,
             sku_size: li._skuSize,
             raw_sku_size: li._rawSkuSize,
+            unit_price: li.originalUnitPriceSet?.shopMoney?.amount || null,
           })),
         } : null,
         fulfilled_order_count: ctx.fulfilled.length,
@@ -535,13 +545,36 @@ async function executeToolCall(toolName, toolInput) {
 function buildSystemPrompt(toneSamples, orderContext) {
   let orderSection = '';
   if (orderContext) {
+    const t = orderContext.target_order;
+
+    // Money line: subtotal → discounts → shipping → tax → paid → refunded.
+    // Built only when an order is present so the advisor sees the same
+    // figures the operator sees on the dashboard order card.
+    let moneyLine = '';
+    if (t) {
+      const cur = t.currency || '';
+      const fmt = n => `$${Number(n || 0).toFixed(2)}`;
+      const parts = [`paid ${fmt(t.total_paid)}${cur ? ` ${cur}` : ''}`];
+      if (Number(t.total_discounts || 0) > 0) {
+        const codeBit = t.discount_codes?.length ? ` (${t.discount_codes.join(', ')})` : '';
+        parts.push(`discount −${fmt(t.total_discounts)}${codeBit}`);
+      }
+      if (Number(t.total_shipping || 0) > 0 || t.shipping_method) {
+        const shipMethodBit = t.shipping_method ? ` (${t.shipping_method})` : '';
+        parts.push(`shipping ${Number(t.total_shipping || 0) > 0 ? fmt(t.total_shipping) : 'free'}${shipMethodBit}`);
+      }
+      if (Number(t.total_tax || 0) > 0) parts.push(`tax ${fmt(t.total_tax)}`);
+      if (Number(t.total_refunded || 0) > 0) parts.push(`refunded −${fmt(t.total_refunded)}`);
+      moneyLine = `\n- Money: ${parts.join(' · ')}`;
+    }
+
     orderSection = `
 ## Customer & Order Context
 - Customer email: ${orderContext.customer?.email || 'unknown'}${orderContext.resolved_by_name ? `\n- ⚠️ RESOLVED BY NAME FALLBACK: no customer record exists under the sender's email (${orderContext.conversation_email}). This customer was found by searching their name. Apply the "Resolved by name" verification gates before trusting this match.` : ''}
 - Customer country: ${orderContext.customer?.country || 'unknown'}${orderContext.customer?.duties_prepaid != null ? ` (duties ${orderContext.customer.duties_prepaid ? 'PREPAID — we cover customs charges' : 'NOT prepaid — customer responsible'})` : ''}
-${orderContext.target_order ? `- Order: ${orderContext.target_order.name} (placed ${orderContext.target_order.created_at?.split('T')[0] || 'unknown'}, ${orderContext.target_order.days_since_order} days ago)
-- Fulfillment: ${orderContext.target_order.fulfillment_status}${orderContext.target_order.financial_status && orderContext.target_order.financial_status !== 'PAID' ? ` · Financial: ${orderContext.target_order.financial_status}${Number(orderContext.target_order.total_refunded || 0) > 0 ? ` (total_refunded: $${Number(orderContext.target_order.total_refunded).toFixed(2)})` : ''}` : ''}
-- Items: ${orderContext.target_order.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
+${t ? `- Order: ${t.name} (placed ${t.created_at?.split('T')[0] || 'unknown'}, ${t.days_since_order} days ago)
+- Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}
+- Items: ${t.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size}${li.unit_price != null ? ` @ $${Number(li.unit_price).toFixed(2)}` : ''} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
 ${orderContext.exchange_orders?.length ? `- Previous exchanges: ${orderContext.exchange_orders.map(ex => ex.name).join(', ')}` : ''}
 `;
   }
@@ -928,7 +961,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 
   In both cases:
   - Identify the kept items from the conversation + order context.
-  - **Invoice total:** for case (b), the invoice total MUST equal the order's total_refunded value from the order context (shown in the order summary above as "total_refunded: $X.XX") — that's the exact amount that was refunded, and re-invoicing for that same amount cleanly reconciles the books. Do NOT recompute from line item prices. For case (a), sum the current line item prices for the kept items.
+  - **Invoice total:** for case (b), the invoice total MUST equal the order's refunded amount from the order context (shown in the Money line above as "refunded −$X.XX") — that's the exact amount that was refunded, and re-invoicing for that same amount cleanly reconciles the books. Do NOT recompute from line item prices. For case (a), sum the current line item prices for the kept items (each item has a unit price in the Items list).
   - Set status to "ready", action_type to "invoice_kept_items". Write the email in past tense ("I've sent you an invoice for $X.XX so you can pay for the [items]"). The dollar amount in the prose must match the invoice total.
   - Populate operator_action_summary with the exact items, quantities, sizes/colors, the total, and a reference to the original order. Example for case (b): "create invoice for 3x AJ size 14 Pink + 1x Ruby size 14 Black, total $87.55 (matches refund), re-billing items previously refunded on order #29870". The operator agent uses this to call create_invoice_order with paid_items only.
 

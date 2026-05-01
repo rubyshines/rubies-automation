@@ -779,104 +779,143 @@ main { height: calc(100vh - 56px); }
   padding-left: 2px;
 }
 
-.ticket-order-total {
-  font-size: 13px;
-  color: var(--text);
-  font-weight: 700;
-  text-align: right;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-}
-
-/* "(was $X)" inline annotation next to the total on free exchanges */
-.ticket-order-total-was {
-  display: inline-block;
-  margin-left: 8px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  text-decoration: line-through;
-}
-
-/* Subtotal struck through on partial-discount orders, sits inline before the total */
-.ticket-order-subtotal-strike {
-  display: inline-block;
-  margin-right: 8px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  text-decoration: line-through;
-}
-
-/* "Discount applied: −$X.XX" row above the total on partial-discount orders */
-.ticket-order-discount-row {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--green);
-  text-align: right;
-  padding-top: 4px;
-}
-
-/* Small pill in the order-card header indicating discount state */
-.ticket-order-discount-pill {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
-  vertical-align: middle;
-}
-.ticket-order-discount-pill--exchange {
-  color: var(--teal);
-  background: var(--teal-soft);
-}
-.ticket-order-discount-pill--partial {
-  color: var(--green);
-  background: var(--green-bg);
-}
-.ticket-order-discount-pill--refund {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-/* "Refunded: −$X.XX" row above the total on partially-refunded orders.
-   Brand accent (brick red) signals "money returned" — distinct from the
-   green discount/exchange treatment without reading as alarming. */
-.ticket-order-refund-row {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  text-align: right;
-  padding-top: 4px;
-}
-
-/* Subtotal struck through on refunded orders, sits inline before the post-refund total */
-.ticket-order-refund-original {
-  display: inline-block;
-  margin-right: 8px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  text-decoration: line-through;
-}
-
-/* Secondary line under the order header: source order # for exchanges,
-   or the actual discount code for partial promos. */
+/* Secondary line under the order header surfacing the source order
+   for an exchange. Kept distinct from the money-row summary because
+   it's a navigational hint, not a financial figure. */
 .ticket-order-discount-meta {
   margin-top: 2px;
   font-size: 11px;
   color: var(--text-secondary);
 }
-.ticket-order-discount-meta code {
+
+/* ─── Order summary breakdown ─────────────────────────────
+   Confirmation-style: subtotal → discount → shipping → tax → total →
+   refunded → net paid. Mirrors the structure customers know from
+   Shopify receipts so operators read the same shape they wrote.
+   Tabular numerals keep the right column decimal-aligned. */
+.order-summary {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.order-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 3px 0;
+  color: var(--text-secondary);
+}
+.order-summary-row dt {
+  font-weight: 500;
+  text-align: left;
+}
+.order-summary-row dd {
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+.order-summary-meta {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  margin-left: 6px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
-  background: var(--surface-inset);
-  padding: 1px 5px;
-  border-radius: 4px;
+  letter-spacing: 0.01em;
+}
+.order-summary-row--discount dd {
+  color: var(--green);
+}
+.order-summary-row--total {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
   color: var(--text);
+}
+.order-summary-row--total dt,
+.order-summary-row--total dd {
+  font-weight: 700;
+  color: var(--text);
+}
+.order-summary-currency {
+  display: inline-block;
+  margin-right: 6px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.order-summary-row--refund dd {
+  color: var(--accent);
+}
+.order-summary-row--net {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.order-summary-row--net dt,
+.order-summary-row--net dd {
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* ─── Refunded line item treatment ─────────────────────────
+   Full refund: strikethrough on the row text + a small brick-red
+   "refunded" chip beside the title. Partial refund: no strikethrough
+   (the kept items still ship), but a "(N refunded)" annotation in
+   the qty cell signals the partial state. */
+.order-item-row-refunded .order-item-title,
+.order-item-row-refunded .order-item-variant,
+.order-item-row-refunded .order-item-sku,
+.order-item-row-refunded .order-item-qty,
+.order-item-row-refunded .order-item-price {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--text-tertiary);
+  color: var(--text-tertiary);
+}
+.order-item-row-refunded .order-item-variant {
+  background: var(--surface-inset);
+  opacity: 0.7;
+}
+.order-item-refund-flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  text-decoration: none !important;
+  vertical-align: middle;
+}
+.order-item-row-refunded-partial .order-item-qty,
+.order-item-row-refunded-partial .order-item-name,
+.order-item-row-refunded-partial .order-item-sku,
+.order-item-row-refunded-partial .order-item-price {
+  text-decoration: none;
+  color: var(--text);
+}
+
+/* ─── Pre-order target inline ──────────────────────────────
+   Per-item Pre-order target string from line item customAttributes
+   (the Pre-Order Now app stamps this at checkout). Yellow accent —
+   "waiting on stock", not alarming. Sits as its own line under the
+   variant chip so the target date is glanceable without crowding. */
+.order-item-preorder {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--yellow);
 }
 
 .context-details {
@@ -1084,25 +1123,7 @@ main { height: calc(100vh - 56px); }
   background: var(--green-bg);
 }
 
-/* Footer line in expanded past-order body summarizing the savings */
-.past-order-savings {
-  margin-top: 6px;
-  padding: 4px 0;
-  border-top: 1px dashed var(--border);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--green);
-}
-.past-order-savings code {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  background: var(--surface-inset);
-  padding: 1px 4px;
-  border-radius: 3px;
-  color: var(--text);
-}
-
-/* Refund variants of the past-order amount + savings rows.
+/* Refund variant of the compact past-order amount (collapsed line).
    Uses brand accent (brick red) so refunds are visually distinct from
    green discount/exchange savings while still feeling on-brand. */
 .past-order-amount-refunded {
@@ -1110,24 +1131,125 @@ main { height: calc(100vh - 56px); }
   font-weight: 700;
   font-size: 12px;
 }
-.past-order-refund {
-  margin-top: 6px;
-  padding: 4px 0;
+
+/* ─── Past-order summary breakdown (compact) ───────────────
+   Same shape as the active order's `.order-summary` so an operator
+   reads identical structure whether scanning a ticket's order or a
+   prior order in the customer's history. Tighter type for density. */
+.past-order-summary-grid {
+  margin-top: 8px;
+  padding-top: 6px;
   border-top: 1px dashed var(--border);
+}
+.past-order-summary-list {
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.past-order-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 1px 0;
+  color: var(--text-secondary);
+}
+.past-order-summary-row dt {
   font-weight: 500;
+  text-align: left;
+}
+.past-order-summary-row dd {
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+.past-order-summary-meta {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.01em;
+}
+.past-order-summary-row--discount dd {
+  color: var(--green);
+}
+.past-order-summary-row--total {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.past-order-summary-row--total dt,
+.past-order-summary-row--total dd {
+  font-weight: 700;
+  color: var(--text);
+}
+.past-order-summary-currency {
+  display: inline-block;
+  margin-right: 5px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+.past-order-summary-row--refund dd {
   color: var(--accent);
 }
-.past-order-refund-pill {
+.past-order-summary-row--net {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.past-order-summary-row--net dt,
+.past-order-summary-row--net dd {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.past-order-source-line {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Refunded items in the past-order expanded body */
+.past-order-item-refunded .past-order-item-name,
+.past-order-item-refunded .past-order-item-variant,
+.past-order-item-refunded .past-order-item-price,
+.past-order-item-refunded .past-order-item-qty {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--text-tertiary);
+  color: var(--text-tertiary);
+}
+.past-order-item-refunded-partial .past-order-item-name,
+.past-order-item-refunded-partial .past-order-item-variant,
+.past-order-item-refunded-partial .past-order-item-price,
+.past-order-item-refunded-partial .past-order-item-qty {
+  text-decoration: none;
+  color: var(--text);
+}
+.past-order-item-refund-flag {
   display: inline-block;
-  margin-right: 4px;
-  padding: 1px 6px;
+  margin-left: 4px;
+  padding: 0 5px;
   border-radius: 999px;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  text-decoration: none !important;
+  vertical-align: middle;
+}
+.past-order-item-preorder {
+  display: block;
+  margin-top: 1px;
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--yellow);
 }
 
 .past-order-load-more {

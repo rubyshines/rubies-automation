@@ -217,6 +217,12 @@ function normalizeLineItemRows(o) {
       discount_allocations: allocations.length ? allocations : null,
 
       refunded_quantity: refundedQty,
+
+      // REST `properties` is the customAttributes equivalent. Stored under
+      // the same column name + shape as the GraphQL sync writes.
+      custom_attributes: (li.properties && li.properties.length)
+        ? li.properties.map(p => ({ key: p.name, value: p.value }))
+        : null,
     };
   });
 }

@@ -862,7 +862,7 @@ async function loadCustomerContext(email, orderNumber) {
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
         `#${to.order_number}`, to.created_at, to.items,
         to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo, to.shipping, to.shipping_method,
-        { tags: to.tags, total_discounts: to.total_discounts, subtotal: to.subtotal, discount_applications: to.discount_applications, discount_codes: to.discount_codes, note: to.note },
+        { tags: to.tags, total_discounts: to.total_discounts, subtotal: to.subtotal, total_tax: to.total_tax, discount_applications: to.discount_applications, discount_codes: to.discount_codes, note: to.note },
         { financial_status: to.financial_status, total_refunded: to.total_refunded, original_total: to.original_total }
       );
     }
@@ -975,43 +975,83 @@ function renderOtherOrders(showCount) {
     }
 
     const itemsHtml = (o.items || []).map(i => {
+      const qty = Number(i.quantity || 0);
+      const refundedQty = Number(i.refunded_quantity || 0);
+      const isFullyRefundedItem = refundedQty > 0 && refundedQty >= qty;
+      const isPartiallyRefundedItem = refundedQty > 0 && refundedQty < qty;
+      const rowClass = `past-order-item${isFullyRefundedItem ? ' past-order-item-refunded' : ''}${isPartiallyRefundedItem ? ' past-order-item-refunded-partial' : ''}`;
+
       let priceCell = '';
       if (i.price != null) {
         if (isExchange) {
-          // Original price struck through next to the effective $0
           priceCell = `<span class="past-order-item-price-original">$${Number(i.price).toFixed(0)}</span> <span class="past-order-item-price-effective">$0</span>`;
         } else {
           priceCell = `<span class="past-order-item-price">$${Number(i.price).toFixed(0)}</span>`;
         }
       }
-      return `<div class="past-order-item">
-        <span class="past-order-item-qty">${i.quantity}x</span>
+
+      const preOrderAttr = (i.custom_attributes || []).find(a => /pre-?order/i.test(a?.key || ''));
+      const preOrderTarget = preOrderAttr?.value || null;
+      const qtyCell = isPartiallyRefundedItem
+        ? `${qty}× <span class="past-order-item-refund-flag">(${refundedQty} ref)</span>`
+        : `${qty}×`;
+
+      return `<div class="${rowClass}">
+        <span class="past-order-item-qty">${qtyCell}</span>
         <div class="past-order-item-info">
           <span class="past-order-item-name">${esc(i.title)}</span>
           ${i.variant ? `<span class="past-order-item-variant">${esc(i.variant)}</span>` : ''}
+          ${preOrderTarget ? `<span class="past-order-item-preorder">Pre-order &middot; ${esc(preOrderTarget)}</span>` : ''}
+          ${isFullyRefundedItem ? `<span class="past-order-item-refund-flag">refunded</span>` : ''}
         </div>
         ${priceCell}
       </div>`;
     }).join('');
 
-    // Footer line: surfaces the discount label, savings, and (for exchanges) source order
-    let savingsRow = '';
-    if (isExchange && discount.discounts > 0) {
-      const sourceBit = discount.sourceOrder ? ` · from #${esc(discount.sourceOrder)}` : '';
-      savingsRow = `<div class="past-order-savings">Free exchange · saved $${discount.discounts.toFixed(2)}${sourceBit}</div>`;
-    } else if (isPartialDiscount) {
-      const codeBit = discount.code ? ` · code <code>${esc(discount.code)}</code>` : '';
-      savingsRow = `<div class="past-order-savings">Discount applied · saved $${discount.discounts.toFixed(2)}${codeBit}</div>`;
-    }
+    // Confirmation-style summary (compact). Mirrors the active card so
+    // operators read the same shape whether scanning past orders or the
+    // ticket's order. Subtotal + Total always present; other rows render
+    // only when non-zero.
+    const subtotalAmount = Number(o.subtotal || (isPartialDiscount ? discount.subtotal : null) || o.total || 0);
+    const discountAmount = isPartialDiscount || isExchange ? Number(discount.discounts || 0) : 0;
+    const shipAmount = o.shipping != null ? Number(o.shipping) : null;
+    const taxAmount = Number(o.total_tax || 0);
+    const totalAmount = Number(o.total || 0);
+    const netAmount = hasRefund ? totalAmount - refundedAmount : null;
+    const cur = esc(o.currency || 'CAD');
+    const fmt = (n, neg) => `${neg ? '−' : ''}$${Math.abs(Number(n || 0)).toFixed(2)}`;
 
-    // Refund row sits below savings (if both apply, the operator sees both).
-    let refundRow = '';
+    let summary = `<div class="past-order-summary-grid"><dl class="past-order-summary-list">`;
+    summary += `<div class="past-order-summary-row"><dt>Subtotal</dt><dd>${fmt(subtotalAmount)}</dd></div>`;
+    if (discountAmount > 0) {
+      const discountLabel = isExchange
+        ? 'Exchange credit'
+        : (discount.code ? `Discount <span class="past-order-summary-meta">${esc(discount.code)}</span>` : 'Discount');
+      summary += `<div class="past-order-summary-row past-order-summary-row--discount"><dt>${discountLabel}</dt><dd>${fmt(discountAmount, true)}</dd></div>`;
+    }
+    if (shipAmount != null) {
+      const shipLabel = o.shipping_method
+        ? `Shipping <span class="past-order-summary-meta">${esc(o.shipping_method)}</span>`
+        : 'Shipping';
+      summary += `<div class="past-order-summary-row"><dt>${shipLabel}</dt><dd>${shipAmount > 0 ? fmt(shipAmount) : 'Free'}</dd></div>`;
+    }
+    if (taxAmount > 0) {
+      summary += `<div class="past-order-summary-row"><dt>Tax</dt><dd>${fmt(taxAmount)}</dd></div>`;
+    }
+    summary += `<div class="past-order-summary-row past-order-summary-row--total"><dt>Total</dt><dd><span class="past-order-summary-currency">${cur}</span>${fmt(totalAmount)}</dd></div>`;
     if (hasRefund) {
-      const refundLabel = isFullyRefunded ? 'Fully refunded' : 'Partially refunded';
-      refundRow = `<div class="past-order-refund">${refundLabel} · −$${refundedAmount.toFixed(2)}</div>`;
+      const refundLabel = isFullyRefunded ? 'Refunded' : 'Refunded (partial)';
+      summary += `<div class="past-order-summary-row past-order-summary-row--refund"><dt>${refundLabel}</dt><dd>${fmt(refundedAmount, true)}</dd></div>`;
+      summary += `<div class="past-order-summary-row past-order-summary-row--net"><dt>Net paid</dt><dd>${fmt(netAmount)}</dd></div>`;
     }
+    summary += `</dl></div>`;
 
-    // Build links row for expanded view
+    // Optional secondary line for exchange source order — kept distinct
+    // from the summary because it's a navigational hint, not a money row.
+    const sourceLine = (isExchange && discount.sourceOrder)
+      ? `<div class="past-order-source-line">Exchange of order #${esc(discount.sourceOrder)}</div>`
+      : '';
+
     let orderLinks = '';
     if (shopUrl) orderLinks += `<a href="${shopUrl}" target="_blank" class="order-link order-link-sm">Shopify</a>`;
     if (o.tracking_url) orderLinks += `<a href="${o.tracking_url}" target="_blank" class="order-link order-link-sm order-link-tracking">Tracking</a>`;
@@ -1026,8 +1066,8 @@ function renderOtherOrders(showCount) {
       <div class="past-order-items">
         ${o.shipping_address ? `<div class="past-order-address">${formatAddress(o.shipping_address)}</div>` : ''}
         ${itemsHtml || '<span style="color:var(--text-tertiary);font-size:11px">No items</span>'}
-        ${savingsRow}
-        ${refundRow}
+        ${sourceLine}
+        ${summary}
         ${orderLinks ? `<div class="past-order-links">${orderLinks}</div>` : ''}
       </div>
     </details>`;
@@ -1103,8 +1143,14 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
   const originalTotal = Number(refundInfo?.original_total || total || 0);
 
   const itemsHtml = (items || []).map(i => {
+    const qty = Number(i.quantity || 0);
+    const refundedQty = Number(i.refunded_quantity || 0);
+    const isFullyRefundedItem = refundedQty > 0 && refundedQty >= qty;
+    const isPartiallyRefundedItem = refundedQty > 0 && refundedQty < qty;
+    const rowClass = `order-item-row${isFullyRefundedItem ? ' order-item-row-refunded' : ''}${isPartiallyRefundedItem ? ' order-item-row-refunded-partial' : ''}`;
+
     const price = i.price != null ? `$${Number(i.price).toFixed(2)}` : '';
-    const itemTotal = (i.price != null && i.quantity > 1) ? `$${(Number(i.price) * i.quantity).toFixed(2)}` : price;
+    const itemTotal = (i.price != null && qty > 1) ? `$${(Number(i.price) * qty).toFixed(2)}` : price;
     let priceCell;
     if (isExchange && i.price != null) {
       // Strike-through original beside the effective $0.00 paid price
@@ -1112,9 +1158,23 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     } else {
       priceCell = itemTotal;
     }
-    return `<tr class="order-item-row">
-      <td class="order-item-qty">${i.quantity}x</td>
-      <td class="order-item-name">${esc(i.title)}${i.variant ? ` <span class="order-item-variant">${esc(i.variant)}</span>` : ''}</td>
+
+    // Per-item Pre-order target from line item customAttributes (Pre-Order Now app).
+    const preOrderAttr = (i.custom_attributes || []).find(a => /pre-?order/i.test(a?.key || ''));
+    const preOrderTarget = preOrderAttr?.value || null;
+
+    // Quantity cell carries the partial-refund annotation when applicable.
+    const qtyCell = isPartiallyRefundedItem
+      ? `${qty}× <span class="order-item-refund-flag">(${refundedQty} refunded)</span>`
+      : `${qty}×`;
+
+    return `<tr class="${rowClass}">
+      <td class="order-item-qty">${qtyCell}</td>
+      <td class="order-item-name">
+        <span class="order-item-title">${esc(i.title)}</span>${i.variant ? ` <span class="order-item-variant">${esc(i.variant)}</span>` : ''}
+        ${preOrderTarget ? `<span class="order-item-preorder">Pre-order &middot; ${esc(preOrderTarget)}</span>` : ''}
+        ${isFullyRefundedItem ? `<span class="order-item-refund-flag">refunded</span>` : ''}
+      </td>
       <td class="order-item-sku">${esc(i.sku || '')}</td>
       <td class="order-item-price">${priceCell}</td>
     </tr>`;
@@ -1167,46 +1227,60 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
   let discountMeta = '';
   if (isExchange && discount.sourceOrder) {
     discountMeta = `<div class="ticket-order-discount-meta">Exchange of order #${esc(discount.sourceOrder)}</div>`;
-  } else if (isPartialDiscount && discount.code) {
-    discountMeta = `<div class="ticket-order-discount-meta">Code applied: <code>${esc(discount.code)}</code>${discount.percent ? ` · ${discount.percent}% off` : ''}</div>`;
   }
 
-  // Total row varies by discount state. For exchanges we show $0.00 with the
-  // pre-discount value struck through beside it; partial discounts show a
-  // discount row above the total and strike the subtotal. A refund row, when
-  // present, appears above the total and the original (pre-refund) amount is
-  // struck through inline. Refund + discount can co-occur and both render.
-  let totalRow = '';
-  if (total != null) {
-    const refundRow = hasRefund
-      ? `<div class="ticket-order-refund-row">Refunded: −$${refundedAmount.toFixed(2)}</div>`
-      : '';
+  // Confirmation-style summary: subtotal → discount → shipping → tax → total
+  // → refunded → net paid. Mirrors the structure customers already recognize
+  // from Shopify order receipts. Zero-value rows are omitted (except subtotal
+  // and total, which always render).
+  const subtotalAmount = Number(discountInfo?.subtotal || (isPartialDiscount ? discount.subtotal : null) || total || 0);
+  const discountAmount = isPartialDiscount || isExchange ? Number(discount.discounts || 0) : 0;
+  const shippingAmount = shipping != null ? Number(shipping) : null;
+  const taxAmount = Number(discountInfo?.total_tax || 0);
+  const totalAmount = Number(total || 0);
+  const netAmount = hasRefund ? totalAmount - refundedAmount : null;
+  const cur = esc(currency || 'CAD');
 
-    if (isExchange && discount.discounts > 0) {
-      totalRow = `${refundRow}
-        <div class="ticket-order-total">
-          Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
-          <span class="ticket-order-total-was">was $${discount.discounts.toFixed(2)}</span>
-        </div>`;
-    } else if (isPartialDiscount) {
-      const dropLabel = discount.code ? `Discount (${esc(discount.code)})` : 'Discount applied';
-      totalRow = `<div class="ticket-order-discount-row">${dropLabel}: −$${discount.discounts.toFixed(2)}</div>
-        ${refundRow}
-        <div class="ticket-order-total">
-          <span class="ticket-order-subtotal-strike">$${discount.subtotal.toFixed(2)}</span>
-          Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
-        </div>`;
-    } else if (hasRefund) {
-      // Refund without a discount — strike the original total inline.
-      totalRow = `${refundRow}
-        <div class="ticket-order-total">
-          <span class="ticket-order-refund-original">$${originalTotal.toFixed(2)}</span>
-          Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
-        </div>`;
-    } else {
-      totalRow = `<div class="ticket-order-total">Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}</div>`;
+  const moneyCell = (n, opts = {}) => {
+    const sign = opts.negative ? '−' : '';
+    return `${sign}$${Math.abs(Number(n || 0)).toFixed(2)}`;
+  };
+
+  let summaryRows = '';
+  if (total != null) {
+    summaryRows += `<div class="order-summary-row"><dt>Subtotal</dt><dd>${moneyCell(subtotalAmount)}</dd></div>`;
+
+    if (discountAmount > 0) {
+      const discountLabel = isExchange
+        ? 'Exchange credit'
+        : (discount.code ? `Discount <span class="order-summary-meta">${esc(discount.code)}${discount.percent ? ` &middot; ${discount.percent}% off` : ''}</span>` : 'Discount');
+      summaryRows += `<div class="order-summary-row order-summary-row--discount"><dt>${discountLabel}</dt><dd>${moneyCell(discountAmount, { negative: true })}</dd></div>`;
+    }
+
+    if (shippingAmount != null) {
+      const shipLabel = shippingMethod
+        ? `Shipping <span class="order-summary-meta">${esc(shippingMethod)}</span>`
+        : 'Shipping';
+      const shipValue = shippingAmount > 0 ? moneyCell(shippingAmount) : 'Free';
+      summaryRows += `<div class="order-summary-row"><dt>${shipLabel}</dt><dd>${shipValue}</dd></div>`;
+    }
+
+    if (taxAmount > 0) {
+      summaryRows += `<div class="order-summary-row"><dt>Tax</dt><dd>${moneyCell(taxAmount)}</dd></div>`;
+    }
+
+    summaryRows += `<div class="order-summary-row order-summary-row--total"><dt>Total</dt><dd><span class="order-summary-currency">${cur}</span>${moneyCell(totalAmount)}</dd></div>`;
+
+    if (hasRefund) {
+      const refundLabel = isFullyRefunded ? 'Refunded' : 'Refunded (partial)';
+      summaryRows += `<div class="order-summary-row order-summary-row--refund"><dt>${refundLabel}</dt><dd>${moneyCell(refundedAmount, { negative: true })}</dd></div>`;
+      summaryRows += `<div class="order-summary-row order-summary-row--net"><dt>Net paid</dt><dd>${moneyCell(netAmount)}</dd></div>`;
     }
   }
+
+  const summaryHtml = summaryRows
+    ? `<dl class="order-summary">${summaryRows}</dl>`
+    : '';
 
   return `
     <div class="ticket-order-header">
@@ -1218,8 +1292,7 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     ${addressHtml}
     <table class="order-items-table">${itemsHtml}</table>
     ${trackingHtml}
-    ${shipping != null ? `<div class="ticket-order-shipping" style="font-size:12px;color:var(--text-secondary)">${shippingMethod || 'Shipping'}: ${Number(shipping) > 0 ? '$' + Number(shipping).toFixed(2) : 'Free'}</div>` : ''}
-    ${totalRow}
+    ${summaryHtml}
     ${linksHtml ? `<div class="order-links" style="margin-top:8px">${linksHtml}</div>` : ''}
   `;
 }

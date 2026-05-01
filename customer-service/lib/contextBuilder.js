@@ -92,6 +92,9 @@ function supabaseOrderToShopify(orderRow, lineItems) {
       shopMoney: { amount: String(orderRow.total_price || 0), currencyCode: orderRow.shop_currency },
       presentmentMoney: { amount: String(orderRow.presentment_total_price || orderRow.total_price || 0), currencyCode: orderRow.presentment_currency || orderRow.shop_currency },
     },
+    currentTotalPriceSet: {
+      shopMoney: { amount: String(orderRow.current_total_price ?? orderRow.total_price ?? 0), currencyCode: orderRow.shop_currency },
+    },
     totalRefundedSet: {
       shopMoney: { amount: String(orderRow.total_refunded || 0), currencyCode: orderRow.shop_currency },
     },
@@ -101,6 +104,14 @@ function supabaseOrderToShopify(orderRow, lineItems) {
     totalShippingPriceSet: {
       shopMoney: { amount: String(orderRow.total_shipping || 0), currencyCode: orderRow.shop_currency },
     },
+    totalTaxSet: {
+      shopMoney: { amount: String(orderRow.total_tax || 0), currencyCode: orderRow.shop_currency },
+    },
+    totalDiscountsSet: {
+      shopMoney: { amount: String(orderRow.total_discounts || 0), currencyCode: orderRow.shop_currency },
+    },
+    discountCodes: orderRow.discount_codes || [],
+    shippingLines: orderRow.shipping_method ? [{ title: orderRow.shipping_method }] : [],
     shippingAddress: orderRow.shipping_address ? {
       address1: orderRow.shipping_address.address1,
       address2: orderRow.shipping_address.address2,
