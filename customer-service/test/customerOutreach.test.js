@@ -149,7 +149,7 @@ require.cache[supabaseClientPath] = {
 };
 
 // Now require the module under test.
-const { sendIncidentOutreach } = require('../lib/customerOutreach');
+const { sendIncidentOutreach, seedOutboundDraft } = require('../lib/customerOutreach');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -414,5 +414,110 @@ describe('sendIncidentOutreach — live mode', () => {
     assert.equal(findAllCalls('cs_ai_drafts', 'insert').length, 2);
     // Pacing: at least 600ms between iterations
     assert.ok(elapsed >= 600, `expected >=600ms with pacing, got ${elapsed}ms`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// seedOutboundDraft — operator-initiated draft staging (no Gorgias write).
+// ---------------------------------------------------------------------------
+
+describe('seedOutboundDraft', () => {
+  beforeEach(resetCallTrackers);
+
+  const BASE_DRAFT = {
+    orderNumber: '12345',
+    customerEmail: 'jane@example.com',
+    customerName: 'Jane Doe',
+    subject: 'About your recent order',
+    plainBody: 'Hi,\n\nQuick heads-up about your order.\n\nTake care,\nJamie',
+    summary: 'Back-order heads-up',
+    steer: 'Naomi back-order — offer cancel or swap',
+    noteText: 'Proactive outreach drafted',
+  };
+
+  it('inserts cs_tickets + cs_ai_drafts + order_alert_notes with NO Gorgias side effects', async () => {
+    const result = await seedOutboundDraft(BASE_DRAFT);
+
+    assert.equal(result.ok, true);
+    assert.ok(result.cs_ticket_id);
+    assert.ok(result.cs_draft_id);
+    assert.match(result.dashboard_url, /#ticket-\d+$/);
+
+    // Critically: zero Gorgias calls
+    assert.equal(gorgiasCalls.createOutboundTicket.length, 0);
+    assert.equal(gorgiasCalls.snoozeTicket.length, 0);
+    assert.equal(gorgiasCalls.getTicketMessages.length, 0);
+
+    // cs_tickets insert with operator-initiated open shape, gorgias_ticket_id NULL
+    const ticketsInsert = findCall('cs_tickets', 'insert');
+    assert.ok(ticketsInsert);
+    assert.equal(ticketsInsert.payload.gorgias_ticket_id, null);
+    assert.equal(ticketsInsert.payload.status, 'open');
+    assert.equal(ticketsInsert.payload.initiated_by, 'operator');
+    assert.equal(ticketsInsert.payload.has_agent_reply, false);
+    assert.equal(ticketsInsert.payload.message_type, 'proactive_outreach');
+    assert.equal(ticketsInsert.payload.customer_email, 'jane@example.com');
+    assert.equal(ticketsInsert.payload.customer_name, 'Jane Doe');
+    assert.equal(ticketsInsert.payload.order_number, '12345');
+    assert.equal(ticketsInsert.payload.summary, 'Back-order heads-up');
+    assert.deepEqual(ticketsInsert.payload.conversation_history, []);
+
+    // cs_ai_drafts insert with pending advisor_draft + draft body in draft_response (not sent_response)
+    const draftsInsert = findCall('cs_ai_drafts', 'insert');
+    assert.ok(draftsInsert);
+    assert.equal(draftsInsert.payload.gorgias_ticket_id, null);
+    assert.equal(draftsInsert.payload.gorgias_message_id, null);
+    assert.equal(draftsInsert.payload.draft_kind, 'advisor_draft');
+    assert.equal(draftsInsert.payload.status, 'pending');
+    assert.equal(draftsInsert.payload.source, 'operator_outreach');
+    assert.equal(draftsInsert.payload.message_type, 'proactive_outreach');
+    assert.equal(draftsInsert.payload.draft_response, BASE_DRAFT.plainBody);
+    assert.equal(draftsInsert.payload.sent_response, null);
+    assert.equal(draftsInsert.payload.structured_output.subject, 'About your recent order');
+    assert.equal(draftsInsert.payload.structured_output.operator_steer, BASE_DRAFT.steer);
+    assert.equal(draftsInsert.payload.operator_steer, BASE_DRAFT.steer);
+
+    // active_draft_id linked back
+    const ticketsUpdate = findCall('cs_tickets', 'update');
+    assert.ok(ticketsUpdate);
+    assert.ok('active_draft_id' in ticketsUpdate.payload);
+
+    // order_alert_notes inserted as unresolved
+    const notesInsert = findCall('order_alert_notes', 'insert');
+    assert.ok(notesInsert);
+    assert.equal(notesInsert.payload.order_number, '12345');
+    assert.equal(notesInsert.payload.note, 'Proactive outreach drafted');
+    assert.equal(notesInsert.payload.resolved, false);
+    assert.equal(notesInsert.payload.author, 'operator');
+  });
+
+  it('strips leading # from order_number on cs_tickets', async () => {
+    await seedOutboundDraft({ ...BASE_DRAFT, orderNumber: '#12345' });
+    const ticketsInsert = findCall('cs_tickets', 'insert');
+    assert.equal(ticketsInsert.payload.order_number, '12345');
+  });
+
+  it('skips order_alert_notes write when noteText is omitted', async () => {
+    const result = await seedOutboundDraft({ ...BASE_DRAFT, noteText: undefined });
+    assert.equal(result.ok, true);
+    assert.equal(findCall('order_alert_notes', 'insert'), undefined);
+    assert.ok(findCall('cs_tickets', 'insert'));
+    assert.ok(findCall('cs_ai_drafts', 'insert'));
+  });
+
+  it('returns error when cs_tickets insert fails — and does NOT proceed to drafts insert', async () => {
+    supabaseResults['cs_tickets.insert'] = { data: null, error: { message: 'ticket insert blew up' } };
+
+    const result = await seedOutboundDraft(BASE_DRAFT);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /ticket insert blew up/);
+    assert.equal(findCall('cs_ai_drafts', 'insert'), undefined);
+    assert.equal(findCall('order_alert_notes', 'insert'), undefined);
+  });
+
+  it('throws when required fields are missing', async () => {
+    await assert.rejects(seedOutboundDraft({ ...BASE_DRAFT, customerEmail: undefined }), /customerEmail is required/);
+    await assert.rejects(seedOutboundDraft({ ...BASE_DRAFT, subject: undefined }), /subject is required/);
+    await assert.rejects(seedOutboundDraft({ ...BASE_DRAFT, plainBody: undefined }), /plainBody is required/);
   });
 });

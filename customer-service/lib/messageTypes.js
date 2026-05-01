@@ -23,6 +23,7 @@ const CANONICAL_MESSAGE_TYPES = new Set([
   'business_outreach',
   'community_outreach',
   'discount_request',
+  'proactive_outreach',
   'uncategorized',
 ]);
 

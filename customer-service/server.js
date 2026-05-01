@@ -51,6 +51,7 @@ const discountCodeTools = require('./lib/tools/discountCode');
 const cancelOrderTools = require('./lib/tools/cancelOrder');
 const splitShipmentTools = require('./lib/tools/splitShipment');
 const seoMetaTools = require('./lib/tools/seoMeta');
+const createOutreachTicketTools = require('./lib/tools/createOutreachTicket');
 
 const allTools = [
   ...customerLookupTools,
@@ -88,6 +89,7 @@ const allTools = [
   ...cancelOrderTools,
   ...splitShipmentTools,
   ...seoMetaTools,
+  ...createOutreachTicketTools,
 ];
 
 /**

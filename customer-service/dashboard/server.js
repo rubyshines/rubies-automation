@@ -224,11 +224,44 @@ async function apiSendDraft(id, body) {
 
   // Send to Gorgias (auto-link product names in HTML)
   const bodyHtml = autoLinkProducts(finalResponse);
-  const replyResult = await gorgias.createTicketReply(draft.gorgias_ticket_id, {
-    body_html: bodyHtml,
-    body_text: finalResponse,
-    attachments: body.attachments,
-  });
+
+  // Two paths converge here:
+  //   - Inbound replies (the common case): post a reply to an existing Gorgias ticket.
+  //   - Operator-initiated outbound drafts (created via create_outreach_ticket
+  //     in the standalone operator console): no Gorgias ticket exists yet —
+  //     create the outbound ticket now, which dispatches the email, and
+  //     back-fill gorgias_ticket_id on both cs_ai_drafts and cs_tickets so all
+  //     downstream lookups by gorgias_ticket_id continue to work.
+  let replyResult;
+  const isOutboundInitiated = !draft.gorgias_ticket_id;
+  if (isOutboundInitiated) {
+    const subject = draft.structured_output?.subject || '(no subject)';
+    const newTicket = await gorgias.createOutboundTicket({
+      customerEmail: draft.customer_email,
+      customerName: draft.customer_name || '',
+      subject,
+      bodyHtml,
+      bodyText: finalResponse,
+    });
+    const messages = await gorgias.getTicketMessages(newTicket.id);
+    const outbound = messages.find(m => m.from_agent === true);
+    replyResult = { id: outbound?.id };
+    draft.gorgias_ticket_id = newTicket.id;
+    draft.gorgias_message_id = outbound?.id || null;
+    if (draft.ticket_id) {
+      await supabase.from('cs_tickets').update({
+        gorgias_ticket_id: newTicket.id,
+        gorgias_status: 'open',
+        gorgias_updated_at: new Date().toISOString(),
+      }).eq('id', draft.ticket_id);
+    }
+  } else {
+    replyResult = await gorgias.createTicketReply(draft.gorgias_ticket_id, {
+      body_html: bodyHtml,
+      body_text: finalResponse,
+      attachments: body.attachments,
+    });
+  }
 
   const wasEdited = (draft.draft_response || '').trim() !== finalResponse.trim();
 
@@ -241,6 +274,10 @@ async function apiSendDraft(id, body) {
     sent_at: new Date().toISOString(),
     gorgias_reply_message_id: replyResult?.id || null,
   };
+  if (isOutboundInitiated) {
+    draftUpdate.gorgias_ticket_id = draft.gorgias_ticket_id;
+    draftUpdate.gorgias_message_id = draft.gorgias_message_id;
+  }
   if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
   await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
 

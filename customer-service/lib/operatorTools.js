@@ -47,6 +47,7 @@ function loadAllOperatorTools() {
     require('./tools/cancelOrder'),
     require('./tools/splitShipment'),
     require('./tools/seoMeta'),
+    require('./tools/createOutreachTicket'),
   ];
 
   const tools = [];

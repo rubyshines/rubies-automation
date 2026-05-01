@@ -302,4 +302,157 @@ function stripHtmlBasic(html) {
     .trim();
 }
 
-module.exports = { sendIncidentOutreach, registerOutboundWithAdvisorPipeline };
+/**
+ * Stage a proactive outbound email as a pending draft for operator review.
+ *
+ * In contrast to sendIncidentOutreach (which creates a Gorgias ticket and
+ * sends the email immediately), this function performs zero Gorgias writes.
+ * It only creates a cs_tickets row (with gorgias_ticket_id = NULL) and a
+ * cs_ai_drafts row in 'pending' state, plus an optional unresolved
+ * order_alert_notes row so the affected order surfaces in the daily report.
+ *
+ * The dashboard's send-draft path detects null gorgias_ticket_id and lazily
+ * creates the Gorgias outbound ticket at send time, back-filling the id on
+ * both rows. If the operator never sends, no Gorgias ticket is ever created.
+ *
+ * @param {object} args
+ * @param {string|number} args.orderNumber
+ * @param {string} args.customerEmail
+ * @param {string} [args.customerName]
+ * @param {string} args.subject
+ * @param {string} args.plainBody
+ * @param {string} [args.htmlBody]
+ * @param {string} [args.summary] — short queue-card description
+ * @param {string} [args.steer] — operator's compose intent, stored for audit
+ * @param {string} [args.noteText] — order_alert_notes body; omit to skip
+ * @param {string} [args.author='operator']
+ * @returns {Promise<{ ok, cs_ticket_id, cs_draft_id, dashboard_url }>}
+ */
+async function seedOutboundDraft({
+  orderNumber,
+  customerEmail,
+  customerName,
+  subject,
+  plainBody,
+  htmlBody,
+  summary,
+  steer,
+  noteText,
+  author = 'operator',
+} = {}) {
+  if (!customerEmail) throw new Error('seedOutboundDraft: customerEmail is required');
+  if (!subject) throw new Error('seedOutboundDraft: subject is required');
+  if (!plainBody) throw new Error('seedOutboundDraft: plainBody is required');
+
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+  const cleanOrderNumber = orderNumber ? String(orderNumber).replace(/^#/, '') : null;
+
+  // 1) cs_tickets row — open, awaiting operator review, no Gorgias yet.
+  const { data: ticketRow, error: ticketErr } = await supabase
+    .from('cs_tickets')
+    .insert({
+      gorgias_ticket_id: null,
+      status: 'open',
+      initiated_by: 'operator',
+      follow_up_stage: 0,
+      has_agent_reply: false,
+      message_count: 0,
+      customer_email: customerEmail,
+      customer_name: customerName || null,
+      order_number: cleanOrderNumber,
+      conversation_history: [],
+      message_type: 'proactive_outreach',
+      confidence: 'high',
+      advisor_status: 'ready',
+      summary: summary || null,
+      source: 'gorgias',
+      last_customer_message_at: null,
+      gorgias_status: null,
+      gorgias_updated_at: null,
+      updated_at: now,
+      created_at: now,
+    })
+    .select('id')
+    .single();
+
+  if (ticketErr) {
+    return { ok: false, error: `cs_tickets insert: ${ticketErr.message}` };
+  }
+
+  // 2) cs_ai_drafts row — pending, awaiting send.
+  const { data: draftRow, error: draftErr } = await supabase
+    .from('cs_ai_drafts')
+    .insert({
+      ticket_id: ticketRow.id,
+      gorgias_ticket_id: null,
+      gorgias_message_id: null,
+      customer_email: customerEmail,
+      customer_name: customerName || null,
+      order_number: cleanOrderNumber,
+      draft_response: plainBody,
+      sent_response: null,
+      structured_output: {
+        status: 'outbound_draft',
+        source: 'operator_outreach',
+        subject,
+        recipient_email: customerEmail,
+        operator_steer: steer || null,
+      },
+      audit_trail: [`[Outbound draft] Operator-initiated draft via composeOutboundDraft. Steer: ${steer || '(none)'}`],
+      confidence: 'high',
+      advisor_status: 'ready',
+      message_type: 'proactive_outreach',
+      conversation_history: [],
+      draft_kind: 'advisor_draft',
+      status: 'pending',
+      source: 'operator_outreach',
+      operator_steer: steer || null,
+    })
+    .select('id')
+    .single();
+
+  if (draftErr) {
+    return { ok: false, error: `cs_ai_drafts insert: ${draftErr.message}`, cs_ticket_id: ticketRow.id };
+  }
+
+  // 3) Link active_draft_id back on the ticket.
+  const { error: linkErr } = await supabase
+    .from('cs_tickets')
+    .update({ active_draft_id: draftRow.id })
+    .eq('id', ticketRow.id);
+
+  if (linkErr) {
+    return { ok: false, error: `active_draft_id link: ${linkErr.message}`, cs_ticket_id: ticketRow.id, cs_draft_id: draftRow.id };
+  }
+
+  // 4) Optional note for the daily report.
+  if (noteText && cleanOrderNumber) {
+    const { error: noteErr } = await supabase
+      .from('order_alert_notes')
+      .insert({
+        order_number: cleanOrderNumber,
+        note: noteText,
+        resolved: false,
+        author,
+        alert_type: 'unfulfilled',
+      });
+    if (noteErr) {
+      return { ok: true, cs_ticket_id: ticketRow.id, cs_draft_id: draftRow.id, note_error: noteErr.message };
+    }
+  }
+
+  // Ignore unused-htmlBody param; kept in signature for symmetry with seedOutboundDraft callers
+  // that already build HTML alongside plain text.
+  void htmlBody;
+
+  const dashboardBase = process.env.DASHBOARD_URL || 'https://ops.rubyshines.com';
+  return {
+    ok: true,
+    cs_ticket_id: ticketRow.id,
+    cs_draft_id: draftRow.id,
+    dashboard_url: `${dashboardBase}/#ticket-${ticketRow.id}`,
+  };
+}
+
+module.exports = { sendIncidentOutreach, registerOutboundWithAdvisorPipeline, seedOutboundDraft };
