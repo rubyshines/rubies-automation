@@ -675,6 +675,7 @@ async function fetchOrdersForSync(since = null, cursor = null) {
             lineItems(first: 100) {
               edges {
                 node {
+                  id
                   title
                   variantTitle
                   sku

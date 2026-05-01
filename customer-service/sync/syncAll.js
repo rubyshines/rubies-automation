@@ -216,12 +216,13 @@ async function syncOrders({ since, full } = {}) {
         continue;
       }
 
-      // --- Delete existing line items and re-insert (simpler than diffing) ---
-      await supabase
-        .from('order_line_items')
-        .delete()
-        .eq('shopify_order_id', o.id);
-
+      // --- Sync line items idempotently ---
+      // Old pattern was delete + insert, which raced with concurrent webhook
+      // syncs and produced duplicate rows on rare interleaves. New pattern:
+      // upsert by shopify_line_item_id (per-line-item stable id from Shopify),
+      // then narrow orphan-cleanup deletes legacy null rows + items removed
+      // from the order. Race-safe: concurrent upserts on the same line item
+      // produce identical rows, no duplicates.
       const lineItemRows = o.lineItems.map(li => {
         // Sum discount allocations for this line item
         let totalDiscount = 0;
@@ -250,6 +251,7 @@ async function syncOrders({ since, full } = {}) {
 
         return {
           shopify_order_id: o.id,
+          shopify_line_item_id: li.id || null,
           shopify_variant_id: li.variant?.id || null,
           title: li.title,
           variant_title: li.variantTitle || null,
@@ -270,15 +272,37 @@ async function syncOrders({ since, full } = {}) {
       });
 
       if (lineItemRows.length > 0) {
+        // Upsert by shopify_line_item_id (partial unique index on the column).
+        // Concurrent runs writing the same row resolve to one canonical row.
         const { error: liErr } = await supabase
           .from('order_line_items')
-          .insert(lineItemRows);
-
+          .upsert(lineItemRows, { onConflict: 'shopify_line_item_id' });
         if (liErr) {
-          console.error(`[OrderSync] Line items error for ${o.name}:`, liErr.message);
+          console.error(`[OrderSync] Line items upsert error for ${o.name}:`, liErr.message);
         } else {
           totalLineItems += lineItemRows.length;
         }
+      }
+
+      // Orphan cleanup: remove rows for this order that are NOT in the current
+      // Shopify response. Catches (a) line items removed by order edits and
+      // (b) legacy rows missing shopify_line_item_id from before the migration.
+      const currentLineItemIds = lineItemRows.map(r => r.shopify_line_item_id).filter(Boolean);
+      let orphanQuery = supabase
+        .from('order_line_items')
+        .delete()
+        .eq('shopify_order_id', o.id);
+      if (currentLineItemIds.length > 0) {
+        // Delete rows whose id is NOT in the current set, OR whose id is null (legacy).
+        orphanQuery = orphanQuery.or(
+          `shopify_line_item_id.is.null,shopify_line_item_id.not.in.(${currentLineItemIds.map(s => `"${s}"`).join(',')})`
+        );
+      }
+      // If currentLineItemIds is empty (order has no line items in Shopify),
+      // delete all rows for this order — fall through with no extra filter.
+      const { error: orphanErr } = await orphanQuery;
+      if (orphanErr) {
+        console.error(`[OrderSync] Orphan cleanup error for ${o.name}:`, orphanErr.message);
       }
 
       totalOrders++;

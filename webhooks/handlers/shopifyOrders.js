@@ -40,21 +40,33 @@ async function handle(topic, payload) {
     throw new Error(`Order upsert failed: ${orderErr.message}`);
   }
 
-  // Delete + re-insert line items (same strategy as syncAll.js)
-  await supabase
-    .from('order_line_items')
-    .delete()
-    .eq('shopify_order_id', orderRow.shopify_order_id);
-
+  // Idempotent line-item sync (race-safe under concurrent webhook deliveries):
+  // upsert by shopify_line_item_id (stable per-line-item ID), then orphan-clean
+  // any rows for this order whose IDs aren't in the current payload — also
+  // catches legacy null-ID rows from before the migration.
   const lineItemRows = normalizeLineItemRows(payload);
   if (lineItemRows.length > 0) {
     const { error: liErr } = await supabase
       .from('order_line_items')
-      .insert(lineItemRows);
-
+      .upsert(lineItemRows, { onConflict: 'shopify_line_item_id' });
     if (liErr) {
-      console.error(`[shopify-orders] Line items error: ${liErr.message}`);
+      console.error(`[shopify-orders] Line items upsert error: ${liErr.message}`);
     }
+  }
+
+  const currentLineItemIds = lineItemRows.map(r => r.shopify_line_item_id).filter(Boolean);
+  let orphanQuery = supabase
+    .from('order_line_items')
+    .delete()
+    .eq('shopify_order_id', orderRow.shopify_order_id);
+  if (currentLineItemIds.length > 0) {
+    orphanQuery = orphanQuery.or(
+      `shopify_line_item_id.is.null,shopify_line_item_id.not.in.(${currentLineItemIds.map(s => `"${s}"`).join(',')})`
+    );
+  }
+  const { error: orphanErr } = await orphanQuery;
+  if (orphanErr) {
+    console.error(`[shopify-orders] Orphan cleanup error: ${orphanErr.message}`);
   }
 
   console.log(`[shopify-orders] Upserted order #${orderRow.order_number} with ${lineItemRows.length} line items`);

@@ -126,7 +126,10 @@ async function syncShippingZones() {
     return Math.abs(Number(a) - Number(b)) < 0.001;
   };
   const historyRows = [];
-  const observedAt = new Date().toISOString();
+  // Truncate to the minute so concurrent runs of the same change collide on the
+  // (country_code, change_type, observed_at) unique constraint and ignoreDuplicates
+  // silently no-ops the second insert. Sub-minute precision isn't useful here.
+  const observedAt = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
   for (const r of rows) {
     const prev = existing.get(r.country_code);
     if (!prev) {
@@ -171,12 +174,18 @@ async function syncShippingZones() {
     if (error) throw new Error(`Supabase upsert failed: ${error.message}`);
   }
 
-  // Insert history rows (only for actual changes; zero-change days write nothing)
+  // Insert history rows (only for actual changes; zero-change days write nothing).
+  // Idempotent: a partial unique index on (country_code, change_type,
+  // date_trunc('minute', observed_at)) collapses two concurrent runs of the
+  // same change into one row. ignoreDuplicates makes the second insert a no-op.
   if (historyRows.length > 0) {
     const { error: histErr } = await supabase
       .from('shipping_zones_history')
-      .insert(historyRows);
-    if (histErr) throw new Error(`Supabase history insert failed: ${histErr.message}`);
+      .upsert(historyRows, {
+        onConflict: 'country_code,change_type,observed_at',
+        ignoreDuplicates: true,
+      });
+    if (histErr) throw new Error(`Supabase history upsert failed: ${histErr.message}`);
   }
 
   const zoneCounts = {};

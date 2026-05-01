@@ -200,6 +200,7 @@ function normalizeLineItemRows(o) {
 
     return {
       shopify_order_id: shopifyOrderId,
+      shopify_line_item_id: li.id ? toGid('LineItem', li.id) : null,
       shopify_variant_id: li.variant_id ? toGid('ProductVariant', li.variant_id) : null,
       title: li.title,
       variant_title: li.variant_title || null,
