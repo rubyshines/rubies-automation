@@ -5,7 +5,8 @@
  * Pipeline uses Shopify JSON API (minimal headers) + /meta.json currency detection
  * + live FX conversion to get USD prices deterministically.
  *
- * For non-Shopify stores (Etsy), falls back to AI extraction.
+ * RUBIES_PRODUCTS.priceUsd values below are fallback only. The pipeline pulls
+ * the live adult-tier price (max variant) from rubyshines.com on each run.
  *
  * Last curated: 2026-04-07
  */

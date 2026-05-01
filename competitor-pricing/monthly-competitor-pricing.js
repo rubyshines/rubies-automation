@@ -45,10 +45,50 @@ function toUsd(amount, currency) {
 }
 
 // ---------------------------------------------------------------------------
+// Pull current RUBIES adult-tier prices live from Shopify so the report
+// never drifts after a price change. Each product's `priceUsd` is replaced
+// with the max variant price (adult tier; youth is the cheaper variants).
+// Falls back to whatever was hardcoded in config if the fetch fails.
+// ---------------------------------------------------------------------------
+async function loadRubiesAdultPrices() {
+  for (const product of RUBIES_PRODUCTS) {
+    try {
+      const jsonUrl = product.url.replace(/\/?$/, '.json');
+      const res = await fetch(jsonUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': '' },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!res.ok) {
+        console.warn(`  RUBIES ${product.name}: HTTP ${res.status}, keeping $${product.priceUsd}`);
+        continue;
+      }
+      const data = await res.json();
+      const variants = data?.product?.variants || [];
+      const prices = variants
+        .map((v) => parseFloat(v.price))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (prices.length === 0) {
+        console.warn(`  RUBIES ${product.name}: no variant prices, keeping $${product.priceUsd}`);
+        continue;
+      }
+      const maxLocal = Math.max(...prices);
+      const baseCurrency = (await detectShopifyCurrency(product.url)) || 'USD';
+      product.priceUsd = toUsd(maxLocal, baseCurrency);
+      console.log(`  RUBIES ${product.name}: ${baseCurrency} ${maxLocal} (adult tier) = $${product.priceUsd}`);
+    } catch (err) {
+      console.warn(`  RUBIES ${product.name}: ${err.message}, keeping $${product.priceUsd}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Scrape all products
 // ---------------------------------------------------------------------------
 async function scrapeAll() {
   await loadExchangeRates();
+
+  // Pull our own current adult-tier prices so the comparison is fresh
+  await loadRubiesAdultPrices();
 
   // Pre-warm currency detection for all domains
   for (const comp of COMPETITORS) {
@@ -143,9 +183,9 @@ async function detectPriceChanges(results, scrapeDate) {
     const supabase = getSupabaseClient();
     const { data: previous } = await supabase
       .from('competitor_prices')
-      .select('competitor_brand, product_category, product_name, price_usd, scrape_date')
+      .select('competitor_brand, product_category, product_name, price_local, currency_code, price_usd, scrape_date')
       .lt('scrape_date', scrapeDate)
-      .not('price_usd', 'is', null)
+      .not('price_local', 'is', null)
       .order('scrape_date', { ascending: false });
 
     if (!previous || previous.length === 0) return [];
@@ -157,18 +197,26 @@ async function detectPriceChanges(results, scrapeDate) {
       if (!prevMap.has(key)) prevMap.set(key, row);
     }
 
+    // Compare in the merchant's own currency. Real price changes show in local
+    // currency; market FX wobble doesn't. This avoids flagging $1 USD shifts
+    // that are just CAD/EUR rate movement. If the store changed currency
+    // (e.g. CA stopped serving CAD), skip — not comparable.
     const changes = [];
     for (const r of results) {
-      if (!r.priceUsd || r.scrapeError) continue;
+      if (!r.priceLocal || r.scrapeError) continue;
       const key = `${r.competitor}:${r.category}`;
       const prev = prevMap.get(key);
-      if (prev && Math.abs(Number(prev.price_usd) - r.priceUsd) > 0.5) {
+      if (!prev || prev.currency_code !== r.currencyCode) continue;
+      if (Math.abs(Number(prev.price_local) - r.priceLocal) > 0.5) {
         changes.push({
           competitor: r.competitor,
           category: r.category,
           productName: r.productName,
           previousPrice: Number(prev.price_usd),
           currentPrice: r.priceUsd,
+          previousPriceLocal: Number(prev.price_local),
+          currentPriceLocal: r.priceLocal,
+          currency: r.currencyCode,
           previousDate: prev.scrape_date,
         });
       }
