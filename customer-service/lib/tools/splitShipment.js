@@ -1,7 +1,8 @@
 /**
- * Fulfill items tool: fulfill_items
+ * Split shipment tool: split_shipment
  *
- * Splits an order for the pre-order case in one operation:
+ * Splits an order so the in-stock items ship now and the held (out-of-stock /
+ * pre-order) items ship separately later, in one operation:
  *   1. Marks the held items as fulfilled on the original order (placeholder
  *      fulfillment — no tracking, customer not notified) so the warehouse can
  *      ship the in-stock portion.
@@ -14,8 +15,8 @@
  *
  * Two-phase: phase 1 previews; phase 2 (confirmed=true) executes.
  *
- * NOT for manual shipment recording with real tracking — that is a different
- * flow that doesn't yet exist as a tool.
+ * For manual fulfillment with real tracking, or partial fulfillment without
+ * a follow-on pre-order, build a different tool when the need arises.
  */
 
 const {
@@ -33,15 +34,15 @@ const NEW_ORDER_TAGS = ['pre-order', 'cs-mcp'];
 
 const tools = [
   {
-    name: 'fulfill_items',
+    name: 'split_shipment',
     description: [
-      'Split an order for the pre-order case: marks specified out-of-stock line items as fulfilled (placeholder, no tracking, no customer notification) on the original order so the warehouse can ship the in-stock items, AND immediately creates a new $0 pre-order for the held items so they queue for shipment when inventory arrives.',
+      'Split an order so in-stock items ship now and held (pre-order / out-of-stock) items ship separately later. Marks the specified held line items as fulfilled (placeholder, no tracking, no customer notification) on the original order so the warehouse can release the in-stock items, AND immediately creates a new $0 pre-order containing the held items so they queue for shipment when inventory arrives.',
       'Tags the original order `pre-order-pending` and appends a staff note. Tags the new pre-order `pre-order` + `pre-order-from-<original>` with a referencing note.',
       'Two-phase: phase 1 (confirmed omitted/false) previews; phase 2 (confirmed=true) executes.',
       'You MUST present the phase 1 preview to the operator and receive explicit confirmation before calling phase 2.',
-      'Use this when an order has out-of-stock items blocking the warehouse from shipping the in-stock items, AND the operator wants the held items queued as a separate pre-order rather than refunded.',
-      'Do NOT use this for refunds — the customer pays nothing extra and receives nothing less; this just splits the shipment timing.',
-      'Do NOT use for manual shipment recording with real tracking — that is a different flow.',
+      'Pass the SKUs of the HELD items (the ones being moved to a new pre-order), not the in-stock items being shipped now.',
+      'Use this when the customer has agreed to split their order so in-stock items ship now and pre-order/OOS items follow. The held items go to a new $0 pre-order (not a refund — the customer pays nothing extra and receives nothing less, this just splits the shipment timing).',
+      'Do NOT use for manual fulfillment with real tracking — that is a different flow.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -296,7 +297,7 @@ const tools = [
             '  Shipping address: ' + (order.shippingAddress ? `same as ${order.name}` : 'customer default'),
             '',
             staff_note ? `**Staff note (added to both orders):** ${staff_note}\n` : '',
-            `To confirm, call fulfill_items again with confirmed=true, order_number="${order_number}", items=${JSON.stringify(items)}, and _fulfill_data=${JSON.stringify(fulfillData)}.`,
+            `To confirm, call split_shipment again with confirmed=true, order_number="${order_number}", items=${JSON.stringify(items)}, and _fulfill_data=${JSON.stringify(fulfillData)}.`,
           ].filter(Boolean).join('\n'),
         }],
       };

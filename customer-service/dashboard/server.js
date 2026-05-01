@@ -439,7 +439,10 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
 
   // On re-draft: keep action chat history (don't lose operator work) but clear
   // execution state so the action panel reflects the new draft's recommendation.
-  const actionCompleted = draft.action_result?.phase === 'completed';
+  // Action is "completed" if the legacy execute path filed `phase='completed'`
+  // OR a chat-path completion was filed into `actions[]` (the canonical timeline log).
+  const actionCompleted = draft.action_result?.phase === 'completed'
+    || (Array.isArray(draft.actions) && draft.actions.length > 0);
   if (!actionCompleted) {
     const prevChat = draft.action_result;
     if (prevChat?.chat_history?.length) {
@@ -1088,6 +1091,20 @@ async function apiGetHistory(query) {
 // Two-phase execute endpoints
 // ---------------------------------------------------------------------------
 
+// Build a canonical actions[] entry from a legacy phase-2 tool result so the
+// completed action shows up in the inline ticket timeline (same shape as the
+// chat-path entries built at apiActionChat). Use after legacy execute endpoints.
+function buildLegacyActionEntry(actionType, toolResult, executedAt) {
+  const resultText = toolResult?.content?.[0]?.text
+    || (typeof toolResult === 'string' ? toolResult : '');
+  return {
+    executed_at: executedAt,
+    action_type: actionType,
+    summary: resultText,
+    links: extractActionLinks([{ tool: '', result: resultText }]),
+  };
+}
+
 async function apiExecuteExchange(id, body) {
   const supabase = getSupabaseClient();
   const { data: draft, error: fetchErr } = await supabase
@@ -1109,9 +1126,12 @@ async function apiExecuteExchange(id, body) {
       draft_order_id: prevResult.draft_order_id,
     });
 
+    const now = new Date().toISOString();
+    const entry = buildLegacyActionEntry('exchange', result, now);
     await supabase.from('cs_ai_drafts').update({
       action_result: { ...prevResult, phase: 'completed', phase2: result },
-      action_executed_at: new Date().toISOString(),
+      action_executed_at: now,
+      actions: [...(Array.isArray(draft.actions) ? draft.actions : []), entry],
     }).eq('id', id);
 
     return result;
@@ -1181,9 +1201,12 @@ async function apiExecuteRefund(id, body) {
       _refund_data: prevResult._refund_data,
     });
 
+    const now = new Date().toISOString();
+    const entry = buildLegacyActionEntry('refund', result, now);
     await supabase.from('cs_ai_drafts').update({
       action_result: { ...prevResult, phase: 'completed', phase2: result },
-      action_executed_at: new Date().toISOString(),
+      action_executed_at: now,
+      actions: [...(Array.isArray(draft.actions) ? draft.actions : []), entry],
     }).eq('id', id);
 
     return result;
@@ -1235,9 +1258,12 @@ async function apiExecuteEdit(id, body) {
     });
 
     const prevResult = draft.action_result || {};
+    const now = new Date().toISOString();
+    const entry = buildLegacyActionEntry('order_modification', result, now);
     await supabase.from('cs_ai_drafts').update({
       action_result: { ...prevResult, phase: 'completed', phase2: result },
-      action_executed_at: new Date().toISOString(),
+      action_executed_at: now,
+      actions: [...(Array.isArray(draft.actions) ? draft.actions : []), entry],
     }).eq('id', id);
 
     return result;
@@ -1271,6 +1297,31 @@ function getAnthropic() {
   if (!_anthropicClient) _anthropicClient = new Anthropic();
   return _anthropicClient;
 }
+
+// Tools that write/modify Shopify state. Used by the completing-tool detector
+// to decide whether a tool result counts as a completed action worth filing in
+// the timeline. Read-only tools (lookup_customer, search_products, etc.) are
+// intentionally absent — they never complete an action by themselves.
+const WRITE_TOOLS = new Set([
+  'create_exchange_order',
+  'create_invoice_order',
+  'create_order',
+  'create_order_complete',
+  'create_wholesale_order',
+  'refund_order',
+  'edit_order',
+  'cancel_order',
+  'warehouse_hold',
+  'release_warehouse_hold',
+  'release_address_hold',
+  'add_order_note',
+  'create_discount_code',
+  'update_customer',
+  'split_shipment',
+  'send_draft_order_invoice',
+  'delete_draft_order',
+  'set_product_prices',
+]);
 
 function extractActionLinks(toolResults) {
   const links = [];
@@ -1359,14 +1410,15 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   // Order Created — Awaiting Confirmation**") so we must exclude any tool result
   // still flagged as awaiting confirmation, otherwise the dashboard locks the panel
   // into "executed" mode and the Yes/No confirm buttons never render.
+  //
+  // Rule: if the tool is a known write tool AND its result doesn't say
+  // "awaiting confirmation," it's a completion. Two-phase tools' phase 1
+  // previews always emit "awaiting confirmation"; phase 2 (with confirmed=true)
+  // does not. One-phase write tools just complete on first call.
   const completingTool = result.tool_results.find(tr => {
-    if (tr.result && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)) return false;
-    if (tr.tool === 'refund_order' && tr.input?.confirmed) return true;
-    if (tr.tool === 'create_exchange_order' && tr.input?.confirmed) return true;
-    if (tr.tool === 'edit_order' && tr.input?.confirmed) return true;
-    if (tr.tool === 'warehouse_hold') return true;
-    return tr.result && typeof tr.result === 'string'
-      && /\b(completed|refunded|hold placed|edit committed|address updated)\b/i.test(tr.result);
+    if (!WRITE_TOOLS.has(tr.tool)) return false;
+    if (typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)) return false;
+    return true;
   });
   if (completingTool) {
     const now = new Date().toISOString();
@@ -1400,6 +1452,8 @@ function actionTypeFromTool(toolName) {
     case 'cancel_order':          return 'cancellation';
     case 'update_customer':       return 'customer_profile_update';
     case 'create_discount_code':  return 'discount_code';
+    case 'split_shipment':        return 'split_shipment';
+    case 'create_invoice_order':  return 'invoice_kept_items';
     default:                      return null;
   }
 }
@@ -1467,7 +1521,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     // 2. Recent orders
     supabase
       .from('orders')
-      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
+      .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_refunded, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
       .eq('customer_email', email)
       .order('created_at', { ascending: false })
       .limit(10),
@@ -1535,7 +1589,7 @@ async function apiGetCustomerContext(email, orderNumber) {
     if (!matchedOrder) {
       const { data: directOrder } = await supabase
         .from('orders')
-        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
+        .select('shopify_order_id, order_number, created_at, fulfillment_status, financial_status, total_price, current_total_price, subtotal_price, total_discounts, total_refunded, total_shipping, shipping_method, shop_currency, shipping_address, note, tags, fulfillments, discount_applications, discount_codes')
         .eq('order_number', orderNum)
         .maybeSingle();
       if (directOrder) matchedOrder = directOrder;
@@ -1564,6 +1618,8 @@ async function apiGetCustomerContext(email, orderNumber) {
         order_number: matchedOrder.order_number,
         created_at: matchedOrder.created_at,
         total: matchedOrder.current_total_price || matchedOrder.total_price,
+        original_total: matchedOrder.total_price,
+        total_refunded: matchedOrder.total_refunded,
         subtotal: matchedOrder.subtotal_price,
         total_discounts: matchedOrder.total_discounts,
         tags: matchedOrder.tags || [],
@@ -1620,6 +1676,8 @@ async function apiGetCustomerContext(email, orderNumber) {
     order_number: o.order_number,
     created_at: o.created_at,
     total: o.current_total_price || o.total_price,
+    original_total: o.total_price,
+    total_refunded: o.total_refunded,
     subtotal: o.subtotal_price,
     total_discounts: o.total_discounts,
     tags: o.tags || [],

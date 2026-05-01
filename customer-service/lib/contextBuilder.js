@@ -92,6 +92,9 @@ function supabaseOrderToShopify(orderRow, lineItems) {
       shopMoney: { amount: String(orderRow.total_price || 0), currencyCode: orderRow.shop_currency },
       presentmentMoney: { amount: String(orderRow.presentment_total_price || orderRow.total_price || 0), currencyCode: orderRow.presentment_currency || orderRow.shop_currency },
     },
+    totalRefundedSet: {
+      shopMoney: { amount: String(orderRow.total_refunded || 0), currencyCode: orderRow.shop_currency },
+    },
     subtotalPriceSet: {
       shopMoney: { amount: String(orderRow.subtotal_price || 0), currencyCode: orderRow.shop_currency },
     },

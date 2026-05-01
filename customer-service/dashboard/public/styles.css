@@ -837,6 +837,31 @@ main { height: calc(100vh - 56px); }
   color: var(--green);
   background: var(--green-bg);
 }
+.ticket-order-discount-pill--refund {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* "Refunded: −$X.XX" row above the total on partially-refunded orders.
+   Brand accent (brick red) signals "money returned" — distinct from the
+   green discount/exchange treatment without reading as alarming. */
+.ticket-order-refund-row {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: right;
+  padding-top: 4px;
+}
+
+/* Subtotal struck through on refunded orders, sits inline before the post-refund total */
+.ticket-order-refund-original {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
 
 /* Secondary line under the order header: source order # for exchanges,
    or the actual discount code for partial promos. */
@@ -1075,6 +1100,34 @@ main { height: calc(100vh - 56px); }
   padding: 1px 4px;
   border-radius: 3px;
   color: var(--text);
+}
+
+/* Refund variants of the past-order amount + savings rows.
+   Uses brand accent (brick red) so refunds are visually distinct from
+   green discount/exchange savings while still feeling on-brand. */
+.past-order-amount-refunded {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+}
+.past-order-refund {
+  margin-top: 6px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+}
+.past-order-refund-pill {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .past-order-load-more {

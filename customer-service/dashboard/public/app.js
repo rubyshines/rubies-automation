@@ -850,7 +850,8 @@ async function loadCustomerContext(email, orderNumber) {
       document.getElementById('ticket-order').innerHTML = renderOrderCard(
         `#${to.order_number}`, to.created_at, to.items,
         to.fulfillment_status, to.total, to.currency, linksHtml, to.shipping_address, trackingInfo, to.shipping, to.shipping_method,
-        { tags: to.tags, total_discounts: to.total_discounts, subtotal: to.subtotal, discount_applications: to.discount_applications, discount_codes: to.discount_codes, note: to.note }
+        { tags: to.tags, total_discounts: to.total_discounts, subtotal: to.subtotal, discount_applications: to.discount_applications, discount_codes: to.discount_codes, note: to.note },
+        { financial_status: to.financial_status, total_refunded: to.total_refunded, original_total: to.original_total }
       );
     }
 
@@ -938,11 +939,28 @@ function renderOtherOrders(showCount) {
     const isPartialDiscount = discount.type === 'partial';
     const statusLower = (o.fulfillment_status || '').toLowerCase();
     const statusColor = statusLower === 'fulfilled' ? 'var(--green)' : statusLower === 'unfulfilled' ? 'var(--yellow)' : 'var(--text-tertiary)';
-    const amountStr = isExchange
-      ? `<span class="past-order-amount-original">$${discount.discounts.toFixed(0)}</span> <span class="past-order-amount-effective">$0</span>`
-      : isPartialDiscount
-      ? `<span class="past-order-amount-original">$${discount.subtotal.toFixed(0)}</span> <span class="past-order-amount-effective">$${Number(o.total).toFixed(0)}</span>`
-      : `$${Number(o.total).toFixed(0)}`;
+
+    // Refund derived from the same fields the active card uses.
+    const refundedAmount = Number(o.total_refunded || 0);
+    const refundFinancialStatus = (o.financial_status || '').toUpperCase();
+    const isFullyRefunded = refundFinancialStatus === 'REFUNDED';
+    const isPartiallyRefunded = refundFinancialStatus === 'PARTIALLY_REFUNDED' && refundedAmount > 0;
+    const hasRefund = isFullyRefunded || isPartiallyRefunded;
+    const originalTotal = Number(o.original_total || o.total || 0);
+
+    // Amount string priority: refund > exchange/discount > plain.
+    // A refunded order's "real" amount is the post-refund current total,
+    // so we surface that as the effective amount with the original struck.
+    let amountStr;
+    if (hasRefund) {
+      amountStr = `<span class="past-order-amount-original">$${originalTotal.toFixed(0)}</span> <span class="past-order-amount-refunded">$${Number(o.total).toFixed(0)}</span>`;
+    } else if (isExchange) {
+      amountStr = `<span class="past-order-amount-original">$${discount.discounts.toFixed(0)}</span> <span class="past-order-amount-effective">$0</span>`;
+    } else if (isPartialDiscount) {
+      amountStr = `<span class="past-order-amount-original">$${discount.subtotal.toFixed(0)}</span> <span class="past-order-amount-effective">$${Number(o.total).toFixed(0)}</span>`;
+    } else {
+      amountStr = `$${Number(o.total).toFixed(0)}`;
+    }
 
     const itemsHtml = (o.items || []).map(i => {
       let priceCell = '';
@@ -974,6 +992,13 @@ function renderOtherOrders(showCount) {
       savingsRow = `<div class="past-order-savings">Discount applied · saved $${discount.discounts.toFixed(2)}${codeBit}</div>`;
     }
 
+    // Refund row sits below savings (if both apply, the operator sees both).
+    let refundRow = '';
+    if (hasRefund) {
+      const refundLabel = isFullyRefunded ? 'Fully refunded' : 'Partially refunded';
+      refundRow = `<div class="past-order-refund">${refundLabel} · −$${refundedAmount.toFixed(2)}</div>`;
+    }
+
     // Build links row for expanded view
     let orderLinks = '';
     if (shopUrl) orderLinks += `<a href="${shopUrl}" target="_blank" class="order-link order-link-sm">Shopify</a>`;
@@ -990,6 +1015,7 @@ function renderOtherOrders(showCount) {
         ${o.shipping_address ? `<div class="past-order-address">${formatAddress(o.shipping_address)}</div>` : ''}
         ${itemsHtml || '<span style="color:var(--text-tertiary);font-size:11px">No items</span>'}
         ${savingsRow}
+        ${refundRow}
         ${orderLinks ? `<div class="past-order-links">${orderLinks}</div>` : ''}
       </div>
     </details>`;
@@ -1036,7 +1062,7 @@ function classifyOrderDiscount({ tags, total, total_discounts, subtotal, discoun
   return { type: 'none', label: null, percent: null, code: null, sourceOrder: null };
 }
 
-function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo, shipping, shippingMethod, discountInfo) {
+function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, linksHtml, shippingAddress, trackingInfo, shipping, shippingMethod, discountInfo, refundInfo) {
   const statusColor = !fulfillmentStatus ? 'var(--text-tertiary)'
     : fulfillmentStatus.toLowerCase() === 'fulfilled' ? 'var(--green)'
     : fulfillmentStatus.toLowerCase() === 'unfulfilled' ? 'var(--yellow)'
@@ -1053,6 +1079,16 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
   });
   const isExchange = discount.type === 'exchange';
   const isPartialDiscount = discount.type === 'partial';
+
+  // Refund classification — derived from financial_status + amounts. We
+  // treat it as a separate axis from discount because an order can have
+  // both (e.g. promo discount applied AND a later partial refund).
+  const refundedAmount = Number(refundInfo?.total_refunded || 0);
+  const refundFinancialStatus = (refundInfo?.financial_status || '').toUpperCase();
+  const isFullyRefunded = refundFinancialStatus === 'REFUNDED';
+  const isPartiallyRefunded = refundFinancialStatus === 'PARTIALLY_REFUNDED' && refundedAmount > 0;
+  const hasRefund = isFullyRefunded || isPartiallyRefunded;
+  const originalTotal = Number(refundInfo?.original_total || total || 0);
 
   const itemsHtml = (items || []).map(i => {
     const price = i.price != null ? `$${Number(i.price).toFixed(2)}` : '';
@@ -1113,17 +1149,6 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
     trackingHtml = `<div class="order-tracking">${parts.join('')}</div>${extraHtml}`;
   }
 
-  // Badge label uses the discount title from Shopify when richer than the
-  // generic "Free exchange" / "Discount applied" defaults. For exchanges
-  // the title is usually "Exchange"; for promos it's the code.
-  let discountBadge = '';
-  if (isExchange) {
-    discountBadge = `<span class="ticket-order-discount-pill ticket-order-discount-pill--exchange">Free exchange</span>`;
-  } else if (isPartialDiscount) {
-    const partialLabel = discount.code ? `Code ${esc(discount.code)}` : (discount.label ? esc(discount.label) : 'Discount applied');
-    discountBadge = `<span class="ticket-order-discount-pill ticket-order-discount-pill--partial">${partialLabel}${discount.percent ? ` · ${discount.percent}% off` : ''}</span>`;
-  }
-
   // Optional secondary line under the order header surfacing where the
   // exchange came from (parsed from the order note) — gives the operator
   // a clickable hint of the original order.
@@ -1136,19 +1161,34 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
 
   // Total row varies by discount state. For exchanges we show $0.00 with the
   // pre-discount value struck through beside it; partial discounts show a
-  // discount row above the total and strike the subtotal.
+  // discount row above the total and strike the subtotal. A refund row, when
+  // present, appears above the total and the original (pre-refund) amount is
+  // struck through inline. Refund + discount can co-occur and both render.
   let totalRow = '';
   if (total != null) {
+    const refundRow = hasRefund
+      ? `<div class="ticket-order-refund-row">Refunded: −$${refundedAmount.toFixed(2)}</div>`
+      : '';
+
     if (isExchange && discount.discounts > 0) {
-      totalRow = `<div class="ticket-order-total">
-        Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
-        <span class="ticket-order-total-was">was $${discount.discounts.toFixed(2)}</span>
-      </div>`;
+      totalRow = `${refundRow}
+        <div class="ticket-order-total">
+          Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
+          <span class="ticket-order-total-was">was $${discount.discounts.toFixed(2)}</span>
+        </div>`;
     } else if (isPartialDiscount) {
       const dropLabel = discount.code ? `Discount (${esc(discount.code)})` : 'Discount applied';
       totalRow = `<div class="ticket-order-discount-row">${dropLabel}: −$${discount.discounts.toFixed(2)}</div>
+        ${refundRow}
         <div class="ticket-order-total">
           <span class="ticket-order-subtotal-strike">$${discount.subtotal.toFixed(2)}</span>
+          Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
+        </div>`;
+    } else if (hasRefund) {
+      // Refund without a discount — strike the original total inline.
+      totalRow = `${refundRow}
+        <div class="ticket-order-total">
+          <span class="ticket-order-refund-original">$${originalTotal.toFixed(2)}</span>
           Total: $${Number(total).toFixed(2)} ${esc(currency || 'CAD')}
         </div>`;
     } else {
@@ -1161,7 +1201,6 @@ function renderOrderCard(name, date, items, fulfillmentStatus, total, currency, 
       <span class="ticket-order-title">Order ${esc(name)}</span>
       <span style="margin-left:8px;font-size:12px;color:var(--text-secondary)">${date ? timeAgo(date) : ''}</span>
       ${fulfillmentStatus ? `<span class="ticket-order-status" style="margin-left:8px;color:${statusColor}">${esc(fulfillmentStatus)}</span>` : ''}
-      ${discountBadge}
     </div>
     ${discountMeta}
     ${addressHtml}
@@ -1212,8 +1251,8 @@ function renderActionPanel(draft) {
 
   // Header badge
   if (actionType) {
-    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'fulfillment_check' ? 'hold' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
-    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', fulfillment_check: 'Fulfillment Check', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
+    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'split_shipment' ? 'edit' : actionType === 'invoice_kept_items' ? 'edit' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
+    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', split_shipment: 'Split Shipment', invoice_kept_items: 'Invoice Kept Items', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
     const badgeLabel = badgeLabels[actionType] || actionType;
     headerEl.innerHTML = `
       <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>
@@ -1421,8 +1460,16 @@ function buildActionPrefill(draft) {
     return `cancel order #${orderNum}`;
   }
 
-  if (actionType === 'fulfillment_check') {
-    return `check fulfillment for order #${orderNum}`;
+  if (actionType === 'split_shipment') {
+    // operator_action_summary holds the exact split instructions (which SKUs
+    // ship now vs go to the new pre-order). Use it directly when present.
+    return structured.operator_action_summary || `split order #${orderNum}`;
+  }
+
+  if (actionType === 'invoice_kept_items') {
+    // operator_action_summary holds the items + unit prices + total to invoice.
+    // The operator agent reads this and dispatches create_invoice_order.
+    return structured.operator_action_summary || `create invoice for kept items on order #${orderNum}`;
   }
 
   if (actionType === 'customer_profile_update') {

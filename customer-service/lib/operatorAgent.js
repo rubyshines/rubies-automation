@@ -111,6 +111,10 @@ Sizing systems:
 
 **Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold.
 
+**Split shipment for pre-order:** Use split_shipment when the customer has agreed to split their order so in-stock items ship now and pre-order/OOS items follow. Pass the SKUs of the HELD items (the pre-order/OOS ones being moved to a new $0 pre-order), not the in-stock items being shipped now. Two-phase: preview, then confirm.
+
+**Invoice for kept items:** Use create_invoice_order with paid_items when the action panel says invoice_kept_items. This covers two cases: (a) the customer kept items they were supposed to return after an exchange and now wants to pay, or (b) the customer was refunded and changed their mind, wanting to keep the items and be re-billed. The advisor's operator_action_summary lists the items, quantities, sizes/colors, unit prices, and total — use those exact values. No exchange_items, no return_credit. The customer pays the invoice; the new payment naturally reconciles any prior refund (do not also reverse the original refund).
+
 **Discount codes:** Use create_discount_code when the operator says "discount", "give them X% off", "comp", "free product", or "make it free". Two modes: percent off the Discounts collection (default 10), or free_product (fixed amount = highest variant price, scoped to one product). The advisor already auto-issues 10% codes for discount_request tickets — only call this tool when the operator explicitly asks for a higher discount or a free product. Always two-phase confirmation when percent_off > 10 or mode=free_product.
 
 ## Choosing the Right Tool
@@ -121,6 +125,8 @@ Sizing systems:
 - **Pure refund:** refund_order
 - **New standalone order:** create_order
 - **Discount code (>10% or free product):** create_discount_code
+- **Split a pre-order shipment:** split_shipment (placeholder-fulfills held SKUs on original, creates $0 pre-order for them)
+- **Invoice for kept items (after refund or no-show return):** create_invoice_order with paid_items only (action_type = invoice_kept_items)
 
 ## Rules
 - **Tool calls precede operator-facing prose.** Internal planning narration ("Looking up the customer…", "Checking inventory for the AJ 1X…") is encouraged before tool calls — the operator sees this in the reasoning trace. But do not write the operator-facing reply (the preview, the confirmation, the summary) until you have called every tool the response requires. Write the reply once, in full, after all tool results are in.
@@ -298,6 +304,7 @@ const SHADOW_BLOCKED_TOOLS = new Set([
   'release_warehouse_hold',
   'release_address_hold',
   'add_order_note',
+  'split_shipment',
 ]);
 
 async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMessages, opusResult, context }) {

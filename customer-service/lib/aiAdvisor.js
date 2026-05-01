@@ -322,6 +322,7 @@ async function executeToolCall(toolName, toolInput) {
           days_since_order: Math.floor((Date.now() - new Date(ctx.targetOrder.createdAt).getTime()) / 86400000),
           fulfillment_status: ctx.targetOrder.displayFulfillmentStatus,
           financial_status: ctx.targetOrder.displayFinancialStatus,
+          total_refunded: ctx.targetOrder.totalRefundedSet?.shopMoney?.amount || '0',
           shipping_address: ctx.targetOrder.shippingAddress || null,
           line_items: ctx.orderLineItems.map(li => ({
             title: li.title,
@@ -526,7 +527,7 @@ function buildSystemPrompt(toneSamples, orderContext) {
 - Customer email: ${orderContext.customer?.email || 'unknown'}${orderContext.resolved_by_name ? `\n- ⚠️ RESOLVED BY NAME FALLBACK: no customer record exists under the sender's email (${orderContext.conversation_email}). This customer was found by searching their name. Apply the "Resolved by name" verification gates before trusting this match.` : ''}
 - Customer country: ${orderContext.customer?.country || 'unknown'}${orderContext.customer?.duties_prepaid != null ? ` (duties ${orderContext.customer.duties_prepaid ? 'PREPAID — we cover customs charges' : 'NOT prepaid — customer responsible'})` : ''}
 ${orderContext.target_order ? `- Order: ${orderContext.target_order.name} (placed ${orderContext.target_order.created_at?.split('T')[0] || 'unknown'}, ${orderContext.target_order.days_since_order} days ago)
-- Fulfillment: ${orderContext.target_order.fulfillment_status}
+- Fulfillment: ${orderContext.target_order.fulfillment_status}${orderContext.target_order.financial_status && orderContext.target_order.financial_status !== 'PAID' ? ` · Financial: ${orderContext.target_order.financial_status}${Number(orderContext.target_order.total_refunded || 0) > 0 ? ` (total_refunded: $${Number(orderContext.target_order.total_refunded).toFixed(2)})` : ''}` : ''}
 - Items: ${orderContext.target_order.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
 ${orderContext.exchange_orders?.length ? `- Previous exchanges: ${orderContext.exchange_orders.map(ex => ex.name).join(', ')}` : ''}
 `;
@@ -866,9 +867,12 @@ When a customer asks about a delayed or unshipped order:
 
 **Pre-order item on order:** Each pre_order issue from check_unfulfilled_order may include a preOrderTarget value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
 
-  - **Target is in the future** (still upcoming): "When you placed your order, you would have seen a message that the [item] in [variant] is a pre-order, with target availability [date]. Pre-orders ship along with the rest of the order once everything is in stock." Call compare_products to find what's available, then offer up to three options based on what applies: split the shipment (when there are in-stock items to ship now), swap the pre-order item for something in stock (apply the OOS swap precedence — sibling color first, then a different product in the same size), or refund just the pre-order item and ship the rest. Set status to "needs_info", action_type to "fulfillment_check".
+  - **Target is in the future** (still upcoming):
+    - **Round 1 (offering options):** Open with "When you placed your order, you would have seen a message that the [item] in [variant] is a pre-order, with target availability [date]. Pre-orders ship along with the rest of the order once everything is in stock." Call compare_products to find what's available, then offer up to three options based on what applies: split the shipment (when there are in-stock items to ship now), swap the pre-order item for something in stock (apply the OOS swap precedence — sibling color first, then a different product in the same size), or refund just the pre-order item and ship the rest. Set status to "needs_info", action_type to null, operator_action_summary to null.
+    - **Round 2, customer chose split:** Confirm in past tense ("I've split your shipment so [in-stock items] will ship now, and [held items] will follow once they're back in stock (target [date])"). Set status to "ready", action_type to "split_shipment", and populate operator_action_summary with the exact split: "split order #X: ship [in-stock SKUs+qtys] now, hold [held SKUs+qtys] in new pre-order until [target date]".
+    - **Round 2, customer chose swap or refund:** Use the standard exchange or refund prescription item flow — items[].state=CONFIRMED for the swap (with resolved_product/resolved_size/resolved_color) or REFUND_CONFIRMED for the refund. The post-processor derives action_type from the prescription items.
 
-  - **Target has passed and inventory is still 0** (overdue): The shipment missed its target. Apologize for the delay and route to a human so Jamie can investigate (could be a delayed shipment or a mis-tagged pre-order). Set status to "route_to_human", action_type to "fulfillment_check".
+  - **Target has passed and inventory is still 0** (overdue): The shipment missed its target. Apologize for the delay and route to a human so Jamie can investigate (could be a delayed shipment or a mis-tagged pre-order). Set status to "route_to_human", action_type to null.
 
   - **Target has passed and inventory is now available** (resolved): Don't mention this item as a reason for the delay — its pre-order resolved. Focus on whatever still blocks the order (a different pre-order or OOS item). See "Pre-order resolved but ANOTHER item now OOS" below.
 
@@ -879,11 +883,11 @@ Swap precedence (follow this order):
   2. **Same product, different color.** If their preferred color is OOS, the compare_products source.available_colors shows which colors have stock. Offer those.
   3. **Different product, same size.** Call compare_products — the alternatives list shows in-stock products in the same category. Use fit_description and comparison_notes to pick the closest match. Don't offer a different size — the customer chose that size for a reason. (Exception: youth ↔ adult equivalent sizes like youth 14 = adult S are the same fit.)
   4. **Refund just that item** and ship the rest of the order now.
-  Set status to "needs_info", action_type to "fulfillment_check".
+  Set status to "needs_info", action_type to null.
 
 **Pre-order resolved but a different item is blocking:** When a past-target pre-order is now in stock but something else (a future-target pre-order, an OOS item, etc.) is still holding the order, focus on the current blocker. Don't reference the resolved pre-order as a reason for the delay — its inventory is here.
 
-**Order stuck (3+ business days, no issues found):** "I'm sorry for the delay. I'm looking into this and will get back to you." Set action_type to "fulfillment_check" so it gets flagged for Jamie.
+**Order stuck (3+ business days, no issues found):** "I'm sorry for the delay. I'm looking into this and will get back to you." Set status to "route_to_human" so Jamie can investigate.
 
 **Normal processing (0-2 business days):** "Your order is being prepared and should ship today/tomorrow. You'll get a shipping confirmation with tracking once it's on its way."
 
@@ -904,6 +908,16 @@ When a customer says they were charged customs duties or import taxes on deliver
 - **Process refunds and exchanges IMMEDIATELY.** Never wait for the customer to donate, ship, or confirm anything before processing. The refund/exchange happens first, donation info is given alongside it.
 - $0 exchange orders: NEVER refund. These are previous exchanges. Offer another exchange instead.
 - If a customer wants to PAY for items they kept from an exchange (e.g., they forgot to donate/return them), send them an invoice. Don't tell them it's free or to keep them. They're offering to do the right thing.
+
+  **Customer wants to be invoiced for kept items (covers two cases):**
+  - **(a) No prior refund — kept exchange items they were supposed to return:** customer says they kept the items they were supposed to donate/return, asks to pay.
+  - **(b) Prior refund reversal — they were refunded, then changed their mind:** the order shows financial_status PARTIALLY_REFUNDED or REFUNDED, and the conversation makes clear they now want to keep those items and be re-billed ("decided to keep", "re-charge me", "I'll pay for these after all"). The new invoice payment naturally reconciles the prior refund — same amount in, same amount out. Do NOT try to reverse the original refund. Just send a new invoice for the kept items.
+
+  In both cases:
+  - Identify the kept items from the conversation + order context.
+  - **Invoice total:** for case (b), the invoice total MUST equal the order's total_refunded value from the order context (shown in the order summary above as "total_refunded: $X.XX") — that's the exact amount that was refunded, and re-invoicing for that same amount cleanly reconciles the books. Do NOT recompute from line item prices. For case (a), sum the current line item prices for the kept items.
+  - Set status to "ready", action_type to "invoice_kept_items". Write the email in past tense ("I've sent you an invoice for $X.XX so you can pay for the [items]"). The dollar amount in the prose must match the invoice total.
+  - Populate operator_action_summary with the exact items, quantities, sizes/colors, the total, and a reference to the original order. Example for case (b): "create invoice for 3x AJ size 14 Pink + 1x Ruby size 14 Black, total $87.55 (matches refund), re-billing items previously refunded on order #29870". The operator agent uses this to call create_invoice_order with paid_items only.
 
 ### Donations
 - All RUBIES returns are donated (not shipped back). Never ask a customer to ship items back to RUBIES.
@@ -967,7 +981,7 @@ After handling the conversation, you MUST end your final message with a structur
   "status": "ready|needs_info|gathering|route_to_human (use ready when ALL items are resolved OR when setting an explicit action_type below — the system automatically marks it action_needed for the operator. Use needs_info when waiting for customer input. Use gathering while still processing.)",
   "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|discount_request|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. Use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships, discount_request when the customer asks for a discount or didn't receive their welcome code. If nothing fits, use 'uncategorized' — do not invent new values.)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
-  "action_type": "null|warehouse_hold|order_modification|cancellation|customer_profile_update|discount_code (set when an order, profile, or discount-code action is needed beyond exchange/refund)",
+  "action_type": "null|warehouse_hold|order_modification|cancellation|customer_profile_update|discount_code|split_shipment|invoice_kept_items (set when an order, profile, discount-code, split-shipment, or invoice-kept-items action is needed beyond exchange/refund)",
   "new_address": "null OR { address1, city, province, zip, country } — REQUIRED when action_type is order_modification and the customer provided a new shipping address. Parse the address from their message.",
   "customer_profile_update": "null OR { new_email, new_first_name, new_last_name } — REQUIRED when action_type is customer_profile_update. Include only the fields the customer asked to change.",
   "discount_code": "null OR { mode: 'percent'|'free_product', percent_off?: number, product_query?: string } — REQUIRED when action_type is discount_code. From the advisor path, this is always { mode: 'percent', percent_off: 10 }. Higher percentages and free-product comps come from operator commands, not from the advisor.",
@@ -1531,8 +1545,18 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
   }
 
   // Compute action_type from prescription items (which have the resolved states)
+  // — but only if the model didn't explicitly say "no action." When the model
+  // emits action_type=null AND operator_action_summary=null together, it has
+  // intentionally signalled no fresh action is being committed (typical for
+  // multi-round tickets where the action was completed in a prior turn — the
+  // items remain CONFIRMED for context but the action is not being re-issued).
+  // Trust that signal rather than re-deriving from prescription state.
+  const modelExplicitlyNoAction = ('action_type' in parsed)
+    && parsed.action_type === null
+    && !parsed.operator_action_summary;
+
   let action_type = null;
-  if (parsed.status === 'ready' || parsed.status === 'action_needed') {
+  if (!modelExplicitlyNoAction && (parsed.status === 'ready' || parsed.status === 'action_needed')) {
     const hasExchange = prescriptionItems.some(i => i.state === 'CONFIRMED' && !i.product?.includes('refund'));
     const hasRefund = prescriptionItems.some(i => i.state === 'REFUND_CONFIRMED');
     if (hasExchange && hasRefund) action_type = 'exchange+refund';
@@ -1540,9 +1564,10 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     else if (hasRefund) action_type = 'refund';
   }
 
-  // AI's explicit action_type for hold, edit, cancellation takes priority
-  // (item states like CONFIRMED may be misinterpreted as exchange for non-exchange scenarios)
-  if (parsed.action_type && ['warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code'].includes(parsed.action_type)) {
+  // AI's explicit action_type for hold, edit, cancellation, profile, discount,
+  // split, invoice-kept-items takes priority. (Item states like CONFIRMED may
+  // be misinterpreted as exchange for non-exchange scenarios.)
+  if (parsed.action_type && ['warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code', 'split_shipment', 'invoice_kept_items'].includes(parsed.action_type)) {
     action_type = parsed.action_type;
   }
 

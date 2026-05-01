@@ -131,6 +131,7 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
               }
               totalPriceSet { shopMoney { amount currencyCode } }
               currentTotalPriceSet { shopMoney { amount currencyCode } }
+              totalRefundedSet { shopMoney { amount currencyCode } }
               lineItems(first: 50) {
                 edges {
                   node {
@@ -187,6 +188,7 @@ async function getOrderByNumber(orderNumber) {
             }
             totalPriceSet { shopMoney { amount currencyCode } }
             currentTotalPriceSet { shopMoney { amount currencyCode } }
+            totalRefundedSet { shopMoney { amount currencyCode } }
             subtotalPriceSet { shopMoney { amount currencyCode } }
             totalShippingPriceSet { shopMoney { amount currencyCode } }
             totalTaxSet { shopMoney { amount currencyCode } }
@@ -253,6 +255,7 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
             }
             totalPriceSet { shopMoney { amount currencyCode } }
             currentTotalPriceSet { shopMoney { amount currencyCode } }
+            totalRefundedSet { shopMoney { amount currencyCode } }
             lineItems(first: 50) {
               edges {
                 node {

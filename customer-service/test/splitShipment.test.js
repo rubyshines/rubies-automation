@@ -1,7 +1,7 @@
 /**
- * Unit tests for lib/tools/fulfillItems.js
+ * Unit tests for lib/tools/splitShipment.js
  *
- * Run: node --test customer-service/test/fulfillItems.test.js
+ * Run: node --test customer-service/test/splitShipment.test.js
  */
 
 const { describe, it, beforeEach } = require('node:test');
@@ -45,8 +45,8 @@ require.cache[shopifyPath] = {
   },
 };
 
-const fulfillItemsTools = require('../lib/tools/fulfillItems');
-const handler = fulfillItemsTools.find(t => t.name === 'fulfill_items').handler;
+const splitShipmentTools = require('../lib/tools/splitShipment');
+const handler = splitShipmentTools.find(t => t.name === 'split_shipment').handler;
 
 function makeOrder(overrides = {}) {
   return {
@@ -92,7 +92,7 @@ function previewFulfillData(previewText) {
   return JSON.parse(m[1]);
 }
 
-describe('fulfill_items — phase 1 (preview)', () => {
+describe('split_shipment — phase 1 (preview)', () => {
   beforeEach(() => { mockOrder = makeOrder(); resetCalls(); });
 
   it('returns a preview describing both the placeholder fulfillment and the new pre-order', async () => {
@@ -138,7 +138,7 @@ describe('fulfill_items — phase 1 (preview)', () => {
   });
 });
 
-describe('fulfill_items — guards', () => {
+describe('split_shipment — guards', () => {
   beforeEach(() => { resetCalls(); });
 
   it('blocks cancelled orders', async () => {
@@ -170,7 +170,7 @@ describe('fulfill_items — guards', () => {
   });
 });
 
-describe('fulfill_items — phase 2 (execute)', () => {
+describe('split_shipment — phase 2 (execute)', () => {
   beforeEach(() => { mockOrder = makeOrder(); resetCalls(); });
 
   it('runs all four steps: placeholder fulfill, note, tag, and new pre-order', async () => {
