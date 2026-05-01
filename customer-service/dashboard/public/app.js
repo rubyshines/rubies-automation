@@ -161,9 +161,19 @@ async function autoRefreshTick() {
 // Init
 // ---------------------------------------------------------------------------
 
+function hideAppSplash() {
+  const el = document.getElementById('app-splash');
+  if (!el || el.classList.contains('app-splash-hide')) return;
+  el.classList.add('app-splash-hide');
+  setTimeout(() => el.remove(), 400);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  // Safety net: hide splash even if init below stalls
+  setTimeout(hideAppSplash, 8000);
+
   // Check auth before anything else
-  if (!(await checkAuth())) return;
+  if (!(await checkAuth())) { hideAppSplash(); return; }
 
   // Register service worker for PWA
   if ('serviceWorker' in navigator) {
@@ -190,11 +200,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     switchTab(savedTab);
   }
 
-  loadTicketQueue().then(async () => {
-    if (pendingTicketRestore) {
-      selectTicket(parseInt(pendingTicketRestore[1]));
-    }
-  });
+  loadTicketQueue()
+    .then(async () => {
+      if (pendingTicketRestore) {
+        selectTicket(parseInt(pendingTicketRestore[1]));
+      }
+    })
+    .finally(hideAppSplash);
   loadStats();
   loadVersion();
   // Smart auto-refresh: polls every 30s when visible, pauses when hidden,

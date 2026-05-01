@@ -3538,8 +3538,30 @@ main { height: calc(100vh - 56px); }
   transform: translateY(0);
 }
 .toast-success { background: var(--green); color: white; }
-.toast-error { background: var(--accent); color: white; }
+.toast-error { background: var(--red); color: white; }
 .toast-info { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.toast-undo {
+  background: var(--text);
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px 10px 18px;
+}
+.toast-undo .toast-message { white-space: nowrap; }
+.toast-undo-btn {
+  background: rgba(255, 255, 255, 0.14);
+  color: white;
+  border: none;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.toast-undo-btn:hover { background: rgba(255, 255, 255, 0.26); }
 
 /* Persistent error toasts with action buttons */
 .toast-persistent {
@@ -4163,6 +4185,28 @@ main { height: calc(100vh - 56px); }
   flex-shrink: 0;
 }
 
+/* Stack textarea over a right-aligned mic+send row, so the textarea spans the full
+   centered block width instead of sharing the row with the buttons. */
+.adhoc-input-block .action-chat-input-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.adhoc-input-block .action-chat-input {
+  width: 100%;
+  font-size: 15px;
+  padding: 14px 18px;
+  min-height: 120px;
+}
+
+.adhoc-button-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
 .adhoc-empty-hint {
   display: none;
   color: var(--text-tertiary);
@@ -4181,12 +4225,22 @@ main { height: calc(100vh - 56px); }
   display: none;
 }
 
+/* Empty state has no conversation to reset and no need for a heavy title bar — the centered greeting is the identity. */
+.adhoc-container.empty .adhoc-header {
+  display: none;
+}
+
 .adhoc-container.empty .adhoc-input-block {
   margin-top: -64px; /* optical lift so input sits at visual center, not geometric */
 }
 
 .adhoc-container.empty .adhoc-empty-hint {
   display: block;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.018em;
+  margin-bottom: 22px;
 }
 
 @media (max-width: 768px) {
@@ -4194,8 +4248,13 @@ main { height: calc(100vh - 56px); }
     padding: 12px 14px 10px;
   }
   .adhoc-title-text { font-size: 16px; }
-  .adhoc-empty-hint { font-size: 14px; margin-bottom: 10px; }
+  .adhoc-container.empty .adhoc-empty-hint { font-size: 20px; margin-bottom: 18px; }
   .adhoc-container.empty .adhoc-input-block { margin-top: -32px; }
+  .adhoc-input-block .action-chat-input {
+    font-size: 14px;
+    padding: 10px 14px;
+    min-height: 88px;
+  }
   /* Override the legacy mobile rule that disables internal scroll on action-chat-messages — ad hoc needs internal scroll so the input stays anchored at the bottom */
   .adhoc-messages { overflow-y: auto !important; }
 }

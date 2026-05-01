@@ -14,8 +14,30 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,300..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* Critical splash CSS — inlined so it paints before styles.css loads */
+    #app-splash { display: none; }
+    @media (max-width: 768px) {
+      #app-splash {
+        position: fixed; inset: 0; z-index: 99999;
+        display: flex; align-items: center; justify-content: center;
+        background: #ffffff;
+        transition: opacity 0.35s ease;
+      }
+      #app-splash img {
+        width: 96px; height: 96px; border-radius: 22px;
+        animation: app-splash-pulse 1.4s ease-in-out infinite;
+      }
+      #app-splash.app-splash-hide { opacity: 0; pointer-events: none; }
+      @keyframes app-splash-pulse {
+        0%, 100% { transform: scale(1);    opacity: 0.85; }
+        50%      { transform: scale(1.06); opacity: 1;    }
+      }
+    }
+  </style>
 </head>
 <body>
+  <div id="app-splash"><img src="/icons/icon-192.png" alt=""></div>
   <header>
     <img src="/icons/icon-192.png" alt="RUBIES" class="header-logo">
     <h1>RUBIES Care</h1>
@@ -190,10 +212,12 @@
         <div class="adhoc-input-block">
           <div class="adhoc-empty-hint">What can I help with?</div>
           <div class="action-chat-input-row">
-            <textarea class="action-chat-input" id="adhoc-chat-input" rows="3"
+            <textarea class="action-chat-input" id="adhoc-chat-input" rows="4"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdhocMessage()}"></textarea>
-            <button class="voice-mic" id="adhoc-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
-            <button class="action-chat-send" id="adhoc-chat-send" onclick="sendAdhocMessage()">Send</button>
+            <div class="adhoc-button-row">
+              <button class="voice-mic" id="adhoc-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
+              <button class="action-chat-send" id="adhoc-chat-send" onclick="sendAdhocMessage()">Send</button>
+            </div>
           </div>
         </div>
       </div>
@@ -230,30 +254,6 @@
   <script src="/voiceInput.js"></script>
   <script src="/app.js"></script>
 <div id="toast-container"></div>
-<style>
-#toast-container { position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
-.toast { padding: 10px 18px; border-radius: 8px; font-size: 14px; font-weight: 500; color: #fff; opacity: 0; transform: translateX(40px); transition: opacity .25s, transform .25s; pointer-events: auto; }
-.toast-visible { opacity: 1; transform: translateX(0); }
-.toast-success { background: #16a34a; }
-.toast-error   { background: #dc2626; }
-.toast-info    { background: #2563eb; }
-.toast-undo    { background: #c0392b; display: flex; align-items: center; gap: 14px; }
-.toast-undo .toast-message { white-space: nowrap; }
-.toast-undo-btn {
-  background: rgba(255,255,255,0.18);
-  color: #fff;
-  border: none;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.toast-undo-btn:hover { background: rgba(255,255,255,0.32); }
-</style>
 
 <!-- Attachment Lightbox -->
 <div class="lightbox-overlay" id="lightbox">
