@@ -1191,6 +1191,18 @@ function normalizeGid(id, type) {
   return `gid://shopify/${type}/${str}`;
 }
 
+// Tips appear as Shopify line items at checkout but aren't fulfillable products.
+// Filter them out everywhere line items reach the advisor / operator agent so
+// the AI doesn't reason about a tip as something to ship, refund, or split.
+function isTipLineItem(li) {
+  if (!li) return false;
+  const title = (li.title || '').trim().toLowerCase();
+  if (title !== 'tip') return false;
+  if (li.sku) return false;
+  if (li.variant?.id || li.shopify_variant_id) return false;
+  return true;
+}
+
 /**
  * Build a Shopify admin URL for an order or draft order GID.
  * Uses SHOPIFY_ADMIN_STORE env var (the admin slug, e.g. "rubies-active-wear"),
@@ -1726,6 +1738,7 @@ module.exports = {
   sendDraftOrderInvoice,
   listDraftOrders,
   normalizeGid,
+  isTipLineItem,
   createCustomer,
   updateCustomer,
   createDiscountCode,

@@ -8,7 +8,7 @@
  * Fallback: reads from Shopify direct if Supabase data is stale (>1 hour).
  */
 
-const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('./shopify');
+const { searchCustomers, getCustomerOrders, getOrderByNumber, isTipLineItem } = require('./shopify');
 const { extractSizeFromSku } = require('./sizeUtils');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
@@ -394,10 +394,12 @@ async function buildContext({ customer_email, customer_name, order_number, issue
   }
 
   // Build order line items with normalized SKU sizes
-  const orderLineItems = (targetOrder?.lineItems || []).map(li => {
-    const { raw, normalized } = extractSizeFromSku(li.sku);
-    return { ...li, _skuSize: normalized, _rawSkuSize: raw };
-  });
+  const orderLineItems = (targetOrder?.lineItems || [])
+    .filter(li => !isTipLineItem(li))
+    .map(li => {
+      const { raw, normalized } = extractSizeFromSku(li.sku);
+      return { ...li, _skuSize: normalized, _rawSkuSize: raw };
+    });
 
   // Prior-ticket context (for second-round follow-ups). Safe to fail — absence
   // of a prior ticket is the common case, not an error.

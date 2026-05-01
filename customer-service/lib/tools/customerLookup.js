@@ -4,7 +4,7 @@
  * Reads from Supabase (fast, ~50ms). Falls back to Shopify if not found.
  */
 
-const { searchCustomers, getCustomerOrders, getOrderByNumber } = require('../shopify');
+const { searchCustomers, getCustomerOrders, getOrderByNumber, isTipLineItem } = require('../shopify');
 const {
   searchCustomersFromSupabase,
   getCustomerOrdersFromSupabase,
@@ -101,7 +101,7 @@ const tools = [
           financialStatus: o.displayFinancialStatus,
           fulfillmentStatus: o.displayFulfillmentStatus,
           total: o.totalPriceSet?.shopMoney,
-          items: o.lineItems.map(li => ({
+          items: o.lineItems.filter(li => !isTipLineItem(li)).map(li => ({
             title: li.title,
             variant: li.variantTitle,
             quantity: li.quantity,
@@ -152,7 +152,7 @@ const tools = [
           tax: order.totalTaxSet?.shopMoney,
           total: order.totalPriceSet?.shopMoney,
         },
-        items: order.lineItems.map(li => ({
+        items: order.lineItems.filter(li => !isTipLineItem(li)).map(li => ({
           title: li.title,
           variant: li.variantTitle,
           quantity: li.quantity,
