@@ -38,6 +38,10 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncProducts').run(),
   },
   {
+    name: 'Collections',
+    run: () => require('./customer-service/sync/syncCollections').run(),
+  },
+  {
     name: 'Inventory',
     run: () => require('./inventory-tracking/daily-inventory-tracking').run(),
   },

@@ -302,6 +302,7 @@ async function fetchAllProducts(cursor = null) {
             descriptionHtml
             productType
             vendor
+            seo { title description }
             metafields(first: 50) {
               edges {
                 node {
@@ -1205,6 +1206,12 @@ function getAdminUrl(gid) {
   if (gid.includes('/DiscountCodeNode/') || gid.includes('/DiscountAutomaticNode/')) {
     return `https://admin.shopify.com/store/${storeName}/discounts/${numericId}`;
   }
+  if (gid.includes('/Collection/')) {
+    return `https://admin.shopify.com/store/${storeName}/collections/${numericId}`;
+  }
+  if (gid.includes('/Product/')) {
+    return `https://admin.shopify.com/store/${storeName}/products/${numericId}`;
+  }
   return `https://admin.shopify.com/store/${storeName}/orders/${numericId}`;
 }
 
@@ -1594,6 +1601,116 @@ async function updateOrderShippingAddress(orderId, shippingAddress) {
   return data.orderUpdate.order;
 }
 
+// --- Collection queries / mutations ---
+
+async function fetchAllCollections(cursor = null) {
+  const data = await shopifyGraphQL(`
+    query fetchCollections($after: String) {
+      collections(first: 100, after: $after) {
+        edges {
+          node {
+            id
+            handle
+            title
+            descriptionHtml
+            seo { title description }
+            ruleSet {
+              appliedDisjunctively
+              rules { column relation condition }
+            }
+            productsCount { count }
+            products(first: 250) {
+              edges { node { handle } }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `, { after: cursor });
+
+  const collections = data.collections.edges.map(e => {
+    const node = e.node;
+    return {
+      id: node.id,
+      handle: node.handle,
+      title: node.title,
+      descriptionHtml: node.descriptionHtml || null,
+      seo: node.seo || { title: null, description: null },
+      ruleSet: node.ruleSet || null,
+      productsCount: node.productsCount?.count ?? 0,
+      productHandles: (node.products?.edges || []).map(pe => pe.node.handle),
+    };
+  });
+
+  return { collections, pageInfo: data.collections.pageInfo };
+}
+
+/**
+ * Update a collection's handle and/or SEO meta. Pass only the fields you want to change.
+ * Shopify auto-generates a 301 redirect when the handle changes.
+ * Returns { id, handle, title, seo, urlRedirectId? }.
+ */
+async function updateCollectionSeo({ id, handle, title, seoTitle, seoDescription, descriptionHtml }) {
+  const input = { id };
+  if (handle !== undefined) input.handle = handle;
+  if (title !== undefined) input.title = title;
+  if (descriptionHtml !== undefined) input.descriptionHtml = descriptionHtml;
+  if (seoTitle !== undefined || seoDescription !== undefined) {
+    input.seo = {};
+    if (seoTitle !== undefined) input.seo.title = seoTitle;
+    if (seoDescription !== undefined) input.seo.description = seoDescription;
+  }
+
+  const data = await shopifyGraphQL(`
+    mutation collectionUpdate($input: CollectionInput!) {
+      collectionUpdate(input: $input) {
+        collection {
+          id
+          handle
+          title
+          descriptionHtml
+          seo { title description }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { input });
+  return data.collectionUpdate.collection;
+}
+
+/**
+ * Update a product's handle and/or SEO meta. Pass only the fields you want to change.
+ * Shopify auto-generates a 301 redirect when the handle changes.
+ */
+async function updateProductSeo({ id, handle, title, seoTitle, seoDescription, descriptionHtml }) {
+  const input = { id };
+  if (handle !== undefined) input.handle = handle;
+  if (title !== undefined) input.title = title;
+  if (descriptionHtml !== undefined) input.descriptionHtml = descriptionHtml;
+  if (seoTitle !== undefined || seoDescription !== undefined) {
+    input.seo = {};
+    if (seoTitle !== undefined) input.seo.title = seoTitle;
+    if (seoDescription !== undefined) input.seo.description = seoDescription;
+  }
+
+  const data = await shopifyGraphQL(`
+    mutation productUpdate($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product {
+          id
+          handle
+          title
+          descriptionHtml
+          seo { title description }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { input });
+  return data.productUpdate.product;
+}
+
 module.exports = {
   shopifyGraphQL,
   searchCustomers,
@@ -1636,4 +1753,7 @@ module.exports = {
   addTags,
   appendOrderNote,
   fetchProductById,
+  fetchAllCollections,
+  updateCollectionSeo,
+  updateProductSeo,
 };

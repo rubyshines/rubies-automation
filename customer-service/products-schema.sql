@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS products (
   comparison_notes        text,
   materials_composition   text,
 
+  -- SEO meta (from Shopify Online Store SEO panel)
+  seo_title           text,                          -- null = default-from-title
+  seo_description     text,                          -- null = default-from-description excerpt
+
   synced_at           timestamptz NOT NULL DEFAULT now()
 );
 
@@ -89,6 +93,8 @@ RETURNS TABLE (
   best_for            text,
   comparison_notes    text,
   materials_composition text,
+  seo_title           text,
+  seo_description     text,
   variant_count       bigint,
   total_inventory     bigint,
   min_price           numeric,
@@ -113,6 +119,8 @@ RETURNS TABLE (
     p.best_for,
     p.comparison_notes,
     p.materials_composition,
+    p.seo_title,
+    p.seo_description,
     COUNT(v.shopify_variant_id)     AS variant_count,
     COALESCE(SUM(v.inventory_quantity), 0) AS total_inventory,
     MIN(v.price)                    AS min_price,

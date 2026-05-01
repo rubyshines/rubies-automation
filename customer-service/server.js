@@ -50,6 +50,7 @@ const updateCustomerTools = require('./lib/tools/updateCustomer');
 const discountCodeTools = require('./lib/tools/discountCode');
 const cancelOrderTools = require('./lib/tools/cancelOrder');
 const splitShipmentTools = require('./lib/tools/splitShipment');
+const seoMetaTools = require('./lib/tools/seoMeta');
 
 const allTools = [
   ...customerLookupTools,
@@ -86,6 +87,7 @@ const allTools = [
   ...discountCodeTools,
   ...cancelOrderTools,
   ...splitShipmentTools,
+  ...seoMetaTools,
 ];
 
 /**

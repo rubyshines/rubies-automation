@@ -147,6 +147,8 @@ async function run() {
       vendor: p.vendor || null,
       description_html: p.descriptionHtml || null,
       tags: p.tags || [],
+      seo_title: p.seo?.title || null,
+      seo_description: p.seo?.description || null,
       ...mf,
       synced_at: now,
     };

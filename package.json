@@ -27,6 +27,7 @@
     "cs-sync-conversations": "node customer-service/sync/syncConversations.js",
     "cs-sync-costs": "node customer-service/sync/syncCosts.js",
     "cs-sync-products": "node customer-service/sync/syncProducts.js",
+    "cs-sync-collections": "node customer-service/sync/syncCollections.js",
     "daily-sync-all": "node daily-sync-all.js",
     "cs-sync-full": "node customer-service/sync/syncAll.js --orders --full && node customer-service/sync/syncAll.js --customers && node customer-service/sync/syncAll.js --refresh-aggregates",
     "cs-seed-donation-partners": "node customer-service/import/seedDonationPartners.js",
