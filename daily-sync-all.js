@@ -133,6 +133,8 @@ async function main() {
   console.log('=== RUBIES Daily Sync — starting ===\n');
   const overallStart = Date.now();
 
+  require('./customer-service/import/gorgiasClient').resetRetryCount();
+
   const results = [];
   let anyFailure = false;
 
@@ -194,7 +196,8 @@ async function main() {
   console.log('');
 
   // --- SendGrid email ---
-  await sendSummaryEmail(overallStatus, results, totalRows, overallDuration);
+  const gorgiasRetries = require('./customer-service/import/gorgiasClient').getRetryCount();
+  await sendSummaryEmail(overallStatus, results, totalRows, overallDuration, gorgiasRetries);
 
   if (anyFailure) {
     process.exit(1);
@@ -274,8 +277,27 @@ function buildTicketDriftHtml(results) {
       </div>`;
   }
 
-  if (followUps.length) {
-    const cards = followUps.map(f => `
+  const errFollowUps = followUps.filter(f => typeof f.action === 'string' && f.action.startsWith('error:'));
+  const okFollowUps = followUps.filter(f => !errFollowUps.includes(f));
+
+  if (errFollowUps.length) {
+    const cards = errFollowUps.map(f => `
+      <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
+        <div style="font-weight:bold;font-size:14px;">#${esc(String(f.ticketId))} <span style="font-weight:normal;color:#6b7280;">${esc(f.email)}</span></div>
+        <div style="color:#dc2626;font-size:13px;margin-top:2px;">${esc(f.action)}</div>
+      </div>`).join('');
+
+    html += `
+      <div style="margin:20px 0 0;">
+        <div style="background:#fef2f2;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #fecaca;border-bottom:2px solid #fecaca;">
+          <strong style="color:#dc2626;">Follow-up Errors (${errFollowUps.length})</strong>
+        </div>
+        <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
+      </div>`;
+  }
+
+  if (okFollowUps.length) {
+    const cards = okFollowUps.map(f => `
       <div style="padding:10px 12px;border-bottom:1px solid #bbf7d0;">
         <div style="font-weight:bold;font-size:14px;">#${esc(String(f.ticketId))} <span style="font-weight:normal;color:#6b7280;">${esc(f.email)}</span></div>
         <div style="color:#16a34a;font-size:13px;margin-top:2px;">${esc(f.action)}</div>
@@ -284,7 +306,7 @@ function buildTicketDriftHtml(results) {
     html += `
       <div style="margin:20px 0 0;">
         <div style="background:#f0fdf4;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #bbf7d0;border-bottom:2px solid #bbf7d0;">
-          <strong style="color:#16a34a;">Auto Follow-ups (${followUps.length})</strong>
+          <strong style="color:#16a34a;">Auto Follow-ups (${okFollowUps.length})</strong>
         </div>
         <div style="border:1px solid #bbf7d0;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
       </div>`;
@@ -293,7 +315,7 @@ function buildTicketDriftHtml(results) {
   return html;
 }
 
-async function sendSummaryEmail(overallStatus, results, totalRows, overallDuration) {
+async function sendSummaryEmail(overallStatus, results, totalRows, overallDuration, gorgiasRetries = 0) {
   const sgMail = getSendgridClient();
   if (!sgMail) {
     console.log('Skipping email notification (no SendGrid client).');
@@ -351,7 +373,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
       <h2 style="margin-bottom:4px;font-size:18px;">Daily Sync \u2014 ${date}</h2>
-      <p style="color:#6b7280;margin-top:0;font-size:13px;">${results.length} pipelines &middot; ${totalRows} rows &middot; ${formatDuration(overallDuration)}</p>
+      <p style="color:#6b7280;margin-top:0;font-size:13px;">${results.length} pipelines &middot; ${totalRows} rows &middot; ${formatDuration(overallDuration)}${gorgiasRetries ? ` &middot; ${gorgiasRetries} Gorgias retr${gorgiasRetries === 1 ? 'y' : 'ies'}` : ''}</p>
 
       ${driftHtml}
       ${errorsHtml}

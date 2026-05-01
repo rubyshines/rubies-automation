@@ -248,7 +248,7 @@ async function run({ execute = false } = {}) {
       const stage = st.follow_up_stage || 0;
       if (stage === 0) {
         const snoozeDays = st.test_snooze ? 0.004 : undefined;
-        const result = await executeStage1(gorgias, st, { snoozeDays });
+        const result = await executeStage1(gorgias, st, { snoozeDays, gorgiasTicket: gTicket });
         if (result.sent) {
           console.log(`  [follow-up] #${st.gorgias_ticket_id}: Stage 1 sent to ${st.customer_email}`);
           followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: 'stage1_sent' });
@@ -427,11 +427,16 @@ async function runPipeline() {
     const driftCount = detection.driftIssues.length;
     const undeliveredCount = detection.undelivered.length;
     const followUpCount = detection.followUps.length;
-    const hasIssues = driftCount > 0 || undeliveredCount > 0;
+    const followUpErrorCount = detection.followUps.filter(f => typeof f.action === 'string' && f.action.startsWith('error:')).length;
+    const hasIssues = driftCount > 0 || undeliveredCount > 0 || followUpErrorCount > 0;
     const detailParts = [`${detection.openTickets} open`];
     if (driftCount) detailParts.push(`${driftCount} drift`);
     if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
-    if (followUpCount) detailParts.push(`${followUpCount} follow-ups`);
+    if (followUpCount) {
+      detailParts.push(followUpErrorCount
+        ? `${followUpCount} follow-ups (${followUpErrorCount} errored)`
+        : `${followUpCount} follow-ups`);
+    }
     if (!hasIssues && !followUpCount) detailParts.push('all in sync');
 
     return {

@@ -3,7 +3,12 @@
  *
  * Auth: HTTP Basic (email:api_key) or Bearer token.
  * Base URL: https://{domain}.gorgias.com/api
- * Rate limit: ~2 req/sec — we add 500ms delay between calls.
+ *
+ * Rate limiting: apiFetch retries on 429 with exponential backoff (1s, 2s,
+ * up to 3 attempts). No preemptive pacing — interactive callers (dashboard,
+ * webhooks) stay fast; bursty batch callers self-throttle when they hit the
+ * wall. If a specific batch path becomes a frequent retrier, add targeted
+ * pacing there.
  *
  * Docs: https://developers.gorgias.com/reference
  */
@@ -25,26 +30,36 @@ function getConfig() {
   };
 }
 
+let _retryCount = 0;
+function getRetryCount() { return _retryCount; }
+function resetRetryCount() { _retryCount = 0; }
+
 async function apiFetch(path, options = {}) {
   const config = getConfig();
   const url = `${config.baseUrl}${path}`;
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Authorization': `Basic ${config.auth}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      ...options.headers,
-    },
-  });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Basic ${config.auth}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...options.headers,
+      },
+    });
 
-  if (!response.ok) {
+    if (response.ok) return response.json();
+
+    if (response.status === 429 && attempt < 2) {
+      _retryCount++;
+      await delay(1000 * Math.pow(2, attempt));
+      continue;
+    }
+
     const errText = await response.text();
     throw new Error(`Gorgias API error ${response.status} on ${path}: ${errText}`);
   }
-
-  return response.json();
 }
 
 /**
@@ -234,10 +249,10 @@ async function createOutboundTicket({ customerEmail, customerName, subject, body
 /**
  * Create a reply message on a ticket (sent to customer via email).
  */
-async function createTicketReply(ticketId, { body_html, body_text, attachments, senderId }) {
+async function createTicketReply(ticketId, { body_html, body_text, attachments, senderId, ticket: providedTicket }) {
   const html = body_html || `<p>${(body_text || '').replace(/\n/g, '<br>')}</p>`;
-  // Look up sender info from the ticket
-  const ticket = await getTicket(ticketId);
+  // Look up sender info from the ticket (skip if caller passed it in)
+  const ticket = providedTicket || await getTicket(ticketId);
   const ticketChannel = ticket.channel || 'email';
   const senderEmail = process.env.GORGIAS_SENDER_EMAIL || 'care@rubyshines.com';
   const senderName = process.env.GORGIAS_SENDER_NAME || 'RUBIES Customer Care';
@@ -524,4 +539,6 @@ module.exports = {
   // Utilities
   stripHtml,
   delay,
+  getRetryCount,
+  resetRetryCount,
 };

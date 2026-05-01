@@ -51,7 +51,7 @@ ${escapedResponse}
  * @param {object} [opts]
  * @param {number} [opts.snoozeDays] - days to re-snooze (default 3, override for testing)
  */
-async function executeStage1(gorgias, ticket, { snoozeDays } = {}) {
+async function executeStage1(gorgias, ticket, { snoozeDays, gorgiasTicket } = {}) {
   const supabase = getSupabaseClient();
   const days = snoozeDays ?? DEFAULT_SNOOZE_DAYS;
 
@@ -84,6 +84,7 @@ async function executeStage1(gorgias, ticket, { snoozeDays } = {}) {
     body_text: followUpText,
     body_html: followUpHtml,
     senderId: aiBotId,
+    ticket: gorgiasTicket,
   });
 
   // Create audit draft record
