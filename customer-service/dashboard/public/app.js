@@ -16,18 +16,53 @@ let currentDraft = null;
 // Focus time tracking — measures active operator time per ticket
 // ---------------------------------------------------------------------------
 
-const _focusAccumulated = {};       // { ticketId: seconds }
+const FOCUS_STORAGE_KEY = 'cs-focus-accumulated';
+const FOCUS_TTL_MS = 24 * 60 * 60 * 1000; // 24h — abandoned tickets expire
+let _focusAccumulated = _loadFocusFromStorage();
 let _focusTicketId = null;
 let _focusStartTime = null;
 let _focusIdleTimer = null;
 let _focusIdleDebounce = null;
 const FOCUS_IDLE_TIMEOUT = 60000;   // 60s of no interaction = idle
 
+function _loadFocusFromStorage() {
+  try {
+    const raw = localStorage.getItem(FOCUS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    const restored = {};
+    // Stored shape: { [ticketId]: { seconds, updated_at } }
+    for (const [tid, entry] of Object.entries(parsed || {})) {
+      if (entry && typeof entry.seconds === 'number' && (now - (entry.updated_at || 0)) < FOCUS_TTL_MS) {
+        restored[tid] = entry.seconds;
+      }
+    }
+    return restored;
+  } catch {
+    return {};
+  }
+}
+
+function _saveFocusToStorage() {
+  try {
+    const now = Date.now();
+    const out = {};
+    for (const [tid, seconds] of Object.entries(_focusAccumulated)) {
+      out[tid] = { seconds, updated_at: now };
+    }
+    localStorage.setItem(FOCUS_STORAGE_KEY, JSON.stringify(out));
+  } catch {
+    // localStorage full or disabled — focus tracking degrades to in-memory only
+  }
+}
+
 function _accumulateFocus() {
   if (_focusTicketId && _focusStartTime) {
     const elapsed = (Date.now() - _focusStartTime) / 1000;
     _focusAccumulated[_focusTicketId] = (_focusAccumulated[_focusTicketId] || 0) + elapsed;
     _focusStartTime = null;
+    _saveFocusToStorage();
   }
 }
 
@@ -61,6 +96,7 @@ function getFocusTime(ticketId) {
 
 function clearFocusTime(ticketId) {
   delete _focusAccumulated[ticketId];
+  _saveFocusToStorage();
 }
 
 function _resetIdleCountdown() {
@@ -2332,13 +2368,15 @@ function closeNoReply() {
 
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
 
   localStorage.removeItem(`draft-ticket-${ticketId}`);
   localStorage.removeItem(`notes-ticket-${ticketId}`);
   advanceToNextTicket(ticketId);
 
   executeBackgroundAction(ticketId, `${ticketRef} — Closed`,
-    () => api(`/api/tickets/${ticketId}/close`, { method: 'POST', body: { notes } }),
+    () => api(`/api/tickets/${ticketId}/close`, { method: 'POST', body: { notes, focus_time_seconds: focusSeconds } }),
     null,
     { undoable: true }
   );
@@ -2812,13 +2850,15 @@ function snoozeNoReply() {
 
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
 
   localStorage.removeItem(`draft-ticket-${ticketId}`);
   localStorage.removeItem(`notes-ticket-${ticketId}`);
   advanceToNextTicket(ticketId);
 
   executeBackgroundAction(ticketId, `${ticketRef} — Snoozed`,
-    () => api(`/api/tickets/${ticketId}/snooze`, { method: 'POST' })
+    () => api(`/api/tickets/${ticketId}/snooze`, { method: 'POST', body: { focus_time_seconds: focusSeconds } })
   );
 }
 
@@ -2828,9 +2868,11 @@ async function releaseDraft() {
 
   try {
     const releasedTicketId = currentTicketId;
+    const focusSeconds = getFocusTime(releasedTicketId);
+    clearFocusTime(releasedTicketId);
     await api(`/api/tickets/${releasedTicketId}/release`, {
       method: 'POST',
-      body: { notes },
+      body: { notes, focus_time_seconds: focusSeconds },
     });
     showToast('Draft released');
     advanceToNextTicket(releasedTicketId);
@@ -2846,7 +2888,9 @@ async function markSpam() {
 
   try {
     const spamTicketId = currentTicketId;
-    await api(`/api/tickets/${spamTicketId}/spam`, { method: 'POST', body: {} });
+    const focusSeconds = getFocusTime(spamTicketId);
+    clearFocusTime(spamTicketId);
+    await api(`/api/tickets/${spamTicketId}/spam`, { method: 'POST', body: { focus_time_seconds: focusSeconds } });
     localStorage.removeItem(`draft-ticket-${spamTicketId}`);
     localStorage.removeItem(`notes-ticket-${spamTicketId}`);
     showToast('Marked as spam');
@@ -2863,7 +2907,9 @@ async function deleteDraft() {
 
   try {
     const deletedTicketId = currentTicketId;
-    await api(`/api/tickets/${deletedTicketId}/delete`, { method: 'POST', body: {} });
+    const focusSeconds = getFocusTime(deletedTicketId);
+    clearFocusTime(deletedTicketId);
+    await api(`/api/tickets/${deletedTicketId}/delete`, { method: 'POST', body: { focus_time_seconds: focusSeconds } });
     localStorage.removeItem(`draft-ticket-${deletedTicketId}`);
     localStorage.removeItem(`notes-ticket-${deletedTicketId}`);
     showToast('Draft deleted');
@@ -3015,11 +3061,13 @@ function parkTicket() {
 
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
 
   advanceToNextTicket(ticketId);
 
   executeBackgroundAction(ticketId, `${ticketRef} — Parked`,
-    () => api(`/api/tickets/${ticketId}/park`, { method: 'POST', body: {} })
+    () => api(`/api/tickets/${ticketId}/park`, { method: 'POST', body: { focus_time_seconds: focusSeconds } })
   );
 }
 
@@ -3029,11 +3077,13 @@ function unparkTicket() {
 
   const ticketId = currentTicketId;
   const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
 
   advanceToNextTicket(ticketId);
 
   executeBackgroundAction(ticketId, `${ticketRef} — Unparked`,
-    () => api(`/api/tickets/${ticketId}/unpark`, { method: 'POST', body: {} })
+    () => api(`/api/tickets/${ticketId}/unpark`, { method: 'POST', body: { focus_time_seconds: focusSeconds } })
   );
 }
 

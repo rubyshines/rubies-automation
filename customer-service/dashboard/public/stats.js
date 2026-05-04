@@ -30,6 +30,16 @@ function formatFocusTime(seconds) {
   return `${m}m ${s}s`;
 }
 
+function formatDurationHM(seconds) {
+  if (seconds == null || seconds === 0) return '—';
+  const totalMin = Math.round(seconds / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 function scoreColor(s) {
   if (s >= 8) return 'var(--green)';
   if (s >= 6) return 'var(--yellow)';
@@ -107,6 +117,15 @@ async function loadToday() {
 }
 
 function renderKPIs(data) {
+  // Headline: Time on CS today (sum across all sent/handled drafts)
+  const totalSec = data.total_focus_time_seconds;
+  const handled = data.tickets_handled || 0;
+  document.getElementById('kpi-total-time-val').textContent = formatDurationHM(totalSec);
+  const sub = handled > 0 && totalSec
+    ? `across ${handled} ticket${handled === 1 ? '' : 's'}`
+    : (handled > 0 ? `${handled} ticket${handled === 1 ? '' : 's'} (no time data)` : '');
+  document.getElementById('kpi-total-time-sub').textContent = sub;
+
   // Tickets handled (+ filtered note if any)
   const handledStr = data.filtered_count
     ? `${data.tickets_handled || 0} <span class="kpi-note">+${data.filtered_count} filtered</span>`
@@ -223,7 +242,8 @@ function renderTicketsTable() {
           <th class="${thClass('message_type')}" onclick="sortTable('message_type')">Type ${sortArrow('message_type')}</th>
           <th class="${thClass('outcome')}" onclick="sortTable('outcome')">Outcome ${sortArrow('outcome')}</th>
           <th class="${thClass('haiku_score')}" onclick="sortTable('haiku_score')">Score ${sortArrow('haiku_score')}</th>
-          <th class="${thClass('focus_time_seconds')}" onclick="sortTable('focus_time_seconds')">Focus Time ${sortArrow('focus_time_seconds')}</th>
+          <th class="${thClass('focus_time_seconds')}" onclick="sortTable('focus_time_seconds')">Focus ${sortArrow('focus_time_seconds')}</th>
+          <th class="${thClass('total_focus_time_seconds')}" onclick="sortTable('total_focus_time_seconds')">Total ${sortArrow('total_focus_time_seconds')}</th>
           <th class="${thClass('haiku_category')}" onclick="sortTable('haiku_category')">Category ${sortArrow('haiku_category')}</th>
           <th>Summary</th>
         </tr>
@@ -236,6 +256,7 @@ function renderTicketsTable() {
             <td>${outcomeBadge(t.redirect_count > 0 ? 'redirected' : t.outcome)}</td>
             <td class="score-cell">${t.outcome === 'no_edit' ? '<span style="color:var(--green)">10</span>' : t.haiku_score != null ? formatScore(t.haiku_score, t.haiku_score_post_steer) : '—'}</td>
             <td class="focus-cell">${formatFocusTime(t.focus_time_seconds)}</td>
+            <td class="focus-cell">${formatFocusTime(t.total_focus_time_seconds)}</td>
             <td>${t.haiku_category ? `<span class="cat-badge">${t.haiku_category.replace(/_/g, ' ')}</span>` : '—'}</td>
             <td class="summary-cell">${t.haiku_summary || '—'}</td>
           </tr>
@@ -275,15 +296,24 @@ async function loadTrends() {
 
   const { start, end } = dateRange(currentRange);
 
+  // Prior-period range for delta comparison (same length, immediately before start)
+  const priorEnd = new Date(start);
+  priorEnd.setDate(priorEnd.getDate() - 1);
+  const priorStart = new Date(priorEnd);
+  priorStart.setDate(priorStart.getDate() - currentRange);
+  const fmt = (d) => d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+
   // Show loading state
   showTrendsLoading(true);
 
   try {
-    const [range, categories] = await Promise.all([
+    const [range, categories, priorRange] = await Promise.all([
       api(`/api/stats/range?start=${start}&end=${end}`),
       api(`/api/stats/categories?start=${start}&end=${end}`),
+      api(`/api/stats/range?start=${fmt(priorStart)}&end=${fmt(priorEnd)}`),
     ]);
     showTrendsLoading(false);
+    renderTrendsSummary(range, priorRange);
     renderQualityChart(range.daily_breakdown || []);
     renderVolumeChart(range.daily_breakdown || []);
     renderCategoriesChart(categories);
@@ -292,6 +322,33 @@ async function loadTrends() {
     showTrendsLoading(false);
     showTrendsError('Failed to load trends: ' + err.message);
   }
+}
+
+function renderTrendsSummary(range, priorRange) {
+  const el = document.getElementById('trends-summary');
+  if (!el) return;
+  const total = range.total_focus_time_seconds;
+  const prior = priorRange?.total_focus_time_seconds;
+  if (!total) {
+    el.innerHTML = '';
+    return;
+  }
+  const label = currentRange === 7 ? 'Time on CS this week'
+    : currentRange === 30 ? 'Time on CS this month'
+    : `Time on CS, last ${currentRange} days`;
+  let deltaHtml = '';
+  if (prior && prior > 0) {
+    const pct = ((total - prior) / prior) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    const color = pct < 0 ? 'var(--green)' : pct > 0 ? 'var(--red)' : 'var(--text-tertiary)';
+    deltaHtml = ` <span style="color:${color};font-size:0.85em">(${sign}${pct.toFixed(0)}% vs prior ${currentRange}d)</span>`;
+  }
+  el.innerHTML = `
+    <div class="trends-headline">
+      <span class="trends-headline-label">${label}:</span>
+      <span class="trends-headline-value">${formatDurationHM(total)}</span>${deltaHtml}
+    </div>
+  `;
 }
 
 function showTrendsLoading(on) {

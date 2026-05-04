@@ -31,6 +31,11 @@
   <!-- ─── Today Tab ──────────────────────────────────────── -->
   <main id="tab-today" class="tab-content active">
     <div class="kpi-row" id="kpi-row">
+      <div class="kpi-card kpi-card-headline" id="kpi-total-time">
+        <div class="kpi-label">Time on CS Today</div>
+        <div class="kpi-value" id="kpi-total-time-val">—</div>
+        <div class="kpi-sub" id="kpi-total-time-sub"></div>
+      </div>
       <div class="kpi-card" id="kpi-handled">
         <div class="kpi-label">Tickets Handled</div>
         <div class="kpi-value" id="kpi-handled-val">—</div>
@@ -54,7 +59,7 @@
         <div class="kpi-value" id="kpi-redirect-val">—</div>
       </div>
       <div class="kpi-card" id="kpi-focus">
-        <div class="kpi-label">Avg Focus Time</div>
+        <div class="kpi-label">Avg Focus / Ticket</div>
         <div class="kpi-value" id="kpi-focus-val">—</div>
       </div>
     </div>
@@ -76,6 +81,8 @@
       <button class="range-btn active" data-days="30" onclick="setRange(30)">30d</button>
       <button class="range-btn" data-days="90" onclick="setRange(90)">90d</button>
     </div>
+
+    <div class="trends-summary" id="trends-summary"></div>
 
     <div class="charts-row">
       <div class="chart-card">

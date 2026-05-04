@@ -396,12 +396,14 @@ async function apiCloseDraft(id, body) {
   await gorgias.assignTicket(draft.gorgias_ticket_id, null);
 
   // Update DB only after Gorgias succeeded
-  await supabase.from('cs_ai_drafts').update({
+  const draftUpdate = {
     status: 'sent',
     feedback_notes: body.notes || 'Closed without reply',
     reviewed_at: new Date().toISOString(),
     sent_at: new Date().toISOString(),
-  }).eq('id', id);
+  };
+  if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
+  await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
 
   await supabase.from('cs_ai_feedback_log').insert({
     draft_id: id,
@@ -588,11 +590,13 @@ async function apiReleaseDraft(id, body) {
   await gorgias.assignTicket(draft.gorgias_ticket_id, null);
 
   // Update draft
-  await supabase.from('cs_ai_drafts').update({
+  const draftUpdate = {
     status: 'released',
     feedback_notes: body.notes || 'Released to Gorgias',
     reviewed_at: new Date().toISOString(),
-  }).eq('id', id);
+  };
+  if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
+  await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
 
   // Log feedback
   await supabase.from('cs_ai_feedback_log').insert({
@@ -608,7 +612,7 @@ async function apiReleaseDraft(id, body) {
   return { success: true };
 }
 
-async function apiDeleteDraft(id) {
+async function apiDeleteDraft(id, body = {}) {
   const supabase = getSupabaseClient();
 
   const { data: draft, error: fetchErr } = await supabase
@@ -626,10 +630,12 @@ async function apiDeleteDraft(id) {
   }
 
   // Update DB only after Gorgias succeeded
-  await supabase.from('cs_ai_drafts').update({
+  const draftUpdate = {
     status: 'deleted',
     reviewed_at: new Date().toISOString(),
-  }).eq('id', id);
+  };
+  if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
+  await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
 
   // Log feedback (filtered — excluded from quality rates)
   await supabase.from('cs_ai_feedback_log').insert({
@@ -648,7 +654,7 @@ async function apiDeleteDraft(id) {
   return { success: true };
 }
 
-async function apiMarkSpam(id) {
+async function apiMarkSpam(id, body = {}) {
   const supabase = getSupabaseClient();
 
   const { data: draft, error: fetchErr } = await supabase
@@ -667,10 +673,12 @@ async function apiMarkSpam(id) {
   }
 
   // Update DB only after Gorgias succeeded
-  await supabase.from('cs_ai_drafts').update({
+  const draftUpdate = {
     status: 'spam',
     reviewed_at: new Date().toISOString(),
-  }).eq('id', id);
+  };
+  if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
+  await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
 
   // Log feedback (filtered — excluded from quality rates)
   await supabase.from('cs_ai_feedback_log').insert({
@@ -853,6 +861,7 @@ async function _queryDayStats(supabase, dateStr) {
   // Focus time: from drafts that were sent today
   const draftIds = rows.filter(r => r.draft_id).map(r => r.draft_id);
   let avgFocusTime = null;
+  let totalFocusTime = null;
   if (draftIds.length > 0) {
     const { data: draftsWithFocus } = await supabase
       .from('cs_ai_drafts')
@@ -862,6 +871,7 @@ async function _queryDayStats(supabase, dateStr) {
     const focusTimes = (draftsWithFocus || []).map(d => d.focus_time_seconds);
     if (focusTimes.length > 0) {
       avgFocusTime = Math.round(focusTimes.reduce((a, b) => a + b, 0) / focusTimes.length);
+      totalFocusTime = focusTimes.reduce((a, b) => a + b, 0);
     }
   }
 
@@ -905,6 +915,7 @@ async function _queryDayStats(supabase, dateStr) {
     redirect_rate: _pct(redirectCount, handled),
     released_rate: _pct(released, handled),
     avg_focus_time_seconds: avgFocusTime,
+    total_focus_time_seconds: totalFocusTime,
     avg_quality_score: avgQualityScore,
     avg_steer_accuracy: avgSteerAccuracy,
     by_message_type: byType,
@@ -975,6 +986,7 @@ async function apiGetStatsRange(query) {
   const dailyBreakdown = [];
   let totalHandled = 0, totalNoEdit = 0, totalEdited = 0, totalRedirect = 0, totalReleased = 0;
   const focusTimes = [];
+  let rangeTotalFocusTime = 0;
 
   for (const date of dates) {
     const rows = feedbackByDate[date] || [];
@@ -989,6 +1001,9 @@ async function apiGetStatsRange(query) {
     const dayFocusTimes = dayDraftIds.map(id => draftFocusMap[id]).filter(Boolean);
     const avgFocusTime = dayFocusTimes.length > 0
       ? Math.round(dayFocusTimes.reduce((a, b) => a + b, 0) / dayFocusTimes.length) : null;
+    const dayTotalFocusTime = dayFocusTimes.length > 0
+      ? dayFocusTimes.reduce((a, b) => a + b, 0) : null;
+    if (dayTotalFocusTime != null) rangeTotalFocusTime += dayTotalFocusTime;
 
     // Quality scores
     const scores = [];
@@ -1017,6 +1032,7 @@ async function apiGetStatsRange(query) {
       redirect_rate: _pct(redirectCount, handled),
       released_rate: _pct(released, handled),
       avg_focus_time_seconds: avgFocusTime,
+      total_focus_time_seconds: dayTotalFocusTime,
       avg_quality_score: avgQualityScore,
       avg_steer_accuracy: avgSteerAccuracy,
     };
@@ -1044,6 +1060,7 @@ async function apiGetStatsRange(query) {
     released_rate: _pct(totalReleased, totalHandled),
     avg_focus_time_seconds: focusTimes.length > 0
       ? Math.round(focusTimes.reduce((a, b) => a + b, 0) / focusTimes.length) : null,
+    total_focus_time_seconds: rangeTotalFocusTime > 0 ? rangeTotalFocusTime : null,
     daily_breakdown: dailyBreakdown,
   };
 }
@@ -1072,17 +1089,22 @@ async function apiGetStatsTickets(query) {
   const draftMap = {};
   for (const d of (drafts || [])) draftMap[d.id] = d;
 
-  // Count redirects per ticket
+  // Count redirects per ticket + sum focus time across all drafts on each ticket
   const ticketIds = [...new Set((drafts || []).map(d => d.ticket_id).filter(Boolean))];
   let redirectsByTicket = {};
+  let totalFocusByTicket = {};
   if (ticketIds.length > 0) {
-    const { data: steered } = await supabase
+    const { data: ticketDrafts } = await supabase
       .from('cs_ai_drafts')
-      .select('ticket_id')
-      .not('operator_steer', 'is', null)
+      .select('ticket_id, focus_time_seconds, operator_steer')
       .in('ticket_id', ticketIds);
-    for (const s of (steered || [])) {
-      redirectsByTicket[s.ticket_id] = (redirectsByTicket[s.ticket_id] || 0) + 1;
+    for (const d of (ticketDrafts || [])) {
+      if (d.operator_steer) {
+        redirectsByTicket[d.ticket_id] = (redirectsByTicket[d.ticket_id] || 0) + 1;
+      }
+      if (d.focus_time_seconds) {
+        totalFocusByTicket[d.ticket_id] = (totalFocusByTicket[d.ticket_id] || 0) + d.focus_time_seconds;
+      }
     }
   }
 
@@ -1096,6 +1118,7 @@ async function apiGetStatsTickets(query) {
       confidence: r.confidence,
       outcome,
       focus_time_seconds: draft.focus_time_seconds || null,
+      total_focus_time_seconds: totalFocusByTicket[draft.ticket_id] || null,
       redirect_count: redirectsByTicket[draft.ticket_id] || 0,
       haiku_category: r.haiku_category || null,
       haiku_summary: r.haiku_summary || null,
@@ -2008,7 +2031,7 @@ async function apiSendTicketMessage(ticketId, body) {
 
   const { data: ticket, error } = await supabase
     .from('cs_tickets')
-    .select('gorgias_ticket_id, conversation_history')
+    .select('gorgias_ticket_id, conversation_history, customer_email, order_number, active_draft_id')
     .eq('id', ticketId)
     .single();
   if (error) throw error;
@@ -2026,35 +2049,64 @@ async function apiSendTicketMessage(ticketId, body) {
 
   // Append to conversation history
   const history = ticket.conversation_history || [];
+  const sentAt = new Date().toISOString();
   history.push({
     id: replyResult?.id,
     sender: 'agent',
     is_bot: false,
     body: message,
     body_html: bodyHtml,
-    created_at: new Date().toISOString(),
+    created_at: sentAt,
     channel: 'email',
   });
 
   // Post-send action
   const afterAction = body.after || 'snooze';
-  const now = new Date().toISOString();
-  const updates = { conversation_history: history, updated_at: now };
+  const updates = { conversation_history: history, updated_at: sentAt };
 
   // Update Gorgias FIRST — if this fails, operation fails and ticket stays open
   if (afterAction === 'close') {
     await gorgias.closeTicket(ticket.gorgias_ticket_id);
     await gorgias.assignTicket(ticket.gorgias_ticket_id, null);
     updates.status = 'closed';
-    updates.closed_at = now;
+    updates.closed_at = sentAt;
   } else {
     await gorgias.snoozeTicket(ticket.gorgias_ticket_id, 3);
     updates.status = 'snoozed';
-    updates.snoozed_at = now;
+    updates.snoozed_at = sentAt;
   }
 
   // Update DB only after Gorgias succeeded
   await supabase.from('cs_tickets').update(updates).eq('id', ticketId);
+
+  // Anchor focus_time_seconds on a draft row. Use the active draft if one exists;
+  // otherwise insert a lightweight manual_send draft so this operator-time isn't
+  // silently dropped (mirrors the outbound-staging pattern).
+  const focusSeconds = body.focus_time_seconds != null ? Math.round(body.focus_time_seconds) : null;
+  if (focusSeconds != null) {
+    if (ticket.active_draft_id) {
+      await supabase.from('cs_ai_drafts')
+        .update({ focus_time_seconds: focusSeconds })
+        .eq('id', ticket.active_draft_id);
+    } else {
+      await supabase.from('cs_ai_drafts').insert({
+        ticket_id: ticketId,
+        gorgias_ticket_id: ticket.gorgias_ticket_id,
+        gorgias_message_id: replyResult?.id || null,
+        customer_email: ticket.customer_email,
+        order_number: ticket.order_number,
+        draft_response: '',
+        sent_response: message,
+        structured_output: {},
+        confidence: 'low',
+        status: 'sent',
+        draft_kind: 'manual_send',
+        sent_at: sentAt,
+        reviewed_at: sentAt,
+        focus_time_seconds: focusSeconds,
+      });
+    }
+  }
 
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
 }
@@ -2156,9 +2208,22 @@ async function apiForwardTicket(ticketId, body) {
   return { success: true, forwarded_to: recipientEmail };
 }
 
-async function apiParkTicket(ticketId) {
+async function apiParkTicket(ticketId, body = {}) {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
+
+  // Capture focus time on the active draft (if any) before clearing the pointer
+  if (body.focus_time_seconds != null) {
+    const { data: t } = await supabase.from('cs_tickets')
+      .select('active_draft_id')
+      .eq('id', ticketId)
+      .single();
+    if (t?.active_draft_id) {
+      await supabase.from('cs_ai_drafts')
+        .update({ focus_time_seconds: Math.round(body.focus_time_seconds) })
+        .eq('id', t.active_draft_id);
+    }
+  }
 
   await supabase.from('cs_tickets').update({
     status: 'parked',
@@ -2170,9 +2235,21 @@ async function apiParkTicket(ticketId) {
   return { success: true };
 }
 
-async function apiUnparkTicket(ticketId) {
+async function apiUnparkTicket(ticketId, body = {}) {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
+
+  if (body.focus_time_seconds != null) {
+    const { data: t } = await supabase.from('cs_tickets')
+      .select('active_draft_id')
+      .eq('id', ticketId)
+      .single();
+    if (t?.active_draft_id) {
+      await supabase.from('cs_ai_drafts')
+        .update({ focus_time_seconds: Math.round(body.focus_time_seconds) })
+        .eq('id', t.active_draft_id);
+    }
+  }
 
   await supabase.from('cs_tickets').update({
     status: 'open',
@@ -2258,10 +2335,15 @@ const paramRoutes = [
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/snooze$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
-    const { data: t } = await supabase.from('cs_tickets').select('gorgias_ticket_id').eq('id', parseInt(id)).single();
+    const { data: t } = await supabase.from('cs_tickets').select('gorgias_ticket_id, active_draft_id').eq('id', parseInt(id)).single();
     if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
     await gorgias.snoozeTicket(t.gorgias_ticket_id, 3);
     await updateTicketStatus(supabase, t.gorgias_ticket_id, 'snoozed');
+    if (body?.focus_time_seconds != null && t.active_draft_id) {
+      await supabase.from('cs_ai_drafts')
+        .update({ focus_time_seconds: Math.round(body.focus_time_seconds) })
+        .eq('id', t.active_draft_id);
+    }
     return { success: true };
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: async (body, id) => {
@@ -2358,21 +2440,21 @@ const paramRoutes = [
         return apiReleaseDraft(t.active_draft_id, body);
       });
   }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/spam$/, handler: (_, id) => {
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/spam$/, handler: (body, id) => {
     const supabase = getSupabaseClient();
     return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
       .then(({ data: t }) => {
         if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiMarkSpam(t.active_draft_id);
+        return apiMarkSpam(t.active_draft_id, body);
       });
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/return$/, handler: (body, id) => apiReturnToInbox(parseInt(id), body) },
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/delete$/, handler: (_, id) => {
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/delete$/, handler: (body, id) => {
     const supabase = getSupabaseClient();
     return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
       .then(({ data: t }) => {
         if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiDeleteDraft(t.active_draft_id);
+        return apiDeleteDraft(t.active_draft_id, body);
       });
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/exchange$/, handler: (body, id) => {
@@ -2428,8 +2510,8 @@ const paramRoutes = [
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/message$/, handler: (body, id) => apiSendTicketMessage(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/park$/, handler: (_, id) => apiParkTicket(parseInt(id)) },
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpark$/, handler: (_, id) => apiUnparkTicket(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/park$/, handler: (body, id) => apiParkTicket(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpark$/, handler: (body, id) => apiUnparkTicket(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/forward$/, handler: (body, id) => apiForwardTicket(parseInt(id), body) },
 ];
 

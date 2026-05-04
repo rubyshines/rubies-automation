@@ -54,6 +54,16 @@ function formatTime(seconds) {
   return `${m}m ${s}s`;
 }
 
+function formatDurationHM(seconds) {
+  if (seconds == null || seconds === 0) return '—';
+  const totalMin = Math.round(seconds / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 // ---------------------------------------------------------------------------
 // Data queries
 // ---------------------------------------------------------------------------
@@ -97,6 +107,7 @@ async function getYesterdayStats(supabase, dateStr) {
   // Focus time
   const draftIds = rows.filter(r => r.draft_id).map(r => r.draft_id);
   let avgFocusTime = null;
+  let totalFocusTime = null;
   if (draftIds.length > 0) {
     const { data: draftsWithFocus } = await supabase
       .from('cs_ai_drafts')
@@ -106,6 +117,7 @@ async function getYesterdayStats(supabase, dateStr) {
     const focusTimes = (draftsWithFocus || []).map(d => d.focus_time_seconds);
     if (focusTimes.length > 0) {
       avgFocusTime = Math.round(focusTimes.reduce((a, b) => a + b, 0) / focusTimes.length);
+      totalFocusTime = focusTimes.reduce((a, b) => a + b, 0);
     }
   }
 
@@ -131,7 +143,7 @@ async function getYesterdayStats(supabase, dateStr) {
 
   return {
     handled, noEdit, edited, released, closedNoReply, filtered, spam, deleted,
-    redirectCount, avgFocusTime, avgQualityScore, byType, topCategories,
+    redirectCount, avgFocusTime, totalFocusTime, avgQualityScore, byType, topCategories,
   };
 }
 
@@ -142,7 +154,7 @@ async function getYesterdayStats(supabase, dateStr) {
 function buildEmail(dateStr, stats) {
   const {
     handled, noEdit, edited, released, filtered, spam, deleted,
-    redirectCount, avgFocusTime, avgQualityScore, byType, topCategories,
+    redirectCount, avgFocusTime, totalFocusTime, avgQualityScore, byType, topCategories,
   } = stats;
 
   const noEditRate = pct(noEdit, handled);
@@ -167,6 +179,15 @@ function buildEmail(dateStr, stats) {
     No tickets handled yesterday.
   </div>`;
   } else {
+    // Headline: total time on CS yesterday
+    if (totalFocusTime) {
+      html += `
+  <div style="margin: 20px 0; padding: 18px 20px; background: linear-gradient(135deg, #1a8f7d 0%, #15776a 100%); border-radius: 8px; color: #fff;">
+    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255,255,255,0.85); margin-bottom: 4px;">Time on CS Yesterday</div>
+    <div style="font-size: 28px; font-weight: 700; line-height: 1.1;">${formatDurationHM(totalFocusTime)}</div>
+    <div style="font-size: 12px; color: rgba(255,255,255,0.85); margin-top: 4px;">across ${handled} ticket${handled === 1 ? '' : 's'}</div>
+  </div>`;
+    }
     // KPI row
     html += `
   <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
