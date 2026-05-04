@@ -18,6 +18,37 @@ const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
 const { resolveCustomerForDraft, getShippingMethodTitle } = require('../orderUtils');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
+const { getSupabaseClient } = require('../../../shared/supabaseClient');
+
+// Apr 16 2026 retail price increase — adult sizes on 16 products jumped $3-6.
+// `pre_increase_pricing: true` on create_wholesale_order uses the variant's
+// previous_price from this rollout to invoice transitional retailers at the
+// pre-increase wholesale price. SKUs without an Apr 16 row use current retail.
+const PRE_INCREASE_WINDOW_START = '2026-04-16T00:00:00Z';
+const PRE_INCREASE_WINDOW_END = '2026-04-17T00:00:00Z';
+
+async function fetchPreIncreasePrices(variantIds) {
+  if (!variantIds || variantIds.length === 0) return new Map();
+  const sb = getSupabaseClient();
+  const { data, error } = await sb
+    .from('price_history')
+    .select('variant_id, previous_price, changed_at')
+    .in('variant_id', variantIds)
+    .gte('changed_at', PRE_INCREASE_WINDOW_START)
+    .lt('changed_at', PRE_INCREASE_WINDOW_END)
+    .not('previous_price', 'is', null)
+    .order('changed_at', { ascending: true });
+  if (error) throw new Error(`price_history lookup failed: ${error.message}`);
+  // If a variant changed more than once on Apr 16, take the earliest row's
+  // previous_price — that's the truly pre-rollout value.
+  const map = new Map();
+  for (const row of data || []) {
+    if (!map.has(row.variant_id)) {
+      map.set(row.variant_id, parseFloat(row.previous_price));
+    }
+  }
+  return map;
+}
 
 const CURRENCY_OVERRIDES = {
   'hello@sockdrawerheroes.com': 'USD',
@@ -243,6 +274,7 @@ const tools = [
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
       'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for non-US wholesale (FedEx routing); operator can override via shipping_speed.',
+      'Set pre_increase_pricing=true to invoice transitional retailers at pre-Apr-16 2026 retail × wholesale discount (uses price_history.previous_price per variant; SKUs that didn\'t change use current retail).',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -275,6 +307,10 @@ const tools = [
         },
         note: { type: 'string', description: 'Optional note for the draft order' },
         discount_percent: { type: 'number', description: 'Override the default country-based discount percentage (e.g. 50 for 50% off). If omitted, uses 50% for US/AU, 30% for others.' },
+        pre_increase_pricing: {
+          type: 'boolean',
+          description: 'When true, invoice at pre-Apr-16 2026 retail × wholesale discount for variants that changed in that rollout. Variants without an Apr 16 change row use current retail × discount (silently — they didn\'t change). Use for transitional wholesale partners who were quoted the old prices. Default false.',
+        },
         shipping_speed: {
           type: 'string',
           enum: ['standard', 'expedited'],
@@ -292,7 +328,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, pre_increase_pricing }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -340,6 +376,26 @@ const tools = [
         return { content: [{ type: 'text', text: resolvedItems.error }] };
       }
 
+      // Pre-Apr-16 pricing snapshot: variant_id → previous USD retail. Empty
+      // map when flag is off; when on, contains entries only for variants that
+      // changed in the Apr 16 2026 rollout.
+      const preIncreasePrices = pre_increase_pricing
+        ? await fetchPreIncreasePrices(resolvedItems.map(r => r.variantId))
+        : new Map();
+
+      // Annotate each resolved item with the per-line USD discount value to
+      // apply. Snapshot SKUs use FIXED_AMOUNT (currentRetail - oldWholesale);
+      // everything else uses the standard PERCENTAGE discount.
+      for (const item of resolvedItems) {
+        const oldRetail = preIncreasePrices.get(item.variantId);
+        if (oldRetail !== undefined) {
+          const currentRetail = parseFloat(item.price || 0);
+          const targetUnitPrice = oldRetail * (1 - discountPercent / 100);
+          item.preIncreaseRetail = oldRetail;
+          item.fixedDiscountAmount = +(currentRetail - targetUnitPrice).toFixed(2);
+        }
+      }
+
       // Check currency override
       const email = (customer_email || '').toLowerCase().trim();
       const currencyOverride = CURRENCY_OVERRIDES[email];
@@ -347,7 +403,8 @@ const tools = [
       // Look up customer details for address
       const { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
 
-      const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server`;
+      const noteSuffix = pre_increase_pricing ? ' | pre-Apr-16 pricing' : '';
+      const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server${noteSuffix}`;
 
       // Resolve shipping speed. Default: standard for US wholesale, expedited for non-US
       // wholesale (matches the prior "non-US wholesale always FedEx" rule).
@@ -357,15 +414,23 @@ const tools = [
       const shippingTitle = await getShippingMethodTitle(cc, speed);
 
       function buildDraftInput(itemList, orderNote) {
-        const lineItems = itemList.map(r => ({
-          variantId: r.variantId,
-          quantity: r.quantity,
-          appliedDiscount: {
-            title: `Wholesale ${discountPercent}%`,
-            value: discountPercent,
-            valueType: 'PERCENTAGE',
-          },
-        }));
+        const lineItems = itemList.map(r => {
+          const li = { variantId: r.variantId, quantity: r.quantity };
+          if (r.fixedDiscountAmount != null) {
+            li.appliedDiscount = {
+              title: `Wholesale ${discountPercent}% (pre-Apr-16 retail $${r.preIncreaseRetail.toFixed(2)})`,
+              value: r.fixedDiscountAmount,
+              valueType: 'FIXED_AMOUNT',
+            };
+          } else {
+            li.appliedDiscount = {
+              title: `Wholesale ${discountPercent}%`,
+              value: discountPercent,
+              valueType: 'PERCENTAGE',
+            };
+          }
+          return li;
+        });
         const input = {
           customerId: customerGid,
           lineItems,
@@ -483,6 +548,11 @@ const tools = [
       outputLines.push(addressBlock);
       outputLines.push('');
       outputLines.push(`**Discount:** ${discountPercent}% (${cc}) | **Currency:** ${currency}${currencyOverride ? ` (override: ${currencyOverride})` : ''}`);
+      if (pre_increase_pricing) {
+        const snapshotCount = resolvedItems.filter(r => r.fixedDiscountAmount != null).length;
+        const noChangeCount = resolvedItems.length - snapshotCount;
+        outputLines.push(`**Pricing:** pre-Apr-16 2026 retail (\`pre_increase_pricing=true\`) — ${snapshotCount} line(s) at pre-rollout prices, ${noChangeCount} line(s) at current retail (no Apr 16 change)`);
+      }
       outputLines.push('');
 
       // Items grouped by split — use line items from Shopify response
@@ -501,7 +571,16 @@ const tools = [
           const unitPrice = discountedSet ? parseFloat(discountedSet.amount) : parseFloat(li.originalUnitPrice);
           const lineTotal = unitPrice * li.quantity;
           const variantInfo = li.variant && li.variant.title && li.variant.title !== 'Default Title' ? ` - ${li.variant.title}` : '';
-          outputLines.push(`  ${li.quantity}x ${li.title}${variantInfo} → ${currency} $${unitPrice.toFixed(2)} each = ${currency} $${lineTotal.toFixed(2)}`);
+          let pricingNote = '';
+          if (pre_increase_pricing && li.variant && li.variant.id) {
+            const snapItem = resolvedItems.find(r => r.variantId === li.variant.id);
+            if (snapItem && snapItem.preIncreaseRetail != null) {
+              pricingNote = ` [pre-Apr-16 retail $${snapItem.preIncreaseRetail.toFixed(2)}]`;
+            } else {
+              pricingNote = ` [no Apr-16 change]`;
+            }
+          }
+          outputLines.push(`  ${li.quantity}x ${li.title}${variantInfo} → ${currency} $${unitPrice.toFixed(2)} each${pricingNote} = ${currency} $${lineTotal.toFixed(2)}`);
         }
         outputLines.push(`**Total:** ${currency} $${splitTotal.toFixed(2)}`);
         outputLines.push('');
@@ -514,6 +593,36 @@ const tools = [
           outputLines.push(`⚠️ **INSUFFICIENT STOCK:** ${r.productTitle} - ${r.variantTitle} — only ${r.inventoryQuantity} available (need ${r.quantity})`);
         }
         outputLines.push('');
+      }
+
+      // Price-change summary for customer notice (only when invoicing at pre-Apr-16
+      // prices). Group snapshot lines by product + old retail + new retail so we
+      // emit one row per price tier rather than per size.
+      if (pre_increase_pricing) {
+        const changeGroups = new Map();
+        for (const r of resolvedItems) {
+          if (r.preIncreaseRetail == null) continue;
+          const currentRetail = parseFloat(r.price || 0);
+          const key = `${r.productTitle}|${r.preIncreaseRetail}|${currentRetail}`;
+          if (!changeGroups.has(key)) {
+            changeGroups.set(key, {
+              productTitle: r.productTitle,
+              oldRetail: r.preIncreaseRetail,
+              newRetail: currentRetail,
+              units: 0,
+            });
+          }
+          changeGroups.get(key).units += r.quantity;
+        }
+        if (changeGroups.size > 0) {
+          outputLines.push(`**Price changes for customer (${discountPercent}% wholesale on new retail):**`);
+          for (const g of changeGroups.values()) {
+            const oldWholesale = g.oldRetail * (1 - discountPercent / 100);
+            const newWholesale = g.newRetail * (1 - discountPercent / 100);
+            outputLines.push(`  ${g.productTitle}: this order $${oldWholesale.toFixed(2)} → next order $${newWholesale.toFixed(2)} (retail $${g.oldRetail.toFixed(2)} → $${g.newRetail.toFixed(2)}, ${g.units} unit${g.units === 1 ? '' : 's'})`);
+          }
+          outputLines.push('');
+        }
       }
 
       // Summary table
