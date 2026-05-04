@@ -8,7 +8,6 @@ const { searchCustomers, getCustomerOrders, getOrderByNumber, isTipLineItem } = 
 const {
   searchCustomersFromSupabase,
   getCustomerOrdersFromSupabase,
-  getOrderByNumberFromSupabase,
 } = require('../supabaseQueries');
 
 const tools = [
@@ -128,16 +127,28 @@ const tools = [
       required: ['order_number'],
     },
     handler: async ({ order_number }) => {
-      // Try Supabase first, fall back to Shopify
-      let order = await getOrderByNumberFromSupabase(order_number);
-      if (!order) {
-        order = await getOrderByNumber(order_number);
-      }
+      // Always fetch from Shopify — Supabase mirror doesn't track per-refund state
+      // (pending vs success), and operator decisions need live cancel/refund truth.
+      const order = await getOrderByNumber(order_number);
+
+      const refunds = (order.refunds || []).map(r => ({
+        id: r.id,
+        createdAt: r.createdAt,
+        note: r.note,
+        amount: r.totalRefundedSet?.shopMoney,
+        transactions: (r.transactions?.edges || []).map(e => ({
+          kind: e.node.kind,
+          status: e.node.status,
+          amount: e.node.amountSet?.shopMoney,
+        })),
+      }));
 
       const formatted = {
         id: order.id,
         name: order.name,
         createdAt: order.createdAt,
+        cancelledAt: order.cancelledAt,
+        cancelReason: order.cancelReason,
         financialStatus: order.displayFinancialStatus,
         fulfillmentStatus: order.displayFulfillmentStatus,
         customer: order.customer ? {
@@ -151,16 +162,20 @@ const tools = [
           shipping: order.totalShippingPriceSet?.shopMoney,
           tax: order.totalTaxSet?.shopMoney,
           total: order.totalPriceSet?.shopMoney,
+          refunded: order.totalRefundedSet?.shopMoney,
+          currentTotal: order.currentTotalPriceSet?.shopMoney,
         },
         items: order.lineItems.filter(li => !isTipLineItem(li)).map(li => ({
           title: li.title,
           variant: li.variantTitle,
           quantity: li.quantity,
+          currentQuantity: li.currentQuantity,
           sku: li.sku,
           unitPrice: li.originalUnitPriceSet?.shopMoney,
           variantId: li.variant?.id,
         })),
         fulfillments: order.fulfillments,
+        refunds,
         note: order.note,
         tags: order.tags,
       };

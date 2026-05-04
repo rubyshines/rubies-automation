@@ -377,7 +377,10 @@ async function buildContext({ customer_email, customer_name, order_number, issue
       try {
         const orderResult = await getOrderByNumber(effectiveOrderNumber);
         if (orderResult) {
-          targetOrder = orderResult;
+          targetOrder = {
+            ...orderResult,
+            lineItems: (orderResult.lineItems || []).filter(li => li.currentQuantity > 0),
+          };
           const orderCustomerEmail = orderResult.customer?.email;
           if (orderCustomerEmail && orderCustomerEmail.toLowerCase() !== customer_email.toLowerCase()) {
             const orderCustomers = await searchCustomers(orderCustomerEmail);

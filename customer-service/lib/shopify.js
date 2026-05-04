@@ -169,6 +169,8 @@ async function getOrderByNumber(orderNumber) {
             id
             name
             createdAt
+            cancelledAt
+            cancelReason
             displayFinancialStatus
             displayFulfillmentStatus
             customer {
@@ -212,6 +214,21 @@ async function getOrderByNumber(orderNumber) {
               deliveredAt
               trackingInfo { number url }
             }
+            refunds {
+              id
+              createdAt
+              note
+              totalRefundedSet { shopMoney { amount currencyCode } }
+              transactions(first: 5) {
+                edges {
+                  node {
+                    kind
+                    status
+                    amountSet { shopMoney { amount currencyCode } }
+                  }
+                }
+              }
+            }
             note
             tags
           }
@@ -223,7 +240,7 @@ async function getOrderByNumber(orderNumber) {
   if (!order) throw new Error(`Order not found: ${orderNumber}`);
   return {
     ...order,
-    lineItems: order.lineItems.edges.map(e => e.node).filter(li => li.currentQuantity > 0),
+    lineItems: order.lineItems.edges.map(e => e.node),
   };
 }
 

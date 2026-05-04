@@ -519,13 +519,16 @@ async function executeToolCall(toolName, toolInput) {
       const { getOrderByNumber } = require('./shopify');
       try {
         const shopifyOrder = await getOrderByNumber(order_number);
-        // Map line items to the format analyzeUnfulfilledOrder expects (needs variantId)
+        // Map line items to the format analyzeUnfulfilledOrder expects (needs variantId).
+        // Filter out items removed via order edits / refunds (currentQuantity === 0).
         const mapped = {
           ...shopifyOrder,
-          lineItems: (shopifyOrder.lineItems || []).map(li => ({
-            ...li,
-            variantId: li.variant?.id || null,
-          })),
+          lineItems: (shopifyOrder.lineItems || [])
+            .filter(li => li.currentQuantity > 0)
+            .map(li => ({
+              ...li,
+              variantId: li.variant?.id || null,
+            })),
         };
         return await analyzeUnfulfilledOrder(mapped);
       } catch (e) {
