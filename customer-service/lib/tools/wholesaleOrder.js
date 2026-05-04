@@ -12,7 +12,7 @@
  * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold)
  */
 
-const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
+const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, getDraftOrderRecap, normalizeGid, getAdminUrl } = require('../shopify');
 const { searchProducts } = require('../productCache');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
@@ -274,7 +274,7 @@ const tools = [
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
       'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for non-US wholesale (FedEx routing); operator can override via shipping_speed.',
-      'Set pre_increase_pricing=true to invoice transitional retailers at pre-Apr-16 2026 retail × wholesale discount (uses price_history.previous_price per variant; SKUs that didn\'t change use current retail).',
+      'Set pre_increase_pricing=true to invoice transitional retailers at pre-Apr-16 2026 retail × wholesale discount (uses price_history.previous_price per variant; SKUs that didn\'t change use current retail). Per-item override: set items[].use_current_pricing=true on individual lines to keep them at current retail × discount even when pre_increase_pricing is on (e.g. items the customer never ordered before so old prices don\'t apply).',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -302,6 +302,7 @@ const tools = [
               target_size: { type: 'string', description: 'Target size when using sku to find a sibling variant in a different size.' },
               query: { type: 'string', description: 'Fuzzy search fallback when neither variant_id nor sku is available.' },
               quantity: { type: 'number' },
+              use_current_pricing: { type: 'boolean', description: 'Per-item override used only when pre_increase_pricing=true. Set true to keep this line at current retail × discount instead of pre-Apr-16 pricing (e.g. customer never ordered the item before so honoring old prices doesn\'t apply).' },
             },
           },
         },
@@ -334,9 +335,15 @@ const tools = [
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
       if (confirmed && draft_order_ids && draft_order_ids.length > 0) {
         const results = [];
+        // Collect recap data BEFORE sending invoices so we can rebuild the
+        // price-change summary regardless of post-invoice draft state.
+        const recaps = [];
         for (const draftId of draft_order_ids) {
           const draftGid = normalizeGid(draftId, 'DraftOrder');
           const draftAdminUrl = getAdminUrl(draftGid);
+
+          const recap = await getDraftOrderRecap(draftGid);
+          if (recap) recaps.push(recap);
 
           // Send invoice (before completing, since completed drafts become orders)
           const invoiceResult = await sendDraftOrderInvoice(draftGid);
@@ -354,6 +361,58 @@ const tools = [
           if (results.length > 1) resultText += `**Draft ${i + 1} of ${results.length}:**\n`;
           resultText += `**Draft Order:** ${r.draftName} — ${r.draftAdminUrl}\n`;
           resultText += `**Invoice sent** — Payment link: ${r.invoiceUrl}\n\n`;
+        }
+
+        // Customer-facing price-change summary: only emit when at least one
+        // recap is tagged pre-apr-16-pricing. Aggregate snapshot lines
+        // across drafts (FIXED_AMOUNT discount = invoiced at pre-increase
+        // price; PERCENTAGE = current pricing, skip).
+        const isPreIncreaseOrder = recaps.some(r => r.tags.includes('pre-apr-16-pricing'));
+        if (isPreIncreaseOrder) {
+          const snapshotLines = [];
+          for (const recap of recaps) {
+            for (const li of recap.lineItems) {
+              if (!li.variant || !li.variant.id) continue;
+              if (!li.appliedDiscount || li.appliedDiscount.valueType !== 'FIXED_AMOUNT') continue;
+              snapshotLines.push({
+                variantId: li.variant.id,
+                productTitle: li.title,
+                currentRetail: parseFloat(li.originalUnitPriceSet.presentmentMoney.amount),
+                discountedUnitPrice: parseFloat(li.discountedUnitPriceSet.presentmentMoney.amount),
+                quantity: li.quantity,
+              });
+            }
+          }
+          if (snapshotLines.length > 0) {
+            const variantIds = [...new Set(snapshotLines.map(l => l.variantId))];
+            const preMap = await fetchPreIncreasePrices(variantIds);
+            const groups = new Map();
+            for (const l of snapshotLines) {
+              const oldRetail = preMap.get(l.variantId);
+              if (oldRetail == null) continue;
+              const key = `${l.productTitle}|${oldRetail}|${l.currentRetail}`;
+              if (!groups.has(key)) {
+                groups.set(key, {
+                  productTitle: l.productTitle,
+                  oldRetail,
+                  newRetail: l.currentRetail,
+                  oldWholesale: l.discountedUnitPrice,
+                  units: 0,
+                });
+              }
+              groups.get(key).units += l.quantity;
+            }
+            if (groups.size > 0) {
+              resultText += `**Customer notice — prices going up next order:**\n`;
+              for (const g of groups.values()) {
+                // Derive new wholesale from the same discount ratio used on the snapshot line.
+                const dPct = (g.oldRetail - g.oldWholesale) / g.oldRetail;
+                const newWholesale = g.newRetail * (1 - dPct);
+                resultText += `  ${g.productTitle}: this order $${g.oldWholesale.toFixed(2)} → next order $${newWholesale.toFixed(2)} (retail $${g.oldRetail.toFixed(2)} → $${g.newRetail.toFixed(2)}, ${g.units} unit${g.units === 1 ? '' : 's'})\n`;
+              }
+              resultText += `\n`;
+            }
+          }
         }
 
         return { content: [{ type: 'text', text: resultText }] };
@@ -383,10 +442,21 @@ const tools = [
         ? await fetchPreIncreasePrices(resolvedItems.map(r => r.variantId))
         : new Map();
 
+      // Per-item override: items[].use_current_pricing=true forces a line to
+      // use current retail × discount even when pre_increase_pricing is on.
+      // resolveLineItems preserves input order, so map by index.
+      for (let i = 0; i < resolvedItems.length; i++) {
+        if (items[i] && items[i].use_current_pricing === true) {
+          resolvedItems[i].useCurrentPricingOverride = true;
+        }
+      }
+
       // Annotate each resolved item with the per-line USD discount value to
       // apply. Snapshot SKUs use FIXED_AMOUNT (currentRetail - oldWholesale);
-      // everything else uses the standard PERCENTAGE discount.
+      // everything else uses the standard PERCENTAGE discount. Lines with the
+      // per-item override skip the snapshot lookup.
       for (const item of resolvedItems) {
+        if (item.useCurrentPricingOverride) continue;
         const oldRetail = preIncreasePrices.get(item.variantId);
         if (oldRetail !== undefined) {
           const currentRetail = parseFloat(item.price || 0);
@@ -436,7 +506,7 @@ const tools = [
           lineItems,
           note: orderNote,
           shippingLine: { title: shippingTitle, price: '0.00' },
-          tags: ['wholesale', 'cs-mcp'],
+          tags: pre_increase_pricing ? ['wholesale', 'cs-mcp', 'pre-apr-16-pricing'] : ['wholesale', 'cs-mcp'],
         };
         if (shippingAddress) {
           input.shippingAddress = shippingAddress;
@@ -550,8 +620,12 @@ const tools = [
       outputLines.push(`**Discount:** ${discountPercent}% (${cc}) | **Currency:** ${currency}${currencyOverride ? ` (override: ${currencyOverride})` : ''}`);
       if (pre_increase_pricing) {
         const snapshotCount = resolvedItems.filter(r => r.fixedDiscountAmount != null).length;
-        const noChangeCount = resolvedItems.length - snapshotCount;
-        outputLines.push(`**Pricing:** pre-Apr-16 2026 retail (\`pre_increase_pricing=true\`) — ${snapshotCount} line(s) at pre-rollout prices, ${noChangeCount} line(s) at current retail (no Apr 16 change)`);
+        const overrideCount = resolvedItems.filter(r => r.useCurrentPricingOverride).length;
+        const noChangeCount = resolvedItems.length - snapshotCount - overrideCount;
+        const parts = [`${snapshotCount} line(s) at pre-rollout prices`];
+        if (noChangeCount > 0) parts.push(`${noChangeCount} at current retail (no Apr 16 change)`);
+        if (overrideCount > 0) parts.push(`${overrideCount} at current retail (operator override)`);
+        outputLines.push(`**Pricing:** pre-Apr-16 2026 retail (\`pre_increase_pricing=true\`) — ${parts.join(', ')}`);
       }
       outputLines.push('');
 
@@ -574,7 +648,9 @@ const tools = [
           let pricingNote = '';
           if (pre_increase_pricing && li.variant && li.variant.id) {
             const snapItem = resolvedItems.find(r => r.variantId === li.variant.id);
-            if (snapItem && snapItem.preIncreaseRetail != null) {
+            if (snapItem && snapItem.useCurrentPricingOverride) {
+              pricingNote = ` [current pricing — operator override]`;
+            } else if (snapItem && snapItem.preIncreaseRetail != null) {
               pricingNote = ` [pre-Apr-16 retail $${snapItem.preIncreaseRetail.toFixed(2)}]`;
             } else {
               pricingNote = ` [no Apr-16 change]`;

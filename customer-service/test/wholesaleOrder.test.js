@@ -85,6 +85,9 @@ function buildDraftResponseFromInput(input) {
   };
 }
 
+// Phase-2 recap fixture: tests can populate this map keyed by draft GID to
+// drive getDraftOrderRecap responses. Format mirrors Shopify's GraphQL shape.
+let stubDraftRecaps = {};
 require.cache[shopifyPath] = {
   id: shopifyPath, filename: shopifyPath, loaded: true,
   exports: {
@@ -95,6 +98,7 @@ require.cache[shopifyPath] = {
     deleteDraftOrder: () => Promise.resolve(),
     completeDraftOrder: () => Promise.resolve({ name: 'D999', order: { id: 'gid://shopify/Order/1', name: '#1001' } }),
     sendDraftOrderInvoice: () => Promise.resolve({ name: 'D999', invoiceUrl: 'https://example.com/inv' }),
+    getDraftOrderRecap: (id) => Promise.resolve(stubDraftRecaps[id] || null),
     normalizeGid: (id, type) => (typeof id === 'string' && id.startsWith('gid://')) ? id : `gid://shopify/${type}/${id}`,
     getAdminUrl: (gid) => `https://admin.shopify.com/store/rubyshines/${gid}`,
   },
@@ -246,6 +250,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
   beforeEach(() => {
     lastCreateDraftOrderArgs = null;
     stubPriceHistoryRows = [];
+    stubDraftRecaps = {};
     stubVariantPrices = {
       'gid://shopify/ProductVariant/100': '32.00', // adult AJ-style: bumped Apr 16
       'gid://shopify/ProductVariant/101': '24.00', // youth-style: unchanged
@@ -420,6 +425,186 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       items: [{ variant_id: 'gid://shopify/ProductVariant/100', quantity: 1 }],
     });
     assert.doesNotMatch(result.content[0].text, /Price changes for customer/);
+  });
+
+  it('with flag + per-item use_current_pricing override, that line uses PERCENTAGE on current retail', async () => {
+    // Apr 16 row exists for variant 100 (would normally use FIXED_AMOUNT $18 off),
+    // but operator overrides → falls back to standard 50% PERCENTAGE.
+    stubPriceHistoryRows = [
+      { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
+    ];
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [{ variant_id: 'gid://shopify/ProductVariant/100', quantity: 1, use_current_pricing: true }],
+      pre_increase_pricing: true,
+    });
+    const li = lastCreateDraftOrderArgs.lineItems[0];
+    assert.equal(li.appliedDiscount.valueType, 'PERCENTAGE');
+    assert.equal(li.appliedDiscount.value, 50);
+  });
+
+  it('with flag, mixing snapshot + per-item override applies each rule independently', async () => {
+    stubPriceHistoryRows = [
+      { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
+      { variant_id: 'gid://shopify/ProductVariant/101', previous_price: 12, changed_at: '2026-04-16T12:00:00Z' },
+    ];
+    stubVariantPrices = {
+      'gid://shopify/ProductVariant/100': '32.00', // AJ — honor old price
+      'gid://shopify/ProductVariant/101': '14.00', // chest pads — operator override to current
+    };
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [
+        { variant_id: 'gid://shopify/ProductVariant/100', quantity: 1 },
+        { variant_id: 'gid://shopify/ProductVariant/101', quantity: 12, use_current_pricing: true },
+      ],
+      pre_increase_pricing: true,
+    });
+    const [aj, pads] = lastCreateDraftOrderArgs.lineItems;
+    // AJ: snapshot path → FIXED $18 off ($32 - $14)
+    assert.equal(aj.appliedDiscount.valueType, 'FIXED_AMOUNT');
+    assert.equal(aj.appliedDiscount.value, 18);
+    // Chest pads: override → standard PERCENTAGE
+    assert.equal(pads.appliedDiscount.valueType, 'PERCENTAGE');
+    assert.equal(pads.appliedDiscount.value, 50);
+    // Preview shows operator-override marker for the pads line
+    assert.match(result.content[0].text, /current pricing — operator override/);
+    // Header reports the override count
+    assert.match(result.content[0].text, /1 at current retail \(operator override\)/);
+    // Price-change summary should NOT include chest pads (they're not having a price change communicated to customer)
+    assert.doesNotMatch(result.content[0].text, /TEST PRODUCT.*\$6\.00/);
+  });
+
+  it('with flag, draft is tagged pre-apr-16-pricing (so Phase 2 can detect it)', async () => {
+    stubPriceHistoryRows = [
+      { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
+    ];
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [{ variant_id: 'gid://shopify/ProductVariant/100', quantity: 1 }],
+      pre_increase_pricing: true,
+    });
+    assert.ok(lastCreateDraftOrderArgs.tags.includes('pre-apr-16-pricing'));
+    assert.ok(lastCreateDraftOrderArgs.tags.includes('wholesale'));
+  });
+
+  it('without flag, pre-apr-16-pricing tag is NOT added', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [{ variant_id: 'gid://shopify/ProductVariant/100', quantity: 1 }],
+    });
+    assert.ok(!lastCreateDraftOrderArgs.tags.includes('pre-apr-16-pricing'));
+  });
+
+  it('Phase 2: invoice confirmation includes customer-facing price-change summary for pre-apr-16 orders', async () => {
+    // Simulate a tagged draft with one snapshot AJ line and one current-priced
+    // chest-pad line (operator override). Only the AJ line should appear in
+    // the customer notice.
+    stubPriceHistoryRows = [
+      { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
+    ];
+    stubDraftRecaps['gid://shopify/DraftOrder/D6715'] = {
+      id: 'gid://shopify/DraftOrder/D6715',
+      name: 'D6715',
+      tags: ['wholesale', 'cs-mcp', 'pre-apr-16-pricing'],
+      lineItems: [
+        {
+          title: 'AJ',
+          quantity: 5,
+          variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+          originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
+          discountedUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
+          appliedDiscount: { value: 18, valueType: 'FIXED_AMOUNT', title: 'Wholesale 50% (pre-Apr-16 retail $28.00)' },
+        },
+        {
+          title: 'Chest Pads',
+          quantity: 12,
+          variant: { id: 'gid://shopify/ProductVariant/200', title: 'Black / M' },
+          originalUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
+          discountedUnitPriceSet: { presentmentMoney: { amount: '7.00', currencyCode: 'USD' } },
+          appliedDiscount: { value: 50, valueType: 'PERCENTAGE', title: 'Wholesale 50%' },
+        },
+      ],
+    };
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      confirmed: true,
+      draft_order_ids: ['gid://shopify/DraftOrder/D6715'],
+    });
+    const text = result.content[0].text;
+    assert.match(text, /Invoice sent/);
+    assert.match(text, /Customer notice — prices going up next order/);
+    assert.match(text, /AJ: this order \$14\.00 → next order \$16\.00 \(retail \$28\.00 → \$32\.00, 5 units\)/);
+    // Chest pads should NOT appear (PERCENTAGE discount = current pricing)
+    assert.doesNotMatch(text, /Chest Pads.*next order/);
+  });
+
+  it('Phase 2: non-pre-increase orders skip the customer notice', async () => {
+    stubDraftRecaps['gid://shopify/DraftOrder/D6716'] = {
+      id: 'gid://shopify/DraftOrder/D6716',
+      name: 'D6716',
+      tags: ['wholesale', 'cs-mcp'], // no pre-apr-16-pricing tag
+      lineItems: [
+        {
+          title: 'AJ',
+          quantity: 1,
+          variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+          originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
+          discountedUnitPriceSet: { presentmentMoney: { amount: '16.00', currencyCode: 'USD' } },
+          appliedDiscount: { value: 50, valueType: 'PERCENTAGE', title: 'Wholesale 50%' },
+        },
+      ],
+    };
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      confirmed: true,
+      draft_order_ids: ['gid://shopify/DraftOrder/D6716'],
+    });
+    assert.doesNotMatch(result.content[0].text, /Customer notice/);
+  });
+
+  it('Phase 2: aggregates snapshot lines across multiple drafts (AU split case)', async () => {
+    stubPriceHistoryRows = [
+      { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
+    ];
+    // Two drafts (e.g. AU split), each with AJ snapshot lines
+    stubDraftRecaps['gid://shopify/DraftOrder/A'] = {
+      id: 'gid://shopify/DraftOrder/A',
+      name: 'A',
+      tags: ['wholesale', 'cs-mcp', 'pre-apr-16-pricing'],
+      lineItems: [{
+        title: 'AJ',
+        quantity: 3,
+        variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+        originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
+        discountedUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
+        appliedDiscount: { value: 18, valueType: 'FIXED_AMOUNT', title: 'pre' },
+      }],
+    };
+    stubDraftRecaps['gid://shopify/DraftOrder/B'] = {
+      id: 'gid://shopify/DraftOrder/B',
+      name: 'B',
+      tags: ['wholesale', 'cs-mcp', 'pre-apr-16-pricing'],
+      lineItems: [{
+        title: 'AJ',
+        quantity: 2,
+        variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+        originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
+        discountedUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
+        appliedDiscount: { value: 18, valueType: 'FIXED_AMOUNT', title: 'pre' },
+      }],
+    };
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      confirmed: true,
+      draft_order_ids: ['gid://shopify/DraftOrder/A', 'gid://shopify/DraftOrder/B'],
+    });
+    // 3 + 2 = 5 units in single grouped row
+    assert.match(result.content[0].text, /AJ: this order \$14\.00 → next order \$16\.00 \(retail \$28\.00 → \$32\.00, 5 units\)/);
   });
 
   it('with flag, draft note carries the pre-Apr-16 marker', async () => {

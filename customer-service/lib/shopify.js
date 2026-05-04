@@ -522,6 +522,40 @@ async function sendDraftOrderInvoice(draftOrderId, email) {
 
 // --- Draft order queries ---
 
+// Minimal draft fetch used by Phase 2 of create_wholesale_order to regenerate
+// the customer-facing price-change summary without re-passing item context.
+async function getDraftOrderRecap(draftOrderId) {
+  const gid = normalizeGid(draftOrderId, 'DraftOrder');
+  const data = await shopifyGraphQL(`
+    query draftRecap($id: ID!) {
+      draftOrder(id: $id) {
+        id
+        name
+        tags
+        lineItems(first: 250) {
+          edges {
+            node {
+              title
+              quantity
+              variant { id title }
+              originalUnitPriceSet { presentmentMoney { amount currencyCode } }
+              discountedUnitPriceSet { presentmentMoney { amount currencyCode } }
+              appliedDiscount { value valueType title }
+            }
+          }
+        }
+      }
+    }
+  `, { id: gid });
+  if (!data.draftOrder) return null;
+  return {
+    id: data.draftOrder.id,
+    name: data.draftOrder.name,
+    tags: data.draftOrder.tags || [],
+    lineItems: data.draftOrder.lineItems.edges.map(e => e.node),
+  };
+}
+
 async function listDraftOrders({ status, limit = 20 } = {}) {
   const queryParts = [];
   if (status) queryParts.push(`status:${status}`);
@@ -1749,6 +1783,7 @@ module.exports = {
   deleteDraftOrder,
   completeDraftOrder,
   sendDraftOrderInvoice,
+  getDraftOrderRecap,
   listDraftOrders,
   normalizeGid,
   isTipLineItem,

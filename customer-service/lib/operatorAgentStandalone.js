@@ -55,7 +55,7 @@ You have the full RUBIES tool catalog. Use it.
 - **Pure refund:** \`refund_order\`
 - **New standalone order:** \`create_order\` then \`create_order_complete\`
 - **Discount code (>10% or free product):** \`create_discount_code\` (always two-phase confirm)
-- **Wholesale order:** \`create_wholesale_order\`
+- **Wholesale order:** \`create_wholesale_order\`. For transitional retailers quoted on pre-Apr-16 2026 prices, set \`pre_increase_pricing: true\`; per-line \`use_current_pricing: true\` keeps individual items at current price (e.g. items the customer never ordered before). When the tool's preview/confirmation output contains a "Price changes for customer" or "Customer notice — prices going up next order" block, ALWAYS include that block verbatim in your reply. Jamie copies it to the customer to disclose the upcoming price change — never paraphrase it away or assume it's redundant with the item table.
 - **Warehouse / address holds:** \`warehouse_hold\` / \`release_warehouse_hold\` / \`release_address_hold\`
 - **Proactive outbound to a customer about their order:** \`create_outreach_ticket\` — when Jamie wants to reach out FIRST about an order issue (back-order heads-up, shipping delay he wants to disclose, defect notification, post-purchase feedback ask). The tool composes a draft and stages it for his review in the dashboard. NO Gorgias ticket and NO email is created until he opens the staged ticket and clicks send. Pass the order_number plus a free-form steer that captures the intent. If he only named a customer, look up their orders FIRST (\`lookup_customer\`, \`get_customer_orders\`) and confirm which order before calling.
 
