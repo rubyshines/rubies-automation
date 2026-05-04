@@ -270,8 +270,18 @@ function daysSinceDelivery(trackingData) {
   return Math.floor((Date.now() - d.getTime()) / 86400000);
 }
 
+function formatShippingAddress(addr) {
+  if (!addr) return null;
+  const lines = [
+    [addr.address1, addr.address2].filter(Boolean).join(', '),
+    [addr.city, addr.provinceCode || addr.province, addr.zip].filter(Boolean).join(' ').trim(),
+    addr.country || addr.countryCode || null,
+  ].filter(Boolean);
+  return lines.join(', ');
+}
+
 async function buildShippingResponse(trackingData, context) {
-  const { shippingZone, customerName, orderNumber, customerMessage, shipDate, countryCode, countryName, provinceCode, region } = context || {};
+  const { shippingZone, customerName, orderNumber, customerMessage, shipDate, countryCode, countryName, provinceCode, region, shippingAddress } = context || {};
   const name = customerName || null;
   const greeting = name ? `Hi ${name}` : 'Hi';
   const trackingLink = trackingData.trackingUrl || null;
@@ -406,7 +416,12 @@ async function buildShippingResponse(trackingData, context) {
     case 'returned': {
       parts.push(`${greeting}, it looks like your package is being returned to us.`);
       if (trackingData.status_description) parts.push(`The carrier noted: ${trackingData.status_description}.`);
-      parts.push(`Once I confirm it's on its way back I'll get a new order sent out to you.`);
+      const addrStr = formatShippingAddress(shippingAddress);
+      if (addrStr) {
+        parts.push(`Can you confirm the shipping address on the order is correct? We have it as ${addrStr}. Once you confirm (or send me an updated address) I'll get a new package out to you.`);
+      } else {
+        parts.push(`Could you confirm the shipping address you'd like the new package sent to? Once I have that I'll get it out to you.`);
+      }
       needsHumanFollowUp = true;
       break;
     }

@@ -301,6 +301,7 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
           orderNumber: order.name?.replace('#', ''),
           customerMessage,
           shipDate,
+          shippingAddress: order.shippingAddress,
         }
       );
       results.push({
@@ -330,7 +331,7 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
         try {
           summary = await summarizeForCustomer(
             { current_status: cached.current_status, events: cached.raw_events, trackingUrl: cached.tracking_url, local_carrier: cached.local_carrier },
-            { shippingZone, countryCode: destCountry, countryName: destCountryName, provinceCode: destProvince, region: destRegion, customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null, orderNumber: order.name?.replace('#', ''), customerMessage, shipDate }
+            { shippingZone, countryCode: destCountry, countryName: destCountryName, provinceCode: destProvince, region: destRegion, customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null, orderNumber: order.name?.replace('#', ''), customerMessage, shipDate, shippingAddress: order.shippingAddress }
           );
         } catch (e) { /* fall back to cached summary */ }
       }
@@ -367,6 +368,7 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
           orderNumber: order.name?.replace('#', ''),
           customerMessage,
           shipDate,
+          shippingAddress: order.shippingAddress,
         }
       );
 
