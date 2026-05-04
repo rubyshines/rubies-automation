@@ -52,6 +52,7 @@ const cancelOrderTools = require('./lib/tools/cancelOrder');
 const splitShipmentTools = require('./lib/tools/splitShipment');
 const seoMetaTools = require('./lib/tools/seoMeta');
 const createOutreachTicketTools = require('./lib/tools/createOutreachTicket');
+const warehouseAllocationTools = require('./lib/tools/warehouseAllocation');
 
 const allTools = [
   ...customerLookupTools,
@@ -90,6 +91,7 @@ const allTools = [
   ...splitShipmentTools,
   ...seoMetaTools,
   ...createOutreachTicketTools,
+  ...warehouseAllocationTools,
 ];
 
 /**

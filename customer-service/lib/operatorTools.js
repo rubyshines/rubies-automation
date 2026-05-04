@@ -48,6 +48,7 @@ function loadAllOperatorTools() {
     require('./tools/splitShipment'),
     require('./tools/seoMeta'),
     require('./tools/createOutreachTicket'),
+    require('./tools/warehouseAllocation'),
   ];
 
   const tools = [];
