@@ -4,11 +4,11 @@
  * Auth: HTTP Basic (email:api_key) or Bearer token.
  * Base URL: https://{domain}.gorgias.com/api
  *
- * Rate limiting: apiFetch retries on 429 with exponential backoff (1s, 2s,
- * up to 3 attempts). No preemptive pacing — interactive callers (dashboard,
- * webhooks) stay fast; bursty batch callers self-throttle when they hit the
- * wall. If a specific batch path becomes a frequent retrier, add targeted
- * pacing there.
+ * Rate limiting: apiFetch retries on 429 up to 5 attempts. Honors the
+ * `Retry-After` response header (seconds, capped at 30s) when Gorgias
+ * sends one; falls back to exponential backoff (1s, 2s, 4s, 8s) otherwise.
+ * No preemptive pacing — interactive callers (dashboard, webhooks) stay
+ * fast; bursty batch callers self-throttle when they hit the wall.
  *
  * Docs: https://developers.gorgias.com/reference
  */
@@ -38,7 +38,8 @@ async function apiFetch(path, options = {}) {
   const config = getConfig();
   const url = `${config.baseUrl}${path}`;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -51,15 +52,28 @@ async function apiFetch(path, options = {}) {
 
     if (response.ok) return response.json();
 
-    if (response.status === 429 && attempt < 2) {
+    if (response.status === 429 && attempt < MAX_ATTEMPTS - 1) {
       _retryCount++;
-      await delay(1000 * Math.pow(2, attempt));
+      const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
+      const waitMs = retryAfter != null
+        ? Math.min(retryAfter * 1000, 30000)
+        : 1000 * Math.pow(2, attempt);
+      await delay(waitMs);
       continue;
     }
 
     const errText = await response.text();
     throw new Error(`Gorgias API error ${response.status} on ${path}: ${errText}`);
   }
+}
+
+function parseRetryAfter(header) {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+  const dateMs = Date.parse(header);
+  if (Number.isFinite(dateMs)) return Math.max(0, (dateMs - Date.now()) / 1000);
+  return null;
 }
 
 /**
