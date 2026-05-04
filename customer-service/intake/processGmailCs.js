@@ -110,18 +110,40 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
   const markProcessed = () =>
     supabase.from('email_messages').update({ processed_at: now }).eq('gmail_message_id', msg.gmail_message_id);
 
+  // Helper: CS email already handled elsewhere (by Gorgias native, prior forward,
+  // existing ticket, or Jamie's manual Gmail reply). Label R/Customer Support and
+  // archive out of inbox so it doesn't sit there forever.
+  const markCsHandled = async (reason) => {
+    const csLabel = labelIds['R/Customer Support'];
+    let archived = false;
+    if (csLabel) {
+      try {
+        if (archiveEnabled) {
+          await labelAndArchive(gmail, msg.gmail_message_id, csLabel);
+          archived = true;
+        } else {
+          await labelMessage(gmail, msg.gmail_message_id, csLabel);
+        }
+      } catch (err) {
+        console.warn(`[gmail-cs] Could not label/archive ${msg.gmail_message_id} (${reason}): ${err.message}`);
+      }
+    }
+    const update = { processed_at: now };
+    if (archived) update.archived_at = now;
+    await supabase.from('email_messages').update(update).eq('gmail_message_id', msg.gmail_message_id);
+    return { action: 'skipped', reason };
+  };
+
   // ── customer_support → forward to Gorgias ──
   if (classification === 'customer_support') {
     // Skip if addressed to care@ (Gorgias already has it)
     if ((msg.to_addresses || []).some(a => a.toLowerCase().includes(CARE_ADDRESS))) {
-      await markProcessed();
-      return { action: 'skipped', reason: 'addressed_to_care' };
+      return await markCsHandled('addressed_to_care');
     }
 
     // Skip if already forwarded
     if (msg.forwarded_to_gorgias_at) {
-      await markProcessed();
-      return { action: 'skipped', reason: 'already_forwarded' };
+      return await markCsHandled('already_forwarded');
     }
 
     // Atomic claim: only one concurrent caller can own this gmail_message_id.
@@ -163,8 +185,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
       const recentGorgiasTickets = await gorgias.findOpenTicketsByEmail(msg.from_address, { withinMinutes: 10 });
       if (recentGorgiasTickets.length) {
         console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: Gorgias already has open ticket #${recentGorgiasTickets[0].id} for ${msg.from_address}`);
-        await markProcessed();
-        return { action: 'skipped', reason: 'gorgias_already_handling' };
+        return await markCsHandled('gorgias_already_handling');
       }
     } catch (err) {
       console.warn(`[gmail-cs] Gorgias dedup lookup failed for ${msg.from_address}: ${err.message} — falling through to Supabase dedup`);
@@ -175,8 +196,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     const dupAction = await checkForDuplicateTicket(supabase, msg.from_address, 0, newMessages);
     if (dupAction === 'close_new') {
       console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: duplicate of existing ticket for ${msg.from_address}`);
-      await markProcessed();
-      return { action: 'skipped', reason: 'duplicate' };
+      return await markCsHandled('duplicate');
     }
 
     // Skip replies to Stage 2 personal follow-up emails (sent from jamie@ via SendGrid).
@@ -208,8 +228,7 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
 
     if (priorReplies && priorReplies.length > 0) {
       console.log(`[gmail-cs] Skip ${msg.gmail_message_id}: legacy thread already handled in Gmail`);
-      await markProcessed();
-      return { action: 'skipped', reason: 'legacy_thread' };
+      return await markCsHandled('legacy_thread');
     }
 
     // Fetch full thread history for context (include attachment_meta for forwarding)
@@ -263,23 +282,31 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     const threadCount = thread.length;
     console.log(`[gmail-cs] Created Gorgias ticket ${ticket.id} for ${msg.from_address} — "${(msg.subject || '').substring(0, 50)}" (${threadCount} message${threadCount > 1 ? 's' : ''})`);
 
-    // Mark all thread messages as forwarded + processed
+    // Label in Gmail
+    const csLabel = labelIds['R/Customer Support'];
+    let archived = false;
+    if (csLabel) {
+      try {
+        if (archiveEnabled) {
+          await labelAndArchive(gmail, msg.gmail_message_id, csLabel);
+          archived = true;
+        } else {
+          await labelMessage(gmail, msg.gmail_message_id, csLabel);
+        }
+      } catch (err) {
+        console.warn(`[gmail-cs] Could not label/archive forwarded ${msg.gmail_message_id}: ${err.message}`);
+      }
+    }
+
+    // Mark all thread messages as forwarded + processed (and archived if Gmail archive succeeded)
     const threadMsgIds = thread.map(m => m.gmail_message_id);
-    await supabase.from('email_messages').update({
+    const update = {
       forwarded_to_gorgias_at: now,
       gorgias_ticket_id: ticket.id,
       processed_at: now,
-    }).in('gmail_message_id', threadMsgIds);
-
-    // Label in Gmail
-    const csLabel = labelIds['R/Customer Support'];
-    if (csLabel) {
-      if (archiveEnabled) {
-        await labelAndArchive(gmail, msg.gmail_message_id, csLabel);
-      } else {
-        await labelMessage(gmail, msg.gmail_message_id, csLabel);
-      }
-    }
+    };
+    if (archived) update.archived_at = now;
+    await supabase.from('email_messages').update(update).in('gmail_message_id', threadMsgIds);
 
     return { action: 'forwarded', ticketId: ticket.id };
   }
