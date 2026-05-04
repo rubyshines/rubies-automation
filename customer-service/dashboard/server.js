@@ -1530,10 +1530,11 @@ async function apiConsoleChat(body, { onStream } = {}) {
   const { operatorAgentStandalone } = require('../lib/operatorAgentStandalone');
   const message = body.message;
   const history = body.history || [];
+  const images = Array.isArray(body.images) ? body.images : [];
   if (!message || typeof message !== 'string') {
     throw new Error('message is required');
   }
-  const result = await operatorAgentStandalone(message, history, onStream);
+  const result = await operatorAgentStandalone(message, history, onStream, { images });
   const links = extractActionLinks(result.tool_results);
   return {
     response: result.response,

@@ -41,6 +41,7 @@ You have the full RUBIES tool catalog. Use it.
 ## Operating principles
 
 - **No ticket context is preloaded.** You start cold. Look things up before acting — \`lookup_customer\`, \`get_order_details\`, \`search_products\` first; act second.
+- **Images are supported.** Jamie may attach screenshots (e.g. of an order, a defect photo, a competitor page, an email). Read them, extract any order numbers / SKUs / customer details visible, and use that to drive your tool calls.
 - **Investigate fulfillment issues before asking back.** When the operator flags a specific order as having a problem (backordered, delayed, stuck, on hold, "something's wrong with #X"), call \`get_order_details\` and \`get_order_allocation\` first. \`get_order_allocation\` returns hold reasons + per-line-item stock state (on_hand / allocated / available / backordered) — name the stuck item from the data rather than asking the operator which item is the issue. For SKU-level questions beyond a specific order, use \`inventory_allocation\` (live 3PL stock) alongside \`get_inventory_snapshot\` (Shopify-side daily snapshot).
 - **Tool calls precede operator-facing prose.** Internal planning narration is fine before tool calls — it surfaces in the trace. But do not write the operator-facing reply (preview, confirmation, summary, answer) until every tool the response requires has been called. Write the reply once, in full, after all tool results are in.
 - **Two-phase preview → confirm for destructive actions.** Show what you're about to do, wait for "yes" / "do it" / "confirm", then execute. Applies to: refunds, exchanges, order edits, new paid orders, discount codes >10% or free product, warehouse holds, address holds.
@@ -84,9 +85,11 @@ ${nicknames || '  (not loaded)'}`;
  * @param {string} message - Operator command text
  * @param {Array} history - Prior conversation messages (for multi-turn within a session)
  * @param {function} [onEvent] - Optional streaming callback: onEvent({ type, data })
+ * @param {object} [opts]
+ * @param {Array<{media_type:string, data:string}>} [opts.images] - Base64 image attachments
  * @returns {{ response, tool_results, history, _timing }}
  */
-async function operatorAgentStandalone(message, history = [], onEvent) {
+async function operatorAgentStandalone(message, history = [], onEvent, opts = {}) {
   const _t = { start: Date.now(), api_calls: [] };
   const { tools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt();
@@ -96,7 +99,21 @@ async function operatorAgentStandalone(message, history = [], onEvent) {
     { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
   ];
 
-  let currentMessages = [...history, { role: 'user', content: message }];
+  const images = Array.isArray(opts.images) ? opts.images : [];
+  let userContent;
+  if (images.length) {
+    userContent = [
+      ...images.map(img => ({
+        type: 'image',
+        source: { type: 'base64', media_type: img.media_type, data: img.data },
+      })),
+      { type: 'text', text: message },
+    ];
+  } else {
+    userContent = message;
+  }
+
+  let currentMessages = [...history, { role: 'user', content: userContent }];
   let finalResponse = '';
   const toolResults = [];
   const maxIterations = 10;

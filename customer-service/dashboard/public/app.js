@@ -1725,11 +1725,38 @@ async function runChatTurn({
   onSend,
   onToolResults,
   traceTitle = 'Operator Agent',
+  images = [],
+  attachments = [],
 }) {
   const qr = containerEl.querySelector('.action-quick-replies');
   if (qr) qr.remove();
 
-  appendChatMessage(containerEl, 'user', message);
+  const userBubble = appendChatMessage(containerEl, 'user', message);
+  if (attachments.length && userBubble) {
+    const attachWrap = document.createElement('div');
+    attachWrap.className = 'msg-attachments chat-attachments';
+    for (const a of attachments) {
+      if (a.kind === 'image') {
+        const link = document.createElement('a');
+        link.className = 'msg-attachment-thumb';
+        link.href = a.url;
+        const img = document.createElement('img');
+        img.src = a.url;
+        img.alt = a.name || 'image';
+        link.appendChild(img);
+        attachWrap.appendChild(link);
+      } else {
+        const link = document.createElement('a');
+        link.className = 'msg-attachment-file';
+        link.href = a.url;
+        link.download = a.name || 'file';
+        link.textContent = a.name || 'file';
+        attachWrap.appendChild(link);
+      }
+    }
+    userBubble.appendChild(attachWrap);
+    containerEl.scrollTop = containerEl.scrollHeight;
+  }
   inputEl.value = '';
   inputEl.disabled = true;
   sendBtnEl.disabled = true;
@@ -1742,7 +1769,7 @@ async function runChatTurn({
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, history, images }),
     });
 
     const reader = resp.body.getReader();
@@ -1867,6 +1894,10 @@ async function sendActionMessage() {
 // ---------------------------------------------------------------------------
 
 let _adhocChatHistory = [];
+let _adhocAttachments = [];
+const ADHOC_MAX_FILES = 10;
+const ADHOC_MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
+const ADHOC_MAX_TEXT_BYTES = 200 * 1024;       // 200 KB per non-image file (~50k tokens)
 
 async function sendAdhocMessage() {
   if (window.voiceInput) voiceInput.stopActive();
@@ -1874,22 +1905,44 @@ async function sendAdhocMessage() {
   const input = document.getElementById('adhoc-chat-input');
   const sendBtn = document.getElementById('adhoc-chat-send');
   const message = input.value.trim();
-  if (!message) return;
+  if (!message && _adhocAttachments.length === 0) return;
 
   // First message in this session — drop the empty-state centering so the
   // messages box reveals and the input snaps to the bottom.
   const container = document.querySelector('.adhoc-container');
   if (container) container.classList.remove('empty');
 
+  const sending = _adhocAttachments.slice();
+  _adhocAttachments = [];
+  renderAdhocAttachments();
+
+  const images = sending
+    .filter(a => a.kind === 'image')
+    .map(a => ({ media_type: a.media_type, data: a.data }));
+
+  let composed = message;
+  for (const a of sending.filter(a => a.kind === 'text')) {
+    composed += `\n\n--- Attached file: ${a.name} ---\n${a.text}\n--- End of ${a.name} ---`;
+  }
+  const summarySent = composed.trim() || '(file attached)';
+
+  // View-model for the user bubble — image thumbs + file cards, no inline text
+  const bubbleAttachments = sending.map(a => a.kind === 'image'
+    ? { kind: 'image', name: a.name, url: `data:${a.media_type};base64,${a.data}` }
+    : { kind: 'file',  name: a.name, url: a.objectUrl }
+  );
+
   const { history } = await runChatTurn({
     endpoint: '/api/console/chat-stream',
-    message,
+    message: summarySent,
     history: _adhocChatHistory,
     containerEl: messagesEl,
     inputEl: input,
     sendBtnEl: sendBtn,
     onSend: sendAdhocMessage,
     traceTitle: 'Ad Hoc Operator',
+    images,
+    attachments: bubbleAttachments,
   });
 
   _adhocChatHistory = history;
@@ -1897,6 +1950,11 @@ async function sendAdhocMessage() {
 
 function resetAdhoc() {
   _adhocChatHistory = [];
+  for (const a of _adhocAttachments) {
+    if (a.objectUrl) URL.revokeObjectURL(a.objectUrl);
+  }
+  _adhocAttachments = [];
+  renderAdhocAttachments();
   const messagesEl = document.getElementById('adhoc-chat-messages');
   if (messagesEl) messagesEl.innerHTML = '';
   const container = document.querySelector('.adhoc-container');
@@ -1908,6 +1966,186 @@ function resetAdhoc() {
     if (!isMobile()) input.focus();
   }
 }
+
+function renderAdhocAttachments() {
+  const wrap = document.getElementById('adhoc-attachments');
+  if (!wrap) return;
+  if (_adhocAttachments.length === 0) {
+    wrap.innerHTML = '';
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  wrap.innerHTML = '';
+  for (const att of _adhocAttachments) {
+    const el = document.createElement('a');
+    el.title = att.name || 'attachment';
+    if (att.kind === 'image') {
+      el.className = 'adhoc-attachment adhoc-attachment-image msg-attachment-thumb';
+      el.href = `data:${att.media_type};base64,${att.data}`;
+      const img = document.createElement('img');
+      img.src = el.href;
+      img.alt = att.name || 'attached image';
+      el.appendChild(img);
+    } else {
+      el.className = 'adhoc-attachment adhoc-attachment-file msg-attachment-file';
+      el.href = att.objectUrl;
+      el.download = att.name || 'file';
+      const icon = document.createElement('span');
+      icon.className = 'adhoc-attachment-file-icon';
+      icon.textContent = '\u{1F4C4}';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'adhoc-attachment-file-name';
+      nameEl.textContent = att.name || 'file';
+      el.appendChild(icon);
+      el.appendChild(nameEl);
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'adhoc-attachment-remove';
+    btn.setAttribute('aria-label', 'Remove attachment');
+    btn.textContent = '×';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const removed = _adhocAttachments.find(a => a.id === att.id);
+      if (removed?.objectUrl) URL.revokeObjectURL(removed.objectUrl);
+      _adhocAttachments = _adhocAttachments.filter(a => a.id !== att.id);
+      renderAdhocAttachments();
+    });
+    el.appendChild(btn);
+    wrap.appendChild(el);
+  }
+}
+
+async function addAdhocFiles(fileList) {
+  const files = Array.from(fileList || []).filter(Boolean);
+  if (!files.length) return;
+  const remaining = ADHOC_MAX_FILES - _adhocAttachments.length;
+  if (remaining <= 0) {
+    alert(`Up to ${ADHOC_MAX_FILES} files per message.`);
+    return;
+  }
+  for (const file of files.slice(0, remaining)) {
+    const isImage = file.type && file.type.startsWith('image/');
+    const limit = isImage ? ADHOC_MAX_IMAGE_BYTES : ADHOC_MAX_TEXT_BYTES;
+    if (file.size > limit) {
+      const cap = isImage ? '5 MB' : '200 KB';
+      alert(`"${file.name || 'file'}" exceeds ${cap} and was skipped.`);
+      continue;
+    }
+    try {
+      if (isImage) {
+        const data = await readFileAsBase64(file);
+        _adhocAttachments.push({
+          id: makeAttachmentId(),
+          kind: 'image',
+          name: file.name || 'image',
+          media_type: file.type,
+          data,
+        });
+      } else {
+        const text = await readFileAsText(file);
+        _adhocAttachments.push({
+          id: makeAttachmentId(),
+          kind: 'text',
+          name: file.name || 'file',
+          media_type: file.type || 'application/octet-stream',
+          text,
+          objectUrl: URL.createObjectURL(file),
+        });
+      }
+    } catch (err) {
+      console.error('[adhoc] failed to read file:', err);
+    }
+  }
+  renderAdhocAttachments();
+}
+
+function makeAttachmentId() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result || '';
+      const idx = String(result).indexOf(',');
+      resolve(idx >= 0 ? String(result).slice(idx + 1) : '');
+    };
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsText(file);
+  });
+}
+
+function initAdhocAttachments() {
+  const container = document.querySelector('.adhoc-container');
+  const input = document.getElementById('adhoc-chat-input');
+  const fileInput = document.getElementById('adhoc-file-input');
+  const attachBtn = document.getElementById('adhoc-chat-attach');
+  if (!container || !input || !fileInput || !attachBtn) return;
+
+  attachBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    addAdhocFiles(fileInput.files);
+    fileInput.value = '';
+  });
+
+  input.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files = [];
+    for (const item of items) {
+      if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length) {
+      e.preventDefault();
+      addAdhocFiles(files);
+    }
+  });
+
+  let dragDepth = 0;
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+
+  container.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    container.classList.add('dragging');
+  });
+  container.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  container.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) container.classList.remove('dragging');
+  });
+  container.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    container.classList.remove('dragging');
+    addAdhocFiles(e.dataTransfer.files);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', initAdhocAttachments);
 
 function updateDraftFromActionResults(toolResults) {
   const editor = document.getElementById('draft-editor');

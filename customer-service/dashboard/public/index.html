@@ -212,13 +212,19 @@
         <div class="adhoc-input-block">
           <div class="adhoc-empty-hint">What can I help with?</div>
           <div class="action-chat-input-row">
+            <div class="adhoc-attachments msg-attachments" id="adhoc-attachments" hidden></div>
             <textarea class="action-chat-input" id="adhoc-chat-input" rows="4"
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdhocMessage()}"></textarea>
             <div class="adhoc-button-row">
+              <input type="file" id="adhoc-file-input" multiple hidden>
+              <button class="adhoc-attach-btn" id="adhoc-chat-attach" type="button" aria-label="Attach files" title="Attach files"></button>
               <button class="voice-mic" id="adhoc-chat-mic" data-state="idle" type="button" aria-label="Voice input"></button>
               <button class="action-chat-send" id="adhoc-chat-send" onclick="sendAdhocMessage()">Send</button>
             </div>
           </div>
+        </div>
+        <div class="adhoc-drop-overlay" id="adhoc-drop-overlay">
+          <div class="adhoc-drop-overlay-inner">Drop files to attach</div>
         </div>
       </div>
     </div>
