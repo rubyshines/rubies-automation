@@ -94,14 +94,16 @@ CREATE INDEX IF NOT EXISTS idx_tickets_auto_close_path ON cs_tickets (auto_close
 ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS initiated_by text DEFAULT 'customer';
 CREATE INDEX IF NOT EXISTS idx_tickets_initiated_by ON cs_tickets (initiated_by);
 
--- gorgias_ticket_id nullable: ad-hoc operator outreach drafts (composed by the
--- standalone operator console via create_outreach_ticket) stage as cs_tickets +
--- cs_ai_drafts rows BEFORE any Gorgias ticket exists. The Gorgias ticket is
--- created lazily on send by the dashboard, which back-fills gorgias_ticket_id
--- on both rows. NULLs are still distinct under the UNIQUE constraint, so we
--- only need to drop NOT NULL on both tables.
-ALTER TABLE cs_tickets ALTER COLUMN gorgias_ticket_id DROP NOT NULL;
-ALTER TABLE cs_ai_drafts ALTER COLUMN gorgias_ticket_id DROP NOT NULL;
+-- gorgias_ticket_id + gorgias_message_id nullable: ad-hoc operator outreach
+-- drafts (composed by the standalone operator console via create_outreach_ticket)
+-- stage as cs_tickets + cs_ai_drafts rows BEFORE any Gorgias ticket or message
+-- exists. The Gorgias ticket is created lazily on send by the dashboard, which
+-- back-fills both ids. NULLs are still distinct under the UNIQUE constraint on
+-- cs_ai_drafts(gorgias_ticket_id, gorgias_message_id), so multiple outbound
+-- drafts coexist without conflict.
+ALTER TABLE cs_tickets   ALTER COLUMN gorgias_ticket_id  DROP NOT NULL;
+ALTER TABLE cs_ai_drafts ALTER COLUMN gorgias_ticket_id  DROP NOT NULL;
+ALTER TABLE cs_ai_drafts ALTER COLUMN gorgias_message_id DROP NOT NULL;
 
 -- ============================================================
 -- 2. Add ticket_id FK on cs_ai_drafts

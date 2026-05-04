@@ -19,8 +19,8 @@ ON CONFLICT (id) DO NOTHING;
 -- ============================================================
 CREATE TABLE IF NOT EXISTS cs_ai_drafts (
   id                      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  gorgias_ticket_id       bigint NOT NULL,
-  gorgias_message_id      bigint NOT NULL,
+  gorgias_ticket_id       bigint,  -- nullable: outbound operator drafts stage before Gorgias ticket exists
+  gorgias_message_id      bigint,  -- nullable: same — backfilled on send
 
   -- Customer context snapshot
   customer_email          text,
