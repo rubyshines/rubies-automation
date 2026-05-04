@@ -17,7 +17,8 @@ function buildEmail({ date, categoryRows, overall, priceChanges, errors }) {
       const delta = Math.round(c.currentPrice - c.previousPrice);
       const pct = c.previousPrice ? Math.round((delta / c.previousPrice) * 100) : 0;
       const arrow = delta > 0 ? '&#9650;' : '&#9660;';
-      const color = delta > 0 ? '#c0392b' : '#0a7c42';
+      // Same convention: competitor raising price = good for us = green.
+      const color = delta > 0 ? '#0a7c42' : '#c0392b';
       changeRows += `
         <tr>
           <td style="padding:7px 10px;border-bottom:1px solid #f0f0f0;font-size:13px;font-weight:600;">${c.competitor}</td>
@@ -164,11 +165,15 @@ function buildEmail({ date, categoryRows, overall, priceChanges, errors }) {
 </body></html>`;
 }
 
+// Color convention: green = good for RUBIES, red = bad for RUBIES.
+// In the "vs RUBIES" column, diff = competitor price - our price.
+// Positive (competitor more expensive than us) = good for us = green.
+// Negative (competitor cheaper than us) = bad for us = red.
 function diffBadge(diff) {
   if (!diff && diff !== 0) return '<span style="color:#999;">—</span>';
   const isMore = diff > 0;
-  const color = isMore ? '#c0392b' : diff === 0 ? '#666' : '#0a7c42';
-  const bg = isMore ? '#fdecea' : diff === 0 ? '#f5f5f5' : '#e8f8ef';
+  const color = isMore ? '#0a7c42' : diff === 0 ? '#666' : '#c0392b';
+  const bg = isMore ? '#e8f8ef' : diff === 0 ? '#f5f5f5' : '#fdecea';
   const sign = diff > 0 ? '+' : '';
   return `<span style="display:inline-block;padding:2px 7px;border-radius:3px;background:${bg};color:${color};font-weight:600;font-size:13px;">$${sign}${diff}</span>`;
 }
