@@ -3664,18 +3664,20 @@ function parseOrderFormItems(text) {
  * @param {Array} opts.orderItems - Parsed order form items [{qty, name, variant}]
  * @param {string} opts.timestamp - ISO timestamp of first customer message
  */
-function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attachments }) {
+function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attachments, intent }) {
   if (!customerWords.length && !orderItems.length) return '';
 
   const channelLabel = channel === 'chat' ? 'via chat' : channel === 'facebook-messenger' ? 'via Facebook' : 'via email';
   const time = timestamp ? timeAgo(timestamp, 'long') : '';
+  const intentLabel = intent === 'refund' ? 'Refund requested' : intent === 'exchange' ? 'Exchange requested' : null;
 
   let html = '<div class="intake-card">';
 
-  // Header: label + channel pill
+  // Header: label + channel pill + intent pill (if customer made a structured choice)
   html += `<div class="intake-header">
     <span class="intake-label">Customer</span>
     <span class="intake-channel intake-channel--${channel}">${channelLabel}</span>
+    ${intentLabel ? `<span class="intake-intent intake-intent--${intent}">${intentLabel}</span>` : ''}
     ${time ? `<span class="intake-time">${time}</span>` : ''}
   </div>`;
 
@@ -3750,6 +3752,33 @@ const BOT_BUTTON_LABELS = new Set([
   'what would you like to do', 'select an order',
 ]);
 
+/**
+ * Extract the customer's selected intent (refund vs exchange) from a help-center
+ * contact form or chat bot flow. The form gives the customer a Return / Exchange
+ * choice that gets dropped by BOT_BUTTON_LABELS; this parser surfaces it for the
+ * intake card so the operator can see at a glance what was requested.
+ *
+ * Returns 'refund' | 'exchange' | null.
+ */
+function extractFormIntent(botMessages) {
+  let intent = null;
+  for (const m of botMessages) {
+    if (m.sender !== 'customer') continue;
+    const body = (m.body || '').trim();
+    if (!body) continue;
+    // Help-center form: look at the question portion (the menu trail).
+    const candidateLines = isHelpCenterForm(body)
+      ? splitHelpCenterForm(body).question.split('\n')
+      : body.split('\n');
+    for (const raw of candidateLines) {
+      const line = raw.trim().toLowerCase();
+      if (line === 'return' || line === 'refund') intent = 'refund';
+      else if (line === 'exchange') intent = 'exchange';
+    }
+  }
+  return intent;
+}
+
 /** Extract customer's actual words from bot flow (filters out button clicks, order forms) */
 function extractCustomerWords(botMessages) {
   const words = [];
@@ -3816,15 +3845,17 @@ function renderConversation(messages, ticket) {
       <div class="bot-group-messages">${botMessages.map(m => renderMessageBubble(m, ticket)).join('')}</div>
     </details>`);
 
-    // Unified intake card: customer words + order items
+    // Unified intake card: customer words + order items + intent badge
     const customerWords = extractCustomerWords(botMessages);
     const orderItems = extractOrderItems(botMessages);
+    const intent = extractFormIntent(botMessages);
     const firstCustomerMsg = botMessages.find(m => m.sender === 'customer');
 
     parts.push(renderIntakeCard({
       channel: 'chat',
       customerWords,
       orderItems,
+      intent,
       timestamp: firstCustomerMsg?.created_at,
     }));
   } else if (messages.length > 0 && messages[0].sender === 'customer') {
@@ -3863,10 +3894,12 @@ function renderConversation(messages, ticket) {
         const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
         const cleaned = cleanMessageBody(rawHtml);
         const processed = collapseQuotedContent(cleaned);
+        const intent = extractFormIntent([firstMsg]);
         parts.push(renderIntakeCard({
           channel: firstChannel,
           customerWords: [processed],
           orderItems: [],
+          intent,
           timestamp: firstMsg.created_at,
           attachments: firstMsg.attachments,
         }));

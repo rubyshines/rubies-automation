@@ -1567,6 +1567,18 @@ main { height: calc(100vh - 56px); }
   color: #4267b2;
 }
 
+.intake-intent {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.intake-intent--refund { background: var(--red-bg); color: var(--red); }
+.intake-intent--exchange { background: var(--teal-soft); color: var(--teal); }
+
 .intake-time {
   font-size: 10px;
   color: var(--text-tertiary);
