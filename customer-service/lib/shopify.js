@@ -210,9 +210,15 @@ async function getOrderByNumber(orderNumber) {
             }
             fulfillments {
               status
+              displayStatus
               createdAt
               deliveredAt
-              trackingInfo { number url }
+              inTransitAt
+              estimatedDeliveryAt
+              trackingInfo { number url company }
+              events(first: 20, sortKey: HAPPENED_AT, reverse: true) {
+                edges { node { happenedAt status message } }
+              }
             }
             refunds {
               id
@@ -707,10 +713,16 @@ async function fetchOrdersForSync(since = null, cursor = null) {
             # --- Fulfillments ---
             fulfillments {
               status
+              displayStatus
               createdAt
               deliveredAt
-              trackingInfo { number url }
+              inTransitAt
+              estimatedDeliveryAt
+              trackingInfo { number url company }
               location { legacyResourceId }
+              events(first: 20, sortKey: HAPPENED_AT, reverse: true) {
+                edges { node { happenedAt status message } }
+              }
             }
 
             # --- Shipping lines ---

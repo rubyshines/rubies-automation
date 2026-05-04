@@ -12,6 +12,61 @@ const { parseTrackingPage, summarizeForCustomer, detectProblems } = require('../
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { buildContext } = require('../contextBuilder');
 
+// Map Shopify fulfillment event statuses to internal tracking statuses.
+const SHOPIFY_EVENT_STATUS_MAP = {
+  DELIVERED: 'delivered',
+  OUT_FOR_DELIVERY: 'out_for_delivery',
+  IN_TRANSIT: 'in_transit',
+  ATTEMPTED_DELIVERY: 'exception',
+  FAILURE: 'exception',
+  READY_FOR_PICKUP: 'exception',
+  CONFIRMED: 'pre_transit',
+  LABEL_PRINTED: 'pre_transit',
+  LABEL_PURCHASED: 'pre_transit',
+};
+
+/**
+ * Convert Shopify fulfillment event objects (as stored in
+ * `orders.fulfillments[].events` by syncAll.js) into the trackingData shape
+ * the analyzer/summarizer expect. Replaces the carrier-page scrape for
+ * USPS/OnTrac — Shopify already aggregates carrier events, no need to fetch
+ * the public tracking page.
+ */
+function buildTrackingDataFromShopifyEvents(fulfillment) {
+  const events = (fulfillment.events || []).map(e => {
+    const d = e.happenedAt ? new Date(e.happenedAt) : null;
+    return {
+      happenedAt: e.happenedAt || null,
+      // Format as "MMM DD" to match the date shape the analyzer expects from
+      // its AI-parsed scraper output (used by detectProblems/daysSinceEvent).
+      date: d && !isNaN(d) ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null,
+      time: d && !isNaN(d) ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : null,
+      description: e.message || e.status || '',
+      location: null, // Shopify events don't include geo location
+      status: e.status || null,
+    };
+  });
+
+  const latest = events[0];
+  let currentStatus = SHOPIFY_EVENT_STATUS_MAP[latest?.status] || 'unknown';
+  if (latest && /return(?:ed)? to sender/i.test(latest.description)) {
+    currentStatus = 'returned';
+  }
+  if (fulfillment.deliveredAt) currentStatus = 'delivered';
+
+  return {
+    current_status: currentStatus,
+    status_description: latest?.description || null,
+    estimated_delivery: fulfillment.estimatedDeliveryAt || null,
+    last_location: null,
+    destination: null,
+    local_carrier: null,
+    local_tracking_number: null,
+    customs_cleared: null,
+    events,
+  };
+}
+
 // Cache TTL: 2 hours for active, 24 hours for delivered
 const ACTIVE_CACHE_MS = 2 * 60 * 60 * 1000;
 const DELIVERED_CACHE_MS = 24 * 60 * 60 * 1000;
@@ -202,10 +257,23 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
     } catch (e) { /* no region mapping */ }
   }
 
-  for (const ff of fulfillments) {
-    const trackingInfo = ff.trackingInfo?.[0] || {};
-    const trackingNumber = trackingInfo.number;
-    const trackingUrl = trackingInfo.url;
+  for (const ffRaw of fulfillments) {
+    // Normalize fulfillment shape — callers pass either the Shopify GraphQL
+    // shape ({trackingInfo: [{number, url}], events: {edges: [...]}}) or the
+    // Supabase JSONB shape ({trackingNumber, trackingUrl, events: [...]}).
+    const ff = {
+      ...ffRaw,
+      trackingNumber: ffRaw.trackingInfo?.[0]?.number || ffRaw.trackingNumber || null,
+      trackingUrl: ffRaw.trackingInfo?.[0]?.url || ffRaw.trackingUrl || null,
+      trackingCompany: ffRaw.trackingInfo?.[0]?.company || ffRaw.trackingCompany || null,
+      events: Array.isArray(ffRaw.events)
+        ? ffRaw.events
+        : (ffRaw.events?.edges || []).map(e => e.node),
+      deliveredAt: ffRaw.deliveredAt || null,
+      estimatedDeliveryAt: ffRaw.estimatedDeliveryAt || null,
+    };
+    const trackingNumber = ff.trackingNumber;
+    const trackingUrl = ff.trackingUrl;
     const shipDate = ff.createdAt?.split('T')[0] || null;
 
     if (!trackingNumber && !trackingUrl) {
@@ -213,7 +281,47 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
       continue;
     }
 
-    // Check cache
+    // For non-Passport carriers (USPS, OnTrac), Shopify's fulfillment.events
+    // already aggregates carrier scans — use them directly. No scrape, no
+    // tracking_snapshots cache. Passport falls through to the scraper below
+    // because Shopify doesn't track the local-carrier handoff.
+    const isPassport = /passport/i.test(trackingUrl || '');
+    if (!isPassport && ff.events.length > 0) {
+      const trackingData = buildTrackingDataFromShopifyEvents(ff);
+      const problems = detectProblems(trackingData);
+      const summary = await summarizeForCustomer(
+        { ...trackingData, trackingUrl },
+        {
+          shippingZone,
+          countryCode: destCountry,
+          countryName: destCountryName,
+          provinceCode: destProvince,
+          region: destRegion,
+          customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null,
+          orderNumber: order.name?.replace('#', ''),
+          customerMessage,
+          shipDate,
+        }
+      );
+      results.push({
+        carrier: ff.trackingCompany || 'USPS',
+        trackingUrl,
+        trackingNumber,
+        currentStatus: trackingData.current_status,
+        statusDescription: trackingData.status_description,
+        estimatedDelivery: trackingData.estimated_delivery,
+        lastLocation: null,
+        localCarrier: null,
+        events: trackingData.events,
+        summary,
+        problems,
+        shippingZone,
+        fromShopifyEvents: true,
+      });
+      continue;
+    }
+
+    // Check cache (Passport only — non-Passport short-circuited above)
     const cached = await getCachedTracking(trackingNumber);
     if (cached) {
       // If we have the customer's message, re-summarize with it (cheap AI call, no re-scrape)

@@ -31,6 +31,33 @@ async function handle(topic, payload) {
     }
   }
 
+  // Preserve fulfillment fields the REST webhook doesn't carry
+  // (events, displayStatus, inTransitAt, deliveredAt, etc.) by merging from
+  // the existing Supabase row. Without this, every orders/update would wipe
+  // the rich fulfillment data populated by the GraphQL daily sync and the
+  // fulfillments-update webhook.
+  if (orderRow.fulfillments?.length) {
+    const { data: existing } = await supabase
+      .from('orders')
+      .select('fulfillments')
+      .eq('shopify_order_id', orderRow.shopify_order_id)
+      .maybeSingle();
+    const existingFulfillments = existing?.fulfillments || [];
+    orderRow.fulfillments = orderRow.fulfillments.map(f => {
+      const match = existingFulfillments.find(e => e.trackingNumber && e.trackingNumber === f.trackingNumber);
+      if (!match) return f;
+      return {
+        ...match,
+        ...f,
+        deliveredAt: f.deliveredAt || match.deliveredAt || null,
+        events: f.events?.length ? f.events : (match.events || []),
+        displayStatus: f.displayStatus || match.displayStatus || null,
+        inTransitAt: f.inTransitAt || match.inTransitAt || null,
+        estimatedDeliveryAt: f.estimatedDeliveryAt || match.estimatedDeliveryAt || null,
+      };
+    });
+  }
+
   // Upsert order
   const { error: orderErr } = await supabase
     .from('orders')

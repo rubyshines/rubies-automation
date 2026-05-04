@@ -61,9 +61,15 @@ async function handle(topic, payload) {
     // Match by tracking number since we don't store fulfillment ID
     if (f.trackingNumber && f.trackingNumber === newFulfillment.trackingNumber) {
       found = true;
-      // Preserve existing deliveredAt if already set (e.g., by Passport scraper)
+      // Preserve fields the REST payload doesn't carry: events, displayStatus,
+      // inTransitAt, estimatedDeliveryAt (populated by daily GraphQL sync), and
+      // deliveredAt (set by the Passport scraper when the carrier confirms).
       const merged = { ...f, ...newFulfillment };
       if (f.deliveredAt && !newFulfillment.deliveredAt) merged.deliveredAt = f.deliveredAt;
+      if (f.events?.length) merged.events = f.events;
+      if (f.displayStatus && !newFulfillment.displayStatus) merged.displayStatus = f.displayStatus;
+      if (f.inTransitAt && !newFulfillment.inTransitAt) merged.inTransitAt = f.inTransitAt;
+      if (f.estimatedDeliveryAt && !newFulfillment.estimatedDeliveryAt) merged.estimatedDeliveryAt = f.estimatedDeliveryAt;
       return merged;
     }
     return f;

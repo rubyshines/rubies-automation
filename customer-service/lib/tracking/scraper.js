@@ -1,18 +1,9 @@
 /**
- * Tracking page scraper — fetches carrier tracking pages and returns raw text.
- * Parsing/extraction is handled by the deterministic parser or AI analyzer.
- *
- * Carriers:
- * - Passport (track.passportshipping.com) — Puppeteer (JS-rendered page)
- * - OnTrac (www.ontrac.com) — simple HTTP fetch
- * - USPS (tools.usps.com) — Shopify fulfillment fallback (anti-bot)
+ * Passport tracking scraper — Shopify's fulfillment events cover USPS/OnTrac
+ * and any other Shopify-supported carrier directly, so we only scrape
+ * Passport here. Passport's local-carrier handoff (Royal Mail, Australia
+ * Post, DHL, etc.) is not surfaced through Shopify's fulfillment events.
  */
-
-const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.9',
-};
 
 // ---------------------------------------------------------------------------
 // Carrier detection from tracking URL
@@ -26,31 +17,6 @@ function detectCarrier(trackingUrl) {
   if (trackingUrl.includes('fedex.com')) return 'fedex';
   if (trackingUrl.includes('ups.com')) return 'ups';
   return 'unknown';
-}
-
-// ---------------------------------------------------------------------------
-// HTML → clean text (shared across carriers)
-// ---------------------------------------------------------------------------
-
-function htmlToText(html) {
-  return html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/\n{2,}/g, '\n')
-    .trim();
-}
-
-// ---------------------------------------------------------------------------
-// Simple HTTP fetch (OnTrac)
-// ---------------------------------------------------------------------------
-
-async function fetchTrackingPage(url) {
-  const response = await fetch(url, { headers: BROWSER_HEADERS });
-  if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
-  const html = await response.text();
-  return htmlToText(html);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,61 +104,24 @@ async function closeBrowser() {
 }
 
 // ---------------------------------------------------------------------------
-// USPS — no scraping available (anti-bot protection). Use Shopify fulfillment
-// status as fallback. Returns a text summary from what Shopify knows.
+// Main entry point — Passport only. Other carriers source events directly
+// from Shopify's fulfillment.events GraphQL connection (synced into
+// orders.fulfillments[].events by syncAll.js).
 // ---------------------------------------------------------------------------
 
-function buildUSPSFallbackText(trackingNumber, shopifyFulfillment) {
-  const status = shopifyFulfillment?.status || 'unknown';
-  const lines = [`USPS Tracking: ${trackingNumber}`];
-  lines.push(`Shopify fulfillment status: ${status}`);
-  if (shopifyFulfillment?.createdAt) lines.push(`Shipped: ${shopifyFulfillment.createdAt.split('T')[0]}`);
-  lines.push(`Track at: https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`);
-  return lines.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
-
-/**
- * Fetch raw text from a carrier tracking page.
- * @param {string} trackingUrl - Full tracking URL
- * @param {string} trackingNumber - Tracking number
- * @param {Object} [shopifyFulfillment] - Shopify fulfillment data (used as fallback for USPS)
- * @returns {Promise<{ carrier: string, trackingUrl: string, rawText: string }>}
- */
-async function scrapeTracking(trackingUrl, trackingNumber, shopifyFulfillment) {
+async function scrapeTracking(trackingUrl, trackingNumber) {
   const carrier = detectCarrier(trackingUrl);
-  let rawText;
-
-  switch (carrier) {
-    case 'passport':
-      rawText = await fetchPassportPage(trackingNumber);
-      break;
-    case 'ontrac':
-      rawText = await fetchTrackingPage(`https://www.ontrac.com/tracking/?number=${trackingNumber}`);
-      break;
-    case 'usps':
-      rawText = buildUSPSFallbackText(trackingNumber, shopifyFulfillment);
-      break;
-    default:
-      rawText = `Track your package at: ${trackingUrl}`;
-      break;
+  if (carrier !== 'passport') {
+    throw new Error(`scrapeTracking is only used for Passport — got carrier=${carrier}. Non-Passport tracking should read fulfillments.events from Supabase.`);
   }
-
-  // Cap text length for AI processing
+  let rawText = await fetchPassportPage(trackingNumber);
   if (rawText.length > 4000) rawText = rawText.substring(0, 4000);
-
   return { carrier, trackingUrl, rawText };
 }
 
 module.exports = {
   scrapeTracking,
   detectCarrier,
-  fetchTrackingPage,
   fetchPassportPage,
-  buildUSPSFallbackText,
-  htmlToText,
   closeBrowser,
 };

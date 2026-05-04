@@ -10,7 +10,6 @@
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
-const { shopifyGraphQL } = require('../../customer-service/lib/shopify');
 const { businessDaysSince: sharedBusinessDaysSince } = require('../../shared/businessDays');
 
 const SHOPIFY_STORE = 'rubies-active-wear';
@@ -127,58 +126,6 @@ function lastEventDescription(events) {
 function shopifyAdminUrl(shopifyOrderId) {
   if (!shopifyOrderId) return null;
   return `https://admin.shopify.com/store/${SHOPIFY_STORE}/orders/${String(shopifyOrderId).replace(/\D/g, '')}`;
-}
-
-// ---------------------------------------------------------------------------
-// Shopify fulfillment events (for orders without tracking snapshots)
-// ---------------------------------------------------------------------------
-
-async function fetchShopifyFulfillmentEvents(orderNumbers) {
-  const eventMap = {};
-  const BATCH = 10;
-  for (let i = 0; i < orderNumbers.length; i += BATCH) {
-    const batch = orderNumbers.slice(i, i + BATCH);
-    const nameQuery = batch.map(n => 'name:#' + n).join(' OR ');
-    try {
-      const data = await shopifyGraphQL(`{
-        orders(first: ${BATCH}, query: "${nameQuery}") {
-          edges { node { name fulfillments {
-            status deliveredAt trackingInfo { company }
-            events(first: 10, sortKey: HAPPENED_AT, reverse: true) {
-              edges { node { happenedAt status message } }
-            }
-          } } }
-        }
-      }`);
-      for (const edge of data.orders.edges) {
-        const orderNum = parseInt(edge.node.name.replace('#', ''));
-        const f = edge.node.fulfillments?.[0];
-        if (!f) continue;
-        const events = (f.events?.edges || []).map(e => e.node);
-        let lastEventDays = null;
-        if (events.length > 0) lastEventDays = Math.floor((Date.now() - new Date(events[0].happenedAt).getTime()) / 86400000);
-        let currentStatus = 'unknown';
-        if (f.deliveredAt) currentStatus = 'delivered';
-        else if (events.length > 0) {
-          const s = events[0].status;
-          if (s === 'OUT_FOR_DELIVERY') currentStatus = 'out_for_delivery';
-          else if (s === 'FAILURE') currentStatus = 'exception';
-          else if (s === 'ATTEMPTED_DELIVERY') currentStatus = 'exception';
-          else currentStatus = 'in_transit';
-        }
-        let actionRequired = null;
-        for (const ev of events.slice(0, 5)) {
-          for (const p of SHOPIFY_EVENT_ACTION_PATTERNS) { if (p.test(ev.message || '')) { actionRequired = ev.message; break; } }
-          if (actionRequired) break;
-        }
-        eventMap[orderNum] = {
-          carrier: f.trackingInfo?.[0]?.company || '?', currentStatus, events, lastEventDays, actionRequired,
-          lastEventDesc: events.length > 0 ? `${events[0].happenedAt?.split('T')[0]}: ${events[0].message || events[0].status}` : null,
-        };
-      }
-    } catch (e) { console.warn(`  [Shipping] Shopify events fetch failed: ${e.message}`); }
-  }
-  return eventMap;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,39 +342,61 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     allOpenClaims = data || [];
   } catch { /* table may not exist */ }
 
-  // Build fulfillment-based status for orders without snapshots (from stored webhook data)
+  // Build fulfillment-based status for orders without tracking snapshots, using
+  // Shopify fulfillment events stored on the order row by syncAll.js.
+  // Shopify event statuses: CONFIRMED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED,
+  // ATTEMPTED_DELIVERY, FAILURE, READY_FOR_PICKUP, LABEL_PRINTED, LABEL_PURCHASED.
+  const SHOPIFY_EVENT_STATUS_MAP = {
+    DELIVERED: 'delivered',
+    OUT_FOR_DELIVERY: 'out_for_delivery',
+    IN_TRANSIT: 'in_transit',
+    ATTEMPTED_DELIVERY: 'exception',
+    FAILURE: 'exception',
+    READY_FOR_PICKUP: 'exception',
+    CONFIRMED: 'pre_transit',
+    LABEL_PRINTED: 'pre_transit',
+    LABEL_PURCHASED: 'pre_transit',
+  };
+
   const fulfillmentEventMap = {};
   const noDataCount = { hasData: 0, noData: 0 };
   for (const n of orderNums) {
     if (snapMap[n]) continue; // has tracking snapshot, skip
     const order = allOrders.find(o => o.order_number === n);
     const f = (order?.fulfillments || []).find(fl => fl.trackingUrl || fl.trackingNumber);
-    if (!f?.shipmentStatus) { noDataCount.noData++; continue; }
+    if (!f) { noDataCount.noData++; continue; }
+
+    const events = Array.isArray(f.events) ? f.events : [];
+    if (events.length === 0) { noDataCount.noData++; continue; }
     noDataCount.hasData++;
 
-    const statusMap = {
-      delivered: 'delivered', in_transit: 'in_transit', out_for_delivery: 'out_for_delivery',
-      attempted_delivery: 'exception', failure: 'exception',
-      label_printed: 'pre_transit', label_purchased: 'pre_transit',
-      confirmed: 'pre_transit', ready_for_pickup: 'exception',
-    };
-    const currentStatus = statusMap[f.shipmentStatus] || 'unknown';
-    let lastEventDays = null;
-    if (f.lastEventAt) {
-      lastEventDays = Math.floor((Date.now() - new Date(f.lastEventAt).getTime()) / 86400000);
+    const latest = events[0]; // events are stored most-recent-first
+    const currentStatus = SHOPIFY_EVENT_STATUS_MAP[latest.status] || 'unknown';
+    const lastEventDays = latest.happenedAt
+      ? Math.floor((Date.now() - new Date(latest.happenedAt).getTime()) / 86400000)
+      : null;
+
+    // Action required = scan recent events for actionable patterns (return to
+    // sender, address incorrect, etc.) using the same patterns as raw_events.
+    let actionRequired = null;
+    for (const ev of events.slice(0, 5)) {
+      const desc = ev.message || '';
+      if (BENIGN_EXCEPTION_PATTERNS.some(p => p.test(desc))) continue;
+      if (SHOPIFY_EVENT_ACTION_PATTERNS.some(p => p.test(desc))) { actionRequired = desc; break; }
     }
 
     fulfillmentEventMap[n] = {
       carrier: f.trackingCompany || '?',
       currentStatus,
+      events,
       lastEventDays,
-      actionRequired: ['attempted_delivery', 'failure', 'ready_for_pickup'].includes(f.shipmentStatus)
-        ? `Carrier status: ${f.shipmentStatus.replace(/_/g, ' ')}`
+      actionRequired,
+      lastEventDesc: latest.happenedAt
+        ? `${latest.happenedAt.split('T')[0]}: ${latest.message || latest.status}`
         : null,
-      lastEventDesc: f.lastEventAt ? `${f.lastEventAt.split('T')[0]}: ${f.shipmentStatus.replace(/_/g, ' ')}` : null,
     };
   }
-  console.log(`  [Shipping] ${orderNums.length - Object.keys(snapMap).length} orders without snapshots: ${noDataCount.hasData} with webhook data, ${noDataCount.noData} without`);
+  console.log(`  [Shipping] ${orderNums.length - Object.keys(snapMap).length} orders without snapshots: ${noDataCount.hasData} with Shopify events, ${noDataCount.noData} without`);
 
   // Load line items
   const itemMap = {};

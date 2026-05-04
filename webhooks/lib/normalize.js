@@ -44,13 +44,17 @@ function normalizeOrderRow(o) {
   const customerEmail = o.customer?.email?.toLowerCase().trim() || o.email?.toLowerCase().trim() || null;
   const orderNumber = o.order_number || parseInt(String(o.name).replace(/\D/g, ''), 10);
 
-  // Build fulfillments array
+  // Build fulfillments array. REST webhook payloads don't include fulfillment
+  // events, displayStatus, inTransitAt, etc. — those come from the daily
+  // GraphQL sync. The order webhook handler merges them from the existing
+  // Supabase row so they aren't wiped on every orders/update.
   const fulfillments = (o.fulfillments || []).map(f => ({
     status: f.status?.toUpperCase() || null,
     createdAt: f.created_at || null,
-    deliveredAt: null, // REST doesn't include deliveredAt
+    deliveredAt: null,
     trackingNumber: f.tracking_number || f.tracking_numbers?.[0] || null,
     trackingUrl: f.tracking_url || f.tracking_urls?.[0] || null,
+    trackingCompany: f.tracking_company || null,
     locationId: f.location_id ? String(f.location_id) : null,
   }));
 

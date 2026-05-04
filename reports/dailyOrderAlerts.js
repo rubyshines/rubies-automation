@@ -542,12 +542,14 @@ async function reScrapeAlertedOrders(shipping) {
   const { parseTrackingPage } = require('../customer-service/lib/tracking/analyzer');
   const supabase = getSupabaseClient();
 
-  // Collect all alerts that need attention and have a tracking URL
-  const categories = ['urgentNonPassport', 'passportPending', 'passportLost', 'delayed'];
+  // Only re-scrape Passport — USPS/OnTrac events come from Shopify GraphQL via
+  // the daily orders sync (orders.fulfillments[].events), which is fresher
+  // than scraping the carrier page mid-report.
+  const categories = ['passportPending', 'passportLost'];
   const toScrape = [];
   for (const cat of categories) {
     for (const alert of (shipping[cat] || [])) {
-      if (alert.tracking_url && alert.tracking_number) {
+      if (alert.tracking_url && alert.tracking_number && /passport/i.test(alert.tracking_url)) {
         toScrape.push({ alert, category: cat });
       }
     }
