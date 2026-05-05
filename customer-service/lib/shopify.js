@@ -579,6 +579,65 @@ async function getDraftOrderRecap(draftOrderId) {
   };
 }
 
+/**
+ * Fetch a single open draft order by its display name (e.g. "D6720"). Returns
+ * null when no draft with that name exists. Searches both open drafts and any
+ * status — Shopify lets a name resolve to a single record across statuses.
+ */
+async function getDraftOrderByName(name) {
+  const cleanName = String(name || '').trim();
+  if (!cleanName) return null;
+  const queryString = `name:${cleanName}`;
+  const data = await shopifyGraphQL(`
+    query getDraftByName($query: String!) {
+      draftOrders(first: 1, query: $query) {
+        edges {
+          node {
+            id
+            name
+            status
+            invoiceUrl
+            totalPrice
+            shippingAddress { country countryCodeV2 }
+            shippingLine { title shippingRateHandle price }
+          }
+        }
+      }
+    }
+  `, { query: queryString });
+  const edge = data.draftOrders.edges[0];
+  return edge ? edge.node : null;
+}
+
+/**
+ * Update the shipping line on a draft order. Title drives Warehance carrier
+ * mapping (Passport DDP / DDU / Fedex / etc.). Price defaults to "0.00" since
+ * RUBIES covers shipping.
+ */
+async function updateDraftOrderShipping(draftOrderId, { title, price = '0.00' }) {
+  const gid = normalizeGid(draftOrderId, 'DraftOrder');
+  const data = await shopifyGraphQL(`
+    mutation updateDraftShipping($id: ID!, $input: DraftOrderInput!) {
+      draftOrderUpdate(id: $id, input: $input) {
+        draftOrder {
+          id
+          name
+          shippingLine { title price }
+        }
+        userErrors { field message }
+      }
+    }
+  `, {
+    id: gid,
+    input: { shippingLine: { title, price } },
+  });
+  const errs = data.draftOrderUpdate.userErrors || [];
+  if (errs.length) {
+    throw new Error(`draftOrderUpdate failed: ${errs.map(e => `${e.field}: ${e.message}`).join('; ')}`);
+  }
+  return data.draftOrderUpdate.draftOrder;
+}
+
 async function listDraftOrders({ status, limit = 20 } = {}) {
   const queryParts = [];
   if (status) queryParts.push(`status:${status}`);
@@ -1813,6 +1872,8 @@ module.exports = {
   completeDraftOrder,
   sendDraftOrderInvoice,
   getDraftOrderRecap,
+  getDraftOrderByName,
+  updateDraftOrderShipping,
   listDraftOrders,
   normalizeGid,
   isTipLineItem,

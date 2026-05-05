@@ -19,11 +19,26 @@ const assert = require('node:assert/strict');
 const supabaseClientPath = require.resolve('../../shared/supabaseClient');
 const warehanceClientPath = require.resolve('../../reports/lib/warehanceClient');
 const shippingLookupPath = require.resolve('../lib/tools/shippingLookup');
+const shopifyPath = require.resolve('../lib/shopify');
 
 let stubOrder = null;
 let lastUpdateShippingMethod = null;
 let lastSupabaseInsert = null;
 let stubZone = null;
+let stubDraft = null;
+let lastDraftShippingUpdate = null;
+
+require.cache[shopifyPath] = {
+  id: shopifyPath, filename: shopifyPath, loaded: true,
+  exports: {
+    getDraftOrderByName: async (name) => stubDraft && stubDraft.name === name ? stubDraft : null,
+    updateDraftOrderShipping: async (id, input) => {
+      lastDraftShippingUpdate = { id, input };
+      return { id, name: stubDraft?.name, shippingLine: input };
+    },
+    getAdminUrl: (gid) => `https://admin.shopify.com/store/rubyshines/${gid}`,
+  },
+};
 
 require.cache[shippingLookupPath] = {
   id: shippingLookupPath, filename: shippingLookupPath, loaded: true,
@@ -174,5 +189,83 @@ describe('update_shipping_speed — non-US orders', () => {
     stubOrder = makeOrder({ country: 'AU', id: 99 });
     await run({ order_number: 1, speed: 'expedited', reason: 'rush' });
     assert.equal(lastUpdateShippingMethod.methodId, 231185182476);
+  });
+});
+
+describe('update_shipping_speed — draft orders', () => {
+  beforeEach(() => {
+    stubOrder = null;
+    stubDraft = null;
+    lastDraftShippingUpdate = null;
+    stubZone = null;
+  });
+
+  it('routes "D6720"-style names to the draft path and retitles the shipping line', async () => {
+    stubZone = 'ddp';
+    stubDraft = {
+      id: 'gid://shopify/DraftOrder/6720',
+      name: 'D6720',
+      status: 'OPEN',
+      shippingAddress: { country: 'Australia', countryCodeV2: 'AU' },
+      shippingLine: { title: 'Expedited International Shipping - All Duties and Import Fees Included', price: '0.00' },
+    };
+    const result = await run({ order_number: 'D6720', speed: 'standard', reason: 'Customer asked to downgrade' });
+    assert.ok(!result.isError, result.content[0].text);
+    assert.equal(lastDraftShippingUpdate.id, 'gid://shopify/DraftOrder/6720');
+    assert.equal(
+      lastDraftShippingUpdate.input.title,
+      'Free International Shipping - All Duties and Import Fees Included'
+    );
+    assert.match(result.content[0].text, /Draft shipping updated/);
+  });
+
+  it('falls back to draft lookup when a numeric order is not in Warehance', async () => {
+    stubOrder = null;
+    stubZone = 'us';
+    stubDraft = {
+      id: 'gid://shopify/DraftOrder/9999',
+      name: 'D9999',
+      status: 'OPEN',
+      shippingAddress: { country: 'United States', countryCodeV2: 'US' },
+      shippingLine: { title: 'US Expedited Shipping', price: '0.00' },
+    };
+    const result = await run({ order_number: 9999, speed: 'standard', reason: 'switching back to ground' });
+    assert.ok(!result.isError, result.content[0].text);
+    assert.equal(lastDraftShippingUpdate.input.title, 'Free US Standard Shipping');
+  });
+
+  it('refuses when the draft has already been completed', async () => {
+    stubDraft = {
+      id: 'gid://shopify/DraftOrder/6720',
+      name: 'D6720',
+      status: 'COMPLETED',
+      shippingAddress: { country: 'AU' },
+      shippingLine: { title: 'Free International Shipping - All Duties and Import Fees Included' },
+    };
+    const result = await run({ order_number: 'D6720', speed: 'standard', reason: 'too late' });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /already been completed/);
+    assert.equal(lastDraftShippingUpdate, null);
+  });
+
+  it('no-ops when the draft is already on the requested speed', async () => {
+    stubZone = 'ddp';
+    stubDraft = {
+      id: 'gid://shopify/DraftOrder/6720',
+      name: 'D6720',
+      status: 'OPEN',
+      shippingAddress: { country: 'Australia', countryCodeV2: 'AU' },
+      shippingLine: { title: 'Free International Shipping - All Duties and Import Fees Included', price: '0.00' },
+    };
+    const result = await run({ order_number: 'D6720', speed: 'standard', reason: 'already on it' });
+    assert.match(result.content[0].text, /already on \*\*Free International Shipping/);
+    assert.equal(lastDraftShippingUpdate, null);
+  });
+
+  it('returns an error when the draft is not found', async () => {
+    stubDraft = null;
+    const result = await run({ order_number: 'D404', speed: 'standard', reason: 'oops' });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /Draft order D404 not found/);
   });
 });

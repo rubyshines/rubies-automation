@@ -11,6 +11,8 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
 const { getShippingZone } = require('./shippingLookup');
+const { getDraftOrderByName, updateDraftOrderShipping, getAdminUrl } = require('../shopify');
+const { getShippingMethodTitle } = require('../orderUtils');
 
 // Warehance shipping method IDs (from /shipping-methods endpoint).
 // Refreshed 2026-04-30 — earlier IDs (231185182253 / 231185182258) were stale.
@@ -379,6 +381,59 @@ async function handleReleaseWarehouseHold({ order_number, reason }) {
   };
 }
 
+// Update the shippingLine on a Shopify draft order. Used when the order the
+// operator wants to retitle hasn't been paid yet — there's no Warehance row
+// to update, but the title on the draft drives both the customer-facing
+// rate and the eventual carrier mapping when the order is placed.
+async function updateDraftShippingSpeed(draftName, speed, reason) {
+  const draft = await getDraftOrderByName(draftName);
+  if (!draft) {
+    return {
+      content: [{ type: 'text', text: `Draft order ${draftName} not found in Shopify.` }],
+      isError: true,
+    };
+  }
+  if (draft.status === 'COMPLETED') {
+    return {
+      content: [{
+        type: 'text',
+        text: `Draft ${draftName} has already been completed (became a real order). Use the order number instead — this tool will route to Warehance.`,
+      }],
+      isError: true,
+    };
+  }
+
+  const country = draft.shippingAddress?.countryCodeV2 || draft.shippingAddress?.country || '';
+  const newTitle = await getShippingMethodTitle(country, speed);
+  const oldTitle = draft.shippingLine?.title || '(none)';
+
+  if (newTitle === oldTitle) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Draft ${draftName} is already on **${newTitle}** — no change needed.\n\n${getAdminUrl(draft.id)}`,
+      }],
+    };
+  }
+
+  await updateDraftOrderShipping(draft.id, { title: newTitle, price: '0.00' });
+
+  return {
+    content: [{
+      type: 'text',
+      text: [
+        `**Draft shipping updated** — ${draftName}`,
+        '',
+        `**From:** ${oldTitle}`,
+        `**To:** ${newTitle}`,
+        `Reason: ${reason}`,
+        '',
+        getAdminUrl(draft.id),
+      ].join('\n'),
+    }],
+  };
+}
+
 async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
   const supabase = getSupabaseClient();
 
@@ -386,9 +441,17 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
     return { content: [{ type: 'text', text: `Invalid speed "${speed}". Use "standard" or "expedited".` }], isError: true };
   }
 
+  // Drafts are addressed by name (e.g. "D6720"). Route to Shopify
+  // draftOrderUpdate before consulting Warehance — drafts never appear in
+  // the warehouse queue until the invoice is paid + the order placed.
+  const rawId = String(order_number ?? '').trim();
+  if (/^d\d+$/i.test(rawId)) {
+    return await updateDraftShippingSpeed(rawId.toUpperCase(), speed, reason);
+  }
+
   let whOrder;
   try {
-    whOrder = await fetchOrderByNumber(String(order_number));
+    whOrder = await fetchOrderByNumber(rawId);
   } catch (err) {
     return { content: [{ type: 'text', text: `Failed to look up order in Warehance: ${err.message}` }], isError: true };
   }
@@ -396,6 +459,17 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
   const whUrl = whOrder ? warehanceOrderUrl(whOrder) : null;
 
   if (!whOrder) {
+    // Numeric input that wasn't in Warehance — try as a draft name (D<num>)
+    // before giving up. Covers "the order #6720 hasn't been placed yet" cases.
+    // Only forward to the draft path if a draft with that name actually
+    // exists; otherwise return the original "not found in Warehance" error
+    // so the operator knows the canonical lookup actually ran.
+    try {
+      const maybeDraft = await getDraftOrderByName(`D${rawId}`);
+      if (maybeDraft) {
+        return await updateDraftShippingSpeed(`D${rawId}`, speed, reason);
+      }
+    } catch (_) { /* fall through */ }
     return { content: [{ type: 'text', text: `Order #${order_number} not found in Warehance.` }], isError: true };
   }
 
@@ -548,13 +622,19 @@ const tools = [
   },
   {
     name: 'update_shipping_speed',
-    description: 'Update the shipping speed on an unfulfilled order in Warehance. US: "expedited" (US Expedited) or "standard" (US Standard). Non-US "expedited" sets the Warehance method to Fedex. Non-US "standard" sets the Warehance method to Passport DDP (Canada / DDP zone) or Passport DDU (DDU zone), determined from shipping_zones. Only works for orders that are not yet in progress.',
+    description: 'Update the shipping speed on an unfulfilled order or an open Shopify draft order. Pass either a placed order number (e.g. 29444) or a draft order name (e.g. "D6720"). Drafts route to Shopify draftOrderUpdate, retitling the shippingLine; placed orders route to Warehance, which updates the carrier method. US: "expedited" (US Expedited) or "standard" (US Standard). Non-US "expedited" sets the Warehance method to Fedex (or the Expedited International Shipping line on a draft). Non-US "standard" sets Passport DDP (Canada / DDP zone) or Passport DDU (DDU zone), determined from shipping_zones. Only works for orders not yet in progress.',
     inputSchema: {
       type: 'object',
       properties: {
-        order_number: { type: 'number', description: 'Order number (e.g., 29444)' },
+        order_number: {
+          oneOf: [
+            { type: 'number' },
+            { type: 'string' },
+          ],
+          description: 'Placed order number (e.g. 29444) or draft order name (e.g. "D6720"). Draft names are detected by the leading "D" — pass them as strings.',
+        },
         speed: { type: 'string', enum: ['expedited', 'standard'], description: 'Shipping speed: "expedited" (2-3 bus days) or "standard" (2-7 bus days)' },
-        reason: { type: 'string', description: 'Why the shipping speed is being changed (e.g., "Customer paid for upgrade", "Compensating for delay")' },
+        reason: { type: 'string', description: 'Why the shipping speed is being changed (e.g., "Customer paid for upgrade", "Compensating for delay", "Customer asked to downgrade pre-payment")' },
       },
       required: ['order_number', 'speed', 'reason'],
     },

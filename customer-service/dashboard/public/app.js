@@ -1754,6 +1754,7 @@ function appendActionTrace(containerEl, { title = 'Operator Agent' } = {}) {
 async function runChatTurn({
   endpoint,
   message,
+  apiMessage,
   history,
   containerEl,
   inputEl,
@@ -1765,6 +1766,11 @@ async function runChatTurn({
   pdfs = [],
   attachments = [],
 }) {
+  // The bubble shows `message` (what the operator typed). The API receives
+  // `apiMessage` if provided, otherwise the bubble text. This split exists
+  // so attachment payloads (extracted PDF text, etc.) reach the model
+  // without polluting the chat transcript shown to the operator.
+  const messageForApi = (apiMessage != null ? apiMessage : message);
   const qr = containerEl.querySelector('.action-quick-replies');
   if (qr) qr.remove();
 
@@ -1782,12 +1788,47 @@ async function runChatTurn({
         img.alt = a.name || 'image';
         link.appendChild(img);
         attachWrap.appendChild(link);
+      } else if (a.preview) {
+        // File with extracted text — render as a collapsible details so the
+        // operator can verify what the model is actually receiving without
+        // polluting the bubble.
+        const det = document.createElement('details');
+        det.className = 'msg-attachment-file msg-attachment-preview';
+        const summary = document.createElement('summary');
+        summary.className = 'msg-attachment-preview-summary';
+        const icon = document.createElement('span');
+        icon.className = 'msg-attachment-icon';
+        icon.textContent = '\u{1F4C4}';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'msg-attachment-name';
+        nameEl.textContent = a.name || 'file';
+        const meta = document.createElement('span');
+        meta.className = 'msg-attachment-meta';
+        const lineCount = a.preview.split('\n').length;
+        const charCount = a.preview.length;
+        meta.textContent = `${lineCount.toLocaleString()} lines · ${charCount.toLocaleString()} chars`;
+        summary.appendChild(icon);
+        summary.appendChild(nameEl);
+        summary.appendChild(meta);
+        const body = document.createElement('pre');
+        body.className = 'msg-attachment-preview-body';
+        body.textContent = a.preview;
+        det.appendChild(summary);
+        det.appendChild(body);
+        attachWrap.appendChild(det);
       } else {
         const link = document.createElement('a');
         link.className = 'msg-attachment-file';
         link.href = a.url;
         link.download = a.name || 'file';
-        link.textContent = a.name || 'file';
+        const icon = document.createElement('span');
+        icon.className = 'msg-attachment-icon';
+        icon.textContent = '\u{1F4C4}';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'msg-attachment-name';
+        nameEl.textContent = a.name || 'file';
+        link.appendChild(icon);
+        link.appendChild(nameEl);
         attachWrap.appendChild(link);
       }
     }
@@ -1806,7 +1847,7 @@ async function runChatTurn({
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history, images, pdfs }),
+      body: JSON.stringify({ message: messageForApi, history, images, pdfs }),
     });
 
     const reader = resp.body.getReader();
@@ -1962,21 +2003,37 @@ async function sendAdhocMessage() {
     .filter(a => a.kind === 'pdf')
     .map(a => ({ media_type: a.media_type, data: a.data, name: a.name }));
 
+  // Compose the API payload — extracted text attachments are inlined here
+  // so the model sees them, but they never reach the bubble (the operator
+  // just sees the typed message + a chip per attachment).
   let composed = message;
   for (const a of sending.filter(a => a.kind === 'text')) {
     composed += `\n\n--- Attached file: ${a.name} ---\n${a.text}\n--- End of ${a.name} ---`;
   }
-  const summarySent = composed.trim() || '(file attached)';
+  const apiMessage = composed.trim() || '(file attached)';
+  const bubbleMessage = message.trim() || (sending.length === 1
+    ? `Attached ${sending[0].name}`
+    : `Attached ${sending.length} files`);
 
-  // View-model for the user bubble — image thumbs + file cards, no inline text
-  const bubbleAttachments = sending.map(a => a.kind === 'image'
-    ? { kind: 'image', name: a.name, url: `data:${a.media_type};base64,${a.data}` }
-    : { kind: 'file',  name: a.name, url: a.objectUrl }
-  );
+  // View-model for the user bubble — image thumbs + file cards. Text-kind
+  // attachments carry their extracted preview so the chip can expand inline.
+  const bubbleAttachments = sending.map(a => {
+    if (a.kind === 'image') {
+      return { kind: 'image', name: a.name, url: `data:${a.media_type};base64,${a.data}` };
+    }
+    return {
+      kind: 'file',
+      name: a.name,
+      url: a.objectUrl,
+      preview: a.text || null,
+      mediaType: a.media_type,
+    };
+  });
 
   const { history } = await runChatTurn({
     endpoint: '/api/console/chat-stream',
-    message: summarySent,
+    message: bubbleMessage,
+    apiMessage,
     history: _adhocChatHistory,
     containerEl: messagesEl,
     inputEl: input,
