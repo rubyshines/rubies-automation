@@ -95,34 +95,6 @@ function calendarDaysSince(dateStr) {
   return Math.round((Date.now() - d.getTime()) / 86400000);
 }
 
-function daysSinceLastEvent(events) {
-  if (!Array.isArray(events) || events.length === 0) return null;
-  const latest = events[0];
-  const ts = latest.timestamp || `${latest.date} ${latest.time || ''}`.trim();
-  let d = new Date(ts);
-  if (isNaN(d) && latest.date) d = new Date(`${latest.date} ${new Date().getFullYear()}`);
-  if (isNaN(d)) return null;
-  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
-  if (days < 0 || days > 365) return null;
-  return days;
-}
-
-function detectActionRequired(events) {
-  if (!Array.isArray(events)) return null;
-  for (const evt of events.slice(0, 5)) {
-    const desc = evt.description || '';
-    if (BENIGN_EXCEPTION_PATTERNS.some(p => p.test(desc))) continue;
-    for (const p of ACTION_REQUIRED_PATTERNS) { if (p.test(desc)) return desc; }
-  }
-  return null;
-}
-
-function lastEventDescription(events) {
-  if (!Array.isArray(events) || events.length === 0) return null;
-  const latest = events[0];
-  return latest.date ? `${latest.date}: ${latest.description || ''}` : latest.description || '';
-}
-
 function shopifyAdminUrl(shopifyOrderId) {
   if (!shopifyOrderId) return null;
   return `https://admin.shopify.com/store/${SHOPIFY_STORE}/orders/${String(shopifyOrderId).replace(/\D/g, '')}`;
@@ -302,15 +274,10 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   const { data: zones } = await supabase.from('shipping_zones').select('country_code, zone');
   for (const z of (zones || [])) zoneMap[z.country_code] = z.zone;
 
-  // Load tracking snapshots
-  const snapMap = {};
-  for (let i = 0; i < orderNums.length; i += 500) {
-    const batch = orderNums.slice(i, i + 500);
-    const { data } = await supabase.from('tracking_snapshots')
-      .select('order_number, carrier, current_status, raw_events, last_location, local_carrier, customs_cleared, estimated_delivery, scraped_at')
-      .in('order_number', batch);
-    for (const s of (data || [])) snapMap[s.order_number] = s;
-  }
+  // Tracking events live on orders.fulfillments[].events for every carrier
+  // (Shopify-supported carriers via syncAll, Passport via syncPassportDelivery
+  // mirror). The tracking_snapshots table is now write-only audit; reads
+  // happen straight off the order row.
 
   // Load existing notes
   const noteMap = {};
@@ -342,10 +309,12 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     allOpenClaims = data || [];
   } catch { /* table may not exist */ }
 
-  // Build fulfillment-based status for orders without tracking snapshots, using
-  // Shopify fulfillment events stored on the order row by syncAll.js.
-  // Shopify event statuses: CONFIRMED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED,
-  // ATTEMPTED_DELIVERY, FAILURE, READY_FOR_PICKUP, LABEL_PRINTED, LABEL_PURCHASED.
+  // Build per-order tracking state from orders.fulfillments[]. Carrier-agnostic:
+  // syncAll writes Shopify events for every Shopify-supported carrier; the
+  // Passport scraper mirrors Passport-specific extras (lastLocation,
+  // localCarrier, customsCleared) onto the same row. Shopify event statuses:
+  // CONFIRMED, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED, ATTEMPTED_DELIVERY,
+  // FAILURE, READY_FOR_PICKUP, LABEL_PRINTED, LABEL_PURCHASED.
   const SHOPIFY_EVENT_STATUS_MAP = {
     DELIVERED: 'delivered',
     OUT_FOR_DELIVERY: 'out_for_delivery',
@@ -358,10 +327,9 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     LABEL_PURCHASED: 'pre_transit',
   };
 
-  const fulfillmentEventMap = {};
+  const trackingMap = {};
   const noDataCount = { hasData: 0, noData: 0 };
   for (const n of orderNums) {
-    if (snapMap[n]) continue; // has tracking snapshot, skip
     const order = allOrders.find(o => o.order_number === n);
     const f = (order?.fulfillments || []).find(fl => fl.trackingUrl || fl.trackingNumber);
     if (!f) { noDataCount.noData++; continue; }
@@ -371,32 +339,43 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     noDataCount.hasData++;
 
     const latest = events[0]; // events are stored most-recent-first
-    const currentStatus = SHOPIFY_EVENT_STATUS_MAP[latest.status] || 'unknown';
+    let currentStatus = SHOPIFY_EVENT_STATUS_MAP[latest.status] || 'unknown';
+    if (latest && /return(?:ed)? to sender/i.test(latest.message || '')) {
+      currentStatus = 'returned';
+    }
+    if (f.deliveredAt) currentStatus = 'delivered';
+
     const lastEventDays = latest.happenedAt
       ? Math.floor((Date.now() - new Date(latest.happenedAt).getTime()) / 86400000)
       : null;
 
     // Action required = scan recent events for actionable patterns (return to
-    // sender, address incorrect, etc.) using the same patterns as raw_events.
+    // sender, address incorrect, customs hold, etc.).
     let actionRequired = null;
     for (const ev of events.slice(0, 5)) {
       const desc = ev.message || '';
       if (BENIGN_EXCEPTION_PATTERNS.some(p => p.test(desc))) continue;
       if (SHOPIFY_EVENT_ACTION_PATTERNS.some(p => p.test(desc))) { actionRequired = desc; break; }
+      if (ACTION_REQUIRED_PATTERNS.some(p => p.test(desc))) { actionRequired = desc; break; }
     }
 
-    fulfillmentEventMap[n] = {
+    trackingMap[n] = {
       carrier: f.trackingCompany || '?',
       currentStatus,
       events,
       lastEventDays,
       actionRequired,
+      lastLocation: f.lastLocation || latest.location || null,
+      localCarrier: f.localCarrier || null,
+      localTrackingNumber: f.localTrackingNumber || null,
+      customsCleared: typeof f.customsCleared === 'boolean' ? f.customsCleared : null,
+      estimatedDelivery: f.estimatedDeliveryAt || null,
       lastEventDesc: latest.happenedAt
         ? `${latest.happenedAt.split('T')[0]}: ${latest.message || latest.status}`
         : null,
     };
   }
-  console.log(`  [Shipping] ${orderNums.length - Object.keys(snapMap).length} orders without snapshots: ${noDataCount.hasData} with Shopify events, ${noDataCount.noData} without`);
+  console.log(`  [Shipping] ${orderNums.length} orders, ${noDataCount.hasData} with fulfillment events, ${noDataCount.noData} without`);
 
   // Load line items
   const itemMap = {};
@@ -423,18 +402,16 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     const zone = cc === 'US' ? 'us' : cc === 'CA' ? 'canada' : (zoneMap[cc] || 'ddu');
     const bizDays = businessDaysSince(order.fulfilled_at);
     const calDays = calendarDaysSince(order.fulfilled_at);
-    const snap = snapMap[order.order_number];
-    const shopifyEvt = fulfillmentEventMap[order.order_number];
+    const tracking = trackingMap[order.order_number];
     const window = DELIVERY_WINDOWS[zone] || DELIVERY_WINDOWS.ddu;
 
-    if (snap?.current_status === 'delivered') continue;
-    if (shopifyEvt?.currentStatus === 'delivered') continue;
+    if (tracking?.currentStatus === 'delivered') continue;
 
     const trackingFulfillment = (order.fulfillments || []).find(f => f.trackingUrl);
     const isPassport = (trackingFulfillment?.trackingUrl || '').includes('passport');
-    const carrierName = snap?.carrier || shopifyEvt?.carrier || (isPassport ? 'passport' : '?');
-    const currentStatus = snap?.current_status || shopifyEvt?.currentStatus || 'unknown';
-    const lastEvent = snap?.raw_events ? lastEventDescription(snap.raw_events) : shopifyEvt?.lastEventDesc || null;
+    const carrierName = tracking?.carrier || (isPassport ? 'passport' : '?');
+    const currentStatus = tracking?.currentStatus || 'unknown';
+    const lastEvent = tracking?.lastEventDesc || null;
 
     let shippingZone = zone;
 
@@ -450,11 +427,11 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       destination: [addr.city, addr.provinceCode, cc].filter(Boolean).join(', '),
       zone: shippingZone,
       business_days: bizDays, calendar_days: calDays,
-      carrier: carrierName, local_carrier: snap?.local_carrier || null,
+      carrier: carrierName, local_carrier: tracking?.localCarrier || null,
       tracking_url: trackingFulfillment?.trackingUrl || null,
       tracking_number: trackingFulfillment?.trackingNumber || null,
-      status: currentStatus, last_location: snap?.last_location || null,
-      last_event: lastEvent, customs_cleared: snap?.customs_cleared,
+      status: currentStatus, last_location: tracking?.lastLocation || null,
+      last_event: lastEvent, customs_cleared: tracking?.customsCleared,
       isPassport,
       items: (itemMap[order.order_number] || []).map(li => {
         const qty = li.quantity > 1 ? `${li.quantity}x ` : '';
@@ -466,7 +443,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
     // Exception / returned
     if (currentStatus === 'exception') {
-      const msg = shopifyEvt?.events?.[0]?.message || 'Carrier reported an exception';
+      const msg = tracking?.events?.[0]?.message || 'Carrier reported an exception';
       const isBenign = BENIGN_EXCEPTION_PATTERNS.some(p => p.test(msg));
       if (!isBenign) {
         alert.issues.push(`Exception: ${msg}`);
@@ -481,32 +458,23 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     }
 
     // Action required
-    if (snap?.raw_events) {
-      const actionDesc = detectActionRequired(snap.raw_events);
-      if (actionDesc) {
-        const isCustomsHold = /held.*customs|customs.*payment|customs.*hold/i.test(actionDesc);
-        if (!isCustomsHold || !snap.customs_cleared) {
-          alert.issues.push(`Action required: ${actionDesc}`);
-          alert.severity = 'high';
-          if (!alert.claimReason) alert.claimReason = isCustomsHold ? 'customs_hold' : 'exception';
-        }
+    if (tracking?.actionRequired) {
+      const actionDesc = tracking.actionRequired;
+      const isCustomsHold = /held.*customs|customs.*payment|customs.*hold/i.test(actionDesc);
+      if (!isCustomsHold || !tracking.customsCleared) {
+        alert.issues.push(`Action required: ${actionDesc}`);
+        alert.severity = 'high';
+        if (!alert.claimReason) alert.claimReason = isCustomsHold ? 'customs_hold' : 'exception';
       }
-    }
-    if (shopifyEvt?.actionRequired) {
-      alert.issues.push(`Action required: ${shopifyEvt.actionRequired}`);
-      alert.severity = 'high';
-      if (!alert.claimReason) alert.claimReason = 'exception';
     }
 
     // Stale tracking
-    let staleDays = null;
-    if (snap?.raw_events) staleDays = daysSinceLastEvent(snap.raw_events);
-    else if (shopifyEvt?.lastEventDays != null) staleDays = shopifyEvt.lastEventDays;
+    const staleDays = tracking?.lastEventDays ?? null;
 
     // Passport packages at the origin hub (Los Angeles) have a normal 7-14 day
     // tracking gap while in international transit. Use a higher stale threshold
     // to avoid noise from the expected handoff delay.
-    const atOriginHub = isPassport && /los angeles/i.test(snap?.last_location || lastEvent || '');
+    const atOriginHub = isPassport && /los angeles/i.test(tracking?.lastLocation || lastEvent || '');
     const staleThreshold = atOriginHub ? 12 : 7;
     const likelyLostThreshold = atOriginHub ? 18 : 14;
 
@@ -533,8 +501,8 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
     // Customs hold — only for DDP orders with actual customs hold event in tracking
     // Never for DDU (customer expects to pay duties themselves)
-    if (zone === 'ddp' && isPassport && snap?.raw_events) {
-      const customsHoldEvent = detectCustomsHold(snap.raw_events);
+    if (zone === 'ddp' && isPassport && tracking?.events) {
+      const customsHoldEvent = detectCustomsHold(tracking.events.map(e => ({ description: e.message || '' })));
       if (customsHoldEvent) {
         const existingClaim = claimMap[order.order_number];
         if (!existingClaim?.customer_customs_notified_at) {

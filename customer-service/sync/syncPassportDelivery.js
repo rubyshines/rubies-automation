@@ -31,6 +31,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { shopifyGraphQL } = require('../lib/shopify');
 const { scrapeTracking, closeBrowser } = require('../lib/tracking/scraper');
 const { parsePassportPage } = require('../lib/tracking/passportParser');
+const { passportEventsToShopify } = require('../lib/tracking/eventNormalizer');
 let parseTrackingPage; // lazy-loaded Sonnet fallback
 
 const NITRO_LOCATION_ID = '105921249558';
@@ -98,6 +99,43 @@ async function pushDeliveryToShopify(shopifyOrderId, trackingNumber, deliveredAt
     console.warn(`  Shopify push failed for ${trackingNumber}: ${e.message}`);
     return false;
   }
+}
+
+/**
+ * Mirror Passport scrape into orders.fulfillments[] so the read layer is
+ * carrier-agnostic. Normalizes events to Shopify shape, attaches Passport
+ * extras (lastLocation, localCarrier, customsCleared, localTrackingNumber,
+ * estimatedDeliveryAt) on the matching fulfillment.
+ *
+ * Idempotent: if the fulfillment row doesn't match (tracking number changed,
+ * order edited), it's a no-op.
+ */
+async function updateOrderFulfillmentFromScrape(supabase, order, parsed) {
+  const normalizedEvents = passportEventsToShopify(parsed.events || [], order.fulfilled_at);
+  if (normalizedEvents.length === 0 && !parsed.last_location && !parsed.local_carrier) return;
+
+  const eta = parsed.estimated_delivery && !isNaN(new Date(parsed.estimated_delivery))
+    ? new Date(parsed.estimated_delivery).toISOString()
+    : null;
+
+  const updatedFulfillments = (order.fulfillments || []).map(f => {
+    if (f.trackingNumber !== order.tracking_number) return f;
+    return {
+      ...f,
+      events: normalizedEvents.length ? normalizedEvents : (f.events || []),
+      lastLocation: parsed.last_location || f.lastLocation || null,
+      localCarrier: parsed.local_carrier || f.localCarrier || null,
+      localTrackingNumber: parsed.local_tracking_number || f.localTrackingNumber || null,
+      customsCleared: typeof parsed.customs_cleared === 'boolean' ? parsed.customs_cleared : (f.customsCleared ?? null),
+      estimatedDeliveryAt: eta || f.estimatedDeliveryAt || null,
+    };
+  });
+
+  const { error } = await supabase
+    .from('orders')
+    .update({ fulfillments: updatedFulfillments })
+    .eq('order_number', order.order_number);
+  if (error) console.warn(`  #${order.order_number}: fulfillment events update failed — ${error.message}`);
 }
 
 /**
@@ -368,7 +406,8 @@ async function scrapeOrder(supabase, order, snapMap) {
     shippingZone = zoneRow?.zone || 'ddu';
   }
 
-  // Upsert snapshot
+  // Upsert snapshot (kept as transitional audit/cache — read path uses
+  // orders.fulfillments[].events as the canonical source going forward).
   const { error: upsertError } = await supabase.from('tracking_snapshots').upsert({
     tracking_number: order.tracking_number,
     order_number: order.order_number,
@@ -390,6 +429,12 @@ async function scrapeOrder(supabase, order, snapMap) {
   if (upsertError) {
     console.error(`  #${order.order_number}: upsert failed — ${upsertError.message}`);
   }
+
+  // Mirror the scrape into orders.fulfillments[] so all downstream readers
+  // (shippingLookup, shippingDelays, advisor) treat Passport identically to
+  // domestic carriers. Events get the Shopify event shape; Passport-only
+  // extras (lastLocation, localCarrier, customsCleared, etc.) sit alongside.
+  await updateOrderFulfillmentFromScrape(supabase, order, parsed);
 
   // If delivered, extract and validate deliveredAt before patching
   if (parsed.current_status === 'delivered') {

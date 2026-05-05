@@ -26,23 +26,23 @@ const SHOPIFY_EVENT_STATUS_MAP = {
 };
 
 /**
- * Convert Shopify fulfillment event objects (as stored in
- * `orders.fulfillments[].events` by syncAll.js) into the trackingData shape
- * the analyzer/summarizer expect. Replaces the carrier-page scrape for
- * USPS/OnTrac — Shopify already aggregates carrier events, no need to fetch
- * the public tracking page.
+ * Convert events stored on `orders.fulfillments[].events` (in Shopify event
+ * shape) into the trackingData shape the analyzer/summarizer expect. Works
+ * for every carrier — Shopify writes its own carriers (USPS, OnTrac, etc.)
+ * directly via syncAll, and syncPassportDelivery normalizes Passport scrapes
+ * into the same shape, so the read path is uniform.
  */
 function buildTrackingDataFromShopifyEvents(fulfillment) {
   const events = (fulfillment.events || []).map(e => {
     const d = e.happenedAt ? new Date(e.happenedAt) : null;
     return {
       happenedAt: e.happenedAt || null,
-      // Format as "MMM DD" to match the date shape the analyzer expects from
-      // its AI-parsed scraper output (used by detectProblems/daysSinceEvent).
+      // Format as "MMM DD" to match the date shape the analyzer expects
+      // (used by detectProblems/daysSinceEvent).
       date: d && !isNaN(d) ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null,
       time: d && !isNaN(d) ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : null,
       description: e.message || e.status || '',
-      location: null, // Shopify events don't include geo location
+      location: e.location || null,
       status: e.status || null,
     };
   });
@@ -58,43 +58,19 @@ function buildTrackingDataFromShopifyEvents(fulfillment) {
     current_status: currentStatus,
     status_description: latest?.description || null,
     estimated_delivery: fulfillment.estimatedDeliveryAt || null,
-    last_location: null,
+    last_location: fulfillment.lastLocation || latest?.location || null,
     destination: null,
-    local_carrier: null,
-    local_tracking_number: null,
-    customs_cleared: null,
+    local_carrier: fulfillment.localCarrier || null,
+    local_tracking_number: fulfillment.localTrackingNumber || null,
+    customs_cleared: typeof fulfillment.customsCleared === 'boolean' ? fulfillment.customsCleared : null,
     events,
   };
 }
 
-// Cache TTL: 2 hours for active, 24 hours for delivered
-const ACTIVE_CACHE_MS = 2 * 60 * 60 * 1000;
-const DELIVERED_CACHE_MS = 24 * 60 * 60 * 1000;
-
 // ---------------------------------------------------------------------------
-// Check cache
+// Tracking snapshot writer (audit trail for live scrapes; reads now happen
+// from orders.fulfillments[].events directly — see buildTrackingDataFromShopifyEvents)
 // ---------------------------------------------------------------------------
-
-async function getCachedTracking(trackingNumber) {
-  try {
-    const supabase = getSupabaseClient();
-    const { data } = await supabase
-      .from('tracking_snapshots')
-      .select('*')
-      .eq('tracking_number', trackingNumber)
-      .single();
-
-    if (!data?.scraped_at) return null;
-
-    const age = Date.now() - new Date(data.scraped_at).getTime();
-    const ttl = data.current_status === 'delivered' ? DELIVERED_CACHE_MS : ACTIVE_CACHE_MS;
-    if (age > ttl) return null; // stale
-
-    return data;
-  } catch (e) {
-    return null; // table may not exist yet
-  }
-}
 
 async function cacheTracking(trackingNumber, data) {
   try {
@@ -281,12 +257,11 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
       continue;
     }
 
-    // For non-Passport carriers (USPS, OnTrac), Shopify's fulfillment.events
-    // already aggregates carrier scans — use them directly. No scrape, no
-    // tracking_snapshots cache. Passport falls through to the scraper below
-    // because Shopify doesn't track the local-carrier handoff.
-    const isPassport = /passport/i.test(trackingUrl || '');
-    if (!isPassport && ff.events.length > 0) {
+    // Carrier-agnostic read: every carrier's events live in
+    // orders.fulfillments[].events (Shopify writes its supported carriers
+    // directly via syncAll; Passport scrapes are normalized into the same
+    // shape by syncPassportDelivery). Use them when present.
+    if (ff.events.length > 0) {
       const trackingData = buildTrackingDataFromShopifyEvents(ff);
       const problems = detectProblems(trackingData);
       const summary = await summarizeForCustomer(
@@ -305,49 +280,29 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
         }
       );
       results.push({
-        carrier: ff.trackingCompany || 'USPS',
+        carrier: ff.trackingCompany || detectCarrier(trackingUrl),
         trackingUrl,
         trackingNumber,
         currentStatus: trackingData.current_status,
         statusDescription: trackingData.status_description,
         estimatedDelivery: trackingData.estimated_delivery,
-        lastLocation: null,
-        localCarrier: null,
+        lastLocation: trackingData.last_location,
+        localCarrier: trackingData.local_carrier,
+        localTrackingNumber: trackingData.local_tracking_number,
+        customsCleared: trackingData.customs_cleared,
         events: trackingData.events,
         summary,
         problems,
         shippingZone,
-        fromShopifyEvents: true,
+        fromFulfillmentEvents: true,
       });
       continue;
     }
 
-    // Check cache (Passport only — non-Passport short-circuited above)
-    const cached = await getCachedTracking(trackingNumber);
-    if (cached) {
-      // If we have the customer's message, re-summarize with it (cheap AI call, no re-scrape)
-      let summary = cached.summary;
-      if (customerMessage) {
-        try {
-          summary = await summarizeForCustomer(
-            { current_status: cached.current_status, events: cached.raw_events, trackingUrl: cached.tracking_url, local_carrier: cached.local_carrier },
-            { shippingZone, countryCode: destCountry, countryName: destCountryName, provinceCode: destProvince, region: destRegion, customerName: customer?.firstName || order.customer?.name?.split(' ')[0] || null, orderNumber: order.name?.replace('#', ''), customerMessage, shipDate, shippingAddress: order.shippingAddress }
-          );
-        } catch (e) { /* fall back to cached summary */ }
-      }
-      results.push({
-        carrier: cached.carrier,
-        trackingUrl: cached.tracking_url,
-        currentStatus: cached.current_status,
-        summary,
-        events: cached.raw_events,
-        localCarrier: cached.local_carrier,
-        fromCache: true,
-      });
-      continue;
-    }
-
-    // Scrape
+    // Fallback: events not yet synced to the fulfillment row. Currently only
+    // happens for Passport orders that haven't been picked up by
+    // syncPassportDelivery yet. Scrape live, then return — the next
+    // syncPassportDelivery run will mirror the events into the fulfillment.
     try {
       const scrapeResult = await scrapeTracking(trackingUrl, trackingNumber, ff);
       const parsed = await parseTrackingPage(scrapeResult.rawText, scrapeResult.carrier);
@@ -437,7 +392,6 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
     if (r.statusDescription) md += ` — ${r.statusDescription}`;
     md += '\n';
     if (r.trackingUrl) md += `**Tracking:** ${r.trackingUrl}\n`;
-    if (r.fromCache) md += '*(cached)*\n';
     if (r.problems?.length) {
       for (const p of r.problems) md += `**⚠️ ${p.severity.toUpperCase()}:** ${p.description}\n`;
     }
