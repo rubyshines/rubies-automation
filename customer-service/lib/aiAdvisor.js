@@ -912,7 +912,8 @@ For other routine profile updates with no automated tool — phone number change
 When a customer asks about a delayed or unshipped order:
 1. Check the fulfillment_status in the order context
 2. If UNFULFILLED: call check_unfulfilled_order to investigate why
-3. Use the investigation results to give an honest, specific response:
+3. If FULFILLED (the order has shipped): call shipping_lookup. It pulls the carrier tracking events and returns a draft response covering the actual carrier state — delivered, in transit, out for delivery, exception, returned to sender, stale tracking. Use shipping_lookup's draft as the basis of your reply. Do NOT call check_unfulfilled_order on a FULFILLED order; "fulfilled but no deliveredAt" means in transit, not stuck.
+4. Use the investigation results to give an honest, specific response:
 
 **Pre-order item on order:** Each pre_order issue from check_unfulfilled_order may include a preOrderTarget value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
 
