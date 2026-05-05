@@ -148,23 +148,53 @@ async function syncOrders({ since, full } = {}) {
       }));
 
       // --- Build fulfillments array ---
-      const fulfillments = (o.fulfillments || []).map(f => ({
-        status: f.status,
-        displayStatus: f.displayStatus || null,
-        createdAt: f.createdAt,
-        deliveredAt: f.deliveredAt || null,
-        inTransitAt: f.inTransitAt || null,
-        estimatedDeliveryAt: f.estimatedDeliveryAt || null,
-        trackingNumber: f.trackingInfo?.[0]?.number || null,
-        trackingUrl: f.trackingInfo?.[0]?.url || null,
-        trackingCompany: f.trackingInfo?.[0]?.company || null,
-        locationId: f.location?.legacyResourceId || null,
-        events: (f.events?.edges || []).map(e => ({
+      // Shopify's fulfillment.deliveredAt is null for Passport (Passport
+      // doesn't push delivery events back to Shopify). The Passport scraper
+      // writes deliveredAt + lastLocation/localCarrier/customsCleared/
+      // localTrackingNumber/estimatedDeliveryAt directly to Supabase, so we
+      // merge those forward instead of letting the GraphQL view wipe them.
+      // Same pattern protects scraped Passport events when Shopify's events
+      // count for the same fulfillment is sparser than what's stored.
+      const { data: existingRow } = await supabase
+        .from('orders')
+        .select('fulfillments')
+        .eq('shopify_order_id', o.id)
+        .maybeSingle();
+      const existingFulfillments = existingRow?.fulfillments || [];
+
+      const fulfillments = (o.fulfillments || []).map(f => {
+        const trackingNumber = f.trackingInfo?.[0]?.number || null;
+        const shopifyEvents = (f.events?.edges || []).map(e => ({
           happenedAt: e.node.happenedAt,
           status: e.node.status,
           message: e.node.message,
-        })),
-      }));
+        }));
+        const existing = existingFulfillments.find(e => e.trackingNumber && e.trackingNumber === trackingNumber);
+        // Prefer the richer events array. Shopify can only add events over
+        // time; if the stored array has more entries, it includes scraper
+        // events Shopify doesn't see.
+        const events = existing && (existing.events?.length || 0) > shopifyEvents.length
+          ? existing.events
+          : shopifyEvents;
+        return {
+          status: f.status,
+          displayStatus: f.displayStatus || existing?.displayStatus || null,
+          createdAt: f.createdAt,
+          deliveredAt: f.deliveredAt || existing?.deliveredAt || null,
+          inTransitAt: f.inTransitAt || existing?.inTransitAt || null,
+          estimatedDeliveryAt: f.estimatedDeliveryAt || existing?.estimatedDeliveryAt || null,
+          trackingNumber,
+          trackingUrl: f.trackingInfo?.[0]?.url || null,
+          trackingCompany: f.trackingInfo?.[0]?.company || null,
+          locationId: f.location?.legacyResourceId || null,
+          // Passport-only extras (set by syncPassportDelivery; preserve here)
+          lastLocation: existing?.lastLocation || null,
+          localCarrier: existing?.localCarrier || null,
+          localTrackingNumber: existing?.localTrackingNumber || null,
+          customsCleared: typeof existing?.customsCleared === 'boolean' ? existing.customsCleared : null,
+          events,
+        };
+      });
 
       // --- Upsert order ---
       const orderRow = {

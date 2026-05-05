@@ -52,7 +52,16 @@ function buildTrackingDataFromShopifyEvents(fulfillment) {
   if (latest && /return(?:ed)? to sender/i.test(latest.description)) {
     currentStatus = 'returned';
   }
+  // Delivered wins over any other state. Carriers (especially Passport) often
+  // emit a final "facility scan" or generic IN_TRANSIT event with the same
+  // timestamp as DELIVERED, which can sort to the front by happenedAt. Scan
+  // the array for any DELIVERED event before trusting the latest-event
+  // status. fulfillment.deliveredAt (set by Shopify or the Passport scraper)
+  // is also authoritative.
   if (fulfillment.deliveredAt) currentStatus = 'delivered';
+  else if (events.some(e => e.status === 'DELIVERED' || /\bdelivered\b/i.test(e.description || ''))) {
+    currentStatus = 'delivered';
+  }
 
   return {
     current_status: currentStatus,

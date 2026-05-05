@@ -343,7 +343,14 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     if (latest && /return(?:ed)? to sender/i.test(latest.message || '')) {
       currentStatus = 'returned';
     }
+    // Delivered wins over any other state. Carriers sometimes emit a final
+    // facility-scan / generic IN_TRANSIT event with the same timestamp as
+    // DELIVERED that sorts to the front. Scan the array for any DELIVERED
+    // event so we don't flag delivered packages as in-transit.
     if (f.deliveredAt) currentStatus = 'delivered';
+    else if (events.some(e => e.status === 'DELIVERED' || /\bdelivered\b/i.test(e.message || ''))) {
+      currentStatus = 'delivered';
+    }
 
     const lastEventDays = latest.happenedAt
       ? Math.floor((Date.now() - new Date(latest.happenedAt).getTime()) / 86400000)
