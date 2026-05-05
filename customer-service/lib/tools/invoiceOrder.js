@@ -9,7 +9,12 @@
 
 const { createDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { resolveCustomerForDraft, getShippingMethodTitle } = require('../orderUtils');
+const {
+  resolveCustomerForDraft,
+  getShippingMethodTitle,
+  applyShippingAddressOverride,
+  SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+} = require('../orderUtils');
 const { formatAddressBlock } = require('../addressUtils');
 
 const tools = [
@@ -22,6 +27,7 @@ const tools = [
       'Two-phase flow: Phase 1 (confirmed omitted or false) creates the draft and returns a preview.',
       'Phase 2 (confirmed=true + draft_order_id) sends the invoice to the customer.',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
+      'When the customer has explicitly asked to ship to a new address (different from what is on file), pass shipping_address with the new address fields — this overrides the customer default.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -72,6 +78,7 @@ const tools = [
           enum: ['standard', 'expedited'],
           description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate at $0. Default: "standard".',
         },
+        shipping_address: SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
         confirmed: {
           type: 'boolean',
           description: 'Set to true to send the invoice for a previously created draft (phase 2). Requires draft_order_id.',
@@ -83,7 +90,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, shipping_speed, confirmed, draft_order_id }) => {
+    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, shipping_speed, shipping_address, confirmed, draft_order_id }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Send invoice for existing draft ---
@@ -122,8 +129,13 @@ const tools = [
         return { content: [{ type: 'text', text: resolvedPaid.error }] };
       }
 
-      // Resolve customer details
-      const { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
+      // Resolve customer details. An explicit shipping_address override
+      // takes precedence over the customer default address on file.
+      let { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
+      if (shipping_address) {
+        shippingAddress = applyShippingAddressOverride(shippingAddress, shipping_address);
+        addressBlock = formatAddressBlock(shippingAddress);
+      }
 
       // Build line items
       const lineItems = [];

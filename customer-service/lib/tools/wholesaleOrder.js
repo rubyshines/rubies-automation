@@ -16,7 +16,12 @@ const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderIn
 const { searchProducts } = require('../productCache');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
-const { resolveCustomerForDraft, getShippingMethodTitle } = require('../orderUtils');
+const {
+  resolveCustomerForDraft,
+  getShippingMethodTitle,
+  applyShippingAddressOverride,
+  SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+} = require('../orderUtils');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 
@@ -275,6 +280,7 @@ const tools = [
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
       'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for non-US wholesale (FedEx routing); operator can override via shipping_speed.',
       'Set pre_increase_pricing=true to invoice transitional retailers at pre-Apr-16 2026 retail × wholesale discount (uses price_history.previous_price per variant; SKUs that didn\'t change use current retail). Per-item override: set items[].use_current_pricing=true on individual lines to keep them at current retail × discount even when pre_increase_pricing is on (e.g. items the customer never ordered before so old prices don\'t apply).',
+      'When the customer has explicitly asked to ship to a new address (different from what is on file), pass shipping_address with the new address fields — this overrides the customer default.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -317,6 +323,7 @@ const tools = [
           enum: ['standard', 'expedited'],
           description: 'Shipping speed. Default: "standard" for US wholesale, "expedited" for non-US wholesale (FedEx routing via the expedited Shopify shipping rate). Sets the Shopify shipping line title at $0; Warehance auto-maps to the carrier.',
         },
+        shipping_address: SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
         confirmed: {
           type: 'boolean',
           description: 'Set to true to complete previously created draft order(s) and send invoices (phase 2). Requires draft_order_ids.',
@@ -329,7 +336,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, pre_increase_pricing }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, shipping_address, pre_increase_pricing }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -470,8 +477,14 @@ const tools = [
       const email = (customer_email || '').toLowerCase().trim();
       const currencyOverride = CURRENCY_OVERRIDES[email];
 
-      // Look up customer details for address
-      const { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
+      // Look up customer details for address. An explicit shipping_address
+      // override (operator told us to ship somewhere different) takes
+      // precedence over the customer's default address on file.
+      let { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
+      if (shipping_address) {
+        shippingAddress = applyShippingAddressOverride(shippingAddress, shipping_address);
+        addressBlock = formatAddressBlock(shippingAddress);
+      }
 
       const noteSuffix = pre_increase_pricing ? ' | pre-Apr-16 pricing' : '';
       const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server${noteSuffix}`;

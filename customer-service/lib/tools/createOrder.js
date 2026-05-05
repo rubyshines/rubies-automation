@@ -224,8 +224,10 @@ async function handleCreateOrder({
     shippingLine: { title: shippingTitle, price: '0.00' },
   };
 
-  // Pass shipping address if available
-  const addr = customerInfo.address || address;
+  // Pass shipping address if available. An explicit `address` from the
+  // operator wins — it's the most specific signal that the customer wants
+  // to ship somewhere different from what's on file.
+  const addr = address || customerInfo.address;
   if (addr) {
     const shippingAddr = {
       address1: addr.address1 || '',
@@ -275,7 +277,7 @@ const tools = [
         phone: { type: 'string', description: 'Customer phone (for new customers)' },
         address: {
           type: 'object',
-          description: 'Shipping address (for new customers)',
+          description: 'Shipping address. Required for new customers (used for the customer record + draft). For existing customers, pass this only when the customer has explicitly asked to ship somewhere different from what is on file — when provided, it overrides the customer default.',
           properties: {
             address1: { type: 'string' },
             address2: { type: 'string', description: 'Apartment, suite, unit, etc.' },

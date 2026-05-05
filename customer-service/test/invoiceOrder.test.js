@@ -70,6 +70,7 @@ async function fakeGetShippingMethodTitle(country, speed) {
 }
 
 const orderUtilsPath = require.resolve('../lib/orderUtils');
+const realOrderUtils = require('../lib/orderUtils');
 require.cache[orderUtilsPath] = {
   id: orderUtilsPath,
   filename: orderUtilsPath,
@@ -85,6 +86,8 @@ require.cache[orderUtilsPath] = {
       address1: a.address1, address2: a.address2 || '',
       city: a.city, province: a.province, country: a.countryCodeV2 || a.country, zip: a.zip,
     }),
+    applyShippingAddressOverride: realOrderUtils.applyShippingAddressOverride,
+    SHIPPING_ADDRESS_OVERRIDE_SCHEMA: realOrderUtils.SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
     getShippingMethodTitle: fakeGetShippingMethodTitle,
   },
 };
@@ -325,5 +328,38 @@ describe('create_invoice_order — phase 2 (send invoice)', () => {
     });
     assert.match(result.content[0].text, /Invoice Sent/);
     assert.match(result.content[0].text, /admin\.shopify\.com/);
+  });
+});
+
+describe('create_invoice_order — shipping_address operator override', () => {
+  it('uses customer default address when no override is provided', async () => {
+    setStubCustomerCountry('US');
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      paid_items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.address1, '123 Main St');
+    assert.equal(lastCreateDraftOrderArgs.billingAddress.address1, '123 Main St');
+  });
+
+  it('explicit shipping_address overrides the customer default', async () => {
+    setStubCustomerCountry('US');
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      paid_items: [{ sku: 'rub0001-S', quantity: 1 }],
+      shipping_address: {
+        first_name: 'Different',
+        last_name: 'Person',
+        address1: '999 New Address',
+        city: 'Newcity',
+        province: 'BC',
+        country: 'CA',
+        zip: 'V6B 1A1',
+      },
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.address1, '999 New Address');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.country, 'CA');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.firstName, 'Different');
+    assert.equal(lastCreateDraftOrderArgs.billingAddress.address1, '999 New Address');
   });
 });

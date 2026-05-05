@@ -158,6 +158,8 @@ require.cache[orderUtilsPath] = {
       shippingAddress: { firstName: 'Test', lastName: 'Wholesale', address1: '1 Wholesale Way', city: 'X', province: 'X', country: 'CA', zip: '00000' },
     }),
     buildShippingAddress: realOrderUtils.buildShippingAddress,
+    applyShippingAddressOverride: realOrderUtils.applyShippingAddressOverride,
+    SHIPPING_ADDRESS_OVERRIDE_SCHEMA: realOrderUtils.SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
     getShippingMethodTitle: fakeGetShippingMethodTitle,
   },
 };
@@ -618,5 +620,58 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     assert.match(lastCreateDraftOrderArgs.note, /pre-Apr-16 pricing/);
+  });
+});
+
+describe('create_wholesale_order — shipping_address operator override', () => {
+  beforeEach(() => { lastCreateDraftOrderArgs = null; });
+
+  it('uses customer default address when no override is provided', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'CA',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.address1, '1 Wholesale Way');
+    assert.equal(lastCreateDraftOrderArgs.billingAddress.address1, '1 Wholesale Way');
+  });
+
+  it('explicit shipping_address overrides the customer default', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'AU',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+      shipping_address: {
+        first_name: 'Erin',
+        last_name: 'Spencer',
+        address1: '76 Parramatta Rd',
+        city: 'Stanmore',
+        province: 'NSW',
+        country: 'AU',
+        zip: '2048',
+      },
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.address1, '76 Parramatta Rd');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.city, 'Stanmore');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.province, 'NSW');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.zip, '2048');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.country, 'AU');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.firstName, 'Erin');
+    assert.equal(lastCreateDraftOrderArgs.billingAddress.address1, '76 Parramatta Rd');
+  });
+
+  it('partial override merges onto customer default', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'CA',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+      shipping_address: { address1: '99 Different St', address2: 'Apt 5' },
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.address1, '99 Different St');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.address2, 'Apt 5');
+    // Unspecified fields fall back to customer default
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.city, 'X');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.country, 'CA');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress.firstName, 'Test');
   });
 });

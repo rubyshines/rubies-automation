@@ -8,7 +8,13 @@ const { createDraftOrder, completeDraftOrder, normalizeGid, getCustomerOrders, g
 const { getCustomerOrdersFromSupabase, getCustomerFulfilledOrdersFromSupabase } = require('../supabaseQueries');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock, formatAddressLine } = require('../addressUtils');
-const { resolveCustomerForDraft, buildShippingAddress, getShippingMethodTitle } = require('../orderUtils');
+const {
+  resolveCustomerForDraft,
+  buildShippingAddress,
+  getShippingMethodTitle,
+  applyShippingAddressOverride,
+  SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+} = require('../orderUtils');
 
 const tools = [
   {
@@ -23,6 +29,7 @@ const tools = [
       'If no original_order_id is provided, automatically finds the customer\'s most recent FULFILLED, non-cancelled order.',
       'If an original_order_id IS provided, validates that it is fulfilled before proceeding.',
       'Tagged with "exchange" and "cs-mcp". The Shopify shipping line title is set from shipping_speed + destination (e.g. "Canada Expedited Shipping" for a Canadian expedited exchange) at price $0; Warehance auto-maps the title to the right carrier.',
+      'When the customer has explicitly asked to ship to a new address (different from the original order), pass shipping_address with the new address fields — this overrides both the customer default and the original-order address.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -58,6 +65,7 @@ const tools = [
           enum: ['standard', 'expedited'],
           description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate at $0. Default: "standard".',
         },
+        shipping_address: SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
         confirmed: {
           type: 'boolean',
           description: 'Set to true to complete a previously created draft order (phase 2). Requires draft_order_id.',
@@ -69,7 +77,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, items, note, original_order_id, shipping_speed, confirmed, draft_order_id }) => {
+    handler: async ({ customer_id, items, note, original_order_id, shipping_speed, shipping_address, confirmed, draft_order_id }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm and complete an existing draft ---
@@ -221,6 +229,12 @@ const tools = [
             text: `Error looking up customer orders: ${err.message}. Please provide an original_order_id explicitly.`,
           }],
         };
+      }
+
+      // Operator override beats both customer default and original-order address.
+      if (shipping_address) {
+        shippingAddress = applyShippingAddressOverride(shippingAddress, shipping_address);
+        addressBlock = formatAddressBlock(shippingAddress);
       }
 
       // Build item summary
