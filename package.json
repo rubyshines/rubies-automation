@@ -78,6 +78,7 @@
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "googleapis": "^131.0.0",
+    "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
     "pg": "^8.13.0",
     "puppeteer": "^22.15.0"

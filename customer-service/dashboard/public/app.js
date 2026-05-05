@@ -1762,6 +1762,7 @@ async function runChatTurn({
   onToolResults,
   traceTitle = 'Operator Agent',
   images = [],
+  pdfs = [],
   attachments = [],
 }) {
   const qr = containerEl.querySelector('.action-quick-replies');
@@ -1805,7 +1806,7 @@ async function runChatTurn({
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history, images }),
+      body: JSON.stringify({ message, history, images, pdfs }),
     });
 
     const reader = resp.body.getReader();
@@ -1934,6 +1935,7 @@ let _adhocAttachments = [];
 const ADHOC_MAX_FILES = 10;
 const ADHOC_MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
 const ADHOC_MAX_TEXT_BYTES = 200 * 1024;       // 200 KB per non-image file (~50k tokens)
+const ADHOC_MAX_PDF_BYTES = 5 * 1024 * 1024;   // 5 MB per PDF (server extracts text, falls back to native)
 
 async function sendAdhocMessage() {
   if (window.voiceInput) voiceInput.stopActive();
@@ -1955,6 +1957,10 @@ async function sendAdhocMessage() {
   const images = sending
     .filter(a => a.kind === 'image')
     .map(a => ({ media_type: a.media_type, data: a.data }));
+
+  const pdfs = sending
+    .filter(a => a.kind === 'pdf')
+    .map(a => ({ media_type: a.media_type, data: a.data, name: a.name }));
 
   let composed = message;
   for (const a of sending.filter(a => a.kind === 'text')) {
@@ -1978,6 +1984,7 @@ async function sendAdhocMessage() {
     onSend: sendAdhocMessage,
     traceTitle: 'Ad Hoc Operator',
     images,
+    pdfs,
     attachments: bubbleAttachments,
   });
 
@@ -2064,9 +2071,10 @@ async function addAdhocFiles(fileList) {
   }
   for (const file of files.slice(0, remaining)) {
     const isImage = file.type && file.type.startsWith('image/');
-    const limit = isImage ? ADHOC_MAX_IMAGE_BYTES : ADHOC_MAX_TEXT_BYTES;
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    const limit = isImage ? ADHOC_MAX_IMAGE_BYTES : isPdf ? ADHOC_MAX_PDF_BYTES : ADHOC_MAX_TEXT_BYTES;
     if (file.size > limit) {
-      const cap = isImage ? '5 MB' : '200 KB';
+      const cap = isImage ? '5 MB' : isPdf ? '5 MB' : '200 KB';
       alert(`"${file.name || 'file'}" exceeds ${cap} and was skipped.`);
       continue;
     }
@@ -2080,6 +2088,37 @@ async function addAdhocFiles(fileList) {
           media_type: file.type,
           data,
         });
+      } else if (isPdf) {
+        const data = await readFileAsBase64(file);
+        const resp = await fetch('/api/console/extract-pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: file.name || 'document.pdf', data }),
+        });
+        const result = await resp.json();
+        if (!resp.ok || result.error) {
+          alert(`"${file.name || 'PDF'}": ${result.error || 'extraction failed'}`);
+          continue;
+        }
+        if (result.kind === 'text') {
+          _adhocAttachments.push({
+            id: makeAttachmentId(),
+            kind: 'text',
+            name: result.name,
+            media_type: 'application/pdf',
+            text: result.text,
+            objectUrl: URL.createObjectURL(file),
+          });
+        } else if (result.kind === 'pdf') {
+          _adhocAttachments.push({
+            id: makeAttachmentId(),
+            kind: 'pdf',
+            name: result.name,
+            media_type: result.media_type || 'application/pdf',
+            data: result.data,
+            objectUrl: URL.createObjectURL(file),
+          });
+        }
       } else {
         const text = await readFileAsText(file);
         _adhocAttachments.push({
@@ -2093,6 +2132,7 @@ async function addAdhocFiles(fileList) {
       }
     } catch (err) {
       console.error('[adhoc] failed to read file:', err);
+      alert(`"${file.name || 'file'}": ${err.message || 'failed to attach'}`);
     }
   }
   renderAdhocAttachments();

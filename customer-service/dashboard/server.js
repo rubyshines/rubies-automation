@@ -1554,16 +1554,69 @@ async function apiConsoleChat(body, { onStream } = {}) {
   const message = body.message;
   const history = body.history || [];
   const images = Array.isArray(body.images) ? body.images : [];
+  const pdfs = Array.isArray(body.pdfs) ? body.pdfs : [];
   if (!message || typeof message !== 'string') {
     throw new Error('message is required');
   }
-  const result = await operatorAgentStandalone(message, history, onStream, { images });
+  const result = await operatorAgentStandalone(message, history, onStream, { images, pdfs });
   const links = extractActionLinks(result.tool_results);
   return {
     response: result.response,
     tool_results: result.tool_results,
     history: result.history,
     links,
+  };
+}
+
+// Extract a PDF for the ad hoc console. Returns plain text when the PDF has
+// embedded text (cheap path, ~tokens-per-char); falls back to passing the
+// base64 back so the caller can attach it as a native Anthropic document
+// block when extraction yields nothing useful (e.g. scanned/image-only PDFs).
+const PDF_EXTRACT_MAX_BYTES = 5 * 1024 * 1024;
+const PDF_EXTRACT_MIN_TEXT = 200;
+const PDF_EXTRACT_MAX_PAGES_NATIVE = 20;
+
+async function apiConsoleExtractPdf(body) {
+  const name = typeof body.name === 'string' ? body.name : 'document.pdf';
+  const data = typeof body.data === 'string' ? body.data : '';
+  if (!data) throw new Error('data (base64) is required');
+
+  const buf = Buffer.from(data, 'base64');
+  if (buf.length === 0) throw new Error('empty PDF');
+  if (buf.length > PDF_EXTRACT_MAX_BYTES) {
+    throw new Error(`PDF exceeds ${Math.round(PDF_EXTRACT_MAX_BYTES / 1024 / 1024)} MB limit`);
+  }
+
+  let text = '';
+  let pages = 0;
+  try {
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: buf });
+    const parsed = await parser.getText();
+    await parser.destroy();
+    text = (parsed.text || '').trim();
+    pages = parsed.total || 0;
+  } catch (err) {
+    throw new Error(`PDF parse failed: ${err.message || err}`);
+  }
+
+  if (text.length >= PDF_EXTRACT_MIN_TEXT) {
+    return { kind: 'text', name, pages, text };
+  }
+
+  // Insufficient embedded text — fall back to native PDF block.
+  if (pages > PDF_EXTRACT_MAX_PAGES_NATIVE) {
+    throw new Error(
+      `PDF has ${pages} pages with no extractable text; native fallback capped at ${PDF_EXTRACT_MAX_PAGES_NATIVE} pages.`
+    );
+  }
+  return {
+    kind: 'pdf',
+    name,
+    pages,
+    media_type: 'application/pdf',
+    data,
+    reason: 'no_extractable_text',
   };
 }
 
@@ -2297,6 +2350,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/action-chat$/, handler: (body, id) => apiActionChat(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
+  { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },

@@ -87,6 +87,7 @@ ${nicknames || '  (not loaded)'}`;
  * @param {function} [onEvent] - Optional streaming callback: onEvent({ type, data })
  * @param {object} [opts]
  * @param {Array<{media_type:string, data:string}>} [opts.images] - Base64 image attachments
+ * @param {Array<{media_type:string, data:string, name?:string}>} [opts.pdfs] - Base64 PDF attachments (native document blocks)
  * @returns {{ response, tool_results, history, _timing }}
  */
 async function operatorAgentStandalone(message, history = [], onEvent, opts = {}) {
@@ -100,9 +101,15 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
   ];
 
   const images = Array.isArray(opts.images) ? opts.images : [];
+  const pdfs = Array.isArray(opts.pdfs) ? opts.pdfs : [];
   let userContent;
-  if (images.length) {
+  if (images.length || pdfs.length) {
     userContent = [
+      ...pdfs.map(pdf => ({
+        type: 'document',
+        source: { type: 'base64', media_type: pdf.media_type || 'application/pdf', data: pdf.data },
+        ...(pdf.name ? { title: pdf.name } : {}),
+      })),
       ...images.map(img => ({
         type: 'image',
         source: { type: 'base64', media_type: img.media_type, data: img.data },
