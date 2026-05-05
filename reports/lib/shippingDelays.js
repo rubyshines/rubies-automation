@@ -137,40 +137,6 @@ async function sendPassportEmail(claims) {
 }
 
 // ---------------------------------------------------------------------------
-// Domestic shipping alert email to Jamie
-// ---------------------------------------------------------------------------
-
-async function sendDomesticAlertEmail(alerts) {
-  const sgMail = getSendgridClient();
-  if (!sgMail || alerts.length === 0) return;
-
-  const lines = alerts.map(a => {
-    const parts = [
-      `Order #${a.order_number} — ${a.carrier || '?'} — ${a.destination}`,
-      `  Shipped: ${a.ship_date || '?'} (${a.business_days}bd)`,
-      `  Tracking: ${a.tracking_url || a.tracking_number || '?'}`,
-    ];
-    for (const issue of a.issues) parts.push(`  ▸ ${issue}`);
-    return parts.join('\n');
-  });
-
-  const text = `The following domestic shipments need attention:\n\n${lines.join('\n\n')}`;
-
-  try {
-    await sgMail.send({
-      to: 'jamie@rubyshines.com',
-      from: 'pipeline@rubyshines.com',
-      subject: `RUBIES — ${alerts.length} domestic shipping alert${alerts.length > 1 ? 's' : ''}`,
-      text,
-      trackingSettings: { clickTracking: { enable: false, enableText: false } },
-    });
-    console.log(`  [Shipping] Domestic alert email sent (${alerts.length} orders)`);
-  } catch (e) {
-    console.error('  [Shipping] Failed to send domestic alert email:', e.message);
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Customs notification email to customer
 // ---------------------------------------------------------------------------
 
@@ -397,10 +363,13 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     }
   }
 
-  // Track new claims, customs notifications, and domestic alerts
+  // Track new Passport claims and customs notifications. Urgent domestic
+  // alerts are NOT separately tracked here — they surface in the daily
+  // order-alerts email under the "Urgent" section via `urgentNonPassport`.
+  // A standalone "domestic shipping alert" email used to fire from this
+  // function but was redundant with the daily report.
   const newClaims = [];
   const customsAlerts = [];
-  const domesticAlerts = [];
 
   // Analyze each order
   for (const order of allOrders) {
@@ -527,11 +496,6 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       newClaims.push(alert);
     }
 
-    // Check if this is a domestic likely-lost that hasn't been alerted yet
-    if (alert.severity === 'high' && !isPassport && !alert.note?.note?.includes('[auto-alert]')) {
-      domesticAlerts.push(alert);
-    }
-
     alert.note = noteMap[order.order_number] || null;
     alert.claim = claimMap[order.order_number] || null;
     alerts.push(alert);
@@ -581,20 +545,6 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     for (const alert of customsAlerts) {
       if (!alert.customer_email) continue;
       await sendCustomsNotificationEmail(supabase, alert);
-    }
-  }
-
-  // Send domestic alert email and mark as notified
-  if (domesticAlerts.length > 0) {
-    await sendDomesticAlertEmail(domesticAlerts);
-    for (const alert of domesticAlerts) {
-      await supabase.from('order_alert_notes').insert({
-        order_number: alert.order_number,
-        note: `[auto-alert] ${alert.issues.join('; ')}`,
-        author: 'auto',
-        alert_type: 'shipping',
-        resolved: false,
-      });
     }
   }
 
@@ -675,7 +625,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
   return {
     alerts: active,
-    urgentNonPassport, passportPending, passportAwaitingResponse, passportLost, customsAlerts, domesticAlerts, delayed,
+    urgentNonPassport, passportPending, passportAwaitingResponse, passportLost, customsAlerts, delayed,
     resolved: showResolved ? resolved : [],
     summary, totalInTransit: allOrders.length, resolvedCount: resolved.length,
     newClaims, newClaimsCount: newClaims.length,

@@ -274,14 +274,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     ...shUrgent.map(a => shippingRow(a)),
   ];
 
-  // 2. Shipping emails sent today (Passport claims + customs notices + domestic alerts)
+  // 2. Shipping emails sent today (Passport claims + customs notices)
   const shNewClaims = sh.newClaims || [];
   const shCustomsAlerts = sh.customsAlerts || [];
-  const shDomesticAlerts = sh.domesticAlerts || [];
   const passportEmailsSentRows = [
     ...shNewClaims.map(a => shippingRow(a, '#0891b2', 'emailed Passport')),
     ...shCustomsAlerts.map(a => shippingRow(a, '#0891b2', 'customs notice to customer')),
-    ...shDomesticAlerts.map(a => shippingRow(a, '#dc2626', 'domestic alert')),
   ];
 
   // 3. Waiting on response / lost
@@ -515,7 +513,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   // Combined urgent
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
   printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
-  printShippingSection('SHIPPING EMAILS SENT TODAY', [...(sh.newClaims || []), ...(sh.customsAlerts || []), ...(sh.domesticAlerts || [])]);
+  printShippingSection('SHIPPING EMAILS SENT TODAY', [...(sh.newClaims || []), ...(sh.customsAlerts || [])]);
   printShippingSection('WAITING ON RESPONSE FROM PASSPORT', sh.passportAwaitingResponse || []);
   printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
