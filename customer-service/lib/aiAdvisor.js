@@ -181,6 +181,17 @@ const TOOLS = [
       required: ['order_number'],
     },
   },
+  {
+    name: 'shipping_lookup',
+    description: 'Look up the live carrier tracking state for a FULFILLED order. Reads Shopify fulfillment events for domestic carriers (USPS, OnTrac) and scrapes Passport for international. Returns current_status (delivered, in_transit, out_for_delivery, exception, returned, pre_transit), recent events, and a customer-ready draft summary covering the actual carrier state — including return-to-sender, address-incorrect, customs holds, stale tracking, and overdue shipments. Call this whenever a customer asks about a shipped order ("where is my package?", "I haven\'t received it", "tracking hasn\'t updated"). Use the returned draft as the basis of your reply.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        order_number: { type: 'string', description: 'Order number to look up' },
+      },
+      required: ['order_number'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -531,6 +542,39 @@ async function executeToolCall(toolName, toolInput) {
             })),
         };
         return await analyzeUnfulfilledOrder(mapped);
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
+    case 'shipping_lookup': {
+      const { order_number } = toolInput;
+      const { getOrderByNumber } = require('./shopify');
+      const { handleShippingLookup } = require('./tools/shippingLookup');
+      try {
+        const order = await getOrderByNumber(order_number);
+        const result = await handleShippingLookup({
+          _context: {
+            order,
+            customer: { firstName: order.customer?.firstName || order.shippingAddress?.firstName || null },
+            customerMessage: null,
+          },
+        });
+        const r = result._structured?.results?.[0] || {};
+        return {
+          status: result._structured?.status || r.currentStatus || 'unknown',
+          current_status: r.currentStatus || null,
+          summary: r.summary || null,
+          problems: r.problems || [],
+          events: (r.events || []).slice(0, 8),
+          tracking_url: r.trackingUrl || null,
+          tracking_number: r.trackingNumber || null,
+          carrier: r.carrier || null,
+          local_carrier: r.localCarrier || null,
+          last_location: r.lastLocation || null,
+          estimated_delivery: r.estimatedDelivery || null,
+          customs_cleared: r.customsCleared,
+        };
       } catch (e) {
         return { error: e.message };
       }
