@@ -542,6 +542,15 @@ async function selectTicket(id) {
   location.hash = `ticket-${id}`;
   startFocusTimer(id);
 
+  // The steer textbox is a single shared DOM element across all tickets.
+  // Clear it on ticket switch so a steer typed on ticket A doesn't get sent
+  // to ticket B's refresh endpoint.
+  const steerInput = document.getElementById('steer-input');
+  if (steerInput) {
+    steerInput.value = '';
+    steerInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   // Re-open conversation (may have been collapsed by draft focus on mobile)
   const convEl = document.getElementById('detail-conversation');
   if (convEl && !convEl.open) convEl.setAttribute('open', '');
