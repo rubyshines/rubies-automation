@@ -5,6 +5,7 @@
  * Ported from rubies-utilities/scripts/update-sales-leads.js.
  */
 
+const EmailReplyParser = require('email-reply-parser').default;
 const { OUR_ADDRESS } = require('../config');
 
 // ---------------------------------------------------------------------------
@@ -34,37 +35,18 @@ function parseAddressList(headerValue) {
 }
 
 /**
- * Strip quoted/replied content from an email body.
+ * Strip quoted/replied content from an email body. Multi-locale: handles
+ * English "On ... wrote:", Danish "Den ... skrev :", French "Le ... a écrit :",
+ * German "Am ... schrieb :", and the usual Outlook / forwarded markers.
  * Keeps only the new content in this message.
  */
 function stripQuotedContent(body) {
   if (!body || typeof body !== 'string') return body;
-  const lines = body.split(/\r?\n/);
-  const result = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
-
-    // Gmail/Apple: "On Mon, Jan 6, Jane wrote:"
-    if (/^On .+wrote:\s*$/i.test(line.trim())) break;
-    // Gmail multi-line: "On Tue, Feb 10, 2026 at 1:33 PM Name <email>" + "wrote:"
-    if (/^On .+<[^>]+>\s*$/i.test(line.trim()) && /^wrote:\s*$/i.test(nextLine.trim())) break;
-    if (/^On\s+.+@.+$/i.test(line.trim()) && /^wrote:\s*$/i.test(nextLine.trim())) break;
-    // Outlook
-    if (/^-{3,}\s*Original Message\s*-{3,}/i.test(line)) break;
-    if (line.trim() === '-----Original Message-----') break;
-    // Underscore separator
-    if (/^_{5,}$/.test(line)) break;
-    // Outlook "From: ... Sent: ..."
-    if (i > 0 && /^From:\s+/i.test(line) && /Sent:\s+/i.test(lines.slice(i, i + 4).join(' '))) break;
-    // Quoted lines
-    if (line.trim().startsWith('>')) break;
-
-    result.push(line);
+  try {
+    return new EmailReplyParser().read(body).getVisibleText().trim();
+  } catch {
+    return body;
   }
-
-  return result.join('\n').trim();
 }
 
 /**

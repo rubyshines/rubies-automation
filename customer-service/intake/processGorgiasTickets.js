@@ -25,6 +25,22 @@ const { buildContext } = require('../lib/contextBuilder');
 const gorgias = require('../import/gorgiasClient');
 const { canonicalMessageType } = require('../lib/messageTypes');
 const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankYouClassifier');
+const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
+
+// Pull a clean text body off a Gorgias message. Gorgias's own stripper is
+// English-biased — for non-English replies (Danish "Den ... skrev :", etc.) it
+// returns empty `stripped_text`/`stripped_html`. Fall back to the email-reply
+// parser library on the raw body in that case so the AI advisor and dashboard
+// don't see the entire quoted campaign. Returns { text, libraryStripped }
+// where libraryStripped=true means the library actually removed quote content
+// (caller should drop body_html so the dashboard renders the cleaned text).
+function extractCleanBody(m) {
+  const stripped = (m.stripped_text || '').trim() || gorgias.stripHtml(m.stripped_html || '').trim();
+  if (stripped) return { text: stripped, libraryStripped: false };
+  const raw = (m.body_text || '').trim() || gorgias.stripHtml(m.body_html || '').trim();
+  const cleaned = stripQuotedContent(raw);
+  return { text: cleaned, libraryStripped: cleaned.length < raw.length };
+}
 
 // Lazy-load AI advisor
 let _advisorHandler = null;
@@ -117,7 +133,7 @@ async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, new
 
   const newContent = newMessages
     .filter(m => !m.from_agent)
-    .map(m => gorgias.stripHtml(m.stripped_text || m.body_text || ''))
+    .map(m => extractCleanBody(m).text)
     .join('\n')
     .substring(0, 800);
 
@@ -180,11 +196,13 @@ Rules:
 function buildConversationHistorySnapshot(messages) {
   return messages.map(m => {
     const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
-    // Prefer Gorgias's stripped_* fields — they've already done the work of
-    // separating new content from quoted reply chains. Don't re-derive this
-    // client-side (dashboard regex/DOM gymnastics break on edge cases).
-    let bodyHtml = m.stripped_html || m.body_html || null;
-    let bodyText = gorgias.stripHtml(m.stripped_text || m.stripped_html || m.body_html || m.body_text || '');
+    // Prefer Gorgias's stripped_* fields when present. When they're empty
+    // (non-English replies — Gorgias's stripper is English-biased), fall back
+    // to email-reply-parser on the raw body and drop body_html so the dashboard
+    // renders the cleaned text instead of the bloated quoted HTML.
+    const clean = extractCleanBody(m);
+    let bodyHtml = clean.libraryStripped ? null : (m.stripped_html || m.body_html || null);
+    let bodyText = clean.text;
     if (sender === 'customer' && m.channel === 'help-center') {
       bodyText = cleanHelpCenterBody(bodyText);
       bodyHtml = null;
@@ -492,7 +510,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
 
   // Extract message text (use stripped version for cleaner input)
-  const messageText = gorgias.stripHtml(latestCustomerMsg.stripped_text || latestCustomerMsg.body_text || '');
+  const messageText = extractCleanBody(latestCustomerMsg).text;
   if (!messageText.trim()) return { skipped: true };
 
   // === Auto-close fast path: pure thank-you closer ===
@@ -848,7 +866,7 @@ function buildConversationContext(messages, latestMsgId) {
     const isBot = m.sender?.email?.endsWith('@email.gorgias.com') || m.via === 'rule';
     if (isBot) continue; // Skip bot auto-replies
 
-    const body = gorgias.stripHtml(m.stripped_text || m.body_text || '').trim();
+    const body = extractCleanBody(m).text.trim();
     if (!body) continue;
 
     const truncated = body.length > maxPerMsg ? body.substring(0, maxPerMsg) + '...' : body;
@@ -870,4 +888,5 @@ module.exports = {
   checkForDuplicateTicket,
   tryAutoCloseThankYou,
   buildConversationHistorySnapshot,
+  extractCleanBody,
 };

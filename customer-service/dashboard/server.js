@@ -443,10 +443,8 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
     .join(' ')
     .trim() || gorgiasTicket?.customer?.name || null;
 
-  const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
-
-  // Build conversation context (same as poller)
-  const { buildConversationContext } = require('../intake/processGorgiasTickets');
+  const { extractCleanBody, buildConversationContext } = require('../intake/processGorgiasTickets');
+  const messageText = extractCleanBody(lastCustomer).text;
   let contextParts = [];
   if (typeof buildConversationContext === 'function') {
     const ctx = buildConversationContext(messages, lastCustomer.id);
@@ -2423,7 +2421,7 @@ const paramRoutes = [
     // No draft at all — create a new one by running the advisor on the latest customer message
     if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
     const gorgiasClient = require('../import/gorgiasClient');
-    const { buildConversationContext } = require('../intake/processGorgiasTickets');
+    const { buildConversationContext, extractCleanBody } = require('../intake/processGorgiasTickets');
     const { aiAdvisor } = require('../lib/aiAdvisor');
 
     const [messages, gorgiasTicket] = await Promise.all([
@@ -2438,7 +2436,7 @@ const paramRoutes = [
       .join(' ')
       .trim() || gorgiasTicket?.customer?.name || null;
 
-    const messageText = gorgiasClient.stripHtml(lastCustomer.stripped_text || lastCustomer.body_text || '');
+    const messageText = extractCleanBody(lastCustomer).text;
     let contextParts = [];
     if (typeof buildConversationContext === 'function') {
       const ctx = buildConversationContext(messages, lastCustomer.id);

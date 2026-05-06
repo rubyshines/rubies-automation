@@ -78,6 +78,32 @@ describe('buildConversationHistorySnapshot', () => {
     assert.equal(snapshot.body_html, html);
   });
 
+  it('falls back to email-reply-parser when Gorgias returns empty stripped fields (non-English locale)', () => {
+    // Gorgias's stripper is English-biased and returns empty stripped_text/html
+    // for replies with non-English attribution lines (e.g. Danish "Den ... skrev :",
+    // French "Le ... a écrit :"). Without library fallback, we'd store the entire
+    // quoted Klaviyo campaign as the customer's message and feed it to the advisor.
+    const danishReply = `I would like to order these for my daughter.\n\nAll the best,\nCamilla\n\nDen 5. maj 2026 kl. 02.00 skrev RUBIES :\n\nNow ready to order!\n[Big marketing campaign body that should be stripped]\nLots of testimonials, image URLs, etc.`;
+    const [snapshot] = buildConversationHistorySnapshot([{
+      id: 5,
+      from_agent: false,
+      channel: 'email',
+      via: 'email',
+      created_datetime: '2026-05-05T10:28:00+00:00',
+      body_text: danishReply,
+      body_html: `<p>${danishReply.replace(/\n/g, '<br>')}</p>`,
+      stripped_text: '',
+      stripped_html: '',
+    }]);
+    assert.match(snapshot.body, /I would like to order these/);
+    assert.match(snapshot.body, /Camilla/);
+    assert.doesNotMatch(snapshot.body, /Now ready to order/);
+    assert.doesNotMatch(snapshot.body, /testimonials/);
+    // body_html is dropped so the dashboard renders the cleaned text rather than
+    // the full quoted HTML.
+    assert.equal(snapshot.body_html, null);
+  });
+
   it('nulls body_html for help-center customer messages', () => {
     const [snapshot] = buildConversationHistorySnapshot([{
       id: 4,

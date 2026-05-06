@@ -75,12 +75,14 @@
     "@sendgrid/mail": "^7.7.0",
     "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.0.0",
+    "email-reply-parser": "^2.3.5",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "googleapis": "^131.0.0",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
     "pg": "^8.13.0",
-    "puppeteer": "^22.15.0"
+    "puppeteer": "^22.15.0",
+    "xlsx": "^0.18.5"
   }
 }
