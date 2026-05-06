@@ -89,11 +89,11 @@ const TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        customer_country: { type: 'string', description: 'Customer country code (e.g. "US", "CA", "AU")' },
+        customer_country: { type: 'string', description: 'Country code of the ORDER\'S shipping address (where the items physically are), e.g. "US", "CA", "NL". NOT the customer profile country — those can differ when the order shipped to a friend, family, or while the customer was traveling.' },
         item_count: { type: 'number', description: 'Number of items being returned/donated' },
         customer_address: {
           type: 'object',
-          description: 'Customer shipping address for geographic routing',
+          description: 'Shipping address of the order being exchanged (target_order.shipping_address from get_order_context), used for geographic routing within the country.',
           properties: {
             address1: { type: 'string' },
             city: { type: 'string' },
@@ -620,7 +620,8 @@ function buildSystemPrompt(toneSamples, orderContext) {
 - Customer email: ${orderContext.customer?.email || 'unknown'}${orderContext.resolved_by_name ? `\n- ⚠️ RESOLVED BY NAME FALLBACK: no customer record exists under the sender's email (${orderContext.conversation_email}). This customer was found by searching their name. Apply the "Resolved by name" verification gates before trusting this match.` : ''}
 - Customer country: ${orderContext.customer?.country || 'unknown'}${orderContext.customer?.duties_prepaid != null ? ` (duties ${orderContext.customer.duties_prepaid ? 'PREPAID — we cover customs charges' : 'NOT prepaid — customer responsible'})` : ''}
 ${t ? `- Order: ${t.name} (placed ${t.created_at?.split('T')[0] || 'unknown'}, ${t.days_since_order} days ago)
-- Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}
+- Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}${t.shipping_address ? `
+- Order ship-to: ${[t.shipping_address.city, t.shipping_address.provinceCode || t.shipping_address.province, t.shipping_address.countryCode || t.shipping_address.country].filter(Boolean).join(', ')}${(t.shipping_address.countryCode || '').toUpperCase() !== (orderContext.customer?.country || '').toUpperCase() ? ' ⚠️ DIFFERENT COUNTRY than customer profile — use this country (where the items physically are) for donation routing, shipping ETAs, anything country-dependent' : ''}` : ''}
 - Items: ${t.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size}${li.unit_price != null ? ` @ $${Number(li.unit_price).toFixed(2)}` : ''} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
 ${orderContext.exchange_orders?.length ? `- Previous exchanges: ${orderContext.exchange_orders.map(ex => ex.name).join(', ')}` : ''}
 `;
@@ -1016,6 +1017,7 @@ When a customer says they were charged customs duties or import taxes on deliver
   - Populate operator_action_summary with the exact items, quantities, sizes/colors, the total, and a reference to the original order. Example for case (b): "create invoice for 3x AJ size 14 Pink + 1x Ruby size 14 Black, total $87.55 (matches refund), re-billing items previously refunded on order #29870". The operator agent uses this to call create_invoice_order with paid_items only.
 
 ### Donations
+- **Use the ORDER's shipping country, not the customer profile country.** Pass target_order.shipping_address.country to get_donation_partner, not customer.country. The customer's profile address can differ from where this specific order shipped (gifts, travel, moved). The donation partner must be in the same country as the items, otherwise the customer faces international shipping costs that exceed the donation value. Same goes for customer_address — pass the order's shipping_address for geographic routing.
 - All RUBIES returns are donated (not shipped back). Never ask a customer to ship items back to RUBIES.
 - Donation is SEPARATE from the refund/exchange. We process the refund first, then tell them where to donate. Never make the refund conditional on donation.
 - Skip donation info for defects (customer keeps the defective item).
