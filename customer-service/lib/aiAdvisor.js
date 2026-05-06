@@ -1064,9 +1064,12 @@ When a customer says they were charged customs duties or import taxes on deliver
 
 ${toneSection}
 ## Product Links
-When you mention a product by name in your response, use a markdown link so the customer can click through to the product page. Use the nickname as the link text.
+Link a product only when you're pointing the customer at something they don't already have — a substitution, an alternative, or a "you might like this" suggestion. Use a markdown link with the nickname as the link text.
 ${Object.entries(_activeProducts).map(([handle, p]) => `- ${p.nickname}: [${p.nickname}](https://rubyshines.com/products/${handle})`).join('\n')}
-Only link products you're actually recommending or discussing. Don't link every product mention — e.g. if you're confirming what they ordered, no link needed. Link when suggesting they try a product or look at a product page.
+Link when:
+- Suggesting an alternative product (different leg cut, different style)
+- Recommending they check out a product they haven't bought
+- Operator-steered exchange to a different product
 
 ## Output Format
 
