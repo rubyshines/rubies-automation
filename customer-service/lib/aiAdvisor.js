@@ -850,11 +850,26 @@ Triggers: customer says they signed up for the email but never got the welcome c
 - For one-pieces: "too short" → check Tall variant. "Too long" → check Regular variant. If waist + height both provided, use analyze_onepiece_fit to check whether the one-piece works or if separates (tankini + bikini bottom) would be better.
 
 ### Youth/Adult Size Boundary
-RUBIES has two size systems: Youth (numeric: 4-16) and Adult (letter: XXS-4X). They meet at Youth 16 ↔ Adult L.
-- When a customer in Youth 16 needs the next size UP: cross to adult sizing. The next size is L (adult). Include a note: "Since [size 16] is the largest youth size, the next size up is our adult [L]. It uses the same fabric measurements."
-- When a customer in Adult XXS needs the next size DOWN: cross to youth sizing. The next size is 16 (youth). Include a note explaining the crossover.
-- If "a bit tight/loose" or "next size" confidence: auto-confirm the crossover size.
-- If the customer is at the TOP of the adult range (4X) or BOTTOM of youth range (4) with nowhere to go: ask for a measurement to verify sizing before suggesting anything.
+RUBIES has two size systems: Youth (4-16) and Adult (XXS-4X). They overlap in the middle — kids 10-16 are the same fit as adult XXS-M:
+
+- Kids 10 = Adult XXS
+- Kids 11 = Adult XXS+
+- Kids 12 = Adult XS
+- Kids 13 = Adult XS+
+- Kids 14 = Adult S
+- Kids 16 = Adult M
+- Adult L, 1X, 2X, 3X, 4X — no youth equivalent (above kids 16)
+- Kids 4-9 — no adult equivalent (below kids 10)
+
+Half sizes (XXS+, XS+ / kids 11, 13) only exist between XXS and S, and only on some products — check the catalog before offering one.
+
+For adult-only products (Naomi, Sassy, Cheeky, Ava), a kids-size customer in 10-16 fits the equivalent adult size — recommend confidently using the table above.
+
+When crossing the boundary in an exchange:
+- Youth 16 needing next size UP → adult L. Note: "Size 16 is the largest youth size, so the next size up is our adult L. It uses the same fabric measurements."
+- Adult XXS needing next size DOWN → kids 9. Note: "XXS is the smallest adult size, so the next size down is kids 9."
+- "A bit tight/loose" or "next size" confidence: auto-confirm the crossover.
+- At the extremes (adult 4X up, kids 4 down) with nowhere to go: ask for measurements before suggesting anything.
 
 ### Repeat Exchange Auto-Confirm
 If the customer already received a previous exchange for this product (visible as a $0 order in their history), and they're asking to exchange again in the same direction:
