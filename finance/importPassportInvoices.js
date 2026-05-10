@@ -55,7 +55,7 @@ async function importPassportInvoices(filePath) {
     const batch = rows.slice(i, i + batchSize);
     const { error } = await supabase
       .from('passport_invoices')
-      .upsert(batch, { onConflict: 'invoice_number,tracking_id' });
+      .upsert(batch, { onConflict: 'invoice_number,order_id,tracking_id' });
 
     if (error) {
       console.error('Batch error at row', i, ':', error.message);
@@ -63,7 +63,7 @@ async function importPassportInvoices(filePath) {
       for (const row of batch) {
         const { error: rowErr } = await supabase
           .from('passport_invoices')
-          .upsert([row], { onConflict: 'invoice_number,tracking_id' });
+          .upsert([row], { onConflict: 'invoice_number,order_id,tracking_id' });
         if (rowErr) console.error('  Row error:', row.tracking_id, rowErr.message);
         else inserted++;
       }
@@ -86,6 +86,21 @@ async function importPassportInvoices(filePath) {
     .from('passport_invoices')
     .select('*', { count: 'exact', head: true });
   console.log('Total records in table:', count);
+
+  // Resolve newly-imported rows to Shopify order numbers
+  console.log('\nResolving Shopify order numbers for new rows...');
+  const { main: resolveOrders } = require('./resolvePassportShopifyOrders');
+  await resolveOrders();
+
+  // Sync customer-paid shipping into OFC (so margin calc has revenue side)
+  console.log('\nSyncing customer shipping fees into OFC...');
+  const { syncCustomerShippingFees } = require('./syncCustomerShippingFees');
+  await syncCustomerShippingFees();
+
+  // Generate landed-margin sanity check
+  console.log('\nGenerating landed margin report...');
+  const { generateReport } = require('./lib/landedMarginReport');
+  await generateReport();
 }
 
 const filePath = process.argv[2] || DEFAULT_PATH;

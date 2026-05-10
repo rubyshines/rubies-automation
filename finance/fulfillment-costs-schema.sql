@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS order_fulfillment_costs (
   width_in NUMERIC,
   height_in NUMERIC,
 
+  -- Carrier tracking numbers (array — multi-package shipments have >1)
+  tracking_numbers TEXT[],
+
+  -- Warehance shipment IDs (array — for joining to passport_invoices.order_id "WH-{shipment_id}-{hash}")
+  warehance_shipment_ids TEXT[],
+
   -- Data provenance
   source TEXT NOT NULL,                            -- 'backfill-local-json', 'nitro-api', 'daily-sync'
   synced_at TIMESTAMPTZ DEFAULT NOW()
@@ -56,4 +62,6 @@ CREATE INDEX IF NOT EXISTS idx_ofc_provider ON order_fulfillment_costs(fulfillme
 CREATE INDEX IF NOT EXISTS idx_ofc_country ON order_fulfillment_costs(shipping_country_code);
 CREATE INDEX IF NOT EXISTS idx_ofc_zone ON order_fulfillment_costs(shipping_zone);
 CREATE INDEX IF NOT EXISTS idx_ofc_created ON order_fulfillment_costs(created_at);
+CREATE INDEX IF NOT EXISTS idx_ofc_tracking_numbers ON order_fulfillment_costs USING GIN (tracking_numbers);
+CREATE INDEX IF NOT EXISTS idx_ofc_warehance_shipment_ids ON order_fulfillment_costs USING GIN (warehance_shipment_ids);
 

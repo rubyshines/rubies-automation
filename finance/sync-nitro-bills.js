@@ -115,7 +115,8 @@ function parseBillCsv(csvText) {
         height_in: null,
         carrier: null,
         service: null,
-        tracking: null,
+        tracking_numbers: [],
+        warehance_shipment_ids: [],
         zone_number: null,
         country_code: null,
         order_date: null,
@@ -149,7 +150,10 @@ function parseBillCsv(csvText) {
 
       if (row['Carrier']) o.carrier = row['Carrier'];
       if (row['Service']) o.service = row['Service'];
-      if (row['Tracking Number']) o.tracking = row['Tracking Number'];
+      const tn = row['Tracking Number'];
+      if (tn && !o.tracking_numbers.includes(tn)) o.tracking_numbers.push(tn);
+      const sid = row['Shipment ID'];
+      if (sid && !o.warehance_shipment_ids.includes(sid)) o.warehance_shipment_ids.push(sid);
       if (row['Zone']) o.zone_number = row['Zone'];
     }
 
@@ -180,6 +184,8 @@ function buildRow(o) {
     length_in: o.length_in,
     width_in: o.width_in,
     height_in: o.height_in,
+    tracking_numbers: o.tracking_numbers.length ? o.tracking_numbers : null,
+    warehance_shipment_ids: o.warehance_shipment_ids.length ? o.warehance_shipment_ids : null,
     source: 'warehance-bills',
   };
 }

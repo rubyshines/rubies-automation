@@ -25,13 +25,17 @@ CREATE TABLE IF NOT EXISTS passport_invoices (
   insurance NUMERIC DEFAULT 0,
   clearance_fee NUMERIC DEFAULT 0,
   total_customs_duties NUMERIC DEFAULT 0,
+  -- Resolved Shopify order number (populated by resolvePassportShopifyOrders.js)
+  shopify_order_number INTEGER,
+  resolution_method TEXT,  -- 'tracking', 'shopify_order_id', 'warehance_api', null = unresolved
   synced_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(invoice_number, tracking_id)
+  CONSTRAINT passport_invoices_natural_key UNIQUE NULLS NOT DISTINCT (invoice_number, order_id, tracking_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_passport_ship_date ON passport_invoices(ship_date);
 CREATE INDEX IF NOT EXISTS idx_passport_country ON passport_invoices(dest_country);
 CREATE INDEX IF NOT EXISTS idx_passport_invoice ON passport_invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_passport_shopify_order ON passport_invoices(shopify_order_number);
 
 -- Summary view: DDP costs by country by month
 CREATE OR REPLACE VIEW passport_monthly_costs AS
