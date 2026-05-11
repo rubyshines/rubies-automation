@@ -50,6 +50,7 @@ const updateCustomerTools = require('./lib/tools/updateCustomer');
 const discountCodeTools = require('./lib/tools/discountCode');
 const cancelOrderTools = require('./lib/tools/cancelOrder');
 const splitShipmentTools = require('./lib/tools/splitShipment');
+const consolidateOrdersTools = require('./lib/tools/consolidateOrders');
 const seoMetaTools = require('./lib/tools/seoMeta');
 const createOutreachTicketTools = require('./lib/tools/createOutreachTicket');
 const warehouseAllocationTools = require('./lib/tools/warehouseAllocation');
@@ -89,6 +90,7 @@ const allTools = [
   ...discountCodeTools,
   ...cancelOrderTools,
   ...splitShipmentTools,
+  ...consolidateOrdersTools,
   ...seoMetaTools,
   ...createOutreachTicketTools,
   ...warehouseAllocationTools,

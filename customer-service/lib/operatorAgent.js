@@ -30,6 +30,17 @@ function buildSystemPrompt(context) {
   const { customer_email, order_number, order_items, fulfillment_status, intake, draft } = context;
   const draftResponse = draft?.draft_response || '';
 
+  // Detect whether this order already has a warehouse hold in place. Two signals:
+  // (a) the advisor proposed action_type='warehouse_hold' (operator likely already
+  //     clicked the prefilled action button), or
+  // (b) a prior action of type 'warehouse_hold' exists in the timeline. Either
+  //     way the hold is in place and calling warehouse_hold again is a no-op that
+  //     trips the dashboard's completion gate and clears chat history mid-flow.
+  const priorHoldAction = Array.isArray(draft?.actions)
+    && draft.actions.some(a => a.action_type === 'warehouse_hold');
+  const advisorPlannedHold = draft?.action_type === 'warehouse_hold';
+  const holdAlreadyPlaced = priorHoldAction || advisorPlannedHold;
+
   const itemList = (order_items || [])
     .map(i => `  - ${i.quantity || 1}x ${i.title} (SKU: ${i.sku}, size: ${i.variant || ''})`)
     .join('\n');
@@ -68,6 +79,7 @@ function buildSystemPrompt(context) {
 - Customer: ${customer_email}
 - Order: #${order_number}
 - Fulfillment: ${fulfillment_status || 'unknown'}
+- Warehouse hold: ${holdAlreadyPlaced ? 'ALREADY PLACED — do NOT call warehouse_hold again' : 'not placed'}
 - Order items:
 ${itemList || '  (no items)'}
 
@@ -109,7 +121,7 @@ Sizing systems:
 
 **Order edits:** Use edit_order with swap_items for modifications. When swapping items and the edit should be cost-neutral (no charge to customer), set \`even_swap: true\` on each swap entry — the tool auto-calculates the exact discount. You can also apply custom discounts with \`discount: { percent: 100 }\` (free) or \`discount: { fixed_amount: 5.00 }\` (dollars off).
 
-**Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold.
+**Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold. **Never call warehouse_hold defensively or "to be safe" when another tool will run** — it's a separate action, not a precondition. If the "Warehouse hold" context line says ALREADY PLACED, skip the tool entirely (the dashboard already filed it). Calling it redundantly clears the action-chat history mid-flow and breaks Phase 2 confirmations on edit_order / create_invoice_order / cancel_order. Only call warehouse_hold when the operator explicitly asks to place a hold AND it isn't already placed.
 
 **Split shipment for pre-order:** Use split_shipment when the customer has agreed to split their order so in-stock items ship now and pre-order/OOS items follow. Pass the SKUs of the HELD items (the pre-order/OOS ones being moved to a new $0 pre-order), not the in-stock items being shipped now. Two-phase: preview, then confirm.
 
@@ -137,7 +149,8 @@ Sizing systems:
 - For search queries, use short product nicknames (e.g. "Charlie" not "THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR").
 - If a color change is requested, include the color in the query (e.g. "Charlie 1X Black").
 - Tall sizes: ST = S Tall, MT = M Tall, LT = L Tall. When searching, use "S Tall" not "ST" (e.g. "Sky S Tall" not "Sky ST").
-- **If a search/tool call fails, do NOT retry with the same query.** Try a different format: use the SKU from the original order with the target size, or search with just the product name and a broader size (e.g. "Sky S" instead of "Sky S Tall"), or use search_products to find the right variant first.`;
+- **If a search/tool call fails, do NOT retry with the same query.** Try a different format: use the SKU from the original order with the target size, or search with just the product name and a broader size (e.g. "Sky S" instead of "Sky S Tall"), or use search_products to find the right variant first.
+- **Hard-stop on infrastructure errors.** If a tool returns an error that looks like a bug or system failure rather than a normal business outcome, STOP all work immediately and reply with: "Tool \`<name>\` failed with what looks like a bug: <error excerpt>. Stopping so you can fix it before I continue." Do NOT attempt a workaround with a different tool, do NOT keep going on the rest of the request. Infrastructure-error signals: the result starts with or contains "GraphQL errors:", "Field 'X' doesn't exist", "Cannot read properties of", "is not a function", "ECONNREFUSED", "fetch failed", "userErrors", a stack trace, an HTTP 5xx, or any phrase that reads as an exception rather than a business outcome. Business-outcome errors (which you SHOULD try to work around) look like: "Order not found", "SKU X not found in order", "is already fulfilled", "is cancelled", "different customers", "invalid input", "no products found matching". When in doubt, hard-stop — a wasted user turn is much cheaper than executing a workaround on top of a broken substrate.`;
 }
 
 // ---------------------------------------------------------------------------

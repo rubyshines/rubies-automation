@@ -1503,6 +1503,16 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   const completingTool = result.tool_results.find(tr => {
     if (!WRITE_TOOLS.has(tr.tool)) return false;
     if (typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)) return false;
+    // warehouse_hold and release_*_hold on an already-(un)held order are no-ops.
+    // Treat them as non-completing so they don't clear chat_history mid-flow and
+    // strand a pending Phase 1 draft_order_id on the next turn. Tool output uses
+    // markdown bold (`**warehouse hold**`) so the regex allows arbitrary chars
+    // between the action verb and the object.
+    if ((tr.tool === 'warehouse_hold' || tr.tool === 'release_warehouse_hold' || tr.tool === 'release_address_hold')
+        && typeof tr.result === 'string'
+        && /already has[^.]*warehouse hold|does not have[^.]*(warehouse|address) hold/i.test(tr.result)) {
+      return false;
+    }
     return true;
   });
   if (completingTool) {

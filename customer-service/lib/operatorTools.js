@@ -46,6 +46,7 @@ function loadAllOperatorTools() {
     require('./tools/discountCode'),
     require('./tools/cancelOrder'),
     require('./tools/splitShipment'),
+    require('./tools/consolidateOrders'),
     require('./tools/seoMeta'),
     require('./tools/createOutreachTicket'),
     require('./tools/warehouseAllocation'),
