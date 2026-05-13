@@ -190,6 +190,36 @@ RUBIES Founder`;
 }
 
 // ---------------------------------------------------------------------------
+// Claim reconciliation
+// ---------------------------------------------------------------------------
+
+/**
+ * Partition open claims into (a) claims whose order already shows the package
+ * delivered (deliveredAt set on the matching fulfillment) and (b) claims that
+ * are genuinely still in transit. Used to heal stale "awaiting response"
+ * entries when the Passport scraper detected delivery but didn't flip the
+ * claim — typically because the claim was filed after delivery, or because
+ * deliveredAt was set via a path that didn't run the auto-resolve update.
+ *
+ * Pure function. Matches by exact tracking_number to avoid false positives
+ * on split shipments.
+ */
+function partitionClaimsByDelivery(claims, orderDataMap) {
+  const delivered = [];
+  const stillOpen = [];
+  for (const c of claims) {
+    const order = orderDataMap[c.order_number];
+    const fulfillment = (order?.fulfillments || []).find(f => f.trackingNumber === c.tracking_number);
+    if (fulfillment?.deliveredAt) {
+      delivered.push({ claim: c, deliveredAt: fulfillment.deliveredAt });
+    } else {
+      stillOpen.push(c);
+    }
+  }
+  return { delivered, stillOpen };
+}
+
+// ---------------------------------------------------------------------------
 // Main analysis
 // ---------------------------------------------------------------------------
 
@@ -562,10 +592,14 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   const alertedOrderNums = new Set(alerts.map(a => a.order_number));
   const missingClaims = allOpenClaims.filter(c => !alertedOrderNums.has(c.order_number));
 
-  // Look up order data for claims not already in allOrders
+  // Look up order data for claims not already in allOrders. allOrders excludes
+  // delivered orders (see line ~227), so reconciliation must pull fulfillments
+  // for every missing claim — not just the ones without order rows.
   const orderDataMap = {};
   for (const o of allOrders) orderDataMap[o.order_number] = o;
-  const needOrderData = missingClaims.filter(c => !orderDataMap[c.order_number]).map(c => c.order_number);
+  const needOrderData = missingClaims
+    .filter(c => !orderDataMap[c.order_number])
+    .map(c => c.order_number);
   if (needOrderData.length > 0) {
     const { data } = await supabase.from('orders')
       .select('order_number, shopify_order_id, fulfilled_at, fulfillments')
@@ -573,7 +607,27 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     for (const o of (data || [])) orderDataMap[o.order_number] = o;
   }
 
-  const passportAwaitingResponse = missingClaims.map(c => {
+  // Heal stale claims whose order already shows delivered. Without this, the
+  // awaiting-Passport list grows indefinitely as the scraper only flips claims
+  // when it scrapes delivered, not when deliveredAt was set by another path.
+  const { delivered: healedClaims, stillOpen: trulyMissingClaims } =
+    partitionClaimsByDelivery(missingClaims, orderDataMap);
+  for (const { claim, deliveredAt } of healedClaims) {
+    const { error: healErr } = await supabase.from('passport_claims')
+      .update({
+        status: 'delivered',
+        resolution: `Tracking confirmed delivered ${deliveredAt.split('T')[0]} (reconciled)`,
+        resolution_date: new Date().toISOString(),
+      })
+      .eq('order_number', claim.order_number)
+      .eq('status', 'open');
+    if (healErr) console.error(`  [Shipping] Failed to reconcile claim #${claim.order_number}: ${healErr.message}`);
+  }
+  if (healedClaims.length > 0) {
+    console.log(`  [Shipping] Reconciled ${healedClaims.length} delivered claim${healedClaims.length === 1 ? '' : 's'}`);
+  }
+
+  const passportAwaitingResponse = trulyMissingClaims.map(c => {
     const order = orderDataMap[c.order_number];
     const shipDate = order?.fulfilled_at?.split('T')[0] || null;
     const bizDays = order?.fulfilled_at ? businessDaysSince(order.fulfilled_at) : null;
@@ -632,4 +686,4 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   };
 }
 
-module.exports = { checkShippingDelays };
+module.exports = { checkShippingDelays, partitionClaimsByDelivery };
