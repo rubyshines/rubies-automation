@@ -345,6 +345,15 @@ async function fetchAllProducts(cursor = null) {
                   inventoryQuantity
                   inventoryItem { id }
                   selectedOptions { name value }
+                  metafields(first: 20) {
+                    edges {
+                      node {
+                        namespace
+                        key
+                        value
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -368,10 +377,21 @@ async function fetchAllProducts(cursor = null) {
         try { metafields[key] = JSON.parse(value); } catch { metafields[key] = value; }
       }
     }
+    const variants = node.variants.edges.map(ve => {
+      const v = ve.node;
+      const variantMetafields = {};
+      for (const mf of (v.metafields?.edges || [])) {
+        const { namespace, key, value } = mf.node;
+        if (namespace === 'custom') {
+          try { variantMetafields[key] = JSON.parse(value); } catch { variantMetafields[key] = value; }
+        }
+      }
+      return { ...v, metafields: variantMetafields };
+    });
     return {
       ...node,
       metafields,
-      variants: node.variants.edges.map(v => v.node),
+      variants,
     };
   });
 

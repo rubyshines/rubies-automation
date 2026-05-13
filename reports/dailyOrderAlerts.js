@@ -340,7 +340,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (hasErrors) statusEmoji = '\u274c';
   else if (totalIssues === 0) statusEmoji = '\u2705';
   else if (hasUrgent) statusEmoji = '\u26a0\ufe0f';
-  else statusEmoji = '\uD83D\uDCE6';
+  else statusEmoji = '\uD83D\udd14';
 
   const subjectParts = [`Daily Order Alerts \u2014 ${today}`];
   if (totalIssues > 0) {
@@ -358,11 +358,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     `Unfulfilled: ${uf.summary.total}`,
     `In transit: ${sh.totalInTransit}`,
   ];
+  // Action-required chips first (urgent/attention/lost), then info chips.
   if (urgentRows.length) summaryParts.push(`<strong style="color:#dc2626;">Urgent: ${urgentRows.length}</strong>`);
+  if (attentionRows.length) summaryParts.push(`<strong style="color:#f59e0b;">Attention: ${attentionRows.length}</strong>`);
+  if (passportLostRows.length) summaryParts.push(`<strong style="color:#dc2626;">Lost: ${passportLostRows.length}</strong>`);
   if (passportEmailsSentRows.length) summaryParts.push(`<span style="color:#0891b2;">Passport emails sent: ${passportEmailsSentRows.length}</span>`);
   if (passportAwaitingRows.length) summaryParts.push(`<span style="color:#8b5cf6;">Awaiting Passport: ${passportAwaitingRows.length}</span>`);
-  if (passportLostRows.length) summaryParts.push(`<strong style="color:#dc2626;">Lost: ${passportLostRows.length}</strong>`);
-  if (attentionRows.length) summaryParts.push(`<span style="color:#f59e0b;">Attention: ${attentionRows.length}</span>`);
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
   if (waitingRows.length) summaryParts.push(`Waiting: ${waitingRows.length}`);
   if (ufNormal.length) summaryParts.push(`Normal: ${ufNormal.length}`);
@@ -434,13 +435,13 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
 
       ${allClearHtml}
       ${section('Urgent', '#dc2626', urgentRows)}
+      ${section('Attention', '#f59e0b', attentionRows)}
+      ${section('Passport Claims \u2014 Lost', '#dc2626', passportLostRows)}
+      ${stockHtml}
       ${section('Shipping Emails Sent Today', '#0891b2', passportEmailsSentRows)}
       ${section('Waiting on Response from Passport', '#8b5cf6', passportAwaitingRows)}
-      ${section('Passport Claims \u2014 Lost', '#dc2626', passportLostRows)}
-      ${section('Attention', '#f59e0b', attentionRows)}
-      ${stockHtml}
-      ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
       ${section('Waiting on Response', '#f97316', waitingRows)}
+      ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
       ${section('Pre-Order', '#6366f1', preOrderRows)}
       ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
       ${resolvedHtml}
@@ -510,15 +511,15 @@ function formatConsole(unfulfilled, shipping, opts) {
   const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
   const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
 
-  // Combined urgent
+  // Action-required first (urgent / attention / lost), info below.
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
   printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
+  printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
+  printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
   printShippingSection('SHIPPING EMAILS SENT TODAY', [...(sh.newClaims || []), ...(sh.customsAlerts || [])]);
   printShippingSection('WAITING ON RESPONSE FROM PASSPORT', sh.passportAwaitingResponse || []);
-  printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
-  printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
-  printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
+  printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
   printUnfulfilledSection('PRE-ORDER', preOrders);
 
   if (opts.showResolved) {

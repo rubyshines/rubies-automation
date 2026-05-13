@@ -158,6 +158,8 @@ async function run() {
   const variantRows = [];
   for (const p of activeProducts) {
     for (const v of p.variants) {
+      const vmf = v.metafields || {};
+      const incoming = vmf.pre_order_incoming_us;
       variantRows.push({
         shopify_variant_id: v.id,
         shopify_product_id: p.id,
@@ -167,6 +169,8 @@ async function run() {
         price: parseFloat(v.price) || 0,
         inventory_quantity: v.inventoryQuantity ?? 0,
         selected_options: v.selectedOptions || [],
+        pre_order_incoming: incoming != null ? parseInt(incoming, 10) : null,
+        pre_order_date: vmf.pre_order_date_us || null,
         synced_at: now,
       });
     }

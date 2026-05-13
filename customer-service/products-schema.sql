@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS product_variants (
   inventory_quantity  integer NOT NULL DEFAULT 0,
   selected_options    jsonb DEFAULT '[]',
 
+  -- Pre-order metafields (custom.pre_order_incoming_us / pre_order_date_us on Shopify)
+  pre_order_incoming  integer,
+  pre_order_date      date,
+
   synced_at           timestamptz NOT NULL DEFAULT now()
 );
 
