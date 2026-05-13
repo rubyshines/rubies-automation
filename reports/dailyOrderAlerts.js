@@ -34,6 +34,7 @@ const { getSupabaseClient } = require('../shared/supabaseClient');
 const { getSendgridClient } = require('../shared/sendgridClient');
 const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
+const { detectAndDraftShopAppLeaks } = require('./lib/shopAppLeak');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -240,8 +241,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
   const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
   const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
+  // Orders with an unresolved auto-author note (e.g. Shop App leak auto-drafter)
+  // already have a pending draft in CS Advisor — surface them in their own
+  // info section, not in Attention/Urgent.
+  const ufAutoDrafted = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author === 'auto');
   const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
-  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
+  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved);
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
   const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
@@ -291,13 +296,16 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     ...ufAttention.map(r => unfulfilledRow(r)),
   ];
 
-  // 4. Auto-Resolved
+  // 5. Auto-drafted into CS Advisor (Shop App leak outreach pending operator review)
+  const autoDraftedRows = ufAutoDrafted.map(r => unfulfilledRow(r));
+
+  // 6. Auto-Resolved
   const autoResolvedRows = ufAutoResolved.map(r => unfulfilledRow(r));
 
-  // 5. Waiting on Response (unfulfilled only — shipping notes are inline)
+  // 7. Waiting on Response (unfulfilled only — shipping notes are inline)
   const waitingRows = ufWaiting.map(r => unfulfilledRow(r));
 
-  // 6. Pre-Orders
+  // 8. Pre-Orders
   const preOrderRows = preOrders.map(r => unfulfilledRow(r));
 
   // --- Stock issues ---
@@ -331,7 +339,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   }
 
   // --- Counts ---
-  const totalIssues = urgentRows.length + passportEmailsSentRows.length + passportAwaitingRows.length + passportLostRows.length + attentionRows.length;
+  const totalIssues = urgentRows.length + passportEmailsSentRows.length + passportAwaitingRows.length + passportLostRows.length + attentionRows.length + autoDraftedRows.length;
   const hasUrgent = urgentRows.length > 0 || passportLostRows.length > 0;
   const hasErrors = (uf.errors?.length || 0) > 0;
 
@@ -362,6 +370,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (urgentRows.length) summaryParts.push(`<strong style="color:#dc2626;">Urgent: ${urgentRows.length}</strong>`);
   if (attentionRows.length) summaryParts.push(`<strong style="color:#f59e0b;">Attention: ${attentionRows.length}</strong>`);
   if (passportLostRows.length) summaryParts.push(`<strong style="color:#dc2626;">Lost: ${passportLostRows.length}</strong>`);
+  if (autoDraftedRows.length) summaryParts.push(`<span style="color:#6366f1;">Auto-drafted: ${autoDraftedRows.length}</span>`);
   if (passportEmailsSentRows.length) summaryParts.push(`<span style="color:#0891b2;">Passport emails sent: ${passportEmailsSentRows.length}</span>`);
   if (passportAwaitingRows.length) summaryParts.push(`<span style="color:#8b5cf6;">Awaiting Passport: ${passportAwaitingRows.length}</span>`);
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
@@ -438,6 +447,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       ${section('Attention', '#f59e0b', attentionRows)}
       ${section('Passport Claims \u2014 Lost', '#dc2626', passportLostRows)}
       ${stockHtml}
+      ${section('Drafted in CS Advisor (auto)', '#6366f1', autoDraftedRows)}
       ${section('Shipping Emails Sent Today', '#0891b2', passportEmailsSentRows)}
       ${section('Waiting on Response from Passport', '#8b5cf6', passportAwaitingRows)}
       ${section('Waiting on Response', '#f97316', waitingRows)}
@@ -503,12 +513,13 @@ function formatConsole(unfulfilled, shipping, opts) {
   // Unfulfilled sections — same override as the HTML formatter: an unresolved
   // operator note pulls the order out of Pre-Orders into the actionable flow.
   const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
-  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
+  const ufAutoDrafted = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author === 'auto');
+  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
+  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved);
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
   const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
   const ufAttention = ufRest.filter(r => r.classification.severity === 'attention');
-  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
   const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
 
   // Action-required first (urgent / attention / lost), info below.
@@ -516,6 +527,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
   printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
+  printUnfulfilledSection('DRAFTED IN CS ADVISOR (auto)', ufAutoDrafted);
   printShippingSection('SHIPPING EMAILS SENT TODAY', [...(sh.newClaims || []), ...(sh.customsAlerts || [])]);
   printShippingSection('WAITING ON RESPONSE FROM PASSPORT', sh.passportAwaitingResponse || []);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
@@ -652,6 +664,41 @@ async function run() {
     opts.shippingOnly ? emptyUnfulfilled : checkUnfulfilledOrders(),
     checkShippingDelays({ showResolved: opts.showResolved }),
   ]);
+
+  // Shop App pre-order leaks → seed pending drafts in CS Advisor and refresh
+  // r.note on affected results so they bucket as "Drafted in CS Advisor (auto)"
+  // rather than Attention.
+  if (!opts.shippingOnly) {
+    try {
+      const { drafted } = await detectAndDraftShopAppLeaks(supabase, unfulfilled.results, { write: true });
+      const sentCount = drafted.filter(d => d.status === 'drafted').length;
+      if (sentCount > 0) {
+        const justDrafted = drafted.filter(d => d.status === 'drafted').map(d => parseInt(d.order_number, 10));
+        const { data: freshNotes } = await supabase
+          .from('order_alert_notes')
+          .select('order_number, note, author, resolved, created_at')
+          .in('order_number', justDrafted)
+          .eq('resolved', false)
+          .order('created_at', { ascending: false });
+        const byOrder = new Map();
+        for (const n of (freshNotes || [])) {
+          if (!byOrder.has(n.order_number)) byOrder.set(n.order_number, n);
+        }
+        for (const r of unfulfilled.results) {
+          const n = byOrder.get(r.order.order_number);
+          if (n) r.note = n;
+        }
+        console.log(`  [shopAppLeak] ${sentCount} Shop App leak draft(s) seeded into CS Advisor`);
+      }
+      const failed = drafted.filter(d => d.status === 'failed');
+      for (const f of failed) {
+        unfulfilled.errors.push(`Shop App leak draft for #${f.order_number}: ${f.error}`);
+      }
+    } catch (err) {
+      console.warn(`  [shopAppLeak] error: ${err.message}`);
+      unfulfilled.errors.push(`Shop App leak detection: ${err.message}`);
+    }
+  }
 
   // Re-scrape delayed/urgent orders for fresh tracking data
   await reScrapeAlertedOrders(shipping);

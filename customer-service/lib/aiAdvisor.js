@@ -1936,4 +1936,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor };
+module.exports = { aiAdvisor, executeToolCall };
