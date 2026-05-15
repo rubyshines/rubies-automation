@@ -30,16 +30,14 @@ function buildSystemPrompt(context) {
   const { customer_email, order_number, order_items, fulfillment_status, intake, draft } = context;
   const draftResponse = draft?.draft_response || '';
 
-  // Detect whether this order already has a warehouse hold in place. Two signals:
-  // (a) the advisor proposed action_type='warehouse_hold' (operator likely already
-  //     clicked the prefilled action button), or
-  // (b) a prior action of type 'warehouse_hold' exists in the timeline. Either
-  //     way the hold is in place and calling warehouse_hold again is a no-op that
-  //     trips the dashboard's completion gate and clears chat history mid-flow.
-  const priorHoldAction = Array.isArray(draft?.actions)
+  // Detect whether this order already has a warehouse hold in place by looking
+  // at the timeline only. `draft.action_type === 'warehouse_hold'` is the
+  // advisor's *proposal*, not an execution — trusting it as a "hold is placed"
+  // signal causes the agent to skip the real tool and falsely report success
+  // (the intake pipeline now auto-executes the hold and files a real action
+  // entry when it succeeds, so this signal is reliable on its own).
+  const holdAlreadyPlaced = Array.isArray(draft?.actions)
     && draft.actions.some(a => a.action_type === 'warehouse_hold');
-  const advisorPlannedHold = draft?.action_type === 'warehouse_hold';
-  const holdAlreadyPlaced = priorHoldAction || advisorPlannedHold;
 
   const itemList = (order_items || [])
     .map(i => `  - ${i.quantity || 1}x ${i.title} (SKU: ${i.sku}, size: ${i.variant || ''})`)

@@ -53,6 +53,42 @@ function getAdvisorHandler() {
   return _advisorHandler;
 }
 
+// Auto-place a warehouse hold the moment the advisor classifies a ticket as
+// `action_type: warehouse_hold`. Advisor reply text is past-tense ("I've put a
+// hold on the order"), so the hold needs to be real before the draft is filed
+// — otherwise the operator sees a draft that lies. Returns an `actions` entry
+// to append to the draft on success, or null on skip/failure (failure is
+// logged so the operator agent can still attempt the hold itself).
+async function autoExecuteAdvisorHold(structured) {
+  if (structured?.action_type !== 'warehouse_hold') return null;
+  const orderName = structured?.order?.name || '';
+  const orderNumber = parseInt(String(orderName).replace(/^#/, ''), 10);
+  if (!orderNumber) return null;
+
+  const { handleWarehouseHold } = require('../lib/tools/orderNotes');
+  const reason = structured?.intake?.message_type === 'cancellation'
+    ? 'Auto-hold: customer asked to cancel, holding before we cancel'
+    : 'Auto-hold: customer wants to modify the order';
+
+  try {
+    const result = await handleWarehouseHold({ order_number: orderNumber, reason });
+    const text = result?.content?.[0]?.text || '';
+    if (result?.isError) {
+      console.warn(`[intake] Auto-hold failed for #${orderNumber}: ${text}`);
+      return null;
+    }
+    return {
+      executed_at: new Date().toISOString(),
+      action_type: 'warehouse_hold',
+      summary: text,
+      links: [],
+    };
+  } catch (err) {
+    console.warn(`[intake] Auto-hold exception for #${orderNumber}: ${err.message}`);
+    return null;
+  }
+}
+
 // AI Bot user ID — cached after first lookup
 let _aiBotUserId = null;
 const AI_BOT_NAME = 'RUBIES AI';
@@ -695,6 +731,15 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     return { skipped: true };
   }
 
+  // Auto-execute the warehouse hold the moment the advisor proposes it — the
+  // draft response is already past-tense ("I've put a hold on the order"), so
+  // the hold needs to be real before the operator sees the ticket. On success
+  // we seed the draft's `actions` array; on failure we leave it empty and the
+  // operator agent will see the hold isn't placed.
+  const autoHoldAction = await autoExecuteAdvisorHold(structured);
+  const initialActions = autoHoldAction ? [autoHoldAction] : [];
+  const nowIso = new Date().toISOString();
+
   // Insert draft — save advisor result verbatim, no post-processing
   const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
@@ -718,6 +763,8 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       order_context: structured.order || null,
       customer_context: structured.customer || null,
       action_type: structured.action_type || null,
+      actions: initialActions,
+      action_executed_at: autoHoldAction ? nowIso : null,
       previous_draft_id: previousDraftId,
     })
     .select('id')

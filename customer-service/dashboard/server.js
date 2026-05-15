@@ -1520,7 +1520,12 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
     const now = new Date().toISOString();
     const entry = {
       executed_at: now,
-      action_type: actionTypeFromTool(completingTool.tool, draft.action_type) || draft.action_type || null,
+      // File under what the tool actually did, never under what the draft
+      // *intended*. Falling back to `draft.action_type` lets unrelated writes
+      // (e.g. `add_order_note`) masquerade as completing the proposed action —
+      // which is how a missed `warehouse_hold` could show up in the timeline
+      // as a successful hold.
+      action_type: actionTypeFromTool(completingTool.tool, draft.action_type) || completingTool.tool,
       summary:     result.response || '',
       links:       result.links || [],
     };
