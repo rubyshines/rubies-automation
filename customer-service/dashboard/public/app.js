@@ -1381,8 +1381,8 @@ function renderActionPanel(draft) {
 
   // Header badge
   if (actionType) {
-    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'split_shipment' ? 'edit' : actionType === 'invoice_kept_items' ? 'edit' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
-    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', split_shipment: 'Split Shipment', invoice_kept_items: 'Invoice Kept Items', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
+    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'free_order' ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'split_shipment' ? 'edit' : actionType === 'order_consolidation' ? 'edit' : actionType === 'invoice_kept_items' ? 'edit' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
+    const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', free_order: 'Free Order', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', split_shipment: 'Split Shipment', order_consolidation: 'Consolidate Orders', invoice_kept_items: 'Invoice Kept Items', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
     const badgeLabel = badgeLabels[actionType] || actionType;
     headerEl.innerHTML = `
       <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>

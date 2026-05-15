@@ -1403,6 +1403,7 @@ const WRITE_TOOLS = new Set([
   'create_discount_code',
   'update_customer',
   'split_shipment',
+  'consolidate_orders',
   'send_draft_order_invoice',
   'delete_draft_order',
   'set_product_prices',
@@ -1519,7 +1520,7 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
     const now = new Date().toISOString();
     const entry = {
       executed_at: now,
-      action_type: actionTypeFromTool(completingTool.tool) || draft.action_type || null,
+      action_type: actionTypeFromTool(completingTool.tool, draft.action_type) || draft.action_type || null,
       summary:     result.response || '',
       links:       result.links || [],
     };
@@ -1538,9 +1539,9 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   return result;
 }
 
-function actionTypeFromTool(toolName) {
+function actionTypeFromTool(toolName, draftActionType) {
   switch (toolName) {
-    case 'create_exchange_order': return 'exchange';
+    case 'create_exchange_order': return draftActionType === 'free_order' ? 'free_order' : 'exchange';
     case 'refund_order':          return 'refund';
     case 'edit_order':            return 'order_modification';
     case 'warehouse_hold':        return 'warehouse_hold';
@@ -1548,6 +1549,7 @@ function actionTypeFromTool(toolName) {
     case 'update_customer':       return 'customer_profile_update';
     case 'create_discount_code':  return 'discount_code';
     case 'split_shipment':        return 'split_shipment';
+    case 'consolidate_orders':    return 'order_consolidation';
     case 'create_invoice_order':  return 'invoice_kept_items';
     default:                      return null;
   }

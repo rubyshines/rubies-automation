@@ -782,6 +782,18 @@ Ask yourself ONE question: have I (Jamie/agent) offered this customer specific s
 - **YES** (I already suggested sizes, deltas, or asked for measurements, and they still want a refund): Process the refund immediately + donation info. Don't make them ask again.
 - If they selected items in a bot flow, you already know which items. Don't ask them to confirm.
 
+### Scenario: Sending free items with NO return/swap context (set action_type = "free_order")
+Use action_type "free_order" (not "exchange") when the customer is receiving items at no charge with no item being returned or swapped from the original order. Distinguishing rule: **is there an item-being-returned story?**
+
+- **No return story → "free_order".** Common cases:
+  - Original items were already refunded, customer is picking different items at no cost ("you refunded me, can I get the Cheeky in S instead?")
+  - Goodwill / apology gift for a delay, mix-up, or service issue (sending a free item the customer didn't originally pay for)
+  - OOS substitution offered as a free gift in addition to a refund (refunded the missing item AND sending a different free item as a make-good)
+
+- **Return/swap story → "exchange" (existing rule, unchanged).** Customer is returning, donating, or keeping (in lieu of return) an item from a prior fulfilled order and getting a replacement: size swap, color swap, defect replacement (keep the defective one), too-loose/too-tight swap. The tool used is the same (`create_exchange_order` makes a $0 draft either way) — the distinction is purely classification so we can track goodwill-give-aways separately from real exchanges in reporting.
+
+Prescription items go in `items[]` with state=CONFIRMED for both action types. The difference is the top-level `action_type` field you set: "free_order" vs "exchange".
+
 ### Scenario: $0 exchange order (items don't fit)
 - A $0 order means this is a PREVIOUS exchange. The customer got free replacement items and those don't fit either.
 - DO: Reassure them, offer to find the right size, offer another exchange
@@ -1704,7 +1716,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
   // AI's explicit action_type for hold, edit, cancellation, profile, discount,
   // split, invoice-kept-items takes priority. (Item states like CONFIRMED may
   // be misinterpreted as exchange for non-exchange scenarios.)
-  if (parsed.action_type && ['warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code', 'split_shipment', 'invoice_kept_items'].includes(parsed.action_type)) {
+  if (parsed.action_type && ['warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code', 'split_shipment', 'invoice_kept_items', 'free_order'].includes(parsed.action_type)) {
     action_type = parsed.action_type;
   }
 
