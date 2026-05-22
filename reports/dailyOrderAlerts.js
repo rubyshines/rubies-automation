@@ -254,12 +254,13 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const ufNormal = ufRest.filter(r => r.classification.severity === 'normal');
 
   // --- Shipping buckets ---
+  // Passport buckets (claims, awaiting-response, lost, customs notices, sync
+  // summary) are intentionally not rendered — they were noise off stale/failed
+  // tracking data. checkShippingDelays still creates/reconciles claims in the DB
+  // and still emails customs notices to customers; we just don't surface the
+  // Passport machinery in this report. Pending a proper rework.
   const shUrgent = sh.urgentNonPassport || [];
-  const shPassportPending = sh.passportPending || [];
-  const shPassportAwaitingResponse = sh.passportAwaitingResponse || [];
-  const shPassportLost = sh.passportLost || [];
   const shDelayed = sh.delayed || [];
-  const shResolved = sh.resolved || [];
 
   function section(title, color, cards) {
     if (!cards.length) return '';
@@ -279,19 +280,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     ...shUrgent.map(a => shippingRow(a)),
   ];
 
-  // 2. Shipping emails sent today (Passport claims + customs notices)
-  const shNewClaims = sh.newClaims || [];
-  const shCustomsAlerts = sh.customsAlerts || [];
-  const passportEmailsSentRows = [
-    ...shNewClaims.map(a => shippingRow(a, '#0891b2', 'emailed Passport')),
-    ...shCustomsAlerts.map(a => shippingRow(a, '#0891b2', 'customs notice to customer')),
-  ];
-
-  // 3. Waiting on response / lost
-  const passportAwaitingRows = shPassportAwaitingResponse.map(a => shippingRow(a, '#8b5cf6', 'awaiting response'));
-  const passportLostRows = shPassportLost.map(a => shippingRow(a, '#dc2626', 'lost'));
-
-  // 4. Attention (unfulfilled only — shipping delayed no longer shown)
+  // 2. Attention (unfulfilled only — shipping delayed no longer shown)
   const attentionRows = [
     ...ufAttention.map(r => unfulfilledRow(r)),
   ];
@@ -327,20 +316,17 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
 
   // --- Resolved sections ---
   let resolvedHtml = '';
-  const totalResolved = ufResolved.length + (sh.resolvedCount || 0);
-  if (opts.showResolved && (ufResolved.length > 0 || shResolved.length > 0)) {
-    const resolvedRows = [
-      ...ufResolved.map(r => unfulfilledRow(r)),
-      ...shResolved.map(a => shippingRow(a, '#9ca3af', 'resolved')),
-    ];
+  const totalResolved = ufResolved.length;
+  if (opts.showResolved && ufResolved.length > 0) {
+    const resolvedRows = ufResolved.map(r => unfulfilledRow(r));
     resolvedHtml = section('Resolved', '#9ca3af', resolvedRows);
   } else if (totalResolved > 0) {
     resolvedHtml = `<p style="color:#9ca3af;margin-top:16px;">${totalResolved} resolved (use --show-resolved to see details)</p>`;
   }
 
   // --- Counts ---
-  const totalIssues = urgentRows.length + passportEmailsSentRows.length + passportAwaitingRows.length + passportLostRows.length + attentionRows.length + autoDraftedRows.length;
-  const hasUrgent = urgentRows.length > 0 || passportLostRows.length > 0;
+  const totalIssues = urgentRows.length + attentionRows.length + autoDraftedRows.length;
+  const hasUrgent = urgentRows.length > 0;
   const hasErrors = (uf.errors?.length || 0) > 0;
 
   // --- Subject line ---
@@ -354,8 +340,6 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (totalIssues > 0) {
     subjectParts.push(`${totalIssues} need attention`);
     if (urgentRows.length > 0) subjectParts.push(`${urgentRows.length} urgent`);
-    const totalPassport = passportEmailsSentRows.length + passportAwaitingRows.length + passportLostRows.length;
-    if (totalPassport > 0) subjectParts.push(`${totalPassport} Passport`);
   } else {
     subjectParts.push('all clear');
   }
@@ -369,10 +353,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // Action-required chips first (urgent/attention/lost), then info chips.
   if (urgentRows.length) summaryParts.push(`<strong style="color:#dc2626;">Urgent: ${urgentRows.length}</strong>`);
   if (attentionRows.length) summaryParts.push(`<strong style="color:#f59e0b;">Attention: ${attentionRows.length}</strong>`);
-  if (passportLostRows.length) summaryParts.push(`<strong style="color:#dc2626;">Lost: ${passportLostRows.length}</strong>`);
   if (autoDraftedRows.length) summaryParts.push(`<span style="color:#6366f1;">Auto-drafted: ${autoDraftedRows.length}</span>`);
-  if (passportEmailsSentRows.length) summaryParts.push(`<span style="color:#0891b2;">Passport emails sent: ${passportEmailsSentRows.length}</span>`);
-  if (passportAwaitingRows.length) summaryParts.push(`<span style="color:#8b5cf6;">Awaiting Passport: ${passportAwaitingRows.length}</span>`);
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
   if (waitingRows.length) summaryParts.push(`Waiting: ${waitingRows.length}`);
   if (ufNormal.length) summaryParts.push(`Normal: ${ufNormal.length}`);
@@ -400,33 +381,6 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       <div style="font-size:13px;">${parts.join('')}</div>`;
   }
 
-  // --- Passport tracking sync (last 24h) ---
-  let passportSyncHtml = '';
-  const psSync = extra.passportSyncSummary;
-  if (psSync) {
-    const badge = (label, value, color) =>
-      value > 0 ? `<span style="display:inline-block;padding:3px 10px;margin:0 4px 4px 0;background:${color};color:#fff;border-radius:10px;font-size:11px;font-weight:600;">${label}: ${value}</span>` : '';
-
-    const badges = [
-      badge('Scraped', psSync.totalScraped, '#6366f1'),
-      badge('Delivered', psSync.delivered, '#16a34a'),
-      badge('Expired', psSync.expired, '#d97706'),
-      badge('CAPTCHA', psSync.captcha, '#dc2626'),
-      badge('Errors', psSync.errors, '#dc2626'),
-    ].filter(Boolean).join('');
-
-    const details = [
-      `${psSync.runs} runs`,
-      psSync.backfillRemaining > 0 ? `${psSync.backfillRemaining} backfill remaining` : null,
-      `${psSync.updatesRemaining} active updates`,
-    ].filter(Boolean).join(' &middot; ');
-
-    passportSyncHtml = `
-      <h3 style="margin:24px 0 8px;color:#6366f1;">Passport Tracking Sync (last 24h)</h3>
-      <div style="margin:4px 0;">${badges}</div>
-      <p style="font-size:12px;color:#6b7280;margin:4px 0;">${details}</p>`;
-  }
-
   // --- Errors ---
   let errorsHtml = '';
   if (uf.errors?.length > 0) {
@@ -445,18 +399,14 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       ${allClearHtml}
       ${section('Urgent', '#dc2626', urgentRows)}
       ${section('Attention', '#f59e0b', attentionRows)}
-      ${section('Passport Claims \u2014 Lost', '#dc2626', passportLostRows)}
       ${stockHtml}
       ${section('Drafted in CS Advisor (auto)', '#6366f1', autoDraftedRows)}
-      ${section('Shipping Emails Sent Today', '#0891b2', passportEmailsSentRows)}
-      ${section('Waiting on Response from Passport', '#8b5cf6', passportAwaitingRows)}
       ${section('Waiting on Response', '#f97316', waitingRows)}
       ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
       ${section('Pre-Order', '#6366f1', preOrderRows)}
       ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
       ${resolvedHtml}
       ${followUpHtml}
-      ${passportSyncHtml}
       ${errorsHtml}
     </div>`;
 
@@ -475,8 +425,7 @@ function formatConsole(unfulfilled, shipping, opts) {
 
   lines.push(`\n=== RUBIES Daily Order Alerts -- ${today} ===\n`);
   lines.push(`Unfulfilled: ${uf.summary.total} | In transit: ${sh.totalInTransit}`);
-  const passportTotal = (sh.newClaims?.length || 0) + (sh.passportAwaitingResponse?.length || 0) + (sh.passportLost?.length || 0);
-  lines.push(`Urgent: ${uf.summary.urgent + (sh.urgentNonPassport?.length || 0)} | Attention: ${uf.summary.attention} | Passport: ${passportTotal}\n`);
+  lines.push(`Urgent: ${uf.summary.urgent + (sh.urgentNonPassport?.length || 0)} | Attention: ${uf.summary.attention}\n`);
 
   function printUnfulfilledSection(title, orders) {
     if (!orders.length) return;
@@ -526,10 +475,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
   printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
-  printShippingSection('PASSPORT CLAIMS - LOST', sh.passportLost || []);
   printUnfulfilledSection('DRAFTED IN CS ADVISOR (auto)', ufAutoDrafted);
-  printShippingSection('SHIPPING EMAILS SENT TODAY', [...(sh.newClaims || []), ...(sh.customsAlerts || [])]);
-  printShippingSection('WAITING ON RESPONSE FROM PASSPORT', sh.passportAwaitingResponse || []);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
   printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
   printUnfulfilledSection('PRE-ORDER', preOrders);
@@ -537,109 +483,10 @@ function formatConsole(unfulfilled, shipping, opts) {
   if (opts.showResolved) {
     const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
     printUnfulfilledSection('RESOLVED (unfulfilled)', ufResolved);
-    printShippingSection('RESOLVED (shipping)', sh.resolved || []);
   }
 
   lines.push('');
   return lines.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// Re-scrape alerted orders for fresh tracking data
-// ---------------------------------------------------------------------------
-
-async function reScrapeAlertedOrders(shipping) {
-  const { scrapeTracking } = require('../customer-service/lib/tracking/scraper');
-  const { parseTrackingPage } = require('../customer-service/lib/tracking/analyzer');
-  const supabase = getSupabaseClient();
-
-  // Only re-scrape Passport — USPS/OnTrac events come from Shopify GraphQL via
-  // the daily orders sync (orders.fulfillments[].events), which is fresher
-  // than scraping the carrier page mid-report.
-  const categories = ['passportPending', 'passportLost'];
-  const toScrape = [];
-  for (const cat of categories) {
-    for (const alert of (shipping[cat] || [])) {
-      if (alert.tracking_url && alert.tracking_number && /passport/i.test(alert.tracking_url)) {
-        toScrape.push({ alert, category: cat });
-      }
-    }
-  }
-
-  if (toScrape.length === 0) return;
-  console.log(`  [Re-scrape] Refreshing tracking for ${toScrape.length} alerted orders...`);
-
-  let updated = 0;
-  let resolved = 0;
-
-  for (const { alert } of toScrape) {
-    try {
-      const scraped = await scrapeTracking(alert.tracking_url, alert.tracking_number);
-      const parsed = await parseTrackingPage(scraped.rawText, scraped.carrier);
-
-      // Update tracking_snapshots cache
-      await supabase.from('tracking_snapshots').upsert({
-        tracking_number: alert.tracking_number,
-        order_number: alert.order_number,
-        carrier: scraped.carrier,
-        tracking_url: alert.tracking_url,
-        destination_country: alert.country || null,
-        shipping_zone: alert.zone || null,
-        raw_events: parsed.events || [],
-        current_status: parsed.current_status,
-        estimated_delivery: parsed.estimated_delivery || null,
-        last_location: parsed.last_location || null,
-        local_carrier: parsed.local_carrier || null,
-        local_tracking_number: parsed.local_tracking_number || null,
-        customs_cleared: parsed.customs_cleared || null,
-        scraped_at: new Date().toISOString(),
-      }, { onConflict: 'tracking_number' });
-
-      // Check if status meaningfully changed
-      const oldStatus = alert.status;
-      const newStatus = parsed.current_status;
-      const newLastEvent = parsed.events?.[0];
-
-      if (newStatus === oldStatus && !newLastEvent) continue;
-
-      // Update alert object in place
-      alert.status = newStatus;
-      alert.last_location = parsed.last_location || alert.last_location;
-      alert.customs_cleared = parsed.customs_cleared;
-      alert.local_carrier = parsed.local_carrier || alert.local_carrier;
-      if (newLastEvent) {
-        alert.last_event = `${newLastEvent.date}: ${newLastEvent.location || ''} ${newLastEvent.description || ''}`.trim();
-      }
-
-      // If delivered, mark for removal from active alerts
-      if (newStatus === 'delivered') {
-        alert._resolved = true;
-        resolved++;
-      }
-
-      updated++;
-    } catch (err) {
-      // Non-fatal — keep the original alert data
-      console.warn(`  [Re-scrape] Failed for #${alert.order_number}: ${err.message}`);
-    }
-  }
-
-  // Remove delivered orders from all category lists and alerts
-  if (resolved > 0) {
-    const isResolved = a => a._resolved;
-    for (const cat of categories) {
-      if (shipping[cat]) {
-        shipping[cat] = shipping[cat].filter(a => !isResolved(a));
-      }
-    }
-    shipping.alerts = (shipping.alerts || []).filter(a => !isResolved(a));
-  }
-
-  if (updated > 0 || resolved > 0) {
-    console.log(`  [Re-scrape] ${updated} updated, ${resolved} now delivered`);
-  } else {
-    console.log(`  [Re-scrape] No changes detected`);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -700,9 +547,6 @@ async function run() {
     }
   }
 
-  // Re-scrape delayed/urgent orders for fresh tracking data
-  await reScrapeAlertedOrders(shipping);
-
   // Console output
   if (opts.json) {
     const jsonOutput = {
@@ -740,42 +584,21 @@ async function run() {
 
   // Fetch auto follow-up activity from last 24h
   let autoFollowUps = [];
-  let passportSyncSummary = null;
   try {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const [followUpResult, syncResult] = await Promise.all([
-      supabase
-        .from('cs_ai_drafts')
-        .select('customer_email, customer_name, gorgias_ticket_id, message_type, sent_at')
-        .eq('source', 'auto_follow_up')
-        .gte('sent_at', yesterday)
-        .order('sent_at', { ascending: false }),
-      supabase
-        .from('passport_sync_runs')
-        .select('*')
-        .gte('ran_at', yesterday)
-        .order('ran_at', { ascending: false }),
-    ]);
+    const followUpResult = await supabase
+      .from('cs_ai_drafts')
+      .select('customer_email, customer_name, gorgias_ticket_id, message_type, sent_at')
+      .eq('source', 'auto_follow_up')
+      .gte('sent_at', yesterday)
+      .order('sent_at', { ascending: false });
     autoFollowUps = followUpResult.data || [];
-    const runs = syncResult.data || [];
-    if (runs.length > 0) {
-      passportSyncSummary = {
-        runs: runs.length,
-        totalScraped: runs.reduce((s, r) => s + (r.backfill_scraped || 0) + (r.updates_scraped || 0), 0),
-        delivered: runs.reduce((s, r) => s + (r.backfill_delivered || 0) + (r.updates_delivered || 0), 0),
-        expired: runs.reduce((s, r) => s + (r.expired || 0), 0),
-        captcha: runs.reduce((s, r) => s + (r.captcha || 0), 0),
-        errors: runs.reduce((s, r) => s + (r.errors || 0), 0),
-        backfillRemaining: runs[0].backfill_remaining || 0,
-        updatesRemaining: runs[0].updates_remaining || 0,
-      };
-    }
   } catch (err) {
-    console.warn(`[alerts] Could not fetch follow-up/sync data: ${err.message}`);
+    console.warn(`[alerts] Could not fetch follow-up data: ${err.message}`);
   }
 
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, passportSyncSummary });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps });
 
   const sgMail = getSendgridClient();
   if (sgMail) {
@@ -794,8 +617,7 @@ async function run() {
   }
 
   // Pipeline-compatible return
-  const shippingAlertCount = (shipping.urgentNonPassport?.length || 0) + (shipping.newClaims?.length || 0)
-    + (shipping.passportAwaitingResponse?.length || 0) + (shipping.passportLost?.length || 0);
+  const shippingAlertCount = shipping.urgentNonPassport?.length || 0;
   const detail = `${unfulfilled.summary.total} unfulfilled (${unfulfilled.summary.urgent + unfulfilled.summary.attention} need attention), ${shippingAlertCount} shipping alerts, ${shipping.totalInTransit} in transit`;
 
   return {
