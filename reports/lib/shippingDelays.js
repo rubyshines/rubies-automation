@@ -567,7 +567,14 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       }
     }
 
-    await sendPassportEmail(newClaims);
+    // Passport investigation emails are intentionally disabled. Every claim ever
+    // filed (49/49) resolved as delivered — 0 were actually lost, and 86% were
+    // already delivered before we emailed. The "likely lost" signal fires off
+    // stale/failed-scrape tracking data, not real losses. Claims are still
+    // created so the daily report can track in-flight orders, but we no longer
+    // email partners@passportglobal.com. Pending a proper rework that re-checks
+    // live tracking before escalating. See git history 2026-05-22.
+    // await sendPassportEmail(newClaims);
   }
 
   // Send customs notification emails
