@@ -551,6 +551,14 @@ async function selectTicket(id) {
     steerInput.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  // The draft editor is likewise a single shared DOM element. Clear it
+  // synchronously on switch so the previous ticket's text can't be read by a
+  // send fired during the async load window below. renderTicketDetail repopulates
+  // it once the new ticket's draft loads. (Programmatic .value assignment doesn't
+  // fire the autosave 'input' listener, so this won't clobber localStorage.)
+  const draftEditorEl = document.getElementById('draft-editor');
+  if (draftEditorEl) draftEditorEl.value = '';
+
   // Re-open conversation (may have been collapsed by draft focus on mobile)
   const convEl = document.getElementById('detail-conversation');
   if (convEl && !convEl.open) convEl.setAttribute('open', '');
@@ -744,8 +752,6 @@ function renderTicketDetail(ticket) {
     // Only use localStorage version if it was saved against the SAME draft ID
     const useLocal = savedDraft && savedDraftId && parseInt(savedDraftId) === d.id;
     editor.value = useLocal ? savedDraft : d.draft_response;
-    // DEBUG: log what's being rendered (remove after confirming fix)
-    console.log(`[draft-diag] ticket=${ticket.id} active_draft_id=${d.id} savedDraftId=${savedDraftId} useLocal=${useLocal} preview="${editor.value.substring(0, 80)}"`);
     autoExpandTextarea(editor);
 
     // Message type + confidence + status badges
@@ -1939,7 +1945,12 @@ async function runChatTurn({
 }
 
 async function sendActionMessage() {
-  if (!currentTicketId) return;
+  // Snapshot identity from the loaded ticket object (see sendDraft) so the
+  // operator command can't be routed to a different ticket if the operator
+  // navigates away mid-stream.
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
   if (window.voiceInput) voiceInput.stopActive();
 
   const messagesEl = document.getElementById('action-chat-messages');
@@ -1949,7 +1960,7 @@ async function sendActionMessage() {
   if (!message) return;
 
   const { finalResult, history } = await runChatTurn({
-    endpoint: `/api/tickets/${currentTicketId}/action-chat-stream`,
+    endpoint: `/api/tickets/${ticketId}/action-chat-stream`,
     message,
     history: _actionChatHistory,
     containerEl: messagesEl,
@@ -1962,9 +1973,10 @@ async function sendActionMessage() {
   _actionChatHistory = history;
 
   // Reload ticket so a newly-completed action shows up inline in the timeline
-  // and the bottom panel returns to idle.
-  if (finalResult && currentTicketId) {
-    const refreshed = await api(`/api/tickets/${currentTicketId}`);
+  // and the bottom panel returns to idle — but only if the operator is still
+  // viewing this ticket, so we don't overwrite a ticket they navigated to.
+  if (finalResult && currentTicketId === ticketId) {
+    const refreshed = await api(`/api/tickets/${ticketId}`);
     if (refreshed?.active_draft) {
       currentDraft = refreshed.active_draft;
       currentTicket = refreshed;
@@ -2427,21 +2439,33 @@ function getDraftAttachmentsPayload() {
 // ---------------------------------------------------------------------------
 
 function sendDraft(afterAction, testSnooze) {
-  if (!currentTicketId) return;
-  if (_actionsInFlight.has(currentTicketId)) return;
+  // Source identity from the single ticket object, not the separate
+  // currentTicketId/currentDraftId globals. currentTicket updates atomically
+  // (after selectTicket's await), whereas currentTicketId flips synchronously on
+  // switch — reading them separately let ticketId (new ticket) pair with stale
+  // draftId/editor text during the load window and misfire one ticket's reply
+  // onto another. With both sourced here, the in-flight guard below blocks a
+  // duplicate fired mid-switch (currentTicket still points at the in-flight ticket).
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
   if (window.voiceInput) voiceInput.stopActive();
 
   const response = document.getElementById('draft-editor').value;
   if (!response.trim()) { alert('Please enter a message'); return; }
   const notes = undefined;
 
-  const ticketId = currentTicketId;
-  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
-  const draftId = currentDraftId;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const draftId = ticket.active_draft?.id || null;
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
+  // Dispatch draft-scoped when a draft exists. The /api/drafts/:id/send handler
+  // guards on draft.status === 'pending', so a stale duplicate aimed at an
+  // already-sent draft is rejected — rather than the ticket endpoint re-resolving
+  // active_draft_id and writing the wrong body onto whatever draft is now active.
   const endpoint = draftId
-    ? `/api/tickets/${ticketId}/send`
+    ? `/api/drafts/${draftId}/send`
     : `/api/tickets/${ticketId}/message`;
   const attachments = getDraftAttachmentsPayload();
   const body = draftId
@@ -2468,12 +2492,13 @@ function sendDraft(afterAction, testSnooze) {
 }
 
 function closeNoReply() {
-  if (!currentTicketId) return;
-  if (_actionsInFlight.has(currentTicketId)) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
   const notes = undefined;
 
-  const ticketId = currentTicketId;
-  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
 
@@ -2815,10 +2840,11 @@ function splitThinkingFromDraft(text) {
 }
 
 async function refreshDraft(steer) {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   if (window.voiceInput) voiceInput.stopActive();
 
-  const ticketId = currentTicketId; // snapshot — user may navigate away during the call
+  const ticketId = ticket.id; // snapshot from the loaded ticket (see sendDraft) — user may navigate away during the call
   const btn = document.getElementById('btn-refresh');
   const steerInput = document.getElementById('steer-input');
   const editor = document.getElementById('draft-editor');
@@ -2951,11 +2977,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 function snoozeNoReply() {
-  if (!currentTicketId) return;
-  if (_actionsInFlight.has(currentTicketId)) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
 
-  const ticketId = currentTicketId;
-  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
 
@@ -2969,11 +2996,12 @@ function snoozeNoReply() {
 }
 
 async function releaseDraft() {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   const notes = undefined;
 
   try {
-    const releasedTicketId = currentTicketId;
+    const releasedTicketId = ticket.id;
     const focusSeconds = getFocusTime(releasedTicketId);
     clearFocusTime(releasedTicketId);
     await api(`/api/tickets/${releasedTicketId}/release`, {
@@ -2989,11 +3017,12 @@ async function releaseDraft() {
 }
 
 async function markSpam() {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   if (!confirm('Mark as spam? This will close the ticket in Gorgias and tag it as spam.')) return;
 
   try {
-    const spamTicketId = currentTicketId;
+    const spamTicketId = ticket.id;
     const focusSeconds = getFocusTime(spamTicketId);
     clearFocusTime(spamTicketId);
     await api(`/api/tickets/${spamTicketId}/spam`, { method: 'POST', body: { focus_time_seconds: focusSeconds } });
@@ -3008,11 +3037,12 @@ async function markSpam() {
 }
 
 async function deleteDraft() {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   if (!confirm('Are you sure you want to delete this draft? This cannot be undone.')) return;
 
   try {
-    const deletedTicketId = currentTicketId;
+    const deletedTicketId = ticket.id;
     const focusSeconds = getFocusTime(deletedTicketId);
     clearFocusTime(deletedTicketId);
     await api(`/api/tickets/${deletedTicketId}/delete`, { method: 'POST', body: { focus_time_seconds: focusSeconds } });
@@ -3067,7 +3097,8 @@ async function toggleReturnDropdown() {
 }
 
 async function returnToInbox(classification) {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
 
   const dropdown = document.getElementById('return-dropdown');
   if (dropdown) dropdown.style.display = 'none';
@@ -3077,7 +3108,7 @@ async function returnToInbox(classification) {
   btn.textContent = 'Returning...';
 
   try {
-    const returnedTicketId = currentTicketId;
+    const returnedTicketId = ticket.id;
     await api(`/api/tickets/${returnedTicketId}/return`, {
       method: 'POST',
       body: { classification },
@@ -3129,12 +3160,13 @@ async function loadStats() {
 // ---------------------------------------------------------------------------
 
 async function sendSimpleMessage(afterAction) {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   const message = document.getElementById('simple-message-editor').value;
   if (!message.trim()) { alert('Please enter a message'); return; }
 
   try {
-    const sentTicketId = currentTicketId;
+    const sentTicketId = ticket.id;
     await api(`/api/tickets/${sentTicketId}/message`, {
       method: 'POST',
       body: { message, after: afterAction },
@@ -3148,9 +3180,10 @@ async function sendSimpleMessage(afterAction) {
 }
 
 async function reopenTicket() {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   try {
-    await api(`/api/tickets/${currentTicketId}/reopen`, { method: 'POST', body: {} });
+    await api(`/api/tickets/${ticket.id}/reopen`, { method: 'POST', body: {} });
     showToast('Ticket reopened');
     clearTicketSelection();
     // Switch to the appropriate tab
@@ -3162,11 +3195,12 @@ async function reopenTicket() {
 }
 
 function parkTicket() {
-  if (!currentTicketId) return;
-  if (_actionsInFlight.has(currentTicketId)) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
 
-  const ticketId = currentTicketId;
-  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
 
@@ -3178,11 +3212,12 @@ function parkTicket() {
 }
 
 function unparkTicket() {
-  if (!currentTicketId) return;
-  if (_actionsInFlight.has(currentTicketId)) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
 
-  const ticketId = currentTicketId;
-  const ticketRef = currentTicket?.gorgias_ticket_id ? `#${currentTicket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
 
@@ -3194,7 +3229,8 @@ function unparkTicket() {
 }
 
 async function forwardTicket() {
-  if (!currentTicketId) return;
+  const ticket = currentTicket;
+  if (!ticket) return;
   const to = prompt('Forward to email:', 'jamie@rubyshines.com');
   if (!to) return;
 
@@ -3203,7 +3239,7 @@ async function forwardTicket() {
   btn.textContent = 'Forwarding...';
 
   try {
-    await api(`/api/tickets/${currentTicketId}/forward`, { method: 'POST', body: { to } });
+    await api(`/api/tickets/${ticket.id}/forward`, { method: 'POST', body: { to } });
     btn.textContent = 'Forwarded';
     setTimeout(() => { btn.textContent = 'Forward'; btn.disabled = false; }, 2000);
   } catch (err) {
@@ -4161,15 +4197,29 @@ const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 function autoExpandTextarea(el) {
+  if (!el) return;
   el.style.height = 'auto';
-  el.style.height = el.scrollHeight + 'px';
-  // iOS zoom fix: containers use transform: scale(0.8125), creating a layout gap.
-  // Compensate with negative margin-bottom based on actual container height.
-  if (_isIOS && isMobile()) {
-    const wrap = el.closest('.draft-editor-wrap, .action-chat-input-row');
-    if (wrap) {
-      wrap.style.marginBottom = -(wrap.offsetHeight * 0.1875) + 'px';
-    }
+  const h = el.scrollHeight;
+  if (h > 0) {
+    el.style.height = h + 'px';
+    return;
+  }
+  // scrollHeight === 0 means the element isn't laid out yet (panel just
+  // toggled from display:none, fonts still loading). Retry on the next
+  // frame, and again after fonts settle. Without this the editor locks at
+  // min-height on first ticket load.
+  requestAnimationFrame(() => {
+    el.style.height = 'auto';
+    const h2 = el.scrollHeight;
+    if (h2 > 0) el.style.height = h2 + 'px';
+  });
+  if (document.fonts && document.fonts.ready && !el.dataset.fontsHooked) {
+    el.dataset.fontsHooked = '1';
+    document.fonts.ready.then(() => {
+      el.style.height = 'auto';
+      const h3 = el.scrollHeight;
+      if (h3 > 0) el.style.height = h3 + 'px';
+    });
   }
 }
 

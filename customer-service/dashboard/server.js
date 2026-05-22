@@ -2881,13 +2881,19 @@ function readBody(req) {
 // Start server
 // ---------------------------------------------------------------------------
 
-const server = http.createServer(handleRequest);
-server.listen(PORT, async () => {
-  console.log(`\n  RUBIES Care running at http://localhost:${PORT}\n`);
-  await loadProductConfig();
-  // Load product cache + decision tree config for the action router
-  const { loadFromSupabase } = require('../lib/productCache');
-  const { initCsConfig } = require('../lib/sizingEngine');
-  await loadFromSupabase(getSupabaseClient());
-  await initCsConfig();
-});
+// Only bind a port when run directly (npm run dashboard). When required from a
+// test, skip startup so handlers like apiSendDraft can be exercised in isolation.
+if (require.main === module) {
+  const server = http.createServer(handleRequest);
+  server.listen(PORT, async () => {
+    console.log(`\n  RUBIES Care running at http://localhost:${PORT}\n`);
+    await loadProductConfig();
+    // Load product cache + decision tree config for the action router
+    const { loadFromSupabase } = require('../lib/productCache');
+    const { initCsConfig } = require('../lib/sizingEngine');
+    await loadFromSupabase(getSupabaseClient());
+    await initCsConfig();
+  });
+}
+
+module.exports = { apiSendDraft };
