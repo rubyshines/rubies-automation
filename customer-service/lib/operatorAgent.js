@@ -16,6 +16,19 @@ function getAnthropic() {
   return _anthropic;
 }
 
+// Parse + remove the automation-only `AUTO_CONFIRM: SAFE | HOLD — reason` verdict
+// the operator agent appends to phase-1 previews. Returns the clean operator-facing
+// text plus the structured verdict ({ safe, reason } | null when absent).
+const AUTO_CONFIRM_RE = /\n*[ \t]*AUTO_CONFIRM:\s*(SAFE|HOLD)\b[ \t]*(?:[—–-]+\s*([^\n]*))?/i;
+function stripAutoConfirm(text) {
+  const raw = text || '';
+  const m = raw.match(AUTO_CONFIRM_RE);
+  if (!m) return { clean: raw, verdict: null };
+  const verdict = { safe: /^safe$/i.test(m[1]), reason: (m[2] || '').trim() || null };
+  const clean = raw.replace(AUTO_CONFIRM_RE, '').trimEnd();
+  return { clean, verdict };
+}
+
 // ---------------------------------------------------------------------------
 // Load tool schemas — shared with the ad hoc standalone agent
 // ---------------------------------------------------------------------------
@@ -142,6 +155,10 @@ Sizing systems:
 ## Rules
 - **Tool calls precede operator-facing prose.** Internal planning narration ("Looking up the customer…", "Checking inventory for the AJ 1X…") is encouraged before tool calls — the operator sees this in the reasoning trace. But do not write the operator-facing reply (the preview, the confirmation, the summary) until you have called every tool the response requires. Write the reply once, in full, after all tool results are in.
 - Always show a preview first (phase 1), then wait for operator confirmation before completing (phase 2).
+- **End every Phase 1 "awaiting confirmation" preview with an auto-confirm verdict on its own final line.** The dashboard's one-click "Execute & Send" reads this to decide whether it can confirm phase 2 in the background without a human looking. Emit exactly one of:
+  - \`AUTO_CONFIRM: SAFE\` — the preview is a single, clean action that matches what the draft promised the customer, with nothing unexpected.
+  - \`AUTO_CONFIRM: HOLD — <short reason>\` — use this whenever you added a "⚠️ Note", asked the operator a question, hit any business or infrastructure error, previewed more than one action, or anything about the action is ambiguous or differs from the draft.
+  When in doubt, HOLD. This line is for automation only and is stripped before display — keep it terse. Emit it ONLY on phase 1 previews that end in "awaiting confirmation"; never on phase 2 (post-execution) summaries, address-only edits, or plain informational replies.
 - **Exception:** Address-only edits (shipping address updates) — execute immediately, no preview needed. Just report "Address updated on order #X" with the new address. No extra commentary.
 - **On operator confirmation, your next action MUST be a tool call — not prose.** When the operator says "yes", "confirm", "yes confirm", "do it", "go ahead", "proceed", "execute" (or clicks the Yes/Confirm quick-reply button), immediately call the SAME tool from the most recent "awaiting confirmation" preview, with \`confirmed: true\` and the same arguments (including \`draft_order_id\` / \`_refund_data\` / \`_fulfill_data\` / \`keep_order_number\` + \`drop_order_number\` / \`order_number\` / etc — whatever Phase 1's preview said to pass back). Do NOT re-run Phase 1, do NOT show the preview again, do NOT narrate, do NOT ask "shall I proceed?" — the operator already said yes. The only acceptable text on a confirmation turn is the post-execution result summary returned by Phase 2. If you genuinely cannot determine which tool/args to use (no prior Phase 1 in history), say so in one short line and stop — don't guess by re-previewing.
 - Be concise. Show what you did, not a wall of text. Don't add explanations about why you did or didn't need confirmation.
@@ -197,10 +214,34 @@ async function operatorAgent(message, context, history = [], onEvent) {
 
     let response;
     if (onEvent) {
-      // Streaming mode — emit text deltas as they arrive
+      // Streaming mode — emit text deltas as they arrive, but suppress the
+      // trailing `AUTO_CONFIRM:` verdict line (automation-only, stripped before
+      // display). Hold back a short tail so a marker split across deltas
+      // ("AUTO" then "_CONFIRM:") is still caught before it streams to the UI.
       const stream = client.messages.stream(apiParams);
-      stream.on('text', (text) => emit({ type: 'text_delta', data: text }));
+      let acc = '';        // full accumulated text this turn
+      let emitted = 0;      // chars already emitted
+      let cut = false;      // true once the verdict marker is seen
+      stream.on('text', (text) => {
+        if (cut) return;
+        acc += text;
+        const idx = acc.search(/\n*[ \t]*AUTO_CONFIRM:/i);
+        if (idx >= 0) {
+          if (idx > emitted) emit({ type: 'text_delta', data: acc.slice(emitted, idx) });
+          emitted = acc.length;
+          cut = true;
+          return;
+        }
+        // Hold back the last 14 chars in case they're the start of the marker.
+        const safeEnd = Math.max(emitted, acc.length - 14);
+        if (safeEnd > emitted) {
+          emit({ type: 'text_delta', data: acc.slice(emitted, safeEnd) });
+          emitted = safeEnd;
+        }
+      });
       response = await stream.finalMessage();
+      // Flush any held-back tail that turned out not to be the marker.
+      if (!cut && emitted < acc.length) emit({ type: 'text_delta', data: acc.slice(emitted) });
     } else {
       response = await client.messages.create(apiParams);
     }
@@ -220,7 +261,9 @@ async function operatorAgent(message, context, history = [], onEvent) {
       const text = textBlocks.map(b => b.text).join('\n');
       // Always capture the latest text — overwrite, don't accumulate intermediate chatter
       finalResponse = text;
-      emit({ type: 'text', data: text });
+      // Strip the automation-only verdict from the displayed text (it's parsed
+      // out of finalResponse below and returned as a structured field).
+      emit({ type: 'text', data: stripAutoConfirm(text).clean });
     }
 
     if (toolUseBlocks.length === 0) break;
@@ -279,6 +322,12 @@ async function operatorAgent(message, context, history = [], onEvent) {
 
   _t.total_ms = Date.now() - _t.start;
 
+  // Lift the automation-only AUTO_CONFIRM verdict out of the operator-facing
+  // text. `auto_confirm` is the gate signal for the one-click Execute & Send
+  // flow; null means no clean phase-1 verdict was emitted (treated as HOLD).
+  const { clean, verdict } = stripAutoConfirm(finalResponse);
+  finalResponse = clean;
+
   // Fire shadow Sonnet evaluation in background (diagnostic mode)
   runOperatorShadowEval({
     systemPrompt,
@@ -293,6 +342,7 @@ async function operatorAgent(message, context, history = [], onEvent) {
     response: finalResponse,
     tool_results: toolResults,
     history: currentMessages,
+    auto_confirm: verdict,
     _timing: _t,
   };
 }
@@ -453,4 +503,4 @@ Respond as JSON: { "tool_selection": { "rating": "...", "direction": "...", "not
   }
 }
 
-module.exports = { operatorAgent };
+module.exports = { operatorAgent, stripAutoConfirm };

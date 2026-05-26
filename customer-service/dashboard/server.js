@@ -185,7 +185,7 @@ async function apiGetDrafts(query) {
 
   let q = supabase
     .from('cs_ai_drafts')
-    .select('id, gorgias_ticket_id, gorgias_message_id, customer_email, customer_name, customer_country, order_number, draft_response, confidence, advisor_status, message_type, action_type, turn_number, status, created_at')
+    .select('id, gorgias_ticket_id, gorgias_message_id, customer_email, customer_name, customer_country, order_number, draft_response, confidence, advisor_status, message_type, action_type, turn_number, status, created_at, action_result')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -1489,7 +1489,9 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   // Update draft with in-progress action chat (the bottom panel renders this
   // until the action completes; on completion we file the entry into `actions`
   // and clear this scratchpad so the panel returns to idle).
-  const prevResult = draft.action_result || {};
+  // Drop any stale execute_send badge — the operator is now engaging the ticket
+  // manually, so the "needs review" flag from a held one-click run no longer applies.
+  const { execute_send: _staleBadge, ...prevResult } = draft.action_result || {};
   const updates = {
     action_result: {
       ...prevResult,
@@ -1551,6 +1553,104 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Execute & Send — one-click background: phase 1 → gate → phase 2 → send.
+// Reuses apiActionChat (both phases) and apiSendDraft. Auto-confirms ONLY when
+// the operator agent returned AUTO_CONFIRM: SAFE AND exactly one clean
+// awaiting-confirmation write preview (mechanical backstop). Any HOLD, question,
+// error, or multi-write leaves the ticket at phase 1 for manual handling,
+// flagged with a reason badge. Nothing irreversible happens on a HOLD.
+// ---------------------------------------------------------------------------
+
+/** Pure gate decision over a phase-1 operatorAgent result. Exported for tests. */
+function evaluateExecuteSendGate(phase1Result) {
+  const previews = (phase1Result?.tool_results || []).filter(
+    tr => WRITE_TOOLS.has(tr.tool) && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)
+  );
+  if (phase1Result?.auto_confirm?.safe !== true) {
+    return { safe: false, reason: phase1Result?.auto_confirm?.reason || 'Flagged for review.' };
+  }
+  if (previews.length === 0) return { safe: false, reason: 'No clean action preview — needs review.' };
+  if (previews.length > 1) return { safe: false, reason: 'Multiple actions previewed — needs review.' };
+  return { safe: true, reason: null };
+}
+
+async function setExecuteSendOutcome(supabase, draftId, status, reason) {
+  const { data } = await supabase.from('cs_ai_drafts').select('action_result').eq('id', draftId).maybeSingle();
+  const ar = data?.action_result || {};
+  await supabase.from('cs_ai_drafts').update({
+    action_result: { ...ar, execute_send: { status, reason: reason || null, at: new Date().toISOString() } },
+  }).eq('id', draftId);
+}
+
+/**
+ * Pure orchestration of the execute-and-send sequence over injected IO, so the
+ * risk-critical ordering is testable without network: phase 1 → gate → phase 2
+ * → send. Guarantees: a HOLD runs no phase 2 and no send; a phase-2 failure
+ * sends no email; a send failure after a completed action returns 'half'.
+ * Exported for tests.
+ */
+async function orchestrateExecuteAndSend({ command, runPhase1, runPhase2, sendDraft, recordOutcome }) {
+  if (!command) return { outcome: 'error', reason: 'No operator action to execute on this draft.' };
+
+  let r1;
+  try { r1 = await runPhase1(); }
+  catch (err) { await recordOutcome('error', `Phase 1 failed: ${err.message}`); return { outcome: 'error', reason: err.message }; }
+
+  const gate = evaluateExecuteSendGate(r1);
+  if (!gate.safe) {
+    await recordOutcome('hold', gate.reason);
+    return { outcome: 'hold', reason: gate.reason, response: r1.response };
+  }
+
+  let r2;
+  try { r2 = await runPhase2(r1); }
+  catch (err) { await recordOutcome('error', `Action failed: ${err.message}`); return { outcome: 'error', reason: err.message }; }
+
+  const executed = (r2.tool_results || []).find(
+    tr => WRITE_TOOLS.has(tr.tool) && !tr.error && typeof tr.result === 'string'
+      && !/awaiting confirmation/i.test(tr.result)
+  );
+  if (!executed) {
+    const reason = (r2.tool_results || []).find(tr => tr.error)?.error || 'Action did not complete on confirmation.';
+    await recordOutcome('error', reason);
+    return { outcome: 'error', reason, response: r2.response };
+  }
+
+  try { await sendDraft(); }
+  catch (err) {
+    await recordOutcome('half', `Action done, send failed: ${err.message}`);
+    return { outcome: 'half', reason: err.message, action_summary: r2.response };
+  }
+  return { outcome: 'sent', action_summary: r2.response };
+}
+
+async function apiExecuteAndSend(draftId, body = {}) {
+  const supabase = getSupabaseClient();
+  const { data: draft, error: fetchErr } = await supabase
+    .from('cs_ai_drafts').select('*').eq('id', draftId).single();
+  if (fetchErr) throw fetchErr;
+
+  // The operator-edited action box wins; fall back to the advisor's summary.
+  const command = (body.command || draft.structured_output?.operator_action_summary || '').trim();
+
+  return orchestrateExecuteAndSend({
+    command,
+    // apiActionChat persists the phase-1 chat scratchpad, so a HOLD leaves the
+    // operator a preview + quick-reply buttons when they reopen.
+    runPhase1: () => apiActionChat(draftId, { message: command, history: [] }),
+    runPhase2: (r1) => apiActionChat(draftId, { message: 'yes confirm', history: r1.history }),
+    sendDraft: () => apiSendDraft(draftId, {
+      response: body.response,
+      after: body.after || 'snooze',
+      focus_time_seconds: body.focus_time_seconds,
+      attachments: body.attachments,
+      notes: body.notes,
+    }),
+    recordOutcome: (status, reason) => setExecuteSendOutcome(supabase, draftId, status, reason),
+  });
 }
 
 function actionTypeFromTool(toolName, draftActionType) {
@@ -2018,6 +2118,19 @@ async function apiGetTickets(query) {
 
   const { data, error } = await q;
   if (error) throw error;
+
+  // Attach the Execute & Send outcome badge (hold/error/half) from the active
+  // draft's action_result, so a bounced-back one-click run is flagged in queue.
+  const draftIds = data.map(t => t.active_draft_id).filter(Boolean);
+  if (draftIds.length) {
+    const { data: drafts } = await supabase
+      .from('cs_ai_drafts').select('id, action_result').in('id', draftIds);
+    const byId = new Map((drafts || []).map(d => [d.id, d.action_result?.execute_send || null]));
+    for (const t of data) {
+      const es = byId.get(t.active_draft_id);
+      if (es) t.execute_send = es;
+    }
+  }
   return data;
 }
 
@@ -2401,6 +2514,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/refund$/, handler: (body, id) => apiExecuteRefund(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/action-chat$/, handler: (body, id) => apiActionChat(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute-and-send$/, handler: (body, id) => apiExecuteAndSend(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
   { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
@@ -2933,4 +3047,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft };
+module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend };

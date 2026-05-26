@@ -489,6 +489,12 @@ function ticketCardHtml(t) {
   if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
   if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
   if (t.auto_close_path === 'thank_you') row2Parts.push('<span class="badge badge-auto-closed">auto-closed</span>');
+  // Execute & Send bounce-back: a one-click run that held or failed.
+  if (t.execute_send && t.execute_send.status) {
+    const es = t.execute_send;
+    const label = es.status === 'hold' ? 'needs review' : es.status === 'half' ? 'send failed' : 'failed';
+    row2Parts.push(`<span class="badge badge-exec-${es.status === 'hold' ? 'hold' : 'fail'}" title="${esc(es.reason || '')}">${label}</span>`);
+  }
 
   // In search results, show the ticket status so a closed/snoozed match is
   // distinguishable at a glance (the tab queue is already status-homogeneous).
@@ -1453,6 +1459,9 @@ function renderActionPanel(draft) {
   _actionChatHistory = [];
 
   document.getElementById('btn-send').disabled = false;
+  // Execute & Send is shown only on a fresh, un-executed pending action (set below).
+  const execSendBtn = document.getElementById('btn-execute-send');
+  if (execSendBtn) execSendBtn.style.display = 'none';
   panel.style.display = 'block';
 
   const actionType = draft.action_type || '';
@@ -1521,6 +1530,8 @@ function renderActionPanel(draft) {
   if (prefill) {
     input.value = prefill;
     input.placeholder = 'Edit and hit Enter to execute...';
+    // Fresh, un-executed action → offer the one-click background Execute & Send.
+    if (execSendBtn) execSendBtn.style.display = '';
     // Auto-size textarea to fit content (defer to allow DOM to render)
     setTimeout(() => {
       input.style.height = 'auto';
@@ -2562,6 +2573,90 @@ function sendDraft(afterAction, testSnooze) {
     },
     { undoable: afterAction === 'close' }
   );
+}
+
+const EXEC_ACTION_LABELS = {
+  exchange: 'Exchange', 'exchange+refund': 'Exchange + refund', free_order: 'Free order',
+  refund: 'Refund', order_modification: 'Order edit', cancellation: 'Cancellation',
+  split_shipment: 'Split shipment', order_consolidation: 'Consolidation',
+  invoice_kept_items: 'Invoice', discount_code: 'Discount', warehouse_hold: 'Hold',
+};
+
+// One-click background: run the action, auto-confirm phase 2 if nothing is
+// flagged, and send the draft. On hold/error/half the ticket bounces back to
+// its tab (flagged) and a clickable toast explains why. Mirrors sendDraft's
+// optimistic-advance pattern so the operator can move on immediately.
+function executeAndSend() {
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
+  const draftId = ticket.active_draft?.id || null;
+  if (!draftId) { showToast('No action draft to execute', 'error'); return; }
+  if (window.voiceInput) voiceInput.stopActive();
+
+  const response = document.getElementById('draft-editor').value;
+  if (!response.trim()) { alert('Please enter a message'); return; }
+  const command = (document.getElementById('action-chat-input')?.value || '').trim() || undefined;
+
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const actionLabel = EXEC_ACTION_LABELS[ticket.active_draft?.action_type] || 'Action';
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
+  const attachments = getDraftAttachmentsPayload();
+  const body = { response, command, after: 'snooze', focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
+
+  // Optimistic: clear local state and advance immediately so the operator moves on.
+  clearDraftAttachments();
+  localStorage.removeItem(`draft-ticket-${ticketId}`);
+  localStorage.removeItem(`notes-ticket-${ticketId}`);
+  advanceToNextTicket(ticketId);
+
+  _actionsInFlight.add(ticketId);
+  api(`/api/drafts/${draftId}/execute-and-send`, { method: 'POST', body })
+    .then(res => {
+      const outcome = res?.outcome;
+      if (outcome === 'sent') {
+        showToast(`${ticketRef} — ${actionLabel} done + sent`);
+      } else if (outcome === 'hold') {
+        localStorage.setItem(`draft-ticket-${ticketId}`, response);
+        reinsertTicket(ticketId);
+        showClickableToast(`${ticketRef} needs review: ${res.reason || 'flagged'}`, 'warn', ticketId);
+      } else if (outcome === 'half') {
+        localStorage.setItem(`draft-ticket-${ticketId}`, response);
+        reinsertTicket(ticketId);
+        showClickableToast(`${ticketRef} — ${actionLabel} done, send failed. Retry send.`, 'error', ticketId);
+      } else { // 'error' or anything unexpected
+        localStorage.setItem(`draft-ticket-${ticketId}`, response);
+        reinsertTicket(ticketId);
+        showClickableToast(`${ticketRef} — ${actionLabel} failed: ${res?.reason || 'unknown error'}`, 'error', ticketId);
+      }
+      loadStats();
+    })
+    .catch(err => {
+      console.error(`Execute & Send failed for ticket ${ticketId}:`, err);
+      localStorage.setItem(`draft-ticket-${ticketId}`, response);
+      reinsertTicket(ticketId);
+      showClickableToast(`${ticketRef} — Execute & Send failed: ${err.message}`, 'error', ticketId);
+    })
+    .finally(() => { _actionsInFlight.delete(ticketId); });
+}
+
+// Toast that, when clicked, jumps back to the ticket. Used for bounced-back
+// one-click runs so the operator can go handle them with one tap.
+function showClickableToast(message, type, ticketId) {
+  const container = document.getElementById('toast-container');
+  if (!container) { showToast(message, type === 'warn' ? 'info' : type); return; }
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type} toast-clickable`;
+  toast.textContent = message;
+  toast.onclick = () => { toast.remove(); selectTicket(ticketId); };
+  container.appendChild(toast);
+  setTimeout(() => toast.classList.add('toast-visible'), 10);
+  setTimeout(() => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 7000); // longer than normal — these need action
 }
 
 function closeNoReply() {
@@ -3632,8 +3727,14 @@ function cleanMessageBody(html) {
   // collapseQuotedContent will handle the quote (and everything inside it)
   // on its own.
   if (!/<blockquote|gmail_quote/i.test(html)) {
-    html = html.replace(/-{5,}.*$/s, '');
-    html = html.replace(/-{5,}<br\s*\/?>.*$/si, '');
+    // NOTE: we deliberately do NOT strip "from a -{5,} separator to end of
+    // string." Contact-form and intake messages use a dashed separator with the
+    // customer's ACTUAL message *after* it ("Product Question\n-----\n<real
+    // message>"), so a greedy trailing strip silently deletes the real content.
+    // The contact-form label *before* the separator is removed where it matters
+    // (the email intake-card path in renderConversation). Here we only strip the
+    // Gorgias notification template footer, which is identifiable by its
+    // Subject:/Message:/team-name markers.
     html = html.replace(/<strong>Subject:<\/strong>[\s\S]*$/i, '');
     html = html.replace(/\bSubject:\s*\n.*Message:\s*\n/gi, '');
     html = html.replace(/The RUBIES Customer Care team\s*$/i, '');
@@ -4092,12 +4193,20 @@ function extractOrderItems(botMessages) {
 
 /** Render conversation — unified intake card + message thread */
 function renderConversation(messages, ticket) {
-  const boundary = findFirstHumanAgentIndex(messages);
   const parts = [];
+
+  // Operator-initiated tickets (proactive outreach, auto pre-order outreach)
+  // have no customer→bot intake to hide — the thread opens with our own
+  // outbound email. Running findFirstHumanAgentIndex on these can return -1,
+  // which buries the entire conversation in the collapsed "Bot intake"
+  // accordion. Force boundary = 0 so they render as a plain agent→customer
+  // thread with no intake collapse.
+  const isOperatorInitiated = ticket.initiated_by === 'operator';
 
   // boundary > 0: bot flow is messages[0..boundary-1]
   // boundary === -1: entire conversation is bot (no human agent yet)
   // boundary === 0: no bot flow (email-only ticket)
+  const boundary = isOperatorInitiated ? 0 : findFirstHumanAgentIndex(messages);
   let botEnd = boundary > 0 ? boundary : (boundary === -1 ? messages.length : 0);
 
   if (botEnd > 0) {

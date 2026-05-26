@@ -1754,8 +1754,14 @@ main { height: calc(100vh - 56px); }
   overflow: hidden;
 }
 
-.msg-body p { margin: 0 0 2px; }
-/* preserve paragraph breaks in messages */
+/* Preserve readable paragraph spacing. Email clients wrap each paragraph in
+   its own <div> (often dir="auto"), which stacks with no gap and collapses the
+   body into a wall of text. Give block children the same spacing as <p>, and
+   zero the last one so the bubble doesn't gain trailing space. */
+.msg-body p,
+.msg-body div { margin: 0 0 0.6em; }
+.msg-body p:last-child,
+.msg-body div:last-child { margin-bottom: 0; }
 .msg-body div:empty { display: none; }
 
 /* Quoted/forwarded content collapse */
@@ -2793,6 +2799,24 @@ main { height: calc(100vh - 56px); }
   font-weight: 600;
 }
 
+/* Execute & Send bounce-back flags on a queue card */
+.badge-exec-hold {
+  background: rgba(180, 83, 9, 0.16);
+  color: #d97706;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.badge-exec-fail {
+  background: rgba(220, 38, 38, 0.16);
+  color: var(--red);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
 /* Queue items — spam gets visually deprioritized */
 .queue-item-spam {
   opacity: 0.45;
@@ -3343,6 +3367,12 @@ main { height: calc(100vh - 56px); }
 }
 .btn-close:hover { background: #116d33; }
 
+.btn-execute {
+  background: #7c3aed;
+  color: white;
+}
+.btn-execute:hover { background: #6d28d9; }
+
 .btn-train {
   background: #6d28d9;
   color: white;
@@ -3854,7 +3884,10 @@ main { height: calc(100vh - 56px); }
 }
 .toast-success { background: var(--green); color: white; }
 .toast-error { background: var(--red); color: white; }
+.toast-warn { background: #b45309; color: white; }
 .toast-info { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.toast-clickable { cursor: pointer; }
+.toast-clickable:hover { filter: brightness(1.08); }
 .toast-undo {
   background: var(--text);
   color: white;
