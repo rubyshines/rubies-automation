@@ -13,25 +13,11 @@
  * cross-reference the order's line item SKUs against the SKU-level stock state.
  */
 
-const { fetchOrderByNumber, getHoldReasons, apiFetch } = require('../../../reports/lib/warehanceClient');
+const { fetchOrderByNumber, getHoldReasons, apiFetch, fetchSkuStock, fetchSkuStockMany } = require('../../../reports/lib/warehanceClient');
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function fetchSkuStock(sku) {
-  const json = await apiFetch(`/products?search_value=${encodeURIComponent(sku)}`);
-  const products = json.data?.products || [];
-  return products.find(p => p.sku === sku) || null;
-}
-
-async function fetchSkuStockMany(skus) {
-  const unique = [...new Set(skus.filter(Boolean))];
-  const results = await Promise.all(unique.map(fetchSkuStock));
-  const map = new Map();
-  unique.forEach((sku, i) => map.set(sku, results[i]));
-  return map;
-}
 
 function inferLineStatus(orderItem, stock) {
   if (!stock) return 'unknown (no stock data)';

@@ -35,6 +35,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { seedOutboundDraft } = require('../../customer-service/lib/customerOutreach');
 const productCache = require('../../customer-service/lib/productCache');
 const { businessDaysSince } = require('../../shared/businessDays');
+const { fetchSkuStockMany } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 
@@ -150,6 +151,40 @@ function classifyOrder(lineItems, variantStateBySku) {
   else if (oosOther.length > 0) caseLabel = 'C';
   else caseLabel = 'B';
   return { case: caseLabel, leaks, inStockOther, oosOther };
+}
+
+// Filter Shopify-flagged candidates down to those the warehouse genuinely can't
+// fill. `classifyOrder` keys on Shopify "available <= 0", which is true for any
+// fully-committed SKU — including hot sizes that have real on-hand stock and
+// ship normally. Here we re-test each flagged item against live warehouse stock
+// (`stockBySku`, a Map of sku -> { backordered, ... }) and keep an order only if
+// at least one of its leak items is actually backordered (> 0). Non-backordered
+// "leaks" and "other OOS" items are reclassified as in-stock (they will ship),
+// and the A/B/C case is recomputed. Returns the surviving candidates, mutated in
+// place. Orders with nothing genuinely backordered are dropped.
+function filterToBackordered(candidates, stockBySku) {
+  const isBackordered = sku => ((stockBySku.get(sku)?.backordered ?? 0) > 0);
+  const verified = [];
+  for (const c of candidates) {
+    const cl = c.classification;
+    const realLeaks = [];
+    for (const li of cl.leaks) {
+      if (isBackordered(li.sku)) realLeaks.push(li);
+      else cl.inStockOther.push(li);
+    }
+    if (!realLeaks.length) continue; // nothing genuinely backordered → not an unnotified pre-order
+    const realOos = [];
+    for (const li of cl.oosOther) {
+      if (isBackordered(li.sku)) realOos.push(li);
+      else cl.inStockOther.push(li);
+    }
+    cl.leaks = realLeaks;
+    cl.oosOther = realOos;
+    cl.case = (cl.inStockOther.length === 0 && cl.oosOther.length === 0) ? 'A'
+      : (cl.oosOther.length > 0 ? 'C' : 'B');
+    verified.push(c);
+  }
+  return verified;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,8 +419,32 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
     return !existing.has(n);
   });
 
+  if (!fresh.length) return [];
+
+  // Verify candidates against live warehouse stock before flagging. Shopify
+  // "available <= 0" (the signal classifyOrder keys on) only means the variant
+  // is fully committed — true for any fast-moving SKU whose on-hand is reserved
+  // by existing orders — and does NOT mean the order can't ship. Only treat an
+  // item as a genuine unnotified pre-order when the warehouse actually can't
+  // cover it (backordered > 0). Without this, a popular size that shows 0
+  // available but has real on-hand stock (and ships normally) trips the
+  // detector on every new order — a false positive that would email customers
+  // "your order is on backorder" while it's being packed.
+  const checkSkus = [...new Set(fresh.flatMap(c =>
+    [...c.classification.leaks, ...c.classification.oosOther].map(li => li.sku)))];
+  let stockBySku;
+  try {
+    stockBySku = await fetchSkuStockMany(checkSkus);
+  } catch (e) {
+    console.warn(`[unnotifiedPreOrder] warehouse stock check failed — skipping outreach this run: ${e.message}`);
+    return [];
+  }
+  const verified = filterToBackordered(fresh, stockBySku);
+
+  if (!verified.length) return [];
+
   // Attach swap alternatives per leak via the advisor's compare_products tool.
-  for (const c of fresh) {
+  for (const c of verified) {
     const perLeakAlts = [];
     for (const li of c.classification.leaks) {
       const alts = await pickAlternativesViaCompare(li.sku);
@@ -393,7 +452,7 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
     }
     c.alternatives = [...new Set(perLeakAlts)].slice(0, MAX_ALTERNATIVES);
   }
-  return fresh;
+  return verified;
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +551,7 @@ module.exports = {
   detectUnnotifiedPreOrders,
   detectAndDraftUnnotifiedPreOrders,
   classifyOrder,
+  filterToBackordered,
   composeBody,
   formatPreOrderDate,
   hasPreOrderAttr,

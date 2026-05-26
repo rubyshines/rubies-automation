@@ -160,6 +160,29 @@ function warehanceOrderUrl(whOrder) {
   return `https://staging.warehance.com/orders/${whOrder.id}?orderId=${whOrder.id}`;
 }
 
+/**
+ * Fetch the live Warehance product/stock record for a single SKU.
+ * Returns the product object (with on_hand / allocated / available / backordered)
+ * or null if the SKU isn't found.
+ */
+async function fetchSkuStock(sku) {
+  if (!sku) return null;
+  const json = await apiFetch(`/products?search_value=${encodeURIComponent(sku)}`);
+  const products = json.data?.products || [];
+  return products.find(p => p.sku === sku) || null;
+}
+
+/**
+ * Bulk variant of fetchSkuStock. Returns a Map keyed by SKU.
+ */
+async function fetchSkuStockMany(skus) {
+  const unique = [...new Set((skus || []).filter(Boolean))];
+  const results = await Promise.all(unique.map(fetchSkuStock));
+  const map = new Map();
+  unique.forEach((sku, i) => map.set(sku, results[i]));
+  return map;
+}
+
 module.exports = {
   apiFetch,
   apiPatch,
@@ -172,4 +195,6 @@ module.exports = {
   updateShippingMethod,
   cancelOrder,
   warehanceOrderUrl,
+  fetchSkuStock,
+  fetchSkuStockMany,
 };

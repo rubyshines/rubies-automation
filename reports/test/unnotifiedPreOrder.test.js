@@ -6,7 +6,57 @@ const {
   composeBody,
   formatPreOrderDate,
   hasPreOrderAttr,
+  filterToBackordered,
 } = require('../lib/unnotifiedPreOrder');
+
+// Build a candidate in the shape detectUnnotifiedPreOrders produces.
+function candidate(caseLabel, leaks, inStockOther = [], oosOther = []) {
+  return { order: { order_number: '1' }, classification: { case: caseLabel, leaks, inStockOther, oosOther } };
+}
+const stock = entries => new Map(entries.map(([sku, backordered]) => [sku, { backordered }]));
+
+test('filterToBackordered keeps an order whose leak is genuinely backordered', () => {
+  const cands = [candidate('A', [{ sku: 'GAF-BLK-S' }])];
+  const out = filterToBackordered(cands, stock([['GAF-BLK-S', 1]]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].classification.leaks.length, 1);
+  assert.equal(out[0].classification.case, 'A');
+});
+
+test('filterToBackordered drops a false positive (leak shows 0 available but has on-hand stock, not backordered)', () => {
+  // The Naomi-M case: Shopify available 0 (fully committed) but warehouse can fill it.
+  const cands = [candidate('A', [{ sku: 'GAF-BLK-M' }])];
+  const out = filterToBackordered(cands, stock([['GAF-BLK-M', 0]]));
+  assert.equal(out.length, 0);
+});
+
+test('filterToBackordered drops when the SKU has no warehouse stock record', () => {
+  const cands = [candidate('A', [{ sku: 'MYSTERY' }])];
+  const out = filterToBackordered(cands, new Map());
+  assert.equal(out.length, 0);
+});
+
+test('filterToBackordered reclassifies a non-backordered leak as in-stock and recomputes the case', () => {
+  // Two leaks: one truly backordered, one actually fillable → survives as Case B.
+  const cands = [candidate('A', [{ sku: 'GAF-BLK-S' }, { sku: 'GAF-BLK-M' }])];
+  const out = filterToBackordered(cands, stock([['GAF-BLK-S', 1], ['GAF-BLK-M', 0]]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].classification.leaks.length, 1);
+  assert.equal(out[0].classification.leaks[0].sku, 'GAF-BLK-S');
+  assert.equal(out[0].classification.inStockOther.length, 1);
+  assert.equal(out[0].classification.case, 'B');
+});
+
+test('filterToBackordered demotes a non-backordered other-OOS item, flipping Case C to B', () => {
+  // The "other OOS" item actually has stock → it becomes an in-stock item, so
+  // the order is now leak + in-stock other (Case B), not leak-only (Case A).
+  const cands = [candidate('C', [{ sku: 'GAF-BLK-S' }], [], [{ sku: 'GAF-BLK-L' }])];
+  const out = filterToBackordered(cands, stock([['GAF-BLK-S', 1], ['GAF-BLK-L', 0]]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].classification.oosOther.length, 0);
+  assert.equal(out[0].classification.inStockOther.length, 1);
+  assert.equal(out[0].classification.case, 'B');
+});
 
 test('formatPreOrderDate buckets days into beginning/middle/end of month', () => {
   assert.equal(formatPreOrderDate('2026-07-05'), 'beginning of July, 2026');
