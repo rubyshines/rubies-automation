@@ -2021,6 +2021,33 @@ async function apiGetTickets(query) {
   return data;
 }
 
+// Search tickets across ALL statuses (not tab-scoped) by customer name, email,
+// order number, or summary. Returns the same row shape as apiGetTickets so the
+// dashboard can render results with the existing queue-item card renderer.
+async function apiSearchTickets(query) {
+  const supabase = getSupabaseClient();
+  const raw = (query.get('q') || '').trim();
+  const limit = parseInt(query.get('limit') || '50', 10);
+  if (raw.length < 2) return [];
+
+  // Sanitize for PostgREST's .or() grammar: commas separate filters and
+  // parens group them, so a term containing either would corrupt the filter.
+  // Strip those plus the ilike wildcards we add ourselves.
+  const term = raw.replace(/[,()%*\\]/g, ' ').trim();
+  if (!term) return [];
+  const pat = `%${term}%`;
+
+  const { data, error } = await supabase
+    .from('cs_tickets')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at, last_customer_message_at, auto_close_path')
+    .or(`customer_name.ilike.${pat},customer_email.ilike.${pat},order_number.ilike.${pat},summary.ilike.${pat}`)
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return data;
+}
+
 async function apiGetTicketStats() {
   const supabase = getSupabaseClient();
 
@@ -2350,6 +2377,7 @@ const routes = {
   'GET /api/stats/categories': (req) => apiGetStatsCategories(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/history': (req) => apiGetHistory(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets': (req) => apiGetTickets(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/tickets/search': (req) => apiSearchTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/stats': () => apiGetTicketStats(),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');

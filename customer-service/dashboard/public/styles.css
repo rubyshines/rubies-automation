@@ -265,6 +265,78 @@ main { height: calc(100vh - 56px); }
   height: 100%;
 }
 
+/* ─── Ticket search ──────────────────────────────────────── */
+.queue-search {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  transition: box-shadow 0.15s ease;
+}
+.queue-search:focus-within {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.queue-search-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+.queue-search:focus-within .queue-search-icon { color: var(--accent); }
+.queue-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  padding: 3px 0;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.queue-search input::placeholder { color: var(--text-tertiary); }
+.queue-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.queue-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.queue-search-clear:hover { background: var(--border-strong); color: var(--text); }
+
+/* Results header — scrolls with the results, below the sticky search bar */
+.queue-search-head {
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Status pill shown on a search-result card when status isn't "open" */
+.badge-status-closed { background: var(--surface-inset); color: var(--text-secondary); }
+.badge-status-snoozed { background: var(--blue-bg); color: var(--blue); }
+.badge-status-parked { background: var(--yellow-bg); color: var(--yellow); }
+
 #sidebar-context {
   display: flex;
   flex-direction: column;

@@ -8,6 +8,8 @@ let currentQueueTicketIds = []; // ordered list of ticket IDs in current queue v
 let ticketsProcessedThisSession = 0;
 let lastActionTime = 0;
 let ticketNavStack = []; // for back-navigation from past ticket views
+let searchActive = false; // true while the queue shows search results instead of a tab
+let _searchDebounce = null;
 
 let currentDraftId = null;
 let currentDraft = null;
@@ -187,7 +189,8 @@ async function autoRefreshTick() {
     const json = JSON.stringify(stats);
     if (json !== _lastStatsJson) {
       _lastStatsJson = json;
-      loadTicketQueue();
+      // Don't replace search results with the tab queue on a background tick.
+      if (!searchActive) loadTicketQueue();
       loadStats();
     }
   } catch { /* network error — skip this tick */ }
@@ -364,6 +367,14 @@ function switchTab(tab) {
   adhocPanel.style.display = 'none';
 
   localStorage.setItem('activeTab', tab);
+  // Leave search mode when switching tabs (clears the box + restores tab queue).
+  if (searchActive || document.getElementById('queue-search-input')?.value) {
+    const input = document.getElementById('queue-search-input');
+    if (input) input.value = '';
+    const clearBtn = document.getElementById('queue-search-clear');
+    if (clearBtn) clearBtn.style.display = 'none';
+    searchActive = false;
+  }
   // Clear selection when switching tabs
   currentTicketId = null;
   currentTicket = null;
@@ -437,65 +448,127 @@ async function loadTicketQueue() {
       document.getElementById('detail-placeholder').textContent = 'Select a ticket to review';
     }
 
-    container.innerHTML = tickets.map(t => {
-      const isSpam = t.message_type === 'business_outreach';
-      const isCommunity = t.message_type === 'community_outreach';
-      const isGmail = t.source === 'gmail';
-      const ticketChannel = (t.conversation_history || [])[0]?.channel || null;
-      const isParked = t.status === 'parked';
-      const parked = isParked ? parkedAge(t.parked_at) : null;
-      const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
-      const categoryClass = getCategoryClass(t.message_type);
-      const categoryLabel = isSpam ? 'spam' : isCommunity ? 'community' : (t.message_type || 'general').replace(/_/g, ' ');
-      const statusClass = `status-dot-${t.status || 'open'}`;
-      const orderStr = t.order_number ? `#${String(t.order_number).replace(/^#/, '')}` : '';
-      // Timing: ticket age + last activity
-      const ticketAge = t.created_at ? timeAgo(t.created_at, 'short') : '?';
-      const ageTier = ticketAgeTier(t.created_at);
-      const lastReply = t.snoozed_at || t.updated_at;
-      const lastReplyAgo = lastReply ? timeAgo(lastReply, 'short') : null;
-      const timeStr = parked
-        ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
-        : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>${lastReplyAgo && t.snoozed_at ? `<span class="queue-item-replied">replied ${lastReplyAgo}</span>` : ''}`;
-
-      // Unread: there's a customer message that hasn't been viewed yet
-      const isUnread = t.last_customer_message_at
-        && (!t.viewed_at || new Date(t.viewed_at) < new Date(t.last_customer_message_at));
-      const readClass = isUnread ? 'unread' : 'read';
-
-      // Row 2: secondary badges (only shown when there's content)
-      const row2Parts = [];
-      if (ticketChannel === 'facebook-messenger') row2Parts.push('<span class="badge badge-facebook">via Facebook</span>');
-      else if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
-      if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
-      if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
-      if (t.auto_close_path === 'thank_you') row2Parts.push('<span class="badge badge-auto-closed">auto-closed</span>');
-
-      return `
-      <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${readClass} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
-        ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
-        <div class="queue-item-inner">
-          <div class="queue-item-row1">
-            <span class="status-dot ${statusClass}"></span>
-            <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
-            <span class="queue-item-time">${timeStr}</span>
-          </div>
-          ${t.summary ? `<div class="queue-item-summary">${esc(t.summary)}</div>` : ''}
-          <div class="queue-item-row2">
-            <span class="category-badge ${categoryClass}">${esc(categoryLabel)}</span>
-            ${orderStr ? `<span class="queue-item-order">${esc(orderStr)}</span>` : ''}
-            ${row2Parts.join('')}
-          </div>
-        </div>
-      </div>`;
-    }).join('');
+    container.innerHTML = tickets.map(ticketCardHtml).join('');
   } catch (err) {
     console.error('Failed to load ticket queue:', err);
   }
 }
 
+// Render a single ticket as a queue-item card. Shared by the tab queue and
+// search results so both surfaces look and behave identically.
+function ticketCardHtml(t) {
+  const isSpam = t.message_type === 'business_outreach';
+  const isCommunity = t.message_type === 'community_outreach';
+  const isGmail = t.source === 'gmail';
+  const ticketChannel = (t.conversation_history || [])[0]?.channel || null;
+  const isParked = t.status === 'parked';
+  const parked = isParked ? parkedAge(t.parked_at) : null;
+  const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
+  const categoryClass = getCategoryClass(t.message_type);
+  const categoryLabel = isSpam ? 'spam' : isCommunity ? 'community' : (t.message_type || 'general').replace(/_/g, ' ');
+  const statusClass = `status-dot-${t.status || 'open'}`;
+  const orderStr = t.order_number ? `#${String(t.order_number).replace(/^#/, '')}` : '';
+  // Timing: ticket age + last activity
+  const ticketAge = t.created_at ? timeAgo(t.created_at, 'short') : '?';
+  const ageTier = ticketAgeTier(t.created_at);
+  const lastReply = t.snoozed_at || t.updated_at;
+  const lastReplyAgo = lastReply ? timeAgo(lastReply, 'short') : null;
+  const timeStr = parked
+    ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
+    : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>${lastReplyAgo && t.snoozed_at ? `<span class="queue-item-replied">replied ${lastReplyAgo}</span>` : ''}`;
+
+  // Unread: there's a customer message that hasn't been viewed yet
+  const isUnread = t.last_customer_message_at
+    && (!t.viewed_at || new Date(t.viewed_at) < new Date(t.last_customer_message_at));
+  const readClass = isUnread ? 'unread' : 'read';
+
+  // Row 2: secondary badges (only shown when there's content)
+  const row2Parts = [];
+  if (ticketChannel === 'facebook-messenger') row2Parts.push('<span class="badge badge-facebook">via Facebook</span>');
+  else if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
+  if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
+  if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
+  if (t.auto_close_path === 'thank_you') row2Parts.push('<span class="badge badge-auto-closed">auto-closed</span>');
+
+  // In search results, show the ticket status so a closed/snoozed match is
+  // distinguishable at a glance (the tab queue is already status-homogeneous).
+  if (searchActive && t.status && t.status !== 'open') {
+    row2Parts.push(`<span class="badge badge-status-${t.status}">${t.status}</span>`);
+  }
+
+  return `
+  <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${readClass} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
+    ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="status-dot ${statusClass}"></span>
+        <span class="queue-item-name">${esc(t.customer_name || t.customer_email)}</span>
+        <span class="queue-item-time">${timeStr}</span>
+      </div>
+      ${t.summary ? `<div class="queue-item-summary">${esc(t.summary)}</div>` : ''}
+      <div class="queue-item-row2">
+        <span class="category-badge ${categoryClass}">${esc(categoryLabel)}</span>
+        ${orderStr ? `<span class="queue-item-order">${esc(orderStr)}</span>` : ''}
+        ${row2Parts.join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
 // Legacy alias for any remaining references
 function loadQueue() { return loadTicketQueue(); }
+
+// ---------------------------------------------------------------------------
+// Search — find any ticket across all statuses by name, email, order #, or summary
+// ---------------------------------------------------------------------------
+
+// Debounced entry point wired to the search input's `oninput`.
+function onSearchInput(value) {
+  clearTimeout(_searchDebounce);
+  const term = (value || '').trim();
+  const clearBtn = document.getElementById('queue-search-clear');
+  if (clearBtn) clearBtn.style.display = term ? 'flex' : 'none';
+  if (term.length < 2) {
+    if (searchActive) exitSearch();
+    return;
+  }
+  _searchDebounce = setTimeout(() => runSearch(term), 250);
+}
+
+async function runSearch(term) {
+  searchActive = true;
+  const container = document.getElementById('queue-items');
+  try {
+    const tickets = await api(`/api/tickets/search?q=${encodeURIComponent(term)}`);
+    currentQueueTicketIds = tickets.map(t => t.id);
+    const head = `<div class="queue-search-head">${tickets.length} ${tickets.length === 1 ? 'result' : 'results'} for &ldquo;${esc(term)}&rdquo;</div>`;
+    if (!tickets.length) {
+      container.innerHTML = head + `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">No tickets match &ldquo;${esc(term)}&rdquo;</div>`;
+      return;
+    }
+    container.innerHTML = head + tickets.map(ticketCardHtml).join('');
+  } catch (err) {
+    console.error('Ticket search failed:', err);
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--accent)">Search failed. Try again.</div>`;
+  }
+}
+
+// Clear the box and return to the active tab's queue.
+function clearSearch() {
+  const input = document.getElementById('queue-search-input');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('queue-search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  exitSearch();
+  if (input && !isMobile()) input.focus();
+}
+
+// Leave search mode and restore the tab queue (without touching the input value).
+function exitSearch() {
+  clearTimeout(_searchDebounce);
+  searchActive = false;
+  loadTicketQueue();
+}
 
 function showSidebarContext() {
   document.getElementById('sidebar-queue').style.display = 'none';
