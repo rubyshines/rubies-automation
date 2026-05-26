@@ -34,7 +34,7 @@ const { getSupabaseClient } = require('../shared/supabaseClient');
 const { getSendgridClient } = require('../shared/sendgridClient');
 const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
-const { detectAndDraftShopAppLeaks } = require('./lib/shopAppLeak');
+const { detectAndDraftUnnotifiedPreOrders } = require('./lib/unnotifiedPreOrder');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -241,7 +241,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
   const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
   const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
-  // Orders with an unresolved auto-author note (e.g. Shop App leak auto-drafter)
+  // Orders with an unresolved auto-author note (e.g. unnotified pre-order auto-drafter)
   // already have a pending draft in CS Advisor — surface them in their own
   // info section, not in Attention/Urgent.
   const ufAutoDrafted = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author === 'auto');
@@ -285,7 +285,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     ...ufAttention.map(r => unfulfilledRow(r)),
   ];
 
-  // 5. Auto-drafted into CS Advisor (Shop App leak outreach pending operator review)
+  // 5. Auto-drafted into CS Advisor (unnotified pre-order outreach pending operator review)
   const autoDraftedRows = ufAutoDrafted.map(r => unfulfilledRow(r));
 
   // 6. Auto-Resolved
@@ -512,12 +512,12 @@ async function run() {
     checkShippingDelays({ showResolved: opts.showResolved }),
   ]);
 
-  // Shop App pre-order leaks → seed pending drafts in CS Advisor and refresh
+  // Unnotified pre-orders → seed pending drafts in CS Advisor and refresh
   // r.note on affected results so they bucket as "Drafted in CS Advisor (auto)"
   // rather than Attention.
   if (!opts.shippingOnly) {
     try {
-      const { drafted } = await detectAndDraftShopAppLeaks(supabase, unfulfilled.results, { write: true });
+      const { drafted } = await detectAndDraftUnnotifiedPreOrders(supabase, unfulfilled.results, { write: true });
       const sentCount = drafted.filter(d => d.status === 'drafted').length;
       if (sentCount > 0) {
         const justDrafted = drafted.filter(d => d.status === 'drafted').map(d => parseInt(d.order_number, 10));
@@ -535,15 +535,15 @@ async function run() {
           const n = byOrder.get(r.order.order_number);
           if (n) r.note = n;
         }
-        console.log(`  [shopAppLeak] ${sentCount} Shop App leak draft(s) seeded into CS Advisor`);
+        console.log(`  [unnotifiedPreOrder] ${sentCount} unnotified pre-order draft(s) seeded into CS Advisor`);
       }
       const failed = drafted.filter(d => d.status === 'failed');
       for (const f of failed) {
-        unfulfilled.errors.push(`Shop App leak draft for #${f.order_number}: ${f.error}`);
+        unfulfilled.errors.push(`Unnotified pre-order draft for #${f.order_number}: ${f.error}`);
       }
     } catch (err) {
-      console.warn(`  [shopAppLeak] error: ${err.message}`);
-      unfulfilled.errors.push(`Shop App leak detection: ${err.message}`);
+      console.warn(`  [unnotifiedPreOrder] error: ${err.message}`);
+      unfulfilled.errors.push(`Unnotified pre-order detection: ${err.message}`);
     }
   }
 

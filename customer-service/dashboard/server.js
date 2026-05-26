@@ -615,7 +615,7 @@ async function apiDeleteDraft(id, body = {}) {
 
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts')
-    .select('gorgias_ticket_id, message_type, confidence, advisor_status')
+    .select('ticket_id, gorgias_ticket_id, message_type, confidence, advisor_status')
     .eq('id', id)
     .maybeSingle();
   if (fetchErr) throw fetchErr;
@@ -645,8 +645,17 @@ async function apiDeleteDraft(id, body = {}) {
     advisor_status: draft.advisor_status,
   });
 
+  // Close the ticket. updateTicketStatus matches on gorgias_ticket_id; for
+  // proactive-outreach drafts with no Gorgias ticket yet (created via
+  // create_outreach_ticket), close the cs_tickets row directly by id so it
+  // doesn't linger in the queue pointing at a deleted draft.
   if (draft.gorgias_ticket_id) {
     await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+  } else if (draft.ticket_id) {
+    const now = new Date().toISOString();
+    await supabase.from('cs_tickets')
+      .update({ status: 'closed', updated_at: now, closed_at: now, active_draft_id: null })
+      .eq('id', draft.ticket_id);
   }
 
   return { success: true };

@@ -6,7 +6,7 @@ const {
   composeBody,
   formatPreOrderDate,
   hasPreOrderAttr,
-} = require('../lib/shopAppLeak');
+} = require('../lib/unnotifiedPreOrder');
 
 test('formatPreOrderDate buckets days into beginning/middle/end of month', () => {
   assert.equal(formatPreOrderDate('2026-07-05'), 'beginning of July, 2026');

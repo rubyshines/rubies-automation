@@ -1,26 +1,28 @@
 /**
- * Shop App pre-order leak — detection + auto-draft into CS Advisor.
+ * Unnotified pre-order — detection + auto-draft into CS Advisor.
  *
- * Background: the Shopify Shop App bypasses our custom theme, so its checkout
- * never stamps line items with the `Pre-order` customAttribute that the
- * Pre-Order Now app applies on the Online Store. A customer can buy an OOS
- * "continue selling" variant via Shop App without ever being told it's a
- * pre-order; the order sits unfulfilled until inventory arrives.
+ * Background: a customer can buy an out-of-stock "continue selling" variant
+ * without ever being told it's a pre-order. The most common cause is the
+ * Shopify Shop App, which bypasses our custom theme and so never stamps line
+ * items with the `Pre-order` customAttribute that the Pre-Order Now app applies
+ * on the Online Store — but the detection is channel-agnostic (an Online Store
+ * race condition produces the same signal). Either way the order sits
+ * unfulfilled until inventory arrives and the customer is left uninformed.
  *
  * Detection signal (per-line-item):
  *   variant inventory ≤ 0
  *   AND no `Pre-order` customAttribute on the line item
  *   AND line item is unfulfilled
  *
- * For each leak order we compose a per-case A/B/C draft (mirrors Naomi
+ * For each affected order we compose a per-case A/B/C draft (mirrors Naomi
  * outreach taxonomy) and seed it into CS Advisor via seedOutboundDraft().
  * Jamie reviews and sends from the dashboard. Idempotent via the
  * order_alert_notes table.
  *
  * Entry points:
- *   detectAndDraftShopAppLeaks(supabase, unfulfilledResults, opts)
+ *   detectAndDraftUnnotifiedPreOrders(supabase, unfulfilledResults, opts)
  *     - cron-callable; returns { drafted, skipped }.
- *   CLI: node reports/lib/shopAppLeak.js [--write]
+ *   CLI: node reports/lib/unnotifiedPreOrder.js [--write]
  *     - default: dry-run print only; --write actually seeds drafts.
  */
 
@@ -39,7 +41,7 @@ const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 const DELAY_ACKNOWLEDGE_DAYS = 3;
 const MAX_ALTERNATIVES = 2;
 
-const NOTE_PREFIX = '[auto-draft] Shop App pre-order outreach drafted';
+const NOTE_PREFIX = '[auto-draft] Unnotified pre-order outreach drafted';
 const SUBJECT = 'ACTION required on your recent RUBIES order';
 const SIGNOFF = 'Take care,\nJamie Alexander\nRUBIES Founder';
 // Orders older than this with no existing notes get skipped — they predate
@@ -352,7 +354,7 @@ async function fetchOrdersWithUnresolvedNotes(supabase, orderNumbers) {
   return new Set((data || []).map(n => n.order_number));
 }
 
-async function detectShopAppLeaks(supabase, unfulfilledResults) {
+async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
   const orders = unfulfilledResults.map(r => r.order);
 
   // Collect all SKUs across all unfulfilled orders to do one bulk variant lookup.
@@ -405,7 +407,7 @@ async function draftLeakOutreach({ leaks, write = false }) {
     const daysSinceOrder = order.created_at ? businessDaysSince(order.created_at) || 0 : 0;
     const plain = composeBody({ orderNumber, classification, alternatives, daysSinceOrder });
     const html = plainToHtml(plain);
-    const summary = `Shop App leak (Case ${classification.case}) — ${classification.leaks.length} pre-order item${classification.leaks.length > 1 ? 's' : ''}`;
+    const summary = `Unnotified pre-order (Case ${classification.case}) — ${classification.leaks.length} pre-order item${classification.leaks.length > 1 ? 's' : ''}`;
     const noteText = `${NOTE_PREFIX} — awaiting send/customer choice (Case ${classification.case})`;
 
     if (!write) {
@@ -422,7 +424,7 @@ async function draftLeakOutreach({ leaks, write = false }) {
         plainBody: plain,
         htmlBody: html,
         summary,
-        steer: `Auto-drafted Shop App pre-order leak outreach. Case ${classification.case}.`,
+        steer: `Auto-drafted unnotified pre-order outreach. Case ${classification.case}.`,
         noteText,
         author: 'auto',
       });
@@ -442,10 +444,10 @@ async function draftLeakOutreach({ leaks, write = false }) {
   return results;
 }
 
-async function detectAndDraftShopAppLeaks(supabase, unfulfilledResults, { write = false } = {}) {
+async function detectAndDraftUnnotifiedPreOrders(supabase, unfulfilledResults, { write = false } = {}) {
   await productCache.loadFromSupabase();
-  try { await initCsConfig(); } catch (e) { console.warn(`[shopAppLeak] initCsConfig: ${e.message}`); }
-  const leaks = await detectShopAppLeaks(supabase, unfulfilledResults);
+  try { await initCsConfig(); } catch (e) { console.warn(`[unnotifiedPreOrder] initCsConfig: ${e.message}`); }
+  const leaks = await detectUnnotifiedPreOrders(supabase, unfulfilledResults);
   if (!leaks.length) return { drafted: [], skipped: 0 };
   const results = await draftLeakOutreach({ leaks, write });
   return { drafted: results, skipped: 0 };
@@ -464,14 +466,14 @@ if (require.main === module) {
       : null;
     const { checkUnfulfilledOrders } = require('./unfulfilled');
     const supabase = getSupabaseClient();
-    console.log(`Shop App leak detection — ${write ? 'LIVE (will seed drafts)' : 'dry run (no writes)'}${orderFilter ? ` — filter: ${[...orderFilter].join(',')}` : ''}\n`);
+    console.log(`Unnotified pre-order detection — ${write ? 'LIVE (will seed drafts)' : 'dry run (no writes)'}${orderFilter ? ` — filter: ${[...orderFilter].join(',')}` : ''}\n`);
     const uf = await checkUnfulfilledOrders();
     const filtered = orderFilter
       ? uf.results.filter(r => orderFilter.has(parseInt(String(r.order.order_number).replace('#', ''), 10)))
       : uf.results;
-    const { drafted } = await detectAndDraftShopAppLeaks(supabase, filtered, { write });
+    const { drafted } = await detectAndDraftUnnotifiedPreOrders(supabase, filtered, { write });
     if (!drafted.length) {
-      console.log('No Shop App leak candidates found.');
+      console.log('No unnotified pre-order candidates found.');
       return;
     }
     for (const r of drafted) {
@@ -487,8 +489,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  detectShopAppLeaks,
-  detectAndDraftShopAppLeaks,
+  detectUnnotifiedPreOrders,
+  detectAndDraftUnnotifiedPreOrders,
   classifyOrder,
   composeBody,
   formatPreOrderDate,
