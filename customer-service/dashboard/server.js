@@ -1555,6 +1555,46 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
   return result;
 }
 
+// Resolve the draft an operator action should anchor onto. Prefer the ticket's
+// active draft; for reopened/snoozed tickets (active_draft_id is nulled on
+// send/snooze/close, then the ticket flips back to open via the Gorgias
+// ticket-updated webhook without relinking) fall back to the most recent draft so
+// the action still runs with full context and is filed into the inline timeline.
+// Returns null only when the ticket has no drafts at all.
+async function resolveActionAnchorDraftId(ticketId) {
+  const supabase = getSupabaseClient();
+  const { data: t } = await supabase.from('cs_tickets')
+    .select('active_draft_id').eq('id', ticketId).single();
+  if (t?.active_draft_id) return t.active_draft_id;
+  const { data: latest } = await supabase.from('cs_ai_drafts')
+    .select('id').eq('ticket_id', ticketId)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return latest?.id || null;
+}
+
+// Run the operator agent with ticket-level context only — used when a ticket has
+// no drafts to anchor onto (rare; e.g. a manually created ticket). The executed
+// action is not filed into a draft's actions[] since there's no draft to hold it.
+async function apiActionChatNoDraft(ticketId, body, { onStream } = {}) {
+  const { operatorAgent } = require('../lib/operatorAgent');
+  const supabase = getSupabaseClient();
+  const { data: t } = await supabase.from('cs_tickets')
+    .select('customer_email, order_number, order_context, gorgias_ticket_id')
+    .eq('id', ticketId).single();
+  const orderCtx = t?.order_context || {};
+  const context = {
+    customer_email: t?.customer_email,
+    order_number: (t?.order_number || '').replace('#', ''),
+    order_items: orderCtx.items || [],
+    fulfillment_status: orderCtx.fulfillment_status || null,
+    intake: null,
+    gorgias_ticket_id: t?.gorgias_ticket_id,
+  };
+  const result = await operatorAgent(body.message, context, body.history || [], onStream);
+  result.links = extractActionLinks(result.tool_results);
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Execute & Send — one-click background: phase 1 → gate → phase 2 → send.
 // Reuses apiActionChat (both phases) and apiSendDraft. Auto-confirms ONLY when
@@ -2702,29 +2742,14 @@ const paramRoutes = [
       });
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/action-chat$/, handler: async (body, id) => {
-    const supabase = getSupabaseClient();
-    const { data: t } = await supabase.from('cs_tickets')
-      .select('active_draft_id, customer_email, order_number, order_context, gorgias_ticket_id')
-      .eq('id', parseInt(id)).single();
-    if (t?.active_draft_id) return apiActionChat(t.active_draft_id, body);
-
-    // No active draft — run action chat with ticket context directly
-    const { operatorAgent } = require('../lib/operatorAgent');
-    const orderCtx = t?.order_context || {};
-    const context = {
-      customer_email: t?.customer_email,
-      order_number: (t?.order_number || '').replace('#', ''),
-      order_items: orderCtx.items || [],
-      fulfillment_status: orderCtx.fulfillment_status || null,
-      intake: null,
-      gorgias_ticket_id: t?.gorgias_ticket_id,
-    };
+    const ticketId = parseInt(id);
+    // Anchor on the active draft, or the most recent draft for reopened/snoozed
+    // tickets; fall back to ticket-only context when the ticket has no drafts.
+    const draftId = await resolveActionAnchorDraftId(ticketId);
     try {
-      const result = await operatorAgent(body.message, context, body.history || []);
-      result.links = extractActionLinks(result.tool_results);
-      return result;
+      return draftId ? await apiActionChat(draftId, body) : await apiActionChatNoDraft(ticketId, body);
     } catch (err) {
-      console.error(`[action-chat] No-draft fallback error:`, err.message, err.stack);
+      console.error(`[action-chat] error:`, err.message, err.stack);
       throw err;
     }
   }},
@@ -2929,13 +2954,12 @@ async function handleRequest(req, res) {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
         try {
-          const supabase = getSupabaseClient();
-          const { data: t } = await supabase.from('cs_tickets')
-            .select('active_draft_id')
-            .eq('id', ticketId).single();
-          if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-
-          const result = await apiActionChat(t.active_draft_id, body, { onStream: sendEvent });
+          // Anchor on the active draft, or the most recent draft for reopened/
+          // snoozed tickets (active_draft_id is null but a prior draft exists).
+          const draftId = await resolveActionAnchorDraftId(ticketId);
+          const result = draftId
+            ? await apiActionChat(draftId, body, { onStream: sendEvent })
+            : await apiActionChatNoDraft(ticketId, body, { onStream: sendEvent });
           sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
         } catch (err) {
           sendEvent({ type: 'error', message: err.message });
