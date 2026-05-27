@@ -11,6 +11,8 @@
  * Free tier: 200M tokens/month.
  */
 
+const { embedTexts } = require('../../shared/aiClient');
+
 const VOYAGE_API_URL = 'https://api.voyageai.com/v1/embeddings';
 const DEFAULT_MODEL = 'voyage-3-lite'; // 512 dimensions
 
@@ -35,25 +37,13 @@ async function embed(text, { model = DEFAULT_MODEL } = {}) {
   const cacheKey = `${model}:${text.slice(0, 200)}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
 
-  const response = await fetch(VOYAGE_API_URL, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${getApiKey()}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      input: [text],
-      model,
-    }),
+  const { vectors } = await embedTexts({
+    component: 'kb_embeddings',
+    model,
+    texts: [text],
+    metadata: { mode: 'single' },
   });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Voyage API error ${response.status}: ${errText}`);
-  }
-
-  const data = await response.json();
-  const vector = data.data[0].embedding;
+  const vector = vectors[0];
 
   // Cache it
   if (cache.size >= CACHE_MAX) {
@@ -78,27 +68,12 @@ async function embedBatch(texts, { model = DEFAULT_MODEL, batchSize = 128 } = {}
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
 
-    const response = await fetch(VOYAGE_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${getApiKey()}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        input: batch,
-        model,
-      }),
+    const { vectors } = await embedTexts({
+      component: 'kb_embeddings',
+      model,
+      texts: batch,
+      metadata: { mode: 'batch', batch_index: i / batchSize },
     });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Voyage API error ${response.status}: ${errText}`);
-    }
-
-    const data = await response.json();
-    const vectors = data.data
-      .sort((a, b) => a.index - b.index)
-      .map(d => d.embedding);
 
     allVectors.push(...vectors);
 

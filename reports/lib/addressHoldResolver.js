@@ -9,6 +9,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 const { releaseAddressHold } = require('./warehanceClient');
 
 let _ai = null;
@@ -192,9 +193,9 @@ async function fetchStreetViewImage(address) {
 
 async function classifyAddressImage(imageBuffer, addressStr) {
   try {
-    const ai = getAI();
-    const response = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    const response = await callClaude({
+      component: 'address_hold_resolver',
+      model: 'claude-sonnet-4-6',
       max_tokens: 150,
       messages: [{
         role: 'user',

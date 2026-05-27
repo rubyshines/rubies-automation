@@ -14,6 +14,7 @@
 require('dotenv').config();
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../shared/aiClient');
 const { getSupabaseClient } = require('../shared/supabaseClient');
 
 const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
@@ -53,7 +54,9 @@ function parseHaikuResponse(text) {
 }
 
 async function classifyDelta(client, original, final) {
-  const response = await client.messages.create({
+  const response = await callClaude({
+    component: 'daily_cs_comparison',
+    metadata: { task: 'classify_delta' },
     model: HAIKU_MODEL,
     max_tokens: 256,
     messages: [{
@@ -74,7 +77,9 @@ ${(final || '').slice(0, 2000)}`,
 }
 
 async function scorePostSteer(client, steeredDraft, final) {
-  const response = await client.messages.create({
+  const response = await callClaude({
+    component: 'daily_cs_comparison',
+    metadata: { task: 'score_post_steer' },
     model: HAIKU_MODEL,
     max_tokens: 128,
     messages: [{

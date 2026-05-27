@@ -27,8 +27,8 @@ let insertShouldThrow; // when true, .insert(...).select().single() rejects
 class MockAnthropic {
   constructor() {
     this.messages = {
-      create: (params) => mockCreate(params),
-      stream: (params) => mockStream(params),
+      create: (params, options) => mockCreate(params, options),
+      stream: (params, options) => mockStream(params, options),
     };
   }
 }
@@ -320,6 +320,22 @@ describe('callClaude — validation', () => {
     const res = await callClaude({ component: 'x', model: 'no-such-model', messages: [], max_tokens: 10 });
     assert.equal(insertedRows[0].cost_usd, 0);
     assert.equal(res.text, 'ok');
+  });
+
+  it('forwards requestOptions as the second arg to messages.create', async () => {
+    let seenOptions;
+    mockCreate = (params, options) => {
+      seenOptions = options;
+      return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } };
+    };
+    await callClaude({
+      component: 'competitor_price_extractor',
+      model: 'claude-sonnet-4-6',
+      messages: [],
+      max_tokens: 10,
+      requestOptions: { timeout: 30000, maxRetries: 2 },
+    });
+    assert.deepEqual(seenOptions, { timeout: 30000, maxRetries: 2 });
   });
 });
 

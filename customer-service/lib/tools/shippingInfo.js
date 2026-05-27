@@ -13,6 +13,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { addBusinessDays } = require('../../../shared/businessDays');
+const { callClaude } = require('../../../shared/aiClient');
 
 // ---------------------------------------------------------------------------
 // Country detection — extract country from customer message
@@ -229,10 +230,10 @@ async function handleShippingInfo({ customer_email, issue_description, _context 
   let polished = text;
   if (customerMessage) {
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const ai = new Anthropic();
-      const response = await ai.messages.create({
-        model: 'claude-sonnet-4-20250514',
+      const response = await callClaude({
+        component: 'shipping_info',
+        metadata: { task: 'polish_domestic' },
+        model: 'claude-sonnet-4-6',
         max_tokens: 400,
         messages: [{
           role: 'user',
@@ -339,10 +340,10 @@ async function handleDutiesInquiry({ customer_email, issue_description, _context
   let polished = text;
   if (customerMessage) {
     try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      const ai = new Anthropic();
-      const response = await ai.messages.create({
-        model: 'claude-sonnet-4-20250514',
+      const response = await callClaude({
+        component: 'shipping_info',
+        metadata: { task: 'polish_intl' },
+        model: 'claude-sonnet-4-6',
         max_tokens: 400,
         messages: [{
           role: 'user',

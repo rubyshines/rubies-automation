@@ -132,6 +132,7 @@ function extractTextAndTools(response) {
  *   stream — when true, uses messages.stream() and resolves on finalMessage()
  *   onText — optional (text:string)=>void, called per text delta in stream mode
  *   ticket_id, draft_id, parent_call_id, metadata — optional tracking fields
+ *   requestOptions — optional per-request SDK options (timeout, maxRetries)
  */
 async function callClaude(params) {
   const {
@@ -143,6 +144,7 @@ async function callClaude(params) {
     draft_id = null,
     parent_call_id = null,
     metadata = null,
+    requestOptions, // optional per-request SDK options (timeout, maxRetries, …)
     ...sdkParams
   } = params;
 
@@ -155,13 +157,17 @@ async function callClaude(params) {
   let response;
   try {
     if (stream) {
-      const s = getAnthropic().messages.stream(apiParams);
+      const s = requestOptions
+        ? getAnthropic().messages.stream(apiParams, requestOptions)
+        : getAnthropic().messages.stream(apiParams);
       if (typeof onText === 'function') {
         s.on('text', (text) => onText(text));
       }
       response = await s.finalMessage();
     } else {
-      response = await getAnthropic().messages.create(apiParams);
+      response = requestOptions
+        ? await getAnthropic().messages.create(apiParams, requestOptions)
+        : await getAnthropic().messages.create(apiParams);
     }
   } catch (err) {
     // Error path: record a row (cost 0) then rethrow. Recording is fail-soft.

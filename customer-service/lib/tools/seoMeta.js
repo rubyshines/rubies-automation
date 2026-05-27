@@ -284,9 +284,9 @@ async function handleDraft({ type, handle, audience, extra_context }) {
     `Return strict JSON: {"title":"...","description":"...","reasoning":"..."}`,
   ].filter(Boolean).join('\n');
 
-  const Anthropic = require('@anthropic-ai/sdk');
-  const ai = new Anthropic();
-  const response = await ai.messages.create({
+  const { callClaude } = require('../../../shared/aiClient');
+  const response = await callClaude({
+    component: 'seo_meta_draft',
     model: 'claude-opus-4-6',
     max_tokens: 800,
     system: HOUSE_STYLE_PROMPT,
