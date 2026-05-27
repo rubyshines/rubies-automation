@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 
 // Serialize all Claude calls — one at a time to respect token-per-minute limits.
 // Scraping remains parallel; only the AI step is queued.
@@ -55,11 +56,13 @@ async function analyzeProspect({ companyName, website, city, state, content, mod
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in .env');
 
-  const client = new Anthropic({ apiKey, timeout: 30000, maxRetries: 2 });
   const userPrompt = buildUserPrompt(companyName, website || '(no website)', city, state, content || '(no content available)');
 
   async function attempt(extraInstruction = '') {
-    const response = await client.messages.create({
+    const response = await callClaude({
+      component: 'b2b_analyzer',
+      metadata: { company_name: companyName, city, state },
+      requestOptions: { timeout: 30000, maxRetries: 2 },
       model: model || 'claude-haiku-4-5-20251001',
       max_tokens: 1500,
       temperature: 0,

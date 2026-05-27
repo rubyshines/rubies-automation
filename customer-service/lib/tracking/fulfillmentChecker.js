@@ -12,6 +12,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../../shared/aiClient');
 const { addBusinessDays, businessDaysBetween } = require('../../../shared/businessDays');
 const { relativeDay } = require('./analyzer');
 
@@ -269,8 +270,8 @@ async function draftUnfulfilledResponse(investigation, context) {
 
   // Light AI polish — smooth phrasing only, no added content
   try {
-    const ai = getAI();
-    const response = await ai.messages.create({
+    const response = await callClaude({
+      component: 'fulfillment_checker',
       model: 'claude-opus-4-6',
       max_tokens: 400,
       messages: [{

@@ -15,6 +15,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 
 let _client = null;
 function getClient() {
@@ -159,9 +160,10 @@ async function composeOutboundDraft({ context, orderNumber, steer }) {
   }
 
   const userMessage = buildUserMessage({ context, steer, orderNumber });
-  const client = getClient();
 
-  const response = await client.messages.create({
+  const response = await callClaude({
+    component: 'compose_outbound_draft',
+    metadata: { customer_email: context?.customer_email || null, order_number: orderNumber },
     model: 'claude-opus-4-6',
     max_tokens: 1024,
     system: SYSTEM_PROMPT,

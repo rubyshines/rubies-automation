@@ -7,6 +7,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
 
 let _anthropic;
@@ -127,6 +128,8 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
   const toolResults = [];
   const maxIterations = 10;
   const emit = onEvent || (() => {});
+  // Best-effort tool-loop linkage: first call in the loop parents the rest.
+  let parentCallId = null;
 
   for (let i = 0; i < maxIterations; i++) {
     const _tApi = Date.now();
@@ -140,12 +143,21 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
 
     let response;
     if (onEvent) {
-      const stream = client.messages.stream(apiParams);
-      stream.on('text', (text) => emit({ type: 'text_delta', data: text }));
-      response = await stream.finalMessage();
+      response = await callClaude({
+        component: 'cs_operator_standalone',
+        ...apiParams,
+        stream: true,
+        onText: (text) => emit({ type: 'text_delta', data: text }),
+        parent_call_id: parentCallId,
+      });
     } else {
-      response = await client.messages.create(apiParams);
+      response = await callClaude({
+        component: 'cs_operator_standalone',
+        ...apiParams,
+        parent_call_id: parentCallId,
+      });
     }
+    if (parentCallId === null) parentCallId = response._ai_call_id;
 
     _t.api_calls.push({
       duration_ms: Date.now() - _tApi,

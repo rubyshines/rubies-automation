@@ -8,6 +8,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../../shared/aiClient');
 const { addBusinessDays, businessDaysSince } = require('../../../shared/businessDays');
 
 let _client = null;
@@ -50,9 +51,10 @@ IMPORTANT:
 - Return ONLY JSON. No explanation.`;
 
 async function parseTrackingPage(rawText, carrier) {
-  const ai = getClient();
-  const response = await ai.messages.create({
-    model: 'claude-sonnet-4-20250514',
+  const response = await callClaude({
+    component: 'tracking_analyzer',
+    metadata: { task: 'parse_tracking_page', carrier },
+    model: 'claude-sonnet-4-6',
     max_tokens: 1500,
     messages: [{
       role: 'user',
@@ -464,9 +466,10 @@ async function summarizeForCustomer(trackingData, context) {
 
   // Light AI polish — smooth phrasing only, no added content
   try {
-    const ai = getClient();
-    const response = await ai.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    const response = await callClaude({
+      component: 'tracking_analyzer',
+      metadata: { task: 'polish_response' },
+      model: 'claude-sonnet-4-6',
       max_tokens: 400,
       messages: [{
         role: 'user',

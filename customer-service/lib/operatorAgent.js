@@ -7,6 +7,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 const { PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./sizingEngine');
 const { KNOWN_SIZES_UPPER } = require('./sizeUtils');
 
@@ -201,6 +202,10 @@ async function operatorAgent(message, context, history = [], onEvent) {
   let toolResults = [];
   const maxIterations = 10;
   const emit = onEvent || (() => {});
+  const _ticketId = context.gorgias_ticket_id || context.ticket_id || null;
+  const _draftId = context.draft_id || (context.draft && context.draft.id) || null;
+  // Best-effort tool-loop linkage: first call in the loop parents the rest.
+  let parentCallId = null;
 
   for (let i = 0; i < maxIterations; i++) {
     const _tApi = Date.now();
@@ -218,33 +223,44 @@ async function operatorAgent(message, context, history = [], onEvent) {
       // trailing `AUTO_CONFIRM:` verdict line (automation-only, stripped before
       // display). Hold back a short tail so a marker split across deltas
       // ("AUTO" then "_CONFIRM:") is still caught before it streams to the UI.
-      const stream = client.messages.stream(apiParams);
       let acc = '';        // full accumulated text this turn
       let emitted = 0;      // chars already emitted
       let cut = false;      // true once the verdict marker is seen
-      stream.on('text', (text) => {
-        if (cut) return;
-        acc += text;
-        const idx = acc.search(/\n*[ \t]*AUTO_CONFIRM:/i);
-        if (idx >= 0) {
-          if (idx > emitted) emit({ type: 'text_delta', data: acc.slice(emitted, idx) });
-          emitted = acc.length;
-          cut = true;
-          return;
-        }
-        // Hold back the last 14 chars in case they're the start of the marker.
-        const safeEnd = Math.max(emitted, acc.length - 14);
-        if (safeEnd > emitted) {
-          emit({ type: 'text_delta', data: acc.slice(emitted, safeEnd) });
-          emitted = safeEnd;
-        }
+      response = await callClaude({
+        component: 'cs_operator',
+        ...apiParams,
+        stream: true,
+        onText: (text) => {
+          if (cut) return;
+          acc += text;
+          const idx = acc.search(/\n*[ \t]*AUTO_CONFIRM:/i);
+          if (idx >= 0) {
+            if (idx > emitted) emit({ type: 'text_delta', data: acc.slice(emitted, idx) });
+            emitted = acc.length;
+            cut = true;
+            return;
+          }
+          // Hold back the last 14 chars in case they're the start of the marker.
+          const safeEnd = Math.max(emitted, acc.length - 14);
+          if (safeEnd > emitted) {
+            emit({ type: 'text_delta', data: acc.slice(emitted, safeEnd) });
+            emitted = safeEnd;
+          }
+        },
+        ticket_id: _ticketId, draft_id: _draftId, parent_call_id: parentCallId,
+        metadata: { customer_email: context.customer_email },
       });
-      response = await stream.finalMessage();
       // Flush any held-back tail that turned out not to be the marker.
       if (!cut && emitted < acc.length) emit({ type: 'text_delta', data: acc.slice(emitted) });
     } else {
-      response = await client.messages.create(apiParams);
+      response = await callClaude({
+        component: 'cs_operator',
+        ...apiParams,
+        ticket_id: _ticketId, draft_id: _draftId, parent_call_id: parentCallId,
+        metadata: { customer_email: context.customer_email },
+      });
     }
+    if (parentCallId === null) parentCallId = response._ai_call_id;
 
     _t.api_calls.push({
       duration_ms: Date.now() - _tApi,
@@ -395,12 +411,16 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
   try {
     for (let i = 0; i < 10; i++) {
       const _tApi = Date.now();
-      sonnetResponse = await client.messages.create({
+      sonnetResponse = await callClaude({
+        component: 'cs_operator_shadow',
         model: 'claude-sonnet-4-6',
         max_tokens: 1024,
         system: systemPrompt,
         tools,
         messages: sonnetMessages,
+        ticket_id: context.gorgias_ticket_id || context.ticket_id || null,
+        draft_id: context.draft_id || (context.draft && context.draft.id) || null,
+        metadata: { customer_email: context.customer_email },
       });
       sonnetTiming.api_calls.push({
         duration_ms: Date.now() - _tApi,
@@ -452,7 +472,11 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
   // AI judge for operator actions
   let judgeResult = null;
   try {
-    const judgeResponse = await client.messages.create({
+    const judgeResponse = await callClaude({
+      component: 'cs_operator_shadow_judge',
+      ticket_id: context.gorgias_ticket_id || context.ticket_id || null,
+      draft_id: context.draft_id || (context.draft && context.draft.id) || null,
+      metadata: { customer_email: context.customer_email, role: 'judge' },
       model: 'claude-opus-4-6',
       max_tokens: 512,
       system: 'You are evaluating two operator agent action responses for a CS dashboard. Compare which tool calls were made and the final response. Be concise.',

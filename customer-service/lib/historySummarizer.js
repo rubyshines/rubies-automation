@@ -14,6 +14,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
 const MODEL = 'claude-opus-4-6';
@@ -61,10 +62,11 @@ Respond with ONLY the prose summary. No preamble, no JSON, no quotes.`;
 async function generateHistorySummary(ticketRow) {
   if (!ticketRow?.conversation_history?.length) return null;
 
-  const client = new Anthropic();
-
   try {
-    const response = await client.messages.create({
+    const response = await callClaude({
+      component: 'history_summarizer',
+      ticket_id: ticketRow.gorgias_ticket_id || null,
+      metadata: { message_type: ticketRow.message_type || null },
       model: MODEL,
       max_tokens: 400,
       messages: [{ role: 'user', content: buildPrompt(ticketRow) }],

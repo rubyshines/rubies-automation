@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 
 // Serialize AI calls — one at a time to respect rate limits
 let _queue = Promise.resolve();
@@ -44,8 +45,6 @@ async function extractPrice(html, url) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in .env');
 
-  const client = new Anthropic({ apiKey, timeout: 30000, maxRetries: 2 });
-
   // Trim HTML to ~8K chars, focusing on likely price regions
   const trimmedHtml = trimToRelevant(html, 8000);
 
@@ -53,7 +52,10 @@ async function extractPrice(html, url) {
 
   return enqueue(async () => {
     async function attempt(extra = '') {
-      const response = await client.messages.create({
+      const response = await callClaude({
+        component: 'competitor_price_extractor',
+        metadata: { url },
+        requestOptions: { timeout: 30000, maxRetries: 2 },
         model: 'claude-sonnet-4-6',
         max_tokens: 500,
         temperature: 0,

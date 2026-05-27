@@ -12,6 +12,7 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const {
   OUR_ADDRESS,
@@ -127,13 +128,15 @@ async function classifyBatchTier3(messages) {
 
   const validLabels = CLASSIFICATION_LABELS.concat(['spam']).join(', ');
 
-  const PRIMARY_MODEL = 'claude-sonnet-4-20250514';
+  const PRIMARY_MODEL = 'claude-sonnet-4-6';
   const FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
 
   let response;
   let modelUsed = PRIMARY_MODEL;
   try {
-    response = await anthropic.messages.create({
+    response = await callClaude({
+      component: 'gmail_email_classifier',
+      metadata: { batch_size: messages.length, tier: 'primary' },
       model: PRIMARY_MODEL,
       max_tokens: 2000,
       messages: [{
@@ -167,7 +170,9 @@ ${emailSummaries}`,
     if (err.status === 529) {
       console.warn(`[classifier] Sonnet overloaded — falling back to Haiku for ${messages.length} emails`);
       modelUsed = FALLBACK_MODEL;
-      response = await anthropic.messages.create({
+      response = await callClaude({
+        component: 'gmail_email_classifier',
+        metadata: { batch_size: messages.length, tier: 'fallback' },
         model: FALLBACK_MODEL,
         max_tokens: 2000,
         messages: [{

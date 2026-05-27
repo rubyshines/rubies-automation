@@ -178,8 +178,7 @@ async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, new
   if (!existingTickets?.length) return null; // No existing tickets — not a duplicate
 
   // There IS an existing ticket — ask Opus to compare
-  const Anthropic = require('@anthropic-ai/sdk');
-  const client = new Anthropic();
+  const { callClaude } = require('../../shared/aiClient');
 
   const newContent = newMessages
     .filter(m => !m.from_agent)
@@ -198,7 +197,10 @@ async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, new
   Agent reply: ${lastAgent || '(no reply yet)'}`;
   }).join('\n\n');
 
-  const response = await client.messages.create({
+  const response = await callClaude({
+    component: 'cs_intake_classifier',
+    ticket_id: newTicketId || null,
+    metadata: { customer_email: customerEmail, task: 'duplicate_detection' },
     model: 'claude-opus-4-6',
     max_tokens: 200,
     messages: [{ role: 'user', content: `A customer (${customerEmail}) just created a new support ticket. They already have existing open ticket(s). Determine if the new ticket is about the same issue.

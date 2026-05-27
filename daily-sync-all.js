@@ -98,6 +98,10 @@ const PIPELINES = [
     name: 'Ticket Reconciliation',
     run: () => require('./customer-service/sync/gorgiasAdvisorResync').runPipeline(),
   },
+  {
+    name: 'AI Cost Rollup',
+    run: () => require('./lib/rollupAiCosts').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -315,6 +319,30 @@ function buildTicketDriftHtml(results) {
   return html;
 }
 
+// Per-component AI spend line for yesterday, sourced from the AI Cost Rollup
+// pipeline result. Renders "cs_advisor $1.20 (8 calls), …" sorted by cost.
+function buildAiCostHtml(results) {
+  const rollup = results.find(r => r.name === 'AI Cost Rollup');
+  const src = rollup?.result?.sources?.ai_costs;
+  if (!src || src.skipped) return '';
+  const breakdown = src.breakdown || [];
+  if (!breakdown.length) return '';
+
+  const items = breakdown.map(b => {
+    const errNote = b.errors ? ` <span style="color:#dc2626;">${b.errors} err</span>` : '';
+    return `<span style="white-space:nowrap;">${esc(b.component)} <strong>$${b.cost_usd.toFixed(4)}</strong> <span style="color:#6b7280;">(${b.calls})</span>${errNote}</span>`;
+  }).join(' &middot; ');
+
+  const total = (src.total_cost_usd || 0).toFixed(4);
+  return `
+    <div style="margin:20px 0 0;">
+      <div style="background:#eff6ff;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #bfdbfe;border-bottom:2px solid #bfdbfe;">
+        <strong style="color:#1d4ed8;">AI yesterday — $${total} (${src.total_calls || 0} calls)</strong>
+      </div>
+      <div style="border:1px solid #bfdbfe;border-top:0;border-radius:0 0 6px 6px;padding:10px 12px;font-size:13px;line-height:1.9;">${items}</div>
+    </div>`;
+}
+
 async function sendSummaryEmail(overallStatus, results, totalRows, overallDuration, gorgiasRetries = 0) {
   const sgMail = getSendgridClient();
   if (!sgMail) {
@@ -370,6 +398,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- Drift / undelivered section ---
   const driftHtml = buildTicketDriftHtml(results);
 
+  // --- AI cost section ---
+  const aiCostHtml = buildAiCostHtml(results);
+
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
       <h2 style="margin-bottom:4px;font-size:18px;">Daily Sync \u2014 ${date}</h2>
@@ -377,6 +408,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
 
       ${driftHtml}
       ${errorsHtml}
+      ${aiCostHtml}
 
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
         <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
