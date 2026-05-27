@@ -1795,8 +1795,11 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
 // ---------------------------------------------------------------------------
 
 async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opusResult, customer_email, ticket_id, draft_id }) {
-  // Skip if diagnostic table doesn't exist or env flag is off
-  if (process.env.CS_DIAGNOSTICS_DISABLED === 'true') return;
+  // Shadow eval is OPT-IN. It doubles every advisor call (Sonnet draft + Opus judge)
+  // and only produces value during an active model evaluation. Default-on gated by a
+  // "disabled" env var silently resumed a costly experiment twice (Apr + May 2026), so
+  // the gate is inverted: it runs ONLY when CS_DIAGNOSTICS_ENABLED=true is explicitly set.
+  if (process.env.CS_DIAGNOSTICS_ENABLED !== 'true') return;
 
   const client = getClient();
   const supabase = getSupabaseClient();

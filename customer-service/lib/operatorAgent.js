@@ -370,7 +370,9 @@ const SHADOW_BLOCKED_TOOLS = new Set([
 ]);
 
 async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMessages, opusResult, context }) {
-  if (process.env.CS_DIAGNOSTICS_DISABLED === 'true') return;
+  // Opt-in. See runShadowEvaluation in aiAdvisor.js — gate inverted to CS_DIAGNOSTICS_ENABLED
+  // so a forgotten/reset env var costs nothing instead of silently resuming a paid experiment.
+  if (process.env.CS_DIAGNOSTICS_ENABLED !== 'true') return;
 
   const { getSupabaseClient } = require('../../shared/supabaseClient');
   const supabase = getSupabaseClient();
