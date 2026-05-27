@@ -112,3 +112,8 @@ Implemented + validated:
 - Verify compare_products / check_unfulfilled_order actually return restock dates so rule 7's pre-order nudge has data to state.
 
 **Still deferred:** auto-hold on modify-unshipped (#877); refund-vs-choice nuance (#1019, needs multi-case study).
+
+## Phase 3c — cadence instrumentation + memory (2026-05-27)
+- **Advisor edit-rate tripwire in the daily ops digest:** `lib/advisorEditRate.js` computes trailing-30d % of sent drafts the operator edited (deterministic, whitespace-normalized; current ≈38.8% of 361). Added as a daily-sync task + a one-line section in daily-sync-all.js (flags ">45% → consider an accuracy sweep"). 3 unit tests. Full suite 773/773.
+- **Renamed "SendGrid summary" → "daily ops digest"** across memory (kept legitimate SendGrid-as-transport refs). Documented the digest's new edit-rate line in domain_tech.md.
+- **Memory written:** initiative_cs_automation.md progress block; domain_cs.md 4 Key Decisions (incl. change-driven sweep cadence + last-sweep marker surfaced at orient); 2 parked items (deferred fixes; KB cleanup).

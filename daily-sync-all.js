@@ -103,6 +103,10 @@ const PIPELINES = [
     run: () => require('./lib/rollupAiCosts').run(),
   },
   {
+    name: 'Advisor Edit Rate',
+    run: () => require('./lib/advisorEditRate').run(),
+  },
+  {
     name: 'AI Pricing Check',
     // Monthly drift detector (new models + pricing changes). Runs on the 1st
     // only; a no-op the rest of the month so it doesn't add daily cost/noise.
@@ -376,6 +380,23 @@ function buildAiCostHtml(results) {
   return capBanner + breakdownHtml + capFootnote;
 }
 
+// CS advisor draft edit-rate — trailing-window trend tripwire for accuracy
+// drift. A rising rate is the cue to run a deeper draft↔sent accuracy sweep
+// (see domain_cs.md "Accuracy-sweep cadence"). Quiet one-liner; flags when high.
+function buildAdvisorEditRateHtml(results) {
+  const task = results.find(r => r.name === 'Advisor Edit Rate');
+  const m = task?.result?.sources?.advisor_edit_rate;
+  if (!m || m.skipped || !m.sent) return '';
+  const high = m.edit_rate_pct != null && m.edit_rate_pct > 45; // normal ~39%; >45% = look
+  const nudge = high
+    ? ' <span style="color:#b45309;font-weight:bold;">&#8593; above baseline &mdash; consider an accuracy sweep</span>'
+    : '';
+  return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
+      CS advisor edit rate (last ${m.window_days}d): <strong>${m.edit_rate_pct}%</strong> of ${m.sent} sent drafts were edited${nudge}
+    </div>`;
+}
+
 // Monthly AI pricing/model drift findings (only present on the 1st). Renders a
 // banner of actionable items (new models, rate changes) so a pricing change or
 // a new model to evaluate doesn't slip by unnoticed.
@@ -451,6 +472,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- AI cost section ---
   const aiCostHtml = buildAiCostHtml(results);
 
+  // --- CS advisor edit-rate (accuracy-drift tripwire) ---
+  const advisorEditHtml = buildAdvisorEditRateHtml(results);
+
   // --- AI pricing/model drift (monthly, 1st only) ---
   const aiPricingHtml = buildAiPricingHtml(results);
 
@@ -462,6 +486,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${driftHtml}
       ${errorsHtml}
       ${aiCostHtml}
+      ${advisorEditHtml}
       ${aiPricingHtml}
 
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
