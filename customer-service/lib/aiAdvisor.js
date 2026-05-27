@@ -640,6 +640,19 @@ function buildSystemPrompt(toneSamples, orderContext) {
     // Built only when an order is present so the advisor sees the same
     // figures the operator sees on the dashboard order card.
     let moneyLine = '';
+    // Full ship-to address (street + unit + zip), not just city/state — the
+    // advisor needs the actual address to confirm it back to the customer on
+    // lost/stolen-package and address-change cases.
+    let shipToLine = '';
+    if (t?.shipping_address) {
+      const a = t.shipping_address;
+      const addr = [a.address1, a.address2, a.city, a.provinceCode || a.province, a.zip, a.countryCode || a.country].filter(Boolean).join(', ');
+      const shipCC = (a.countryCodeV2 || a.countryCode || '').toUpperCase();
+      const shipName = (a.country || '').toUpperCase();
+      const custCountry = (orderContext.customer?.country || '').toUpperCase();
+      const diffCountry = !!custCountry && !!shipCC && shipCC !== custCountry && shipName !== custCountry;
+      shipToLine = `\n- Order ship-to: ${addr}${diffCountry ? ' ⚠️ DIFFERENT COUNTRY than customer profile — use this country (where the items physically are) for donation routing, shipping ETAs, anything country-dependent' : ''}`;
+    }
     if (t) {
       const cur = t.currency || '';
       const fmt = n => `$${Number(n || 0).toFixed(2)}`;
@@ -662,8 +675,7 @@ function buildSystemPrompt(toneSamples, orderContext) {
 - Customer email: ${orderContext.customer?.email || 'unknown'}${orderContext.resolved_by_name ? `\n- ⚠️ RESOLVED BY NAME FALLBACK: no customer record exists under the sender's email (${orderContext.conversation_email}). This customer was found by searching their name. Apply the "Resolved by name" verification gates before trusting this match.` : ''}
 - Customer country: ${orderContext.customer?.country || 'unknown'}${orderContext.customer?.duties_prepaid != null ? ` (duties ${orderContext.customer.duties_prepaid ? 'PREPAID — we cover customs charges' : 'NOT prepaid — customer responsible'})` : ''}
 ${t ? `- Order: ${t.name} (placed ${t.created_at?.split('T')[0] || 'unknown'}, ${t.days_since_order} days ago)
-- Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}${t.shipping_address ? `
-- Order ship-to: ${[t.shipping_address.city, t.shipping_address.provinceCode || t.shipping_address.province, t.shipping_address.countryCode || t.shipping_address.country].filter(Boolean).join(', ')}${(t.shipping_address.countryCode || '').toUpperCase() !== (orderContext.customer?.country || '').toUpperCase() ? ' ⚠️ DIFFERENT COUNTRY than customer profile — use this country (where the items physically are) for donation routing, shipping ETAs, anything country-dependent' : ''}` : ''}
+- Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}${shipToLine}
 - Items: ${t.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size}${li.unit_price != null ? ` @ $${Number(li.unit_price).toFixed(2)}` : ''} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
 ${orderContext.exchange_orders?.length ? `- Previous exchanges: ${orderContext.exchange_orders.map(ex => ex.name).join(', ')}` : ''}
 `;
@@ -1047,6 +1059,13 @@ When a customer asks about a delayed or unshipped order:
 2. If UNFULFILLED: call check_unfulfilled_order to investigate why
 3. If FULFILLED (the order has shipped): call shipping_lookup. It pulls the carrier tracking events and returns a draft response covering the actual carrier state — delivered, in transit, out for delivery, exception, returned to sender, stale tracking. Use shipping_lookup's draft as the basis of your reply. Do NOT call check_unfulfilled_order on a FULFILLED order; "fulfilled but no deliveredAt" means in transit, not stuck.
 4. Use the investigation results to give an honest, specific response:
+
+**Tracking says delivered but the customer didn't get it (stolen, porch pirate, "not where the tracking says it should be"):** When shipping_lookup shows current_status "delivered" but the customer says it never arrived, was stolen, or isn't where tracking claims, handle it yourself in this order. Set message_type to "shipping", status to "needs_info", action_type to null.
+  1. Acknowledge and state what tracking shows: the delivery date, carrier, and where it was left (e.g. "Tracking shows USPS marked this delivered on May 22 to your mailbox").
+  2. Confirm the ship-to address back to them using the full Order ship-to address from the context above, and ask them to verify it: "Just to confirm, the order shipped to [full street address, city, state, zip]. Is that the right address?"
+  3. Ask them to check the usual spots: with neighbours, anyone else at the address, a building manager or front desk, and anywhere the carrier might leave a package safely.
+  4. Offer to reship if it doesn't surface: "If it still hasn't turned up in the next few days, just let me know and I'll get another order sent out to you."
+  Handle this directly. Do NOT tell the customer to file a claim with the carrier, and do NOT route to human on the first contact. (If they reply confirming the address is right and it still hasn't appeared, set status to "route_to_human" so Jamie can decide on a reship.)
 
 **Pre-order item on order:** Each pre_order issue from check_unfulfilled_order may include a preOrderTarget value (e.g. "Target availability end of June, 2026.") — that's the line-item attribute the customer saw at checkout. Compare the target to today's date and pick the right scenario. Set message_type to "shipping".
 
