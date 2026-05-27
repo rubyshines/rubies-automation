@@ -119,6 +119,76 @@ describe('buildConversationHistorySnapshot', () => {
     assert.equal(snapshot.sender, 'customer');
   });
 
+  it('preserves the customer request from a help-center FLOW transcript (does not let the reply-parser eat the > lines)', () => {
+    // Gorgias packs a whole Convert/Flow interaction into ONE help-center
+    // contact_form message: bot prompt lines plus the customer's choices and
+    // free-text prefixed with `>`. stripped_text is empty, so the old path ran
+    // the email-reply-parser, which treats `>` as quoted-reply markers and
+    // deleted every customer line — leaving only bot copy for the advisor AND
+    // the dashboard. We must keep the customer's actual request.
+    const flowBody = [
+      '> Change my order before it ships',
+      '',
+      'We usually start processing new orders on business days at 7 AM EST.',
+      'Please select the order you would like to change.',
+      '> #31037 - $155.10 - May 26, 2026 (CDT)',
+      '> THE RUBY NO-TUCK SHAPING BIKINI BOTTOM - Black / 9',
+      '> RUBIES SHAPING CHEST PADS - Black / S',
+      'What is it you would like to change?',
+      '> Order Items',
+      'Which item(s) would you like to change?',
+      '> 1 x THE RUBY NO-TUCK SHAPING BIKINI BOTTOM - Black / 9',
+      'What changes would you like to make to your order.',
+      '> I accidentally ordered two tops and two bottoms, but should have been for 1 of each please. Can I be credited or exchange? Thanks!',
+    ].join('\n');
+
+    const [snapshot] = buildConversationHistorySnapshot([{
+      id: 9,
+      from_agent: false,
+      channel: 'help-center',
+      via: 'contact_form',
+      meta: { origin: 'flow', ai_agent_message_type: 'last_message_from_flow' },
+      created_datetime: '2026-05-26T18:00:00+00:00',
+      body_text: flowBody,
+      body_html: `<div>${flowBody.replace(/\n/g, '<br>')}</div>`,
+      stripped_text: '',
+      stripped_html: '',
+    }]);
+
+    // The customer's actual request must survive.
+    assert.match(snapshot.body, /I accidentally ordered two tops and two bottoms/);
+    assert.match(snapshot.body, /credited or exchange/);
+    // Bot prompt copy and order-display lines must be stripped.
+    assert.doesNotMatch(snapshot.body, /We usually start processing/);
+    assert.doesNotMatch(snapshot.body, /Which item\(s\) would you like/);
+    assert.doesNotMatch(snapshot.body, /\$155\.10/);
+    assert.doesNotMatch(snapshot.body, /RUBIES SHAPING CHEST PADS/);
+    assert.doesNotMatch(snapshot.body, /1 x THE RUBY/);
+    assert.equal(snapshot.body_html, null);
+    assert.equal(snapshot.sender, 'customer');
+  });
+
+  it('does NOT flow-extract a non-flow help-center message (no meta.origin) — keeps the customer free-text even if it contains a > quote', () => {
+    // Guard for the gate: only meta.origin==='flow' messages get the `>`-line
+    // extraction. A direct help-center message that happens to quote prior
+    // content with `>` must keep its non-`>` customer text, not be reduced to
+    // just the quoted line.
+    const body = 'Hi there, I am trying to decide on bikini sizing for my 11 year old.\n> Also would a medium do her in the pads?';
+    const [snapshot] = buildConversationHistorySnapshot([{
+      id: 11,
+      from_agent: false,
+      channel: 'help-center',
+      via: 'contact_form',
+      // no meta.origin === 'flow'
+      created_datetime: '2026-05-26T18:00:00+00:00',
+      body_text: body,
+      body_html: `<div>${body.replace(/\n/g, '<br>')}</div>`,
+      stripped_text: '',
+      stripped_html: '',
+    }]);
+    assert.match(snapshot.body, /trying to decide on bikini sizing/);
+  });
+
   it('classifies internal-note channel as note sender', () => {
     const [snapshot] = buildConversationHistorySnapshot([{
       id: 5,

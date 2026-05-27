@@ -35,6 +35,18 @@ const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 // where libraryStripped=true means the library actually removed quote content
 // (caller should drop body_html so the dashboard renders the cleaned text).
 function extractCleanBody(m) {
+  // Gorgias Convert/Automate FLOW transcripts (meta.origin==='flow') pack the
+  // whole interaction into one message: bot prompts plus the customer's choices
+  // and free-text as `>`-prefixed lines. stripped_text is empty for these and
+  // the email-reply-parser treats `>` as quoted-reply markers, DELETING the
+  // customer's actual input — leaving only bot prompts for both the dashboard
+  // and the advisor. Parse the transcript directly so the request survives.
+  // Gated on the flow marker so direct help-center messages (and any that
+  // legitimately quote prior content with `>`) keep the normal path below.
+  if (m.meta?.origin === 'flow') {
+    const raw = (m.body_text || '').trim() || gorgias.stripHtml(m.body_html || '').trim();
+    return { text: cleanHelpCenterBody(raw), libraryStripped: true };
+  }
   const stripped = (m.stripped_text || '').trim() || gorgias.stripHtml(m.stripped_html || '').trim();
   if (stripped) return { text: stripped, libraryStripped: false };
   const raw = (m.body_text || '').trim() || gorgias.stripHtml(m.body_html || '').trim();
@@ -133,7 +145,9 @@ function cleanHelpCenterBody(body) {
     if (HELP_CENTER_BUTTON_LABELS.has(lower)) continue;
     if (/^#\d+\s*[-–]\s*\$[\d.,]+/.test(text)) continue; // order pick
     if (/^\d+\s*x\s+/i.test(text)) continue; // selected line item
-    if (/^THE\s+[A-Z].*\s[-–]\s/.test(text)) continue; // variant label
+    // Order-display variant line: "<PRODUCT NAME> - <Color> / <Size>". Anchored
+    // on the trailing " / <size>" so it won't swallow customer free-text.
+    if (/^[A-Z0-9].*\s[-–]\s.+\s\/\s\S+$/.test(text)) continue; // variant label
     keep.push(text);
   }
   const cleaned = keep.join('\n').trim();
@@ -240,6 +254,8 @@ function buildConversationHistorySnapshot(messages) {
     let bodyHtml = clean.libraryStripped ? null : (m.stripped_html || m.body_html || null);
     let bodyText = clean.text;
     if (sender === 'customer' && m.channel === 'help-center') {
+      // Strip bot copy/button labels from non-flow help-center contact forms.
+      // For flow transcripts extractCleanBody already did this (idempotent here).
       bodyText = cleanHelpCenterBody(bodyText);
       bodyHtml = null;
     }
