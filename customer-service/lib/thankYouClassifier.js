@@ -11,6 +11,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { callClaude } = require('../../shared/aiClient');
 
 const MODEL = 'claude-sonnet-4-6';
 const MAX_TOKENS = 300;
@@ -80,7 +81,8 @@ async function classifyThankYou({ recentMessages, priorAgentReply }) {
 
   let response;
   try {
-    response = await getClient().messages.create({
+    response = await callClaude({
+      component: 'thankyou_classifier',
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system: SYSTEM_PROMPT,

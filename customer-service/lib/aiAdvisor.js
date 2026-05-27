@@ -13,6 +13,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { callClaude } = require('../../shared/aiClient');
 const { buildContext } = require('./contextBuilder');
 const {
   normalizeSize,
@@ -1436,6 +1437,9 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
 
   const _emit = onStream || (() => {});
   const useStreaming = !!onStream;
+  // Best-effort tool-loop linkage: the first call in the loop becomes the
+  // parent of every subsequent call for this draft.
+  let parentCallId = null;
 
   // Side-channel sink for the donation routing decision (partner_id, type,
   // items_count). Populated when the agent calls get_donation_partner; read
@@ -1461,19 +1465,30 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       // invisible tokens, ~7-9s at Opus rates).
       let runningText = '';
       let proseDone = false;
-      const stream = client.messages.stream(apiParams);
-      stream.on('text', (text) => {
-        runningText += text;
-        _emit({ type: 'text_delta', text });
-        if (!proseDone && runningText.includes('<structured>')) {
-          proseDone = true;
-          _emit({ type: 'prose_complete' });
-        }
+      response = await callClaude({
+        component: 'cs_advisor',
+        ...apiParams,
+        stream: true,
+        onText: (text) => {
+          runningText += text;
+          _emit({ type: 'text_delta', text });
+          if (!proseDone && runningText.includes('<structured>')) {
+            proseDone = true;
+            _emit({ type: 'prose_complete' });
+          }
+        },
+        ticket_id, draft_id, parent_call_id: parentCallId,
+        metadata: { customer_email },
       });
-      response = await stream.finalMessage();
     } else {
-      response = await client.messages.create(apiParams);
+      response = await callClaude({
+        component: 'cs_advisor',
+        ...apiParams,
+        ticket_id, draft_id, parent_call_id: parentCallId,
+        metadata: { customer_email },
+      });
     }
+    if (parentCallId === null) parentCallId = response._ai_call_id;
 
     const apiTiming = {
       duration_ms: Date.now() - _tApi,
@@ -1821,13 +1836,15 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
   try {
     while (toolCallCount < MAX_TOOL_CALLS) {
       const _tApi = Date.now();
-      sonnetResponse = await client.messages.create({
+      sonnetResponse = await callClaude({
+        component: 'cs_advisor_shadow',
         model: 'claude-sonnet-4-6',
         max_tokens: 8192,
         thinking: { type: 'enabled', budget_tokens: 4000 },
         system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for Sonnet
         tools: filteredTools,
         messages: sonnetMessages,
+        ticket_id, draft_id, metadata: { customer_email },
       });
       sonnetTiming.api_calls.push({
         duration_ms: Date.now() - _tApi,
@@ -1873,7 +1890,9 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
   // Run AI judge — Opus compares both drafts
   let judgeResult = null;
   try {
-    const judgeResponse = await client.messages.create({
+    const judgeResponse = await callClaude({
+      component: 'cs_advisor_shadow_judge',
+      ticket_id, draft_id, metadata: { customer_email, role: 'judge' },
       model: 'claude-opus-4-6',
       max_tokens: 1024,
       system: `You are evaluating two customer service drafts for RUBIES, a gender-affirming underwear brand. Compare Draft A (production model) with Draft B (candidate model). Be concise.`,
