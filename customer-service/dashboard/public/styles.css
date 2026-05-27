@@ -3886,8 +3886,30 @@ main { height: calc(100vh - 56px); }
 .toast-error { background: var(--red); color: white; }
 .toast-warn { background: #b45309; color: white; }
 .toast-info { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.toast-clickable { cursor: pointer; }
-.toast-clickable:hover { filter: brightness(1.08); }
+/* Ticket-scoped toasts carry a View link → lay out message + button inline */
+.toast-has-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 10px 18px;
+}
+.toast-view-btn {
+  background: rgba(255, 255, 255, 0.18);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.toast-view-btn:hover { background: rgba(255, 255, 255, 0.34); }
+/* On the light info toast, the white button needs a darker treatment */
+.toast-info .toast-view-btn { color: var(--text); border-color: var(--border); background: var(--surface-inset); }
+.toast-info .toast-view-btn:hover { background: var(--border); }
 .toast-undo {
   background: var(--text);
   color: white;

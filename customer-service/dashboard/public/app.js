@@ -2617,19 +2617,19 @@ function executeAndSend() {
     .then(res => {
       const outcome = res?.outcome;
       if (outcome === 'sent') {
-        showToast(`${ticketRef} — ${actionLabel} done + sent`);
+        showToast(`${ticketRef} — ${actionLabel} done + sent`, 'success', { ticketId });
       } else if (outcome === 'hold') {
         localStorage.setItem(`draft-ticket-${ticketId}`, response);
         reinsertTicket(ticketId);
-        showClickableToast(`${ticketRef} needs review: ${res.reason || 'flagged'}`, 'warn', ticketId);
+        showToast(`${ticketRef} needs review: ${res.reason || 'flagged'}`, 'warn', { ticketId });
       } else if (outcome === 'half') {
         localStorage.setItem(`draft-ticket-${ticketId}`, response);
         reinsertTicket(ticketId);
-        showClickableToast(`${ticketRef} — ${actionLabel} done, send failed. Retry send.`, 'error', ticketId);
+        showToast(`${ticketRef} — ${actionLabel} done, send failed. Retry send.`, 'error', { ticketId });
       } else { // 'error' or anything unexpected
         localStorage.setItem(`draft-ticket-${ticketId}`, response);
         reinsertTicket(ticketId);
-        showClickableToast(`${ticketRef} — ${actionLabel} failed: ${res?.reason || 'unknown error'}`, 'error', ticketId);
+        showToast(`${ticketRef} — ${actionLabel} failed: ${res?.reason || 'unknown error'}`, 'error', { ticketId });
       }
       loadStats();
     })
@@ -2637,26 +2637,9 @@ function executeAndSend() {
       console.error(`Execute & Send failed for ticket ${ticketId}:`, err);
       localStorage.setItem(`draft-ticket-${ticketId}`, response);
       reinsertTicket(ticketId);
-      showClickableToast(`${ticketRef} — Execute & Send failed: ${err.message}`, 'error', ticketId);
+      showToast(`${ticketRef} — Execute & Send failed: ${err.message}`, 'error', { ticketId });
     })
     .finally(() => { _actionsInFlight.delete(ticketId); });
-}
-
-// Toast that, when clicked, jumps back to the ticket. Used for bounced-back
-// one-click runs so the operator can go handle them with one tap.
-function showClickableToast(message, type, ticketId) {
-  const container = document.getElementById('toast-container');
-  if (!container) { showToast(message, type === 'warn' ? 'info' : type); return; }
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type} toast-clickable`;
-  toast.textContent = message;
-  toast.onclick = () => { toast.remove(); selectTicket(ticketId); };
-  container.appendChild(toast);
-  setTimeout(() => toast.classList.add('toast-visible'), 10);
-  setTimeout(() => {
-    toast.classList.remove('toast-visible');
-    setTimeout(() => toast.remove(), 300);
-  }, 7000); // longer than normal — these need action
 }
 
 function closeNoReply() {
@@ -3176,7 +3159,7 @@ async function releaseDraft() {
       method: 'POST',
       body: { notes, focus_time_seconds: focusSeconds },
     });
-    showToast('Draft released');
+    showToast('Draft released', 'success', { ticketId: releasedTicketId });
     advanceToNextTicket(releasedTicketId);
     loadStats();
   } catch (err) {
@@ -3196,7 +3179,7 @@ async function markSpam() {
     await api(`/api/tickets/${spamTicketId}/spam`, { method: 'POST', body: { focus_time_seconds: focusSeconds } });
     localStorage.removeItem(`draft-ticket-${spamTicketId}`);
     localStorage.removeItem(`notes-ticket-${spamTicketId}`);
-    showToast('Marked as spam');
+    showToast('Marked as spam', 'success', { ticketId: spamTicketId });
     advanceToNextTicket(spamTicketId);
     loadStats();
   } catch (err) {
@@ -3283,7 +3266,7 @@ async function returnToInbox(classification) {
     });
     localStorage.removeItem(`draft-ticket-${returnedTicketId}`);
     localStorage.removeItem(`notes-ticket-${returnedTicketId}`);
-    showToast('Returned to inbox');
+    showToast('Returned to inbox', 'success', { ticketId: returnedTicketId });
     advanceToNextTicket(returnedTicketId);
     loadStats();
   } catch (err) {
@@ -3339,7 +3322,7 @@ async function sendSimpleMessage(afterAction) {
       method: 'POST',
       body: { message, after: afterAction },
     });
-    showToast(afterAction === 'close' ? 'Sent & closed' : 'Sent & snoozed');
+    showToast(afterAction === 'close' ? 'Sent & closed' : 'Sent & snoozed', 'success', { ticketId: sentTicketId });
     advanceToNextTicket(sentTicketId);
     loadStats();
   } catch (err) {
@@ -3481,7 +3464,7 @@ function executeBackgroundAction(ticketId, label, apiCall, onError, options = {}
       if (options.undoable) {
         showUndoToast(label, ticketId);
       } else {
-        showToast(label);
+        showToast(label, 'success', { ticketId });
       }
       loadStats();
     })
@@ -3490,7 +3473,8 @@ function executeBackgroundAction(ticketId, label, apiCall, onError, options = {}
       if (onError) onError(err);
       showRetryToast(
         `${label} failed: ${err.message}`,
-        () => executeBackgroundAction(ticketId, label, apiCall, onError, options)
+        () => executeBackgroundAction(ticketId, label, apiCall, onError, options),
+        { ticketId }
       );
       reinsertTicket(ticketId);
     })
@@ -3506,7 +3490,7 @@ function reinsertTicket(ticketId) {
   loadTicketQueue();
 }
 
-function showRetryToast(message, retryFn) {
+function showRetryToast(message, retryFn, opts = {}) {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const toast = document.createElement('div');
@@ -3516,6 +3500,18 @@ function showRetryToast(message, retryFn) {
   msgSpan.className = 'toast-message';
   msgSpan.textContent = message;
   toast.appendChild(msgSpan);
+
+  if (opts.ticketId != null) {
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'toast-view-btn';
+    viewBtn.textContent = 'View';
+    viewBtn.addEventListener('click', () => {
+      toast.classList.remove('toast-visible');
+      setTimeout(() => toast.remove(), 300);
+      selectTicket(opts.ticketId);
+    });
+    toast.appendChild(viewBtn);
+  }
 
   const retryBtn = document.createElement('button');
   retryBtn.className = 'toast-retry-btn';
@@ -3580,18 +3576,39 @@ function showUndoToast(message, ticketId) {
   setTimeout(dismiss, 3000);
 }
 
-function showToast(message, type = 'success') {
+// `opts.ticketId` adds a "View" link that jumps to the ticket — useful on any
+// ticket-scoped toast (success OR error) so you can go review what happened.
+// Ticket-scoped toasts also linger longer so there's time to click.
+function showToast(message, type = 'success', opts = {}) {
   const container = document.getElementById('toast-container');
   if (!container) return;
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.textContent = message;
+
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'toast-message';
+  msgSpan.textContent = message;
+  toast.appendChild(msgSpan);
+
+  if (opts.ticketId != null) {
+    toast.classList.add('toast-has-action');
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'toast-view-btn';
+    viewBtn.textContent = 'View';
+    viewBtn.addEventListener('click', () => {
+      toast.classList.remove('toast-visible');
+      setTimeout(() => toast.remove(), 300);
+      selectTicket(opts.ticketId);
+    });
+    toast.appendChild(viewBtn);
+  }
+
   container.appendChild(toast);
   setTimeout(() => toast.classList.add('toast-visible'), 10);
   setTimeout(() => {
     toast.classList.remove('toast-visible');
     setTimeout(() => toast.remove(), 300);
-  }, 3000);
+  }, opts.ticketId != null ? 6500 : 3000);
 }
 
 function esc(str) {
