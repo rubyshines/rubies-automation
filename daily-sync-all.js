@@ -102,6 +102,17 @@ const PIPELINES = [
     name: 'AI Cost Rollup',
     run: () => require('./lib/rollupAiCosts').run(),
   },
+  {
+    name: 'AI Pricing Check',
+    // Monthly drift detector (new models + pricing changes). Runs on the 1st
+    // only; a no-op the rest of the month so it doesn't add daily cost/noise.
+    run: () => {
+      if (new Date().getUTCDate() !== 1) {
+        return Promise.resolve({ sources: { ai_pricing_check: { success: true, skipped: true, detail: 'runs on the 1st of the month', findings: [] } }, status: 'ok' });
+      }
+      return require('./scripts/check-ai-pricing').run();
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -325,21 +336,60 @@ function buildAiCostHtml(results) {
   const rollup = results.find(r => r.name === 'AI Cost Rollup');
   const src = rollup?.result?.sources?.ai_costs;
   if (!src || src.skipped) return '';
+
+  // Month-to-date spend-cap early warning (prominent banner when warn/over,
+  // quiet footnote otherwise). Guards against a silent monthly-cap trip.
+  const cap = src.spend_cap;
+  let capBanner = '';
+  let capFootnote = '';
+  if (cap && cap.available) {
+    if (cap.level === 'over' || cap.level === 'warn') {
+      const isOver = cap.level === 'over';
+      const [bg, bd, fg] = isOver ? ['#fef2f2', '#fecaca', '#b91c1c'] : ['#fffbeb', '#fde68a', '#b45309'];
+      const pctTxt = cap.pct != null ? ` — ${Math.round(cap.pct * 100)}% of $${cap.cap_usd} monthly cap` : '';
+      const label = isOver ? '🚨 AI SPEND CAP EXCEEDED' : '⚠️ AI spend approaching cap';
+      capBanner = `<div style="background:${bg};border:1px solid ${bd};border-radius:6px;padding:10px 12px;margin:20px 0 0;color:${fg};font-weight:bold;">${label}: $${cap.mtd_usd} month-to-date${pctTxt}</div>`;
+    } else {
+      const capNote = cap.cap_usd ? ` of $${cap.cap_usd} monthly cap` : ' (no AI_MONTHLY_CAP_USD set)';
+      capFootnote = `<div style="margin:8px 0 0;font-size:12px;color:#6b7280;">AI month-to-date: <strong>$${cap.mtd_usd}</strong>${capNote}</div>`;
+    }
+  }
+
+  let breakdownHtml = '';
   const breakdown = src.breakdown || [];
-  if (!breakdown.length) return '';
-
-  const items = breakdown.map(b => {
-    const errNote = b.errors ? ` <span style="color:#dc2626;">${b.errors} err</span>` : '';
-    return `<span style="white-space:nowrap;">${esc(b.component)} <strong>$${b.cost_usd.toFixed(4)}</strong> <span style="color:#6b7280;">(${b.calls})</span>${errNote}</span>`;
-  }).join(' &middot; ');
-
-  const total = (src.total_cost_usd || 0).toFixed(4);
-  return `
+  if (breakdown.length) {
+    const items = breakdown.map(b => {
+      const errNote = b.errors ? ` <span style="color:#dc2626;">${b.errors} err</span>` : '';
+      return `<span style="white-space:nowrap;">${esc(b.component)} <strong>$${b.cost_usd.toFixed(4)}</strong> <span style="color:#6b7280;">(${b.calls})</span>${errNote}</span>`;
+    }).join(' &middot; ');
+    const total = (src.total_cost_usd || 0).toFixed(4);
+    breakdownHtml = `
     <div style="margin:20px 0 0;">
       <div style="background:#eff6ff;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #bfdbfe;border-bottom:2px solid #bfdbfe;">
         <strong style="color:#1d4ed8;">AI yesterday — $${total} (${src.total_calls || 0} calls)</strong>
       </div>
       <div style="border:1px solid #bfdbfe;border-top:0;border-radius:0 0 6px 6px;padding:10px 12px;font-size:13px;line-height:1.9;">${items}</div>
+    </div>`;
+  }
+
+  if (!capBanner && !capFootnote && !breakdownHtml) return '';
+  return capBanner + breakdownHtml + capFootnote;
+}
+
+// Monthly AI pricing/model drift findings (only present on the 1st). Renders a
+// banner of actionable items (new models, rate changes) so a pricing change or
+// a new model to evaluate doesn't slip by unnoticed.
+function buildAiPricingHtml(results) {
+  const check = results.find(r => r.name === 'AI Pricing Check');
+  const src = check?.result?.sources?.ai_pricing_check;
+  if (!src || src.skipped) return '';
+  const actionable = (src.findings || []).filter(f => f.models || f.model);
+  if (!actionable.length) return '';
+  const items = actionable.map(f => `<li>${esc(f.note || '')}</li>`).join('');
+  return `
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;margin:20px 0 0;color:#b45309;">
+      <strong>AI pricing/model check (monthly)</strong>
+      <ul style="margin:6px 0 0;padding-left:18px;font-weight:normal;">${items}</ul>
     </div>`;
 }
 
@@ -401,6 +451,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- AI cost section ---
   const aiCostHtml = buildAiCostHtml(results);
 
+  // --- AI pricing/model drift (monthly, 1st only) ---
+  const aiPricingHtml = buildAiPricingHtml(results);
+
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
       <h2 style="margin-bottom:4px;font-size:18px;">Daily Sync \u2014 ${date}</h2>
@@ -409,6 +462,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${driftHtml}
       ${errorsHtml}
       ${aiCostHtml}
+      ${aiPricingHtml}
 
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
         <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
