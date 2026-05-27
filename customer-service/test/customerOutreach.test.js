@@ -113,9 +113,14 @@ function makeMockSupabase() {
       single() {
         return this._finalize(true);
       },
+      maybeSingle() {
+        return this._finalize(true);
+      },
       _finalize(isSingle) {
         supabaseCalls.push({ ...ctx });
-        const key = `${ctx.table}.${ctx.op}`;
+        // Pure reads (select with no write op) key on `${table}.read` so tests
+        // can hand back canned rows; write ops key on `${table}.${op}`.
+        const key = ctx.op ? `${ctx.table}.${ctx.op}` : `${ctx.table}.read`;
         const override = supabaseResults[key];
         if (override) return Promise.resolve(override);
         // Default success: synthesize a row id
@@ -149,7 +154,7 @@ require.cache[supabaseClientPath] = {
 };
 
 // Now require the module under test.
-const { sendIncidentOutreach, seedOutboundDraft } = require('../lib/customerOutreach');
+const { sendIncidentOutreach, seedOutboundDraft, buildOrderContextFromMirror } = require('../lib/customerOutreach');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -519,5 +524,72 @@ describe('seedOutboundDraft', () => {
     await assert.rejects(seedOutboundDraft({ ...BASE_DRAFT, customerEmail: undefined }), /customerEmail is required/);
     await assert.rejects(seedOutboundDraft({ ...BASE_DRAFT, subject: undefined }), /subject is required/);
     await assert.rejects(seedOutboundDraft({ ...BASE_DRAFT, plainBody: undefined }), /plainBody is required/);
+  });
+
+  it('persists order_context from the mirror so the dashboard shows products without the async fallback', async () => {
+    supabaseResults['orders.read'] = {
+      data: { shopify_order_id: 'gid://shopify/Order/1', order_number: 12345, created_at: '2026-05-01T00:00:00Z', fulfillment_status: 'UNFULFILLED' },
+      error: null,
+    };
+    supabaseResults['order_line_items.read'] = {
+      data: [
+        { title: 'THE NAOMI GAFF', variant_title: 'Black / M', sku: 'NAO-BLK-M', quantity: 1, refunded_quantity: 0, unit_price: '45.50', unit_price_currency: 'USD', custom_attributes: null },
+      ],
+      error: null,
+    };
+    await seedOutboundDraft(BASE_DRAFT);
+    const ticketsInsert = findCall('cs_tickets', 'insert');
+    assert.ok(ticketsInsert.payload.order_context, 'order_context should be populated');
+    assert.equal(ticketsInsert.payload.order_context.name, '#12345');
+    assert.equal(ticketsInsert.payload.order_context.fulfillment_status, 'UNFULFILLED');
+    assert.equal(ticketsInsert.payload.order_context.items.length, 1);
+    assert.deepEqual(ticketsInsert.payload.order_context.items[0], {
+      title: 'THE NAOMI GAFF', variant: 'Black / M', sku: 'NAO-BLK-M', quantity: 1,
+      refunded_quantity: 0, custom_attributes: null, price: '45.50', currency: 'USD',
+    });
+  });
+
+  it('leaves order_context null (does not throw) when the order is not in the mirror', async () => {
+    supabaseResults['orders.read'] = { data: null, error: null };
+    const result = await seedOutboundDraft(BASE_DRAFT);
+    assert.equal(result.ok, true);
+    const ticketsInsert = findCall('cs_tickets', 'insert');
+    assert.equal(ticketsInsert.payload.order_context, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildOrderContextFromMirror — order_context shape for outbound tickets.
+// ---------------------------------------------------------------------------
+
+describe('buildOrderContextFromMirror', () => {
+  beforeEach(resetCallTrackers);
+
+  it('maps order + line items into the renderOrderCard shape', async () => {
+    supabaseResults['orders.read'] = {
+      data: { shopify_order_id: 'gid://shopify/Order/9', order_number: 30968, created_at: '2026-05-24T00:00:00Z', fulfillment_status: 'FULFILLED' },
+      error: null,
+    };
+    supabaseResults['order_line_items.read'] = {
+      data: [
+        { title: 'THE AJ', variant_title: 'Pink / M', sku: 'AJ-PNK-M', quantity: 2, refunded_quantity: 1, unit_price: '39.00', unit_price_currency: 'USD', custom_attributes: [{ key: 'Pre-order', value: 'June' }] },
+      ],
+      error: null,
+    };
+    const ctx = await buildOrderContextFromMirror('#30968');
+    assert.equal(ctx.name, '#30968');
+    assert.equal(ctx.date, '2026-05-24T00:00:00Z');
+    assert.equal(ctx.fulfillment_status, 'FULFILLED');
+    assert.equal(ctx.items[0].variant, 'Pink / M');
+    assert.equal(ctx.items[0].quantity, 2);
+    assert.equal(ctx.items[0].refunded_quantity, 1);
+    assert.deepEqual(ctx.items[0].custom_attributes, [{ key: 'Pre-order', value: 'June' }]);
+  });
+
+  it('returns null for a missing order and for a non-numeric order number', async () => {
+    supabaseResults['orders.read'] = { data: null, error: null };
+    assert.equal(await buildOrderContextFromMirror('99999'), null);
+    assert.equal(await buildOrderContextFromMirror('not-a-number'), null);
+    assert.equal(await buildOrderContextFromMirror(null), null);
   });
 });

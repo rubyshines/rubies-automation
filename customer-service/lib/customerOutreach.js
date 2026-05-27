@@ -40,6 +40,61 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const OUTBOUND_SNOOZE_DAYS = 3;
 
 /**
+ * Build the cs_tickets.order_context payload for an outbound ticket from the
+ * Supabase order mirror (the same source the dashboard's customer-context
+ * endpoint reads). Outbound tickets never run through the inbound advisor, so
+ * nothing else populates order_context — without this the dashboard shows
+ * "No order associated" until an async fallback fetch lands. The shape matches
+ * what the inbound advisor stores as structured.order and what renderOrderCard
+ * consumes: { name, date, fulfillment_status, items: [...] }.
+ *
+ * Returns null when the order can't be resolved (caller leaves order_context
+ * null and the async fallback still applies — never throws).
+ *
+ * @param {string|number} orderNumber
+ * @returns {Promise<object|null>}
+ */
+async function buildOrderContextFromMirror(orderNumber) {
+  if (!orderNumber) return null;
+  const cleaned = String(orderNumber).replace(/^#/, '');
+  const numeric = Number(cleaned);
+  if (Number.isNaN(numeric)) return null;
+  try {
+    const supabase = getSupabaseClient();
+    const { data: order } = await supabase
+      .from('orders')
+      .select('shopify_order_id, order_number, created_at, fulfillment_status')
+      .eq('order_number', numeric)
+      .maybeSingle();
+    if (!order) return null;
+
+    const { data: lineItems } = await supabase
+      .from('order_line_items')
+      .select('title, variant_title, sku, quantity, refunded_quantity, unit_price, unit_price_currency, custom_attributes')
+      .eq('shopify_order_id', order.shopify_order_id);
+
+    return {
+      name: `#${order.order_number}`,
+      date: order.created_at,
+      fulfillment_status: order.fulfillment_status || null,
+      items: (lineItems || []).map(i => ({
+        title: i.title,
+        variant: i.variant_title,
+        sku: i.sku,
+        quantity: i.quantity,
+        refunded_quantity: i.refunded_quantity || 0,
+        custom_attributes: i.custom_attributes || null,
+        price: i.unit_price,
+        currency: i.unit_price_currency,
+      })),
+    };
+  } catch (err) {
+    console.warn(`[customerOutreach] buildOrderContextFromMirror(${orderNumber}) failed: ${err.message}`);
+    return null;
+  }
+}
+
+/**
  * @param {object} args
  * @param {Array<{order_number, customer_email, customer_name?, subject, html_body, plain_body?, summary?}>} args.outreaches
  *   summary (optional): short string shown on the dashboard queue card.
@@ -206,6 +261,7 @@ async function registerOutboundWithAdvisorPipeline({ supabase, ticket, outreach,
 
     const now = new Date().toISOString();
     const orderNumber = outreach.order_number ? String(outreach.order_number).replace(/^#/, '') : null;
+    const orderContext = await buildOrderContextFromMirror(orderNumber);
     const draftBody = outreach.plain_body || stripHtmlBasic(outreach.html_body);
 
     const { data: ticketRow, error: ticketErr } = await supabase
@@ -221,6 +277,7 @@ async function registerOutboundWithAdvisorPipeline({ supabase, ticket, outreach,
         customer_email: recipientEmail,
         customer_name: recipientName || null,
         order_number: orderNumber,
+        order_context: orderContext,
         conversation_history: conversationHistory,
         message_type: 'outbound_outreach',
         confidence: 'high',
@@ -347,6 +404,7 @@ async function seedOutboundDraft({
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
   const cleanOrderNumber = orderNumber ? String(orderNumber).replace(/^#/, '') : null;
+  const orderContext = await buildOrderContextFromMirror(cleanOrderNumber);
 
   // 1) cs_tickets row — open, awaiting operator review, no Gorgias yet.
   const { data: ticketRow, error: ticketErr } = await supabase
@@ -361,6 +419,7 @@ async function seedOutboundDraft({
       customer_email: customerEmail,
       customer_name: customerName || null,
       order_number: cleanOrderNumber,
+      order_context: orderContext,
       conversation_history: [],
       message_type: 'proactive_outreach',
       confidence: 'high',
@@ -455,4 +514,4 @@ async function seedOutboundDraft({
   };
 }
 
-module.exports = { sendIncidentOutreach, registerOutboundWithAdvisorPipeline, seedOutboundDraft };
+module.exports = { sendIncidentOutreach, registerOutboundWithAdvisorPipeline, seedOutboundDraft, buildOrderContextFromMirror };
