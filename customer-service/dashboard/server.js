@@ -498,6 +498,12 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
     action_type: s?.action_type || null,
     message_type: canonicalMessageType(s?.message_type, `draft ${id}`),
     order_number: s?.order?.name || s?.intake?.order_number ? `#${(s?.order?.name || s?.intake?.order_number).toString().replace('#', '')}` : undefined,
+    // A regenerated draft is always something the operator intends to review/send,
+    // so it must be pending. This re-opens an already-sent draft when the operator
+    // regenerates on a reopened ticket (customer replied after we sent/closed); the
+    // UNIQUE(gorgias_ticket_id, gorgias_message_id) constraint means there's exactly
+    // one draft per message, so we reuse it rather than inserting a second row.
+    status: 'pending',
   };
   if (steer) updates.operator_steer = steer;
 
@@ -545,7 +551,11 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
 
   // Also update ticket row with latest classification
   if (draft.ticket_id) {
-    const ticketUpdates = { updated_at: new Date().toISOString() };
+    // Re-link this draft as the ticket's active draft. No-op when it already is
+    // (normal pending-draft refresh); for a reopened/snoozed ticket (active_draft_id
+    // nulled on send/snooze/close) this points the ticket back at the refreshed
+    // draft so it renders, survives reload, shows in the queue, and is sendable.
+    const ticketUpdates = { updated_at: new Date().toISOString(), active_draft_id: id };
     if (s?.message_type) ticketUpdates.message_type = canonicalMessageType(s.message_type, `ticket ${draft.ticket_id}`);
     if (s?.customer_sentiment) ticketUpdates.customer_sentiment = s.customer_sentiment;
     if (s?.confidence) ticketUpdates.confidence = s.confidence;
@@ -1595,6 +1605,89 @@ async function apiActionChatNoDraft(ticketId, body, { onStream } = {}) {
   return result;
 }
 
+// Create a brand-new advisor draft for a ticket with no active draft to refresh —
+// i.e. a reopened/snoozed ticket whose prior draft was already sent (active_draft_id
+// nulled), or a manually created ticket with no drafts. Runs the advisor on the
+// latest customer message, inserts a fresh `pending` cs_ai_drafts row, and links it
+// as the ticket's active draft so it renders, survives reload, and is sendable.
+// Mutating the old sent draft in place is wrong — it isn't sendable (status='sent')
+// and leaves active_draft_id null. Streams via onStream when provided. Returns the
+// same shape as apiRefreshDraft: { draft_response, draft_id, structured }.
+async function createFreshDraftForTicket(ticketId, { steer, onStream } = {}) {
+  const supabase = getSupabaseClient();
+  const { data: t } = await supabase.from('cs_tickets')
+    .select('gorgias_ticket_id, customer_email, order_number')
+    .eq('id', ticketId).single();
+  if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
+
+  const gorgiasClient = require('../import/gorgiasClient');
+  const { buildConversationContext, extractCleanBody } = require('../intake/processGorgiasTickets');
+  const { aiAdvisor } = require('../lib/aiAdvisor');
+
+  if (onStream) onStream({ type: 'status', text: 'Generating draft...' });
+
+  const [messages, gorgiasTicket] = await Promise.all([
+    gorgiasClient.getTicketMessages(t.gorgias_ticket_id),
+    gorgiasClient.getTicket(t.gorgias_ticket_id).catch(() => null),
+  ]);
+  const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+  if (!lastCustomer) throw new Error('No customer message found');
+
+  const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || gorgiasTicket?.customer?.name || null;
+
+  const messageText = extractCleanBody(lastCustomer).text;
+  let contextParts = [];
+  if (typeof buildConversationContext === 'function') {
+    const ctx = buildConversationContext(messages, lastCustomer.id);
+    if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
+  }
+  const attachments = lastCustomer.attachments || [];
+  const attachmentNote = attachments.length
+    ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
+    : '';
+  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
+
+  const result = await aiAdvisor({
+    customer_email: t.customer_email,
+    customer_name: senderName,
+    issue_description: contextParts.join('\n\n'),
+    operatorSteer: steer || undefined,
+    onStream: onStream ? (event) => onStream(event) : undefined,
+    ticket_id: t.gorgias_ticket_id,
+  });
+
+  const s = result._structured;
+  const newDraft = s?._composedResponse || '';
+  const confidence = (s?.status === 'ready' || s?.status === 'action_needed') ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low';
+
+  const { data: newDraftRow, error: insertErr } = await supabase.from('cs_ai_drafts').insert({
+    ticket_id: ticketId,
+    gorgias_ticket_id: t.gorgias_ticket_id,
+    gorgias_message_id: lastCustomer.id,
+    customer_email: t.customer_email,
+    order_number: t.order_number,
+    draft_response: newDraft,
+    structured_output: s,
+    audit_trail: s?.audit || [],
+    confidence,
+    advisor_status: s?.status,
+    message_type: canonicalMessageType(s?.message_type, `operator-redraft ticket ${ticketId}`),
+    operator_steer: steer || null,
+  }).select('id').single();
+
+  if (insertErr) {
+    console.error(`[refresh] Failed to insert draft for ticket ${ticketId}:`, insertErr);
+    throw new Error(`Draft save failed: ${insertErr.message}`);
+  }
+
+  await supabase.from('cs_tickets').update({ active_draft_id: newDraftRow.id }).eq('id', ticketId);
+
+  return { draft_response: newDraft, draft_id: newDraftRow.id, structured: s };
+}
+
 // ---------------------------------------------------------------------------
 // Execute & Send — one-click background: phase 1 → gate → phase 2 → send.
 // Reuses apiActionChat (both phases) and apiSendDraft. Auto-confirms ONLY when
@@ -2607,90 +2700,16 @@ const paramRoutes = [
     return { success: true };
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/refresh$/, handler: async (body, id) => {
-    const supabase = getSupabaseClient();
-    const steer = (body?.steer || '').trim();
-    const { data: t } = await supabase.from('cs_tickets')
-      .select('active_draft_id, gorgias_ticket_id, customer_email, order_number')
-      .eq('id', parseInt(id)).single();
-    // Has an active draft — update it in place (with optional steer)
-    if (t?.active_draft_id) return apiRefreshDraft(t.active_draft_id, { steer: steer || undefined });
-
-    // No active draft — check for an existing draft on this ticket (e.g. already sent/closed)
-    if (!t?.active_draft_id && t?.gorgias_ticket_id) {
-      const { data: existingDraft } = await supabase.from('cs_ai_drafts')
-        .select('id')
-        .eq('ticket_id', parseInt(id))
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (existingDraft) return apiRefreshDraft(existingDraft.id, { steer: steer || undefined });
-    }
-
-    // No draft at all — create a new one by running the advisor on the latest customer message
-    if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
-    const gorgiasClient = require('../import/gorgiasClient');
-    const { buildConversationContext, extractCleanBody } = require('../intake/processGorgiasTickets');
-    const { aiAdvisor } = require('../lib/aiAdvisor');
-
-    const [messages, gorgiasTicket] = await Promise.all([
-      gorgiasClient.getTicketMessages(t.gorgias_ticket_id),
-      gorgiasClient.getTicket(t.gorgias_ticket_id).catch(() => null),
-    ]);
-    const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
-    if (!lastCustomer) throw new Error('No customer message found');
-
-    const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
-      .filter(Boolean)
-      .join(' ')
-      .trim() || gorgiasTicket?.customer?.name || null;
-
-    const messageText = extractCleanBody(lastCustomer).text;
-    let contextParts = [];
-    if (typeof buildConversationContext === 'function') {
-      const ctx = buildConversationContext(messages, lastCustomer.id);
-      if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
-    }
-    const attachments = lastCustomer.attachments || [];
-    const attachmentNote = attachments.length
-      ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
-      : '';
-    contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
-
-    const result = await aiAdvisor({
-      customer_email: t.customer_email,
-      customer_name: senderName,
-      issue_description: contextParts.join('\n\n'),
-      operatorSteer: steer || undefined,
-      ticket_id: t.gorgias_ticket_id,
-    });
-
-    const s = result._structured;
-    const newDraft = s?._composedResponse || '';
-    const confidence = (s?.status === 'ready' || s?.status === 'action_needed') ? 'high' : s?.status === 'needs_info' ? 'medium' : 'low';
-
-    const { data: newDraftRow, error: insertErr } = await supabase.from('cs_ai_drafts').insert({
-      ticket_id: parseInt(id),
-      gorgias_ticket_id: t.gorgias_ticket_id,
-      gorgias_message_id: lastCustomer.id,
-      customer_email: t.customer_email,
-      order_number: t.order_number,
-      draft_response: newDraft,
-      structured_output: s,
-      audit_trail: s?.audit || [],
-      confidence,
-      advisor_status: s?.status,
-      message_type: canonicalMessageType(s?.message_type, `operator-redraft ticket ${id}`),
-      operator_steer: steer || null,
-    }).select('id').single();
-
-    if (insertErr) {
-      console.error(`[refresh] Failed to insert draft for ticket ${id}:`, insertErr);
-      throw new Error(`Draft save failed: ${insertErr.message}`);
-    }
-
-    await supabase.from('cs_tickets').update({ active_draft_id: newDraftRow.id }).eq('id', parseInt(id));
-
-    return { draft_response: newDraft, draft_id: newDraftRow.id, structured: s };
+    const ticketId = parseInt(id);
+    const steer = (body?.steer || '').trim() || undefined;
+    // Refresh the active draft, or the most recent draft for reopened/snoozed
+    // tickets (active_draft_id nulled on send/snooze/close). apiRefreshDraft resets
+    // it to pending and re-links active_draft_id. Only when the ticket has no drafts
+    // at all do we create one (no UNIQUE(ticket,message) conflict in that case).
+    const draftId = await resolveActionAnchorDraftId(ticketId);
+    return draftId
+      ? apiRefreshDraft(draftId, { steer })
+      : createFreshDraftForTicket(ticketId, { steer });
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/release$/, handler: (body, id) => {
     const supabase = getSupabaseClient();
@@ -2922,15 +2941,16 @@ async function handleRequest(req, res) {
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
         try {
-          const supabase = getSupabaseClient();
-          const steer = (body?.steer || '').trim();
-          const { data: t } = await supabase.from('cs_tickets')
-            .select('active_draft_id')
-            .eq('id', ticketId).single();
-          const draftId = t?.active_draft_id;
-          if (!draftId) throw new Error('No active draft for this ticket');
-
-          const result = await apiRefreshDraft(draftId, { steer: steer || undefined, onStream: sendEvent });
+          const steer = (body?.steer || '').trim() || undefined;
+          // Refresh the active draft, or the most recent draft for reopened/snoozed
+          // tickets (active_draft_id null but a prior draft exists). apiRefreshDraft
+          // resets it to pending and re-links active_draft_id so it renders and is
+          // sendable. Only create a draft when the ticket has none (no UNIQUE
+          // (ticket,message) conflict in that case).
+          const draftId = await resolveActionAnchorDraftId(ticketId);
+          const result = draftId
+            ? await apiRefreshDraft(draftId, { steer, onStream: sendEvent })
+            : await createFreshDraftForTicket(ticketId, { steer, onStream: sendEvent });
           sendEvent({ type: 'complete', draft_response: result.draft_response, draft_id: result.draft_id, structured: result.structured });
         } catch (err) {
           console.error(`[refresh-stream] error:`, err.message || err);
