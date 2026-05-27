@@ -370,9 +370,11 @@ const SHADOW_BLOCKED_TOOLS = new Set([
 ]);
 
 async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMessages, opusResult, context }) {
-  // Opt-in. See runShadowEvaluation in aiAdvisor.js — gate inverted to CS_DIAGNOSTICS_ENABLED
-  // so a forgotten/reset env var costs nothing instead of silently resuming a paid experiment.
-  if (process.env.CS_DIAGNOSTICS_ENABLED !== 'true') return;
+  // Opt-in, gated by the `cs_diagnostics` flag in system_flags (single source of
+  // truth across all runtimes — see shared/systemFlags.js and runShadowEvaluation
+  // in aiAdvisor.js). Fail-soft: missing table/row or read error keeps it OFF.
+  const { isFlagEnabled } = require('../../shared/systemFlags');
+  if (!(await isFlagEnabled('cs_diagnostics'))) return;
 
   const { getSupabaseClient } = require('../../shared/supabaseClient');
   const supabase = getSupabaseClient();

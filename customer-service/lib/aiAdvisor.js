@@ -1795,11 +1795,15 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
 // ---------------------------------------------------------------------------
 
 async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opusResult, customer_email, ticket_id, draft_id }) {
-  // Shadow eval is OPT-IN. It doubles every advisor call (Sonnet draft + Opus judge)
-  // and only produces value during an active model evaluation. Default-on gated by a
-  // "disabled" env var silently resumed a costly experiment twice (Apr + May 2026), so
-  // the gate is inverted: it runs ONLY when CS_DIAGNOSTICS_ENABLED=true is explicitly set.
-  if (process.env.CS_DIAGNOSTICS_ENABLED !== 'true') return;
+  // Shadow eval is OPT-IN, gated by the `cs_diagnostics` flag in the `system_flags`
+  // Supabase table (single source of truth across the webhook server, crons, and
+  // dashboard — see shared/systemFlags.js). It doubles every advisor call (Sonnet
+  // draft + Opus judge) and only has value during an active model eval. An env-var
+  // toggle silently resumed this costly experiment twice (Apr + May 2026) because it
+  // never propagated to all three runtimes; the DB flag flips everywhere within ~60s.
+  // Fail-soft: a missing table/row or read error keeps it OFF.
+  const { isFlagEnabled } = require('../../shared/systemFlags');
+  if (!(await isFlagEnabled('cs_diagnostics'))) return;
 
   const client = getClient();
   const supabase = getSupabaseClient();
