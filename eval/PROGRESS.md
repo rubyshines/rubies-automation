@@ -105,8 +105,9 @@ Implemented + validated:
 - **Fact-precedence rule (anti-hallucination rule 7):** operational facts (delivery times, stock, pre-order restock dates) come from tools, never memory; for an OOS/pre-order item, look up + state the restock date rather than only suggesting an order split (the Naomi lesson); don't guess shipping rates/countries.
 - NOTE: caught + fixed a backtick bug — the system prompt is a template literal, so tool names in `backticks` broke the file. No backticks in prompt prose.
 
+**shipping_info advisor tool — DONE (2026-05-27, commit b1bf0a2):** added `lookupShippingZone(country)` to lib/tools/shippingInfo.js (raw shipping_zones facts, no nested AI call; reuses detectCountry, falls back when a 2-letter input isn't the ISO code e.g. UK→GB). Registered shipping_info tool + executeToolCall case. 7 unit tests + scenario shippingPolicy.js. Validated: US "free shipping?" → "$99 threshold, else $10.50/$24" from DB. **Full unit suite 770/770 pass.**
+
 **Remaining hard-facts work (scoped, not done):**
-- **Add `shipping_info` advisor tool** over shipping_zones (ship-to countries / rates / free-shipping thresholds / DDP). Handler exists (`lib/tools/shippingInfo.js handleShippingInfo`) — needs wiring + a unit test. Biggest remaining gap.
 - **KB cleanup (→ park):** quarantine/fix the wrong "RUBIES Shipping Information" (Australia) + "Shipping Policy" (Portland, buyer-pays-duties) articles — they still feed the MCP `cs_get_knowledge` tool on OTHER surfaces.
 - Verify compare_products / check_unfulfilled_order actually return restock dates so rule 7's pre-order nudge has data to state.
 
