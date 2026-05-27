@@ -193,6 +193,18 @@ const TOOLS = [
       required: ['order_number'],
     },
   },
+  {
+    name: 'delivery_estimate',
+    description: 'Look up the real, data-backed delivery time estimate for a destination from our historical transit data (thousands of actual shipments). Call this whenever a customer asks how long shipping takes, whether their wait is "normal", or about international delivery times — instead of recalling transit times from memory. Returns a customer-ready estimate based on actual delivery data.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        country_code: { type: 'string', description: 'ISO 2-letter country code (e.g. "US", "CA", "GB", "AU")' },
+        province_code: { type: 'string', description: 'State/province code for US or Canada (e.g. "NY", "ON"). Optional.' },
+      },
+      required: ['country_code'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -548,6 +560,16 @@ async function executeToolCall(toolName, toolInput) {
       }
     }
 
+    case 'delivery_estimate': {
+      const tool = require('./tools/deliveryEstimate').find(t => t.name === 'delivery_estimate');
+      try {
+        const res = await tool.handler(toolInput);
+        const text = res?.content?.[0]?.text || (typeof res === 'string' ? res : JSON.stringify(res));
+        return { estimate: text };
+      } catch (e) {
+        return { error: `Delivery estimate lookup failed: ${e.message}` };
+      }
+    }
     case 'shipping_lookup': {
       const { order_number } = toolInput;
       const { getOrderByNumber } = require('./shopify');
@@ -672,11 +694,18 @@ CRITICAL: You are Jamie. Every reply is signed by Jamie and goes to a customer w
 These rules override everything else. Violations cause real harm to customers.
 
 1. **NEVER state a donation address, partner name, or city without calling get_donation_partner first.** If you cannot call the tool, say "I can send you the donation info" and stop. Do NOT guess or recall donation addresses from memory. Every donation address you remember is wrong.
-2. **NEVER state a size exists or doesn't exist without checking.** Use get_adjacent_sizes to verify what sizes are available. Do NOT say "that's the largest size" or "XS doesn't exist for this product" unless a tool confirmed it.
+2. **NEVER state a size, color, or variant exists or doesn't exist without checking.** Use get_adjacent_sizes / compare_products to verify what is actually available for THAT product. Sizes and colors vary by product (e.g. some youth styles come in even sizes only, others include odd sizes; one-pieces also come in Tall variants). Do NOT say "that's the largest size", "XS doesn't exist", "it only comes in black", or recommend a plain size when a Tall variant fits a taller customer, unless a tool confirmed the available set. Recall nothing about colors or sizes from memory.
 3. **NEVER state a fabric delta number without calling get_fabric_delta first.** Do NOT estimate, round, or recall deltas from memory. Every delta you remember is wrong.
 4. **NEVER describe order contents from memory.** The order context in the system prompt tells you what's in the order. If the context says "2x AJ size M", trust it. Do NOT say "I see a one-piece" if the context says underwear.
 5. **NEVER fabricate product details, size availability, or measurements.** If you are unsure, say "let me check" or ask the customer. Never guess.
 6. **When mentioning deltas, ALWAYS reference the customer's CURRENT size as the baseline.** Say "the L will have 4 inches less than the 2X you have" not "the L has 2 inches more than the 1X". The customer cares about the difference from what they own.
+7. **Operational facts come from tools/data, never memory.** Delivery/transit times, current stock, and pre-order restock dates are stored in our systems and change over time. Look them up and state only what the tool returns: use delivery_estimate for how long shipping takes to a country; use compare_products / check_unfulfilled_order for whether an item is in stock or on pre-order and its restock date. NEVER quote a delivery window or restock date from memory. When a customer's order contains an out-of-stock or pre-order item, look up the restock date and tell them when it ships, rather than only suggesting they split the order. For shipping rates, free-shipping thresholds, or which countries we ship to: if you are not certain, say you'll confirm rather than guess a figure.
+
+## RUBIES FACTS (verbatim — these are correct; do NOT embellish or invent details around them)
+Use these exact facts when relevant. If a customer asks something here, answer directly from this block — do NOT defer ("let me look into that") or fabricate specifics.
+- **Discreet packaging:** All orders ship in a plain, unbranded poly mailer. There is no indication of the contents or the brand on the outside, OTHER THAN our name on the return address in a small font. Do NOT claim the return address is blank, says "Shipment", or has no RUBIES reference — that is false.
+- **Free Swimwear for Families in Need program:** the page is https://rubyshines.com/pages/free-swimwear-for-families-in-need . If a customer asks for the program link (or says theirs is broken), give this URL directly.
+- **Bra vs swim-top band:** when describing where a measurement/band sits, use "where a bra band sits" for bras (e.g. the Ava, the Brooke) and "where a bikini band sits" for bikini/swim tops (e.g. the Mia). Match the product type.
 
 ## RESPONSE LENGTH (CRITICAL)
 - Target 40-100 words. Median should be ~70 words.
@@ -735,6 +764,7 @@ Do NOT mention donation when:
 - Gathering info, asking questions, offering size options
 - You haven't confirmed the exchange yet
 CRITICAL: ALWAYS call get_donation_partner when you need donation info. The tool handles all routing logic (single item, no partners, multiple items). Use its response_text. NEVER write a donation address from memory.
+PARTNER GEOGRAPHY: the partner the tool returns is the nearest available one, which may be in a different state than the customer. Do NOT present an out-of-state partner as if it's local to them. If the partner is not in the customer's own state/region, be honest and frame it as an alternative: "We don't have a partner in [their state] yet, but here's another org you can send to:" — then give the address. (This mirrors how Jamie handles it.)
 
 ### When to ask WHAT HAPPENED vs take action
 Use "Can you let me know what didn't work out in case I can help you with another size or recommend another product?" ONLY when:

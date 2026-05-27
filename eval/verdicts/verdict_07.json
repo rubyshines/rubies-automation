@@ -1,0 +1,227 @@
+[
+  {
+    "id": 1132,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "proposed exchange but Jamie executed none yet",
+    "action_pattern_tag": "over_proposed_action"
+  },
+  {
+    "id": 1133,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1134,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added personal anecdote about daughter Ruby",
+    "prose_pattern_tag": "added_personal_touch",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1136,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1142,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1143,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed donation instructions paragraph",
+    "prose_pattern_tag": "removed_donation_info",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1144,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1145,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1151,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "removed wrong $136.80 refund amount",
+    "prose_pattern_tag": "wrong_refund_amount",
+    "action_class": "MINOR",
+    "action_note": "same 3 items, refund amount differed ($136.80 vs $112.50)",
+    "action_pattern_tag": "refund_amount_differed"
+  },
+  {
+    "id": 1152,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1153,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1154,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added fabric difference detail for sizes",
+    "prose_pattern_tag": "added_sizing_detail",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1165,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1166,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed self-blame line",
+    "prose_pattern_tag": "softened_self_blame",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1167,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1168,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1174,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1175,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "corrected return address branding claim",
+    "prose_pattern_tag": "wrong_packaging_detail",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1176,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "removed internal stock-check preamble line",
+    "prose_pattern_tag": "removed_internal_note",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1177,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1178,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1179,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed Passport tracking link and reworded timeframe",
+    "prose_pattern_tag": "removed_tracking_link",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1180,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1182,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1183,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  }
+]

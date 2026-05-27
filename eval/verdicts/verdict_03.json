@@ -1,0 +1,227 @@
+[
+  {
+    "id": 926,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 927,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 928,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 929,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 930,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 932,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 938,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 939,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed replacement offer and order guidance",
+    "prose_pattern_tag": "removed_offer",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 940,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 941,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "dropped size confirmation, vaguer exchange wording",
+    "prose_pattern_tag": "dropped_specifics",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 942,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 943,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "draft wrong topic and recipient entirely",
+    "prose_pattern_tag": "wrong_draft_content",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 944,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 945,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 946,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 947,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "dropped 'size' from swap option list",
+    "prose_pattern_tag": "minor_wording",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 948,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 950,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 951,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 952,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 960,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "draft claimed already done, sent gave donation info",
+    "prose_pattern_tag": "wrong_draft_content",
+    "action_class": "MISSING_ACTION",
+    "action_note": "advisor proposed none, Jamie did exchange",
+    "action_pattern_tag": "missed_exchange"
+  },
+  {
+    "id": 961,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed internal note, reworded donation paragraph",
+    "prose_pattern_tag": "reworded_donation",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 962,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 963,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "changed time 11am to 10am and day to Weds",
+    "prose_pattern_tag": "wrong_meeting_time",
+    "action_class": "MINOR",
+    "action_note": "invite sent but at different time",
+    "action_pattern_tag": "invite_time_differed"
+  },
+  {
+    "id": 964,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  }
+]

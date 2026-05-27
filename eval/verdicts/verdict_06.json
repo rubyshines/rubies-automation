@@ -1,0 +1,227 @@
+[
+  {
+    "id": 1075,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1082,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1083,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "softened return instruction to keep-or-donate",
+    "prose_pattern_tag": "keep_or_donate_softened",
+    "action_class": "MINOR",
+    "action_note": "exchange proposed, executed as free create_order_complete",
+    "action_pattern_tag": "exchange_via_free_order"
+  },
+  {
+    "id": 1084,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1085,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MINOR",
+    "action_note": "proposed exchange+refund, only refund executed (nothing exchanged)",
+    "action_pattern_tag": "refund_only_no_exchange"
+  },
+  {
+    "id": 1086,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1093,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1095,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1097,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed dollar amount, generalized to all swimwear",
+    "prose_pattern_tag": "dropped_refund_amount",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1099,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1100,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "added pink color availability, removed size offer",
+    "prose_pattern_tag": "wrong_color_availability",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1101,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1103,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added future exchange offer note",
+    "prose_pattern_tag": "added_exchange_offer_note",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1105,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1106,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added apology for prior email and thanks",
+    "prose_pattern_tag": "added_personal_touch",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1107,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed no-return-shipping clarification",
+    "prose_pattern_tag": "trimmed_clarification",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1109,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1111,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added personal anecdote about daughter",
+    "prose_pattern_tag": "added_personal_touch",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1117,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added personal anecdote about daughter",
+    "prose_pattern_tag": "added_personal_touch",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1118,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1122,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1123,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1124,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1125,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1131,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed largest-size explanation sentence",
+    "prose_pattern_tag": "trimmed_clarification",
+    "action_class": "MINOR",
+    "action_note": "proposed $47.00 refund, executed $39.95",
+    "action_pattern_tag": "refund_amount_mismatch"
+  }
+]

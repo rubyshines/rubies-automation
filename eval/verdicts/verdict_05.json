@@ -1,0 +1,227 @@
+[
+  {
+    "id": 1025,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1026,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1027,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added invoice sent + release-on-payment detail",
+    "prose_pattern_tag": "added_invoice_payment_step",
+    "action_class": "MINOR",
+    "action_note": "tool did even swap, no invoice for $48 diff",
+    "action_pattern_tag": "invoice_amount_caveat"
+  },
+  {
+    "id": 1028,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1035,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1037,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "offered add/remove/cancel instead of asking new address",
+    "prose_pattern_tag": "reframed_offer",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1045,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed height from measurement request",
+    "prose_pattern_tag": "trimmed_measurement_ask",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1046,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1047,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added hope-you-return-again line",
+    "prose_pattern_tag": "added_warmth_line",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1048,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "proposed hold release but none executed",
+    "action_pattern_tag": "over_proposed_action"
+  },
+  {
+    "id": 1050,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1051,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "corrected refund amount $32.00 to $28.00",
+    "prose_pattern_tag": "wrong_refund_amount",
+    "action_class": "MINOR",
+    "action_note": "refund $28.80 vs proposed $32.00, same item",
+    "action_pattern_tag": "wrong_refund_amount"
+  },
+  {
+    "id": 1052,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "reworded to strongly urge measuring, dropped free-exchange line",
+    "prose_pattern_tag": "reworded_sizing_advice",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1054,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added tall vs regular length question",
+    "prose_pattern_tag": "added_clarifying_question",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1062,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1063,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1064,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1065,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1066,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "corrected no WV partner exists, this is alternate org",
+    "prose_pattern_tag": "wrong_partner_availability",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1067,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "stripped internal stock/creating-exchange preamble",
+    "prose_pattern_tag": "internal_note_stripped",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1068,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1070,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1072,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1073,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1074,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  }
+]

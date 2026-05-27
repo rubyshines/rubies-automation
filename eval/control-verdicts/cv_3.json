@@ -1,0 +1,17 @@
+[
+  {"id":1133,"prose_class":"FACTUAL_CORRECTION","prose_note":"Wrong return partner/address (Raleigh vs BAGLY Boston)","action_class":"MATCH","action_note":"Both exchange to Ruby+AJ 2X Black"},
+  {"id":1022,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"Omits Ruby M→1X swap and refund","action_class":"WRONG_ACTION","action_note":"Jamie added Ruby swap + refund"},
+  {"id":1018,"prose_class":"FACTUAL_CORRECTION","prose_note":"Falsely claims already refunded; Jamie asked first","action_class":"NO_ACTION_CORRECT","action_note":"Jamie asked question, no action"},
+  {"id":940,"prose_class":"COSMETIC","prose_note":"Same thank-you, minor wording","action_class":"NO_ACTION_CORRECT","action_note":"No action either side"},
+  {"id":1227,"prose_class":"PROSE_ACTION_MISMATCH","prose_note":"Describes creating exchange Jamie didn't make","action_class":"EXTRA_ACTION","action_note":"Jamie only said thanks"},
+  {"id":1016,"prose_class":"COSMETIC","prose_note":"Same glad-keeping message","action_class":"NO_ACTION_CORRECT","action_note":"No action either side"},
+  {"id":1198,"prose_class":"COSMETIC","prose_note":"Same you're-welcome reply","action_class":"NO_ACTION_CORRECT","action_note":"No action either side"},
+  {"id":1168,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"Asks where tight vs gives fabric deltas","action_class":"NO_ACTION_CORRECT","action_note":"Both gathering info"},
+  {"id":917,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"Adds delivery-date detail Jamie omitted","action_class":"NO_ACTION_CORRECT","action_note":"No action either side"},
+  {"id":942,"prose_class":"COSMETIC","prose_note":"Same M/S fabric deltas","action_class":"NO_ACTION_CORRECT","action_note":"Both gathering info"},
+  {"id":1145,"prose_class":"COSMETIC","prose_note":"Same size 12/11 deltas","action_class":"NO_ACTION_CORRECT","action_note":"Both gathering info"},
+  {"id":924,"prose_class":"COSMETIC","prose_note":"Same thank-you reply","action_class":"EXTRA_ACTION","action_note":"Jamie committed no exchange"},
+  {"id":921,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"Adds pre-order availability info Jamie omitted","action_class":"NO_ACTION_CORRECT","action_note":"No action either side"},
+  {"id":828,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"Different reason; defers vs confirms address","action_class":"NO_ACTION_CORRECT","action_note":"Jamie asked question, no action"},
+  {"id":1187,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"Omits free bikini bottom program offer","action_class":"NO_ACTION_CORRECT","action_note":"No action either side"}
+]

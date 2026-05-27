@@ -1,0 +1,18 @@
+[
+  {"id":960,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"adds size 7 Pink specifics consistent with exchange","action_class":"MATCH","action_note":"exchange created matches new order"},
+  {"id":974,"prose_class":"FACTUAL_CORRECTION","prose_note":"claims shipped/refunded; Jamie put hold","action_class":"MISSING_ACTION","action_note":"Jamie held order; regen none"},
+  {"id":1019,"prose_class":"PROSE_ACTION_MISMATCH","prose_note":"says refund done; Jamie offered choice","action_class":"EXTRA_ACTION","action_note":"Jamie asked, committed no refund"},
+  {"id":1048,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"leaked preamble line; core message matches","action_class":"MISSING_ACTION","action_note":"Jamie released hold; regen action null"},
+  {"id":1132,"prose_class":"COSMETIC","prose_note":"same exchange and donation message","action_class":"MATCH","action_note":"exchange Mia 2X matches"},
+  {"id":1206,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"affirms 3X adult; Jamie just clarified","action_class":"EXTRA_ACTION","action_note":"Jamie clarified only, no exchange"},
+  {"id":1204,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"omits fabric detail Jamie gave","action_class":"MATCH","action_note":"exchange Serena 3X matches"},
+  {"id":1124,"prose_class":"FACTUAL_CORRECTION","prose_note":"says cancelled/refunded; Jamie put hold","action_class":"MISSING_ACTION","action_note":"Jamie held order; regen none"},
+  {"id":932,"prose_class":"COSMETIC","prose_note":"same exchange and donation substance","action_class":"MATCH","action_note":"exchange AJ S to M matches"},
+  {"id":987,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"asks size; Jamie created exchange","action_class":"MISSING_ACTION","action_note":"Jamie made exchange; regen asked"},
+  {"id":835,"prose_class":"FACTUAL_CORRECTION","prose_note":"wrong donation address vs Jamie","action_class":"MATCH","action_note":"exchange both Charlies matches"},
+  {"id":1093,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"frames refund as already done","action_class":"MISSING_ACTION","action_note":"Jamie refunded; regen action null"},
+  {"id":1109,"prose_class":"COSMETIC","prose_note":"delivered vs shipped; substance matches","action_class":"MATCH","action_note":"exchange Serena 1X matches"},
+  {"id":1208,"prose_class":"SUBSTANTIVE_PROSE","prose_note":"says already cancelled; omits amount","action_class":"MISSING_ACTION","action_note":"Jamie cancelled and refunded; regen none"},
+  {"id":1153,"prose_class":"FACTUAL_CORRECTION","prose_note":"wrong donation address vs Jamie","action_class":"MATCH","action_note":"refund of 3 items matches"},
+  {"id":985,"prose_class":"COSMETIC","prose_note":"same exchange and donation address","action_class":"MATCH","action_note":"exchange Ruby S and Mia S matches"}
+]

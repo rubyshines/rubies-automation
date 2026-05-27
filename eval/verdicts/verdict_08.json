@@ -1,0 +1,227 @@
+[
+  {
+    "id": 1184,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1185,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "changed bikini band to bra band, trimmed returns text",
+    "prose_pattern_tag": "wrong_measurement_reference",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1187,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1188,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "supplied correct program link instead of deferring",
+    "prose_pattern_tag": "missing_correct_link",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1190,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "removed leading internal inventory line",
+    "prose_pattern_tag": "internal_scratch_line",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1191,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "added request for waist measurement",
+    "prose_pattern_tag": "added_sizing_help",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1192,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1198,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1199,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1200,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1201,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1203,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1204,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1205,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1206,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "switched confident confirm to uncertain restatement",
+    "prose_pattern_tag": "softened_confirmation",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "re-proposed exchange already done; Jamie executed none",
+    "action_pattern_tag": "reproposed_completed_action"
+  },
+  {
+    "id": 1207,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1208,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1209,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1215,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1224,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1226,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "corrected size L to L tall",
+    "prose_pattern_tag": "wrong_size_length",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1227,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1228,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1229,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 1230,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "reworded fit description (lower rise/cheeky vs compressed)",
+    "prose_pattern_tag": "refined_product_description",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  }
+]

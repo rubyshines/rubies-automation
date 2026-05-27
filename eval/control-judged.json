@@ -1,0 +1,378 @@
+[
+  {
+    "id": 920,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Same outcome, omits order #s and detail",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Sent consolidated+edited address; regen none",
+    "group": "error"
+  },
+  {
+    "id": 963,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Wrong date/time: June 4 11am vs June 3 10am",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Sent invite; regen none",
+    "group": "error"
+  },
+  {
+    "id": 975,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Omits amount and keep/donate offer",
+    "action_class": "MATCH",
+    "action_note": "Cancellation matches",
+    "group": "error"
+  },
+  {
+    "id": 1005,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Wrong sizing claim; Ruby size 11 contradicts",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both no action",
+    "group": "error"
+  },
+  {
+    "id": 1051,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Suggests AJ; Jamie picked Naomi",
+    "action_class": "MATCH",
+    "action_note": "Refund matches",
+    "group": "error"
+  },
+  {
+    "id": 1066,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Wrong partner/address: Raleigh vs MetroWest MA",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both no action",
+    "group": "error"
+  },
+  {
+    "id": 1100,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Hedges/promises follow-up; Jamie said no plans",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both info only",
+    "group": "error"
+  },
+  {
+    "id": 1151,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Wrong partner/address: Valid USA vs LA RISE",
+    "action_class": "MATCH",
+    "action_note": "Refund matches",
+    "group": "error"
+  },
+  {
+    "id": 1175,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Overclaims no brand name on outside",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both no action",
+    "group": "error"
+  },
+  {
+    "id": 1185,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Asks to resend; Jamie engaged content",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both no action",
+    "group": "error"
+  },
+  {
+    "id": 1188,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Defers link; Jamie gave it directly",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both no action",
+    "group": "error"
+  },
+  {
+    "id": 1226,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same fit/size; adds SKU note",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both no action",
+    "group": "error"
+  },
+  {
+    "id": 877,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Says shipped; Jamie said not shipped, held",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Sent put hold; regen none",
+    "group": "error"
+  },
+  {
+    "id": 901,
+    "prose_class": "COSMETIC",
+    "prose_note": "Adds tracking line; same substance",
+    "action_class": "MATCH",
+    "action_note": "Hold release matches",
+    "group": "error"
+  },
+  {
+    "id": 910,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Adds name/size detail; same outcome",
+    "action_class": "MATCH",
+    "action_note": "Hold release matches",
+    "group": "error"
+  },
+  {
+    "id": 922,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Suggests L+asks; Jamie sent 1X exchange",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Sent committed exchange; regen asked",
+    "group": "error"
+  },
+  {
+    "id": 960,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "adds size 7 Pink specifics consistent with exchange",
+    "action_class": "MATCH",
+    "action_note": "exchange created matches new order",
+    "group": "error"
+  },
+  {
+    "id": 974,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "claims shipped/refunded; Jamie put hold",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Jamie held order; regen none",
+    "group": "error"
+  },
+  {
+    "id": 1019,
+    "prose_class": "PROSE_ACTION_MISMATCH",
+    "prose_note": "says refund done; Jamie offered choice",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "Jamie asked, committed no refund",
+    "group": "error"
+  },
+  {
+    "id": 1048,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "leaked preamble line; core message matches",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Jamie released hold; regen action null",
+    "group": "error"
+  },
+  {
+    "id": 1132,
+    "prose_class": "COSMETIC",
+    "prose_note": "same exchange and donation message",
+    "action_class": "MATCH",
+    "action_note": "exchange Mia 2X matches",
+    "group": "error"
+  },
+  {
+    "id": 1206,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "affirms 3X adult; Jamie just clarified",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "Jamie clarified only, no exchange",
+    "group": "error"
+  },
+  {
+    "id": 1204,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "omits fabric detail Jamie gave",
+    "action_class": "MATCH",
+    "action_note": "exchange Serena 3X matches",
+    "group": "control"
+  },
+  {
+    "id": 1124,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "says cancelled/refunded; Jamie put hold",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Jamie held order; regen none",
+    "group": "control"
+  },
+  {
+    "id": 932,
+    "prose_class": "COSMETIC",
+    "prose_note": "same exchange and donation substance",
+    "action_class": "MATCH",
+    "action_note": "exchange AJ S to M matches",
+    "group": "control"
+  },
+  {
+    "id": 987,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "asks size; Jamie created exchange",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Jamie made exchange; regen asked",
+    "group": "control"
+  },
+  {
+    "id": 835,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "wrong donation address vs Jamie",
+    "action_class": "MATCH",
+    "action_note": "exchange both Charlies matches",
+    "group": "control"
+  },
+  {
+    "id": 1093,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "frames refund as already done",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Jamie refunded; regen action null",
+    "group": "control"
+  },
+  {
+    "id": 1109,
+    "prose_class": "COSMETIC",
+    "prose_note": "delivered vs shipped; substance matches",
+    "action_class": "MATCH",
+    "action_note": "exchange Serena 1X matches",
+    "group": "control"
+  },
+  {
+    "id": 1208,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "says already cancelled; omits amount",
+    "action_class": "MISSING_ACTION",
+    "action_note": "Jamie cancelled and refunded; regen none",
+    "group": "control"
+  },
+  {
+    "id": 1153,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "wrong donation address vs Jamie",
+    "action_class": "MATCH",
+    "action_note": "refund of 3 items matches",
+    "group": "control"
+  },
+  {
+    "id": 985,
+    "prose_class": "COSMETIC",
+    "prose_note": "same exchange and donation address",
+    "action_class": "MATCH",
+    "action_note": "exchange Ruby S and Mia S matches",
+    "group": "control"
+  },
+  {
+    "id": 1133,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Wrong return partner/address (Raleigh vs BAGLY Boston)",
+    "action_class": "MATCH",
+    "action_note": "Both exchange to Ruby+AJ 2X Black",
+    "group": "control"
+  },
+  {
+    "id": 1022,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Omits Ruby M→1X swap and refund",
+    "action_class": "WRONG_ACTION",
+    "action_note": "Jamie added Ruby swap + refund",
+    "group": "control"
+  },
+  {
+    "id": 1018,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_note": "Falsely claims already refunded; Jamie asked first",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Jamie asked question, no action",
+    "group": "control"
+  },
+  {
+    "id": 940,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same thank-you, minor wording",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "No action either side",
+    "group": "control"
+  },
+  {
+    "id": 1227,
+    "prose_class": "PROSE_ACTION_MISMATCH",
+    "prose_note": "Describes creating exchange Jamie didn't make",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "Jamie only said thanks",
+    "group": "control"
+  },
+  {
+    "id": 1016,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same glad-keeping message",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "No action either side",
+    "group": "control"
+  },
+  {
+    "id": 1198,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same you're-welcome reply",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "No action either side",
+    "group": "control"
+  },
+  {
+    "id": 1168,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Asks where tight vs gives fabric deltas",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both gathering info",
+    "group": "control"
+  },
+  {
+    "id": 917,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Adds delivery-date detail Jamie omitted",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "No action either side",
+    "group": "control"
+  },
+  {
+    "id": 942,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same M/S fabric deltas",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both gathering info",
+    "group": "control"
+  },
+  {
+    "id": 1145,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same size 12/11 deltas",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Both gathering info",
+    "group": "control"
+  },
+  {
+    "id": 924,
+    "prose_class": "COSMETIC",
+    "prose_note": "Same thank-you reply",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "Jamie committed no exchange",
+    "group": "control"
+  },
+  {
+    "id": 921,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Adds pre-order availability info Jamie omitted",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "No action either side",
+    "group": "control"
+  },
+  {
+    "id": 828,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Different reason; defers vs confirms address",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "Jamie asked question, no action",
+    "group": "control"
+  },
+  {
+    "id": 1187,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_note": "Omits free bikini bottom program offer",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "No action either side",
+    "group": "control"
+  }
+]

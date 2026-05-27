@@ -1,0 +1,11 @@
+# Keep analysis docs (*.md) and class-label verdicts; exclude raw customer
+# data (draft/sent text + emails) so PII stays out of git.
+pairs.json
+subset.json
+subset.full.json
+errors.json
+control-judge-input.json
+_smoke.json
+batches/
+control-batches/
+regen/

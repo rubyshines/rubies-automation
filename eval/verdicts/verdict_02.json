@@ -1,0 +1,227 @@
+[
+  {
+    "id": 885,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "swapped competitor rec for upcoming sports bra + Mia",
+    "prose_pattern_tag": "changed_product_recommendation",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 886,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 887,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 893,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "removed internal stock-check note prefix",
+    "prose_pattern_tag": "internal_note_prefix",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 894,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 895,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 896,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed donation instructions paragraph",
+    "prose_pattern_tag": "removed_donation_info",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 898,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "reworded ship timing, added caveat",
+    "prose_pattern_tag": "reworded_shipping_estimate",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 899,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 900,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 901,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "proposed hold release, none executed in batch",
+    "action_pattern_tag": "proposed_hold_release_not_executed"
+  },
+  {
+    "id": 902,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "replaced restock framing with manufacturing backstory",
+    "prose_pattern_tag": "changed_restock_explanation",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 904,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 909,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "minor reword of exchange intro",
+    "prose_pattern_tag": "minor_reword",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 910,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "reworded hold-release message to generic version",
+    "prose_pattern_tag": "minor_reword",
+    "action_class": "EXTRA_ACTION",
+    "action_note": "proposed hold release, none executed in batch",
+    "action_pattern_tag": "proposed_hold_release_not_executed"
+  },
+  {
+    "id": 912,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 917,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 918,
+    "prose_class": "COSMETIC",
+    "prose_edit_note": "removed closing keep-you-posted line",
+    "prose_pattern_tag": "removed_closing_line",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 919,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "removed donation address block; exchange called free order",
+    "prose_pattern_tag": "removed_donation_info",
+    "action_class": "MATCH",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 920,
+    "prose_class": "FACTUAL_CORRECTION",
+    "prose_edit_note": "filled in actual corrected street address",
+    "prose_pattern_tag": "address_placeholder_filled",
+    "action_class": "MISSING_ACTION",
+    "action_note": "no action proposed but address fix + consolidation executed",
+    "action_pattern_tag": "missed_order_modification"
+  },
+  {
+    "id": 921,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 922,
+    "prose_class": "SUBSTANTIVE_PROSE",
+    "prose_edit_note": "changed size rec L to 1X, added donation paragraph",
+    "prose_pattern_tag": "changed_size_recommendation",
+    "action_class": "MISSING_ACTION",
+    "action_note": "no action proposed but exchange executed",
+    "action_pattern_tag": "missed_exchange"
+  },
+  {
+    "id": 923,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 924,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  },
+  {
+    "id": 925,
+    "prose_class": "IDENTICAL",
+    "prose_edit_note": "",
+    "prose_pattern_tag": "",
+    "action_class": "NO_ACTION_CORRECT",
+    "action_note": "",
+    "action_pattern_tag": ""
+  }
+]
