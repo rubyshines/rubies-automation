@@ -651,7 +651,45 @@ const tools = [
   },
 ];
 
+/**
+ * Lightweight raw-facts lookup for the CS advisor's shipping_info tool.
+ * Resolves a country name or 2-letter code to the authoritative shipping_zones
+ * row and returns structured facts (rate, threshold, currency, DDP) for the
+ * advisor to phrase itself — no nested AI call, unlike handleShippingInfo.
+ * @param {string} country  Country name or ISO 2-letter code.
+ */
+async function lookupShippingZone(country) {
+  const raw = (country || '').trim();
+  if (!raw) return { ships_to: false, note: 'No country provided.' };
+  const supabase = getSupabaseClient();
+  let data = null;
+  // 1. Try the raw input as an ISO 2-letter code.
+  if (/^[A-Za-z]{2}$/.test(raw)) {
+    ({ data } = await supabase.from('shipping_zones').select('*').eq('country_code', raw.toUpperCase()).single());
+  }
+  // 2. Fall back to country/alias resolution (handles "UK"→GB, "Canada"→CA, etc.).
+  if (!data) {
+    const detected = await detectCountry(raw);
+    if (detected?.code) {
+      ({ data } = await supabase.from('shipping_zones').select('*').eq('country_code', detected.code).single());
+    }
+  }
+  if (!data) return { ships_to: false, country: raw, note: `Could not match "${raw}" to a country in our shipping data. Do not guess — offer to confirm.` };
+  return {
+    ships_to: true,
+    country: data.country_name,
+    country_code: data.country_code,
+    zone: data.zone,
+    standard_rate: data.standard_rate,
+    expedited_rate: data.expedited_rate,
+    free_shipping_threshold: data.free_shipping_threshold,
+    currency: data.currency,
+    covers_duties: data.duties_prepaid, // DDP = we prepay duties, customer pays no customs
+  };
+}
+
 // Export both as tool array (for server.js) and named functions (for internal routing)
+tools.lookupShippingZone = lookupShippingZone;
 tools.handleShippingInfo = handleShippingInfo;
 tools.handleDutiesInquiry = handleDutiesInquiry;
 tools.handleAddressChange = handleAddressChange;

@@ -205,6 +205,17 @@ const TOOLS = [
       required: ['country_code'],
     },
   },
+  {
+    name: 'shipping_info',
+    description: 'Look up our authoritative shipping-policy facts for a destination country from the shipping_zones table: whether we ship there, the standard and expedited rate, the free-shipping threshold, the currency, and whether we cover duties (DDP) so the customer pays no customs. Call this for pre-purchase shipping-policy questions ("do you ship to X?", "how much is shipping?", "is there free shipping?", "will I pay customs/duties?"). State ONLY what it returns — never quote a rate, threshold, ship-to country, or duty policy from memory.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        country: { type: 'string', description: 'Country name or ISO 2-letter code (e.g. "United Kingdom", "GB", "Canada", "US")' },
+      },
+      required: ['country'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -560,6 +571,14 @@ async function executeToolCall(toolName, toolInput) {
       }
     }
 
+    case 'shipping_info': {
+      const { lookupShippingZone } = require('./tools/shippingInfo');
+      try {
+        return await lookupShippingZone(toolInput.country);
+      } catch (e) {
+        return { error: `Shipping info lookup failed: ${e.message}` };
+      }
+    }
     case 'delivery_estimate': {
       const tool = require('./tools/deliveryEstimate').find(t => t.name === 'delivery_estimate');
       try {

@@ -257,3 +257,54 @@ describe('buildShippingSpeedResponse', () => {
     assert.ok(r.needsHumanFollowUp);
   });
 });
+
+// ---------------------------------------------------------------------------
+// lookupShippingZone — raw authoritative facts for the advisor's shipping_info tool
+// ---------------------------------------------------------------------------
+
+const { lookupShippingZone } = require('../lib/tools/shippingInfo');
+
+describe('lookupShippingZone', () => {
+  it('resolves a 2-letter code and returns DDP facts (GB)', async () => {
+    const r = await lookupShippingZone('GB');
+    assert.equal(r.ships_to, true);
+    assert.equal(r.covers_duties, true);
+    assert.equal(r.zone, 'ddp');
+    assert.equal(r.currency, 'USD');
+  });
+
+  it('returns the US free-shipping threshold and no DDP', async () => {
+    const r = await lookupShippingZone('US');
+    assert.equal(r.ships_to, true);
+    assert.equal(r.free_shipping_threshold, 99);
+    assert.equal(r.covers_duties, false);
+  });
+
+  it('resolves a full country name via detectCountry (Canada)', async () => {
+    const r = await lookupShippingZone('Canada');
+    assert.equal(r.ships_to, true);
+    assert.equal(r.country_code, 'CA');
+    assert.equal(r.free_shipping_threshold, 96);
+  });
+
+  it('resolves an alias (UK → GB)', async () => {
+    const r = await lookupShippingZone('UK');
+    assert.equal(r.country_code, 'GB');
+  });
+
+  it('returns ships_to=false for an unmatched country (no guessing)', async () => {
+    const r = await lookupShippingZone('Narnia');
+    assert.equal(r.ships_to, false);
+    assert.ok(r.note && /confirm/i.test(r.note));
+  });
+
+  it('returns ships_to=false for an unknown 2-letter code', async () => {
+    const r = await lookupShippingZone('ZZ');
+    assert.equal(r.ships_to, false);
+  });
+
+  it('handles empty input', async () => {
+    const r = await lookupShippingZone('');
+    assert.equal(r.ships_to, false);
+  });
+});
