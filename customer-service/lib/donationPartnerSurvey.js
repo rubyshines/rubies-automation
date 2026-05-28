@@ -113,4 +113,18 @@ async function findSurveyRowByName(name) {
   return null;
 }
 
-module.exports = { readSurveyRows, findSurveyRowByName, buildMailingAddress, SHEET_ID, TAB };
+/**
+ * Ensure a `mailing_address` starts with the canonical "RUBIES Returns" line.
+ * Idempotent — re-running on an already-prefixed string is a no-op.
+ * Used by both survey-ingest and direct create/update so every partner's
+ * mailing block has a consistent first line on the donation page.
+ */
+function ensureRubiesReturnsPrefix(mailingAddress) {
+  if (!mailingAddress) return mailingAddress;
+  const lines = mailingAddress.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return mailingAddress;
+  if (/^rubies returns/i.test(lines[0])) return lines.join('\n');
+  return ['RUBIES Returns', ...lines].join('\n');
+}
+
+module.exports = { readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, SHEET_ID, TAB };

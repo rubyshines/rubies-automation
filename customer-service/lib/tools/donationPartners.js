@@ -19,7 +19,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { publishDonationPartners } = require('../donationPartnersPublish');
 const { geocodeMailingAddress } = require('../geocoder');
 const { extractLogoUrl } = require('../logoExtractor');
-const { readSurveyRows, findSurveyRowByName } = require('../donationPartnerSurvey');
+const { readSurveyRows, findSurveyRowByName, ensureRubiesReturnsPrefix } = require('../donationPartnerSurvey');
 const { rehostImageOnShopify, isShopifyCdnUrl } = require('../shopifyFileUpload');
 
 const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, size_range, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
@@ -92,6 +92,14 @@ async function handleList({ country_code, include_inactive }) {
 async function deriveCreatePayload(params, { logs }) {
   if (!params.name) throw new Error('Missing required field: name');
   if (!params.mailing_address) throw new Error('Missing required field: mailing_address');
+
+  // Normalize first — every partner's mailing block must lead with "RUBIES
+  // Returns" so the donation page renders consistently. Idempotent.
+  const mailing_address = ensureRubiesReturnsPrefix(params.mailing_address);
+  if (mailing_address !== params.mailing_address) {
+    logs.push('Prepended "RUBIES Returns" to mailing_address (canonical first line).');
+  }
+  params = { ...params, mailing_address };
 
   let lat = params.latitude;
   let lng = params.longitude;
@@ -253,6 +261,11 @@ async function handleUpdate(params) {
   }
   if (Object.keys(patch).length === 1) {
     return { content: [{ type: 'text', text: 'No fields to update.' }], isError: true };
+  }
+
+  // Normalize the mailing block if it's being set/changed.
+  if (patch.mailing_address) {
+    patch.mailing_address = ensureRubiesReturnsPrefix(patch.mailing_address);
   }
 
   // If the operator is setting a new logo_url and it's external, re-host it
