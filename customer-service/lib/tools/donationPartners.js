@@ -19,8 +19,22 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { publishDonationPartners } = require('../donationPartnersPublish');
 const { geocodeMailingAddress } = require('../geocoder');
 const { extractLogoUrl } = require('../logoExtractor');
+const fs = require('fs');
 const { readSurveyRows, findSurveyRowByName, ensureRubiesReturnsPrefix } = require('../donationPartnerSurvey');
-const { rehostImageOnShopify, isShopifyCdnUrl } = require('../shopifyFileUpload');
+const { rehostImageOnShopify, rehostImageFromFile, isShopifyCdnUrl } = require('../shopifyFileUpload');
+
+function looksLikeLocalPath(s) {
+  if (!s) return false;
+  if (/^https?:\/\//i.test(s)) return false;
+  if (s.startsWith('/') || s.startsWith('~') || s.startsWith('./') || s.startsWith('../')) return true;
+  return false;
+}
+
+function expandHome(p) {
+  if (!p) return p;
+  if (p.startsWith('~/')) return require('path').join(require('os').homedir(), p.slice(2));
+  return p;
+}
 
 const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, size_range, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
 
@@ -129,12 +143,11 @@ async function deriveCreatePayload(params, { logs }) {
     throw new Error('Could not determine country_code. Provide it explicitly.');
   }
 
-  let logo_url = params.logo_url || null;
-  if (!logo_url && params.website_url) {
-    logs.push(`Extracting logo from ${params.website_url} via Haiku...`);
-    logo_url = await extractLogoUrl(params.website_url);
-    logs.push(logo_url ? `  → ${logo_url}` : '  → no logo found (continuing without)');
-  }
+  // Logo extraction was previously auto-attempted via Haiku, but in practice
+  // org sites often serve white-on-transparent variants, hotlink-block, or
+  // 404 — too unreliable to trust silently. Operator now always pastes a
+  // logo URL (or a local file path) on the confirm call.
+  const logo_url = params.logo_url || null;
 
   return {
     name: params.name,
@@ -183,7 +196,11 @@ function renderPreview(row, logs, opts = {}) {
       lines.push('_(On save, this logo will be re-hosted on the Shopify CDN so the partner record doesn\'t depend on the external URL.)_');
     }
   } else {
-    lines.push(`**Logo:** — (Haiku could not find one; pass an explicit \`logo_url\` to override.)`);
+    lines.push(`**Logo:** — needed before save.`);
+    lines.push('');
+    lines.push(`Open the org website to find one, then re-run this tool with a \`logo_url\`:`);
+    if (row.website_url) lines.push(`  • Website: ${row.website_url}`);
+    lines.push(`  • \`logo_url\` accepts a public URL (Shopify will fetch + host) OR a local file path like \`/Users/you/Downloads/logo.png\` (we upload the bytes).`);
   }
   lines.push('');
   lines.push('---');
@@ -212,21 +229,30 @@ async function handleCreate(params) {
   }
 
   // Re-host the logo on Shopify CDN at save-time so we never depend on
-  // third-party hosts (org sites move, Wix tokens rotate, Squarespace links
-  // expire). If it's already on cdn.shopify.com, the helper no-ops.
-  if (row.logo_url) {
-    try {
-      logs.push(isShopifyCdnUrl(row.logo_url)
-        ? `Logo already on Shopify CDN — no re-host needed.`
-        : `Re-hosting logo on Shopify CDN: ${row.logo_url}`);
+  // third-party hosts. Logo can be a URL (Shopify fetches it) or a local
+  // file path (we upload bytes via staged uploads).
+  if (!row.logo_url) {
+    return { content: [{ type: 'text', text: `Cannot save without a logo. Re-run with \`logo_url: "<URL or local file path>"\`.\n\n${logs.join('\n')}` }], isError: true };
+  }
+  try {
+    if (looksLikeLocalPath(row.logo_url)) {
+      const localPath = expandHome(row.logo_url);
+      logs.push(`Uploading local logo file to Shopify CDN: ${localPath}`);
+      const result = await rehostImageFromFile(localPath, { alt: `${row.name} logo` });
+      logs.push(`  → ${result.cdnUrl}`);
+      row.logo_url = result.cdnUrl;
+    } else if (isShopifyCdnUrl(row.logo_url)) {
+      logs.push(`Logo already on Shopify CDN — no re-host needed.`);
+    } else {
+      logs.push(`Re-hosting logo on Shopify CDN: ${row.logo_url}`);
       const result = await rehostImageOnShopify(row.logo_url, { alt: `${row.name} logo` });
       if (result.source === 'shopify') {
         logs.push(`  → ${result.cdnUrl}`);
         row.logo_url = result.cdnUrl;
       }
-    } catch (e) {
-      logs.push(`  Re-host failed (${e.message}). Keeping external URL — operator can re-run create or update later.`);
     }
+  } catch (e) {
+    return { content: [{ type: 'text', text: `Logo upload failed: ${e.message}\n\nRe-run with a different \`logo_url\`.\n\n${logs.join('\n')}` }], isError: true };
   }
 
   const supabase = getSupabaseClient();
