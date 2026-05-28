@@ -54,6 +54,7 @@ const consolidateOrdersTools = require('./lib/tools/consolidateOrders');
 const seoMetaTools = require('./lib/tools/seoMeta');
 const createOutreachTicketTools = require('./lib/tools/createOutreachTicket');
 const warehouseAllocationTools = require('./lib/tools/warehouseAllocation');
+const donationPartnerTools = require('./lib/tools/donationPartners');
 
 const allTools = [
   ...customerLookupTools,
@@ -94,6 +95,7 @@ const allTools = [
   ...seoMetaTools,
   ...createOutreachTicketTools,
   ...warehouseAllocationTools,
+  ...donationPartnerTools,
 ];
 
 /**

@@ -97,32 +97,39 @@ async function prescribeDonationRouting(intake, context) {
   try {
     const { data } = await supabase
       .from('donation_partners')
-      .select('id, name, region, city, address, description, donations_routed, latitude, longitude')
+      .select('id, name, region, city, address, mailing_address, description, donations_routed, latitude, longitude')
       .eq('country_code', country)
       .eq('active', true);
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
 
   function formatDonationText(programExplanation, partner, washReminder) {
-    const addrParts = partner.address.split(',').map(s => s.trim());
-    let streetLine, cityLine;
-    if (addrParts.length >= 3) {
-      streetLine = addrParts[0];
-      cityLine = addrParts.slice(1).join(', ');
-    } else if (addrParts.length === 2) {
-      streetLine = addrParts[0];
-      cityLine = addrParts[1];
+    // Prefer the canonical mailing_address from the partner registry (multi-line
+    // "RUBIES Returns / c/o ..." block published to the website). Fall back to
+    // reconstructing from `address` for any legacy row that doesn't have it yet.
+    let addressBlock;
+    if (partner.mailing_address && partner.mailing_address.trim()) {
+      addressBlock = partner.mailing_address.trim();
     } else {
-      streetLine = partner.address;
-      cityLine = '';
+      const addrParts = (partner.address || '').split(',').map(s => s.trim());
+      let streetLine, cityLine;
+      if (addrParts.length >= 3) {
+        streetLine = addrParts[0];
+        cityLine = addrParts.slice(1).join(', ');
+      } else if (addrParts.length === 2) {
+        streetLine = addrParts[0];
+        cityLine = addrParts[1];
+      } else {
+        streetLine = partner.address || '';
+        cityLine = '';
+      }
+      addressBlock = [
+        'RUBIES Returns',
+        `c/o ${partner.name}`,
+        streetLine,
+        cityLine,
+      ].filter(Boolean).join('\n');
     }
-
-    const addressBlock = [
-      'RUBIES Returns',
-      `c/o ${partner.name}`,
-      streetLine,
-      cityLine,
-    ].filter(Boolean).join('\n');
 
     const lines = [
       programExplanation,

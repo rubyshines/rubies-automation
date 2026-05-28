@@ -50,6 +50,7 @@ function loadAllOperatorTools() {
     require('./tools/seoMeta'),
     require('./tools/createOutreachTicket'),
     require('./tools/warehouseAllocation'),
+    require('./tools/donationPartners'),
   ];
 
   const tools = [];
