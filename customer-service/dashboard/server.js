@@ -1808,13 +1808,39 @@ function actionTypeFromTool(toolName, draftActionType) {
 
 async function apiConsoleChat(body, { onStream } = {}) {
   const { operatorAgentStandalone } = require('../lib/operatorAgentStandalone');
-  const message = body.message;
+  const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
+  let message = body.message;
   const history = body.history || [];
   const images = Array.isArray(body.images) ? body.images : [];
   const pdfs = Array.isArray(body.pdfs) ? body.pdfs : [];
   if (!message || typeof message !== 'string') {
     throw new Error('message is required');
   }
+
+  // Stash any attached images to Supabase Storage and append the public URLs
+  // to the prompt text. The operator's Claude still gets the images as vision
+  // input (so it can see + describe them), but now ALSO has stable URLs it can
+  // pass to MCP tools that take a `logo_url` (or similar URL field).
+  const uploadedUrls = [];
+  for (const img of images) {
+    if (!img?.data) continue;
+    try {
+      const { url } = await uploadOperatorBase64(img.data, {
+        filename: img.name || 'attachment',
+        mimeType: img.media_type,
+      });
+      uploadedUrls.push({ name: img.name || 'attachment', url });
+    } catch (e) {
+      console.warn('[adhoc-operator] image upload failed:', e.message);
+    }
+  }
+  if (uploadedUrls.length) {
+    const note = uploadedUrls
+      .map(u => `- ${u.name}: ${u.url}`)
+      .join('\n');
+    message = `${message}\n\n[Files attached this turn — use these URLs when a tool needs the file:\n${note}\n]`;
+  }
+
   const result = await operatorAgentStandalone(message, history, onStream, { images, pdfs });
   const links = extractActionLinks(result.tool_results);
   return {
