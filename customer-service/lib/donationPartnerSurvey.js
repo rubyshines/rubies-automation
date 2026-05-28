@@ -62,7 +62,18 @@ function buildMailingAddress(orgName, rawAddress) {
   return out.join('\n');
 }
 
-async function readSurveyRows() {
+// Short in-memory cache so back-to-back tool calls (e.g. list_submissions
+// then create_from_survey) share a single Google Sheets fetch. The sheet
+// only updates when a new form is submitted, so a few seconds of staleness
+// is fine. Saves ~2-5s per redundant call on a slow Sheets day.
+const SURVEY_CACHE_TTL_MS = 30_000;
+let _surveyCache = { at: 0, rows: null };
+
+async function readSurveyRows({ refresh = false } = {}) {
+  const now = Date.now();
+  if (!refresh && _surveyCache.rows && (now - _surveyCache.at) < SURVEY_CACHE_TTL_MS) {
+    return _surveyCache.rows;
+  }
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -92,7 +103,12 @@ async function readSurveyRows() {
       size_range: (r[COL.size_range] || '').trim() || null,
     });
   }
+  _surveyCache = { at: now, rows: out };
   return out;
+}
+
+function invalidateSurveyCache() {
+  _surveyCache = { at: 0, rows: null };
 }
 
 /**
@@ -127,4 +143,4 @@ function ensureRubiesReturnsPrefix(mailingAddress) {
   return ['RUBIES Returns', ...lines].join('\n');
 }
 
-module.exports = { readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, SHEET_ID, TAB };
+module.exports = { readSurveyRows, findSurveyRowByName, buildMailingAddress, ensureRubiesReturnsPrefix, invalidateSurveyCache, SHEET_ID, TAB };
