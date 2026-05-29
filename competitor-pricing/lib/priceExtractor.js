@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 
 // Serialize AI calls — one at a time to respect rate limits
 let _queue = Promise.resolve();
@@ -56,7 +57,7 @@ async function extractPrice(html, url) {
         component: 'competitor_price_extractor',
         metadata: { url },
         requestOptions: { timeout: 30000, maxRetries: 2 },
-        model: 'claude-sonnet-4-6',
+        model: MODELS.SONNET,
         max_tokens: 500,
         temperature: 0,
         system: SYSTEM_PROMPT,

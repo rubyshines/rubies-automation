@@ -34,6 +34,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../..', '.env') });
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { MODELS } = require('../../shared/aiPricing');
 
 const BATCH_SIZE = 8; // Fewer per batch than rules — need full message context
 const DEFAULT_LIMIT = 150;
@@ -150,7 +151,7 @@ async function extractToneFromBatch(client, conversations, messagesByConv) {
   if (!conversationText.trim()) return [];
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: MODELS.SONNET,
     max_tokens: 4096,
     messages: [{
       role: 'user',

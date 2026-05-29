@@ -8,6 +8,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
 
 let _anthropic;
@@ -135,7 +136,7 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
   for (let i = 0; i < maxIterations; i++) {
     const _tApi = Date.now();
     const apiParams = {
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       max_tokens: 1024,
       system: systemBlocks,
       tools,

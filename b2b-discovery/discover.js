@@ -17,6 +17,7 @@ const {
 const { researchProspect } = require('./lib/researcher');
 const { syncProspectsToSheet } = require('./lib/sheets');
 const { getSupabaseClient } = require('../shared/supabaseClient');
+const { MODELS } = require('../shared/aiPricing');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -265,7 +266,7 @@ async function runResearchUrl(args) {
   }
 
   const model = args.model
-    ? (args.model === 'sonnet' ? 'claude-sonnet-4-6' : args.model)
+    ? (args.model === 'sonnet' ? MODELS.SONNET : args.model)
     : undefined;
 
   console.log(`\n=== Research: ${url} ===\n`);
@@ -300,7 +301,7 @@ async function runResearch(args) {
   }
 
   const model = args.model
-    ? (args.model === 'sonnet' ? 'claude-sonnet-4-6' : args.model)
+    ? (args.model === 'sonnet' ? MODELS.SONNET : args.model)
     : undefined;
   const limit = args.limit ? parseInt(args.limit, 10) : null;
   const retryFailed = !!args['retry-failed'];

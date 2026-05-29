@@ -82,6 +82,7 @@ require.cache[supabasePath] = {
 };
 
 const { callClaude, embedTexts, _resetTableProbe } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 
 function resetState() {
   insertedRows = [];
@@ -112,7 +113,7 @@ describe('callClaude — token extraction and cost', () => {
 
     const res = await callClaude({
       component: 'cs_advisor',
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       messages: [{ role: 'user', content: 'hi' }],
       max_tokens: 100,
     });
@@ -133,7 +134,7 @@ describe('callClaude — token extraction and cost', () => {
     const row = insertedRows[0];
     assert.equal(row.cost_usd, 0.054675);
     assert.equal(row.component, 'cs_advisor');
-    assert.equal(row.model_id, 'claude-opus-4-6');
+    assert.equal(row.model_id, MODELS.OPUS);
     assert.equal(row.provider, 'anthropic');
     assert.equal(row.input_tokens, 1000);
     assert.equal(row.error, null);
@@ -153,7 +154,7 @@ describe('callClaude — token extraction and cost', () => {
 
     const res = await callClaude({
       component: 'cs_operator',
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       messages: [],
       max_tokens: 100,
     });
@@ -177,7 +178,7 @@ describe('callClaude — token extraction and cost', () => {
 
     const res = await callClaude({
       component: 'cs_intake_classifier',
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       messages: [],
       max_tokens: 100,
       ticket_id: 555,
@@ -224,7 +225,7 @@ describe('callClaude — streaming', () => {
 
     const res = await callClaude({
       component: 'cs_advisor',
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       messages: [],
       max_tokens: 100,
       stream: true,
@@ -247,7 +248,7 @@ describe('callClaude — error path', () => {
     mockCreate = () => { throw new Error('rate limited'); };
 
     await assert.rejects(
-      callClaude({ component: 'cs_advisor', model: 'claude-opus-4-6', messages: [], max_tokens: 10 }),
+      callClaude({ component: 'cs_advisor', model: MODELS.OPUS, messages: [], max_tokens: 10 }),
       /rate limited/
     );
 
@@ -271,7 +272,7 @@ describe('callClaude — fail-soft writes', () => {
       usage: { input_tokens: 1, output_tokens: 1 },
     });
 
-    const res = await callClaude({ component: 'cs_advisor', model: 'claude-opus-4-6', messages: [], max_tokens: 10 });
+    const res = await callClaude({ component: 'cs_advisor', model: MODELS.OPUS, messages: [], max_tokens: 10 });
 
     // Call still succeeds, returns the result, but no row written and id is null.
     assert.equal(res.text, 'ok');
@@ -287,7 +288,7 @@ describe('callClaude — fail-soft writes', () => {
       usage: { input_tokens: 1, output_tokens: 1 },
     });
 
-    const res = await callClaude({ component: 'cs_advisor', model: 'claude-opus-4-6', messages: [], max_tokens: 10 });
+    const res = await callClaude({ component: 'cs_advisor', model: MODELS.OPUS, messages: [], max_tokens: 10 });
     assert.equal(res._ai_call_id, null);
     assert.equal(res.text, 'ok');
   });
@@ -296,7 +297,7 @@ describe('callClaude — fail-soft writes', () => {
     tableMissing = true;
     mockCreate = () => { throw new Error('original failure'); };
     await assert.rejects(
-      callClaude({ component: 'cs_advisor', model: 'claude-opus-4-6', messages: [], max_tokens: 10 }),
+      callClaude({ component: 'cs_advisor', model: MODELS.OPUS, messages: [], max_tokens: 10 }),
       /original failure/
     );
   });
@@ -307,7 +308,7 @@ describe('callClaude — fail-soft writes', () => {
 // ---------------------------------------------------------------------------
 describe('callClaude — validation', () => {
   it('requires component and model', async () => {
-    await assert.rejects(callClaude({ model: 'claude-opus-4-6' }), /component is required/);
+    await assert.rejects(callClaude({ model: MODELS.OPUS }), /component is required/);
     await assert.rejects(callClaude({ component: 'x' }), /model is required/);
   });
 
@@ -330,7 +331,7 @@ describe('callClaude — validation', () => {
     };
     await callClaude({
       component: 'competitor_price_extractor',
-      model: 'claude-sonnet-4-6',
+      model: MODELS.SONNET,
       messages: [],
       max_tokens: 10,
       requestOptions: { timeout: 30000, maxRetries: 2 },

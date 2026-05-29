@@ -15,9 +15,10 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
-const MODEL = 'claude-opus-4-6';
+const MODEL = MODELS.OPUS;
 
 function buildPrompt(ticketRow) {
   const convo = (ticketRow.conversation_history || [])

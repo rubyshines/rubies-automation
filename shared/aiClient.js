@@ -10,7 +10,7 @@
  *
  *   const result = await callClaude({
  *     component: 'cs_advisor',     // required — string tag (see ai_calls.component)
- *     model: 'claude-opus-4-6',    // required — passed verbatim to the SDK
+ *     model: MODELS.OPUS,           // required — use MODELS.* from shared/aiPricing
  *     messages, system, tools, max_tokens, thinking,  // standard SDK params
  *     stream: false,               // true → emits deltas via onText, still returns final message
  *     onText: (t) => {...},        // optional — called per text delta when stream:true

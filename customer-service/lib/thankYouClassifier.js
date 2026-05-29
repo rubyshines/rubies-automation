@@ -12,8 +12,9 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 
-const MODEL = 'claude-sonnet-4-6';
+const MODEL = MODELS.SONNET;
 const MAX_TOKENS = 300;
 
 // Force structured output by exposing a single tool the model must call.

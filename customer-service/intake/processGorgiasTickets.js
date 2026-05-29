@@ -21,6 +21,7 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { buildContext } = require('../lib/contextBuilder');
 const gorgias = require('../import/gorgiasClient');
 const { canonicalMessageType } = require('../lib/messageTypes');
@@ -201,7 +202,7 @@ async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, new
     component: 'cs_intake_classifier',
     ticket_id: newTicketId || null,
     metadata: { customer_email: customerEmail, task: 'duplicate_detection' },
-    model: 'claude-opus-4-6',
+    model: MODELS.OPUS,
     max_tokens: 200,
     messages: [{ role: 'user', content: `A customer (${customerEmail}) just created a new support ticket. They already have existing open ticket(s). Determine if the new ticket is about the same issue.
 

@@ -14,6 +14,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { buildContext } = require('./contextBuilder');
 const {
   normalizeSize,
@@ -1518,7 +1519,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   while (toolCallCount < MAX_TOOL_CALLS) {
     const _tApi = Date.now();
     const apiParams = {
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       max_tokens: 4096,
       system: systemBlocks,
       tools: filteredTools,
@@ -1910,7 +1911,7 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
       const _tApi = Date.now();
       sonnetResponse = await callClaude({
         component: 'cs_advisor_shadow',
-        model: 'claude-sonnet-4-6',
+        model: MODELS.SONNET,
         max_tokens: 8192,
         thinking: { type: 'enabled', budget_tokens: 4000 },
         system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for Sonnet
@@ -1965,7 +1966,7 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
     const judgeResponse = await callClaude({
       component: 'cs_advisor_shadow_judge',
       ticket_id, draft_id, metadata: { customer_email, role: 'judge' },
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       max_tokens: 1024,
       system: `You are evaluating two customer service drafts for RUBIES, a gender-affirming underwear brand. Compare Draft A (production model) with Draft B (candidate model). Be concise.`,
       messages: [{

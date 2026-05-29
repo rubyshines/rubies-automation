@@ -15,9 +15,10 @@ require('dotenv').config();
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../shared/aiClient');
+const { MODELS } = require('../shared/aiPricing');
 const { getSupabaseClient } = require('../shared/supabaseClient');
 
-const HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const HAIKU_MODEL = MODELS.HAIKU;
 
 const CATEGORIES = [
   'wrong_action',

@@ -13,6 +13,7 @@ if (!process.env.SUPABASE_URL) {
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const {
   OUR_ADDRESS,
@@ -128,8 +129,8 @@ async function classifyBatchTier3(messages) {
 
   const validLabels = CLASSIFICATION_LABELS.concat(['spam']).join(', ');
 
-  const PRIMARY_MODEL = 'claude-sonnet-4-6';
-  const FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
+  const PRIMARY_MODEL = MODELS.SONNET;
+  const FALLBACK_MODEL = MODELS.HAIKU;
 
   let response;
   let modelUsed = PRIMARY_MODEL;

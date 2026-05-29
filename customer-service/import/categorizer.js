@@ -7,13 +7,14 @@
  * - Generates a summary
  *
  * Uses @anthropic-ai/sdk (already a dependency).
- * Model: claude-haiku-4-5-20251001 (~$0.01 per conversation)
+ * Model: MODELS.HAIKU (~$0.01 per conversation)
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { MODELS } = require('../../shared/aiPricing');
 
-const MODEL = process.env.AI_MODEL || 'claude-haiku-4-5-20251001';
+const MODEL = process.env.AI_MODEL || MODELS.HAIKU;
 
 const CATEGORIES = [
   'sizing_fit',       // sizing questions, fit advice, size comparisons

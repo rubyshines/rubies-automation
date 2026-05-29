@@ -5,6 +5,7 @@ const { scoreProspect, getStatus } = require('./scorer');
 const { placeDetails } = require('./maps');
 const { normalizeDomain } = require('./dedup');
 const { getProspectByDomain, mergeProspect } = require('./db');
+const { MODELS } = require('../../shared/aiPricing');
 
 const SCORE_THRESHOLD = parseInt(process.env.SCORE_THRESHOLD || '5', 10);
 
@@ -130,7 +131,7 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey } = {}) {
 
   // ── Step 5: AI analysis ────────────────────────────────────────────────────
   const content = result._scrapedContent || '';
-  if (verbose) process.stdout.write(`[ANALYZE] Sending to ${model || process.env.AI_MODEL || 'claude-haiku-4-5-20251001'}... `);
+  if (verbose) process.stdout.write(`[ANALYZE] Sending to ${model || process.env.AI_MODEL || MODELS.HAIKU}... `);
   _step = Date.now();
   const analysis = await analyzeProspect({
     companyName: result.company_name,

@@ -10,6 +10,7 @@
 
 const { updateCollectionSeo, updateProductSeo, getAdminUrl } = require('../shopify');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { MODELS } = require('../../../shared/aiPricing');
 
 const TITLE_MAX = 80;
 const DESCRIPTION_MAX = 165;
@@ -287,7 +288,7 @@ async function handleDraft({ type, handle, audience, extra_context }) {
   const { callClaude } = require('../../../shared/aiClient');
   const response = await callClaude({
     component: 'seo_meta_draft',
-    model: 'claude-opus-4-6',
+    model: MODELS.OPUS,
     max_tokens: 800,
     system: HOUSE_STYLE_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],

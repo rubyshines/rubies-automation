@@ -3,24 +3,37 @@
  *
  * Per-million-token rates in USD, keyed by EXACT model_id so that historical
  * rows always resolve to the rate that applied at the time of the call, even
- * after a newer model version ships (claude-opus-4-7 never overwrites the
+ * after a newer model version ships (claude-opus-4-8 never overwrites the
  * claude-opus-4-6 rate).
  *
- * Last verified against https://www.anthropic.com/pricing on 2026-04-30.
+ * Last verified against https://www.anthropic.com/pricing on 2026-05-28.
  *
  * When a new model ships, add an entry here. A monthly drift detector
- * (Phase 5, scripts/check-ai-pricing.js) compares these constants to the live
+ * (scripts/check-ai-pricing.js) compares these constants to the live
  * pricing page and surfaces changes in the daily summary.
  */
 
+/**
+ * Canonical model IDs for each tier. All call sites should import and use
+ * these instead of hardcoding model strings, so a tier upgrade is a one-line
+ * change here rather than a grep-and-replace across the codebase.
+ */
+const MODELS = {
+  OPUS:   'claude-opus-4-8',
+  SONNET: 'claude-sonnet-4-6',
+  HAIKU:  'claude-haiku-4-5-20251001',
+};
+
 // Per-million-token rates. `cost_usd` below converts these to per-token.
+// Legacy entries kept so historical ai_calls rows still compute correct cost.
 const RATES = {
-  'claude-opus-4-6':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 },
-  'claude-opus-4-7':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 }, // placeholder until shipped
+  'claude-opus-4-8':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 },
+  'claude-opus-4-7':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 }, // legacy
+  'claude-opus-4-6':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 }, // legacy
   'claude-sonnet-4-6':         { input: 3,    output: 15,  cache_read: 0.3,  cache_create: 3.75 },
   'claude-sonnet-4-20250514':  { input: 3,    output: 15,  cache_read: 0.3,  cache_create: 3.75 }, // legacy alias
   'claude-haiku-4-5-20251001': { input: 1,    output: 5,   cache_read: 0.1,  cache_create: 1.25 },
-  'claude-haiku-4-5':          { input: 1,    output: 5,   cache_read: 0.1,  cache_create: 1.25 }, // family alias
+  'claude-haiku-4-5':          { input: 1,    output: 5,   cache_read: 0.1,  cache_create: 1.25 }, // legacy alias
   'voyage-3-lite':             { input: 0.02, output: 0 },
   'voyage-3':                  { input: 0.06, output: 0 },
 };
@@ -53,4 +66,4 @@ function computeCost(modelId, usage = {}) {
   return Math.round(cost * 1e6) / 1e6;
 }
 
-module.exports = { RATES, computeCost };
+module.exports = { MODELS, RATES, computeCost };

@@ -18,7 +18,7 @@
  */
 
 const https = require('https');
-const { RATES } = require('../shared/aiPricing');
+const { MODELS, RATES } = require('../shared/aiPricing');
 
 const MODEL_FAMILY_RE = /(opus|sonnet|haiku)/i;
 
@@ -85,7 +85,7 @@ async function fetchPricingRates() {
     const { callClaude } = require('../shared/aiClient');
     const r = await callClaude({
       component: 'ai_pricing_check',
-      model: 'claude-haiku-4-5',
+      model: MODELS.HAIKU,
       max_tokens: 1024,
       messages: [{
         role: 'user',

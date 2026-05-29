@@ -13,6 +13,7 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../../shared/aiClient');
+const { MODELS } = require('../../../shared/aiPricing');
 const { addBusinessDays, businessDaysBetween } = require('../../../shared/businessDays');
 const { relativeDay } = require('./analyzer');
 
@@ -272,7 +273,7 @@ async function draftUnfulfilledResponse(investigation, context) {
   try {
     const response = await callClaude({
       component: 'fulfillment_checker',
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       max_tokens: 400,
       messages: [{
         role: 'user',

@@ -10,6 +10,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { releaseAddressHold } = require('./warehanceClient');
 
 let _ai = null;
@@ -195,7 +196,7 @@ async function classifyAddressImage(imageBuffer, addressStr) {
   try {
     const response = await callClaude({
       component: 'address_hold_resolver',
-      model: 'claude-sonnet-4-6',
+      model: MODELS.SONNET,
       max_tokens: 150,
       messages: [{
         role: 'user',

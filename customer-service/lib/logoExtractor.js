@@ -14,8 +14,9 @@
  */
 
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 
-const LOGO_MODEL = 'claude-haiku-4-5';
+const LOGO_MODEL = MODELS.HAIKU;
 const COMPONENT_TAG = 'donation_partner_logo_extract';
 
 function normalizeUrl(input) {

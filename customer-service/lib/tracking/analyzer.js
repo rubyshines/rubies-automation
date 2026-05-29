@@ -9,6 +9,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../../shared/aiClient');
+const { MODELS } = require('../../../shared/aiPricing');
 const { addBusinessDays, businessDaysSince } = require('../../../shared/businessDays');
 
 let _client = null;
@@ -54,7 +55,7 @@ async function parseTrackingPage(rawText, carrier) {
   const response = await callClaude({
     component: 'tracking_analyzer',
     metadata: { task: 'parse_tracking_page', carrier },
-    model: 'claude-sonnet-4-6',
+    model: MODELS.SONNET,
     max_tokens: 1500,
     messages: [{
       role: 'user',
@@ -469,7 +470,7 @@ async function summarizeForCustomer(trackingData, context) {
     const response = await callClaude({
       component: 'tracking_analyzer',
       metadata: { task: 'polish_response' },
-      model: 'claude-sonnet-4-6',
+      model: MODELS.SONNET,
       max_tokens: 400,
       messages: [{
         role: 'user',

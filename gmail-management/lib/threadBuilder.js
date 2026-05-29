@@ -14,6 +14,7 @@ if (!process.env.SUPABASE_URL) {
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { OUR_ADDRESS, FOLLOW_UP_CADENCE, AREA_URGENCY } = require('../config');
 
@@ -199,7 +200,7 @@ Return JSON:
 
   const response = await callClaude({
     component: 'gmail_thread_builder',
-    model: 'claude-sonnet-4-6',
+    model: MODELS.SONNET,
     max_tokens: 800,
     messages: [{ role: 'user', content: prompt }],
   });

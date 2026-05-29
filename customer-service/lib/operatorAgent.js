@@ -8,6 +8,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./sizingEngine');
 const { KNOWN_SIZES_UPPER } = require('./sizeUtils');
 
@@ -210,7 +211,7 @@ async function operatorAgent(message, context, history = [], onEvent) {
   for (let i = 0; i < maxIterations; i++) {
     const _tApi = Date.now();
     const apiParams = {
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       max_tokens: 1024,
       system: systemBlocks,
       tools,
@@ -413,7 +414,7 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
       const _tApi = Date.now();
       sonnetResponse = await callClaude({
         component: 'cs_operator_shadow',
-        model: 'claude-sonnet-4-6',
+        model: MODELS.SONNET,
         max_tokens: 1024,
         system: systemPrompt,
         tools,
@@ -477,7 +478,7 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
       ticket_id: context.gorgias_ticket_id || context.ticket_id || null,
       draft_id: context.draft_id || (context.draft && context.draft.id) || null,
       metadata: { customer_email: context.customer_email, role: 'judge' },
-      model: 'claude-opus-4-6',
+      model: MODELS.OPUS,
       max_tokens: 512,
       system: 'You are evaluating two operator agent action responses for a CS dashboard. Compare which tool calls were made and the final response. Be concise.',
       messages: [{

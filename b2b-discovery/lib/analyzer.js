@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
+const { MODELS } = require('../../shared/aiPricing');
 
 // Serialize all Claude calls — one at a time to respect token-per-minute limits.
 // Scraping remains parallel; only the AI step is queued.
@@ -63,7 +64,7 @@ async function analyzeProspect({ companyName, website, city, state, content, mod
       component: 'b2b_analyzer',
       metadata: { company_name: companyName, city, state },
       requestOptions: { timeout: 30000, maxRetries: 2 },
-      model: model || 'claude-haiku-4-5-20251001',
+      model: model || MODELS.HAIKU,
       max_tokens: 1500,
       temperature: 0,
       system: SYSTEM_PROMPT,
