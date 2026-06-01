@@ -34,8 +34,8 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { seedOutboundDraft } = require('../../customer-service/lib/customerOutreach');
 const productCache = require('../../customer-service/lib/productCache');
-const { businessDaysSince } = require('../../shared/businessDays');
-const { fetchSkuStockMany } = require('./warehanceClient');
+const { businessDaysSince, addBusinessDays } = require('../../shared/businessDays');
+const { fetchOrderByNumber } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 
@@ -153,38 +153,48 @@ function classifyOrder(lineItems, variantStateBySku) {
   return { case: caseLabel, leaks, inStockOther, oosOther };
 }
 
-// Filter Shopify-flagged candidates down to those the warehouse genuinely can't
-// fill. `classifyOrder` keys on Shopify "available <= 0", which is true for any
-// fully-committed SKU — including hot sizes that have real on-hand stock and
-// ship normally. Here we re-test each flagged item against live warehouse stock
-// (`stockBySku`, a Map of sku -> { backordered, ... }) and keep an order only if
-// at least one of its leak items is actually backordered (> 0). Non-backordered
-// "leaks" and "other OOS" items are reclassified as in-stock (they will ship),
-// and the A/B/C case is recomputed. Returns the surviving candidates, mutated in
-// place. Orders with nothing genuinely backordered are dropped.
-function filterToBackordered(candidates, stockBySku) {
-  const isBackordered = sku => ((stockBySku.get(sku)?.backordered ?? 0) > 0);
-  const verified = [];
-  for (const c of candidates) {
-    const cl = c.classification;
-    const realLeaks = [];
-    for (const li of cl.leaks) {
-      if (isBackordered(li.sku)) realLeaks.push(li);
-      else cl.inStockOther.push(li);
-    }
-    if (!realLeaks.length) continue; // nothing genuinely backordered → not an unnotified pre-order
-    const realOos = [];
-    for (const li of cl.oosOther) {
-      if (isBackordered(li.sku)) realOos.push(li);
-      else cl.inStockOther.push(li);
-    }
-    cl.leaks = realLeaks;
-    cl.oosOther = realOos;
-    cl.case = (cl.inStockOther.length === 0 && cl.oosOther.length === 0) ? 'A'
-      : (cl.oosOther.length > 0 ? 'C' : 'B');
-    verified.push(c);
+// Returns true if the shipping deadline for an order has passed: 5pm Pacific
+// Time on the next business day (US holidays + weekends) after the order date.
+// Orders not yet past their deadline are still expected to ship normally.
+function pastNextBusinessDay5pmPT(orderDateStr) {
+  const orderDate = new Date(orderDateStr);
+
+  // Resolve the order's calendar date in Pacific Time.
+  const ptDateStr = orderDate.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  const [y, m, d] = ptDateStr.split('-').map(Number);
+
+  // Advance to the next business day (skips weekends + US federal holidays).
+  const ptDateLocal = new Date(y, m - 1, d);
+  const nextBizDay = addBusinessDays(ptDateLocal, 1);
+
+  // Construct 5pm Pacific on that day — try PDT (UTC-7) then PST (UTC-8).
+  const nbY = nextBizDay.getFullYear();
+  const nbM = String(nextBizDay.getMonth() + 1).padStart(2, '0');
+  const nbD = String(nextBizDay.getDate()).padStart(2, '0');
+  const nextBizDateStr = `${nbY}-${nbM}-${nbD}`;
+  let deadline;
+  for (const off of ['-07:00', '-08:00']) {
+    const t = new Date(`${nextBizDateStr}T17:00:00${off}`);
+    const ptH = Number(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
+    }).format(t));
+    if (ptH === 17) { deadline = t; break; }
   }
-  return verified;
+  if (!deadline) deadline = new Date(`${nextBizDateStr}T17:00:00-08:00`);
+  return Date.now() > deadline.getTime();
+}
+
+// Keep only candidates whose specific Warehance order is not ready to ship
+// (ready_to_ship === false). This is the authoritative per-order signal from the
+// warehouse: an order in_progress or fully allocated will have ready_to_ship true
+// and should not receive outreach. Orders not found in Warehance are skipped.
+function filterToNotReadyToShip(candidates, warehanceOrders) {
+  return candidates.filter(c => {
+    const orderNum = String(c.order.order_number).replace('#', '');
+    const whOrder = warehanceOrders.get(orderNum);
+    if (!whOrder) return false;
+    return whOrder.ready_to_ship === false;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -401,11 +411,15 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
   }
   const variantStateBySku = await loadVariantStateBySku(supabase, allSkus);
 
-  const cutoff = Date.now() - STALENESS_DAYS * 24 * 60 * 60 * 1000;
+  const staleCutoff = Date.now() - STALENESS_DAYS * 24 * 60 * 60 * 1000;
   const candidates = [];
   for (const r of unfulfilledResults) {
     const o = r.order;
-    if (o.created_at && new Date(o.created_at).getTime() < cutoff) continue;
+    // Skip orders older than STALENESS_DAYS (predate the auto-drafter).
+    if (o.created_at && new Date(o.created_at).getTime() < staleCutoff) continue;
+    // Skip orders not yet past their shipping deadline (next business day 5pm PT).
+    // An order that's still within its window is expected to ship normally.
+    if (o.created_at && !pastNextBusinessDay5pmPT(o.created_at)) continue;
     const classification = classifyOrder(o.order_line_items || [], variantStateBySku);
     if (!classification) continue;
     candidates.push({ order: o, classification });
@@ -421,25 +435,22 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
 
   if (!fresh.length) return [];
 
-  // Verify candidates against live warehouse stock before flagging. Shopify
-  // "available <= 0" (the signal classifyOrder keys on) only means the variant
-  // is fully committed — true for any fast-moving SKU whose on-hand is reserved
-  // by existing orders — and does NOT mean the order can't ship. Only treat an
-  // item as a genuine unnotified pre-order when the warehouse actually can't
-  // cover it (backordered > 0). Without this, a popular size that shows 0
-  // available but has real on-hand stock (and ships normally) trips the
-  // detector on every new order — a false positive that would email customers
-  // "your order is on backorder" while it's being packed.
-  const checkSkus = [...new Set(fresh.flatMap(c =>
-    [...c.classification.leaks, ...c.classification.oosOther].map(li => li.sku)))];
-  let stockBySku;
-  try {
-    stockBySku = await fetchSkuStockMany(checkSkus);
-  } catch (e) {
-    console.warn(`[unnotifiedPreOrder] warehouse stock check failed — skipping outreach this run: ${e.message}`);
-    return [];
-  }
-  const verified = filterToBackordered(fresh, stockBySku);
+  // Look up each candidate in Warehance by order number and keep only those
+  // where ready_to_ship === false. Per-order fetch (not a bulk paginated pull)
+  // so we only call the API for the small set of candidates that made it here.
+  // Individual fetch failures are logged and treated as "skip" (unknown state).
+  const orderEntries = await Promise.all(fresh.map(async c => {
+    const orderNum = String(c.order.order_number).replace('#', '');
+    try {
+      const whOrder = await fetchOrderByNumber(orderNum);
+      return [orderNum, whOrder];
+    } catch (e) {
+      console.warn(`[unnotifiedPreOrder] Warehance lookup failed for #${orderNum}: ${e.message}`);
+      return [orderNum, null];
+    }
+  }));
+  const warehanceOrders = new Map(orderEntries);
+  const verified = filterToNotReadyToShip(fresh, warehanceOrders);
 
   if (!verified.length) return [];
 
@@ -551,7 +562,8 @@ module.exports = {
   detectUnnotifiedPreOrders,
   detectAndDraftUnnotifiedPreOrders,
   classifyOrder,
-  filterToBackordered,
+  filterToNotReadyToShip,
+  pastNextBusinessDay5pmPT,
   composeBody,
   formatPreOrderDate,
   hasPreOrderAttr,
