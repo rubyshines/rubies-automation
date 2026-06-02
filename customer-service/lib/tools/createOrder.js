@@ -124,7 +124,9 @@ async function handleCreateOrder({
   // Resolve customer
   let customerInfo;
   if (customer_id) {
-    const results = await searchCustomers(`id:${customer_id}`);
+    // Shopify customer search expects a numeric ID. Strip the GID prefix if passed.
+    const numericId = String(customer_id).replace(/^gid:\/\/shopify\/Customer\//, '');
+    const results = await searchCustomers(`id:${numericId}`);
     if (results.length === 0) {
       return { content: [{ type: 'text', text: `No customer found for ID "${customer_id}".` }] };
     }

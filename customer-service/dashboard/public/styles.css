@@ -489,6 +489,12 @@ main { height: calc(100vh - 56px); }
   pointer-events: none;
 }
 
+#detail-content.ticket-switching {
+  opacity: 0.35;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+
 .detail-section {
   margin-bottom: 16px;
   background: var(--surface-raised);

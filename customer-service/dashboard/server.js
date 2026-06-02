@@ -1461,7 +1461,7 @@ function dedupeLinks(links) {
   return (links || []).filter(l => { if (seen.has(l.url)) return false; seen.add(l.url); return true; });
 }
 
-async function apiActionChat(draftId, body, { onStream } = {}) {
+async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   const { operatorAgent } = require('../lib/operatorAgent');
   const supabase = getSupabaseClient();
   const { data: draft, error: fetchErr } = await supabase
@@ -1491,7 +1491,7 @@ async function apiActionChat(draftId, body, { onStream } = {}) {
     draft_id: draft.id,
   };
 
-  const result = await operatorAgent(userMessage, context, history, onStream);
+  const result = await operatorAgent(userMessage, context, history, onStream, signal);
 
   // Extract Shopify admin links from tool results before saving
   result.links = extractActionLinks(result.tool_results);
@@ -2964,8 +2964,9 @@ async function handleRequest(req, res) {
           'Connection': 'keep-alive',
         });
         const sendEvent = (data) => {
-          res.write(`data: ${JSON.stringify(data)}\n\n`);
+          if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
+        const heartbeat = setInterval(() => sendEvent({ type: 'heartbeat' }), 8000);
         try {
           const steer = (body?.steer || '').trim() || undefined;
           // Refresh the active draft, or the most recent draft for reopened/snoozed
@@ -2981,8 +2982,10 @@ async function handleRequest(req, res) {
         } catch (err) {
           console.error(`[refresh-stream] error:`, err.message || err);
           sendEvent({ type: 'error', message: err.message || String(err) });
+        } finally {
+          clearInterval(heartbeat);
+          if (!res.writableEnded) res.end();
         }
-        res.end();
         return;
       }
 
@@ -2997,20 +3000,27 @@ async function handleRequest(req, res) {
           'Connection': 'keep-alive',
         });
         const sendEvent = (data) => {
-          res.write(`data: ${JSON.stringify(data)}\n\n`);
+          if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
+        // Cancel the Anthropic call when the client disconnects (timeout or navigation).
+        // Without this, zombie Anthropic calls pile up and block the server.
+        const abortCtrl = new AbortController();
+        req.on('close', () => abortCtrl.abort());
+        const heartbeat = setInterval(() => sendEvent({ type: 'heartbeat' }), 8000);
         try {
           // Anchor on the active draft, or the most recent draft for reopened/
           // snoozed tickets (active_draft_id is null but a prior draft exists).
           const draftId = await resolveActionAnchorDraftId(ticketId);
           const result = draftId
-            ? await apiActionChat(draftId, body, { onStream: sendEvent })
-            : await apiActionChatNoDraft(ticketId, body, { onStream: sendEvent });
+            ? await apiActionChat(draftId, body, { onStream: sendEvent, signal: abortCtrl.signal })
+            : await apiActionChatNoDraft(ticketId, body, { onStream: sendEvent, signal: abortCtrl.signal });
           sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
         } catch (err) {
-          sendEvent({ type: 'error', message: err.message });
+          if (!abortCtrl.signal.aborted) sendEvent({ type: 'error', message: err.message });
+        } finally {
+          clearInterval(heartbeat);
+          if (!res.writableEnded) res.end();
         }
-        res.end();
         return;
       }
 
@@ -3023,16 +3033,20 @@ async function handleRequest(req, res) {
           'Connection': 'keep-alive',
         });
         const sendEvent = (data) => {
-          res.write(`data: ${JSON.stringify(data)}\n\n`);
+          if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
+        const heartbeat = setInterval(() => sendEvent({ type: 'heartbeat' }), 8000);
         try {
           const result = await apiConsoleChat(body, { onStream: sendEvent });
           sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
         } catch (err) {
           console.error(`[console/chat-stream] error:`, err.message || err);
           sendEvent({ type: 'error', message: err.message || String(err) });
+        } finally {
+          clearInterval(heartbeat);
+          clearTimeout(timer);
+          if (!res.writableEnded) res.end();
         }
-        res.end();
         return;
       }
 

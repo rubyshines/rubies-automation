@@ -638,6 +638,12 @@ async function selectTicket(id) {
   const draftEditorEl = document.getElementById('draft-editor');
   if (draftEditorEl) draftEditorEl.value = '';
 
+  // Fade the detail panel while the new ticket loads so there's a clear visual
+  // signal that a ticket switch is in progress (without it, the old content
+  // stays fully visible with an empty draft, looking like nothing happened).
+  const detailContentEl = document.getElementById('detail-content');
+  if (detailContentEl) detailContentEl.classList.add('ticket-switching');
+
   // Re-open conversation (may have been collapsed by draft focus on mobile)
   const convEl = document.getElementById('detail-conversation');
   if (convEl && !convEl.open) convEl.setAttribute('open', '');
@@ -673,6 +679,8 @@ async function selectTicket(id) {
     updateSummaryBar(currentTicket);
   } catch (err) {
     console.error('Failed to load ticket:', err);
+  } finally {
+    if (detailContentEl) detailContentEl.classList.remove('ticket-switching');
   }
 }
 
@@ -1966,7 +1974,9 @@ async function runChatTurn({
         if (!line.startsWith('data: ')) continue;
         try {
           const event = JSON.parse(line.slice(6));
-          if (event.type === 'tool_call') {
+          if (event.type === 'heartbeat') {
+            // Server keepalive — no UI action needed, inactivity already reset above.
+          } else if (event.type === 'tool_call') {
             activeTool = trace?.startTool(event.data?.tool || 'tool', event.data?.input);
           } else if (event.type === 'tool_result') {
             if (event.data?.error) activeTool?.error(event.data.error);
@@ -2604,7 +2614,7 @@ function executeAndSend() {
   const focusSeconds = getFocusTime(ticketId);
   clearFocusTime(ticketId);
   const attachments = getDraftAttachmentsPayload();
-  const body = { response, command, after: 'snooze', focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
+  const body = { response, command, after: 'close', focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
 
   // Optimistic: clear local state and advance immediately so the operator moves on.
   clearDraftAttachments();
@@ -3035,7 +3045,9 @@ async function refreshDraft(steer) {
         if (!line.startsWith('data: ')) continue;
         try {
           const event = JSON.parse(line.slice(6));
-          if (event.type === 'text_delta') {
+          if (event.type === 'heartbeat') {
+            // Server keepalive — inactivity already reset above.
+          } else if (event.type === 'text_delta') {
             streamedText += event.text;
             // Strip structured block from display (it appears at end)
             const displayText = streamedText.replace(/<structured>[\s\S]*$/, '').trim();

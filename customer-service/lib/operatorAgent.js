@@ -185,7 +185,7 @@ Sizing systems:
  * @param {function} [onEvent] - Optional callback for streaming: onEvent({ type, data })
  *   type: 'thinking' | 'tool_call' | 'tool_result' | 'text'
  */
-async function operatorAgent(message, context, history = [], onEvent) {
+async function operatorAgent(message, context, history = [], onEvent, signal) {
   const _t = { start: Date.now(), api_calls: [] };
   const { tools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt(context);
@@ -231,6 +231,7 @@ async function operatorAgent(message, context, history = [], onEvent) {
         component: 'cs_operator',
         ...apiParams,
         stream: true,
+        ...(signal ? { requestOptions: { signal } } : {}),
         onText: (text) => {
           if (cut) return;
           acc += text;
@@ -257,6 +258,7 @@ async function operatorAgent(message, context, history = [], onEvent) {
       response = await callClaude({
         component: 'cs_operator',
         ...apiParams,
+        ...(signal ? { requestOptions: { signal } } : {}),
         ticket_id: _ticketId, draft_id: _draftId, parent_call_id: parentCallId,
         metadata: { customer_email: context.customer_email },
       });
