@@ -9,7 +9,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { _bucketPendingOrders: bucket } = require('../lib/tools/orderNotes');
+const { _bucketPendingOrders: bucket, _buildOrphanRows: buildOrphanRows } = require('../lib/tools/orderNotes');
 
 // Synthetic builder — minimal shape that mirrors what checkUnfulfilledOrders returns
 function row({
@@ -158,5 +158,64 @@ describe('bucketPendingOrders — empty + edge cases', () => {
   it('handles missing unfulfilledResult gracefully', () => {
     const out = bucket(undefined);
     for (const b of Object.keys(out)) assert.equal(out[b].length, 0);
+  });
+});
+
+describe('buildOrphanRows — fulfilled orders with unresolved operator notes', () => {
+  function note(orderNumber, opts = {}) {
+    return {
+      order_number: orderNumber,
+      note: opts.note || 'Waiting on customer',
+      author: opts.author || 'operator',
+      resolved: opts.resolved ?? false,
+      created_at: opts.created_at || '2026-06-02T10:00:00Z',
+    };
+  }
+
+  it('includes a fulfilled order with an unresolved operator note', () => {
+    const rows = buildOrphanRows([note(29270)], new Set());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].order.order_number, 29270);
+    assert.equal(rows[0].note.note, 'Waiting on customer');
+  });
+
+  it('excludes orders already in the unfulfilled set', () => {
+    const rows = buildOrphanRows([note(29270)], new Set([29270]));
+    assert.equal(rows.length, 0);
+  });
+
+  it('excludes auto-authored notes', () => {
+    const rows = buildOrphanRows([note(29270, { author: 'auto' })], new Set());
+    assert.equal(rows.length, 0);
+  });
+
+  it('excludes resolved notes', () => {
+    const rows = buildOrphanRows([note(29270, { resolved: true })], new Set());
+    assert.equal(rows.length, 0);
+  });
+
+  it('deduplicates to the first (latest) note per order when multiple notes exist', () => {
+    const notes = [
+      note(29270, { note: 'Latest note', created_at: '2026-06-02T12:00:00Z' }),
+      note(29270, { note: 'Earlier note', created_at: '2026-06-01T09:00:00Z' }),
+    ];
+    const rows = buildOrphanRows(notes, new Set());
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].note.note, 'Latest note');
+  });
+
+  it('returns multiple rows for distinct orders', () => {
+    const rows = buildOrphanRows([note(29270), note(30872)], new Set());
+    assert.equal(rows.length, 2);
+  });
+
+  it('synthetic row has the expected shape for unfulfilledRow rendering', () => {
+    const rows = buildOrphanRows([note(29270)], new Set());
+    const r = rows[0];
+    assert.ok(r.order);
+    assert.equal(r.order.order_number, 29270);
+    assert.deepEqual(r.order.order_line_items, []);
+    assert.equal(r.isPreOrder, false);
+    assert.equal(r.classification.reason, 'waiting');
   });
 });

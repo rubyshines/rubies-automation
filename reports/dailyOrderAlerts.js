@@ -35,6 +35,7 @@ const { getSendgridClient } = require('../shared/sendgridClient');
 const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
 const { detectAndDraftUnnotifiedPreOrders } = require('./lib/unnotifiedPreOrder');
+const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -291,8 +292,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // 6. Auto-Resolved
   const autoResolvedRows = ufAutoResolved.map(r => unfulfilledRow(r));
 
-  // 7. Waiting on Response (unfulfilled only — shipping notes are inline)
-  const waitingRows = ufWaiting.map(r => unfulfilledRow(r));
+  // 7. Waiting on Response — unfulfilled orders with operator notes, plus
+  // already-shipped orders whose operator note hasn't been resolved yet.
+  const waitingRows = [
+    ...ufWaiting.map(r => unfulfilledRow(r)),
+    ...(extra.orphanWaiting || []).map(r => unfulfilledRow(r)),
+  ];
 
   // 8. Pre-Orders
   const preOrderRows = preOrders.map(r => unfulfilledRow(r));
@@ -597,8 +602,18 @@ async function run() {
     console.warn(`[alerts] Could not fetch follow-up data: ${err.message}`);
   }
 
+  // Fetch unresolved operator notes for already-shipped orders (not in the
+  // unfulfilled set) so they surface in "Waiting on Response".
+  let orphanWaiting = [];
+  try {
+    const knownNums = new Set(unfulfilled.results.map(r => Number(r.order.order_number)));
+    orphanWaiting = await fetchFulfilledOrphanNotes(supabase, knownNums);
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch orphan waiting notes: ${err.message}`);
+  }
+
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting });
 
   const sgMail = getSendgridClient();
   if (sgMail) {

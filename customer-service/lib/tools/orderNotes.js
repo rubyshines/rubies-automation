@@ -9,6 +9,7 @@
  */
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { businessDaysSince } = require('../../../shared/businessDays');
 const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
 const { getShippingZone } = require('./shippingLookup');
 const { getDraftOrderByName, updateDraftOrderShipping, getAdminUrl } = require('../shopify');
@@ -93,7 +94,50 @@ function applyMinBusinessDays(buckets, minBusinessDays) {
   return out;
 }
 
+// Build synthetic waiting-on-response rows for orders that have unresolved
+// operator notes but are no longer in the unfulfilled Shopify set (already
+// shipped or fulfilled). Pure so it's testable without Supabase.
+// `notes` must be in descending created_at order; deduplicates to latest per order.
+function buildOrphanRows(notes, knownOrderNumbers) {
+  const seen = new Set();
+  const rows = [];
+  for (const n of notes) {
+    if (knownOrderNumbers.has(Number(n.order_number))) continue;
+    if (n.author === 'auto') continue;
+    if (n.resolved) continue;
+    if (seen.has(n.order_number)) continue;
+    seen.add(n.order_number);
+    rows.push({
+      order: {
+        order_number: n.order_number,
+        customer_email: null,
+        created_at: n.created_at,
+        order_line_items: [],
+      },
+      isPreOrder: false,
+      note: n,
+      classification: { severity: 'normal', reason: 'waiting', detail: null },
+      businessDays: businessDaysSince(n.created_at) || 0,
+    });
+  }
+  return rows;
+}
+
+// Fetch unresolved operator notes for orders NOT already in the unfulfilled
+// Shopify set. Returns synthetic result rows ready for the waiting_on_response bucket.
+async function fetchFulfilledOrphanNotes(supabase, knownOrderNumbers) {
+  const { data, error } = await supabase
+    .from('order_alert_notes')
+    .select('order_number, note, author, resolved, created_at')
+    .eq('resolved', false)
+    .neq('author', 'auto')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`order_alert_notes fetch failed: ${error.message}`);
+  return buildOrphanRows(data || [], knownOrderNumbers);
+}
+
 async function handleListPendingOrders({ bucket, min_business_days }) {
+  const supabase = getSupabaseClient();
   const { checkUnfulfilledOrders } = require('../../../reports/lib/unfulfilled');
   let unfulfilledResult;
   try {
@@ -107,6 +151,23 @@ async function handleListPendingOrders({ bucket, min_business_days }) {
     bucketed = bucketPendingOrders(unfulfilledResult, { bucket, minBusinessDays: min_business_days });
   } catch (err) {
     return { content: [{ type: 'text', text: err.message }], isError: true };
+  }
+
+  // Also surface unresolved operator notes for orders that have already shipped
+  // (not in the unfulfilled set). Filtered + deduped per order.
+  if (!bucket || bucket === 'waiting_on_response') {
+    try {
+      const knownNums = new Set(
+        (unfulfilledResult?.results || []).map(r => Number(r.order.order_number))
+      );
+      let orphans = await fetchFulfilledOrphanNotes(supabase, knownNums);
+      if (min_business_days != null) {
+        orphans = orphans.filter(r => (r.businessDays || 0) >= min_business_days);
+      }
+      bucketed.waiting_on_response = [...(bucketed.waiting_on_response || []), ...orphans];
+    } catch (err) {
+      console.warn('[listPendingOrders] orphan notes fetch failed:', err.message);
+    }
   }
 
   let md = `## Pending Orders\n\n`;
@@ -661,6 +722,8 @@ const tools = [
   },
 ];
 
-// Pure helper exported for testing the bucket+filter logic without Supabase
+// Pure helpers exported for testing without Supabase
 module.exports = tools;
 module.exports._bucketPendingOrders = bucketPendingOrders;
+module.exports._buildOrphanRows = buildOrphanRows;
+module.exports.fetchFulfilledOrphanNotes = fetchFulfilledOrphanNotes;
