@@ -45,6 +45,12 @@ async function handle(payload) {
     }).eq('id', ourTicket.id);
     console.log(`[gorgias-ticket-updated] ${ticketId} — ${ourTicket.status} → closed`);
 
+  } else if (gorgiasStatus === 'open' && ourTicket.status === 'pending_operator') {
+    // Gorgias opened while we have it marked "On Me" — Jamie owes the response,
+    // not the customer. Do NOT fire auto-follow-up. Leave our status as-is so
+    // it stays in the On Me tab until Jamie responds.
+    console.log(`[gorgias-ticket-updated] ${ticketId} — pending_operator, skipping auto-follow-up`);
+
   } else if (gorgiasStatus === 'open' && ourTicket.status === 'snoozed') {
     // Snoozed ticket woke up — either snooze expired or customer replied.
     // Check Gorgias messages to distinguish.

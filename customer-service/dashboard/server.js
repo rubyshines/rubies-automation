@@ -2238,6 +2238,7 @@ async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {})
   if (status === 'snoozed') updates.snoozed_at = now;
   if (status === 'parked') updates.parked_at = now;
   if (status === 'closed') updates.closed_at = now;
+  // pending_operator keeps the active draft so it's visible when Jamie returns
   if (status === 'snoozed' || status === 'closed' || status === 'parked') updates.active_draft_id = null;
 
   await supabase
@@ -2263,6 +2264,9 @@ async function apiGetTickets(query) {
       break;
     case 'followup':
       q = q.eq('status', 'open').eq('has_agent_reply', true);
+      break;
+    case 'onme':
+      q = q.eq('status', 'pending_operator');
       break;
     case 'parked':
       q = q.eq('status', 'parked');
@@ -2323,11 +2327,13 @@ async function apiSearchTickets(query) {
 async function apiGetTicketStats() {
   const supabase = getSupabaseClient();
 
-  const [newResult, followupResult, parkedResult, snoozedResult] = await Promise.all([
+  const [newResult, followupResult, onmeResult, parkedResult, snoozedResult] = await Promise.all([
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'open').eq('has_agent_reply', false),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'open').eq('has_agent_reply', true),
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'pending_operator'),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'parked'),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
@@ -2337,6 +2343,7 @@ async function apiGetTicketStats() {
   return {
     new: newResult.count || 0,
     followup: followupResult.count || 0,
+    onme: onmeResult.count || 0,
     parked: parkedResult.count || 0,
     snoozed: snoozedResult.count || 0,
   };
@@ -2636,6 +2643,33 @@ async function apiUnparkTicket(ticketId, body = {}) {
   return { success: true };
 }
 
+async function apiPendTicket(ticketId, body = {}) {
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+  if (body.focus_time_seconds != null) {
+    const { data: t } = await supabase.from('cs_tickets').select('active_draft_id').eq('id', ticketId).single();
+    if (t?.active_draft_id) {
+      await supabase.from('cs_ai_drafts').update({ focus_time_seconds: Math.round(body.focus_time_seconds) }).eq('id', t.active_draft_id);
+    }
+  }
+  // Keep active_draft_id so the draft is visible when Jamie returns
+  await supabase.from('cs_tickets').update({ status: 'pending_operator', updated_at: now }).eq('id', ticketId);
+  return { success: true };
+}
+
+async function apiUnpendTicket(ticketId, body = {}) {
+  const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+  if (body.focus_time_seconds != null) {
+    const { data: t } = await supabase.from('cs_tickets').select('active_draft_id').eq('id', ticketId).single();
+    if (t?.active_draft_id) {
+      await supabase.from('cs_ai_drafts').update({ focus_time_seconds: Math.round(body.focus_time_seconds) }).eq('id', t.active_draft_id);
+    }
+  }
+  await supabase.from('cs_tickets').update({ status: 'open', updated_at: now }).eq('id', ticketId);
+  return { success: true };
+}
+
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
@@ -2802,6 +2836,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/reopen$/, handler: (_, id) => apiReopenTicket(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/park$/, handler: (body, id) => apiParkTicket(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpark$/, handler: (body, id) => apiUnparkTicket(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/pend$/, handler: (body, id) => apiPendTicket(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpend$/, handler: (body, id) => apiUnpendTicket(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/forward$/, handler: (body, id) => apiForwardTicket(parseInt(id), body) },
 ];
 

@@ -47,6 +47,7 @@
     <nav>
       <button class="tab active" data-tab="new" onclick="switchTab('new')">New <span class="tab-count" id="tab-count-new"></span></button>
       <button class="tab" data-tab="followup" onclick="switchTab('followup')">Follow-up <span class="tab-count" id="tab-count-followup"></span></button>
+      <button class="tab tab-onme" data-tab="onme" onclick="switchTab('onme')">On Me <span class="tab-count" id="tab-count-onme"></span></button>
       <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
       <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
@@ -192,6 +193,8 @@
               <div class="btn-row btn-row-secondary">
                 <button id="btn-close-only" class="btn btn-ghost" onclick="closeNoReply()">Close</button>
                 <button id="btn-snooze-only" class="btn btn-ghost" onclick="snoozeNoReply()">Snooze</button>
+                <button id="btn-onme" class="btn btn-ghost btn-onme" onclick="pendTicket()">On Me</button>
+                <button id="btn-unpend" class="btn btn-ghost btn-onme" onclick="unpendTicket()" style="display:none">Back to Queue</button>
                 <button id="btn-park" class="btn btn-ghost" onclick="parkTicket()">Park</button>
                 <button id="btn-unpark" class="btn btn-ghost" onclick="unparkTicket()" style="display:none">Unpark</button>
                 <span class="btn-row-divider"></span>
@@ -263,6 +266,7 @@
       <span class="bottom-tab-label">More</span>
     </button>
     <div id="bottom-more-popover" class="bottom-more-popover" style="display:none">
+      <button onclick="bottomMoreSelect('onme')" class="bottom-more-onme">On Me <span class="bottom-tab-count" id="bottom-count-onme"></span></button>
       <button onclick="bottomMoreSelect('parked')">Parked <span class="bottom-tab-count" id="bottom-count-parked"></span></button>
       <button onclick="bottomMoreSelect('snoozed')">Snoozed <span class="bottom-tab-count" id="bottom-count-snoozed"></span></button>
       <a href="/stats">Stats</a>

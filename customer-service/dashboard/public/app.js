@@ -230,12 +230,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const savedTab = localStorage.getItem('activeTab');
   if (pendingTicketRestore) {
     // Restoring a ticket — coerce adhoc back to a ticket tab since we're showing the ticket panel
-    currentTab = savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
+    currentTab = savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'parked', 'snoozed', 'closed', 'adhoc'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -331,7 +331,7 @@ function switchTab(tab) {
   if (bottomDirect) {
     bottomDirect.classList.add('active');
   } else {
-    // Tab lives under "More" (e.g. parked, snoozed) — highlight the More button
+    // Tab lives under "More" (e.g. onme, parked, snoozed) — highlight the More button
     const more = document.querySelector('.bottom-tab[data-bottom-tab="more"]');
     if (more) more.classList.add('active');
   }
@@ -433,8 +433,8 @@ async function loadTicketQueue() {
 
     currentQueueTicketIds = tickets.map(t => t.id);
 
-    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
-    const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
+    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
+    const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
     if (!tickets.length) {
       container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabels[currentTab] || 'No tickets'}</div>`;
       // Update detail placeholder when queue is empty
@@ -732,6 +732,12 @@ function renderTicketDetail(ticket) {
     const btnSpam = document.getElementById('btn-spam');
     if (btnSpam) { btnSpam.textContent = 'Spam'; btnSpam.disabled = false; }
   }
+
+  // On Me / Unpend button visibility
+  const btnOnMe = document.getElementById('btn-onme');
+  const btnUnpend = document.getElementById('btn-unpend');
+  if (btnOnMe) btnOnMe.style.display = (ticket.status === 'open' || ticket.status === 'snoozed') ? '' : 'none';
+  if (btnUnpend) btnUnpend.style.display = ticket.status === 'pending_operator' ? '' : 'none';
 
   // Park/Unpark button visibility
   const btnPark = document.getElementById('btn-park');
@@ -3307,10 +3313,12 @@ async function loadStats() {
     };
     setCount('tab-count-new', s.new);
     setCount('tab-count-followup', s.followup);
+    setCount('tab-count-onme', s.onme);
     setCount('tab-count-parked', s.parked);
     setCount('tab-count-snoozed', s.snoozed);
     setCount('bottom-count-new', s.new);
     setCount('bottom-count-followup', s.followup);
+    setCount('bottom-count-onme', s.onme);
     setCount('bottom-count-parked', s.parked);
     setCount('bottom-count-snoozed', s.snoozed);
   } catch (err) {
@@ -3355,6 +3363,34 @@ async function reopenTicket() {
   } catch (err) {
     alert('Reopen failed: ' + err.message);
   }
+}
+
+function pendTicket() {
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
+  advanceToNextTicket(ticketId);
+  executeBackgroundAction(ticketId, `${ticketRef} — On Me`,
+    () => api(`/api/tickets/${ticketId}/pend`, { method: 'POST', body: { focus_time_seconds: focusSeconds } })
+  );
+}
+
+function unpendTicket() {
+  const ticket = currentTicket;
+  if (!ticket) return;
+  const ticketId = ticket.id;
+  if (_actionsInFlight.has(ticketId)) return;
+  const ticketRef = ticket.gorgias_ticket_id ? `#${ticket.gorgias_ticket_id}` : `ticket ${ticketId}`;
+  const focusSeconds = getFocusTime(ticketId);
+  clearFocusTime(ticketId);
+  advanceToNextTicket(ticketId);
+  executeBackgroundAction(ticketId, `${ticketRef} — Back to Queue`,
+    () => api(`/api/tickets/${ticketId}/unpend`, { method: 'POST', body: { focus_time_seconds: focusSeconds } })
+  );
 }
 
 function parkTicket() {

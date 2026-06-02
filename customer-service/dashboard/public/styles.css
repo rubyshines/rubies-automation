@@ -153,6 +153,12 @@ nav { display: flex; gap: 2px; }
   background: var(--accent);
   color: white;
 }
+.tab-onme { color: #d97706; }
+.tab-onme.active { color: var(--text); }
+.tab-onme .tab-count { background: #fef3c7; color: #d97706; }
+.tab-onme.active .tab-count { background: #d97706; color: white; }
+.btn-onme { color: #d97706; border-color: #fcd34d; }
+.btn-onme:hover { background: #fef3c7; }
 
 #btn-poll {
   background: var(--text);
@@ -4874,6 +4880,8 @@ main { height: calc(100vh - 56px); }
   .bottom-more-popover a:hover {
     background: var(--surface-inset);
   }
+
+  .bottom-more-onme { color: var(--accent); font-weight: 600; }
 
   /* Hide top nav tabs on mobile — bottom nav replaces them */
   header nav { display: none; }
