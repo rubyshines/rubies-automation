@@ -2538,7 +2538,7 @@ function getDraftAttachmentsPayload() {
 // Actions
 // ---------------------------------------------------------------------------
 
-function sendDraft(afterAction, testSnooze) {
+function sendDraft(afterAction) {
   // Source identity from the single ticket object, not the separate
   // currentTicketId/currentDraftId globals. currentTicket updates atomically
   // (after selectTicket's await), whereas currentTicketId flips synchronously on
@@ -2571,7 +2571,6 @@ function sendDraft(afterAction, testSnooze) {
   const body = draftId
     ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) }
     : { message: response, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
-  if (testSnooze) body.testSnooze = true;
 
   // Optimistic: clear local state and advance immediately
   clearDraftAttachments();
@@ -2579,7 +2578,7 @@ function sendDraft(afterAction, testSnooze) {
   localStorage.removeItem(`notes-ticket-${ticketId}`);
   advanceToNextTicket(ticketId);
 
-  const label = afterAction === 'close' ? `${ticketRef} — Sent & closed` : testSnooze ? `${ticketRef} — Sent & snoozed (TEST ~5min)` : `${ticketRef} — Sent & snoozed`;
+  const label = afterAction === 'close' ? `${ticketRef} — Sent & closed` : afterAction === 'onme' ? `${ticketRef} — Sent & On Me` : `${ticketRef} — Sent & snoozed`;
   executeBackgroundAction(ticketId, label,
     () => api(endpoint, { method: 'POST', body }),
     () => {

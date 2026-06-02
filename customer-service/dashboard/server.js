@@ -342,14 +342,14 @@ async function apiSendDraft(id, body) {
     await gorgias.assignTicket(draft.gorgias_ticket_id, null);
     await gorgias.addTicketTag(draft.gorgias_ticket_id, 'ai-resolved');
   } else {
-    const snoozeDays = body.testSnooze ? 0.004 : 3; // ~5 min for testing, 3 days for production
-    await gorgias.snoozeTicket(draft.gorgias_ticket_id, snoozeDays);
+    await gorgias.snoozeTicket(draft.gorgias_ticket_id, 3);
   }
 
   // Update DB status LAST — only after Gorgias succeeded
-  const extraFields = { has_agent_reply: true };
-  if (body.testSnooze) extraFields.test_snooze = true;
-  await updateTicketStatus(supabase, draft.gorgias_ticket_id, afterAction === 'close' ? 'closed' : 'snoozed', extraFields);
+  // 'onme' snoozes Gorgias (keeps it tidy) but sets our status to pending_operator
+  // so the auto-follow-up is suppressed and the ticket stays in the On Me tab.
+  const dbStatus = afterAction === 'close' ? 'closed' : afterAction === 'onme' ? 'pending_operator' : 'snoozed';
+  await updateTicketStatus(supabase, draft.gorgias_ticket_id, dbStatus, { has_agent_reply: true });
 
   // Donation audit log + counter increment. Runs once per ticket: only the
   // first send that contains a donation routing decision counts; later sends
@@ -2455,8 +2455,8 @@ async function apiSendTicketMessage(ticketId, body) {
     updates.closed_at = sentAt;
   } else {
     await gorgias.snoozeTicket(ticket.gorgias_ticket_id, 3);
-    updates.status = 'snoozed';
-    updates.snoozed_at = sentAt;
+    updates.status = afterAction === 'onme' ? 'pending_operator' : 'snoozed';
+    if (afterAction !== 'onme') updates.snoozed_at = sentAt;
   }
 
   // Update DB only after Gorgias succeeded

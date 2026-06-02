@@ -187,7 +187,7 @@
               <div class="btn-row btn-row-primary">
                 <button id="btn-execute-send" class="btn btn-execute" style="display:none" onclick="executeAndSend()" title="Run the action, auto-confirm it in the background if nothing looks off, and send the draft. If anything is flagged, the ticket comes back here for review.">Execute &amp; Send</button>
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send &amp; Snooze</button>
-                <button id="btn-send-test" class="btn btn-primary" onclick="sendDraft('snooze', true)" style="background:#e67e22" title="Snooze for ~5 min (follow-up testing)">Test</button>
+                <button id="btn-send-onme" class="btn btn-onme" onclick="sendDraft('onme')" title="Send and move to On Me — no auto-follow-up, you'll track it">Send &amp; On Me</button>
                 <button id="btn-send-close" class="btn btn-close" onclick="sendDraft('close')">Send &amp; Close</button>
               </div>
               <div class="btn-row btn-row-secondary">

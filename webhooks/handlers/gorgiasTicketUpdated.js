@@ -25,7 +25,7 @@ async function handle(payload) {
   // Look up our ticket (include fields needed for follow-up)
   const { data: ourTicket } = await supabase
     .from('cs_tickets')
-    .select('id, status, follow_up_stage, gorgias_ticket_id, customer_email, customer_name, test_snooze')
+    .select('id, status, follow_up_stage, gorgias_ticket_id, customer_email, customer_name')
     .eq('gorgias_ticket_id', ticketId)
     .maybeSingle();
 
@@ -46,10 +46,21 @@ async function handle(payload) {
     console.log(`[gorgias-ticket-updated] ${ticketId} — ${ourTicket.status} → closed`);
 
   } else if (gorgiasStatus === 'open' && ourTicket.status === 'pending_operator') {
-    // Gorgias opened while we have it marked "On Me" — Jamie owes the response,
-    // not the customer. Do NOT fire auto-follow-up. Leave our status as-is so
-    // it stays in the On Me tab until Jamie responds.
-    console.log(`[gorgias-ticket-updated] ${ticketId} — pending_operator, skipping auto-follow-up`);
+    // Gorgias opened while ticket is On Me. Two cases:
+    // 1. Customer replied → move to open (intake will handle), reset follow-up stage
+    // 2. Snooze expired with no reply → keep as pending_operator, no auto-follow-up
+    const messages = await gorgias.getTicketMessages(ticketId);
+    const latest = messages[messages.length - 1];
+    if (latest && !latest.from_agent) {
+      await supabase.from('cs_tickets').update({
+        status: 'open',
+        follow_up_stage: 0,
+        updated_at: now,
+      }).eq('id', ourTicket.id);
+      console.log(`[gorgias-ticket-updated] ${ticketId} — pending_operator → open (customer replied)`);
+    } else {
+      console.log(`[gorgias-ticket-updated] ${ticketId} — pending_operator snooze expired, staying On Me, no auto-follow-up`);
+    }
 
   } else if (gorgiasStatus === 'open' && ourTicket.status === 'snoozed') {
     // Snoozed ticket woke up — either snooze expired or customer replied.
@@ -73,8 +84,7 @@ async function handle(payload) {
 
     if (stage === 0) {
       try {
-        const snoozeDays = ourTicket.test_snooze ? 0.004 : undefined; // ~5 min for test tickets
-        await executeStage1(gorgias, ourTicket, { snoozeDays });
+        await executeStage1(gorgias, ourTicket);
         console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 1 follow-up sent, re-snoozed`);
       } catch (err) {
         console.error(`[gorgias-ticket-updated] ${ticketId} — Stage 1 error: ${err.message}`);
