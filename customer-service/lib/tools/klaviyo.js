@@ -280,6 +280,81 @@ async function handleListStats({ days_back }) {
 }
 
 // ---------------------------------------------------------------------------
+// Tool: klaviyo_subscription_status
+// ---------------------------------------------------------------------------
+
+async function handleSubscriptionStatus({ email }) {
+  const client = requireClient();
+
+  const data = await client.getProfileSubscriptionData(email);
+  if (!data) {
+    return { content: [{ type: 'text', text: `No Klaviyo profile found for **${email}**.` }] };
+  }
+
+  const emailStatus = data.emailSubscription;
+  const smsStatus = data.smsSubscription;
+
+  const emailIcon = emailStatus === 'SUBSCRIBED' ? '✓' : '✗';
+  const smsIcon = smsStatus === 'SUBSCRIBED' ? '✓' : '✗';
+
+  let md = `## Klaviyo Subscription Status — ${email}\n\n`;
+  md += `| Channel | Status |\n`;
+  md += `|---------|--------|\n`;
+  md += `| Email | ${emailIcon} ${emailStatus} |\n`;
+  md += `| SMS | ${smsIcon} ${smsStatus} |\n`;
+
+  if (data.phoneNumber) {
+    md += `\n**Phone:** ${data.phoneNumber}\n`;
+  }
+
+  if (data.lists.length) {
+    md += `\n**Lists:** ${data.lists.map(l => l.name || l.id).join(', ')}\n`;
+  } else {
+    md += `\n**Lists:** (none)\n`;
+  }
+
+  if (data.lastOpen) {
+    md += `\n**Last email open:** ${data.lastOpen.split('T')[0]}\n`;
+  }
+  if (data.lastClick) {
+    md += `**Last email click:** ${data.lastClick.split('T')[0]}\n`;
+  }
+
+  return { content: [{ type: 'text', text: md }] };
+}
+
+// ---------------------------------------------------------------------------
+// Tool: klaviyo_subscription_update
+// ---------------------------------------------------------------------------
+
+async function handleSubscriptionUpdate({ email, action, channels, phone_number, list_id }) {
+  const client = requireClient();
+
+  const channelList = channels || ['email'];
+  const channelNames = channelList.join(' and ');
+
+  await client.updateSubscription(email, {
+    action,
+    channels: channelList,
+    phoneNumber: phone_number,
+    listId: list_id,
+  });
+
+  const verb = action === 'subscribe' ? 'Subscribed' : 'Unsubscribed';
+  let md = `**${verb}** ${email} ${action === 'subscribe' ? 'to' : 'from'} ${channelNames} marketing.\n`;
+
+  // Verify the change
+  const updated = await client.getProfileSubscriptionData(email);
+  if (updated) {
+    md += `\nUpdated status:\n`;
+    if (channelList.includes('email')) md += `- Email: ${updated.emailSubscription}\n`;
+    if (channelList.includes('sms')) md += `- SMS: ${updated.smsSubscription}\n`;
+  }
+
+  return { content: [{ type: 'text', text: md }] };
+}
+
+// ---------------------------------------------------------------------------
 // Tool definitions (exported array)
 // ---------------------------------------------------------------------------
 
@@ -355,6 +430,54 @@ const tools = [
       required: [],
     },
     handler: handleListStats,
+  },
+  {
+    name: 'klaviyo_subscription_status',
+    description: 'Look up a customer\'s Klaviyo email and SMS marketing subscription status. Shows consent state (SUBSCRIBED/UNSUBSCRIBED/NEVER_SUBSCRIBED), which lists they\'re on, and last engagement dates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        email: {
+          type: 'string',
+          description: 'Customer email address',
+        },
+      },
+      required: ['email'],
+    },
+    handler: handleSubscriptionStatus,
+  },
+  {
+    name: 'klaviyo_subscription_update',
+    description: 'Subscribe or unsubscribe a customer from Klaviyo email and/or SMS marketing. Use when a customer requests to opt in or out of marketing communications. For subscribe, auto-selects the Newsletter list if list_id is omitted. For SMS subscribe, phone_number is required if not already in their profile.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        email: {
+          type: 'string',
+          description: 'Customer email address',
+        },
+        action: {
+          type: 'string',
+          enum: ['subscribe', 'unsubscribe'],
+          description: 'Whether to subscribe or unsubscribe',
+        },
+        channels: {
+          type: 'array',
+          items: { type: 'string', enum: ['email', 'sms'] },
+          description: 'Which channels to update (default: ["email"])',
+        },
+        phone_number: {
+          type: 'string',
+          description: 'Phone number in E.164 format (e.g. +16045551234) — required when subscribing to SMS if not already in their Klaviyo profile',
+        },
+        list_id: {
+          type: 'string',
+          description: 'Klaviyo list ID to subscribe to. Auto-picks Newsletter list if omitted.',
+        },
+      },
+      required: ['email', 'action'],
+    },
+    handler: handleSubscriptionUpdate,
   },
 ];
 

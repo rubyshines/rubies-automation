@@ -212,8 +212,7 @@ function getKlaviyoClient() {
   }
 
   /**
-   * Get subscription status for a profile across all lists.
-   * Returns { status, lists: [{ id, name }], lastOpen, lastClick }
+   * Get subscription status for a profile across all lists (email + SMS).
    */
   async function getProfileSubscriptionData(email) {
     const profile = await getProfileByEmail(email);
@@ -224,12 +223,63 @@ function getKlaviyoClient() {
 
     return {
       profileId: profile.id,
-      subscriptionStatus: attrs.subscriptions?.email?.marketing?.consent || 'unknown',
+      phoneNumber: attrs.phone_number || null,
+      emailSubscription: attrs.subscriptions?.email?.marketing?.consent || 'NEVER_SUBSCRIBED',
+      smsSubscription: attrs.subscriptions?.sms?.marketing?.consent || 'NEVER_SUBSCRIBED',
       lists: lists.map(l => ({ id: l.id, name: l.attributes?.name })),
       lastOpen: attrs.predictive_analytics?.last_email_open || null,
       lastClick: attrs.predictive_analytics?.last_email_click || null,
-      properties: attrs.properties || {},
     };
+  }
+
+  /**
+   * Subscribe or unsubscribe a profile from email/SMS marketing.
+   *
+   * action: 'subscribe' | 'unsubscribe'
+   * channels: array containing 'email', 'sms', or both
+   * listId: required for subscribe (auto-picked from 'Newsletter' list if omitted)
+   * phoneNumber: required for SMS subscribe if profile has no stored number
+   */
+  async function updateSubscription(email, { action, channels = ['email'], listId, phoneNumber } = {}) {
+    const isSubscribe = action === 'subscribe';
+    const endpoint = isSubscribe
+      ? '/api/profile-subscription-bulk-create-jobs'
+      : '/api/profile-unsubscription-bulk-create-jobs';
+    const jobType = isSubscribe
+      ? 'profile-subscription-bulk-create-job'
+      : 'profile-unsubscription-bulk-create-job';
+
+    // For subscribe, resolve listId if not provided
+    if (isSubscribe && !listId) {
+      const lists = await getLists();
+      if (!lists.length) throw new Error('No Klaviyo lists found. Provide a list_id.');
+      const newsletter = lists.find(l => /newsletter/i.test(l.attributes?.name || ''));
+      listId = newsletter ? newsletter.id : lists[0].id;
+    }
+
+    const subscriptions = {};
+    if (channels.includes('email')) {
+      subscriptions.email = { marketing: isSubscribe ? { consent: 'SUBSCRIBED' } : {} };
+    }
+    if (channels.includes('sms')) {
+      subscriptions.sms = { marketing: isSubscribe ? { consent: 'SUBSCRIBED' } : {} };
+    }
+
+    const profileAttribs = { email, subscriptions };
+    if (phoneNumber) profileAttribs.phone_number = phoneNumber;
+
+    const body = {
+      data: {
+        type: jobType,
+        attributes: {
+          profiles: { data: [{ type: 'profile', attributes: profileAttribs }] },
+        },
+      },
+    };
+    if (isSubscribe && listId) body.data.attributes.list_id = listId;
+
+    await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(body) });
+    return { success: true, listId: listId || null };
   }
 
   // ── html stripping ───────────────────────────────────────────────────
@@ -270,6 +320,7 @@ function getKlaviyoClient() {
     getProfileLists,
     getProfiles,
     getProfileSubscriptionData,
+    updateSubscription,
     stripHtml,
   };
 
