@@ -184,6 +184,10 @@
             </div>
             <div id="draft-attachments" class="draft-attachments"></div>
             <div id="draft-actions" class="draft-actions">
+              <div id="hold-failed-warning" class="hold-failed-warning" style="display:none">
+                <span class="hold-failed-icon">&#9888;</span>
+                Auto-hold failed at intake — the order was not held. Place the hold manually via the Action panel above before sending.
+              </div>
               <div class="btn-row btn-row-primary">
                 <button id="btn-execute-send" class="btn btn-execute" style="display:none" onclick="executeAndSend()" title="Run the action, auto-confirm it in the background if nothing looks off, and send the draft. If anything is flagged, the ticket comes back here for review.">Execute &amp; Send</button>
                 <button id="btn-send" class="btn btn-primary" onclick="sendDraft('snooze')">Send &amp; Snooze</button>

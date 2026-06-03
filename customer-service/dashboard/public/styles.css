@@ -3268,6 +3268,23 @@ main { height: calc(100vh - 56px); }
   flex-direction: column;
   gap: 10px;
 }
+.hold-failed-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255, 160, 0, 0.12);
+  border: 1px solid rgba(255, 160, 0, 0.4);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #e8a000;
+  line-height: 1.45;
+}
+.hold-failed-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
 .draft-actions .btn-row { margin-top: 0; }
 
 .btn-row-primary {

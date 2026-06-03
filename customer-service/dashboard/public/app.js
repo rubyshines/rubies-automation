@@ -870,6 +870,15 @@ function renderTicketDetail(ticket) {
     // Action panel — intent-specific UIs
     renderActionPanel(d);
 
+    // Hold-failed warning: auto-hold was proposed but actions[] is empty
+    const holdWarn = document.getElementById('hold-failed-warning');
+    if (holdWarn) {
+      const holdFailed = d.action_type === 'warehouse_hold'
+        && (!Array.isArray(d.actions) || d.actions.length === 0)
+        && !d.action_executed_at;
+      holdWarn.style.display = holdFailed ? '' : 'none';
+    }
+
   } else {
     // No active draft — show empty editor for manual compose
     document.getElementById('draft-editor').value = '';
@@ -889,6 +898,8 @@ function renderTicketDetail(ticket) {
     // operator can request additional actions if needed.
     renderActionPanel({ action_type: null, structured_output: {}, order_number: ticket.order_number });
 
+    const holdWarn = document.getElementById('hold-failed-warning');
+    if (holdWarn) holdWarn.style.display = 'none';
   }
 
   // Smart scroll: align bottom of viewport with top of the next section
@@ -1687,7 +1698,9 @@ function buildActionPrefill(draft) {
   }
 
   if (actionType === 'warehouse_hold') {
-    return `hold order #${orderNum}: customer requested address change`;
+    const summary = structured.operator_action_summary || '';
+    const reason = summary ? summary.replace(/^place warehouse hold on order #\d+[:\s]*/i, '') : 'customer requested hold';
+    return `hold order #${orderNum}: ${reason}`;
   }
 
   if (actionType === 'cancellation') {

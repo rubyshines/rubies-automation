@@ -111,7 +111,7 @@ async function run({ execute = false } = {}) {
     //  - Gorgias snoozed: Advisor must also be snoozed
     const gStatus = gTicket.status;
     const aStatus = advisor.status;
-    if (gStatus === 'open' && !['open', 'snoozed', 'parked'].includes(aStatus)) {
+    if (gStatus === 'open' && !['open', 'snoozed', 'parked', 'pending_operator'].includes(aStatus)) {
       toProcess.push({ ticket: gTicket, reason: `status drift (G:open → A:${aStatus})`, existingIds });
       continue;
     }
