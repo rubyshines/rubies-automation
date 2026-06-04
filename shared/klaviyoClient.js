@@ -35,7 +35,8 @@ function getKlaviyoClient() {
       const body = await res.text();
       throw new Error(`Klaviyo ${res.status}: ${body.slice(0, 300)}`);
     }
-    return res.json();
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
   }
 
   async function fetchAll(path, maxPages = MAX_PAGES) {
@@ -178,7 +179,7 @@ function getKlaviyoClient() {
    */
   async function getProfileByEmail(email) {
     const filter = `equals(email,"${email.toLowerCase().trim()}")`;
-    const data = await apiFetch(`/api/profiles?filter=${encodeURIComponent(filter)}`);
+    const data = await apiFetch(`/api/profiles?filter=${encodeURIComponent(filter)}&additional-fields[profile]=subscriptions,predictive_analytics`);
     return data.data?.[0] || null;
   }
 
@@ -274,9 +275,14 @@ function getKlaviyoClient() {
         attributes: {
           profiles: { data: [{ type: 'profile', attributes: profileAttribs }] },
         },
+        // list_id goes under relationships per Klaviyo's JSON:API format
+        ...(isSubscribe && listId ? {
+          relationships: {
+            list: { data: { type: 'list', id: listId } },
+          },
+        } : {}),
       },
     };
-    if (isSubscribe && listId) body.data.attributes.list_id = listId;
 
     await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(body) });
     return { success: true, listId: listId || null };
