@@ -170,12 +170,17 @@ async function syncOrders({ since, full } = {}) {
           message: e.node.message,
         }));
         const existing = existingFulfillments.find(e => e.trackingNumber && e.trackingNumber === trackingNumber);
-        // Prefer the richer events array. Shopify can only add events over
-        // time; if the stored array has more entries, it includes scraper
-        // events Shopify doesn't see.
-        const events = existing && (existing.events?.length || 0) > shopifyEvents.length
-          ? existing.events
-          : shopifyEvents;
+        // Merge: Shopify is the base (includes carrier events like DELIVERED).
+        // Append stored events whose happenedAt isn't in Shopify's set — those
+        // are Passport scraper extras (local carrier scans) Shopify never sees.
+        // Pure count comparison caused a race: DELIVERED arrived in Shopify at
+        // the same sync run that advanced the high-water mark past these orders,
+        // so stored.length >= shopify.length kept stale events indefinitely.
+        const shopifyTimestamps = new Set(shopifyEvents.map(e => e.happenedAt));
+        const scraperExtras = (existing?.events || []).filter(e => e.happenedAt && !shopifyTimestamps.has(e.happenedAt));
+        const events = shopifyEvents.length > 0
+          ? [...shopifyEvents, ...scraperExtras]
+          : (existing?.events || []);
         return {
           status: f.status,
           displayStatus: f.displayStatus || existing?.displayStatus || null,
