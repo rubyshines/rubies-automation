@@ -419,6 +419,7 @@ async function createCustomer(input) {
             city
             province
             country
+            countryCodeV2
             zip
           }
         }
