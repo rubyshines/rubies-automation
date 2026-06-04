@@ -1995,6 +1995,9 @@ async function runChatTurn({
           const event = JSON.parse(line.slice(6));
           if (event.type === 'heartbeat') {
             // Server keepalive — no UI action needed, inactivity already reset above.
+          } else if (event.type === 'trace_step') {
+            // Server-emitted status step (e.g. "Calling Claude (step N)…")
+            trace?.status(event.data || 'Working…');
           } else if (event.type === 'tool_call') {
             activeTool = trace?.startTool(event.data?.tool || 'tool', event.data?.input);
           } else if (event.type === 'tool_result') {
@@ -2983,7 +2986,11 @@ function createReasoningTrace(container, opts = {}) {
       parts.push(elapsed);
       summaryText.textContent = parts.join(' · ');
       if (autoCollapse && !isError) {
-        collapseTimer = setTimeout(() => { container.dataset.collapsed = 'true'; }, 1500);
+        // Keep trace visible longer for slow runs so tool steps are readable.
+        // Runs >10s use 6s; fast runs collapse after 1.5s.
+        const totalMs = Date.now() - startedAt;
+        const collapseDelay = totalMs > 10_000 ? 6000 : 1500;
+        collapseTimer = setTimeout(() => { container.dataset.collapsed = 'true'; }, collapseDelay);
       }
     },
     destroy() {

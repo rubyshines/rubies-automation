@@ -208,8 +208,17 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
   // Best-effort tool-loop linkage: first call in the loop parents the rest.
   let parentCallId = null;
 
+  // 90-second hard timeout per API call. The Anthropic SDK has no built-in
+  // timeout for streaming calls — without this, a stalled connection waits
+  // forever (observed at 834s locally when the API hung mid-stream).
+  const API_CALL_TIMEOUT_MS = 90_000;
+
   for (let i = 0; i < maxIterations; i++) {
     const _tApi = Date.now();
+    const _elapsed = Date.now() - _t.start;
+    console.log(`[operator-agent] iter=${i + 1} elapsed=${_elapsed}ms calling claude (ticket=${_ticketId || 'none'})`);
+    emit({ type: 'trace_step', data: `Calling Claude (step ${i + 1})…` });
+
     const apiParams = {
       model: MODELS.OPUS,
       max_tokens: 1024,
@@ -217,6 +226,10 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
       tools,
       messages: currentMessages,
     };
+
+    // Build requestOptions: always include a hard timeout; include abort signal when provided.
+    const _requestOptions = { timeout: API_CALL_TIMEOUT_MS };
+    if (signal) _requestOptions.signal = signal;
 
     let response;
     if (onEvent) {
@@ -231,7 +244,7 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
         component: 'cs_operator',
         ...apiParams,
         stream: true,
-        ...(signal ? { requestOptions: { signal } } : {}),
+        requestOptions: _requestOptions,
         onText: (text) => {
           if (cut) return;
           acc += text;
@@ -258,15 +271,19 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
       response = await callClaude({
         component: 'cs_operator',
         ...apiParams,
-        ...(signal ? { requestOptions: { signal } } : {}),
+        requestOptions: _requestOptions,
         ticket_id: _ticketId, draft_id: _draftId, parent_call_id: parentCallId,
         metadata: { customer_email: context.customer_email },
       });
     }
     if (parentCallId === null) parentCallId = response._ai_call_id;
 
+    const _apiDuration = Date.now() - _tApi;
+    const _toolNames = response.content.filter(b => b.type === 'tool_use').map(b => b.name);
+    console.log(`[operator-agent] iter=${i + 1} api_done=${_apiDuration}ms tools=[${_toolNames.join(',')}] stop=${response.stop_reason}`);
+
     _t.api_calls.push({
-      duration_ms: Date.now() - _tApi,
+      duration_ms: _apiDuration,
       input_tokens: response.usage?.input_tokens,
       output_tokens: response.usage?.output_tokens,
       cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
@@ -313,9 +330,11 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
 
         const _tTool = Date.now();
         const toolResult = await handler(toolUse.input);
+        const _toolDuration = Date.now() - _tTool;
         const text = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
         result = text;
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, result: text, _refund_data: toolResult._refund_data, _duration_ms: Date.now() - _tTool });
+        console.log(`[operator-agent]   tool=${toolUse.name} done=${_toolDuration}ms`);
+        toolResults.push({ tool: toolUse.name, input: toolUse.input, result: text, _refund_data: toolResult._refund_data, _duration_ms: _toolDuration });
         emit({ type: 'tool_result', data: { tool: toolUse.name, result: text } });
       } catch (err) {
         result = JSON.stringify({ error: err.message });
@@ -340,6 +359,9 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
   }
 
   _t.total_ms = Date.now() - _t.start;
+
+  const _toolSummary = toolResults.map(t => `${t.tool}:${t._duration_ms || 0}ms`).join(', ');
+  console.log(`[operator-agent] DONE total=${_t.total_ms}ms calls=${_t.api_calls.length} tools=[${_toolSummary}] ticket=${_ticketId || 'none'}`);
 
   // Lift the automation-only AUTO_CONFIRM verdict out of the operator-facing
   // text. `auto_confirm` is the gate signal for the one-click Execute & Send
