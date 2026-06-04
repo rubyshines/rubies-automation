@@ -363,6 +363,40 @@ async function buildContext({ customer_email, customer_name, order_number, issue
     console.log(`[context] ${customer_email} resolved via ${customerData.source} (${orders.length} orders)`);
   }
 
+  // Shopify's getCustomerOrders lags for brand-new customers — the order webhook
+  // arrives and populates our orders table before Shopify finishes linking the order
+  // to the new customer account. If we resolved via Shopify and got 0 orders, check
+  // the Supabase order mirror by email — it's always timely because it's fed by the
+  // order webhook, not the customer association.
+  if (orders.length === 0 && customer_email && customerData?.source && customerData.source !== 'supabase') {
+    try {
+      const supabase = getSupabaseClient();
+      const { data: mirrorOrders } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('customer_email', customer_email.toLowerCase().trim())
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (mirrorOrders?.length) {
+        const orderIds = mirrorOrders.map(o => o.shopify_order_id);
+        const { data: allLineItems } = await supabase
+          .from('order_line_items')
+          .select('*')
+          .in('shopify_order_id', orderIds);
+        const lineItemsByOrder = {};
+        for (const li of (allLineItems || [])) {
+          if (!lineItemsByOrder[li.shopify_order_id]) lineItemsByOrder[li.shopify_order_id] = [];
+          lineItemsByOrder[li.shopify_order_id].push(li);
+        }
+        orders = mirrorOrders.map(o => supabaseOrderToShopify(o, lineItemsByOrder[o.shopify_order_id] || []));
+        console.log(`[context] ${customer_email} Shopify orders empty — supplemented from Supabase mirror (${orders.length} orders)`);
+      }
+    } catch (err) {
+      console.warn(`[context] Supabase order mirror fallback failed: ${err.message}`);
+    }
+  }
+
   const { fulfilled, exchanges, all } = analyzeOrders(orders);
   let targetOrder = null;
 
