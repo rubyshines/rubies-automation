@@ -208,10 +208,11 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
   // Best-effort tool-loop linkage: first call in the loop parents the rest.
   let parentCallId = null;
 
-  // 90-second hard timeout per API call. The Anthropic SDK has no built-in
-  // timeout for streaming calls — without this, a stalled connection waits
-  // forever (observed at 834s locally when the API hung mid-stream).
-  const API_CALL_TIMEOUT_MS = 90_000;
+  // 30-second hard timeout per API call using a native AbortController.
+  // The SDK's requestOptions.timeout may not reliably cancel a stalled stream
+  // (if TCP data started flowing then stopped, the SDK considers it "active").
+  // An explicit AbortController is guaranteed to kill the call at the fetch level.
+  const API_CALL_TIMEOUT_MS = 30_000;
 
   for (let i = 0; i < maxIterations; i++) {
     const _tApi = Date.now();
@@ -227,11 +228,29 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
       messages: currentMessages,
     };
 
-    // Build requestOptions: always include a hard timeout; include abort signal when provided.
-    const _requestOptions = { timeout: API_CALL_TIMEOUT_MS };
-    if (signal) _requestOptions.signal = signal;
+    // Build a per-call AbortController that combines: (a) 30s hard timeout,
+    // (b) the caller's disconnect signal. This is the reliable way to cancel
+    // a stalled Anthropic streaming call — SDK-level requestOptions.timeout
+    // only guards the initial connection, not mid-stream stalls.
+    const _callCtrl = new AbortController();
+    const _callTimer = setTimeout(
+      () => _callCtrl.abort(new Error(`Operator API call timed out after ${API_CALL_TIMEOUT_MS}ms`)),
+      API_CALL_TIMEOUT_MS,
+    );
+    if (signal) {
+      if (signal.aborted) {
+        _callCtrl.abort(signal.reason);
+      } else {
+        const _fwd = () => _callCtrl.abort(signal.reason);
+        signal.addEventListener('abort', _fwd, { once: true });
+        // Clean up listener after the call (handled in finally-equivalent below).
+        _callCtrl.signal._cleanupFwd = () => signal.removeEventListener('abort', _fwd);
+      }
+    }
+    const _requestOptions = { signal: _callCtrl.signal };
 
     let response;
+    try {
     if (onEvent) {
       // Streaming mode — emit text deltas as they arrive, but suppress the
       // trailing `AUTO_CONFIRM:` verdict line (automation-only, stripped before
@@ -276,6 +295,11 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
         metadata: { customer_email: context.customer_email },
       });
     }
+    } finally {
+      clearTimeout(_callTimer);
+      if (_callCtrl.signal._cleanupFwd) _callCtrl.signal._cleanupFwd();
+    }
+
     if (parentCallId === null) parentCallId = response._ai_call_id;
 
     const _apiDuration = Date.now() - _tApi;
