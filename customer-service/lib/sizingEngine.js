@@ -111,8 +111,8 @@ function getProductNickname(fullTitle) {
     if (upper.includes(key) || key.includes(upper)) return nick;
   }
 
-  // Try: extract the person name from "THE [NAME] ..." pattern
-  // Handles product name changes (e.g., "THE AJ SHAPING UNDERWEAR" vs "THE AJ NO-TUCK SHAPING UNDERWEAR")
+  // Fallback: extract person name from old "THE [NAME] ..." title format (pre-2026 style).
+  // Titles no longer start with "THE" but this handles stale references in order history.
   const nameMatch = fullTitle.match(/^THE\s+(\w+)\s/i);
   if (nameMatch) {
     const name = nameMatch[1].toUpperCase();

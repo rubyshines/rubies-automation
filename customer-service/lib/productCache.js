@@ -409,8 +409,10 @@ function getCacheAgeHours() {
  * names. Three traps the codebase has hit before:
  *   1. Some Shopify variant `selectedOptions` are named "Option 1" / "Option 2"
  *      generically, not "Color" / "Size" — don't rely on option names.
- *   2. Product titles are verbose all-caps (e.g. "THE SASSY NO-TUCK SHAPING
- *      UNDERWEAR"). Use the handle's first non-"the" segment for short name.
+ *   2. Product titles are verbose all-caps (e.g. "SASSY NO-TUCK SHAPING
+ *      UNDERWEAR"). Handles may still have a "the-" prefix (e.g. "the-sassy-
+ *      no-tuck-shaping-underwear") — use the handle's first non-"the" segment
+ *      for short name.
  *   3. SKU prefix is a reliable cross-system key today (verified all unique
  *      across products as of Apr 2026). Don't try to parse SKU shape; use
  *      getVariantBySku() and read structured fields.
