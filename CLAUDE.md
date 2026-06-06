@@ -53,9 +53,27 @@ This applies to everything:
 1. Mechanical lookups the AI cannot do (e.g., resolving email to Shopify customer ID requires an API call)
 2. Deterministic calculations (size chart lookups, pricing math, fabric delta calculations)
 
+### Advisor Architecture
+
+Every business function maps to one of eight advisors plus a supervisor. This is the long-term operating model — each advisor owns a domain, shares infrastructure, and is orchestrated by the supervisor (Jamie for now, eventually an agent).
+
+1. **CS Advisor** — inbound customer support
+2. **Sales Advisor** — retailers + affiliates
+3. **Community Advisor** — LGBTQ+ org partnerships
+4. **Marketing Advisor** — campaigns, content, Klaviyo
+5. **Merchandising Advisor** — product design, production, inventory, logistics
+6. **Finance Advisor** — pricing, margins, financial decisions
+7. **Creative Advisor** — brand, visual design, UX, product aesthetics
+8. **Tech Advisor** — engineering, systems, website, all technology supporting the business
+9. **Supervisor** — Jamie for now; eventually an agent that orchestrates the others and escalates exceptions
+
+Every domain in MEMORY.md maps to exactly one advisor. Tools are agent-agnostic — any advisor can call any tool. The supervisor coordinates when two advisors touch the same work. Marketing and Creative will naturally overlap on campaign creative; that coordination is expected and normal.
+
 ### Always use Opus
 
 Use claude-opus-4-6 for all AI-powered features. Never use Sonnet or Haiku for tool-calling or decision-making tasks. Sonnet is unreliable for multi-tool agentic workflows.
+
+Exception: pre-filter passes that are binary triage feeding into a later Opus step may use Haiku (e.g. "could this business conceivably sell apparel?" before running full prospect analysis). The test: does this agent make a decision that affects a customer or relationship? If yes, Opus. If it is a cheap cull before a real reasoning step, Haiku is acceptable.
 
 ### Use the real tools
 
@@ -72,7 +90,7 @@ See domain files in MEMORY.md for systems detail. Deployment: Railway (scheduled
 - **No em dashes in customer-facing copy.** Use commas, parentheses, or short sentences instead. Applies to advisor drafts, marketing emails, blog content, and any AI-generated customer text.
 - **Always use Opus** (claude-opus-4-6) for AI features — never Sonnet or Haiku for tool-calling.
 - **Run tests** before and after changes: `node --test customer-service/test/*.test.js`
-- **Memory directory location:** Memory lives at `~/.claude/projects/-Users-jamiealexander-Library-Mobile-Documents-com-apple-CloudDocs-Documents-RUBIES-creative-content-code-rubies-repo-rubies-automations/memory/` and is symlinked into the project at `.claude/memory/` (gitignored). Reference memory files in chat using the workspace-relative path `.claude/memory/<file>.md` so Jamie can click them open in VSCode — both paths resolve to the same files. Do NOT edit memory files at any other location — duplicates elsewhere are stale artifacts.
+- **Memory directory location:** Memory lives at `.claude/memory/` in the project repo and is committed to git. Reference memory files using the workspace-relative path `.claude/memory/<file>.md` so Jamie can click them open in VSCode. Do NOT edit memory files at any other location — duplicates elsewhere are stale artifacts.
 - **Plans directory location:** Plans live at `~/.claude/plans/` and are symlinked into the project at `.claude/plans/` (gitignored, shared across all projects). Reference plan files as `.claude/plans/<name>.md` so they're clickable in VSCode.
 - **Memory Protocol — reading (every session start):**
   1. Read `feedback_collaboration.md` and `feedback_technical_rules.md`
