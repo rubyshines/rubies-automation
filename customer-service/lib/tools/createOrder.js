@@ -16,7 +16,12 @@ const {
   getAdminUrl,
 } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { getShippingMethodTitle } = require('../orderUtils');
+const {
+  getShippingMethodTitle,
+  applyShippingAddressOverride,
+  SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+  buildShippingAddress,
+} = require('../orderUtils');
 
 function fmtCurrency(n) {
   if (n == null || isNaN(n)) return '$0.00';
@@ -66,7 +71,7 @@ async function findOrCreateCustomer({ email, first_name, last_name, phone, addre
 }
 
 async function handleCreateOrder({
-  email, first_name, last_name, phone, address,
+  email, first_name, last_name, phone, shipping_address,
   customer_id,
   items, custom_items, discount_percent, free, donation, note, tags,
   shipping_speed,
@@ -140,19 +145,24 @@ async function handleCreateOrder({
     };
   } else if (email) {
     // Always find or create the customer — the draft order needs a customerId
-    customerInfo = await findOrCreateCustomer({ email, first_name, last_name, phone, address });
+    customerInfo = await findOrCreateCustomer({ email, first_name, last_name, phone, address: shipping_address });
   } else {
     return { content: [{ type: 'text', text: 'Must provide either email or customer_id.' }] };
   }
 
+  // Build the effective shipping address: customer default → operator override.
+  // The override (shipping_address) wins for any field it specifies. This single
+  // resolved address is used for the preview, shipCountry, and the Shopify draft.
+  const nameParts = customerInfo.name ? customerInfo.name.split(' ') : [];
+  const baseShippingAddress = customerInfo.address
+    ? buildShippingAddress(customerInfo.address, nameParts[0] || '', nameParts.slice(1).join(' ') || '')
+    : null;
+  const effectiveShippingAddress = applyShippingAddressOverride(baseShippingAddress, shipping_address);
+
   // Resolve shipping rate title from destination + speed. Operator-created drafts
   // always get $0 shipping (RUBIES covers it for free / wholesale flows); the title
   // is what drives Warehance carrier routing.
-  const shipCountry =
-    customerInfo.address?.countryCodeV2 ||
-    customerInfo.address?.country ||
-    address?.country ||
-    '';
+  const shipCountry = effectiveShippingAddress?.country || '';
   const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
   const shippingTitle = await getShippingMethodTitle(shipCountry, speed);
 
@@ -164,11 +174,9 @@ async function handleCreateOrder({
   md += `\n**Email:** ${customerInfo.email || email}\n`;
   if (customerInfo.created && phone) md += `**Phone:** ${phone}\n`;
 
-  if (customerInfo.address) {
-    const a = customerInfo.address;
+  if (effectiveShippingAddress) {
+    const a = effectiveShippingAddress;
     md += `**Ship to:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}\n`;
-  } else if (address) {
-    md += `**Ship to:** ${[address.address1, address.address2, address.city, `${address.province || ''} ${address.zip || ''}`, address.country].filter(Boolean).join(', ')}\n`;
   }
 
   md += `\n**Items:**\n`;
@@ -226,25 +234,8 @@ async function handleCreateOrder({
     shippingLine: { title: shippingTitle, price: '0.00' },
   };
 
-  // Pass shipping address if available. An explicit `address` from the
-  // operator wins — it's the most specific signal that the customer wants
-  // to ship somewhere different from what's on file.
-  const addr = address || customerInfo.address;
-  if (addr) {
-    const shippingAddr = {
-      address1: addr.address1 || '',
-      address2: addr.address2 || '',
-      city: addr.city || '',
-      province: addr.province || '',
-      country: addr.country || 'AU',
-      zip: addr.zip || '',
-    };
-    if (customerInfo.name) {
-      const parts = customerInfo.name.split(' ');
-      shippingAddr.firstName = parts[0] || '';
-      shippingAddr.lastName = parts.slice(1).join(' ') || '';
-    }
-    draftInput.shippingAddress = shippingAddr;
+  if (effectiveShippingAddress) {
+    draftInput.shippingAddress = effectiveShippingAddress;
   }
 
   // Always create draft in Phase 1 so we get the admin link + Shopify-calculated totals
@@ -277,17 +268,10 @@ const tools = [
         first_name: { type: 'string', description: 'Customer first name (for new customers)' },
         last_name: { type: 'string', description: 'Customer last name (for new customers)' },
         phone: { type: 'string', description: 'Customer phone (for new customers)' },
-        address: {
-          type: 'object',
-          description: 'Shipping address. Required for new customers (used for the customer record + draft). For existing customers, pass this only when the customer has explicitly asked to ship somewhere different from what is on file — when provided, it overrides the customer default.',
-          properties: {
-            address1: { type: 'string' },
-            address2: { type: 'string', description: 'Apartment, suite, unit, etc.' },
-            city: { type: 'string' },
-            province: { type: 'string' },
-            country: { type: 'string', description: 'Country code e.g. "AU", "US"' },
-            zip: { type: 'string' },
-          },
+        shipping_address: {
+          ...SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+          description: SHIPPING_ADDRESS_OVERRIDE_SCHEMA.description +
+            ' For new customers, also used to create the customer record.',
         },
         customer_id: {
           type: 'string',
