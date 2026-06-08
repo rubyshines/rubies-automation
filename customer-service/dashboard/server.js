@@ -29,6 +29,7 @@ try {
 } catch { GIT_VERSION = { hash: 'unknown', short: '???', date: '', started: new Date().toISOString() }; }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
 const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
 const { autoLinkProducts } = require('../lib/autoLinker');
@@ -207,6 +208,23 @@ async function apiGetDraft(id) {
   return data;
 }
 
+// Upload base64 attachments to Supabase storage and return resolved { url, name, content_type, size }
+// objects that Gorgias's API accepts. Failures are logged and skipped — they don't block the send.
+async function resolveAttachmentsForGorgias(attachments) {
+  if (!attachments || !attachments.length) return [];
+  const resolved = [];
+  for (const att of attachments) {
+    if (!att.base64) continue;
+    try {
+      const { url } = await uploadOperatorBase64(att.base64, { filename: att.name, mimeType: att.content_type });
+      resolved.push({ url, name: att.name, content_type: att.content_type, size: Math.ceil((att.base64.length * 3) / 4) });
+    } catch (e) {
+      console.warn('[dashboard] attachment upload failed, skipping:', att.name, e.message);
+    }
+  }
+  return resolved;
+}
+
 async function apiSendDraft(id, body) {
   const supabase = getSupabaseClient();
 
@@ -217,7 +235,36 @@ async function apiSendDraft(id, body) {
     .eq('id', id)
     .single();
   if (fetchErr) throw fetchErr;
-  if (draft.status !== 'pending') throw new Error(`Draft ${id} is not pending (status: ${draft.status})`);
+  if (draft.status !== 'pending') {
+    // Operator is sending a follow-up on an already-sent draft (e.g. pending_operator / On Me flow).
+    if (draft.status === 'sent' && draft.ticket_id) {
+      // Idempotency guard 1: if a newer active draft already exists for this ticket
+      // (created by a prior send attempt), route to it rather than creating another.
+      const { data: ticket } = await supabase.from('cs_tickets')
+        .select('active_draft_id').eq('id', draft.ticket_id).single();
+      if (ticket?.active_draft_id && ticket.active_draft_id !== id) {
+        return apiSendDraft(ticket.active_draft_id, body);
+      }
+      // Idempotency guard 2: if this draft was sent in the last 60s it's a duplicate retry.
+      if (draft.sent_at && (Date.now() - new Date(draft.sent_at).getTime()) < 60000) {
+        throw new Error(`Draft ${id} was already sent moments ago — looks like a duplicate`);
+      }
+      // Create a fresh pending draft row and send it.
+      const { data: freshDraft, error: freshErr } = await supabase.from('cs_ai_drafts').insert({
+        ticket_id: draft.ticket_id,
+        gorgias_ticket_id: draft.gorgias_ticket_id,
+        customer_email: draft.customer_email,
+        order_number: draft.order_number,
+        draft_response: body.response || '',
+        source: 'operator_reply',
+        structured_output: {},
+      }).select('id').single();
+      if (freshErr) throw freshErr;
+      await supabase.from('cs_tickets').update({ active_draft_id: freshDraft.id }).eq('id', draft.ticket_id);
+      return apiSendDraft(freshDraft.id, body);
+    }
+    throw new Error(`Draft ${id} is not pending (status: ${draft.status})`);
+  }
 
   const finalResponse = body.response || draft.draft_response;
   const notes = body.notes || null;
@@ -256,10 +303,11 @@ async function apiSendDraft(id, body) {
       }).eq('id', draft.ticket_id);
     }
   } else {
+    const resolvedAttachments = await resolveAttachmentsForGorgias(body.attachments);
     replyResult = await gorgias.createTicketReply(draft.gorgias_ticket_id, {
       body_html: bodyHtml,
       body_text: finalResponse,
-      attachments: body.attachments,
+      attachments: resolvedAttachments,
     });
   }
 
@@ -418,6 +466,96 @@ async function apiCloseDraft(id, body) {
 }
 
 
+// Recompose an outbound (operator-initiated) draft when there is no customer
+// reply yet. Called by apiRefreshDraft and createFreshDraftForTicket when the
+// Gorgias thread has only agent messages. Returns { draft_response, draft_id, structured }.
+// Pass draftId + existingDraft to update an existing row; omit both and pass ticketId
+// to insert a fresh row (createFreshDraftForTicket path).
+async function recomposeOutboundDraft({ ticketId, draftId, existingDraft, customerEmail, orderNumber, gorgiasTicketId, gorgiasTicket, steer, emit = () => {} }) {
+  const supabase = getSupabaseClient();
+  const { buildContext } = require('../lib/contextBuilder');
+  const { composeOutboundDraft } = require('../lib/composeOutboundDraft');
+
+  const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
+    .filter(Boolean).join(' ').trim() || gorgiasTicket?.customer?.name || null;
+
+  const orderNum = orderNumber ? String(orderNumber).replace(/^#/, '') : null;
+  if (!orderNum) throw new Error('Cannot recompose outbound draft — no order number on ticket.');
+
+  let preContext = null;
+  try {
+    preContext = await buildContext({
+      customer_email: customerEmail,
+      customer_name: senderName,
+      issue_description: steer,
+      current_gorgias_ticket_id: gorgiasTicketId,
+    });
+  } catch (err) {
+    console.warn(`[refresh-outbound] buildContext failed: ${err.message}`);
+  }
+
+  emit({ type: 'status', text: 'Generating draft...' });
+  const composed = await composeOutboundDraft({ context: preContext, orderNumber: orderNum, steer });
+
+  const structured = {
+    ...(existingDraft?.structured_output || {}),
+    status: 'outbound_draft',
+    source: 'operator_outreach',
+    subject: composed.subject,
+    recipient_email: customerEmail,
+    operator_steer: steer,
+  };
+
+  if (draftId && existingDraft) {
+    // Update the existing draft row in place
+    const updates = {
+      draft_response: composed.plain_body,
+      status: 'pending',
+      operator_steer: steer,
+      structured_output: structured,
+      audit_trail: [
+        ...(Array.isArray(existingDraft.audit_trail) ? existingDraft.audit_trail : []),
+        `[Outbound draft recomposed] Steer: ${steer}`,
+      ],
+    };
+    if (existingDraft.draft_response?.trim()) {
+      const prevHistory = Array.isArray(existingDraft.draft_history) ? existingDraft.draft_history : [];
+      updates.draft_history = [
+        ...prevHistory,
+        { regenerated_at: new Date().toISOString(), draft_response: existingDraft.draft_response, operator_steer: existingDraft.operator_steer || null },
+      ];
+    }
+    await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
+    const resolvedTicketId = existingDraft.ticket_id || ticketId;
+    if (resolvedTicketId) {
+      await supabase.from('cs_tickets').update({ active_draft_id: draftId }).eq('id', resolvedTicketId);
+    }
+    return { draft_response: composed.plain_body, draft_id: draftId, structured };
+  }
+
+  // No existing draft row — insert a new one (createFreshDraftForTicket path)
+  const { data: newRow, error: insertErr } = await supabase.from('cs_ai_drafts').insert({
+    ticket_id: ticketId,
+    gorgias_ticket_id: gorgiasTicketId,
+    gorgias_message_id: null,
+    customer_email: customerEmail,
+    order_number: orderNum,
+    draft_response: composed.plain_body,
+    structured_output: structured,
+    audit_trail: [`[Outbound draft] Composed from operator steer: ${steer}`],
+    confidence: 'high',
+    advisor_status: 'ready',
+    message_type: 'proactive_outreach',
+    draft_kind: 'advisor_draft',
+    status: 'pending',
+    operator_steer: steer,
+  }).select('id').single();
+
+  if (insertErr) throw new Error(`Draft save failed: ${insertErr.message}`);
+  await supabase.from('cs_tickets').update({ active_draft_id: newRow.id }).eq('id', ticketId);
+  return { draft_response: composed.plain_body, draft_id: newRow.id, structured };
+}
+
 async function apiRefreshDraft(id, { steer, onStream } = {}) {
   const warnings = [];
   const _emit = onStream || (() => {});
@@ -437,7 +575,20 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
     gorgiasClient.getTicket(draft.gorgias_ticket_id).catch(() => null),
   ]);
   const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
-  if (!lastCustomer) throw new Error('No customer message found');
+  if (!lastCustomer) {
+    // No customer reply yet — operator-initiated outbound ticket.
+    if (!steer) throw new Error('No customer message yet. Add a steer to update the outbound draft.');
+    return recomposeOutboundDraft({
+      draftId: id,
+      existingDraft: draft,
+      customerEmail: draft.customer_email,
+      orderNumber: draft.order_number,
+      gorgiasTicketId: draft.gorgias_ticket_id,
+      gorgiasTicket,
+      steer,
+      emit: _emit,
+    });
+  }
   const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
     .filter(Boolean)
     .join(' ')
@@ -1462,10 +1613,13 @@ function dedupeLinks(links) {
 }
 
 async function apiActionChat(draftId, body, { onStream, signal } = {}) {
+  const _t0 = Date.now();
+  console.log(`[apiActionChat] START draftId=${draftId}`);
   const { operatorAgent } = require('../lib/operatorAgent');
   const supabase = getSupabaseClient();
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts').select('*').eq('id', draftId).single();
+  console.log(`[apiActionChat] draft fetched elapsed=${Date.now()-_t0}ms`);
   if (fetchErr) throw fetchErr;
 
   const userMessage = body.message;
@@ -1479,6 +1633,7 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
       .select('order_context').eq('id', draft.ticket_id).single();
     ticketOrderCtx = t?.order_context || {};
   }
+  console.log(`[apiActionChat] context ready elapsed=${Date.now()-_t0}ms, calling operatorAgent`);
 
   const context = {
     draft,
@@ -1631,7 +1786,19 @@ async function createFreshDraftForTicket(ticketId, { steer, onStream } = {}) {
     gorgiasClient.getTicket(t.gorgias_ticket_id).catch(() => null),
   ]);
   const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
-  if (!lastCustomer) throw new Error('No customer message found');
+  if (!lastCustomer) {
+    // No customer reply yet — operator-initiated outbound ticket.
+    if (!steer) throw new Error('No customer message yet. Add a steer to update the outbound draft.');
+    return recomposeOutboundDraft({
+      ticketId,
+      customerEmail: t.customer_email,
+      orderNumber: t.order_number,
+      gorgiasTicketId: t.gorgias_ticket_id,
+      gorgiasTicket,
+      steer,
+      emit: onStream || (() => {}),
+    });
+  }
 
   const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
     .filter(Boolean)
@@ -1808,7 +1975,6 @@ function actionTypeFromTool(toolName, draftActionType) {
 
 async function apiConsoleChat(body, { onStream } = {}) {
   const { operatorAgentStandalone } = require('../lib/operatorAgentStandalone');
-  const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
   let message = body.message;
   const history = body.history || [];
   const images = Array.isArray(body.images) ? body.images : [];
@@ -2424,10 +2590,11 @@ async function apiSendTicketMessage(ticketId, body) {
 
   // Send to Gorgias
   const bodyHtml = autoLinkProducts(message);
+  const resolvedAttachments = await resolveAttachmentsForGorgias(body.attachments);
   const replyResult = await gorgias.createTicketReply(ticket.gorgias_ticket_id, {
     body_html: bodyHtml,
     body_text: message,
-    attachments: body.attachments,
+    attachments: resolvedAttachments,
   });
 
   // Append to conversation history
@@ -3043,15 +3210,21 @@ async function handleRequest(req, res) {
         const abortCtrl = new AbortController();
         req.on('close', () => abortCtrl.abort());
         const heartbeat = setInterval(() => sendEvent({ type: 'heartbeat' }), 8000);
+        const _streamStart = Date.now();
+        console.log(`[action-chat-stream] START ticket=${ticketId} msg=${JSON.stringify((body?.message||'').slice(0,60))}`);
         try {
           // Anchor on the active draft, or the most recent draft for reopened/
           // snoozed tickets (active_draft_id is null but a prior draft exists).
+          console.log(`[action-chat-stream] resolving draft for ticket=${ticketId}`);
           const draftId = await resolveActionAnchorDraftId(ticketId);
+          console.log(`[action-chat-stream] draftId=${draftId} elapsed=${Date.now()-_streamStart}ms`);
           const result = draftId
             ? await apiActionChat(draftId, body, { onStream: sendEvent, signal: abortCtrl.signal })
             : await apiActionChatNoDraft(ticketId, body, { onStream: sendEvent, signal: abortCtrl.signal });
+          console.log(`[action-chat-stream] DONE elapsed=${Date.now()-_streamStart}ms`);
           sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
         } catch (err) {
+          console.error(`[action-chat-stream] ERROR elapsed=${Date.now()-_streamStart}ms`, err.message, err.stack);
           if (!abortCtrl.signal.aborted) sendEvent({ type: 'error', message: err.message });
         } finally {
           clearInterval(heartbeat);
@@ -3080,7 +3253,6 @@ async function handleRequest(req, res) {
           sendEvent({ type: 'error', message: err.message || String(err) });
         } finally {
           clearInterval(heartbeat);
-          clearTimeout(timer);
           if (!res.writableEnded) res.end();
         }
         return;
@@ -3106,8 +3278,10 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ error: 'Not found' }));
     } catch (err) {
       console.error(`[dashboard] API error: ${err.message}\n${err.stack}`);
-      res.writeHead(500);
-      res.end(JSON.stringify({ error: err.message }));
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: err.message }));
+      }
     }
     return;
   }
