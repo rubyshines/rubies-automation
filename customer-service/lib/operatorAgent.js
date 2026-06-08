@@ -128,7 +128,7 @@ Sizing systems:
 
 **Return + new order (credit against invoice):** When the customer is returning items from a previous order AND ordering different items (not a size swap), use create_invoice_order with \`return_credit\`. Put ALL the new items in \`paid_items\` (full price) and set \`return_credit\` to the dollar value of the items being returned. Set \`return_credit_note\` to describe the credit (e.g. "Stella return credit from order #20335"). The invoice total = new items - return credit. One email to the customer with the net amount. Do NOT process a separate refund — the credit IS the refund, applied as a discount.
 
-**New orders:** Use create_order for paid orders, free replacements, samples, or gifts. Use create_order_complete to finalize (mark as paid for free orders, send invoice for paid orders).
+**New orders:** Use create_order for paid orders or standalone gifts/samples with no existing order context (e.g. sending a sample to a new prospect). Use create_order_complete to finalize (mark as paid for free orders, send invoice for paid orders). For free replacements tied to an existing customer or order — defect replacements, goodwill sends, OOS substitutions — use create_exchange_order instead (free=true equivalent, links to the customer, matches the free_order action_type).
 
 **Refunds:** Use refund_order with the order number and item SKUs.
 
@@ -144,11 +144,12 @@ Sizing systems:
 
 ## Choosing the Right Tool
 - **Same product, different size/color:** create_exchange_order (all free, $0 draft)
+- **Free replacement / goodwill send / defect replacement / OOS substitution (existing customer):** create_exchange_order (no return story needed — this is action_type free_order)
 - **Replacements + extras:** create_invoice_order with exchange_items + paid_items
 - **Return items + order different items:** create_invoice_order with paid_items + return_credit
 - **Unfulfilled order changes:** edit_order (auto-handles invoice/refund for price diff)
 - **Pure refund:** refund_order
-- **New standalone order:** create_order
+- **New standalone paid order OR gift/sample to someone with no prior order context:** create_order
 - **Discount code (>10% or free product):** create_discount_code
 - **Split a pre-order shipment:** split_shipment (placeholder-fulfills held SKUs on original, creates $0 pre-order for them)
 - **Invoice for kept items (after refund or no-show return):** create_invoice_order with paid_items only (action_type = invoice_kept_items)
