@@ -284,7 +284,7 @@ function buildTicketDriftHtml(results) {
     const cards = undelivered.map(u => `
       <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
         <div style="font-weight:bold;font-size:14px;">#${esc(String(u.ticketId))} <span style="font-weight:normal;color:#6b7280;">${esc(u.email)}</span></div>
-        <div style="color:#dc2626;font-size:13px;margin-top:2px;">${u.failedCount} message${u.failedCount > 1 ? 's' : ''} failed to deliver</div>
+        <div style="color:#dc2626;font-size:13px;margin-top:2px;">${u.failedCount} message${u.failedCount > 1 ? 's' : ''} failed to deliver${u.autoclosed ? ' — ticket auto-closed' : ''}</div>
       </div>`).join('');
 
     html += `

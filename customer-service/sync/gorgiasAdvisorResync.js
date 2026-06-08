@@ -150,6 +150,7 @@ async function run({ execute = false } = {}) {
   }
 
   // ── Step 4b: Check for undelivered agent messages ──
+  //    If not a dry run, auto-close bounced tickets so they never reach the follow-up queue.
 
   const undelivered = [];
   for (const gTicket of gorgiasTickets) {
@@ -157,7 +158,7 @@ async function run({ execute = false } = {}) {
     const messages = await gorgias.getTicketMessages(gTicket.id);
     const failedMsgs = messages.filter(m => m.from_agent && m.failed_datetime);
     if (failedMsgs.length) {
-      undelivered.push({
+      const entry = {
         ticket: gTicket,
         failedMessages: failedMsgs.map(m => ({
           id: m.id,
@@ -167,7 +168,22 @@ async function run({ execute = false } = {}) {
           is_retriable: m.is_retriable,
           body_preview: (m.body_text || m.stripped_text || '').substring(0, 80),
         })),
-      });
+        autoclosed: false,
+      };
+      if (!dryRun) {
+        try {
+          await gorgias.closeTicket(gTicket.id);
+          await supabase
+            .from('cs_tickets')
+            .update({ status: 'closed', updated_at: new Date().toISOString() })
+            .eq('gorgias_ticket_id', gTicket.id);
+          entry.autoclosed = true;
+          console.log(`  [undelivered] #${gTicket.id}: auto-closed (bounced email, ${failedMsgs.length} failed msg(s))`);
+        } catch (e) {
+          console.error(`  [undelivered] #${gTicket.id}: auto-close failed — ${e.message}`);
+        }
+      }
+      undelivered.push(entry);
     }
     await gorgias.delay(300);
   }
@@ -179,6 +195,58 @@ async function run({ execute = false } = {}) {
 
   if (!dryRun) {
   const { executeStage1, executeStage2 } = require('../lib/followUp');
+  const { callClaude } = require('../../shared/aiClient');
+
+  const CLASSIFIER_SYSTEM = `You are reviewing a customer service conversation for RUBIES (gender-affirming underwear and swimwear for trans girls and women).
+
+The conversation has been snoozed — meaning we sent a message and are waiting. Your job is to determine whether the customer still needs to reply, or whether the last agent message wrapped things up and a follow-up email would be unnecessary or annoying.
+
+Answer YES if we are genuinely waiting for the customer:
+- We asked a question (sizing info, measurements, preference)
+- We made an offer and are waiting for their decision (hold/swap/cancel, which size, which product)
+- We proposed an exchange/refund and are waiting for confirmation
+
+Answer NO if the last agent message was a completion or closure:
+- "I've created your exchange and it will go out to you shortly"
+- "I've processed your refund"
+- "Your order is on its way"
+- A delivery of information (tracking, policy) with no open question
+
+Reply with exactly one of: YES or NO
+Then on the same line after a pipe character, give a brief reason (under 15 words).
+Example: YES | asked for waist measurement to confirm exchange size
+Example: NO | exchange confirmed and created, no reply needed`;
+
+  async function classifyFollowupNecessity(gorgiasMessages) {
+    const relevant = gorgiasMessages
+      .filter(m => m.channel !== 'internal-note' && !m.is_bot)
+      .slice(-8)
+      .map(m => {
+        const role = m.from_agent ? 'AGENT' : 'CUSTOMER';
+        const body = (m.body_text || m.stripped_text || m.body || '').substring(0, 500);
+        return `${role}: ${body}`;
+      })
+      .filter(line => line.length > 7);
+
+    if (!relevant.length) return { needed: true, reason: 'no conversation to classify' };
+
+    try {
+      const response = await callClaude({
+        model: 'claude-haiku-4-5-20251001',
+        component: 'followup_classifier',
+        system: CLASSIFIER_SYSTEM,
+        messages: [{ role: 'user', content: `Conversation:\n\n${relevant.join('\n\n')}` }],
+        max_tokens: 60,
+      });
+      const text = (response.content?.[0]?.text || '').trim();
+      const needed = text.toUpperCase().startsWith('YES');
+      const reason = text.includes('|') ? text.split('|').slice(1).join('|').trim() : text;
+      return { needed, reason };
+    } catch (e) {
+      // On classifier error, default to sending the follow-up (safe fallback)
+      return { needed: true, reason: `classifier error: ${e.message}` };
+    }
+  }
 
   // Find tickets we consider snoozed
   const { data: snoozedTickets } = await supabase
@@ -244,8 +312,29 @@ async function run({ execute = false } = {}) {
         }).eq('id', st.id);
       }
 
-      // Run follow-up
+      // Run follow-up — but first check with Haiku whether one is actually needed.
+      // test_snooze tickets skip the classifier so the full flow can be exercised in tests.
       const stage = st.follow_up_stage || 0;
+
+      if (!st.test_snooze) {
+        const { needed, reason } = await classifyFollowupNecessity(messages);
+        if (!needed) {
+          console.log(`  [follow-up] #${st.gorgias_ticket_id}: classifier says resolved — closing (${reason})`);
+          try {
+            await gorgias.closeTicket(st.gorgias_ticket_id);
+            await supabase
+              .from('cs_tickets')
+              .update({ status: 'closed', updated_at: new Date().toISOString() })
+              .eq('id', st.id);
+          } catch (e) {
+            console.error(`  [follow-up] #${st.gorgias_ticket_id}: close failed — ${e.message}`);
+          }
+          followUps.push({ ticketId: st.gorgias_ticket_id, email: st.customer_email, action: `classifier_closed: ${reason}` });
+          continue;
+        }
+        console.log(`  [follow-up] #${st.gorgias_ticket_id}: classifier says follow-up needed (${reason})`);
+      }
+
       if (stage === 0) {
         const snoozeDays = st.test_snooze ? 0.004 : undefined;
         const result = await executeStage1(gorgias, st, { snoozeDays, gorgiasTicket: gTicket });
@@ -291,10 +380,10 @@ async function run({ execute = false } = {}) {
     console.log(`  ⚠️  ${undelivered.length} ticket(s) have UNDELIVERED agent messages`);
     console.log(`${'═'.repeat(65)}\n`);
 
-    for (const { ticket, failedMessages } of undelivered) {
+    for (const { ticket, failedMessages, autoclosed } of undelivered) {
       const name = ticket.customer?.name || '';
       const email = ticket.customer?.email || '';
-      console.log(`  #${ticket.id}  ${name} (${email})`);
+      console.log(`  #${ticket.id}  ${name} (${email})${autoclosed ? '  → AUTO-CLOSED' : ''}`);
       for (const fm of failedMessages) {
         const err = fm.error ? JSON.stringify(fm.error) : 'unknown';
         console.log(`    → MSG #${fm.id} [${fm.channel}] failed ${fm.failed_datetime} — ${err}`);
@@ -329,6 +418,7 @@ async function run({ execute = false } = {}) {
       ticketId: ticket.id,
       email: ticket.customer?.email || '?',
       failedCount: failedMessages.length,
+      autoclosed,
     })),
     followUps,
   };
