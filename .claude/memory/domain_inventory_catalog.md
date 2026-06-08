@@ -24,7 +24,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 ## Current Status
 
-- **Production:** Full catalog synced daily. Inventory snapshots captured daily (2+ years retention). Fuzzy search working. Price history tracking active.
+- **Production:** Full catalog synced daily. Inventory snapshots captured daily since ~March 2026 (2+ year retention policy; ~3 months of data as of June 2026). Fuzzy search working. Price history tracking active.
 - **Partial:** Metafields synced but materials_composition and comparison_notes not surfaced in recommendations.
 
 ## Key Files
@@ -45,6 +45,11 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 - **SEO meta drafts anchor on the page's display title, not the product list.** When `seo_meta_draft` generates a title/description, the collection/product display title defines the category — products are supporting evidence for in-category specifics, never used to broaden scope. A "Tops" collection that contains a bikini top stays a Tops page (not Tops + Swimwear), even when individual products span multiple categories. House style for the SEO meta itself (descriptor patterns, sizing range, audience phrasing, no em dashes) lives in the prompt inside `seoMeta.js`, not duplicated here.
 
+## Key Decisions (continued)
+
+- **Inventory projections output to `inventory_projections` Supabase table.** Queried via `run_inventory_projection` / `get_at_risk_skus` MCP tools (building June 2026 — see `initiative_production_pipeline.md`). OOS-adjusted velocity uses `available_quantity <= 0` in snapshots as the stockout signal. Supplier registry in `suppliers` table; SKU prefix → supplier mapping drives production order generation.
+
 ## What's Next
 
 - Real-time inventory streaming (beyond daily snapshots)
+- Inventory projection + production order MCP tools (see initiative_production_pipeline.md Phase 1)
