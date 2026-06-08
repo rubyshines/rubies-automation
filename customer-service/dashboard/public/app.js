@@ -618,6 +618,7 @@ async function navigateToPastTicket(gorgiasTicketId) {
 
 async function selectTicket(id) {
   currentTicketId = id;
+  _actionChatHistory = [];
   location.hash = `ticket-${id}`;
   startFocusTimer(id);
 
@@ -1476,12 +1477,13 @@ function renderActionPanel(draft) {
   const resultEl = document.getElementById('action-result');
   const input = document.getElementById('action-chat-input');
 
-  // Reset
+  // Reset visual state but preserve conversation history — _actionChatHistory
+  // is reset in selectTicket (ticket navigation) not here, so follow-up messages
+  // after a completed action still have context from the previous exchange.
   previewEl.style.display = 'none';
   resultEl.style.display = 'none';
   messagesEl.innerHTML = '';
   messagesEl.style.display = '';
-  _actionChatHistory = [];
 
   document.getElementById('btn-send').disabled = false;
   // Execute & Send is shown only on a fresh, un-executed pending action (set below).

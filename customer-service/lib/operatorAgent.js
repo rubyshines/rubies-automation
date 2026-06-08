@@ -86,6 +86,10 @@ function buildSystemPrompt(context) {
       }).join(', ')
     : 'none';
 
+  const completedActions = Array.isArray(draft?.actions) && draft.actions.length > 0
+    ? draft.actions.map(a => `  - ${a.action_type}${a.summary ? ': ' + a.summary.split('\n')[0].slice(0, 120) : ''}`).join('\n')
+    : null;
+
   return `You are an action executor for the RUBIES customer service dashboard. You execute exchanges, refunds, order edits, holds, and cancellations.
 
 ## Current Ticket Context
@@ -94,7 +98,7 @@ function buildSystemPrompt(context) {
 - Fulfillment: ${fulfillment_status || 'unknown'}
 - Warehouse hold: ${holdAlreadyPlaced ? 'ALREADY PLACED — do NOT call warehouse_hold again' : 'not placed'}
 - Order items:
-${itemList || '  (no items)'}
+${itemList || '  (no items)'}${completedActions ? `\n\n## Already Completed This Ticket\nThese actions have already been executed — do not repeat them unless the operator explicitly asks:\n${completedActions}` : ''}
 
 ## Authority Order (CRITICAL)
 1. **The operator's command is final.** The operator types directly into the action box, often correcting or extending the AI's draft. If the command says "2 AJs and 1 Flo" and the draft says "3 AJs", do what the operator says.
