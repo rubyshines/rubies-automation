@@ -291,14 +291,14 @@ async function createTicketReply(ticketId, { body_html, body_text, attachments, 
       to: [{ name: ticket.customer?.name || '', address: ticket.customer?.email || '' }],
     };
   }
-  // Gorgias accepts attachments as [{ url, name, content_type, size, extra }]
-  // with url being a data URI (base64) for inline uploads
+  // Gorgias requires http/https URLs — caller must pre-upload to storage
+  // and pass { url, name, content_type, size } objects (see resolveAttachmentsForGorgias in server.js)
   if (attachments && attachments.length) {
     payload.attachments = attachments.map(a => ({
-      url: `data:${a.content_type};base64,${a.base64}`,
+      url: a.url,
       name: a.name,
       content_type: a.content_type,
-      size: Math.ceil((a.base64.length * 3) / 4),
+      size: a.size,
     }));
   }
   return apiFetch(`/tickets/${ticketId}/messages`, {
