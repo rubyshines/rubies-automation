@@ -9,6 +9,7 @@
 const {
   searchCustomers,
   createCustomer,
+  getCustomerOrders,
   createDraftOrder,
   completeDraftOrder,
   sendDraftOrderInvoice,
@@ -150,9 +151,26 @@ async function handleCreateOrder({
     return { content: [{ type: 'text', text: 'Must provide either email or customer_id.' }] };
   }
 
-  // Build the effective shipping address: customer default → operator override.
-  // The override (shipping_address) wins for any field it specifies. This single
-  // resolved address is used for the preview, shipCountry, and the Shopify draft.
+  // For existing customers without an explicit override, prefer the most recent
+  // order's shipping address over the profile default. Shopify sets defaultAddress
+  // from the first-ever order and never auto-updates it, so it goes stale for
+  // customers who've moved or ship internationally. Skip the lookup when an
+  // override is provided — it wins regardless.
+  if (!customerInfo.created && !shipping_address) {
+    try {
+      const { orders } = await getCustomerOrders(customerInfo.id, 1);
+      const recentAddr = orders?.[0]?.shippingAddress;
+      if (recentAddr) {
+        customerInfo.address = recentAddr;
+      }
+    } catch (_) {
+      // Non-critical — fall back to defaultAddress already set
+    }
+  }
+
+  // Build the effective shipping address: most-recent-order address (or profile
+  // default for new customers) → operator override when explicitly provided.
+  // The override wins for any field it specifies.
   const nameParts = customerInfo.name ? customerInfo.name.split(' ') : [];
   const baseShippingAddress = customerInfo.address
     ? buildShippingAddress(customerInfo.address, nameParts[0] || '', nameParts.slice(1).join(' ') || '')
