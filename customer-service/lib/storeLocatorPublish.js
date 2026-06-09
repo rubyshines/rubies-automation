@@ -147,6 +147,10 @@ async function publishViaWorktree(payload, { themeRepo, baseBranch = 'main', mer
       }
     }
 
+    // Clean up the local branch — it now lives on the remote (merged) and we
+    // don't need a local ref. gh pr merge --delete-branch tries this too but
+    // fails non-fatally when the worktree is still around; do it explicitly.
+    try { gitc(themeRepo, ['branch', '-D', branch]); } catch { /* swallow */ }
     return { branch, baseBranch, themeRepo, remoteUrl, merged: true, prUrl, mergeWarning };
   } finally {
     try { gitc(themeRepo, ['worktree', 'remove', '--force', wt]); } catch { /* swallow */ }
