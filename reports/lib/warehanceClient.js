@@ -125,6 +125,15 @@ async function releaseWarehouseHold(warehanceOrderId) {
 }
 
 /**
+ * Fetch all shipping methods configured in Warehance.
+ * Returns array of { id, name, ... } objects.
+ */
+async function fetchShippingMethods() {
+  const json = await apiFetch('/shipping-methods');
+  return json.data?.shipping_methods || json.shipping_methods || json.data || [];
+}
+
+/**
  * Update the shipping method on a Warehance order.
  * @param {number|string} warehanceOrderId
  * @param {number} shippingMethodId — ID from /shipping-methods endpoint
@@ -192,6 +201,7 @@ module.exports = {
   releaseAddressHold,
   setWarehouseHold,
   releaseWarehouseHold,
+  fetchShippingMethods,
   updateShippingMethod,
   cancelOrder,
   warehanceOrderUrl,

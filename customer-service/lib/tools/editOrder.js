@@ -22,8 +22,29 @@ const {
   updateOrderShippingAddress,
 } = require('../shopify');
 const { searchProducts } = require('../productCache');
-const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
+const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl, fetchShippingMethods, updateShippingMethod } = require('../../../reports/lib/warehanceClient');
+const { getShippingZone } = require('./shippingLookup');
 const { writeAuditEntry } = require('./adminTools');
+
+/**
+ * Given a list of Warehance shipping methods and a destination zone + speed,
+ * return the best-matching method. Zone is one of: us, canada, ddp, ddu.
+ * Falls back to the first candidate if no speed-specific match is found.
+ */
+function matchWarehanceShippingMethod(methods, zone, isExpedited) {
+  const nm = m => (m.name || m.title || '').toLowerCase();
+  const candidates = methods.filter(m => {
+    const n = nm(m);
+    if (zone === 'us')     return !n.includes('canada') && !n.includes('international') && !n.includes('passport');
+    if (zone === 'canada') return n.includes('canada');
+    if (zone === 'ddp')    return n.includes('passport') || n.includes('ddp') || (n.includes('duties') && n.includes('international'));
+    if (zone === 'ddu')    return n.includes('ddu') || (n.includes('international') && !n.includes('duties') && !n.includes('ddp'));
+    return false;
+  });
+  if (!candidates.length) return null;
+  if (isExpedited) return candidates.find(m => nm(m).includes('expedited')) || candidates[0];
+  return candidates.find(m => !nm(m).includes('expedited')) || candidates[0];
+}
 
 // Server-side store for pending edit data (MCP can't round-trip custom fields)
 const pendingEdits = new Map();
@@ -292,6 +313,10 @@ const tools = [
           return { content: [{ type: 'text', text: `Error: Order ${order.name} is already fulfilled. Cannot update shipping address.` }] };
         }
 
+        const oldCountry = (order.shippingAddress?.countryCodeV2 || '').toUpperCase();
+        const newCountry = (shipping_address.country || '').toUpperCase();
+        const countryChanged = newCountry && oldCountry && newCountry !== oldCountry;
+
         const addrInput = {};
         if (shipping_address.first_name) addrInput.firstName = shipping_address.first_name;
         if (shipping_address.last_name) addrInput.lastName = shipping_address.last_name;
@@ -311,12 +336,39 @@ const tools = [
           `**New address:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}`,
         ];
 
+        // When country changes, update the Warehance shipping method to match
+        // the new destination. Shopify's shipping line title is immutable on
+        // placed orders, so Warehance is the only place we can correct routing.
+        if (countryChanged) {
+          try {
+            const currentTitle = order.shippingLines?.[0]?.title || '';
+            const isExpedited = /expedited/i.test(currentTitle);
+            const newZone = await getShippingZone(newCountry);
+            const orderNum = order.name.replace('#', '');
+            const whOrder = await fetchOrderByNumber(orderNum);
+
+            if (whOrder) {
+              const methods = await fetchShippingMethods();
+              const match = matchWarehanceShippingMethod(methods, newZone, isExpedited);
+              if (match) {
+                await updateShippingMethod(whOrder.id, match.id);
+                lines.push(`**Warehance shipping:** Updated to "${match.name}"`);
+              } else {
+                lines.push(`**⚠️ Warehance shipping:** No method matched for zone "${newZone}"/${isExpedited ? 'expedited' : 'standard'} — update manually in Warehance`);
+              }
+            }
+            // If whOrder is null, the order hasn't reached Warehance yet — no action needed
+          } catch (e) {
+            lines.push(`**⚠️ Warehance shipping:** Update failed (${e.message}) — update manually in Warehance`);
+          }
+        }
+
         writeAuditEntry({
           action_type: 'address_updated',
           actor: 'claude_code',
           entity_type: 'order',
           entity_id: order.name,
-          details: { order_id: order.id, new_address: addrInput, note },
+          details: { order_id: order.id, new_address: addrInput, country_changed: countryChanged, note },
         });
 
         return { content: [{ type: 'text', text: lines.join('\n') }] };

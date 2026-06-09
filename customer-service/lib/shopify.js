@@ -1085,6 +1085,9 @@ async function getOrderForEdit(orderNumber) {
             shippingAddress {
               address1 address2 city province country countryCodeV2 zip
             }
+            shippingLines(first: 1) {
+              edges { node { title } }
+            }
             totalPriceSet { shopMoney { amount currencyCode } }
             subtotalPriceSet { shopMoney { amount currencyCode } }
             currentTotalPriceSet { shopMoney { amount currencyCode } }
@@ -1148,6 +1151,7 @@ async function getOrderForEdit(orderNumber) {
     ...order,
     lineItems: order.lineItems.edges.map(e => e.node).filter(li => li.currentQuantity > 0),
     discountApplications: (order.discountApplications?.edges || []).map(e => e.node),
+    shippingLines: (order.shippingLines?.edges || []).map(e => e.node),
   };
 }
 
