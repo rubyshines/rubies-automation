@@ -20,6 +20,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Wholesale Orders (MCP tool):** Two-phase confirmation like exchanges. Pricing: US/AU 50% off, others 30% off, free shipping, AU auto-splits at $1k AUD. Currency override: hello@sockdrawerheroes.com always USD.
 
+**Store Locator (MCP tools):** `store_locator_*` tools (list/create/update/delete/publish) manage the rubyshines.com/pages/store-locator map. Data lives in `b2b_companies` (9 new `locator_*` columns + `on_store_locator` flag). Publish writes `rubies-ecom-v4/assets/store-locators.json` via worktree + auto-merge, same pattern as donation partners. Haiku auto-extracts store descriptions from the website. 7 retail partners live as of 2026-06-08.
+
 ## Current Status
 
 - **Production:** Tier 1 & 2 discovery complete. AI analysis and scoring automated. Wholesale orders working via MCP tools.
@@ -30,6 +32,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `b2b-discovery/discover.js` — Prospect discovery pipeline entry point.
 - `b2b-discovery/lib/` — Scraping, contact finding, AI analysis, lead scoring.
 - `customer-service/lib/tools/wholesaleOrder.js` — Wholesale order MCP tool.
+- `customer-service/lib/tools/storeLocator.js` — Store locator MCP tools.
+- `customer-service/lib/storeLocatorPublish.js` — Publish helper (worktree + auto-merge).
 
 ## Key Decisions
 
