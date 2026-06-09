@@ -34,7 +34,7 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { seedOutboundDraft } = require('../../customer-service/lib/customerOutreach');
 const productCache = require('../../customer-service/lib/productCache');
-const { businessDaysSince, addBusinessDays } = require('../../shared/businessDays');
+const { businessDaysSince, addBusinessDays, pastNextBusinessDay5pmPT } = require('../../shared/businessDays');
 const { fetchOrderByNumber } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
@@ -151,37 +151,6 @@ function classifyOrder(lineItems, variantStateBySku) {
   else if (oosOther.length > 0) caseLabel = 'C';
   else caseLabel = 'B';
   return { case: caseLabel, leaks, inStockOther, oosOther };
-}
-
-// Returns true if the shipping deadline for an order has passed: 5pm Pacific
-// Time on the next business day (US holidays + weekends) after the order date.
-// Orders not yet past their deadline are still expected to ship normally.
-function pastNextBusinessDay5pmPT(orderDateStr) {
-  const orderDate = new Date(orderDateStr);
-
-  // Resolve the order's calendar date in Pacific Time.
-  const ptDateStr = orderDate.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-  const [y, m, d] = ptDateStr.split('-').map(Number);
-
-  // Advance to the next business day (skips weekends + US federal holidays).
-  const ptDateLocal = new Date(y, m - 1, d);
-  const nextBizDay = addBusinessDays(ptDateLocal, 1);
-
-  // Construct 5pm Pacific on that day — try PDT (UTC-7) then PST (UTC-8).
-  const nbY = nextBizDay.getFullYear();
-  const nbM = String(nextBizDay.getMonth() + 1).padStart(2, '0');
-  const nbD = String(nextBizDay.getDate()).padStart(2, '0');
-  const nextBizDateStr = `${nbY}-${nbM}-${nbD}`;
-  let deadline;
-  for (const off of ['-07:00', '-08:00']) {
-    const t = new Date(`${nextBizDateStr}T17:00:00${off}`);
-    const ptH = Number(new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
-    }).format(t));
-    if (ptH === 17) { deadline = t; break; }
-  }
-  if (!deadline) deadline = new Date(`${nextBizDateStr}T17:00:00-08:00`);
-  return Date.now() > deadline.getTime();
 }
 
 // Keep only candidates whose specific Warehance order is not ready to ship

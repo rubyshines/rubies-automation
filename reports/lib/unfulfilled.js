@@ -9,7 +9,7 @@
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { businessDaysSince: sharedBusinessDaysSince } = require('../../shared/businessDays');
+const { businessDaysSince: sharedBusinessDaysSince, pastNextBusinessDay5pmPT } = require('../../shared/businessDays');
 const { fetchUnfulfilledOrders, getHoldReasons, warehanceOrderUrl, cancelOrder } = require('./warehanceClient');
 const { resolveAddressHolds } = require('./addressHoldResolver');
 
@@ -242,7 +242,12 @@ function classifyOrder(order, whOrder, inventoryInfo, bd) {
     }
   }
   if (oosItems.length > 0) {
-    return { reason: 'awaiting_stock', severity: 'urgent', detail: oosItems.join('; ') };
+    // Stay quiet until the next-business-day 5pm PT window passes — the
+    // unnotified-pre-order drafter runs in that window and will auto-create a
+    // draft. Only escalate to urgent after that deadline so we don't surface
+    // noise before the automation has had its chance.
+    const severity = pastNextBusinessDay5pmPT(order.created_at) ? 'urgent' : 'normal';
+    return { reason: 'awaiting_stock', severity, detail: oosItems.join('; ') };
   }
 
   // Warehance status checks
