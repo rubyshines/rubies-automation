@@ -27,6 +27,8 @@ const DEFAULT_THEME_ASSET_PATH = path.resolve(
 const LIVE_PAGE_URL = 'https://rubyshines.com/pages/store-locator';
 
 function toPublicShape(row) {
+  let storeUrl = row.website || '';
+  if (storeUrl && !/^https?:\/\//i.test(storeUrl)) storeUrl = 'https://' + storeUrl;
   return {
     name: row.locator_display_name || row.name,
     address: row.locator_display_address || '',
@@ -34,7 +36,7 @@ function toPublicShape(row) {
     hours: row.locator_hours || '',
     products: row.locator_products || ['swimwear', 'underwear'],
     imageUrl: row.locator_logo_url || '',
-    storeUrl: row.website || '',
+    storeUrl,
     lat: Number(row.latitude),
     lng: Number(row.longitude),
   };
