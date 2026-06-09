@@ -19,13 +19,33 @@
  *   - Avoids claiming RUBIES sizing is calibrated to body measurements
  *   - Avoids any mens/boys sizing reference
  *
+ * NOTE: Originally pulled live from Gorgias ticket #95615342. That ticket
+ * drifted — the customer replied "Awesome, thank you so much!" after Jamie
+ * answered, so loading the live thread caused the advisor to see a resolved
+ * conversation and output a one-line closing reply. The conversation is now
+ * hardcoded at the point BEFORE Jamie's answer so the test never drifts.
+ * The customer email is kept real so contextBuilder can look up her order.
+ *
  * Usage: node customer-service/test/scenarios/chartBiggerThanExpected.js
  */
 require('dotenv').config();
-const gorgias = require('../../import/gorgiasClient');
 const { aiAdvisor } = require('../../lib/aiAdvisor');
 
-const TICKET_ID = '95615342';
+// Hardcoded snapshot of ticket #95615342 up to (but not including) Jamie's
+// first reply. Messages 0–4: customer opener, Jamie's measurement request,
+// customer's measurement, customer's concern about chart size being too big.
+const CUSTOMER_EMAIL = 'chloeannfairchild@gmail.com';
+const ISSUE_DESCRIPTION = `Product Question
+-------------------------------
+Is the size cart male or female?
+
+[Agent]: Hi,
+
+Our size chart uses women's/girls' US sizing. If you can share your If you send me the waist measurement around the belly and just under the belly button I can help recommend a size for whichever product you're looking at.
+
+38
+
+Im usually a large and im worried about the recommended by the chart might be to loose.`;
 
 const SIZE_RECOMMEND_RE = /\b2X(L|XL)?\b/i;
 const EXCEPTION_RE = /(exception|works for most|most people|for most)/i;
@@ -38,86 +58,37 @@ function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }
 
 (async () => {
-  console.log(`Loading ticket ${TICKET_ID} from Gorgias...`);
-  const msgs = await gorgias.getTicketMessages(TICKET_ID);
-
-  // Build customer context: include all customer + bot messages, and any agent
-  // messages that came before the latest customer message. The advisor needs
-  // to see the full back-and-forth (including the prior agent reply that
-  // explained women's/girls' sizing) so the test reflects production state.
-  const lastCustomerIdx = (() => {
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (!msgs[i].from_agent) return i;
-    }
-    return -1;
-  })();
-  if (lastCustomerIdx < 0) { fail('could not find a customer message in ticket'); return; }
-
-  const parts = [];
-  let customerEmail = null;
-  for (let i = 0; i <= lastCustomerIdx; i++) {
-    const m = msgs[i];
-    if (m.channel === 'internal-note') continue;
-    const body = gorgias.stripHtml(m.stripped_text || m.body_text || '').trim();
-    if (!body) continue;
-    if (!m.from_agent) {
-      parts.push(body);
-      if (!customerEmail) customerEmail = m.sender?.email || null;
-    } else if (m.sender?.email?.endsWith('@email.gorgias.com') || m.via === 'rule') {
-      parts.push('[Bot]: ' + body);
-    } else {
-      parts.push('[Agent]: ' + body);
-    }
-  }
-  const issueDescription = parts.join('\n\n');
-  if (!customerEmail) { fail('could not extract customer email from ticket'); return; }
-
-  console.log(`Customer: ${customerEmail}`);
-  console.log(`Context length: ${issueDescription.length} chars`);
-  console.log('');
-  console.log('Running advisor...');
+  console.log('Running advisor on hardcoded pre-answer snapshot of ticket #95615342...\n');
 
   const result = await aiAdvisor({
-    customer_email: customerEmail,
-    issue_description: issueDescription,
+    customer_email: CUSTOMER_EMAIL,
+    issue_description: ISSUE_DESCRIPTION,
   });
 
   const draft = (result?._structured?._composedResponse || '').trim();
 
-  console.log('');
   console.log('Saved draft:');
   console.log('---');
   console.log(draft);
-  console.log('---');
-  console.log('');
+  console.log('---\n');
 
-  // Assertion 1: recommends going with the chart's 2X for 38" waist
   if (SIZE_RECOMMEND_RE.test(draft)) pass('draft recommends 2X (chart\'s size for 38" waist)');
   else fail('draft does not mention 2X — should recommend the chart\'s size');
 
-  // Assertion 2: acknowledges the chart works for most / has exceptions
   if (EXCEPTION_RE.test(draft)) pass('draft acknowledges chart works for most / has exceptions');
   else fail('draft is missing "works for most" / "exceptions" framing');
 
-  // Assertion 3: reassures free exchange
   if (EXCHANGE_RE.test(draft) && FREE_RE.test(draft)) pass('draft reassures free exchange if it does not feel right');
   else fail('draft does not reassure free exchange');
 
-  // Assertion 4: does NOT claim sizing is calibrated to body / specially sized
   const calibratedMatch = draft.match(FORBIDDEN_CALIBRATED_RE);
   if (!calibratedMatch) pass('draft does not falsely claim RUBIES sizing is calibrated/specially sized');
   else fail(`draft contains forbidden calibration framing: ${JSON.stringify(calibratedMatch[0])}`);
 
-  // Assertion 5: does NOT mention men's / boys' sizing
   const genderedMatch = draft.match(FORBIDDEN_GENDERED_RE);
   if (!genderedMatch) pass('draft does not reference mens/boys sizing');
   else fail(`draft contains forbidden mens/boys reference: ${JSON.stringify(genderedMatch[0])}`);
 
-  if (process.exitCode === 1) {
-    console.log('');
-    console.log('FAILED — see assertions above.');
-  } else {
-    console.log('');
-    console.log('PASSED');
-  }
+  console.log('');
+  console.log(process.exitCode === 1 ? 'FAILED — see assertions above.' : 'PASSED');
 })().catch(e => { console.error(e); process.exit(1); });
