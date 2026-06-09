@@ -51,6 +51,7 @@ function loadAllOperatorTools() {
     require('./tools/createOutreachTicket'),
     require('./tools/warehouseAllocation'),
     require('./tools/donationPartners'),
+    require('./tools/storeLocator'),
   ];
 
   const tools = [];
