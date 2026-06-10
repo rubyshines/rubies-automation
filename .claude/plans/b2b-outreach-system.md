@@ -300,6 +300,22 @@ threads; the only message type that feeds product R&D)
   and if anyone would like to be part of our tester group, I would love that too."*
 - Notes: Relationship + R&D, not a sales push. Always individual review.
 
+**`referral_ask`** ✓ LOCKED (2026-06-10, Jamie: "for sure important")
+- State: `active`, ALL tracks (retailer, org, affiliate)
+- Queue: Tier 3 — advisor judgment, fired ONLY after a genuinely positive moment (first
+  reorder, glowing sample/program feedback, an enthusiastic reply). Never cold, never after
+  a neutral exchange. At most once per relationship per ~6 months.
+- Opener: *"Hi [name], one small ask — is there anyone else you think should know about
+  RUBIES? A store, an organization, a person doing this work. Referrals from people we trust
+  are how our best relationships have started, and I would really value yours."*
+- Notes: Referrals are the ONLY cold channel with proven wins in the entire corpus (She Bop
+  and THProjekt both arrived via referral). This type deliberately cultivates the channel.
+  Always individual review.
+
+**Commercial facts (locked 2026-06-10, Jamie):** wholesale order floor is **$300 USD**
+(historical emails show both $300 and $400 — $300 is current policy; goes in the advisors'
+verbatim facts block).
+
 **Considered and PARKED (2026-06-10, Jamie):** `invoice_followup` (real once — an unpaid
 invoice stalled a thread — but accounting hygiene at a few invoices/quarter doesn't warrant a
 message type; revisit if unpaid invoices become a pattern) and `event_partner_coordination`
