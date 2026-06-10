@@ -139,6 +139,23 @@ When you need an LLM behavior to be reliable, frame it as a positive instruction
 - If a behavior needs both inclusion and exclusion, lead with the positive ("DO this") and let the negative emerge implicitly. Don't pile on negative rules to cover edge cases — each one is fragile.
 - If you find yourself adding more "DO NOT" rules to fix a recurring lapse, that's a sign the prompt structure is wrong, not that the rules need to be louder. Restructure into positive form, or accept the variance and add a downstream guard (operator review, validateResponse-style strip).
 
+## Long-running/autonomous work uses git worktrees
+
+Sprint and autonomous build sessions never work on `main` directly. Each workstream gets a
+worktree at `~/Code/rubies-repo/worktrees/<name>` on a `sprint/<name>` (or `wt/<name>`) branch.
+
+**Why:** Railway deploys from `main`; a long-running session pushing intermediate states to main
+deploys them to production. Worktrees isolate the work; merges happen at checkpoints (tests
+green; live-CS-path changes only with Jamie present). Rollback tag convention: `pre-sprint-<date>`
+pushed to origin before a sprint starts — revert main to tag + push = production rollback.
+
+**How to apply:**
+- `git worktree add ~/Code/rubies-repo/worktrees/<name> -b sprint/<name>`
+- Worktrees don't carry gitignored files: symlink `.env` and `node_modules` from the main
+  checkout (`ln -sf .../rubies-automations/.env <wt>/.env`, `ln -sfn .../node_modules <wt>/node_modules`).
+  Verified working 2026-06-10 (780/780 tests pass inside a worktree with symlinks).
+- Remove with `git worktree remove <path>` after merge; `git worktree list` to audit.
+
 ## MCP tools must be agent-agnostic
 
 Don't wire a tool to a specific advisor or agent. Any advisor should be able to call any tool. Tools own operations; agents own the judgment about when to call them.
