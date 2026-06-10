@@ -53,7 +53,8 @@
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
       <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
     </nav>
-    <a href="/stats" class="btn-stats" title="Performance stats">Stats</a>
+    <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
+    <a href="/stats" class="btn-stats btn-stats-follow" title="Performance stats">Stats</a>
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
     <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
   </header>
@@ -273,9 +274,23 @@
       <button onclick="bottomMoreSelect('onme')" class="bottom-more-onme">On Me <span class="bottom-tab-count" id="bottom-count-onme"></span></button>
       <button onclick="bottomMoreSelect('parked')">Parked <span class="bottom-tab-count" id="bottom-count-parked"></span></button>
       <button onclick="bottomMoreSelect('snoozed')">Snoozed <span class="bottom-tab-count" id="bottom-count-snoozed"></span></button>
+      <button onclick="toggleBottomMore(event);openAutosendPanel()">Auto-send</button>
       <a href="/stats">Stats</a>
     </div>
   </nav>
+
+  <!-- Auto-send allowlist panel -->
+  <div class="autosend-overlay" id="autosend-overlay" onclick="if(event.target===this)closeAutosendPanel()">
+    <div class="autosend-panel">
+      <div class="autosend-head">
+        <h2>Auto-send</h2>
+        <button class="autosend-close" onclick="closeAutosendPanel()" aria-label="Close">&times;</button>
+      </div>
+      <div id="autosend-master"></div>
+      <div id="autosend-rows"><div class="autosend-loading">Loading&hellip;</div></div>
+      <div class="autosend-foot">Clean % = judge verdicts identical or cosmetic, trailing 90 days. Never-list categories can never auto-send, regardless of flags.</div>
+    </div>
+  </div>
 
   <script src="/voiceInput.js"></script>
   <script src="/app.js"></script>

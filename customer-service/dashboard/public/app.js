@@ -10,6 +10,7 @@ let lastActionTime = 0;
 let ticketNavStack = []; // for back-navigation from past ticket views
 let searchActive = false; // true while the queue shows search results instead of a tab
 let _searchDebounce = null;
+let closedAutoOnly = false; // Closed-tab filter: only auto-sent (or shadow-marked) tickets
 
 let currentDraftId = null;
 let currentDraft = null;
@@ -417,7 +418,8 @@ document.addEventListener('click', (e) => {
 
 async function loadTicketQueue() {
   try {
-    const tickets = await api(`/api/tickets?tab=${currentTab}`);
+    const autoParam = currentTab === 'closed' && closedAutoOnly ? '&auto=1' : '';
+    const tickets = await api(`/api/tickets?tab=${currentTab}${autoParam}`);
     const container = document.getElementById('queue-items');
 
     // Detect new tickets and send desktop notification (only for new/followup tabs)
@@ -435,8 +437,11 @@ async function loadTicketQueue() {
 
     const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
     const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
+    // Closed tab gets a filter row (the "AUTO only" chip) above the cards
+    const filterHtml = currentTab === 'closed' ? closedAutoFilterHtml() : '';
     if (!tickets.length) {
-      container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabels[currentTab] || 'No tickets'}</div>`;
+      const emptyLabel = currentTab === 'closed' && closedAutoOnly ? 'No auto-sent tickets' : (emptyLabels[currentTab] || 'No tickets');
+      container.innerHTML = filterHtml + `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabel}</div>`;
       // Update detail placeholder when queue is empty
       if (!currentTicketId) {
         document.getElementById('detail-placeholder').textContent = allClearLabels[currentTab] || 'All clear';
@@ -448,7 +453,7 @@ async function loadTicketQueue() {
       document.getElementById('detail-placeholder').textContent = 'Select a ticket to review';
     }
 
-    container.innerHTML = tickets.map(ticketCardHtml).join('');
+    container.innerHTML = filterHtml + tickets.map(ticketCardHtml).join('');
   } catch (err) {
     console.error('Failed to load ticket queue:', err);
   }
@@ -489,6 +494,9 @@ function ticketCardHtml(t) {
   if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
   if (t.message_count > 1) row2Parts.push(`<span class="badge badge-muted">${t.message_count}</span>`);
   if (t.auto_close_path === 'thank_you') row2Parts.push('<span class="badge badge-auto-closed">auto-closed</span>');
+  // Auto-send (#4): the draft went out (or would have, in shadow) without review
+  if (t.draft_auto_close_path === 'autosend') row2Parts.push('<span class="badge badge-autosend" title="Sent automatically without operator review">AUTO</span>');
+  else if (t.draft_auto_close_path === 'autosend_shadow') row2Parts.push('<span class="badge badge-autosend-shadow" title="Would have auto-sent (shadow dry run — Jamie still sent it)">AUTO&middot;shadow</span>');
   // Execute & Send bounce-back: a one-click run that held or failed.
   if (t.execute_send && t.execute_send.status) {
     const es = t.execute_send;
@@ -523,6 +531,20 @@ function ticketCardHtml(t) {
 
 // Legacy alias for any remaining references
 function loadQueue() { return loadTicketQueue(); }
+
+// Closed-tab filter chip — show only tickets that auto-sent (or would have, in
+// shadow). Re-rendered with every queue refresh so state survives the 30s poll.
+function closedAutoFilterHtml() {
+  return `<div class="queue-filter-row">
+    <button class="filter-chip ${closedAutoOnly ? 'active' : ''}" onclick="toggleClosedAutoFilter()"
+      title="Only tickets the system auto-sent, or marked as would-have-sent in shadow mode">AUTO only</button>
+  </div>`;
+}
+
+function toggleClosedAutoFilter() {
+  closedAutoOnly = !closedAutoOnly;
+  loadTicketQueue();
+}
 
 // ---------------------------------------------------------------------------
 // Search — find any ticket across all statuses by name, email, order #, or summary
@@ -4424,6 +4446,74 @@ function showVersionInfo() {
   const started = v.started ? new Date(v.started).toLocaleString('en-US', { timeZone: 'America/New_York' }) : '?';
   const committed = v.date || '?';
   alert(`Version: ${v.hash}\nCommitted: ${committed}\nServer started: ${started}`);
+}
+
+// ---------------------------------------------------------------------------
+// Auto-send allowlist panel (#4) — master shadow toggle + per-category flags.
+// One glance answers "what auto-sends?". Never-list rows can never be enabled
+// (the gate hardcodes them server-side; the toggle here is disabled cosmetics).
+// ---------------------------------------------------------------------------
+
+function openAutosendPanel() {
+  document.getElementById('autosend-overlay').classList.add('active');
+  loadAutosendConfig();
+}
+
+function closeAutosendPanel() {
+  document.getElementById('autosend-overlay').classList.remove('active');
+}
+
+async function loadAutosendConfig() {
+  const rowsEl = document.getElementById('autosend-rows');
+  try {
+    const cfg = await api('/api/autosend-config');
+    renderAutosendPanel(cfg);
+  } catch (err) {
+    rowsEl.innerHTML = `<div class="autosend-loading">Failed to load: ${esc(err.message)}</div>`;
+  }
+}
+
+function autosendToggleHtml(key, enabled, disabled) {
+  return `<button class="autosend-toggle ${enabled ? 'on' : ''}" role="switch" aria-checked="${enabled}"
+    ${disabled ? 'disabled title="Never-list — can never auto-send"' : `onclick="setAutosendFlag('${esc(key)}', ${!enabled})"`}>
+    <span class="autosend-knob"></span></button>`;
+}
+
+function renderAutosendPanel(cfg) {
+  document.getElementById('autosend-master').innerHTML = `
+    <div class="autosend-row autosend-row-master">
+      <div class="autosend-row-main">
+        <span class="autosend-row-name">Shadow mode</span>
+        <span class="autosend-row-note">master switch &mdash; eligible drafts get marked, nothing is sent</span>
+      </div>
+      ${autosendToggleHtml('autosend_shadow', cfg.shadow_enabled, false)}
+    </div>`;
+
+  document.getElementById('autosend-rows').innerHTML = cfg.categories.map(c => {
+    const name = esc(c.message_type.replace(/_/g, ' '));
+    const stats = c.judged
+      ? `${c.judged} judged &middot; ${c.clean_pct}% clean`
+      : 'no judgments yet';
+    return `
+    <div class="autosend-row ${c.never_listed ? 'autosend-row-never' : ''}">
+      <div class="autosend-row-main">
+        <span class="autosend-row-name">${name}${c.never_listed ? ' <span class="autosend-never-tag">never</span>' : ''}</span>
+        <span class="autosend-row-note">${stats}</span>
+      </div>
+      ${autosendToggleHtml('autosend_cat_' + c.message_type, c.enabled, c.never_listed)}
+    </div>`;
+  }).join('');
+}
+
+async function setAutosendFlag(key, enabled) {
+  const label = key === 'autosend_shadow' ? 'Shadow mode' : key.replace('autosend_cat_', '').replace(/_/g, ' ');
+  try {
+    await api('/api/autosend-config', { method: 'POST', body: { key, enabled } });
+    showToast(`${label} ${enabled ? 'on' : 'off'}`, 'success');
+  } catch (err) {
+    showToast(`Toggle failed: ${err.message}`, 'error');
+  }
+  loadAutosendConfig(); // re-render from server truth either way
 }
 
 // ---------------------------------------------------------------------------

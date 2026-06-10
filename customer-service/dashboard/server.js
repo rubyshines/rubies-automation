@@ -36,6 +36,8 @@ const { autoLinkProducts } = require('../lib/autoLinker');
 const { canonicalMessageType } = require('../lib/messageTypes');
 const { markOutreachSent, resolveOnTicketClose } = require('../lib/noteLifecycle');
 const { buildSendFeedbackRow, buildManualSendFeedbackRow } = require('../lib/feedbackSignals');
+const { fetchAutosendConfig, validateAutosendFlagKey } = require('../lib/autosendConfig');
+const { setFlag } = require('../../shared/systemFlags');
 
 // Product config for auto-linking (loaded at startup)
 // Product config loaded at startup for any server-side product lookups
@@ -2308,10 +2310,15 @@ async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {})
   }
 }
 
+// cs_ai_drafts.auto_close_path values that mean "this draft went out (or would
+// have gone out, in shadow) without operator review".
+const AUTO_SEND_PATHS = ['autosend', 'autosend_shadow'];
+
 async function apiGetTickets(query) {
   const supabase = getSupabaseClient();
   const tab = query.get('tab') || 'new';
   const limit = parseInt(query.get('limit') || '50', 10);
+  const autoOnly = tab === 'closed' && query.get('auto') === '1';
 
   let q = supabase
     .from('cs_tickets')
@@ -2340,8 +2347,44 @@ async function apiGetTickets(query) {
       break;
   }
 
+  // "AUTO only" filter: scope the closed tab to tickets whose draft was (or
+  // would have been, in shadow) auto-sent. Two-step because the mark lives on
+  // cs_ai_drafts, not cs_tickets.
+  if (autoOnly) {
+    const { data: autoDrafts, error: adErr } = await supabase
+      .from('cs_ai_drafts')
+      .select('ticket_id')
+      .in('auto_close_path', AUTO_SEND_PATHS)
+      .not('ticket_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (adErr) throw adErr;
+    const ids = [...new Set(autoDrafts.map(d => d.ticket_id))];
+    if (!ids.length) return [];
+    q = q.in('id', ids);
+  }
+
   const { data, error } = await q;
   if (error) throw error;
+
+  // Closed tab: attach the auto-send mark so the queue card can badge it.
+  // A live 'autosend' wins over 'autosend_shadow' if a ticket has both.
+  if (tab === 'closed' && data.length) {
+    const { data: marks } = await supabase
+      .from('cs_ai_drafts')
+      .select('ticket_id, auto_close_path')
+      .in('ticket_id', data.map(t => t.id))
+      .in('auto_close_path', AUTO_SEND_PATHS);
+    const markByTicket = new Map();
+    for (const m of marks || []) {
+      const prev = markByTicket.get(m.ticket_id);
+      if (!prev || m.auto_close_path === 'autosend') markByTicket.set(m.ticket_id, m.auto_close_path);
+    }
+    for (const t of data) {
+      const mark = markByTicket.get(t.id);
+      if (mark) t.draft_auto_close_path = mark;
+    }
+  }
 
   // Attach the Execute & Send outcome badge (hold/error/half) from the active
   // draft's action_result, so a bounced-back one-click run is flagged in queue.
@@ -2408,6 +2451,28 @@ async function apiGetTicketStats() {
     parked: parkedResult.count || 0,
     snoozed: snoozedResult.count || 0,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Auto-send allowlist (#4) — master shadow flag + per-category flags, with
+// judge quality stats per category. Assembly lives in lib/autosendConfig.js.
+// ---------------------------------------------------------------------------
+
+async function apiGetAutosendConfig() {
+  return fetchAutosendConfig(getSupabaseClient());
+}
+
+async function apiSetAutosendConfig(body = {}) {
+  const { key, enabled } = body;
+  const check = validateAutosendFlagKey(key);
+  if (!check.ok) {
+    const err = new Error(check.error);
+    err.statusCode = 400;
+    throw err;
+  }
+  await setFlag(key, !!enabled, 'dashboard auto-send panel');
+  console.log(`[dashboard] auto-send flag ${key} → ${!!enabled}`);
+  return { success: true, key, enabled: !!enabled };
 }
 
 async function apiGetTicket(id) {
@@ -2769,6 +2834,7 @@ const routes = {
   'GET /api/tickets': (req) => apiGetTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/search': (req) => apiSearchTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/stats': () => apiGetTicketStats(),
+  'GET /api/autosend-config': () => apiGetAutosendConfig(),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');
     const exclude = new Set(['customer_support', 'spam', 'auto_reply', 'newsletter', 'skip', 'pipeline', 'internal']);
@@ -2790,6 +2856,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/action-chat$/, handler: (body, id) => apiActionChat(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute-and-send$/, handler: (body, id) => apiExecuteAndSend(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
+  { method: 'POST', pattern: /^\/api\/autosend-config$/, handler: (body) => apiSetAutosendConfig(body) },
   { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
@@ -3169,7 +3236,8 @@ async function handleRequest(req, res) {
     } catch (err) {
       console.error(`[dashboard] API error: ${err.message}\n${err.stack}`);
       if (!res.headersSent) {
-        res.writeHead(500);
+        // Handlers may throw with err.statusCode for client errors (e.g. 400)
+        res.writeHead(err.statusCode || 500);
         res.end(JSON.stringify({ error: err.message }));
       }
     }
