@@ -282,7 +282,14 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // tracking data. checkShippingDelays still creates/reconciles claims in the DB
   // and still emails customs notices to customers; we just don't surface the
   // Passport machinery in this report. Pending a proper rework.
-  const shUrgent = sh.urgentNonPassport || [];
+  // Same note-override as unfulfilled rows: an unresolved note (outreach
+  // sent, operator working it) moves a shipping alert out of Urgent into
+  // Waiting on Response. If the conversation closes (note resolved) while
+  // tracking is still bad, the row returns to Urgent — correct, it needs
+  // attention again.
+  const shUrgentAll = sh.urgentNonPassport || [];
+  const shUrgent = shUrgentAll.filter(a => !a.note || a.note.resolved);
+  const shWaiting = shUrgentAll.filter(a => a.note && !a.note.resolved);
   const shDelayed = sh.delayed || [];
 
   function section(title, color, cards) {
@@ -327,6 +334,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const waitingRows = [
     ...ufWaiting.filter(notOnMe).map(r => unfulfilledRow(r)),
     ...(extra.orphanWaiting || []).filter(notOnMe).map(r => unfulfilledRow(r)),
+    ...shWaiting.map(a => shippingRow(a, '#f97316', 'waiting on response')),
   ];
 
   // 8. Pre-Orders
@@ -537,11 +545,15 @@ function formatConsole(unfulfilled, shipping, opts) {
   const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
 
   // Action-required first (urgent / attention / lost), info below.
+  // Shipping urgent: same note-override as the HTML — unresolved note moves
+  // the alert to Waiting on Response.
+  const shUrgentAll = sh.urgentNonPassport || [];
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
-  printShippingSection('URGENT (shipping)', sh.urgentNonPassport || []);
+  printShippingSection('URGENT (shipping)', shUrgentAll.filter(a => !a.note || a.note.resolved));
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
   printUnfulfilledSection('DRAFTED IN CS ADVISOR (auto)', ufAutoDrafted);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
+  printShippingSection('WAITING ON RESPONSE (shipping)', shUrgentAll.filter(a => a.note && !a.note.resolved));
   printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
   printUnfulfilledSection('PRE-ORDER', preOrders);
 
