@@ -15,12 +15,13 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { shouldExcludeSku, getSupplierBySku } = require('./supplierRegistry');
+const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
 
 // The pre-order incoming spreadsheet (tabs named us-YYYY-MM-DD)
 const PRE_ORDER_SHEET_ID = process.env.PRE_ORDER_SHEET_ID || '1m2efAIbrV_fSYhJEfyAghROwJb7_3Fm5PuwR6GYjLwo';
 
-const ADULT_SIZES = new Set(['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL',
-  '18', '20', '22', '24', '26', 'XXS', 'XS1', '1X', '2X', '3X', '4X']);
+// Adult sizes: use canonical letter sizes from sizeUtils (includes XS+, XXS+ etc.)
+const ADULT_SIZES = new Set([...LETTER_SIZES, 'XS1', 'XXS1', 'XL', '1X', '2X', '3X', '4X']);
 
 // ---------------------------------------------------------------------------
 // Date utilities (no moment dependency)
@@ -60,7 +61,7 @@ async function fetchActiveVariants() {
 
   const [{ data: products }, { data: variants }] = await Promise.all([
     supabase.from('products').select('shopify_product_id, handle, title').eq('status', 'ACTIVE'),
-    supabase.from('product_variants').select('sku, inventory_quantity, shopify_product_id').not('sku', 'is', null).neq('sku', ''),
+    supabase.from('product_variants').select('sku, inventory_quantity, shopify_product_id, first_sale_date').not('sku', 'is', null).neq('sku', ''),
   ]);
 
   const productMap = new Map((products || []).map(p => [p.shopify_product_id, p]));
@@ -74,6 +75,7 @@ async function fetchActiveVariants() {
         inventory_quantity: v.inventory_quantity || 0,
         product_handle: p.handle,
         product_name: p.title,
+        first_sale_date: v.first_sale_date || null,
       };
     });
 }
@@ -422,7 +424,7 @@ async function fetchFirstSaleDatesForSkus(skuList) {
 // Main: run projection and upsert to inventory_projections
 // ---------------------------------------------------------------------------
 
-async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDays = 365, writeSheets = false, skuPrefixes = null } = {}) {
+async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDays = 365, writeSheets = false, skuPrefixes = null, tabLabel = null, colorOnHand = false } = {}) {
   const supabase = getSupabaseClient();
   const endDate = isoDate(new Date());
   const startDate = isoDate(new Date(Date.now() - lookbackDays * 86400000));
@@ -448,21 +450,22 @@ async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDay
     fetchPreOrderEvents(startDate, snapshotStartDate),
   ]);
 
-  // Optional prefix filter for testing
+  // Optional prefix filter — supports both "AJ" (prefix only) and "AJ-BLK" (prefix+color)
   const filteredVariants = skuPrefixes
-    ? variants.filter(v => skuPrefixes.includes((v.sku || '').split('-')[0]))
+    ? variants.filter(v => {
+        const sku = v.sku || '';
+        return skuPrefixes.some(p =>
+          p.includes('-') ? (sku.startsWith(p + '-') || sku === p) : sku.split('-')[0] === p
+        );
+      })
     : variants;
 
   console.log(`[projection] ${filteredVariants.length} variants (${skuPrefixes ? skuPrefixes.join(',') + ' only' : 'all'}), ${unitsBySku.size} skus with sales, ${incomingBySku.size} skus with incoming`);
 
-  // Fetch stored first_sale_date values; compute and store for any SKU missing one
-  const { data: storedDates } = await supabase
-    .from('inventory_projections')
-    .select('sku, first_sale_date')
-    .not('first_sale_date', 'is', null)
-    .in('sku', filteredVariants.map(v => v.sku));
-
-  const firstSaleDateBySku = new Map((storedDates || []).map(r => [r.sku, r.first_sale_date]));
+  // first_sale_date is stored on product_variants; compute once for any SKU that doesn't have it yet
+  const firstSaleDateBySku = new Map(
+    filteredVariants.filter(v => v.first_sale_date).map(v => [v.sku, v.first_sale_date])
+  );
 
   const skusNeedingDate = filteredVariants
     .map(v => v.sku)
@@ -472,6 +475,11 @@ async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDay
     console.log(`[projection] computing first_sale_date for ${skusNeedingDate.length} new SKUs...`);
     const computed = await fetchFirstSaleDatesForSkus(skusNeedingDate);
     for (const [sku, date] of computed) firstSaleDateBySku.set(sku, date);
+
+    // Write back to product_variants so subsequent runs skip the computation
+    for (const [sku, date] of computed) {
+      await supabase.from('product_variants').update({ first_sale_date: date }).eq('sku', sku);
+    }
   }
 
   // Pre-load all suppliers (caches on first call)
@@ -573,7 +581,7 @@ async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDay
   }
 
   if (writeSheets) {
-    await writeSalesDataSheet(projectionRows);
+    await writeSalesDataSheet(projectionRows, skuPrefixes, endDate, growthFactor, targetWeeks, tabLabel, colorOnHand);
   }
 
   const atRiskCount = projectionRows.filter(r => r.weeks_until_no_stock < 26).length;
@@ -590,10 +598,90 @@ async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDay
 }
 
 // ---------------------------------------------------------------------------
-// Optional: write "Sales Data by SKU" sheet to Google Sheets
+// Size sort and display — derived from sizeUtils canonical order
 // ---------------------------------------------------------------------------
 
-async function writeSalesDataSheet(rows) {
+function canonicalSize(raw) {
+  if (!raw) return raw;
+  const { base, modifier } = parseSizeVariant(raw.toUpperCase());
+  const canonical = (base && (SIZE_ALIASES[base] || base)) || raw.toUpperCase();
+  return { canonical, isTall: modifier === 'Tall' };
+}
+
+// Sort: numeric youth first (4…16 including 7), then adult letter (XXS…4X),
+// tall variants after their base equivalents.
+function sheetSizeSort(size) {
+  const { canonical, isTall } = canonicalSize(size);
+  const ni = NUMERIC_SIZES.indexOf(canonical);
+  if (ni !== -1) return isTall ? 50 + ni : ni;
+  const li = LETTER_SIZES.indexOf(canonical);
+  if (li !== -1) return isTall ? 200 + li : 100 + li;
+  return 999;
+}
+
+// Display: XS1→XS+, XXS1→XXS+, XL→1X, 2XL→2X, MT→M Tall, etc.
+function displaySize(raw) {
+  if (!raw) return '';
+  const { canonical, isTall } = canonicalSize(raw);
+  return isTall ? `${canonical} Tall` : canonical;
+}
+
+// ---------------------------------------------------------------------------
+// Build conditional format rules for the projection sheet
+// colorOnHand=false: colour by Priority text (default)
+// colorOnHand=true:  colour by "Weeks (on hand only)" numeric thresholds
+// ---------------------------------------------------------------------------
+
+function buildConditionalFormatRules(tabSheetId, totalOutputRows, headers, priorityColLetter, colorOnHand) {
+  const range = { sheetId: tabSheetId, startRowIndex: 1, endRowIndex: totalOutputRows + 1 };
+
+  // Priority bucket colours (light, works on white background)
+  const BUCKETS = [
+    { name: 'URGENT',          thresh: 13,       red: 1.0,  green: 0.60, blue: 0.60 },
+    { name: 'NEEDS_ATTENTION', thresh: 26,       red: 1.0,  green: 0.80, blue: 0.40 },
+    { name: 'WATCH',           thresh: 39,       red: 1.0,  green: 1.0,  blue: 0.60 },
+    { name: 'OK',              thresh: 52,       red: 0.68, green: 0.85, blue: 0.90 },
+    { name: 'GOOD',            thresh: 78,       red: 0.85, green: 0.75, blue: 0.90 },
+    { name: 'FULL_STOCK',      thresh: Infinity, red: 0.56, green: 0.93, blue: 0.56 },
+  ];
+
+  const weeksColIndex = headers.indexOf('Weeks (on hand only)');
+  const weeksColLetter = String.fromCharCode(65 + weeksColIndex); // 'L'
+
+  return BUCKETS.map((b, i) => {
+    let formula;
+    if (colorOnHand) {
+      // Cascade: first match wins, so each rule only needs a simple upper bound.
+      // ISNUMBER guard excludes the ∞ string and blank cells.
+      formula = b.thresh === Infinity
+        ? `=ISNUMBER($${weeksColLetter}2)`
+        : `=AND(ISNUMBER($${weeksColLetter}2),$${weeksColLetter}2<${b.thresh})`;
+    } else {
+      formula = `=$${priorityColLetter}2="${b.name}"`;
+    }
+
+    return {
+      addConditionalFormatRule: {
+        rule: {
+          ranges: [range],
+          booleanRule: {
+            condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: formula }] },
+            format: { backgroundColor: { red: b.red, green: b.green, blue: b.blue } },
+          },
+        },
+        index: i,
+      },
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Optional: write projection tab to Google Sheets
+// Creates a new tab per run named by date + scope (e.g. "2026-06-09" or "2026-06-09 GAF").
+// If a tab with that name already exists, overwrites it.
+// ---------------------------------------------------------------------------
+
+async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, targetWeeks, tabLabel = null, colorOnHand = false) {
   let sheets;
   try {
     const { getSheetsClient } = require('../../../shared/googleSheetsClient');
@@ -609,33 +697,180 @@ async function writeSalesDataSheet(rows) {
     return;
   }
 
+  // Tab name: custom label if provided, otherwise date + prefix scope
+  const scope = tabLabel || (skuPrefixes && skuPrefixes.length > 0 ? skuPrefixes.join(' ') : '');
+  const tabName = scope ? `${runDate} ${scope}` : runDate;
+
+  // Create tab (or clear existing). Capture the sheetId for formatting calls.
+  let tabSheetId = null;
+  try {
+    const res = await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SALES_SHEET_ID,
+      requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] },
+    });
+    tabSheetId = res.data.replies[0].addSheet.properties.sheetId;
+    console.log(`[projection] created tab "${tabName}" (sheetId ${tabSheetId})`);
+  } catch (err) {
+    if (!err.message?.includes('already exists')) {
+      console.warn(`writeSalesDataSheet: failed to create tab — ${err.message}`);
+      return;
+    }
+    // Tab already exists — look up its sheetId and clear it
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: SALES_SHEET_ID, fields: 'sheets.properties' });
+    const existing = meta.data.sheets.find(s => s.properties.title === tabName);
+    tabSheetId = existing?.properties?.sheetId ?? null;
+    await sheets.spreadsheets.values.clear({ spreadsheetId: SALES_SHEET_ID, range: `'${tabName}'` });
+    console.log(`[projection] tab "${tabName}" already exists, overwriting`);
+  }
+
+  // Sort: product name → color → size
+  const sorted = [...rows].sort((a, b) => {
+    const prod = (a.product_name || '').localeCompare(b.product_name || '');
+    if (prod !== 0) return prod;
+    const col = (a.color || '').localeCompare(b.color || '');
+    if (col !== 0) return col;
+    return sheetSizeSort(a.size) - sheetSizeSort(b.size);
+  });
+
+  const targetMonths = Math.round(targetWeeks / 4.33);
+  const growthPct = Math.round((growthFactor - 1) * 100);
+  const scopeLabel = skuPrefixes && skuPrefixes.length > 0 ? skuPrefixes.join(', ') : 'all SKUs';
+
   const headers = ['SKU', 'Product', 'Color', 'Size', 'Age Range', 'Current Inventory',
     'Total Incoming', 'Total Inventory', 'Units Sold (Year)', 'Sales/Week',
-    'Weeks Until Stockout', 'Qty to Order', 'Priority', 'Weeks Unavailable', 'Supplier'];
+    'Weeks Until Stockout', 'Weeks (on hand only)', 'Qty to Order', 'Priority', 'Weeks Unavailable', 'Supplier'];
 
-  const rowsData = rows.map(r => [
-    r.sku, r.product_name, r.color || '', r.size || '', r.age_range || '',
-    r.current_inventory, r.total_incoming, r.total_inventory,
-    r.units_sold_year, r.sales_per_week,
-    r.weeks_until_no_stock === 9999 ? '∞' : r.weeks_until_no_stock,
-    r.qty_to_order, r.priority, r.weeks_unavailable, '',
-  ]);
+  // Columns to sum in TOTAL rows (by header index)
+  const TOTAL_COLS = [5, 6, 7, 8, 9, 12]; // CurrentInv, TotalIncoming, TotalInventory, UnitsSold, VelocitySum, QtyToOrder
+
+  // Group sorted rows by product_name + color
+  const groups = new Map();
+  for (const r of sorted) {
+    const key = `${r.product_name}|||${r.color || ''}`;
+    if (!groups.has(key)) groups.set(key, { product_name: r.product_name, color: r.color || '', items: [] });
+    groups.get(key).items.push(r);
+  }
+
+  // Build output rows and track indices of group-header and total rows for bold formatting
+  const outputRows = [];
+  const boldRowIndices = []; // 0-based, relative to row 1 (after column headers)
+  let skuCount = 0;
+
+  for (const group of groups.values()) {
+    const groupLabel = group.color ? `${group.product_name} - ${group.color}` : group.product_name;
+
+    // Group header row
+    boldRowIndices.push(1 + outputRows.length); // +1 for column header row
+    outputRows.push([groupLabel]);
+
+    // Data rows
+    for (const r of group.items) {
+      const weeksOnHand = r.sales_per_week > 0
+        ? Math.round((r.current_inventory / (r.sales_per_week * growthFactor)) * 10) / 10
+        : '∞';
+      const row = new Array(headers.length).fill('');
+      row[0]  = r.sku;
+      row[1]  = r.product_name;
+      row[2]  = r.color || '';
+      row[3]  = displaySize(r.size);
+      row[4]  = r.age_range || '';
+      row[5]  = r.current_inventory;
+      row[6]  = r.total_incoming;
+      row[7]  = r.total_inventory;
+      row[8]  = r.units_sold_year;
+      row[9]  = r.sales_per_week;
+      row[10] = r.weeks_until_no_stock === 9999 ? '∞' : r.weeks_until_no_stock;
+      row[11] = weeksOnHand;
+      row[12] = r.qty_to_order;
+      row[13] = r.priority;
+      row[14] = r.weeks_unavailable;
+      outputRows.push(row);
+      skuCount++;
+    }
+
+    // Total row — sum numeric columns, label in col 0
+    const totalRow = new Array(headers.length).fill('');
+    totalRow[0] = 'TOTAL';
+    for (const ci of TOTAL_COLS) {
+      totalRow[ci] = group.items.reduce((s, r) => {
+        const v = [r.current_inventory, r.total_incoming, r.total_inventory,
+                   r.units_sold_year, r.sales_per_week, r.qty_to_order][TOTAL_COLS.indexOf(ci)];
+        return s + (Number(v) || 0);
+      }, 0);
+    }
+    // Round velocity sum to 1dp
+    totalRow[9] = Math.round(totalRow[9] * 10) / 10;
+    boldRowIndices.push(1 + outputRows.length);
+    outputRows.push(totalRow);
+
+    // Blank separator
+    outputRows.push([]);
+  }
+
+  // Notes at the bottom
+  const notes = [
+    [],
+    [`Inventory Projection — ${runDate} — ${scopeLabel}`],
+    [`Velocity: units sold over the past 12 months divided by effective selling weeks (days where inventory was zero are excluded from the denominator). Orders are sized to bring each SKU to ${targetMonths} months of stock, calculated at ${growthPct}% above current velocity to account for expected growth.`],
+    [`Priority: URGENT <13w, NEEDS ATTENTION <26w, WATCH <39w, OK <52w, GOOD <78w, FULL STOCK 78w+`],
+  ];
 
   try {
-    // Clear and rewrite the Sales Data by SKU sheet
-    await sheets.spreadsheets.values.clear({
-      spreadsheetId: SALES_SHEET_ID,
-      range: 'Sales Data by SKU',
-    });
     await sheets.spreadsheets.values.update({
       spreadsheetId: SALES_SHEET_ID,
-      range: 'Sales Data by SKU!A1',
+      range: `'${tabName}'!A1`,
       valueInputOption: 'RAW',
-      requestBody: { values: [headers, ...rowsData] },
+      requestBody: { values: [headers, ...outputRows, ...notes] },
     });
-    console.log(`[projection] wrote ${rowsData.length} rows to Google Sheets`);
+    console.log(`[projection] wrote ${skuCount} SKUs (${groups.size} groups) to tab "${tabName}"`);
   } catch (err) {
-    console.warn(`writeSalesDataSheet: failed — ${err.message}`);
+    console.warn(`writeSalesDataSheet: failed to write data — ${err.message}`);
+    return;
+  }
+
+  if (tabSheetId === null) return;
+
+  const priorityColIndex = headers.indexOf('Priority'); // 13
+  const priorityColLetter = String.fromCharCode(65 + priorityColIndex); // 'N'
+  const totalOutputRows = outputRows.length;
+
+  // Formatting: freeze header, bold column headers + group headers + total rows + conditional colours
+  const formatRequests = [
+    // Freeze header row
+    {
+      updateSheetProperties: {
+        properties: { sheetId: tabSheetId, gridProperties: { frozenRowCount: 1 } },
+        fields: 'gridProperties.frozenRowCount',
+      },
+    },
+    // Bold column header row
+    {
+      repeatCell: {
+        range: { sheetId: tabSheetId, startRowIndex: 0, endRowIndex: 1 },
+        cell: { userEnteredFormat: { textFormat: { bold: true } } },
+        fields: 'userEnteredFormat.textFormat.bold',
+      },
+    },
+    // Bold group header + total rows
+    ...boldRowIndices.map(ri => ({
+      repeatCell: {
+        range: { sheetId: tabSheetId, startRowIndex: ri, endRowIndex: ri + 1 },
+        cell: { userEnteredFormat: { textFormat: { bold: true } } },
+        fields: 'userEnteredFormat.textFormat.bold',
+      },
+    })),
+    // Conditional format rules — based on Priority field (default) or Weeks (on hand only) column
+    ...buildConditionalFormatRules(tabSheetId, totalOutputRows, headers, priorityColLetter, colorOnHand),
+  ];
+
+  try {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SALES_SHEET_ID,
+      requestBody: { requests: formatRequests },
+    });
+    console.log(`[projection] applied bold header + conditional formatting`);
+  } catch (err) {
+    console.warn(`writeSalesDataSheet: formatting failed — ${err.message}`);
   }
 }
 

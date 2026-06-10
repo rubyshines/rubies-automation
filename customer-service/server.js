@@ -56,6 +56,8 @@ const createOutreachTicketTools = require('./lib/tools/createOutreachTicket');
 const warehouseAllocationTools = require('./lib/tools/warehouseAllocation');
 const donationPartnerTools = require('./lib/tools/donationPartners');
 const storeLocatorTools = require('./lib/tools/storeLocator');
+const inventoryProjectionTools = require('./lib/tools/inventoryProjection');
+const productionOrderTools = require('./lib/tools/productionOrders');
 
 const allTools = [
   ...customerLookupTools,
@@ -98,6 +100,8 @@ const allTools = [
   ...warehouseAllocationTools,
   ...donationPartnerTools,
   ...storeLocatorTools,
+  ...inventoryProjectionTools,
+  ...productionOrderTools,
 ];
 
 /**

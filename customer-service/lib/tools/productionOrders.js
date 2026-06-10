@@ -62,12 +62,15 @@ function buildCsv(rows, supplierName, orderDate) {
 }
 
 function sizeSort(size) {
-  const youthOrder = ['4','6','8','9','10','11','12','13','14','16'];
-  const adultOrder = ['XXS','XS1','XS','S','M','L','XL','1X','2XL','2X','3XL','3X','4XL','4X'];
-  const yi = youthOrder.indexOf(size);
-  if (yi !== -1) return yi;
-  const ai = adultOrder.indexOf(size);
-  if (ai !== -1) return 100 + ai;
+  const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
+  const s = (size || '').toUpperCase();
+  const { base, modifier } = parseSizeVariant(s);
+  const canonical = (base && (SIZE_ALIASES[base] || base)) || s;
+  const isTall = modifier === 'Tall';
+  const ni = NUMERIC_SIZES.indexOf(canonical);
+  if (ni !== -1) return isTall ? 50 + ni : ni;
+  const li = LETTER_SIZES.indexOf(canonical);
+  if (li !== -1) return isTall ? 200 + li : 100 + li;
   return 999;
 }
 

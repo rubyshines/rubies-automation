@@ -18,21 +18,30 @@ const PRIORITY_EMOJI = {
 // Tool: run_inventory_projection
 // ---------------------------------------------------------------------------
 
-async function handleRunInventoryProjection({ growth_factor, target_weeks, write_sheets, sku_prefixes }) {
+async function handleRunInventoryProjection({ growth_factor, target_weeks, write_sheets, sku_prefixes, tab_label, color_on_hand }) {
   const result = await runProjection({
     growthFactor: growth_factor ?? 1.3,
     targetWeeks: target_weeks ?? 78,
     lookbackDays: 365,
     writeSheets: write_sheets ?? false,
     skuPrefixes: sku_prefixes ?? null,
+    tabLabel: tab_label ?? null,
+    colorOnHand: color_on_hand ?? false,
   });
+
+  const sheetId = process.env.INVENTORY_PLANNING_SHEET_ID;
+  const sheetLink = sheetId
+    ? `[View in Google Sheets](https://docs.google.com/spreadsheets/d/${sheetId})`
+    : null;
 
   const lines = [
     `## Inventory Projection — ${result.run_date}`,
     '',
     `**${result.sku_count}** SKUs projected · **${result.at_risk_count}** at risk (<26 weeks) · **${result.total_units_to_order.toLocaleString()}** units to order`,
     '',
-    write_sheets ? '_Google Sheets updated._' : '_Use `get_at_risk_skus` to query results, or pass `write_sheets: true` to also write to Google Sheets._',
+    write_sheets
+      ? `_Google Sheets updated._ ${sheetLink || ''}`
+      : `_Use \`get_at_risk_skus\` to query results, or pass \`write_sheets: true\` to also write to Google Sheets._${sheetLink ? ' ' + sheetLink : ''}`,
   ];
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
@@ -116,14 +125,16 @@ async function handleGetAtRiskSkus({ weeks_horizon, supplier, include_incoming }
 module.exports = [
   {
     name: 'run_inventory_projection',
-    description: 'Run inventory velocity projection for all active SKUs. Computes OOS-adjusted sales velocity, weeks-until-stockout, and qty-to-order. Writes results to inventory_projections table. Run before get_at_risk_skus to get fresh data.',
+    description: 'Run inventory velocity projection for all active SKUs. Computes OOS-adjusted sales velocity, weeks-until-stockout, and qty-to-order. Writes results to inventory_projections table. Run before get_at_risk_skus to get fresh data. Always show the Google Sheets link from the tool response to the user.',
     inputSchema: {
       type: 'object',
       properties: {
         growth_factor: { type: 'number', description: 'Growth multiplier for velocity (default 1.3 = 30% growth)' },
         target_weeks: { type: 'number', description: 'Target weeks of stock to maintain (default 78 = 18 months)' },
         write_sheets: { type: 'boolean', description: 'If true, also write Sales Data by SKU sheet to Google Sheets (requires INVENTORY_PLANNING_SHEET_ID env var)' },
-        sku_prefixes: { type: 'array', items: { type: 'string' }, description: 'Optional list of SKU prefixes to project (e.g. ["GAF","SB"]). Omit to project all SKUs.' },
+        sku_prefixes: { type: 'array', items: { type: 'string' }, description: 'Optional list of SKU prefixes to project (e.g. ["GAF","SB"] or ["AJ-BLK"] for prefix+color). Omit to project all SKUs.' },
+        tab_label: { type: 'string', description: 'Custom label for the Google Sheets tab name (e.g. "Kali Swim BLK"). Combined with date: "2026-06-09 Kali Swim BLK". If omitted, prefixes are used.' },
+        color_on_hand: { type: 'boolean', description: 'If true, conditional formatting colours rows by "Weeks (on hand only)" instead of the Priority field. Use this to visualise stockout risk based purely on current stock, ignoring incoming orders.' },
       },
     },
     handler: handleRunInventoryProjection,
