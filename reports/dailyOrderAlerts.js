@@ -284,11 +284,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // Passport machinery in this report. Pending a proper rework.
   // Same note-override as unfulfilled rows: an unresolved note (outreach
   // sent, operator working it) moves a shipping alert out of Urgent into
-  // Waiting on Response. If the conversation closes (note resolved) while
-  // tracking is still bad, the row returns to Urgent — correct, it needs
-  // attention again.
+  // Waiting on Response, and a resolved note hides the row permanently.
+  // The normal terminal path for a stuck shipment is reship + close the
+  // conversation — the close hook resolves the note, and the abandoned
+  // original shipment must not haunt Urgent on dead tracking data.
   const shUrgentAll = sh.urgentNonPassport || [];
-  const shUrgent = shUrgentAll.filter(a => !a.note || a.note.resolved);
+  const shUrgent = shUrgentAll.filter(a => !a.note);
   const shWaiting = shUrgentAll.filter(a => a.note && !a.note.resolved);
   const shDelayed = sh.delayed || [];
 
@@ -549,7 +550,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   // the alert to Waiting on Response.
   const shUrgentAll = sh.urgentNonPassport || [];
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
-  printShippingSection('URGENT (shipping)', shUrgentAll.filter(a => !a.note || a.note.resolved));
+  printShippingSection('URGENT (shipping)', shUrgentAll.filter(a => !a.note));
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
   printUnfulfilledSection('DRAFTED IN CS ADVISOR (auto)', ufAutoDrafted);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
