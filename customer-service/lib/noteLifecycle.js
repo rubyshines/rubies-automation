@@ -116,10 +116,12 @@ async function resolveOnTicketClose({ supabase = getSupabaseClient(), orderNumbe
   const latest = (await fetchLatestNotes(supabase, [orderNum])).get(orderNum);
   if (!latest || latest.resolved || !isOutreachNote(latest)) return { resolved: false };
 
+  // cs_tickets.order_number is text and appears both with and without a
+  // leading '#' depending on which pipeline wrote the row — match both.
   const { data: tickets, error: tErr } = await supabase
     .from('cs_tickets')
     .select('id, status')
-    .eq('order_number', String(orderNum));
+    .in('order_number', [String(orderNum), `#${orderNum}`]);
   if (tErr) throw new Error(`cs_tickets fetch: ${tErr.message}`);
   if ((tickets || []).some(t => t.status !== 'closed')) return { resolved: false };
 
@@ -154,15 +156,16 @@ async function reconcileNotes({ supabase = getSupabaseClient() } = {}) {
   if (oErr) throw new Error(`orders fetch: ${oErr.message}`);
   const orderByNum = new Map((orders || []).map(o => [o.order_number, o]));
 
-  // cs_tickets.order_number is text.
+  // cs_tickets.order_number is text and appears both with and without a
+  // leading '#' depending on which pipeline wrote the row — match both.
   const { data: tickets, error: tErr } = await supabase
     .from('cs_tickets')
     .select('id, order_number, status')
-    .in('order_number', orderNumbers.map(String));
+    .in('order_number', orderNumbers.flatMap(n => [String(n), `#${n}`]));
   if (tErr) throw new Error(`cs_tickets fetch: ${tErr.message}`);
   const ticketsByOrder = new Map();
   for (const t of tickets || []) {
-    const k = Number(t.order_number);
+    const k = Number(String(t.order_number).replace(/^#/, ''));
     if (!ticketsByOrder.has(k)) ticketsByOrder.set(k, []);
     ticketsByOrder.get(k).push(t);
   }

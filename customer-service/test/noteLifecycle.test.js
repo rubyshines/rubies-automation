@@ -191,6 +191,17 @@ test('reconcileNotes R2: outreach note + all tickets closed → resolved', async
   assert.equal(resolved[0].rule, 'tickets_closed');
 });
 
+test('reconcileNotes R2: matches tickets stored with a leading # prefix', async () => {
+  const sb = makeStub({
+    notes: [note(31352, '[auto-draft] outreach drafted (Case A)', { author: 'auto' })],
+    orders: [{ order_number: 31352, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+    tickets: [{ id: 1655, order_number: '#31352', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'tickets_closed');
+});
+
 test('reconcileNotes R2: open ticket blocks resolution', async () => {
   const sb = makeStub({
     notes: [note(31273, 'Address-confirmation outreach drafted (v2) — pending operator review')],
