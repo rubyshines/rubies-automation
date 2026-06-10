@@ -27,9 +27,14 @@ const MODELS = {
 // Per-million-token rates. `cost_usd` below converts these to per-token.
 // Legacy entries kept so historical ai_calls rows still compute correct cost.
 const RATES = {
-  'claude-opus-4-8':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 },
-  'claude-opus-4-7':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 }, // legacy
-  'claude-opus-4-6':           { input: 15,   output: 75,  cache_read: 1.5,  cache_create: 18.75 }, // legacy
+  // Opus 4.x corrected 2026-06-10: the $15/$75 rate was Opus 4.1-era, carried
+  // forward by mistake; Opus 4.5+ is $5/$25. Verified against the actual May
+  // 2026 Console bill ($260.34 billed vs $273.91 ledger-computed at these
+  // rates — 5% agreement; the old rates computed $607 for the same month).
+  'claude-fable-5':            { input: 10,   output: 50,  cache_read: 1.0,  cache_create: 12.5 },
+  'claude-opus-4-8':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 },
+  'claude-opus-4-7':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
+  'claude-opus-4-6':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
   'claude-sonnet-4-6':         { input: 3,    output: 15,  cache_read: 0.3,  cache_create: 3.75 },
   'claude-sonnet-4-20250514':  { input: 3,    output: 15,  cache_read: 0.3,  cache_create: 3.75 }, // legacy alias
   'claude-haiku-4-5-20251001': { input: 1,    output: 5,   cache_read: 0.1,  cache_create: 1.25 },
