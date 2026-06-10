@@ -114,6 +114,13 @@ const PIPELINES = [
     run: () => require('./lib/judgeDaily').run(),
   },
   {
+    name: 'Auto-send Shadow',
+    // Dry-run report for auto-send (#4): how many drafts WOULD have auto-sent
+    // (auto_close_path='autosend_shadow') and whether the judge later found any
+    // of them substantively wrong. Zero rows until the shadow flag is enabled.
+    run: () => require('./lib/autosendShadow').run(),
+  },
+  {
     name: 'AI Pricing Check',
     // Monthly drift detector (new models + pricing changes). Runs on the 1st
     // only; a no-op the rest of the month so it doesn't add daily cost/noise.
@@ -430,6 +437,24 @@ function buildClosenessJudgeHtml(results) {
     </div>`;
 }
 
+// Auto-send shadow line (#4 dry run): how many drafts would have auto-sent in
+// the trailing week, by category, and whether the judge later scored any of
+// them substantively divergent (the go/no-go number for flipping a category
+// live). Hidden until the shadow flag produces rows.
+function buildAutosendShadowHtml(results) {
+  const task = results.find(r => r.name === 'Auto-send Shadow');
+  const m = task?.result?.sources?.autosend_shadow;
+  if (!m || m.skipped || !m.marked) return '';
+  const breakdown = Object.entries(m.by_type || {}).map(([k, n]) => `${n} ${k}`).join(' · ');
+  const erred = m.would_have_erred
+    ? ` <span style="color:#b91c1c;font-weight:bold;">⚠ ${m.would_have_erred} would have been WRONG (judge-verified) — category not ready</span>`
+    : ' <span style="color:#15803d;">0 judged wrong</span>';
+  return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
+      Auto-send dry run (last ${m.window_days}d): <strong>${m.marked}</strong> draft(s) would have auto-sent (${breakdown})${erred}
+    </div>`;
+}
+
 // Monthly AI pricing/model drift findings (only present on the 1st). Renders a
 // banner of actionable items (new models, rate changes) so a pricing change or
 // a new model to evaluate doesn't slip by unnoticed.
@@ -511,6 +536,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- Closeness-judge quality line (substantive divergence) ---
   const closenessJudgeHtml = buildClosenessJudgeHtml(results);
 
+  // --- Auto-send shadow dry-run line ---
+  const autosendShadowHtml = buildAutosendShadowHtml(results);
+
   // --- AI pricing/model drift (monthly, 1st only) ---
   const aiPricingHtml = buildAiPricingHtml(results);
 
@@ -524,6 +552,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${aiCostHtml}
       ${advisorEditHtml}
       ${closenessJudgeHtml}
+      ${autosendShadowHtml}
       ${aiPricingHtml}
 
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
