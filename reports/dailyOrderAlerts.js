@@ -361,7 +361,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   else if (hasUrgent) statusEmoji = '\u26a0\ufe0f';
   else statusEmoji = '\uD83D\udd14';
 
-  const subjectParts = [`Daily Order Alerts \u2014 ${today}`];
+  const subjectParts = [`Daily Order Alerts${opts.shippingOnly ? ' (shipping only)' : ''} \u2014 ${today}`];
   if (totalIssues > 0) {
     subjectParts.push(`${totalIssues} need attention`);
     if (urgentRows.length > 0) subjectParts.push(`${urgentRows.length} urgent`);
