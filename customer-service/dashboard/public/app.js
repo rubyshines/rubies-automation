@@ -1494,8 +1494,16 @@ function renderActionPanel(draft) {
   const actionType = draft.action_type || '';
   const orderNum = (draft.order_number || '').replace('#', '');
 
-  // Header badge
-  if (actionType) {
+  // An action has landed in the timeline once `actions[]` is non-empty (or the
+  // legacy action_executed_at stamp is set). Used to suppress the proposal
+  // badge and the prefill below — the timeline tells the story from there.
+  const hasExecutedAction = (Array.isArray(draft.actions) && draft.actions.length > 0)
+    || draft.action_executed_at;
+
+  // Header badge — the advisor's PROPOSAL. Once any action has executed, the
+  // proposal is history (and possibly contradicted by what was actually run),
+  // so drop it rather than pinning a stale pill over an idle panel.
+  if (actionType && !hasExecutedAction) {
     const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'free_order' ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'split_shipment' ? 'edit' : actionType === 'order_consolidation' ? 'edit' : actionType === 'invoice_kept_items' ? 'edit' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
     const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', free_order: 'Free Order', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', split_shipment: 'Split Shipment', order_consolidation: 'Consolidate Orders', invoice_kept_items: 'Invoice Kept Items', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
     const badgeLabel = badgeLabels[actionType] || actionType;
@@ -1538,10 +1546,14 @@ function renderActionPanel(draft) {
 
     input.value = '';
     input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
-    // Show quick-reply buttons if awaiting confirmation
+    // Show quick-reply buttons if awaiting confirmation. The server-computed
+    // chat_pending_preview flag is authoritative (it survives Q&A turns and
+    // matches what the live stream path showed); the regex heuristics only
+    // cover scratchpads saved before the flag existed.
     const chatResponse = draft.action_result?.chat_response || '';
-    if ((chatResponse && isConfirmationPrompt(chatResponse)) ||
-        hasAwaitingConfirmation(draft.action_result?.chat_tool_results)) {
+    const pending = draft.action_result?.chat_pending_preview
+      ?? hasAwaitingConfirmation(draft.action_result?.chat_tool_results);
+    if (pending || (chatResponse && isConfirmationPrompt(chatResponse))) {
       renderQuickReplies(messagesEl, ['Yes, confirm', 'No, cancel'], { inputEl: input, onSend: sendActionMessage });
     }
     return;
@@ -1550,8 +1562,6 @@ function renderActionPanel(draft) {
   // Build prefill command from structured output. Only prefill on a fresh draft
   // that hasn't executed any action yet — once an action lands in the timeline,
   // the panel goes idle and waits for the operator to type a follow-up.
-  const hasExecutedAction = (Array.isArray(draft.actions) && draft.actions.length > 0)
-    || draft.action_executed_at;
   const prefill = hasExecutedAction ? '' : buildActionPrefill(draft);
 
   if (prefill) {
@@ -1888,7 +1898,6 @@ async function runChatTurn({
   inputEl,
   sendBtnEl,
   onSend,
-  onToolResults,
   traceTitle = 'Operator Agent',
   images = [],
   pdfs = [],
@@ -2039,12 +2048,13 @@ async function runChatTurn({
       if (!streamingEl && finalResult.response) {
         appendChatMessage(containerEl, 'assistant', finalResult.response);
       }
-      if (finalResult.tool_results?.length && onToolResults) {
-        onToolResults(finalResult.tool_results);
-      }
       if (finalResult.links?.length) renderActionLinks(containerEl, finalResult.links);
-      if ((finalResult.response && isConfirmationPrompt(finalResult.response)) ||
-          hasAwaitingConfirmation(finalResult.tool_results)) {
+      // Server-computed pending_preview is authoritative when present (action
+      // chat); the regex heuristics remain for endpoints that don't send it
+      // (ad hoc console) and pre-flag responses.
+      const pending = finalResult.pending_preview
+        ?? hasAwaitingConfirmation(finalResult.tool_results);
+      if (pending || (finalResult.response && isConfirmationPrompt(finalResult.response))) {
         renderQuickReplies(containerEl, ['Yes, confirm', 'No, cancel'], { inputEl, onSend });
       }
       nextHistory = finalResult.history || nextHistory;
@@ -2085,7 +2095,6 @@ async function sendActionMessage() {
     inputEl: input,
     sendBtnEl: sendBtn,
     onSend: sendActionMessage,
-    onToolResults: (toolResults) => updateDraftFromActionResults(toolResults),
   });
 
   _actionChatHistory = history;
@@ -2419,42 +2428,6 @@ function initAdhocAttachments() {
 
 document.addEventListener('DOMContentLoaded', initAdhocAttachments);
 
-function updateDraftFromActionResults(toolResults) {
-  const editor = document.getElementById('draft-editor');
-  if (!editor) return;
-
-  for (const tr of toolResults) {
-    const text = typeof tr.result === 'string' ? tr.result : '';
-
-    if (tr.tool === 'create_exchange_order') {
-      // Extract draft order number
-      const orderMatch = text.match(/#D\d+|Draft Order.*?#(\d+)/i);
-      const linkMatch = text.match(/https:\/\/admin\.shopify\.com\/[^\s)]+draft[^\s)]*/);
-      if (orderMatch || text.includes('completed') || text.includes('Completed')) {
-        // Don't auto-append — the operator controls the response text
-      }
-    }
-
-    if (tr.tool === 'refund_order') {
-      const amountMatch = text.match(/\$[\d,.]+/);
-      if (amountMatch && text.toLowerCase().includes('completed')) {
-        // Refund completed — operator may want to mention the amount
-      }
-    }
-  }
-}
-
-// Legacy functions kept for backwards compatibility with old drafts
-function renderCompletedAction(draft) {
-  renderActionPanel(draft);
-}
-function executeExchangePhase1() {}
-function executeExchangePhase2() {}
-function executeRefundPhase1() {}
-function executeRefundPhase2() {}
-function executeEditPhase1() {}
-function executeEditPhase2() {}
-
 // ---------------------------------------------------------------------------
 // Draft Attachments — drag-and-drop file/image attach
 // ---------------------------------------------------------------------------
@@ -2613,6 +2586,7 @@ const EXEC_ACTION_LABELS = {
   refund: 'Refund', order_modification: 'Order edit', cancellation: 'Cancellation',
   split_shipment: 'Split shipment', order_consolidation: 'Consolidation',
   invoice_kept_items: 'Invoice', discount_code: 'Discount', warehouse_hold: 'Hold',
+  customer_profile_update: 'Profile update',
 };
 
 // One-click background: run the action, auto-confirm phase 2 if nothing is
@@ -4552,10 +4526,14 @@ function updateSummaryBar(ticket) {
       tags.push('<span class="context-tag context-tag-followup">follow-up</span>');
     }
 
-    const action = ticket.active_draft?.action_type;
-    if (action === 'exchange') tags.push('<span class="context-tag context-tag-exchanged">exchanged</span>');
-    else if (action === 'refund') tags.push('<span class="context-tag context-tag-refunded">refunded</span>');
-    else if (action === 'edit') tags.push('<span class="context-tag context-tag-edited">edited</span>');
+    // Past-tense tags come from EXECUTED actions (any draft on the ticket),
+    // not from active_draft.action_type — that's the advisor's proposal, and
+    // tagging it "exchanged"/"refunded" claims work that may never have run.
+    const executedTypes = new Set((ticket.drafts || []).flatMap(d =>
+      (Array.isArray(d.actions) ? d.actions : []).map(a => a.action_type)));
+    if (executedTypes.has('exchange')) tags.push('<span class="context-tag context-tag-exchanged">exchanged</span>');
+    else if (executedTypes.has('refund')) tags.push('<span class="context-tag context-tag-refunded">refunded</span>');
+    else if (executedTypes.has('order_modification')) tags.push('<span class="context-tag context-tag-edited">edited</span>');
 
     const status = ticket.active_draft?.advisor_status || '';
     if (status === 'needs_info') tags.push('<span class="context-tag context-tag-alert">needs info</span>');

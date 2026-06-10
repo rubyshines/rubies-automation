@@ -35,7 +35,6 @@ const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/war
 const { autoLinkProducts } = require('../lib/autoLinker');
 const { canonicalMessageType } = require('../lib/messageTypes');
 const { markOutreachSent, resolveOnTicketClose } = require('../lib/noteLifecycle');
-const Anthropic = require('@anthropic-ai/sdk');
 
 // Product config for auto-linking (loaded at startup)
 // Product config loaded at startup for any server-side product lookups
@@ -314,7 +313,11 @@ async function apiSendDraft(id, body) {
 
   const wasEdited = (draft.draft_response || '').trim() !== finalResponse.trim();
 
-  // Update draft
+  // Update draft. Sending is a terminal event for the action-chat scratchpad:
+  // completed work is already filed in `actions[]`, and an un-executed phase-1
+  // preview is dead once the reply goes out (its draft order goes stale). Leaving
+  // the scratchpad behind replays the old chat — with live-looking Yes/No confirm
+  // buttons — when this draft row is reused on a reopened ticket.
   const draftUpdate = {
     status: 'sent',
     sent_response: finalResponse,
@@ -322,6 +325,7 @@ async function apiSendDraft(id, body) {
     reviewed_at: new Date().toISOString(),
     sent_at: new Date().toISOString(),
     gorgias_reply_message_id: replyResult?.id || null,
+    action_result: null,
   };
   if (isOutboundInitiated) {
     draftUpdate.gorgias_ticket_id = draft.gorgias_ticket_id;
@@ -761,11 +765,12 @@ async function apiReleaseDraft(id, body) {
   // Unassign from AI Bot in Gorgias FIRST — if this fails, operation fails
   await gorgias.assignTicket(draft.gorgias_ticket_id, null);
 
-  // Update draft
+  // Update draft (terminal — clear the action-chat scratchpad, see apiSendDraft)
   const draftUpdate = {
     status: 'released',
     feedback_notes: body.notes || 'Released to Gorgias',
     reviewed_at: new Date().toISOString(),
+    action_result: null,
   };
   if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
   await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
@@ -801,10 +806,12 @@ async function apiDeleteDraft(id, body = {}) {
     await gorgias.assignTicket(draft.gorgias_ticket_id, null);
   }
 
-  // Update DB only after Gorgias succeeded
+  // Update DB only after Gorgias succeeded (terminal — clear the action-chat
+  // scratchpad, see apiSendDraft)
   const draftUpdate = {
     status: 'deleted',
     reviewed_at: new Date().toISOString(),
+    action_result: null,
   };
   if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
   await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
@@ -864,10 +871,12 @@ async function apiMarkSpam(id, body = {}) {
     await gorgias.assignTicket(draft.gorgias_ticket_id, null);
   }
 
-  // Update DB only after Gorgias succeeded
+  // Update DB only after Gorgias succeeded (terminal — clear the action-chat
+  // scratchpad, see apiSendDraft)
   const draftUpdate = {
     status: 'spam',
     reviewed_at: new Date().toISOString(),
+    action_result: null,
   };
   if (body.focus_time_seconds != null) draftUpdate.focus_time_seconds = Math.round(body.focus_time_seconds);
   await supabase.from('cs_ai_drafts').update(draftUpdate).eq('id', id);
@@ -1367,215 +1376,8 @@ async function apiGetHistory(query) {
 }
 
 // ---------------------------------------------------------------------------
-// Two-phase execute endpoints
-// ---------------------------------------------------------------------------
-
-// Build a canonical actions[] entry from a legacy phase-2 tool result so the
-// completed action shows up in the inline ticket timeline (same shape as the
-// chat-path entries built at apiActionChat). Use after legacy execute endpoints.
-function buildLegacyActionEntry(actionType, toolResult, executedAt) {
-  const resultText = toolResult?.content?.[0]?.text
-    || (typeof toolResult === 'string' ? toolResult : '');
-  return {
-    executed_at: executedAt,
-    action_type: actionType,
-    summary: resultText,
-    links: extractActionLinks([{ tool: '', result: resultText }]),
-  };
-}
-
-async function apiExecuteExchange(id, body) {
-  const supabase = getSupabaseClient();
-  const { data: draft, error: fetchErr } = await supabase
-    .from('cs_ai_drafts').select('*').eq('id', id).single();
-  if (fetchErr) throw fetchErr;
-
-  const exchangeTools = require('../lib/tools/exchangeOrder');
-  const exchangeHandler = exchangeTools.find(t => t.name === 'create_exchange_order')?.handler;
-  if (!exchangeHandler) throw new Error('Exchange tool not found');
-
-  if (body.confirmed) {
-    // Phase 2: complete the draft order
-    const prevResult = draft.action_result;
-    if (!prevResult?.draft_order_id) throw new Error('No draft_order_id from Phase 1');
-
-    const result = await exchangeHandler({
-      customer_id: prevResult.customer_id,
-      confirmed: true,
-      draft_order_id: prevResult.draft_order_id,
-    });
-
-    const now = new Date().toISOString();
-    const entry = buildLegacyActionEntry('exchange', result, now);
-    await supabase.from('cs_ai_drafts').update({
-      action_result: { ...prevResult, phase: 'completed', phase2: result },
-      action_executed_at: now,
-      actions: [...(Array.isArray(draft.actions) ? draft.actions : []), entry],
-    }).eq('id', id);
-
-    return result;
-  }
-
-  // Phase 1: create draft order preview
-  const { searchCustomers } = require('../lib/shopify');
-  const customers = await searchCustomers(draft.customer_email);
-  const customer = customers?.[0];
-  if (!customer) throw new Error(`Customer not found: ${draft.customer_email}`);
-
-  const structured = draft.structured_output || {};
-  let items = (structured.intake?.items || []).filter(i => i.resolved_size);
-  // Fallback: if intake items lack resolved_size (multi-turn carry-forward bug), pull from prescription
-  if (!items.length) {
-    const intakeItems = structured.intake?.items || [];
-    const rxItems = (structured.prescription?.items || [])
-      .filter(i => i.state === 'CONFIRMED' && i.recommendation?.size);
-    items = rxItems.map(rx => {
-      const intake = intakeItems.find(ii => ii.product === rx.product) || {};
-      return { ...intake, product: rx.product, resolved_size: rx.recommendation.size };
-    });
-  }
-  if (!items.length) throw new Error('No exchange items resolved');
-
-  const result = await exchangeHandler({
-    customer_id: customer.id,
-    items: items.map(i => ({
-      sku: i._orderSku || undefined,
-      target_size: i.resolved_size,
-      query: (!i._orderSku) ? `${i.resolved_product || i.product} ${i.resolved_size}` : undefined,
-      quantity: i._orderQty || 1,
-    })),
-    note: `Exchange via CS Dashboard (draft #${id})`,
-  });
-
-  // Extract draft_order_id from result text
-  const resultText = result.content?.[0]?.text || '';
-  const draftIdMatch = resultText.match(/gid:\/\/shopify\/DraftOrder\/(\d+)/);
-  const draftOrderId = draftIdMatch ? `gid://shopify/DraftOrder/${draftIdMatch[1]}` : null;
-
-  await supabase.from('cs_ai_drafts').update({
-    action_result: { phase: 'preview', customer_id: customer.id, draft_order_id: draftOrderId, preview: resultText },
-  }).eq('id', id);
-
-  return result;
-}
-
-async function apiExecuteRefund(id, body) {
-  const supabase = getSupabaseClient();
-  const { data: draft, error: fetchErr } = await supabase
-    .from('cs_ai_drafts').select('*').eq('id', id).single();
-  if (fetchErr) throw fetchErr;
-
-  const refundTools = require('../lib/tools/refundOrder');
-  const refundHandler = refundTools.find(t => t.name === 'refund_order')?.handler;
-  if (!refundHandler) throw new Error('Refund tool not found');
-
-  if (body.confirmed) {
-    // Phase 2: execute the refund
-    const prevResult = draft.action_result;
-    if (!prevResult?._refund_data) throw new Error('No refund data from Phase 1');
-
-    const result = await refundHandler({
-      order_number: String(draft.order_number),
-      confirmed: true,
-      _refund_data: prevResult._refund_data,
-    });
-
-    const now = new Date().toISOString();
-    const entry = buildLegacyActionEntry('refund', result, now);
-    await supabase.from('cs_ai_drafts').update({
-      action_result: { ...prevResult, phase: 'completed', phase2: result },
-      action_executed_at: now,
-      actions: [...(Array.isArray(draft.actions) ? draft.actions : []), entry],
-    }).eq('id', id);
-
-    return result;
-  }
-
-  // Phase 1: calculate refund
-  const structured = draft.structured_output || {};
-  const refundItems = (structured.prescription?.items || [])
-    .filter(i => i.state === 'REFUND_CONFIRMED' || i.state === 'REFUND_READY');
-  const intakeItems = (structured.intake?.items || []).filter(i => i.product);
-  const itemsForRefund = refundItems.length ? refundItems : intakeItems;
-
-  const result = await refundHandler({
-    order_number: String(draft.order_number),
-    items: itemsForRefund.map(i => ({
-      sku: i._orderSku || i.sku || undefined,
-      quantity: i._orderQty || i.quantity || 1,
-    })).filter(i => i.sku),
-    note: `Refund via CS Dashboard (draft #${id})`,
-  });
-
-  // Extract _refund_data from the result (the handler stores it in the response)
-  const resultText = result.content?.[0]?.text || '';
-  // The refund handler returns _refund_data in a structured way — look for it
-  const refundData = result._refund_data || null;
-
-  await supabase.from('cs_ai_drafts').update({
-    action_result: { phase: 'preview', _refund_data: refundData, preview: resultText },
-  }).eq('id', id);
-
-  return result;
-}
-
-async function apiExecuteEdit(id, body) {
-  const supabase = getSupabaseClient();
-  const { data: draft, error: fetchErr } = await supabase
-    .from('cs_ai_drafts').select('*').eq('id', id).single();
-  if (fetchErr) throw fetchErr;
-
-  const editTools = require('../lib/tools/editOrder');
-  const editHandler = editTools.find(t => t.name === 'edit_order')?.handler;
-  if (!editHandler) throw new Error('Edit order tool not found');
-
-  if (body.confirmed) {
-    // Phase 2: commit the edit (pending edits stored server-side in editOrder.js)
-    const result = await editHandler({
-      order_number: String(draft.order_number),
-      confirmed: true,
-    });
-
-    const prevResult = draft.action_result || {};
-    const now = new Date().toISOString();
-    const entry = buildLegacyActionEntry('order_modification', result, now);
-    await supabase.from('cs_ai_drafts').update({
-      action_result: { ...prevResult, phase: 'completed', phase2: result },
-      action_executed_at: now,
-      actions: [...(Array.isArray(draft.actions) ? draft.actions : []), entry],
-    }).eq('id', id);
-
-    return result;
-  }
-
-  // Phase 1: stage the edit
-  const structured = draft.structured_output || {};
-  // Extract swap items from structured output - these would come from order_modification intent
-  const swapItems = structured.prescription?.swap_items || [];
-
-  const result = await editHandler({
-    order_number: String(draft.order_number),
-    swap_items: swapItems,
-    note: `Edit via CS Dashboard (draft #${id})`,
-  });
-
-  const resultText = result.content?.[0]?.text || '';
-  await supabase.from('cs_ai_drafts').update({
-    action_result: { phase: 'preview', preview: resultText },
-  }).eq('id', id);
-
-  return result;
-}
-
-// ---------------------------------------------------------------------------
 // Action Chat — Claude-powered tool execution via chat
 // ---------------------------------------------------------------------------
-
-let _anthropicClient = null;
-function getAnthropic() {
-  if (!_anthropicClient) _anthropicClient = new Anthropic();
-  return _anthropicClient;
-}
 
 // Tools that write/modify Shopify state. Used by the completing-tool detector
 // to decide whether a tool result counts as a completed action worth filing in
@@ -1636,6 +1438,18 @@ function dedupeLinks(links) {
   return (links || []).filter(l => { if (seen.has(l.url)) return false; seen.add(l.url); return true; });
 }
 
+// Union completed operator actions across all of a ticket's drafts, oldest
+// first. Each customer reply creates a fresh draft row with empty actions[],
+// so any single draft is blind to prior turns' executed work — the agent's
+// "what has already been done" view must aggregate across drafts, exactly like
+// the dashboard timeline does. Pure; exported for tests.
+function unionTicketActions(drafts) {
+  return (drafts || [])
+    .flatMap(d => (Array.isArray(d?.actions) ? d.actions : []))
+    .filter(Boolean)
+    .sort((x, y) => new Date(x.executed_at || 0) - new Date(y.executed_at || 0));
+}
+
 async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   const _t0 = Date.now();
   console.log(`[apiActionChat] START draftId=${draftId}`);
@@ -1650,12 +1464,21 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   const history = body.history || [];
   const structured = draft.structured_output || {};
 
-  // Also pull ticket-level order context as fallback (richer than draft alone)
+  // Also pull ticket-level order context as fallback (richer than draft alone),
+  // and the completed actions across ALL the ticket's drafts so the agent knows
+  // what prior turns already executed (the current draft's actions[] only
+  // covers the current turn).
   let ticketOrderCtx = {};
+  let completedActions = Array.isArray(draft.actions) ? draft.actions : [];
   if (draft.ticket_id) {
-    const { data: t } = await supabase.from('cs_tickets')
-      .select('order_context').eq('id', draft.ticket_id).single();
+    const [{ data: t }, { data: siblingDrafts }] = await Promise.all([
+      supabase.from('cs_tickets')
+        .select('order_context').eq('id', draft.ticket_id).single(),
+      supabase.from('cs_ai_drafts')
+        .select('actions').eq('ticket_id', draft.ticket_id),
+    ]);
     ticketOrderCtx = t?.order_context || {};
+    if (siblingDrafts?.length) completedActions = unionTicketActions(siblingDrafts);
   }
   console.log(`[apiActionChat] context ready elapsed=${Date.now()-_t0}ms, calling operatorAgent`);
 
@@ -1666,6 +1489,7 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
     order_items: structured.order?.items || ticketOrderCtx.items || [],
     fulfillment_status: structured.order?.fulfillment_status || ticketOrderCtx.fulfillment_status || null,
     intake: structured.intake || null,
+    completed_actions: completedActions,
     gorgias_ticket_id: draft.gorgias_ticket_id,
     draft_id: draft.id,
   };
@@ -1674,22 +1498,6 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
 
   // Extract Shopify admin links from tool results before saving
   result.links = extractActionLinks(result.tool_results);
-
-  // Update draft with in-progress action chat (the bottom panel renders this
-  // until the action completes; on completion we file the entry into `actions`
-  // and clear this scratchpad so the panel returns to idle).
-  // Drop any stale execute_send badge — the operator is now engaging the ticket
-  // manually, so the "needs review" flag from a held one-click run no longer applies.
-  const { execute_send: _staleBadge, ...prevResult } = draft.action_result || {};
-  const updates = {
-    action_result: {
-      ...prevResult,
-      chat_tool_results: result.tool_results,
-      chat_history: result.history,
-      chat_response: result.response,
-      chat_links: dedupeLinks([...(prevResult.chat_links || []), ...result.links]),
-    },
-  };
 
   // Detect if a completing action was performed.
   // CRITICAL: phase-1 previews include words like "Created" (e.g. "**Exchange Draft
@@ -1716,6 +1524,36 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
     }
     return true;
   });
+
+  // Single source of truth for the dashboard's Yes/No confirm buttons. The two
+  // client render paths (live stream finalize, panel re-render from scratchpad)
+  // used to apply separate regex heuristics over different snapshots and could
+  // disagree — buttons appearing on the stream then vanishing on the reload.
+  const { execute_send: _staleBadge, ...prevResult } = draft.action_result || {};
+  const pendingPreview = resolveChatPendingPreview({
+    toolResults: result.tool_results,
+    completing: !!completingTool,
+    userMessage,
+    prevPending: prevResult.chat_pending_preview === true,
+  });
+  result.pending_preview = pendingPreview;
+
+  // Update draft with in-progress action chat (the bottom panel renders this
+  // until the action completes; on completion we file the entry into `actions`
+  // and clear this scratchpad so the panel returns to idle).
+  // Drop any stale execute_send badge — the operator is now engaging the ticket
+  // manually, so the "needs review" flag from a held one-click run no longer applies.
+  const updates = {
+    action_result: {
+      ...prevResult,
+      chat_tool_results: result.tool_results,
+      chat_history: result.history,
+      chat_response: result.response,
+      chat_links: dedupeLinks([...(prevResult.chat_links || []), ...result.links]),
+      chat_pending_preview: pendingPreview,
+    },
+  };
+
   if (completingTool) {
     const now = new Date().toISOString();
     const entry = {
@@ -1732,7 +1570,10 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
     updates.actions = [...(Array.isArray(draft.actions) ? draft.actions : []), entry];
     // Clear the in-progress chat scratchpad — the action is now filed in the
     // timeline and the bottom panel should return to idle for the next action.
-    updates.action_result = null;
+    // EXCEPT when the same turn ALSO staged a new awaiting-confirmation preview
+    // (e.g. add_order_note alongside an exchange preview): wiping then would
+    // strand the pending phase 1 and make the confirm buttons vanish on reload.
+    if (!pendingPreview) updates.action_result = null;
     if (!draft.action_executed_at) {
       updates.action_executed_at = now;
       updates.advisor_status = 'ready';
@@ -1742,6 +1583,23 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
 
   return result;
+}
+
+// Decide whether the action chat is awaiting a Yes/No confirmation after this
+// turn. Pure; exported for tests.
+// - A write-tool preview saying "awaiting confirmation" this turn → pending,
+//   even if another write completed in the same turn.
+// - A completing write (phase 2 ran) or an explicit cancel click (the quick-reply
+//   button sends the literal "no, cancel") settles the preview → not pending.
+// - Otherwise (lookups, Q&A prose) the previous state carries over, so asking a
+//   clarifying question mid-preview doesn't make the confirm buttons vanish.
+function resolveChatPendingPreview({ toolResults, completing, userMessage, prevPending }) {
+  const previewedThisTurn = (toolResults || []).some(tr =>
+    WRITE_TOOLS.has(tr.tool) && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result));
+  if (previewedThisTurn) return true;
+  if (completing) return false;
+  if (/^no,?\s*cancel/i.test((userMessage || '').trim())) return false;
+  return prevPending === true;
 }
 
 // Resolve the draft an operator action should anchor onto. Prefer the ticket's
@@ -1781,6 +1639,12 @@ async function apiActionChatNoDraft(ticketId, body, { onStream } = {}) {
   };
   const result = await operatorAgent(body.message, context, body.history || [], onStream);
   result.links = extractActionLinks(result.tool_results);
+  // No draft row to persist pending state on — compute it for this turn only so
+  // the client's confirm buttons still key off the same server-side signal.
+  result.pending_preview = resolveChatPendingPreview({
+    toolResults: result.tool_results, completing: false,
+    userMessage: body.message, prevPending: false,
+  });
   return result;
 }
 
@@ -2912,9 +2776,6 @@ const paramRoutes = [
   }},
   { method: 'GET', pattern: /^\/api\/drafts\/(\d+)$/, handler: (_, id) => apiGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/send$/, handler: (body, id) => apiSendDraft(parseInt(id), body) },
-  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/exchange$/, handler: (body, id) => apiExecuteExchange(parseInt(id), body) },
-  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/refund$/, handler: (body, id) => apiExecuteRefund(parseInt(id), body) },
-  { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute\/edit$/, handler: (body, id) => apiExecuteEdit(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/action-chat$/, handler: (body, id) => apiActionChat(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute-and-send$/, handler: (body, id) => apiExecuteAndSend(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
@@ -3003,30 +2864,6 @@ const paramRoutes = [
       .then(({ data: t }) => {
         if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
         return apiDeleteDraft(t.active_draft_id, body);
-      });
-  }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/exchange$/, handler: (body, id) => {
-    const supabase = getSupabaseClient();
-    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
-      .then(({ data: t }) => {
-        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiExecuteExchange(t.active_draft_id, body);
-      });
-  }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/refund$/, handler: (body, id) => {
-    const supabase = getSupabaseClient();
-    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
-      .then(({ data: t }) => {
-        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiExecuteRefund(t.active_draft_id, body);
-      });
-  }},
-  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/execute\/edit$/, handler: (body, id) => {
-    const supabase = getSupabaseClient();
-    return supabase.from('cs_tickets').select('active_draft_id').eq('id', parseInt(id)).single()
-      .then(({ data: t }) => {
-        if (!t?.active_draft_id) throw new Error('No active draft for this ticket');
-        return apiExecuteEdit(t.active_draft_id, body);
       });
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/action-chat$/, handler: async (body, id) => {
@@ -3264,7 +3101,7 @@ async function handleRequest(req, res) {
             ? await apiActionChat(draftId, body, { onStream: sendEvent, signal: abortCtrl.signal })
             : await apiActionChatNoDraft(ticketId, body, { onStream: sendEvent, signal: abortCtrl.signal });
           console.log(`[action-chat-stream] DONE elapsed=${Date.now()-_streamStart}ms`);
-          sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
+          sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history, pending_preview: result.pending_preview });
         } catch (err) {
           console.error(`[action-chat-stream] ERROR elapsed=${Date.now()-_streamStart}ms`, err.message, err.stack);
           if (!abortCtrl.signal.aborted) sendEvent({ type: 'error', message: err.message });
@@ -3383,4 +3220,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend };
+module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, resolveChatPendingPreview };

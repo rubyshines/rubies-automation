@@ -6,17 +6,9 @@
  * The AI decides which tool to call and how — no manual routing.
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
-const { PRODUCT_NICKNAMES, _activeProducts, initCsConfig } = require('./sizingEngine');
-const { KNOWN_SIZES_UPPER } = require('./sizeUtils');
-
-let _anthropic;
-function getAnthropic() {
-  if (!_anthropic) _anthropic = new Anthropic();
-  return _anthropic;
-}
+const { PRODUCT_NICKNAMES } = require('./sizingEngine');
 
 // Parse + remove the automation-only `AUTO_CONFIRM: SAFE | HOLD — reason` verdict
 // the operator agent appends to phase-1 previews. Returns the clean operator-facing
@@ -45,14 +37,25 @@ function buildSystemPrompt(context) {
   const { customer_email, order_number, order_items, fulfillment_status, intake, draft } = context;
   const draftResponse = draft?.draft_response || '';
 
-  // Detect whether this order already has a warehouse hold in place by looking
-  // at the timeline only. `draft.action_type === 'warehouse_hold'` is the
-  // advisor's *proposal*, not an execution — trusting it as a "hold is placed"
-  // signal causes the agent to skip the real tool and falsely report success
-  // (the intake pipeline now auto-executes the hold and files a real action
-  // entry when it succeeds, so this signal is reliable on its own).
-  const holdAlreadyPlaced = Array.isArray(draft?.actions)
-    && draft.actions.some(a => a.action_type === 'warehouse_hold');
+  // Completed actions for this TICKET — across all drafts/turns, not just the
+  // current draft. Each customer reply creates a fresh draft row with empty
+  // actions[], so the current draft alone is blind to prior turns' executed
+  // work. apiActionChat passes the cross-draft union as completed_actions
+  // (chronological); fall back to the current draft for older callers.
+  const completedList = Array.isArray(context.completed_actions)
+    ? context.completed_actions
+    : (Array.isArray(draft?.actions) ? draft.actions : []);
+
+  // Detect whether this order currently has a warehouse hold by looking at the
+  // timeline only. `draft.action_type === 'warehouse_hold'` is the advisor's
+  // *proposal*, not an execution — trusting it as a "hold is placed" signal
+  // causes the agent to skip the real tool and falsely report success (the
+  // intake pipeline auto-executes the hold and files a real action entry when
+  // it succeeds, so this signal is reliable on its own). A later release
+  // supersedes an earlier hold, so only the most recent hold-related action counts.
+  const lastHoldAction = [...completedList].reverse().find(a =>
+    a.action_type === 'warehouse_hold' || a.action_type === 'release_warehouse_hold');
+  const holdAlreadyPlaced = lastHoldAction?.action_type === 'warehouse_hold';
 
   const itemList = (order_items || [])
     .map(i => `  - ${i.quantity || 1}x ${i.title} (SKU: ${i.sku}, size: ${i.variant || ''})`)
@@ -86,8 +89,11 @@ function buildSystemPrompt(context) {
       }).join(', ')
     : 'none';
 
-  const completedActions = Array.isArray(draft?.actions) && draft.actions.length > 0
-    ? draft.actions.map(a => `  - ${a.action_type}${a.summary ? ': ' + a.summary.split('\n')[0].slice(0, 120) : ''}`).join('\n')
+  const completedActions = completedList.length > 0
+    ? completedList.map(a => {
+        const day = a.executed_at ? ` (${String(a.executed_at).slice(0, 10)})` : '';
+        return `  - ${a.action_type}${day}${a.summary ? ': ' + a.summary.split('\n')[0].slice(0, 120) : ''}`;
+      }).join('\n')
     : null;
 
   return `You are an action executor for the RUBIES customer service dashboard. You execute exchanges, refunds, order edits, holds, and cancellations.
@@ -168,6 +174,7 @@ Sizing systems:
   When in doubt, HOLD. This line is for automation only and is stripped before display — keep it terse. Emit it ONLY on phase 1 previews that end in "awaiting confirmation"; never on phase 2 (post-execution) summaries, address-only edits, or plain informational replies.
 - **Exception:** Address-only edits (shipping address updates) — execute immediately, no preview needed. Just report "Address updated on order #X" with the new address. No extra commentary.
 - **On operator confirmation, your next action MUST be a tool call — not prose.** When the operator says "yes", "confirm", "yes confirm", "do it", "go ahead", "proceed", "execute" (or clicks the Yes/Confirm quick-reply button), immediately call the SAME tool from the most recent "awaiting confirmation" preview, with \`confirmed: true\` and the same arguments (including \`draft_order_id\` / \`_refund_data\` / \`_fulfill_data\` / \`keep_order_number\` + \`drop_order_number\` / \`order_number\` / etc — whatever Phase 1's preview said to pass back). Do NOT re-run Phase 1, do NOT show the preview again, do NOT narrate, do NOT ask "shall I proceed?" — the operator already said yes. The only acceptable text on a confirmation turn is the post-execution result summary returned by Phase 2. If you genuinely cannot determine which tool/args to use (no prior Phase 1 in history), say so in one short line and stop — don't guess by re-previewing.
+- **Scope of a confirmation: the most recent preview that is still pending** — staged but not yet executed (see Already Completed) and not cancelled. A clarifying question and answer in between does NOT kill a pending preview: if the operator asks "does that keep her shipping address?", you answer, and they reply "go ahead" — execute the pending preview. But if YOUR last message asked the operator a question, read a bare "yes"/"no" as the answer to that question first; only treat it as a confirmation when it clearly addresses the pending preview ("yes confirm", "go ahead", "do it"). A preview that already executed or was cancelled is dead — never re-fire it because a later "yes" arrived.
 - Be concise. Show what you did, not a wall of text. Don't add explanations about why you did or didn't need confirmation.
 - For search queries, use short product nicknames (e.g. "Charlie" not "CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR").
 - If a color change is requested, include the color in the query (e.g. "Charlie 1X Black").
@@ -194,7 +201,6 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
   const _t = { start: Date.now(), api_calls: [] };
   const { tools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt(context);
-  const client = getAnthropic();
 
   // Prompt caching — system prompt is static for the duration of an action-chat session
   // (same ticket context across preview → confirm). Reliable win since operator always
@@ -342,15 +348,15 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
         if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
         emit({ type: 'tool_call', data: { tool: toolUse.name, input: toolUse.input } });
 
-        // Auto-fix common Sonnet mistakes before calling the tool
+        // Auto-fix common model mistakes before calling the tool
         if (toolUse.name === 'create_exchange_order' && !toolUse.input.confirmed) {
-          // Resolve customer_id: Sonnet may pass email or skip it
+          // Resolve customer_id: the model may pass an email or skip it
           if (!toolUse.input.customer_id || toolUse.input.customer_id.includes('@')) {
             const { searchCustomers } = require('./shopify');
             const customers = await searchCustomers(context.customer_email);
             if (customers?.[0]) toolUse.input.customer_id = customers[0].id;
           }
-          // Strip original_order_id if Sonnet passed the order number (not a Shopify GID)
+          // Strip original_order_id when it's the order number, not a Shopify GID.
           // The tool auto-finds the correct fulfilled order when this is omitted
           if (toolUse.input.original_order_id && !String(toolUse.input.original_order_id).includes('gid://')) {
             delete toolUse.input.original_order_id;
@@ -383,8 +389,6 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
       { role: 'assistant', content: response.content },
       { role: 'user', content: toolResultMessages },
     ];
-
-    if (response.stop_reason === 'end_turn') continue;
   }
 
   _t.total_ms = Date.now() - _t.start;
@@ -448,7 +452,6 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
 
   const { getSupabaseClient } = require('../../shared/supabaseClient');
   const supabase = getSupabaseClient();
-  const client = getAnthropic();
 
   // Verify diagnostic table exists
   try {
@@ -585,4 +588,4 @@ Respond as JSON: { "tool_selection": { "rating": "...", "direction": "...", "not
   }
 }
 
-module.exports = { operatorAgent, stripAutoConfirm };
+module.exports = { operatorAgent, stripAutoConfirm, buildSystemPrompt };
