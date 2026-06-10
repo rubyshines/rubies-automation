@@ -1546,10 +1546,14 @@ function renderActionPanel(draft) {
 
     input.value = '';
     input.placeholder = 'Continue (e.g. "confirm", "cancel")...';
-    // Show quick-reply buttons if awaiting confirmation
+    // Show quick-reply buttons if awaiting confirmation. The server-computed
+    // chat_pending_preview flag is authoritative (it survives Q&A turns and
+    // matches what the live stream path showed); the regex heuristics only
+    // cover scratchpads saved before the flag existed.
     const chatResponse = draft.action_result?.chat_response || '';
-    if ((chatResponse && isConfirmationPrompt(chatResponse)) ||
-        hasAwaitingConfirmation(draft.action_result?.chat_tool_results)) {
+    const pending = draft.action_result?.chat_pending_preview
+      ?? hasAwaitingConfirmation(draft.action_result?.chat_tool_results);
+    if (pending || (chatResponse && isConfirmationPrompt(chatResponse))) {
       renderQuickReplies(messagesEl, ['Yes, confirm', 'No, cancel'], { inputEl: input, onSend: sendActionMessage });
     }
     return;
@@ -2045,8 +2049,12 @@ async function runChatTurn({
         appendChatMessage(containerEl, 'assistant', finalResult.response);
       }
       if (finalResult.links?.length) renderActionLinks(containerEl, finalResult.links);
-      if ((finalResult.response && isConfirmationPrompt(finalResult.response)) ||
-          hasAwaitingConfirmation(finalResult.tool_results)) {
+      // Server-computed pending_preview is authoritative when present (action
+      // chat); the regex heuristics remain for endpoints that don't send it
+      // (ad hoc console) and pre-flag responses.
+      const pending = finalResult.pending_preview
+        ?? hasAwaitingConfirmation(finalResult.tool_results);
+      if (pending || (finalResult.response && isConfirmationPrompt(finalResult.response))) {
         renderQuickReplies(containerEl, ['Yes, confirm', 'No, cancel'], { inputEl, onSend });
       }
       nextHistory = finalResult.history || nextHistory;

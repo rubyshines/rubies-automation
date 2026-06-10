@@ -6,7 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { unionTicketActions } = require('../dashboard/server');
+const { unionTicketActions, resolveChatPendingPreview } = require('../dashboard/server');
 const { buildSystemPrompt } = require('../lib/operatorAgent');
 
 function ctx(overrides = {}) {
@@ -45,6 +45,56 @@ test('unionTicketActions: entries without executed_at sort first, not dropped', 
     { actions: [{ action_type: 'warehouse_hold' }] },
   ]);
   assert.deepEqual(union.map(a => a.action_type), ['warehouse_hold', 'exchange']);
+});
+
+// --- resolveChatPendingPreview (Yes/No confirm-button state) -------------------
+
+const previewResult = { tool: 'create_exchange_order', result: 'Draft created — Awaiting Confirmation' };
+const noteResult = { tool: 'add_order_note', result: 'Note added to order #12345.' };
+const lookupResult = { tool: 'lookup_customer', result: 'Found customer.' };
+
+test('pending: a write-tool preview this turn sets pending', () => {
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [previewResult], completing: false, userMessage: 'exchange the AJ', prevPending: false,
+  }), true);
+});
+
+test('pending: completion + simultaneous new preview stays pending (mid-flow note)', () => {
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [noteResult, previewResult], completing: true, userMessage: 'note it and exchange', prevPending: false,
+  }), true);
+});
+
+test('pending: a completing write with no new preview settles it', () => {
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [{ tool: 'create_exchange_order', result: 'Exchange order #54321 created.' }],
+    completing: true, userMessage: 'yes confirm', prevPending: true,
+  }), false);
+});
+
+test('pending: prose-only Q&A turn carries the previous pending state', () => {
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [], completing: false, userMessage: 'does that keep her address?', prevPending: true,
+  }), true);
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [lookupResult], completing: false, userMessage: 'what is her LTV?', prevPending: false,
+  }), false);
+});
+
+test('pending: the quick-reply cancel click settles it', () => {
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [], completing: false, userMessage: 'no, cancel', prevPending: true,
+  }), false);
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [], completing: false, userMessage: 'No cancel', prevPending: true,
+  }), false);
+});
+
+test('pending: awaiting-confirmation phrase on a read-only tool does not count', () => {
+  assert.equal(resolveChatPendingPreview({
+    toolResults: [{ tool: 'lookup_customer', result: 'order is awaiting confirmation from carrier' }],
+    completing: false, userMessage: 'check the order', prevPending: false,
+  }), false);
 });
 
 // --- buildSystemPrompt: completed actions across turns -------------------------

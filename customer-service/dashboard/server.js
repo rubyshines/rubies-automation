@@ -1499,22 +1499,6 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   // Extract Shopify admin links from tool results before saving
   result.links = extractActionLinks(result.tool_results);
 
-  // Update draft with in-progress action chat (the bottom panel renders this
-  // until the action completes; on completion we file the entry into `actions`
-  // and clear this scratchpad so the panel returns to idle).
-  // Drop any stale execute_send badge — the operator is now engaging the ticket
-  // manually, so the "needs review" flag from a held one-click run no longer applies.
-  const { execute_send: _staleBadge, ...prevResult } = draft.action_result || {};
-  const updates = {
-    action_result: {
-      ...prevResult,
-      chat_tool_results: result.tool_results,
-      chat_history: result.history,
-      chat_response: result.response,
-      chat_links: dedupeLinks([...(prevResult.chat_links || []), ...result.links]),
-    },
-  };
-
   // Detect if a completing action was performed.
   // CRITICAL: phase-1 previews include words like "Created" (e.g. "**Exchange Draft
   // Order Created — Awaiting Confirmation**") so we must exclude any tool result
@@ -1540,6 +1524,36 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
     }
     return true;
   });
+
+  // Single source of truth for the dashboard's Yes/No confirm buttons. The two
+  // client render paths (live stream finalize, panel re-render from scratchpad)
+  // used to apply separate regex heuristics over different snapshots and could
+  // disagree — buttons appearing on the stream then vanishing on the reload.
+  const { execute_send: _staleBadge, ...prevResult } = draft.action_result || {};
+  const pendingPreview = resolveChatPendingPreview({
+    toolResults: result.tool_results,
+    completing: !!completingTool,
+    userMessage,
+    prevPending: prevResult.chat_pending_preview === true,
+  });
+  result.pending_preview = pendingPreview;
+
+  // Update draft with in-progress action chat (the bottom panel renders this
+  // until the action completes; on completion we file the entry into `actions`
+  // and clear this scratchpad so the panel returns to idle).
+  // Drop any stale execute_send badge — the operator is now engaging the ticket
+  // manually, so the "needs review" flag from a held one-click run no longer applies.
+  const updates = {
+    action_result: {
+      ...prevResult,
+      chat_tool_results: result.tool_results,
+      chat_history: result.history,
+      chat_response: result.response,
+      chat_links: dedupeLinks([...(prevResult.chat_links || []), ...result.links]),
+      chat_pending_preview: pendingPreview,
+    },
+  };
+
   if (completingTool) {
     const now = new Date().toISOString();
     const entry = {
@@ -1556,7 +1570,10 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
     updates.actions = [...(Array.isArray(draft.actions) ? draft.actions : []), entry];
     // Clear the in-progress chat scratchpad — the action is now filed in the
     // timeline and the bottom panel should return to idle for the next action.
-    updates.action_result = null;
+    // EXCEPT when the same turn ALSO staged a new awaiting-confirmation preview
+    // (e.g. add_order_note alongside an exchange preview): wiping then would
+    // strand the pending phase 1 and make the confirm buttons vanish on reload.
+    if (!pendingPreview) updates.action_result = null;
     if (!draft.action_executed_at) {
       updates.action_executed_at = now;
       updates.advisor_status = 'ready';
@@ -1566,6 +1583,23 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   await supabase.from('cs_ai_drafts').update(updates).eq('id', draftId);
 
   return result;
+}
+
+// Decide whether the action chat is awaiting a Yes/No confirmation after this
+// turn. Pure; exported for tests.
+// - A write-tool preview saying "awaiting confirmation" this turn → pending,
+//   even if another write completed in the same turn.
+// - A completing write (phase 2 ran) or an explicit cancel click (the quick-reply
+//   button sends the literal "no, cancel") settles the preview → not pending.
+// - Otherwise (lookups, Q&A prose) the previous state carries over, so asking a
+//   clarifying question mid-preview doesn't make the confirm buttons vanish.
+function resolveChatPendingPreview({ toolResults, completing, userMessage, prevPending }) {
+  const previewedThisTurn = (toolResults || []).some(tr =>
+    WRITE_TOOLS.has(tr.tool) && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result));
+  if (previewedThisTurn) return true;
+  if (completing) return false;
+  if (/^no,?\s*cancel/i.test((userMessage || '').trim())) return false;
+  return prevPending === true;
 }
 
 // Resolve the draft an operator action should anchor onto. Prefer the ticket's
@@ -1605,6 +1639,12 @@ async function apiActionChatNoDraft(ticketId, body, { onStream } = {}) {
   };
   const result = await operatorAgent(body.message, context, body.history || [], onStream);
   result.links = extractActionLinks(result.tool_results);
+  // No draft row to persist pending state on — compute it for this turn only so
+  // the client's confirm buttons still key off the same server-side signal.
+  result.pending_preview = resolveChatPendingPreview({
+    toolResults: result.tool_results, completing: false,
+    userMessage: body.message, prevPending: false,
+  });
   return result;
 }
 
@@ -3061,7 +3101,7 @@ async function handleRequest(req, res) {
             ? await apiActionChat(draftId, body, { onStream: sendEvent, signal: abortCtrl.signal })
             : await apiActionChatNoDraft(ticketId, body, { onStream: sendEvent, signal: abortCtrl.signal });
           console.log(`[action-chat-stream] DONE elapsed=${Date.now()-_streamStart}ms`);
-          sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history });
+          sendEvent({ type: 'complete', response: result.response, tool_results: result.tool_results, links: result.links, history: result.history, pending_preview: result.pending_preview });
         } catch (err) {
           console.error(`[action-chat-stream] ERROR elapsed=${Date.now()-_streamStart}ms`, err.message, err.stack);
           if (!abortCtrl.signal.aborted) sendEvent({ type: 'error', message: err.message });
@@ -3180,4 +3220,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions };
+module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, resolveChatPendingPreview };
