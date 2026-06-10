@@ -77,6 +77,19 @@ If Jamie says memory is drifting or you notice structural issues, re-read this s
 
 **Why:** Jamie spent significant time organizing memory in April 2026 because it had drifted badly — 30 ghost file references, no initiative tracking, vague instructions that led to inconsistent reading/writing. The system works when the rules are followed precisely.
 
+## Session permission mode: Auto mode for cowork (2026-06-10 saga)
+
+In the VS Code extension, the UI mode selector (shift+tab) OUTRANKS all permission allow
+rules. "Ask before edits" and "Plan mode" prompt for every file edit by design — no settings
+file, allowlist rule, or symlink change can override them. Jamie's setup already has wide
+Edit/Write/Bash allow rules at user scope; they only take effect in Auto mode (or Edit
+automatically).
+
+**How to apply:** If Jamie reports repeated permission prompts, check the MODE first (one
+glance at the selector) before touching any configuration. A night was spent on symlinks,
+allowlist syntax, and directory moves when the answer was the mode selector. Diagnose with
+ground truth (/permissions panel, ~/.claude/settings.json) before iterating.
+
 ## Follow the chain for CSS fixes
 
 Trace the full CSS ancestor chain before writing any fix. Don't patch the symptom — find the broken link.
