@@ -759,10 +759,26 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const initialActions = autoHoldAction ? [autoHoldAction] : [];
   const nowIso = new Date().toISOString();
 
+  // Auto-send shadow phase (#4): mark drafts that WOULD have auto-sent so the
+  // dry run is auditable (Closed-tab filter + digest line) before any category
+  // goes live. Gated by system_flags (master `autosend_shadow` + per-category
+  // allowlist); the never-list is hardcoded in the gate. Nothing is sent.
+  let autosendShadow = { eligible: false };
+  try {
+    const { shouldShadowMark } = require('../lib/autosendGate');
+    autosendShadow = await shouldShadowMark({ structured, draftResponse, messageType, confidence });
+    if (autosendShadow.eligible) {
+      console.log(`[intake] Ticket ${ticketId} draft marked autosend_shadow (${autosendShadow.reason})`);
+    }
+  } catch (e) {
+    console.warn(`[intake] autosend gate error (ignored): ${e.message}`);
+  }
+
   // Insert draft — save advisor result verbatim, no post-processing
   const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
     .insert({
+      ...(autosendShadow.eligible ? { auto_close_path: 'autosend_shadow' } : {}),
       ticket_id: ticketRow.id,
       gorgias_ticket_id: ticketId,
       gorgias_message_id: latestCustomerMsgId,
