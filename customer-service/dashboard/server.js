@@ -830,6 +830,17 @@ async function apiDeleteDraft(id, body = {}) {
     await supabase.from('cs_tickets')
       .update({ status: 'closed', updated_at: now, closed_at: now, active_draft_id: null })
       .eq('id', draft.ticket_id);
+    // Same note-lifecycle hook as updateTicketStatus — this branch closes
+    // never-sent outbound tickets directly by id. Fail-soft.
+    try {
+      const { data: t } = await supabase.from('cs_tickets')
+        .select('id, order_number').eq('id', draft.ticket_id).maybeSingle();
+      if (t?.order_number) {
+        await resolveOnTicketClose({ supabase, orderNumber: t.order_number, csTicketId: t.id });
+      }
+    } catch (err) {
+      console.warn(`[noteLifecycle] close hook failed for ticket ${draft.ticket_id}: ${err.message}`);
+    }
   }
 
   return { success: true };

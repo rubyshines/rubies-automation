@@ -104,7 +104,10 @@ async function markOutreachSent({ supabase = getSupabaseClient(), orderNumber, c
 
 /**
  * Event hook for ticket close. Call when a ticket linked to an order is
- * closed. Resolves an open outreach note for that order.
+ * closed. Resolves an open outreach note for that order — but only when NO
+ * other ticket for the order is still active (e.g. a superseded draft gets
+ * deleted while the live outreach conversation is still awaiting the
+ * customer; the note must survive until that one closes too).
  */
 async function resolveOnTicketClose({ supabase = getSupabaseClient(), orderNumber, csTicketId } = {}) {
   const orderNum = cleanOrderNumber(orderNumber);
@@ -112,6 +115,13 @@ async function resolveOnTicketClose({ supabase = getSupabaseClient(), orderNumbe
 
   const latest = (await fetchLatestNotes(supabase, [orderNum])).get(orderNum);
   if (!latest || latest.resolved || !isOutreachNote(latest)) return { resolved: false };
+
+  const { data: tickets, error: tErr } = await supabase
+    .from('cs_tickets')
+    .select('id, status')
+    .eq('order_number', String(orderNum));
+  if (tErr) throw new Error(`cs_tickets fetch: ${tErr.message}`);
+  if ((tickets || []).some(t => t.status !== 'closed')) return { resolved: false };
 
   await insertNote(
     supabase,

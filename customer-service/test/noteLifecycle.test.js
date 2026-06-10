@@ -126,6 +126,19 @@ test('resolveOnTicketClose: resolves an open outreach-sent note', async () => {
   assert.equal(row.author, 'auto');
 });
 
+test('resolveOnTicketClose: skips when another ticket for the order is still active', async () => {
+  const sb = makeStub({
+    notes: [note(31273, 'Address-confirmation outreach drafted (v2) — pending operator review')],
+    tickets: [
+      { id: 1680, order_number: '31273', status: 'closed' },
+      { id: 1681, order_number: '31273', status: 'snoozed' },
+    ],
+  });
+  const result = await resolveOnTicketClose({ supabase: sb, orderNumber: 31273, csTicketId: 1680 });
+  assert.equal(result.resolved, false);
+  assert.equal(sb._inserts.length, 0);
+});
+
 test('resolveOnTicketClose: leaves operator judgment notes alone', async () => {
   const sb = makeStub({ notes: [note(30870, 'Passport shipment mishandled — awaiting reship decision')] });
   const result = await resolveOnTicketClose({ supabase: sb, orderNumber: 30870, csTicketId: 1426 });
