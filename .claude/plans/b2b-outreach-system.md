@@ -479,11 +479,51 @@ Flow: match to `b2b_threads` via `gmail_thread_id` → write inbound `b2b_messag
 Ambiguous replies ("this sounds interesting"): no state change, advisor drafts a response that gently moves toward specifics — advisor judgment, not a mechanical rule.
 Multiple emails before we respond: dedupe — second message updates the existing thread, does not create a second draft. Advisor reads full thread including all messages when generating the response.
 
-**Trigger 3 — Cadence trigger (detail to complete in next session)**
-Time-based conditions checked by the daily 6am sweep. Conditions already defined per message type (reorder_nudge at ~90d, community_checkin at seasonal moments, affiliate reactivation at ~3mo no code usage, etc.). Need to specify: exact SQL conditions per message type, how `next_action_date` is written after each send, and how snoozed contacts re-enter the cadence.
+**Trigger 3 — Cadence trigger ✓ DRAFTED 2026-06-10 (mechanical derivation of locked
+cadences — Jamie to skim, not re-decide)**
 
-**Trigger 4 — Signal trigger (detail to complete in next session)**
-Event-based, fires outside the daily sweep. Signals already defined: new product published → new_collection; delivery confirmed + 5 biz days → post_samples_checkin; sales spike/drop → performance_checkin; pending restock SKU back in stock → reorder_nudge enriched. Need to specify: which Shopify webhooks / events drive each signal, how signals are detected and routed to the correct company's draft generation.
+The daily 6am sweep evaluates, per company, the highest-priority due condition and generates
+at most ONE draft (locked #3: one active draft per company). All conditions additionally
+require: state not `lost`, no pending draft, `contact_unknown` not flagged, and
+`snoozed_until` (nullable column on b2b_companies) either null or past — a snoozed company
+re-enters the cadence naturally on the first sweep after its snooze lapses.
+
+| Message type | Due condition (sweep SQL shape) |
+|---|---|
+| post_samples_checkin | `samples_delivered_at IS NOT NULL AND business_days_since(samples_delivered_at) >= 5 AND no prior post_samples_checkin in thread` (fallback: 10 calendar days after samples_shipped_at when no delivery event) |
+| sample_feedback_request | prior post_samples_checkin got an inbound reply ≥21d ago AND state still `in_contact` (no order/enrollment) AND no prior sample_feedback_request |
+| first_order_checkin | retailer order_count = 1 AND first order delivered ≥21d AND ≤45d AND no prior first_order_checkin |
+| reorder_nudge | retailer `active`, last_order_at ≤ now()−90d |
+| reactivation | retailer `dormant` (≥180d no order) AND no new_collection draft generated since dormancy began |
+| community_checkin | org `active`, last outbound touch ≥180d, AND current date inside a seasonal window (Pride Mar 1–Jun 30; back-to-school Aug 1–Sep 15; year-end Nov 1–Dec 31). Giveaway-only orgs: ≥330d + seasonal window |
+| purchase_pitch | org signalled purchase interest (program_flag candidate or thread marker) AND ≥30d since signal with no order; OR org has purchased before AND ≥330d since last purchase (annual funding cycles) |
+| affiliate_invite | org `active` in ≥1 program, affiliate flag off, ≥60d since relationship became active |
+| content_prompt | affiliate `active`, ≥30d since last content_prompt |
+| performance_checkin (cadence form) | affiliate `active`, ≥30d since last performance_checkin |
+| affiliate_reactivation | affiliate `dormant` (≥90d no attributed sales) |
+
+**next_action_date writing:** set at send time by the send tool, per type: reorder_nudge →
++90d; community_checkin → +180d; content_prompt/performance_checkin → +30d; intro/pitch types
+→ +7d (follow-up nudge window, Tier 5 if passed unanswered); reactivation types → +180d.
+A reply always recomputes (Tier 1 supersedes any next_action_date). The sweep treats
+next_action_date as the cheap pre-filter (`next_action_date <= today`) before evaluating the
+full per-type conditions above.
+
+**Trigger 4 — Signal trigger ✓ DRAFTED 2026-06-10 (mechanical — Jamie to skim)**
+
+Event-driven, outside the sweep. Routing rule: every signal resolves to a set of company_ids,
+then per company the same one-draft rule applies (signal draft replaces a pending
+lower-tier draft).
+
+| Signal | Source | Routing |
+|---|---|---|
+| New product published | existing Shopify product webhook (webhooks/server.js already receives products) → on `published` transition | active retailers with category fit (advisor cross-references order history) + dormant retailers → new_collection draft |
+| Samples delivered | existing Shopify fulfillment-event sync (nightly) populates samples_delivered_at | starts the post_samples_checkin clock (consumed by sweep — no immediate draft) |
+| First-order / reorder delivered | same fulfillment-event sync | starts first_order_checkin clock |
+| Restock of flagged SKU | nightly inventory sync: SKU back in stock AND any b2b_companies.pending_demand_skus contains it | enriches the next reorder_nudge (Tier 3→2 promotion); no standalone draft |
+| Affiliate sales spike/drop | weekly GoAffPro/attribution check: ±50% vs trailing 4-week mean | performance_checkin draft (Tier 2) |
+| Reply received | Gmail Pub/Sub (Trigger 2 — already locked) | immediate, Tier 1 |
+| Pricing change scheduled | manual flag set when pricing initiative fixes a date (system_flags or config) | price_change_notice drafts for all active retailers (batch event — the "20 ready, 3 need review" UX from locked #13) |
 
 ### Design #4 — Dashboard surface
 
@@ -518,12 +558,39 @@ A fresh partners@ would start with zero sender reputation (deliverability risk) 
 plumbing for no relationship gain. Jamie's inbox is the transport, not the workspace — the
 engine reads and routes replies into the queue. Revisit only if volume outgrows the name.
 
-Still to define:
-- New `send_b2b_email` MCP tool spec: inputs, threading params, what it writes back to Supabase
-- Thread table schema: `b2b_threads` (per-topic conversation) and `b2b_messages` (per email, both directions)
-- Reply correlation: Gmail Pub/Sub webhook → `gmail_thread_id` match → state transition
-- Two-phase confirm for send (same pattern as CS — "here's the draft, confirm to send")
-- What happens when a thread has multiple topics with the same contact? (separate threads per topic)
+**Send-flow spec ✓ DRAFTED 2026-06-10 (mechanical — Jamie to skim):**
+
+- **`send_b2b_email` MCP tool** (agent-agnostic, two-phase like every order tool):
+  - Phase 1 (no `confirmed`): inputs `{ company_id, thread_id?, message_type, variant_id?,
+    subject?, body }` → returns rendered preview (resolved recipient from b2b_contacts
+    primary, falls back to general_email; subject derived from thread if replying). No send.
+  - Phase 2 (`confirmed: true`): sends via Gmail API as jamie@rubyshines.com (proper
+    `In-Reply-To`/`References` headers when thread_id present) → writes `b2b_messages` row →
+    updates `b2b_drafts.status='sent'`, `b2b_companies.last_outbound_at`, `next_action_date`
+    (per Trigger-3 table) → returns gmail ids.
+- **Schemas:**
+  - `b2b_threads`: id, company_id, thread_type (intro/order/program/support), subject,
+    gmail_thread_id UNIQUE, status (open/closed), created_at, last_message_at.
+  - `b2b_messages`: id, thread_id, company_id, direction (outbound/inbound), message_type,
+    variant_id, gmail_message_id UNIQUE, in_reply_to, sent_at, from_email, to_email,
+    body_text, created_at. The UNIQUE gmail_message_id is the idempotency key (Pub/Sub is
+    at-least-once).
+- **DRAFT-CHECKPOINT DEDUPE (hard requirement from b2b-historical-findings.md):**
+  `b2b_messages` outbound rows are written ONLY by `send_b2b_email` at send time — NEVER
+  synced from the Gmail Sent folder. (Gmail auto-save persists draft checkpoints that look
+  like multiple sent messages — one historical thread showed 64 "sent" rows for ~4 real
+  sends; any sync-based approach poisons reply-rate metrics and A/B data.) Manual
+  out-of-band sends by Jamie are reconciled by the reply-correlation path only (a thread
+  whose latest inbound references an unknown outbound gets a placeholder outbound row,
+  flagged `manual_send`).
+- **Reply correlation:** Gmail Pub/Sub → sender match against b2b_contacts.email +
+  b2b_companies.general_email → gmail_thread_id match to b2b_threads (fallback: create
+  thread if sender known but thread new) → insert inbound b2b_messages (idempotent) →
+  classifier tags reply intent + checks for inbound-order shape (known B2B sender + line-item
+  content → route as inbound order with parse_wholesale_input prefill, Tier 1) → state
+  transition if warranted → advisor drafts next message → queue Tier 1.
+- **Multiple topics, same contact:** separate `b2b_threads` per topic (thread_type); new
+  topic = new email thread (fresh subject), never buried in an old thread.
 
 **Inbound order handling (added 2026-05-29):**
 Retailers send orders by email or by pasting a PDF/email into the operator. Currently Jamie routes these manually through the ad-hoc operator console using `parse_wholesale_input` + `create_wholesale_order`. In the B2B system this should be first-class.
