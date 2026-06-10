@@ -325,6 +325,45 @@ day 1-2 and finish on their own; auto-send flips live only when its data says so
   garbled-draft repro in flight — address-regex theory eliminated by experiment; awaiting
   live artifact. Branch unmerged until resolved + cowork.
 
+## OUTREACH ENGINE BUILD — active build order (started 2026-06-10 evening)
+
+Design is COMPLETE (b2b-outreach-system.md — all locked/drafted; prompts draft + Jamie's
+answers in b2b-advisor-prompts-draft.md). Build autonomously on `sprint/outreach` worktree
+(~/Code/rubies-repo/worktrees/outreach). On session reopen: continue from the first unchecked
+item. Tests green before every commit. NO emails sent by anything built here until a cowork
+go-live — the send tool's phase-2 stays behind a `b2b_send_enabled` system flag DEFAULTING
+OFF, hard-checked in code.
+
+- [ ] 1. Schemas: extend gmail-management/b2b-schema.sql (or new b2b-outreach-schema.sql):
+      b2b_threads, b2b_messages, b2b_drafts (cols per SSOT Design #3+#6 specs), b2b_companies
+      additions (entity_type, general_email, snoozed_until, next_action_date,
+      last_outbound_at, pending_demand_skus, program_flags, samples_* fields,
+      contact_unknown). SQL file for Jamie to run; code fail-soft until then.
+- [ ] 2. lib: outreach/cadence.js — pure due-condition evaluators per Trigger-3 table +
+      next_action_date writer (unit tests per type).
+- [ ] 3. send tool: customer-service/lib/tools/sendB2bEmail.js — two-phase per Design #6
+      spec; Gmail API send as jamie@ (reuse gmail-management auth); writes b2b_messages/
+      drafts/company fields. PHASE 2 GATED on b2b_send_enabled flag (default off) — preview
+      always works. Register in operator console tools + MCP server. Tests (stub Gmail).
+- [ ] 4. Reply correlation: extend Gmail Pub/Sub path — sender ∈ b2b_contacts/general_email
+      → thread match → inbound b2b_messages (idempotent gmail_message_id) → classifier tag
+      (incl. inbound-order shape) → b2b_drafts regeneration hook. Concurrency-safe per
+      technical rules.
+- [ ] 5. Queue: lib/outreach/queue.js — 6-tier computation per locked decision #6; daily 6am
+      sweep job (new Railway-ready script, NOT wired into daily-sync — outreach has its own
+      clock); operator console MCP tool b2b_queue ("show me today's followups").
+- [ ] 6. Advisors: wire b2b_sales_advisor + b2b_community_advisor from the prompts draft
+      (+ Jamie's answers addendum) — aiClient components b2b_sales_advisor /
+      b2b_community_advisor, draft+steer pattern, output schema mirroring CS advisor's
+      enforced-schema approach. Drafts land in b2b_drafts, NEVER auto-sent.
+- [ ] 7. Phase-1 seed run (drafts only, send flag off): generate intro/checkin drafts for
+      the warm list (17 partners + backfilled orgs + active retailers due a touch) for
+      Jamie's first review session.
+- [ ] 8. Variant tracking: variant_id on drafts/messages (locked #15) — plumbing only, A/B
+      analysis later.
+Deferred to cowork: dashboard queue panel (Design #4 stays MCP-console-first per locked #4),
+go-live flag flip, Design #9 rename.
+
 ## Workstreams
 
 | WS | Branch | Content | Tier |
