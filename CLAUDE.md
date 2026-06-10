@@ -96,8 +96,8 @@ See domain files in MEMORY.md for systems detail. Deployment: Railway (scheduled
   1. Read `feedback_collaboration.md` and `feedback_technical_rules.md`
   2. Scan MEMORY.md domain map — match user's request to domain keyword(s). If no domain matches, scan initiative list for keyword match.
   3. Read matched `domain_*.md` file(s) BEFORE exploring code
-  4. Check for active `project_*.md` and `initiative_*.md` in that domain (use `domains` field in initiative frontmatter). If any initiative has `last_updated` >30 days old and is contextually relevant, flag to Jamie.
-  5. Scan `parked.md` for items whose `Domains` tag matches the matched domain(s), or whose title/notes keyword-match the request. Flag total count if >50 and stale count (items with `Last touched` >90 days).
+  4. Check MEMORY.md Active Projects for any in the matched domain — note their names but do NOT read the project file unless actively executing that project this session. For `initiative_*.md` in the matched domain, read if directly relevant; flag any with `last_updated` >30 days.
+  5. Scan `parked.md` headers only — grep for `## ` titles and their `- Domains:` line to find domain-matching items. Do NOT load the full file at orient. Report count of matching items; flag total if >50 and stale count (`Last touched` >90 days). Only read full parked entries when actively working on one.
   6. Validate: verify all MEMORY.md linked files exist and domain Key Files paths exist. Flag any broken links to Jamie immediately.
   7. Only go to code for specifics memory doesn't cover. Never launch exploration agents for things already documented in memory.
 - **Memory Protocol — writing (after completing work):**

@@ -43,6 +43,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **Domain dedup:** Merge sources if domain already exists, don't duplicate.
 - **Shipping speed driven by Shopify shipping method title.** All order-creation tools (`create_order`, `create_exchange_order`, `create_invoice_order`, `create_wholesale_order`) take `shipping_speed: 'standard' | 'expedited'`. The Shopify shipping line title is set via `getShippingMethodTitle(country, speed)` (in `orderUtils.js`) at price `$0.00` — Warehance auto-maps the title to the correct carrier (US Standard / US Expedited / Passport DDP / Passport DDU / Fedex). No FedEx tags. Wholesale defaults: standard for US, expedited for non-US (preserves the prior "non-US wholesale = FedEx" rule). Post-creation `update_shipping_speed` is fully programmatic: US standard ↔ US Expedited; non-US standard maps zone → Passport DDP (Canada / DDP) or Passport DDU (DDU / unknown); non-US expedited → Fedex. Incoterms is implicit in the Passport method name and handled automatically by Warehance for Fedex orders.
 
+- **`pre_increase_pricing` flag on `create_wholesale_order`:** When set, per-line prices use `price_history.previous_price` from the Apr 16 2026 rollout row × country discount, instead of current retail. SKUs without an Apr 16 row fall back to current retail silently. No draft-level `appliedDiscount` when flag is on — discount is baked into per-line prices. When all partners have transitioned to current pricing, remove the flag (park a cleanup entry at that time).
+
 ## What's Next
 
 - Outreach tracking (contacted status, response tracking)

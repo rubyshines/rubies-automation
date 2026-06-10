@@ -34,11 +34,6 @@
 
 ## Active Projects
 - [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, Sonnet+thinking shadow eval pulled 2026-04-30 (not viable)
-- [Structured Output Consistency](project_structured_output_consistency.md) — catch advisor drafts where prose claims action but structured fields don't (Phase 1 prompt + Phase 2 holdout visibility done, Phase 3 steer-aware scenario assertions next)
-- [Ad Hoc Operator Console](project_adhoc_operator.md) — ad-hoc Opus operator console with all RUBIES tools, dashboard top-nav (desktop) + bottom-nav (mobile)
-- [Wholesale pre-increase pricing flag](project_wholesale_pre_increase_pricing.md) — `pre_increase_pricing: true` on `create_wholesale_order` to invoice transitional retailers at pre-Apr-16 retail × wholesale discount
-- [Reduce CS Time Per Ticket](project_reduce_cs_time_per_ticket.md) — close measurement gaps on operator touch time, surface cumulative per-ticket close time + headline "Time on CS today" KPI, foundation for follow-on optimizations under CS Automation
-- [Execute & Send](project_execute_and_send.md) — one-click background button that runs the operator action (auto-confirming phase 2 when nothing diverges) and sends the draft; Phase 0 removes the manufactured refund-amount divergence
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system

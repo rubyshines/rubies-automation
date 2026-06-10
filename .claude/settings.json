@@ -5,7 +5,9 @@
       "WebFetch(domain:lukeplant.me.uk)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:defensivecss.dev)",
-      "Edit(*)"
+      "Edit(*)",
+      "Write(.claude/memory/*)",
+      "Bash(rm .claude/memory/*)"
     ]
   }
 }
