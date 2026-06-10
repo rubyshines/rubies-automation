@@ -4386,23 +4386,34 @@ main { height: calc(100vh - 56px); }
 
   .btn { padding: 9px 14px; }
 
-  /* ── Input Fields ────────────────────────────────────────── */
+  /* ── Input Fields & Conversation Text ────────────────────── */
+  /* 16px everywhere text is read or typed. iOS auto-zooms on focus of any
+     input RENDERED below 16px, and every workaround tried (transform: scale,
+     CSS zoom, focus-time font swapping) either breaks WebKit's textarea
+     caret positioning or visibly flashes. 16px is the iOS-native body size.
+     Don't set any mobile input below 16px, and don't reintroduce scaling. */
 
-  textarea, input[type="text"], input[type="email"], select {
-    font-size: 13px;
+  textarea, input[type="text"], input[type="email"], input[type="search"], select {
+    font-size: 16px;
+  }
+
+  .queue-search input,
+  .steer-input,
+  .action-chat-input {
+    font-size: 16px;
   }
 
   #draft-editor {
+    font-size: 16px;
     padding: 10px 12px;
     min-height: 35vh;
     min-height: 35dvh;
   }
 
-  /* iOS auto-zoom on focus of <16px inputs is handled in JS
-     (preventIOSFocusZoom in app.js) — no transform/zoom scaling here.
-     Both `transform: scale` and CSS `zoom` break WebKit's textarea caret
-     positioning, and iOS's 16px heuristic uses the RENDERED size, so a
-     scaled-down 16px still triggers the zoom. Don't reintroduce scaling. */
+  .msg {
+    font-size: 16px;
+    line-height: 1.5;
+  }
 
   #action-panel {
     padding: 12px;
@@ -4765,7 +4776,7 @@ main { height: calc(100vh - 56px); }
   .adhoc-container.empty .adhoc-empty-hint { font-size: 20px; margin-bottom: 18px; }
   .adhoc-container.empty .adhoc-input-block { margin-top: -32px; }
   .adhoc-input-block .action-chat-input {
-    font-size: 14px;
+    font-size: 16px; /* never below 16px on mobile — iOS focus zoom */
     padding: 10px 14px;
     min-height: 88px;
   }

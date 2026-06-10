@@ -4460,31 +4460,6 @@ function isMobile() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
 
-const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-// iOS auto-zooms the page when an input rendered smaller than 16px gains
-// focus. The decision is made once, at focus time, from the RENDERED font
-// size — so scaling tricks (transform/zoom) don't fool it and they break
-// WebKit's textarea caret positioning. Instead: bump the font to 16px on
-// touchstart (which precedes focus), then restore the stylesheet size once
-// focus has landed. The textarea stays untransformed, so the caret is
-// always where it appears.
-function preventIOSFocusZoom(el) {
-  if (!el || !_isIOS) return;
-  el.addEventListener('touchstart', () => {
-    el.style.fontSize = '16px';
-  }, { passive: true });
-  el.addEventListener('focus', () => {
-    setTimeout(() => { el.style.fontSize = ''; }, 50);
-  });
-  el.addEventListener('blur', () => {
-    el.style.fontSize = '';
-  });
-}
-['draft-editor', 'steer-input', 'action-chat-input', 'adhoc-chat-input']
-  .forEach((id) => preventIOSFocusZoom(document.getElementById(id)));
-
 function autoExpandTextarea(el) {
   if (!el) return;
   el.style.height = 'auto';
