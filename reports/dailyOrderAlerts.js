@@ -51,6 +51,8 @@ function parseArgs() {
       opts.showResolved = true;
     } else if (args[i] === '--shipping-only') {
       opts.shippingOnly = true;
+    } else if (args[i] === '--no-email') {
+      opts.noEmail = true;
     } else if (args[i] === '--json') {
       opts.json = true;
     } else if (['--note', '--resolve', '--unresolve'].includes(args[i]) && args[i + 1] && args[i + 2]) {
@@ -314,9 +316,17 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
 
   // 7. Waiting on Response — unfulfilled orders with operator notes, plus
   // already-shipped orders whose operator note hasn't been resolved yet.
+  // On Me takes precedence: if a ticket for the order is pending_operator,
+  // the ball is with Jamie, not the customer — show it only in On Me.
+  const onMeOrders = new Set(
+    (extra.onMe || [])
+      .map(t => Number(String(t.order_number || '').replace('#', '')))
+      .filter(Boolean),
+  );
+  const notOnMe = r => !onMeOrders.has(Number(r.order.order_number));
   const waitingRows = [
-    ...ufWaiting.map(r => unfulfilledRow(r)),
-    ...(extra.orphanWaiting || []).map(r => unfulfilledRow(r)),
+    ...ufWaiting.filter(notOnMe).map(r => unfulfilledRow(r)),
+    ...(extra.orphanWaiting || []).filter(notOnMe).map(r => unfulfilledRow(r)),
   ];
 
   // 8. Pre-Orders
@@ -694,7 +704,8 @@ async function run() {
   // Email — always send
   const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled });
 
-  const sgMail = getSendgridClient();
+  const sgMail = opts.noEmail ? null : getSendgridClient();
+  if (opts.noEmail) console.log('Email skipped (--no-email)');
   if (sgMail) {
     try {
       await sgMail.send({
