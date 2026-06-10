@@ -32,6 +32,4 @@ scripts/_*.js
 # Claude Code local settings
 .claude/settings.local.json
 .claude/projects/
-.claude/plans
-.claude/plans/
 .ngrok/
