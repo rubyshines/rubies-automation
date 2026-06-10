@@ -107,6 +107,13 @@ const PIPELINES = [
     run: () => require('./lib/advisorEditRate').run(),
   },
   {
+    name: 'Closeness Judge',
+    // Judges recent sent drafts vs what was actually sent (Opus, ~3¢ each,
+    // ~6/day) and computes the trailing-30d substantive-divergence rate — the
+    // quality headline that supersedes raw edit-rate. See lib/judgeDaily.js.
+    run: () => require('./lib/judgeDaily').run(),
+  },
+  {
     name: 'AI Pricing Check',
     // Monthly drift detector (new models + pricing changes). Runs on the 1st
     // only; a no-op the rest of the month so it doesn't add daily cost/noise.
@@ -397,6 +404,32 @@ function buildAdvisorEditRateHtml(results) {
     </div>`;
 }
 
+// Closeness-judge quality line — the substantive-divergence rate over the
+// trailing window (identical+cosmetic = "as good as drafted"). Supersedes raw
+// edit-rate as the quality headline; also surfaces draft_may_be_right cases
+// (the judge thinks the AI draft beat what was sent — review-worthy either way).
+function buildClosenessJudgeHtml(results) {
+  const task = results.find(r => r.name === 'Closeness Judge');
+  const m = task?.result?.sources?.closeness_judge;
+  if (!m || m.skipped || !m.judged) return '';
+  const c = m.counts || {};
+  const breakdown = ['identical', 'cosmetic', 'substantive', 'factual_correction', 'action_divergence']
+    .filter(k => c[k]).map(k => `${c[k]} ${k.replace(/_/g, ' ')}`).join(' · ');
+  const flagged = (m.draft_may_be_right || []);
+  const flaggedHtml = flagged.length
+    ? `<div style="margin-top:4px;color:#7c3aed;">&#9873; ${flagged.length} draft(s) the judge scored better than what was sent — drafts ${flagged.map(f => f.draft_id).join(', ')}</div>`
+    : '';
+  const high = m.high_severity
+    ? ` <span style="color:#b45309;font-weight:bold;">(${m.high_severity} high-severity)</span>`
+    : '';
+  return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
+      Judge (last ${m.window_days}d, ${m.judged} judged): <strong>${m.divergence_rate_pct}%</strong> substantive divergence${high}<br>
+      <span style="color:#9ca3af;">${breakdown} · today: ${m.today?.judged ?? 0} judged${m.today?.failed ? `, ${m.today.failed} failed` : ''}</span>
+      ${flaggedHtml}
+    </div>`;
+}
+
 // Monthly AI pricing/model drift findings (only present on the 1st). Renders a
 // banner of actionable items (new models, rate changes) so a pricing change or
 // a new model to evaluate doesn't slip by unnoticed.
@@ -475,6 +508,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- CS advisor edit-rate (accuracy-drift tripwire) ---
   const advisorEditHtml = buildAdvisorEditRateHtml(results);
 
+  // --- Closeness-judge quality line (substantive divergence) ---
+  const closenessJudgeHtml = buildClosenessJudgeHtml(results);
+
   // --- AI pricing/model drift (monthly, 1st only) ---
   const aiPricingHtml = buildAiPricingHtml(results);
 
@@ -487,6 +523,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${errorsHtml}
       ${aiCostHtml}
       ${advisorEditHtml}
+      ${closenessJudgeHtml}
       ${aiPricingHtml}
 
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
