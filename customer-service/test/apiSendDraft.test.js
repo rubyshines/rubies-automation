@@ -23,6 +23,7 @@ const autoLinkerPath = require.resolve('../lib/autoLinker');
 
 // Mutable test state, reset per test.
 let DRAFT;            // the row returned for cs_ai_drafts select('*')
+let SIBLING_DRAFTS;   // rows returned for cs_ai_drafts select('actions') (ticket-union)
 const captured = {};  // captures writes + gorgias calls
 
 // Chainable Supabase mock. Intermediate methods return the builder (which is
@@ -41,8 +42,9 @@ function makeSupabase() {
       limit() { return b; },
       single() { return Promise.resolve(resolveRead(state)); },
       maybeSingle() { return Promise.resolve(resolveRead(state)); },
-      // Thenable: update/insert chains are awaited directly.
-      then(onF, onR) { return Promise.resolve({ data: null, error: null }).then(onF, onR); },
+      // Thenable: update/insert chains and multi-row selects are awaited
+      // directly; reads resolve through resolveRead (default {data: null}).
+      then(onF, onR) { return Promise.resolve(resolveRead(state)).then(onF, onR); },
     };
     return b;
   }
@@ -54,6 +56,8 @@ function resolveRead(state) {
   switch (key) {
     case 'cs_ai_drafts:*':
       return { data: DRAFT, error: null };
+    case 'cs_ai_drafts:actions':
+      return { data: SIBLING_DRAFTS, error: null };
     case 'cs_ai_drafts:draft_response':
       return { data: { draft_response: DRAFT.draft_response }, error: null };
     case 'cs_tickets:conversation_history':
@@ -95,6 +99,7 @@ const { apiSendDraft } = require('../dashboard/server');
 
 beforeEach(() => {
   for (const k of Object.keys(captured)) delete captured[k];
+  SIBLING_DRAFTS = null;
   DRAFT = {
     id: 1106,
     gorgias_ticket_id: 555,
@@ -140,5 +145,68 @@ describe('apiSendDraft — identity binding', () => {
   it('sends the stored draft_response when no override body is provided', async () => {
     await apiSendDraft(1106, { after: 'snooze' });
     assert.equal(captured.replies[0].payload.body_text, 'Hi, original advisor draft text.');
+  });
+});
+
+describe('apiSendDraft — unexecuted-action guard', () => {
+  it('blocks a send whose proposed action_type has no executed action filed', async () => {
+    DRAFT.action_type = 'order_modification';
+    DRAFT.actions = [];
+    await assert.rejects(
+      () => apiSendDraft(1106, { response: 'I have updated your shipping address.', after: 'snooze' }),
+      (err) => err.code === 'unexecuted_action' && err.statusCode === 409,
+    );
+    assert.equal(captured.replies, undefined, 'no Gorgias reply should be posted while the proposal is unexecuted');
+  });
+
+  it('a non-matching executed action (e.g. warehouse_hold) does not satisfy the proposal', async () => {
+    DRAFT.action_type = 'order_modification';
+    DRAFT.actions = [{ action_type: 'warehouse_hold', executed_at: '2026-06-05T02:52:39Z', summary: 'hold placed' }];
+    await assert.rejects(
+      () => apiSendDraft(1106, { response: 'I have updated your shipping address.', after: 'snooze' }),
+      (err) => err.code === 'unexecuted_action',
+    );
+    assert.equal(captured.replies, undefined);
+  });
+
+  it('allows the send once a matching action is filed in actions[]', async () => {
+    DRAFT.action_type = 'order_modification';
+    DRAFT.actions = [{ action_type: 'order_modification', executed_at: '2026-06-10T17:48:28Z', summary: 'address updated' }];
+    const result = await apiSendDraft(1106, { response: 'I have updated your shipping address.', after: 'snooze' });
+    assert.equal(result.success, true);
+    assert.equal(captured.replies.length, 1);
+  });
+
+  it('unions executed actions across the ticket\'s sibling drafts', async () => {
+    DRAFT.action_type = 'refund';
+    DRAFT.actions = [];
+    DRAFT.ticket_id = 42;
+    SIBLING_DRAFTS = [
+      { actions: [] },
+      { actions: [{ action_type: 'refund', executed_at: '2026-06-09T12:00:00Z', summary: 'refunded' }] },
+    ];
+    const result = await apiSendDraft(1106, { response: 'Your refund is on its way.', after: 'snooze' });
+    assert.equal(result.success, true);
+  });
+
+  it('compound proposals require every component (exchange+refund with only exchange executed blocks)', async () => {
+    DRAFT.action_type = 'exchange+refund';
+    DRAFT.actions = [{ action_type: 'exchange', executed_at: '2026-06-09T12:00:00Z', summary: 'exchange created' }];
+    await assert.rejects(
+      () => apiSendDraft(1106, { response: 'Exchange created and refund issued.', after: 'snooze' }),
+      (err) => err.code === 'unexecuted_action',
+    );
+  });
+
+  it('force_unexecuted_action overrides the guard after operator confirmation', async () => {
+    DRAFT.action_type = 'order_modification';
+    DRAFT.actions = [];
+    const result = await apiSendDraft(1106, {
+      response: 'Sending without the edit, on purpose.',
+      after: 'snooze',
+      force_unexecuted_action: true,
+    });
+    assert.equal(result.success, true);
+    assert.equal(captured.replies.length, 1);
   });
 });

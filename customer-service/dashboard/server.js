@@ -267,6 +267,26 @@ async function apiSendDraft(id, body) {
     throw new Error(`Draft ${id} is not pending (status: ${draft.status})`);
   }
 
+  // Send-time guard: draft.action_type is a *proposal* — executions live in
+  // actions[]. Advisor drafts confirm the action in past tense ("I've updated
+  // your address"), so sending while the proposal never executed tells the
+  // customer something happened that didn't. Block unless the operator
+  // explicitly overrides (the client confirms and retries with the flag).
+  if (draft.action_type && !body.force_unexecuted_action) {
+    const executedTypes = await fetchExecutedActionTypes(supabase, draft);
+    const missing = draft.action_type.split('+')
+      .map(t => t.trim())
+      .filter(t => t && !executedTypes.has(t));
+    if (missing.length) {
+      const err = new Error(
+        `Draft proposes "${draft.action_type}" but no matching action has been executed on this ticket — the email may claim something that hasn't happened.`
+      );
+      err.code = 'unexecuted_action';
+      err.statusCode = 409;
+      throw err;
+    }
+  }
+
   const finalResponse = body.response || draft.draft_response;
   const notes = body.notes || null;
 
@@ -1437,6 +1457,22 @@ function unionTicketActions(drafts) {
     .flatMap(d => (Array.isArray(d?.actions) ? d.actions : []))
     .filter(Boolean)
     .sort((x, y) => new Date(x.executed_at || 0) - new Date(y.executed_at || 0));
+}
+
+// Executed action_types across ALL the ticket's drafts (same ticket-level
+// union rule as unionTicketActions — completed work is filed on whichever
+// draft row was active when it executed). Falls back to the draft's own
+// actions[] for drafts without a ticket row.
+async function fetchExecutedActionTypes(supabase, draft) {
+  let drafts = [draft];
+  if (draft.ticket_id) {
+    const { data: siblings } = await supabase
+      .from('cs_ai_drafts')
+      .select('actions')
+      .eq('ticket_id', draft.ticket_id);
+    if (siblings?.length) drafts = siblings;
+  }
+  return new Set(unionTicketActions(drafts).map(a => a.action_type).filter(Boolean));
 }
 
 async function apiActionChat(draftId, body, { onStream, signal } = {}) {
@@ -3169,8 +3205,8 @@ async function handleRequest(req, res) {
     } catch (err) {
       console.error(`[dashboard] API error: ${err.message}\n${err.stack}`);
       if (!res.headersSent) {
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: err.message }));
+        res.writeHead(err.statusCode || 500);
+        res.end(JSON.stringify({ error: err.message, ...(err.code && { code: err.code }) }));
       }
     }
     return;

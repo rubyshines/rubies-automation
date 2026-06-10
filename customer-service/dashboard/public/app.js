@@ -2571,7 +2571,16 @@ function sendDraft(afterAction) {
 
   const label = afterAction === 'close' ? `${ticketRef} — Sent & closed` : afterAction === 'onme' ? `${ticketRef} — Sent & On Me` : `${ticketRef} — Sent & snoozed`;
   executeBackgroundAction(ticketId, label,
-    () => api(endpoint, { method: 'POST', body }),
+    // Server blocks sends whose proposed action was never executed (the email
+    // would claim something that hasn't happened). Confirm with the operator,
+    // then retry with the explicit override; declining restores the draft.
+    () => api(endpoint, { method: 'POST', body }).catch(err => {
+      if (err.code !== 'unexecuted_action') throw err;
+      if (!confirm(`${err.message}\n\nSend anyway?`)) {
+        throw new Error('Send cancelled — proposed action not executed');
+      }
+      return api(endpoint, { method: 'POST', body: { ...body, force_unexecuted_action: true } });
+    }),
     () => {
       // Restore draft to localStorage on failure so it's not lost
       localStorage.setItem(`draft-ticket-${ticketId}`, response);
@@ -3492,7 +3501,11 @@ async function api(url, opts = {}) {
     throw new Error('Session expired');
   }
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    if (data.code) err.code = data.code;
+    throw err;
+  }
   return data;
 }
 
