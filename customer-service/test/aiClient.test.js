@@ -129,10 +129,10 @@ describe('callClaude — token extraction and cost', () => {
     assert.deepEqual(res.tool_calls, []);
     assert.equal(res._ai_call_id, 1);
 
-    // Cost: 1000*15 + 500*75 + 200*1.5 + 100*18.75 per million
-    // = (15000 + 37500 + 300 + 1875) / 1e6 = 54675/1e6 = 0.054675
+    // Cost at corrected Opus rates (2026-06-10): 1000*5 + 500*25 + 200*0.5 + 100*6.25 per million
+    // = (5000 + 12500 + 100 + 625) / 1e6 = 18225/1e6 = 0.018225
     const row = insertedRows[0];
-    assert.equal(row.cost_usd, 0.054675);
+    assert.equal(row.cost_usd, 0.018225);
     assert.equal(row.component, 'cs_advisor');
     assert.equal(row.model_id, MODELS.OPUS);
     assert.equal(row.provider, 'anthropic');
