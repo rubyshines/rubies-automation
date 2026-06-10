@@ -3343,6 +3343,10 @@ async function handleRequest(req, res) {
     const content = fs.readFileSync(fullPath);
     const ext = path.extname(fullPath);
     res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
+    // Without this, Safari heuristically reuses stale JS/CSS (no validators
+    // are sent), and the service worker's fetch() reads that stale HTTP
+    // cache — old app code survives deploys. Force revalidation.
+    res.setHeader('Cache-Control', 'no-cache');
     res.writeHead(200);
     res.end(content);
   } catch {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rubies-care-v1';
+const CACHE_NAME = 'rubies-care-v2'; // bump to evict every client's old asset cache
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {
@@ -22,9 +22,12 @@ self.addEventListener('fetch', (e) => {
   // API calls: network-only (never cache live data)
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) return;
 
-  // App shell: network-first, fall back to cache
+  // App shell: network-first, fall back to cache.
+  // cache: 'no-store' bypasses the browser HTTP cache — plain fetch() reads
+  // it, which resurrects stale JS/CSS Safari cached before the server sent
+  // Cache-Control headers. The SW cache below is the only fallback layer.
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(e.request, { cache: 'no-store' }).then(res => {
       // Update cache with fresh copy
       if (res.ok && e.request.method === 'GET') {
         const clone = res.clone();
