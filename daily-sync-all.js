@@ -131,6 +131,14 @@ const PIPELINES = [
       return require('./scripts/check-ai-pricing').run();
     },
   },
+  {
+    name: 'Bill Reconciliation',
+    // Monthly (1st): pulls ACTUAL billed costs from the Anthropic Admin API
+    // and compares to the ai_calls ledger for the previous month. We retrieve
+    // the bill, we don't recompute it. A missing key or API failure ALARMS in
+    // the digest rather than passing silently. See lib/billReconcile.js.
+    run: () => require('./lib/billReconcile').run(),
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -455,6 +463,30 @@ function buildAutosendShadowHtml(results) {
     </div>`;
 }
 
+// Monthly bill-vs-ledger reconciliation (1st only). Three states: clean match
+// (quiet gray line), drift beyond tolerance (amber alarm), or failure/missing
+// key (red alarm — an unverifiable bill is itself a finding, never silent).
+function buildBillReconcileHtml(results) {
+  const task = results.find(r => r.name === 'Bill Reconciliation');
+  const m = task?.result?.sources?.bill_reconcile;
+  if (!m || m.skipped) return '';
+  if (m.failed) {
+    return `
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:10px 12px;margin:12px 0 0;color:#b91c1c;font-size:12px;">
+      <strong>Bill reconciliation FAILED</strong> — could not verify last month's spend against the Anthropic bill: ${esc(m.error || 'unknown error')}
+    </div>`;
+  }
+  const line = `Bill check (${m.month}): billed <strong>$${m.billed_usd}</strong> vs ledger $${m.ledger_usd} (Δ ${m.delta_pct == null ? 'n/a' : m.delta_pct + '%'})`;
+  if (m.alarm) {
+    return `
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;margin:12px 0 0;color:#b45309;font-size:12px;">
+      <strong>⚠ ${line}</strong> — beyond tolerance; ledger and bill disagree. Investigate untracked calls or rate drift.
+    </div>`;
+  }
+  return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">${line} ✓</div>`;
+}
+
 // Monthly AI pricing/model drift findings (only present on the 1st). Renders a
 // banner of actionable items (new models, rate changes) so a pricing change or
 // a new model to evaluate doesn't slip by unnoticed.
@@ -542,6 +574,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- AI pricing/model drift (monthly, 1st only) ---
   const aiPricingHtml = buildAiPricingHtml(results);
 
+  // --- Monthly bill-vs-ledger reconciliation (1st only) ---
+  const billReconcileHtml = buildBillReconcileHtml(results);
+
   const html = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
       <h2 style="margin-bottom:4px;font-size:18px;">Daily Sync \u2014 ${date}</h2>
@@ -554,6 +589,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${closenessJudgeHtml}
       ${autosendShadowHtml}
       ${aiPricingHtml}
+      ${billReconcileHtml}
 
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-top:16px;">
         <tr style="background:#f9fafb;border-bottom:2px solid #e5e7eb;">
