@@ -1,7 +1,7 @@
 const { scrapeProspect } = require('./scraper');
 const { findContacts } = require('./contactFinder');
 const { analyzeProspect } = require('./analyzer');
-const { scoreProspect, getStatus } = require('./scorer');
+const { scoreProspect, routeStatus } = require('./scorer');
 const { placeDetails } = require('./maps');
 const { normalizeDomain } = require('./dedup');
 const { getProspectByDomain, mergeProspect } = require('./db');
@@ -25,14 +25,22 @@ function preFilter(name) {
 
 // Research a single prospect through the full pipeline.
 // Returns an updated prospect object — does NOT save to DB (caller's responsibility).
-// Options: { model, verbose, mapsApiKey }
-async function researchProspect(prospect, { model, verbose, mapsApiKey } = {}) {
+// Options: { model, verbose, mapsApiKey, skipIfNoContent }
+//   skipIfNoContent: if the scrape fails (or no website is found), return early
+//   with scrape_status='failed' and _skippedNoContent=true instead of running
+//   the AI analysis on empty content. researched_date is NOT set so the row
+//   stays retryable.
+//   skipNamePreFilter: bypass the name-regex pre-filter. Used for rows that
+//   already passed the smarter Haiku pre-filter (prefilter.js), which
+//   deliberately keeps categories the regex would cull (thrift, bookstores)
+//   and wants community orgs fully researched, not pattern-routed.
+async function researchProspect(prospect, { model, verbose, mapsApiKey, skipIfNoContent, skipNamePreFilter } = {}) {
   const result = { ...prospect };
   const _t = { placeDetailsMs: 0, scrapeMs: 0, analyzeMs: 0, scrapeMethod: 'none' };
   let _step;
 
   // ── Pre-filter: skip hotels and community orgs without any API calls ───────
-  const precheck = preFilter(result.company_name);
+  const precheck = skipNamePreFilter ? { skip: false } : preFilter(result.company_name);
   if (precheck.skip) {
     result.status = precheck.status;
     result.is_relevant = precheck.status !== 'community-partner' ? false : null;
@@ -104,6 +112,17 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey } = {}) {
       rawHtmlByPage = scrapeResult.rawHtmlByPage;
       result._scrapedContent = scrapeResult.content;
     }
+  }
+
+  // Early-out for callers that only want prospects with real website content.
+  // Persistable state so far (website, website_domain, scrape_status,
+  // scrape_error, phone) is on the result; researched_date stays unset.
+  if (skipIfNoContent && result.scrape_status === 'failed') {
+    if (verbose) console.log(`[SKIP] No content (${result.scrape_error}) — skipping analysis`);
+    delete result._scrapedContent;
+    result._timings = _t;
+    result._skippedNoContent = true;
+    return result;
   }
 
   // ── Step 4: Contact finder ─────────────────────────────────────────────────
@@ -196,7 +215,7 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey } = {}) {
 
     result.score = score;
     result.score_breakdown = scoreBreakdown;
-    result.status = getStatus(score, analysis.isRelevant, SCORE_THRESHOLD);
+    result.status = routeStatus(analysis, score, SCORE_THRESHOLD);
 
     if (verbose) {
       console.log(`[SCORE]`);
