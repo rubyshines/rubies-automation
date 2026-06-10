@@ -159,6 +159,10 @@ working in the same tree).
 - Worktrees don't carry gitignored files: symlink `.env` and `node_modules` from the main
   checkout (`ln -sf .../rubies-automations/.env <wt>/.env`, `ln -sfn .../node_modules <wt>/node_modules`).
   Verified working 2026-06-10 (780/780 tests pass inside a worktree with symlinks).
+- Default ports are shared state too: a server started from a worktree must use a non-default
+  port (`PORT=3848 node customer-service/dashboard/server.js`) — otherwise the sessions
+  silently replace each other's server and serve the wrong code (hit 2026-06-10: a mobile fix
+  was "still broken" because the other session's main-checkout server had taken port 3847).
 - Sprints additionally use the rollback tag convention: `pre-sprint-<date>` pushed to origin
   before starting — revert main to tag + push = production rollback. Merges happen at
   checkpoints (tests green; live-CS-path changes only with Jamie present).

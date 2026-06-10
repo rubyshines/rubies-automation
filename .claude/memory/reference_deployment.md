@@ -37,7 +37,7 @@ Some cron start commands run `scripts/write-service-account-key.js` first (write
 | MCP server | stdio | `customer-service/server.js` — Claude Code connects via stdio transport |
 | Dashboard | 3847 | `customer-service/dashboard/server.js` — ops UI at localhost:3847. Kill and restart after code changes. |
 
-**Local Mobile Testing (ngrok):** A second ngrok account (separate from personal) has its config at `.ngrok/ngrok.yml` (gitignored). Free tier = dynamic URLs each session. Start with: `ngrok http 3847 --config .ngrok/ngrok.yml`. Note: `.ngrok/` is gitignored, so ripgrep won't find files inside it — check the directory directly.
+**Local Mobile Testing (ngrok):** A second ngrok account (separate from personal) has its config at `.ngrok/ngrok.yml` (gitignored — if missing, the master copy survives in the iCloud repo copy under `~/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/.ngrok/`). That account has the reserved static domain `tahr-large-trivially.ngrok-free.app`, which is registered as an Authorized JavaScript origin on the dashboard's Google OAuth client (project RUBIES Operations) — Google sign-in only works on registered origins, so random free-tier URLs can never log in. Start with: `ngrok http <port> --config .ngrok/ngrok.yml --url tahr-large-trivially.ngrok-free.app`. When serving from a worktree, run the dashboard on a non-default port (`PORT=3848 node customer-service/dashboard/server.js`) so it can't collide with the main checkout's 3847 server, and point ngrok at that port. Note: `.ngrok/` is gitignored, so ripgrep won't find files inside it — check the directory directly.
 
 ## Env Var Management
 
