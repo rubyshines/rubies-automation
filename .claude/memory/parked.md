@@ -186,12 +186,12 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
   create_exchange_order) when an address is needed but the stripped body
   doesn't contain one.
 
-## Delete orphan execute handlers in dashboard server
+## ~~Delete orphan execute handlers in dashboard server~~ — RESOLVED 2026-06-10
 - Parked: 2026-04-26
-- Last touched: 2026-04-26
-- Type: refactor
+- Last touched: 2026-06-10
+- Type: refactor (resolved)
 - Domains: cs
-- Notes: `apiExecuteExchange` (71 lines), `apiExecuteRefund` (56 lines), `apiExecuteEdit` (44 lines) plus 6 route registrations (3 draft-level + 3 ticket-level wrappers) in [customer-service/dashboard/server.js](../../customer-service/dashboard/server.js) — all dead since commit a275135 (April 3, 2026) replaced button-driven execution with the operator-agent action-chat. ~180 lines total. Trap: dead code that looks live (almost wired customer_profile_update through this exact pattern thinking it was the live path).
+- Resolution: Removed in the operator-agent staleness sprint (branch `sprint/operator-agent`): `apiExecuteExchange`/`apiExecuteRefund`/`apiExecuteEdit`, `buildLegacyActionEntry`, all 6 route registrations, plus the client-side legacy stubs and no-op `updateDraftFromActionResults`. ~300 lines total. The "dead code that looks live" trap bit again during the 2026-06-10 review (ticket-level wrappers read as a live path) — it's gone now.
 
 ## Advisor classification overridden by closing-message tone
 - Parked: 2026-04-15
