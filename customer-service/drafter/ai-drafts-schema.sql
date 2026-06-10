@@ -140,6 +140,15 @@ CREATE TABLE IF NOT EXISTS cs_ai_feedback_log (
 -- status: 'new' (unreviewed) | 'addressed' (fix implemented)
 ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS status text DEFAULT 'new';
 
+-- Steer capture (sprint 2026-06): how much steering this send needed.
+-- operator_steer = the final steer text on the sent draft; regen_count = number
+-- of regenerations before send (length of draft_history). Queryable without
+-- joining cs_ai_drafts. action gains two new prefixes alongside sent|edited:
+--   'bypassed_*' — operator manually replied while a pending draft existed
+--   'manual_*'   — operator manually replied with no draft at all
+ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS operator_steer text;
+ALTER TABLE cs_ai_feedback_log ADD COLUMN IF NOT EXISTS regen_count integer;
+
 CREATE INDEX IF NOT EXISTS idx_feedback_action ON cs_ai_feedback_log (action);
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON cs_ai_feedback_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_message_type ON cs_ai_feedback_log (message_type);

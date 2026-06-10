@@ -34,6 +34,7 @@ const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
 const { autoLinkProducts } = require('../lib/autoLinker');
 const { canonicalMessageType } = require('../lib/messageTypes');
+const { buildSendFeedbackRow, buildManualSendFeedbackRow } = require('../lib/feedbackSignals');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // Product config for auto-linking (loaded at startup)
@@ -311,8 +312,6 @@ async function apiSendDraft(id, body) {
     });
   }
 
-  const wasEdited = (draft.draft_response || '').trim() !== finalResponse.trim();
-
   // Update draft
   const draftUpdate = {
     status: 'sent',
@@ -347,19 +346,9 @@ async function apiSendDraft(id, body) {
     if (firstDraft?.draft_response) originalResponse = firstDraft.draft_response;
   }
 
-  const baseAction = wasEdited || originalResponse !== draft.draft_response ? 'edited' : 'sent';
-  await supabase.from('cs_ai_feedback_log').insert({
-    draft_id: id,
-    gorgias_ticket_id: draft.gorgias_ticket_id,
-    action: `${baseAction}_${afterAction}`,
-    original_response: originalResponse,
-    final_response: finalResponse,
-    feedback_notes: notes,
-    advisor_status: draft.advisor_status,
-    confidence: draft.confidence,
-    message_type: draft.message_type,
-    turn_number: draft.turn_number,
-  });
+  await supabase.from('cs_ai_feedback_log').insert(
+    buildSendFeedbackRow(draft, finalResponse, { originalResponse, afterAction, notes })
+  );
   // Append reply to conversation history BEFORE Gorgias snooze/close
   // (the snooze triggers a webhook that can race and overwrite history)
   const { data: ticketRow } = await supabase
@@ -2629,34 +2618,56 @@ async function apiSendTicketMessage(ticketId, body) {
   // Update DB only after Gorgias succeeded
   await supabase.from('cs_tickets').update(updates).eq('id', ticketId);
 
-  // Anchor focus_time_seconds on a draft row. Use the active draft if one exists;
-  // otherwise insert a lightweight manual_send draft so this operator-time isn't
-  // silently dropped (mirrors the outbound-staging pattern).
+  // Training-signal capture: a manual send is either a BYPASS of an existing
+  // draft (the operator ignored the AI entirely — the strongest negative
+  // signal) or a pure manual reply with no draft. Both get a feedback_log row;
+  // a lightweight manual_send draft row anchors the no-draft case so the sent
+  // text and operator time are never silently dropped.
   const focusSeconds = body.focus_time_seconds != null ? Math.round(body.focus_time_seconds) : null;
-  if (focusSeconds != null) {
-    if (ticket.active_draft_id) {
+  let activeDraft = null;
+  let manualDraftId = null;
+  if (ticket.active_draft_id) {
+    const { data: ad } = await supabase.from('cs_ai_drafts')
+      .select('id, draft_response, advisor_status, confidence, message_type, turn_number, operator_steer, draft_history, status')
+      .eq('id', ticket.active_draft_id)
+      .maybeSingle();
+    // Only a pending draft counts as bypassed — an already-sent draft means
+    // this manual message is a follow-up, not a rejection of the draft.
+    if (ad && ad.status === 'pending') activeDraft = ad;
+    if (focusSeconds != null) {
       await supabase.from('cs_ai_drafts')
         .update({ focus_time_seconds: focusSeconds })
         .eq('id', ticket.active_draft_id);
-    } else {
-      await supabase.from('cs_ai_drafts').insert({
-        ticket_id: ticketId,
-        gorgias_ticket_id: ticket.gorgias_ticket_id,
-        gorgias_message_id: replyResult?.id || null,
-        customer_email: ticket.customer_email,
-        order_number: ticket.order_number,
-        draft_response: '',
-        sent_response: message,
-        structured_output: {},
-        confidence: 'low',
-        status: 'sent',
-        draft_kind: 'manual_send',
-        sent_at: sentAt,
-        reviewed_at: sentAt,
-        focus_time_seconds: focusSeconds,
-      });
     }
   }
+  if (!activeDraft) {
+    const { data: manualRow } = await supabase.from('cs_ai_drafts').insert({
+      ticket_id: ticketId,
+      gorgias_ticket_id: ticket.gorgias_ticket_id,
+      gorgias_message_id: replyResult?.id || null,
+      customer_email: ticket.customer_email,
+      order_number: ticket.order_number,
+      draft_response: '',
+      sent_response: message,
+      structured_output: {},
+      confidence: 'low',
+      status: 'sent',
+      draft_kind: 'manual_send',
+      sent_at: sentAt,
+      reviewed_at: sentAt,
+      ...(focusSeconds != null && !ticket.active_draft_id ? { focus_time_seconds: focusSeconds } : {}),
+    }).select('id').maybeSingle();
+    manualDraftId = manualRow?.id || null;
+  }
+  await supabase.from('cs_ai_feedback_log').insert(
+    buildManualSendFeedbackRow({
+      activeDraft,
+      manualDraftId,
+      gorgiasTicketId: ticket.gorgias_ticket_id,
+      message,
+      afterAction,
+    })
+  );
 
   return { success: true, gorgias_message_id: replyResult?.id, after: afterAction };
 }
