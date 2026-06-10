@@ -215,23 +215,11 @@
     textarea.style.resize = 'none';
     textarea.style.minHeight = minHeight + 'px';
 
-    const isIOS =
-      /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
-
     function resize() {
       textarea.style.height = 'auto';
       const target = Math.min(textarea.scrollHeight, maxHeight);
       textarea.style.height = target + 'px';
       textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
-
-      if (isIOS && isMobile()) {
-        const wrap = textarea.closest('.steer-row, .draft-editor-wrap, .action-chat-input-row');
-        if (wrap) {
-          wrap.style.marginBottom = -(wrap.offsetHeight * 0.1875) + 'px';
-        }
-      }
     }
 
     textarea.addEventListener('input', resize);
