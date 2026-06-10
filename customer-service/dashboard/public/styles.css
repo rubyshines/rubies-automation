@@ -4398,29 +4398,11 @@ main { height: calc(100vh - 56px); }
     min-height: 35dvh;
   }
 
-  /* iOS auto-zooms on input focus when font-size < 16px (ignores viewport meta).
-     Fix: font-size 16px on inputs (iOS checks this, skips zoom) + CSS `zoom`
-     on CONTAINERS for visual 13px to match conversation text. `zoom` is a
-     layout-level shrink (unlike `transform: scale`, which keeps the original
-     layout box and breaks WebKit's textarea caret positioning). */
-  @supports (-webkit-touch-callout: none) {
-    .steer-input,
-    #draft-editor,
-    .action-chat-input {
-      font-size: 16px !important;
-    }
-
-    #draft-editor {
-      min-height: 43vh;
-      min-height: 43dvh; /* 35 / 0.8125 ≈ 43 → visually 35dvh under zoom */
-    }
-
-    .steer-row,
-    .draft-editor-wrap,
-    .action-chat-input-row {
-      zoom: 0.8125;
-    }
-  }
+  /* iOS auto-zoom on focus of <16px inputs is handled in JS
+     (preventIOSFocusZoom in app.js) — no transform/zoom scaling here.
+     Both `transform: scale` and CSS `zoom` break WebKit's textarea caret
+     positioning, and iOS's 16px heuristic uses the RENDERED size, so a
+     scaled-down 16px still triggers the zoom. Don't reintroduce scaling. */
 
   #action-panel {
     padding: 12px;
