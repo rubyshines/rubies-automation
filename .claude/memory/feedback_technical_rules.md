@@ -139,21 +139,29 @@ When you need an LLM behavior to be reliable, frame it as a positive instruction
 - If a behavior needs both inclusion and exclusion, lead with the positive ("DO this") and let the negative emerge implicitly. Don't pile on negative rules to cover edge cases — each one is fragile.
 - If you find yourself adding more "DO NOT" rules to fix a recurring lapse, that's a sign the prompt structure is wrong, not that the rules need to be louder. Restructure into positive form, or accept the variance and add a downstream guard (operator review, validateResponse-style strip).
 
-## Long-running/autonomous work uses git worktrees
+## Code edits happen in worktrees, not the main checkout
 
-Sprint and autonomous build sessions never work on `main` directly. Each workstream gets a
-worktree at `~/Code/rubies-repo/worktrees/<name>` on a `sprint/<name>` (or `wt/<name>`) branch.
+Any session that edits code works in a worktree by default. The main checkout is reserved for
+read-only work, memory/plan edits, and a commit that will be pushed in the same sitting with
+Jamie present. Each workstream gets a worktree at `~/Code/rubies-repo/worktrees/<name>` on a
+`wt/<name>` (or `sprint/<name>` for sprints) branch.
 
-**Why:** Railway deploys from `main`; a long-running session pushing intermediate states to main
-deploys them to production. Worktrees isolate the work; merges happen at checkpoints (tests
-green; live-CS-path changes only with Jamie present). Rollback tag convention: `pre-sprint-<date>`
-pushed to origin before a sprint starts — revert main to tag + push = production rollback.
+**Why:** Two failure modes, both real. (1) Railway deploys from `main` — a session pushing
+intermediate states to main deploys them to production. (2) Concurrent sessions share the main
+checkout's working tree — one session's local commits and uncommitted edits confuse and block
+the other (hit 2026-06-10: a dashboard fix committed to local main while a second session was
+working in the same tree).
 
 **How to apply:**
-- `git worktree add ~/Code/rubies-repo/worktrees/<name> -b sprint/<name>`
+- Hard cue: if `git status` at orient shows changes you didn't make, another session owns the
+  main checkout — create a worktree before touching any file.
+- `git worktree add ~/Code/rubies-repo/worktrees/<name> -b wt/<name>`
 - Worktrees don't carry gitignored files: symlink `.env` and `node_modules` from the main
   checkout (`ln -sf .../rubies-automations/.env <wt>/.env`, `ln -sfn .../node_modules <wt>/node_modules`).
   Verified working 2026-06-10 (780/780 tests pass inside a worktree with symlinks).
+- Sprints additionally use the rollback tag convention: `pre-sprint-<date>` pushed to origin
+  before starting — revert main to tag + push = production rollback. Merges happen at
+  checkpoints (tests green; live-CS-path changes only with Jamie present).
 - Remove with `git worktree remove <path>` after merge; `git worktree list` to audit.
 
 ## MCP tools must be agent-agnostic
