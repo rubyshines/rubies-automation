@@ -291,7 +291,7 @@ async function resolveAddressHolds(supabase, heldOrders, whOrdersMap) {
         await supabase.from('order_alert_notes').insert({
           order_number: order.order_number,
           note: `Auto-resolved: ${result.reason}`,
-          resolved: false, // Keep visible for review
+          resolved: true, // visible same-day via the Auto-Resolved (review) section
           author: 'auto',
           alert_type: 'unfulfilled',
         });
@@ -357,7 +357,7 @@ async function resolveAddressHolds(supabase, heldOrders, whOrdersMap) {
           await supabase.from('order_alert_notes').insert({
             order_number: order.order_number,
             note: `Auto-resolved: ${result.reason}`,
-            resolved: false,
+            resolved: true,
             author: 'auto',
             alert_type: 'unfulfilled',
           });
@@ -406,7 +406,7 @@ async function resolveAddressHolds(supabase, heldOrders, whOrdersMap) {
             await supabase.from('order_alert_notes').insert({
               order_number: order.order_number,
               note: `Auto-resolved: ${result.reason}`,
-              resolved: false,
+              resolved: true,
               author: 'auto',
               alert_type: 'unfulfilled',
             });

@@ -36,6 +36,7 @@ const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
 const { detectAndDraftUnnotifiedPreOrders } = require('./lib/unnotifiedPreOrder');
 const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
+const { reconcileNotes } = require('../customer-service/lib/noteLifecycle');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -132,6 +133,11 @@ function shopifyAdminUrl(shopifyOrderId) {
 // Unfulfilled order row (for combined email)
 // ---------------------------------------------------------------------------
 
+function ageDaysSince(iso) {
+  if (!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+
 function unfulfilledRow(r) {
   const severityColor = { urgent: '#dc2626', attention: '#f59e0b', normal: '#22c55e', info: '#6366f1', auto_resolved: '#0891b2' };
   const date = r.order.created_at?.split('T')[0] || '?';
@@ -143,6 +149,19 @@ function unfulfilledRow(r) {
     });
   const color = severityColor[r.classification.severity] || '#6b7280';
   const reasonLabel = r.classification.reason.replace(/_/g, ' ');
+
+  // Aging chips: severity rows nobody has touched, and note-driven rows whose
+  // state hasn't moved in over a week. Both are "this is rotting" signals.
+  let ageChip = '';
+  const untouched = !r.note
+    && ['urgent', 'attention'].includes(r.classification.severity)
+    && r.businessDays > 3;
+  const staleNoteDays = r.note && !r.note.resolved ? ageDaysSince(r.note.created_at) : 0;
+  if (untouched) {
+    ageChip = `<span style="background:#991b1b;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">untouched ${r.businessDays}bd</span>`;
+  } else if (staleNoteDays > 7) {
+    ageChip = `<span style="background:#c2410c;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">stale ${staleNoteDays}d &mdash; nudge or resolve?</span>`;
+  }
 
   let links = `<a href="${esc(r.shopifyUrl)}" style="color:#2563eb;text-decoration:none;">Shopify</a>`;
   if (r.warehanceUrl) {
@@ -161,6 +180,7 @@ function unfulfilledRow(r) {
       <strong>#${r.order.order_number}</strong>
       <span style="color:#6b7280;font-size:12px;margin-left:6px;">${esc(date)} &middot; ${r.businessDays}bd</span>
       <span style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${esc(reasonLabel)}</span>
+      ${ageChip}
     </div>
     <div style="font-size:13px;margin-top:3px;">${esc(email)} <span style="color:#6b7280;font-size:11px;">${links}</span></div>
     <div style="font-size:13px;color:#374151;margin-top:4px;">${itemLines.join('<br>')}</div>
@@ -361,6 +381,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (autoDraftedRows.length) summaryParts.push(`<span style="color:#6366f1;">Auto-drafted: ${autoDraftedRows.length}</span>`);
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
   if (waitingRows.length) summaryParts.push(`Waiting: ${waitingRows.length}`);
+  if ((extra.onMe || []).length) summaryParts.push(`<strong style="color:#7c3aed;">On Me: ${extra.onMe.length}</strong>`);
   if (ufNormal.length) summaryParts.push(`Normal: ${ufNormal.length}`);
   if (preOrders.length) summaryParts.push(`Pre-order: ${preOrders.length}`);
   if (totalResolved) summaryParts.push(`Resolved: ${totalResolved}`);
@@ -369,6 +390,33 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   let allClearHtml = '';
   if (totalIssues === 0 && autoResolvedRows.length === 0) {
     allClearHtml = `<p style="color:#22c55e;font-weight:bold;font-size:16px;margin:24px 0;">All clear \u2014 no issues detected.</p>`;
+  }
+
+  // --- On Me: tickets parked on Jamie (pending_operator), with age ---
+  let onMeHtml = '';
+  const onMe = extra.onMe || [];
+  if (onMe.length > 0) {
+    const dashboardBase = process.env.DASHBOARD_URL || 'https://ops.rubyshines.com';
+    const onMeCards = onMe.map(t => {
+      const days = ageDaysSince(t.updated_at);
+      const ageStyle = days > 5 ? 'background:#991b1b;color:#fff;' : 'background:#e5e7eb;color:#374151;';
+      return `<div style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <a href="${dashboardBase}/#ticket-${t.id}" style="color:#2563eb;text-decoration:none;font-weight:bold;">Ticket #${t.id}</a>
+        <span style="${ageStyle}padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${days}d on you</span>
+        ${t.order_number ? `<span style="color:#6b7280;font-size:12px;margin-left:6px;">order #${esc(t.order_number)}</span>` : ''}
+        <div style="font-size:13px;margin-top:2px;">${esc(t.customer_email || '?')}</div>
+        ${t.summary ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(t.summary)}</div>` : ''}
+      </div>`;
+    });
+    onMeHtml = section('On Me (awaiting your reply)', '#7c3aed', onMeCards);
+  }
+
+  // --- Note reconciler activity (today's sweep) ---
+  let reconciledHtml = '';
+  const reconciled = extra.reconciled || [];
+  if (reconciled.length > 0) {
+    const nums = reconciled.map(x => `#${x.order_number}`).join(', ');
+    reconciledHtml = `<p style="color:#9ca3af;font-size:12px;margin-top:16px;">Note reconciler: auto-resolved ${reconciled.length} stale note${reconciled.length === 1 ? '' : 's'} (${esc(nums)})</p>`;
   }
 
   // --- Auto follow-ups (last 24h) ---
@@ -407,10 +455,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       ${stockHtml}
       ${section('Drafted in CS Advisor (auto)', '#6366f1', autoDraftedRows)}
       ${section('Waiting on Response', '#f97316', waitingRows)}
+      ${onMeHtml}
       ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
       ${section('Pre-Order', '#6366f1', preOrderRows)}
       ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
       ${resolvedHtml}
+      ${reconciledHtml}
       ${followUpHtml}
       ${errorsHtml}
     </div>`;
@@ -509,6 +559,22 @@ async function run() {
   }
 
   console.log(`RUBIES Daily Order Alerts${opts.shippingOnly ? ' (shipping only)' : ''} -- fetching data...\n`);
+
+  // Note reconciler sweep — resolve notes whose work demonstrably finished
+  // (order shipped/cancelled, or linked conversation closed) BEFORE the
+  // unfulfilled checker loads note state, so today's report reflects it.
+  let reconciled = [];
+  if (!opts.shippingOnly) {
+    try {
+      const result = await reconcileNotes({ supabase });
+      reconciled = result.resolved;
+      if (reconciled.length > 0) {
+        console.log(`  [noteLifecycle] auto-resolved ${reconciled.length} note(s): ${reconciled.map(x => `#${x.order_number} (${x.rule})`).join(', ')}`);
+      }
+    } catch (err) {
+      console.warn(`  [noteLifecycle] reconciler error: ${err.message}`);
+    }
+  }
 
   // Run analyses
   const emptyUnfulfilled = { results: [], summary: { total: 0, urgent: 0, attention: 0 }, stockIssues: new Map(), errors: [] };
@@ -612,8 +678,21 @@ async function run() {
     console.warn(`[alerts] Could not fetch orphan waiting notes: ${err.message}`);
   }
 
+  // Tickets parked on Jamie (On Me tab) — surface with age so they can't rot.
+  let onMe = [];
+  try {
+    const { data } = await supabase
+      .from('cs_tickets')
+      .select('id, customer_email, order_number, summary, updated_at')
+      .eq('status', 'pending_operator')
+      .order('updated_at', { ascending: true });
+    onMe = data || [];
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch pending_operator tickets: ${err.message}`);
+  }
+
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled });
 
   const sgMail = getSendgridClient();
   if (sgMail) {

@@ -359,13 +359,19 @@ async function fetchOrdersWithUnresolvedNotes(supabase, orderNumbers) {
   if (!orderNumbers.length) return new Set();
   const { data, error } = await supabase
     .from('order_alert_notes')
-    .select('order_number, note')
-    .in('order_number', orderNumbers.map(n => parseInt(String(n).replace('#', ''), 10)))
-    .eq('resolved', false);
+    .select('order_number, note, resolved')
+    .in('order_number', orderNumbers.map(n => parseInt(String(n).replace('#', ''), 10)));
   if (error) throw new Error(`order_alert_notes lookup failed: ${error.message}`);
-  // Any unresolved note (ours or another pipeline's, e.g. Naomi outreach) means
-  // the order is already in someone's queue. Skip it to stay idempotent.
-  return new Set((data || []).map(n => n.order_number));
+  // Skip if: any unresolved note (ours or another pipeline's, e.g. Naomi
+  // outreach) means the order is already in someone's queue; OR the order was
+  // EVER auto-drafted, even if that note has since been resolved (note
+  // lifecycle resolves notes when the conversation closes — that must never
+  // re-trigger a second outreach to the same customer).
+  return new Set(
+    (data || [])
+      .filter(n => !n.resolved || (n.note || '').startsWith(NOTE_PREFIX) || (n.note || '').startsWith('[auto-draft]'))
+      .map(n => n.order_number),
+  );
 }
 
 async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {

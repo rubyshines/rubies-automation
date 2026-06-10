@@ -34,6 +34,7 @@ const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
 const { autoLinkProducts } = require('../lib/autoLinker');
 const { canonicalMessageType } = require('../lib/messageTypes');
+const { markOutreachSent, resolveOnTicketClose } = require('../lib/noteLifecycle');
 const Anthropic = require('@anthropic-ai/sdk');
 
 // Product config for auto-linking (loaded at startup)
@@ -398,6 +399,18 @@ async function apiSendDraft(id, body) {
   // so the auto-follow-up is suppressed and the ticket stays in the On Me tab.
   const dbStatus = afterAction === 'close' ? 'closed' : afterAction === 'onme' ? 'pending_operator' : 'snoozed';
   await updateTicketStatus(supabase, draft.gorgias_ticket_id, dbStatus, { has_agent_reply: true });
+
+  // Note lifecycle: an outreach draft going out supersedes the order's
+  // "drafted — pending review" note so the daily report moves the order to
+  // Waiting on Response. No-op for ordinary inbound replies. Fail-soft —
+  // never roll back a successful send over report bookkeeping.
+  try {
+    if (draft.order_number) {
+      await markOutreachSent({ supabase, orderNumber: draft.order_number, csTicketId: draft.ticket_id });
+    }
+  } catch (err) {
+    console.warn(`[noteLifecycle] send hook failed for order ${draft.order_number}: ${err.message}`);
+  }
 
   // Donation audit log + counter increment. Runs once per ticket: only the
   // first send that contains a donation routing decision counts; later sends
@@ -2411,6 +2424,24 @@ async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {})
     .from('cs_tickets')
     .update(updates)
     .eq('gorgias_ticket_id', gorgiasTicketId);
+
+  // Note lifecycle: closing the conversation resolves the order's open
+  // outreach note (the conversation ending IS the resolution). Operator
+  // judgment notes are left alone. Fail-soft — never block a close.
+  if (status === 'closed') {
+    try {
+      const { data: t } = await supabase
+        .from('cs_tickets')
+        .select('id, order_number')
+        .eq('gorgias_ticket_id', gorgiasTicketId)
+        .maybeSingle();
+      if (t?.order_number) {
+        await resolveOnTicketClose({ supabase, orderNumber: t.order_number, csTicketId: t.id });
+      }
+    } catch (err) {
+      console.warn(`[noteLifecycle] close hook failed for gorgias ticket ${gorgiasTicketId}: ${err.message}`);
+    }
+  }
 }
 
 async function apiGetTickets(query) {
