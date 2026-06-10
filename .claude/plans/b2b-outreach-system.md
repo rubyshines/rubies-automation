@@ -278,6 +278,34 @@ Format per type: state(s) it applies to, queue tier + specific trigger condition
 - Opener: *"Hi [name], it has been a while and I wanted to reach out. We have launched [X] since your last order and I think your customers would love what is new. Want me to send over a look?"*
 - Notes: Advisor fills [X] from actual product launches since their last order (has Shopify history + product catalog). If nothing significant has launched, falls back to: "A lot has grown since your last order — new sizing, expanded range." Tone is warm and confident — RUBIES B2B relationships have been universally positive, retailer went quiet because of timing/budget, not a problem. Advisor reads thread history for context to make the draft specific, not to look for issues. One clear CTA: "want me to send over a look" — easy yes, low commitment.
 
+**`price_change_notice`** ✓ LOCKED (2026-06-10 — added from historical findings: the past
+price-change email directly drove pre-deadline orders)
+- State: `active` (and `dormant` — a deadline is a legitimate reactivation hook)
+- Queue: Tier 2 — event-triggered when wholesale pricing changes are scheduled (pricing
+  initiative will fire this soon)
+- Opener: *"Hi [name], a heads-up before it takes effect: our wholesale pricing changes on
+  [date]. Any order placed before then is at current pricing, so if you have been thinking
+  about a restock, now is a great moment."*
+- Notes: Port tone from the proven historical thread (see b2b-historical-findings.md) when
+  writing the advisor prompt. Always individual review. Never framed as pressure — it is a
+  courtesy with a real deadline.
+
+**`sample_feedback_request`** ✓ LOCKED (2026-06-10 — recurring real motion in historical
+threads; the only message type that feeds product R&D)
+- State: `in_contact` or `active`, retailer and org tracks
+- Queue: Tier 3 — fires ~3-4 weeks after post_samples_checkin got a reply but no order/
+  enrollment followed, or on advisor judgment when a thread mentions community feedback
+- Opener: *"Hi [name], I would love to hear how the RUBIES samples have been landing — what
+  did [your customers / your community] think? Honest feedback helps us make these better,
+  and if anyone would like to be part of our tester group, I would love that too."*
+- Notes: Relationship + R&D, not a sales push. Always individual review.
+
+**Considered and PARKED (2026-06-10, Jamie):** `invoice_followup` (real once — an unpaid
+invoice stalled a thread — but accounting hygiene at a few invoices/quarter doesn't warrant a
+message type; revisit if unpaid invoices become a pattern) and `event_partner_coordination`
+(the RUBIES-hosted Pride party was bespoke relationship work that SHOULD be human-written;
+the queue may remind, the words stay Jamie's).
+
 ---
 
 #### ORG TRACK
@@ -395,6 +423,10 @@ Current system only asks "is this a retail partner?" — wrong for orgs and affi
 - Donation/partnership precedent (have they worked with brands before?)
 - Contact name + role (program director, executive director, etc.)
 - Purchase funding signals (grants, inclusion budget, programmatic funding)
+- **Bespoke arrangements (locked 2026-06-10):** one-off deals live as profile notes the
+  advisor reads before drafting — NOT new schema. Known: Fenway Health gift-card
+  arrangement; GRTF annual discount code. The advisor must never draft to these orgs
+  unaware of their arrangement.
 
 **Known affiliate prospects to add manually:**
 - Regina Rodriguez (reginarodriguezxoxo@gmail.com) — individual, trans, Early2Bed employee, influencer. Warm signal: already has relationship with RUBIES via Early2Bed samples.
@@ -479,8 +511,14 @@ Two advisors for the B2B system. Prospect vs. outreach is not the right split �
 
 ### Design #6 — Gmail send flow
 
-Need to define:
-- From-address per channel (partners@? jamie@? community@?)
+**From-address ✓ LOCKED (2026-06-10, Jamie): `jamie@rubyshines.com` for all three tracks.**
+Founder-personal is the brand's superpower — every converting historical thread was Jamie
+personally; orgs respond to "I'm Jamie, the founder" (it's the locked intro_outreach opener).
+A fresh partners@ would start with zero sender reputation (deliverability risk) and add Gmail
+plumbing for no relationship gain. Jamie's inbox is the transport, not the workspace — the
+engine reads and routes replies into the queue. Revisit only if volume outgrows the name.
+
+Still to define:
 - New `send_b2b_email` MCP tool spec: inputs, threading params, what it writes back to Supabase
 - Thread table schema: `b2b_threads` (per-topic conversation) and `b2b_messages` (per email, both directions)
 - Reply correlation: Gmail Pub/Sub webhook → `gmail_thread_id` match → state transition
@@ -531,16 +569,27 @@ Source data:
 - Minimum bar before go-live: run 10 real prospects through prospect advisor, Jamie grades each draft
 - Eventually: holdout with judge scoring (same framework as CS advisor)
 
-### Design #8 — Migration order
+### Design #8 — Migration order ✓ LOCKED (2026-06-10, Jamie)
 
-Decision pending: which channel first, or which capability first?
+**Warm first. Cold never — until the engine proves itself on friendlies.**
+Learn on relationships that can absorb a clumsy email; spend the unforgiving ones last.
+Capability-first spine (build once for all three channels), exercised in this contact order:
 
-Options:
-- **Channel-first:** Stand up full stack (prospect → queue → draft → send) for retailers only. Then add LGBTQ+ orgs. Then affiliates.
-- **Capability-first:** Stand up data model + prospect pipeline for all three channels. Then queue + draft generation. Then send.
-- **Quick win first:** The 31 community-partner rows + 285 dismissed community-orgs are an immediate LGBTQ+ pipeline with zero new discovery needed. Start there: re-route them, seed the LGBTQ+ pipeline, get the advisor drafting intros for orgs we already know about.
+1. **Phase 1 — warm (engine shakedown + highest-conversion plays):** the 17 active donation
+   partners, the ~12 live org contacts missing from b2b tables (backfill is a Phase-1
+   prerequisite — see b2b-historical-findings.md), and existing retailers (reorder_nudge +
+   first_order_checkin — the She Bop arc validated this motion end-to-end). Includes the
+   inclusion-funding purchase_pitch to existing partners: the single highest-conversion play
+   in the design.
+2. **Phase 2 — warm-adjacent:** the 285 mis-dismissed LGBTQ+ orgs (re-routed) + 31
+   community-partner rows. Mission-aligned, never contacted. Variant tracking from message
+   one (no cold baseline exists — confirmed empirically).
+3. **Phase 3 — cold retailers:** discovery/analyzer output. One-shot ammunition; only after
+   engine + templates + pre-flight judge panels are proven on forgiving traffic.
 
-My instinct: quick-win first (orgs we know about) + capability-first (build the spine once, not three times). But decide after Design #1 and #2 are done.
+Rationale anchored in b2b-historical-findings.md: zero cold-intro history exists (nothing to
+calibrate cold sends against); warm threads (She Bop, THProjekt) both converted; org failure
+mode is follow-through, not messaging — which the queue/cadence engine directly fixes.
 
 ### Design #9 — Wholesale → B2B rename + cleanup
 
