@@ -362,8 +362,14 @@ prompts → console tools (b2b_queue / b2b_draft / send_b2b_email). Sending is h
   1,687 fully researched, 0 analysis errors (~330 had no findable website — skipped, marked).
   Phase 2/3 of the warm-first migration now has a stocked, scored pipeline. Review the
   qualified list whenever: `retailer_prospects` status='qualified', or via b2b_review flows.
-- **Opus outage update: still down at 06:20** (12+ hours). Steer-fix validation runs the
-  moment it recovers — the only remaining gate on sprint/advisor-api.
+- **Opus "outage" — sharper diagnosis at 07:10:** not a global outage but **load-shedding of
+  large-prompt Opus requests** — short scenarios pass instantly at the same minutes the big
+  steer request (real thread + steer + order context) has 529'd for 13 hours straight.
+  Production effect was real but small: 18 errored ai_calls overnight vs 1,341 successes
+  (poller retries; long-thread tickets draft late). Steer-fix validation (the only gate on
+  sprint/advisor-api) runs the moment large-request capacity returns — likely with daytime
+  capacity. If 529s persist on that request class into the day, worth reporting to Anthropic
+  with the request_ids in the session log.
 
 ## OUTREACH ENGINE BUILD — active build order (started 2026-06-10 evening)
 
