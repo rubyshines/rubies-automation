@@ -196,6 +196,31 @@ async function handle(payload, gmailPush) {
     }
   }
 
+  // B2B reply correlation (outreach engine, Trigger 2): inbound from a known
+  // B2B contact / general_email lands on the company's thread and surfaces
+  // Tier 1 in the outreach queue. Fail-soft — B2B tables absent or any error
+  // must never break the CS-critical push path.
+  for (const m of classified) {
+    if (m.is_sent || m.is_auto_reply) continue;
+    try {
+      const { correlateInbound } = require('../../b2b-outreach/lib/replyCorrelation');
+      const r = await correlateInbound({
+        gmail_message_id: m.gmail_message_id,
+        gmail_thread_id: m.gmail_thread_id,
+        from_email: m.from_address,
+        to_email: Array.isArray(m.to_addresses) ? m.to_addresses[0] : m.to_addresses,
+        subject: m.subject,
+        body_text: m.body_text,
+        received_at: m.date,
+      });
+      if (r.matched && !r.duplicate) {
+        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}`);
+      }
+    } catch (err) {
+      console.warn(`[gmail-push] b2b correlation skipped: ${err.message}`);
+    }
+  }
+
   // Update historyId before processing (so concurrent pushes don't re-fetch)
   await supabase.from('gmail_sync_state').update({
     last_history_id: parseInt(newHistoryId),
