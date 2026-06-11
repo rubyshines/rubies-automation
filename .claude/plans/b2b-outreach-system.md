@@ -541,9 +541,17 @@ lower-tier draft).
 | Reply received | Gmail Pub/Sub (Trigger 2 — already locked) | immediate, Tier 1 |
 | Pricing change scheduled | manual flag set when pricing initiative fixes a date (system_flags or config) | price_change_notice drafts for all active retailers (batch event — the "20 ready, 3 need review" UX from locked #13) |
 
-### Design #4 — Dashboard surface
+### Design #4 — Dashboard surface ✓ UNLOCKED FOR V1.1 (2026-06-11, Jamie)
 
-Need to define:
+Chat-first V1 lasted one interaction — Jamie wants a visual queue. Building the panel:
+an "Outreach" section in the existing CS dashboard. Rows: tier badge, channel chip, company,
+message-type label, reason, draft snippet. Filters: All / Retailer / Org / Affiliate. Row
+click → draft view (subject, body, facts-to-verify, commitments) with Regenerate-with-steer,
+Dismiss, Snooze, and Send (two-phase; shows the b2b_send_enabled gate state plainly while
+off). Endpoints are thin wrappers over b2b-outreach libs. Console tools remain (same
+operations, two surfaces).
+
+Original open questions (for reference):
 - One queue or two? (outreach queue + "prospects to review" queue are different mental modes)
 - Where does the new tab live in the existing dashboard?
 - What does a row look like? (company name, channel chip, tier/reason, draft preview snippet, next action label)

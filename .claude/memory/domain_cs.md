@@ -6,7 +6,13 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 ---
 ## What's Built
 
-**AI Advisor (Opus-based):** AI reads full conversation + calls tools as needed. Handles exchanges, sizing, shipping, product questions, positive feedback. Returns structured JSON for dashboard consumption (including `message_type`, `customer_sentiment`, `summary`, `history_summary`). All business rules live in the system prompt. Injects recent related exchange/refund/defect tickets via history_summary for second-round follow-up context.
+**AI Advisor (Opus-based):** AI reads full conversation + calls tools as needed. Handles exchanges, sizing, shipping, product questions, positive feedback. Returns structured output via an API-enforced JSON schema (`advisorOutputSchema.js`, 2026-06-11 — replaced the `<structured>`-block-in-text convention; `customer_reply` streams first for SSE). All business rules live in the system prompt. Injects recent related exchange/refund/defect tickets via history_summary for second-round follow-up context. Resilience layers: malformed-output → route-to-human placeholder; 529 on large schema-enforced requests → automatic one-flip fallback to the legacy `<structured>` output mode per draft.
+
+**Closeness-to-Final Judge (2026-06-10):** continuous quality yardstick — Opus judges every sent draft against what Jamie actually sent (categories: identical/cosmetic/substantive/factual_correction/action_divergence + a draft_may_be_right flag). Runs in the daily sync; digest headline = substantive-divergence rate (supersedes raw edit-rate). Verdicts in `cs_draft_judgments`. 90-day baseline: closing 97% clean, overall divergence improving over time.
+
+**Auto-send (shadow phase, 2026-06-11):** gate (`autosendGate.js`) with a hardcoded never-list (money/orders/actions never eligible) + per-category `system_flags` allowlist that only Jamie promotes. Shadow mode marks would-have-sent drafts (`auto_close_path='autosend_shadow'`) — nothing sends. Dashboard: Auto-send allowlist panel + Closed-tab AUTO filter; digest dry-run line with judge-verified would-have-erred count. First watched category: closing.
+
+**Training-signal capture (2026-06-10):** all three send paths log to `cs_ai_feedback_log` — sent/edited, `bypassed_*` (operator ignored a pending draft), `manual_*` (no draft) — plus `operator_steer` + `regen_count` columns. Historical backfill done.
 
 **Tool Ecosystem (30+ MCP tools):** Lookup (customer, orders, products), actions (create/edit/refund orders, exchanges, wholesale orders, warehouse holds), analytics (LTV, margins, inventory, delivery estimates, reviews), knowledge (CS history search, FAQ, sizing guide).
 
@@ -26,8 +32,9 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 
 ## Current Status
 
-- **Production:** AI advisor handling all ticket types. Dashboard fully operational. Intake running (Gorgias webhooks + Gmail). Auto follow-ups re-enabled (event-driven off Gorgias snooze expiry). ~$0.39/draft, ~$0.60/ticket (~$107/month).
-- **Validated:** 95% action accuracy on 198 held-out conversations. 60+ scenarios tested across 7 complexity tiers.
+- **Production:** AI advisor handling all ticket types (enforced-schema output since 2026-06-11). Dashboard fully operational. Intake running (Gorgias webhooks + Gmail). Auto follow-ups re-enabled. Costs (bill-verified at corrected rates 2026-06-10): ~$0.13/draft, ~$8/day all-in production AI.
+- **Quality measurement:** continuous closeness-to-final judge (see What's Built) — 90-day baseline judged 785 drafts; substantive-divergence is the headline metric. The old "95% action accuracy" snapshot is superseded by this continuous measure.
+- **Auto-send:** shadow dry-run ENABLED 2026-06-11 (closing category watched; nothing sends).
 - **Partial:** Shipping tracking integration exists. Delivery estimate accuracy needs ongoing validation.
 
 ## Key Files

@@ -22,18 +22,20 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Store Locator (MCP tools):** `store_locator_*` tools (list/create/update/delete/publish) manage the rubyshines.com/pages/store-locator map. Data lives in `b2b_companies` (9 new `locator_*` columns + `on_store_locator` flag). Publish writes `rubies-ecom-v4/assets/store-locators.json` via worktree + auto-merge, same pattern as donation partners. Haiku auto-extracts store descriptions from the website. 7 retail partners live as of 2026-06-08.
 
+**Outreach Engine (2026-06-11):** the unified B2B outreach system (design SSOT: `.claude/plans/b2b-outreach-system.md`). One spine, three channels (retailers / LGBTQ+ orgs / affiliates): 6-tier signal-based queue, cadence engine (per-message-type due conditions), two Opus advisors (`b2b_sales_advisor`, `b2b_community_advisor`) drafting into `b2b_drafts` with enforced output schema (facts_to_verify + open_commitments fields instead of "don't hallucinate" rules), Gmail reply correlation (inbound → company thread, bounce/departure detection pauses cadence), and a two-phase send tool **hard-gated by the `b2b_send_enabled` system flag (default OFF — go-live is a Jamie-only act)**. Surfaces: operator-console tools (`b2b_queue`, `b2b_draft`, `send_b2b_email`) + dashboard Outreach panel. Tables: `b2b_threads`/`b2b_messages`/`b2b_drafts` + outreach columns on `b2b_companies`. Outbound `b2b_messages` rows are written ONLY by the send tool, never Gmail-synced (draft-checkpoint dedupe rule).
+
 ## Current Status
 
-- **Production:** Tier 1 & 2 discovery complete. AI analysis and scoring automated. Wholesale orders working via MCP tools.
-- **Partial:** Sheet sync exists but unclear if continuous or one-time.
+- **Production:** Discovery backlog fully researched (all 3,537 Feb rows triaged + analyzed 2026-06-11 → 41 qualified retailers, 144 community-partner orgs). Wholesale orders working via MCP tools. Outreach engine deployed with sending OFF — drafts only, warm-first migration order (partners → re-routed orgs → cold retailers).
+- **Partial:** Sheet sync exists but unclear if continuous or one-time. Contact-loss auto-re-intro draft flow not yet wired (detection + cadence pause + general_email fallback are live).
 
 ## Key Files
 
-- `b2b-discovery/discover.js` — Prospect discovery pipeline entry point.
-- `b2b-discovery/lib/` — Scraping, contact finding, AI analysis, lead scoring.
+- `b2b-outreach/` — outreach engine: cadence, queue, advisors, send tool, sweep.
+- `b2b-discovery/discover.js` — Prospect discovery pipeline entry point (+ `prefilter.js`, `researchSurvivors.js`).
+- `customer-service/lib/tools/b2bOutreach.js` — console/MCP outreach tools.
 - `customer-service/lib/tools/wholesaleOrder.js` — Wholesale order MCP tool.
 - `customer-service/lib/tools/storeLocator.js` — Store locator MCP tools.
-- `customer-service/lib/storeLocatorPublish.js` — Publish helper (worktree + auto-merge).
 
 ## Key Decisions
 
