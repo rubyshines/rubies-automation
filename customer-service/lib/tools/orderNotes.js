@@ -97,16 +97,19 @@ function applyMinBusinessDays(buckets, minBusinessDays) {
 // Build synthetic waiting-on-response rows for orders that have unresolved
 // operator notes but are no longer in the unfulfilled Shopify set (already
 // shipped or fulfilled). Pure so it's testable without Supabase.
-// `notes` must be in descending created_at order; deduplicates to latest per order.
+// `notes` must be in descending created_at order; deduplicates to latest per
+// order FIRST, then applies skip rules to that latest note only — an order
+// whose latest note is resolved (or auto-authored) must not resurface on the
+// strength of an older unresolved note (latest-note-wins).
 function buildOrphanRows(notes, knownOrderNumbers) {
   const seen = new Set();
   const rows = [];
   for (const n of notes) {
+    if (seen.has(n.order_number)) continue;
+    seen.add(n.order_number);
     if (knownOrderNumbers.has(Number(n.order_number))) continue;
     if (n.author === 'auto') continue;
     if (n.resolved) continue;
-    if (seen.has(n.order_number)) continue;
-    seen.add(n.order_number);
     rows.push({
       order: {
         order_number: n.order_number,
@@ -123,17 +126,16 @@ function buildOrphanRows(notes, knownOrderNumbers) {
   return rows;
 }
 
-// Fetch unresolved operator notes for orders NOT already in the unfulfilled
-// Shopify set. Returns synthetic result rows ready for the waiting_on_response bucket.
+// Fetch orders whose LATEST note is an unresolved operator note and that are
+// NOT already in the unfulfilled Shopify set. Returns synthetic result rows
+// ready for the waiting_on_response bucket. Must fetch all notes (not just
+// unresolved ones) — resolution is recorded as a newer resolved=true row, so
+// filtering at the query level would hide the resolving note and resurface
+// the stale operator note underneath it.
 async function fetchFulfilledOrphanNotes(supabase, knownOrderNumbers) {
-  const { data, error } = await supabase
-    .from('order_alert_notes')
-    .select('order_number, note, author, resolved, created_at')
-    .eq('resolved', false)
-    .neq('author', 'auto')
-    .order('created_at', { ascending: false });
-  if (error) throw new Error(`order_alert_notes fetch failed: ${error.message}`);
-  return buildOrphanRows(data || [], knownOrderNumbers);
+  const { fetchLatestNotes } = require('../noteLifecycle');
+  const latestByOrder = await fetchLatestNotes(supabase);
+  return buildOrphanRows([...latestByOrder.values()], knownOrderNumbers);
 }
 
 async function handleListPendingOrders({ bucket, min_business_days }) {

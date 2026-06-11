@@ -209,6 +209,24 @@ describe('buildOrphanRows — fulfilled orders with unresolved operator notes', 
     assert.equal(rows.length, 2);
   });
 
+  it('excludes an order whose latest note is resolved, even if an older note is unresolved', () => {
+    const notes = [
+      note(30883, { note: 'Conversation closed — auto-resolved', author: 'auto', resolved: true, created_at: '2026-06-10T14:00:00Z' }),
+      note(30883, { note: 'Passport shipment mishandled — outreach drafted', created_at: '2026-06-02T10:00:00Z' }),
+    ];
+    const rows = buildOrphanRows(notes, new Set());
+    assert.equal(rows.length, 0);
+  });
+
+  it('excludes an order whose latest note is auto-authored, even if an older operator note is unresolved', () => {
+    const notes = [
+      note(29270, { note: '[auto-draft] outreach pending', author: 'auto', created_at: '2026-06-10T14:00:00Z' }),
+      note(29270, { note: 'Waiting on customer', created_at: '2026-06-02T10:00:00Z' }),
+    ];
+    const rows = buildOrphanRows(notes, new Set());
+    assert.equal(rows.length, 0);
+  });
+
   it('synthetic row has the expected shape for unfulfilledRow rendering', () => {
     const rows = buildOrphanRows([note(29270)], new Set());
     const r = rows[0];
