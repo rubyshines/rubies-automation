@@ -32,6 +32,7 @@ const {
 } = require('./sizingEngine');
 const { prescribeDonationRouting } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
+const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE } = require('./advisorOutputSchema');
 
 let _client = null;
 function getClient() {
@@ -1164,7 +1165,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 - When asking what didn't work, always add: "in case I can help you with another size or recommend another product"
 - For measurements on bottoms, use exactly this phrase: "around the belly and just under the belly button". For tops, use exactly this phrase: "the measurement around the chest where a bikini band sits".
 - NEVER say "Shall I set that up?" or "Would you like me to proceed?" Say "Does that sound right?" or "Does that sound like it will work?"
-- NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover...", "Hmm", "Actually", "Let me try again"). Just write the customer email directly. Write ONE draft, then immediately output the <structured> block. NEVER revise, critique, or re-draft your response. Your first draft is your final draft.
+- NEVER narrate your own thinking ("Now I need to...", "Let me compose...", "Key points to cover...", "Hmm", "Actually", "Let me try again") inside the customer_reply field. Just write the customer email directly. Write ONE draft. NEVER revise, critique, or re-draft your response. Your first draft is your final draft.
 - **Tool calls precede customer-facing prose.** Do not write any customer-facing email content (anything starting with "Hi," "Hey," "Hola," "Thanks," "Sorry," "No problem," "Ooops," or any other greeting/apology/acknowledgement directed at the customer) until you have called every tool you intend to call. Internal planning narration is encouraged before tool calls — operators see this in the reasoning trace and rely on it. Useful pre-tool narration includes things like "Let me check inventory for the Serena in 1X...", "Looking up the donation partner for ZIP 90210...", "Need to confirm the order before drafting...". But the customer-facing email itself must be a single uninterrupted draft written in your final response after all tool results are in. If you need information from a tool, call the tool first and write the entire customer reply afterward.
 - Open with "Hi," or "Hi [name]," as its own standalone line, then a blank line, then the body starting with a capital letter. The greeting is always a separate line — never run it into the first sentence ("Hi,\n\nThanks for reaching out..." is correct; "Hi, thanks for reaching out..." is not). No preamble beyond the greeting line.
 - Action tense and structured fields MUST agree. The prose and the structured block are read together by the operator — they cannot contradict each other.
@@ -1188,44 +1189,7 @@ Link when:
 
 ## Output Format
 
-After handling the conversation, you MUST end your final message with a structured JSON block wrapped in <structured> tags. This is required for every response.
-
-<structured>
-{
-  "status": "ready|needs_info|gathering|route_to_human (use ready when ALL items are resolved OR when setting an explicit action_type below — the system automatically marks it action_needed for the operator. Use needs_info when waiting for customer input. Use gathering while still processing.)",
-  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|discount_request|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. Use business_outreach for unsolicited B2B sales/marketing emails, community_outreach for LGBTQ+ org partnerships, discount_request when the customer asks for a discount or didn't receive their welcome code. If nothing fits, use 'uncategorized' — do not invent new values.)",
-  "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
-  "action_type": "null|warehouse_hold|order_modification|cancellation|customer_profile_update|discount_code|split_shipment|invoice_kept_items (set when an order, profile, discount-code, split-shipment, or invoice-kept-items action is needed beyond exchange/refund)",
-  "new_address": "null OR { address1, city, province, zip, country } — REQUIRED when action_type is order_modification and the customer provided a new shipping address. Parse the address from their message.",
-  "customer_profile_update": "null OR { new_email, new_first_name, new_last_name } — REQUIRED when action_type is customer_profile_update. Include only the fields the customer asked to change.",
-  "discount_code": "null OR { mode: 'percent'|'free_product', percent_off?: number, product_query?: string } — REQUIRED when action_type is discount_code. From the advisor path, this is always { mode: 'percent', percent_off: 10 }. Higher percentages and free-product comps come from operator commands, not from the advisor.",
-  "items": [
-    {
-      "product": "product name",
-      "current_size": "size they have",
-      "resolved_size": "size they're getting (null if unresolved)",
-      "resolved_color": "color they want (null if same color or not specified)",
-      "resolved_product": "different product if style switch (null if same)",
-      "issue": "close_fit_tight|close_fit_loose|doesnt_fit|way_off|defect|...",
-      "state": "CONFIRMED|AWAITING_DECISION|NEEDS_MEASUREMENT|REFUND_CONFIRMED|ROUTE_TO_HUMAN"
-    }
-  ],
-  "donation_needed": true/false,
-  "customer_name": "name or null",
-  "customer_pronouns": "they/them|she/her|he/him",
-  "buying_for": "self|third_party",
-  "third_party_label": "daughter|son|child|null",
-  "duties_refund_amount": "amount and currency if DDP duties refund (e.g. '13.90 EUR'), null otherwise",
-  "confidence": "high|medium|low",
-  "summary": "6-8 word lowercase summary of the ticket for queue list view (e.g. 'exchange AJ 14→16 too tight' or 'shipping delay customs hold australia')",
-  "history_summary": "2-4 sentence prose summary of what happened on this ticket, written for a future advisor call that needs to understand it as prior history. Include the original order number and items, what the customer was asking for, the action taken (exchange/refund/defect handling), and the outcome. Example: 'Customer ordered Naomi gaff size M (order #29784). Reported the fit was too tight and requested exchange to size L. Exchange draft order #30012 created and marked paid, shipped Jan 22. Ticket closed as resolved.' Only fill this for exchange/refund/defect tickets — null otherwise.",
-  "customer_sentiment": "positive|neutral|negative|null — overall tone of the customer across their messages. 'positive' = gratitude/satisfaction/resolved mood. 'negative' = frustration/upset/complaint. 'neutral' = matter-of-fact with no strong signal. null = no customer content to judge (bot-generated or internal). This is orthogonal to message_type — a refund ticket can still end positive.",
-  "operator_action_summary": "null OR a single-line natural-language description of the exact action the operator's tools must execute, matching the order changes the draft promises. MUST be null whenever status is 'needs_info' or 'gathering' — a populated summary signals the action is committed and ready to execute. Required when action_type is set OR when the draft tells the customer (in past tense) an exchange/refund/edit/profile-update has happened. Examples: 'exchange on order #29863: 2x AJ 10→8 Sandstone, 1x AJ 10→Flo 8 Sandstone, 1x Ruby 10→8 Black' / 'refund order #29812 for the 2x Brooke 2X' / 'update customer profile: email to laura.helpline830@passmail.com'. INCLUDE: products, quantities, sizes, colors, product swaps, order numbers — every order/profile change the draft promises. EXCLUDE: customer-facing instructions (donation drop-off addresses, washing instructions, shipping ETAs, kind words, signoffs) — those are in the draft prose, not operator tool actions. Keep it strictly to what the operator's tools will do.",
-  "audit": ["reasoning step 1", "reasoning step 2"]
-}
-</structured>
-
-The text BEFORE the <structured> tags is the actual response to send to the customer. Write it as if you are emailing them directly.`;
+${STRUCTURED_OUTPUT_PROMPT_NOTE}`;
 
   const dynamicPart = orderSection;
 
@@ -1379,16 +1343,16 @@ function buildOperatorSteerBlock(steer) {
     'The human operator has reviewed your prior draft for this ticket and is\n' +
     'redirecting you. Their instruction, verbatim:\n\n' +
     '    "' + trimmed + '"\n\n' +
-    'This instruction SUPERSEDES any conflicting guidance in your system prompt\n' +
-    'for this response only. You MUST comply. Do not re-offer paths the operator\n' +
-    'is redirecting away from. Regenerate BOTH the customer-facing response AND\n' +
-    'the structured action (tool calls, status) to reflect the operator\'s intent.\n' +
-    'If the operator\'s instruction requires a tool you would not normally call\n' +
-    '(e.g. refund, exchange, draft order), call it now.\n\n' +
-    'Even though this instruction tells you what to say, do not begin the\n' +
-    'customer-facing email until after you have called every tool the response\n' +
-    'requires (donation routing, order context, etc.). The customer-facing draft\n' +
-    'must be written once, in full, in your final round.\n' +
+    'This instruction supersedes conflicting CONTENT guidance in your system\n' +
+    'prompt for this response only — it never changes your output format, which\n' +
+    'remains the enforced JSON object. You MUST comply with the operator\'s\n' +
+    'intent. Do not re-offer paths the operator is redirecting away from.\n' +
+    'Write the customer_reply field and every structured field to reflect the\n' +
+    'operator\'s intent. If the operator\'s instruction requires a tool you would\n' +
+    'not normally call (e.g. refund, exchange, draft order), call it now.\n\n' +
+    'Call every tool the response requires (donation routing, order context,\n' +
+    'etc.) BEFORE your final message. Your final message is, as always, the\n' +
+    'single enforced JSON object with the complete email in customer_reply.\n' +
     '================================================================'
   );
 }
@@ -1462,6 +1426,15 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     systemBlocks.push({ type: 'text', text: dynamicPart });
   }
 
+  // Legacy-mode system blocks for the 529 fallback: identical prompt with the
+  // enforced-schema note swapped for the old <structured> template. Very large
+  // schema-enforced requests get load-shed under capacity pressure (529) while
+  // the identical request without output_config succeeds — observed 2026-06-11.
+  const legacySystemBlocks = [
+    { type: 'text', text: staticPart.replace(STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE), cache_control: { type: 'ephemeral' } },
+    ...(dynamicPart ? [{ type: 'text', text: dynamicPart }] : []),
+  ];
+
   // Filter tools: remove redundant ones that waste tokens and can trigger unnecessary tool loops
   // - get_tone_samples: never called (0% in production data) — all samples are in the system prompt
   // - get_order_context: when preContext exists, data is already in the system prompt
@@ -1521,46 +1494,74 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // send-time logger can call logDonationRouting() with the right partner.
   const donationRoutingSink = {};
 
+  let legacyMode = false; // flips on 529 of a schema-enforced call — see fallback below
+
   while (toolCallCount < MAX_TOOL_CALLS) {
     const _tApi = Date.now();
     const apiParams = {
       model: MODELS.OPUS,
       max_tokens: 4096,
-      system: systemBlocks,
+      system: legacyMode ? legacySystemBlocks : systemBlocks,
       tools: filteredTools,
       messages: currentMessages,
+      // Enforced output schema (#2): the final message IS this JSON — no
+      // <structured> tag parsing, no malformed-output class, no thinking
+      // leakage into prose (customer_reply is a schema-constrained field).
+      ...(legacyMode ? {} : { output_config: { format: { type: 'json_schema', schema: ADVISOR_OUTPUT_SCHEMA } } }),
     };
 
-    if (useStreaming) {
-      // Streaming mode — emit text deltas as they arrive. When the structured
-      // block opens we emit prose_complete so the client can switch the editor
-      // out of "Generating…" and into "Finalizing…" — the visible prose is
-      // done; the model is still streaming the structured JSON block (~500
-      // invisible tokens, ~7-9s at Opus rates).
-      let runningText = '';
-      let proseDone = false;
-      response = await callClaude({
-        component: 'cs_advisor',
-        ...apiParams,
-        stream: true,
-        onText: (text) => {
-          runningText += text;
-          _emit({ type: 'text_delta', text });
-          if (!proseDone && runningText.includes('<structured>')) {
-            proseDone = true;
-            _emit({ type: 'prose_complete' });
-          }
-        },
-        ticket_id, draft_id, parent_call_id: parentCallId,
-        metadata: { customer_email },
-      });
-    } else {
-      response = await callClaude({
-        component: 'cs_advisor',
-        ...apiParams,
-        ticket_id, draft_id, parent_call_id: parentCallId,
-        metadata: { customer_email },
-      });
+    try {
+      if (useStreaming) {
+        let onText;
+        if (legacyMode) {
+          // Legacy streaming: raw deltas; prose_complete when <structured> opens.
+          let runningText = '';
+          let proseDone = false;
+          onText = (text) => {
+            runningText += text;
+            _emit({ type: 'text_delta', text });
+            if (!proseDone && runningText.includes('<structured>')) {
+              proseDone = true;
+              _emit({ type: 'prose_complete' });
+            }
+          };
+        } else {
+          // Schema streaming — customer_reply is the first schema property, so
+          // the extractor surfaces the email text live and fires prose_complete
+          // at its closing quote; remaining fields stream invisibly after.
+          onText = createCustomerReplyStreamExtractor({
+            onReplyText: (text) => _emit({ type: 'text_delta', text }),
+            onProseComplete: () => _emit({ type: 'prose_complete' }),
+          });
+        }
+        response = await callClaude({
+          component: 'cs_advisor',
+          ...apiParams,
+          stream: true,
+          onText,
+          ticket_id, draft_id, parent_call_id: parentCallId,
+          metadata: { customer_email },
+        });
+      } else {
+        response = await callClaude({
+          component: 'cs_advisor',
+          ...apiParams,
+          ticket_id, draft_id, parent_call_id: parentCallId,
+          metadata: { customer_email },
+        });
+      }
+    } catch (err) {
+      // 529 fallback: very large schema-enforced requests get load-shed while
+      // the identical request without output_config succeeds (paired evidence
+      // 2026-06-11, 14h window). One mode flip per draft; rethrow anything else.
+      const overloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
+      if (!legacyMode && overloaded) {
+        legacyMode = true;
+        audit.push('529 on schema-enforced call — falling back to legacy <structured> output mode for this draft');
+        console.warn('[advisor] 529 on schema call — retrying in legacy output mode');
+        continue;
+      }
+      throw err;
     }
     if (parentCallId === null) parentCallId = response._ai_call_id;
 
@@ -1636,25 +1637,47 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const textBlocks = response.content.filter(b => b.type === 'text');
   const fullText = textBlocks.map(b => b.text).join('\n');
 
-  // Parse the structured data from the response
-  const structuredMatch = fullText.match(/<structured>\s*([\s\S]*?)\s*<\/structured>/);
+  // Enforced-schema path (#2): the final message IS the JSON. customer_reply
+  // is the email; everything else is the structured payload. No regex
+  // extraction, no stripInternalThinking — the schema makes both obsolete.
   let parsedStructured = null;
   let composedResponse = fullText;
-
-  if (structuredMatch) {
-    try {
-      parsedStructured = JSON.parse(structuredMatch[1]);
-      // Remove the structured block from the customer-facing response
-      composedResponse = fullText.replace(/<structured>[\s\S]*?<\/structured>/, '').trim();
-    } catch (e) {
-      audit.push(`Failed to parse structured output: ${e.message}`);
+  try {
+    const parsed = JSON.parse(fullText);
+    const { customer_reply, ...rest } = parsed;
+    composedResponse = (customer_reply || '').trim();
+    parsedStructured = rest;
+  } catch (e) {
+    // Transition fallback: tolerate the legacy <structured>-in-text shape
+    // (e.g. if output_config is ever disabled). Logged loudly — this path
+    // should never fire under the enforced schema.
+    audit.push(`Enforced-schema parse failed (${e.message}) — falling back to legacy <structured> extraction`);
+    const structuredMatch = fullText.match(/<structured>\s*([\s\S]*?)\s*<\/structured>/);
+    if (structuredMatch) {
+      try {
+        parsedStructured = JSON.parse(structuredMatch[1]);
+        composedResponse = fullText.replace(/<structured>[\s\S]*?<\/structured>/, '').trim();
+      } catch (e2) {
+        audit.push(`Legacy structured parse also failed: ${e2.message}`);
+      }
+    }
+    // Degraded-output guard: if both parses failed, the "draft" is raw model
+    // output (observed during API overload windows: mangled tokens, repetition
+    // loops, max_tokens truncation mid-JSON). Never let that occupy the
+    // customer-facing draft slot — route to human with a clean placeholder.
+    if (!parsedStructured) {
+      audit.push('Draft replaced with route-to-human placeholder (malformed model output — likely degraded/truncated inference; retry by regenerating)');
+      composedResponse = '[AI could not draft a response — needs manual reply]\n\nReason: the model returned malformed output (this correlates with API overload windows). Regenerate the draft, or reply manually.';
     }
   }
-
-  // Strip internal thinking leaks from the customer-facing response.
-  // The AI sometimes narrates its own process before writing the actual email.
-  // Pattern: anything before "Hi," or "Hi [Name]," is internal thinking.
-  composedResponse = stripInternalThinking(composedResponse);
+  if (response.stop_reason === 'max_tokens') {
+    audit.push('WARNING: response hit max_tokens — output was truncated');
+  }
+  // Legacy mode emits prose-then-<structured>; the old thinking-leak strip
+  // applies to that shape (it's a no-op for schema mode, which never runs it).
+  if (legacyMode && parsedStructured) {
+    composedResponse = stripInternalThinking(composedResponse);
+  }
 
   // Validate for hallucinations (may correct the response).
   // expectsCustomerAddress: skip the donation-address strip when the advisor
