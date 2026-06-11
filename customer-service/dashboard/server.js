@@ -2511,6 +2511,94 @@ async function apiSetAutosendConfig(body = {}) {
   return { success: true, key, enabled: !!enabled };
 }
 
+// ---------------------------------------------------------------------------
+// B2B Outreach panel (Design #4 V1.1) — thin wrappers over the b2b-outreach
+// libs. Shared logic lives in b2b-outreach/lib/queueService.js so these
+// endpoints and the MCP console tools (lib/tools/b2bOutreach.js) never drift.
+// ---------------------------------------------------------------------------
+
+const b2bQueueService = require('../../b2b-outreach/lib/queueService');
+
+async function apiB2bQueue(query) {
+  const channel = query.get('channel') || null;
+  return b2bQueueService.fetchQueueWithDrafts(getSupabaseClient(), { channel });
+}
+
+async function apiB2bGetDraft(id) {
+  const { data, error } = await getSupabaseClient()
+    .from('b2b_drafts').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) {
+    const err = new Error(`Draft #${id} not found`);
+    err.statusCode = 404;
+    throw err;
+  }
+  return data;
+}
+
+// Regenerate the draft for the company behind draft :id (supersedes the
+// pending draft; the old draft's message_type is the fallback when the queue
+// no longer has the company due). Returns the full new draft row.
+async function apiB2bRegenerateDraft(id, body = {}) {
+  const sb = getSupabaseClient();
+  const old = await apiB2bGetDraft(id);
+  const steer = (body.steer || '').trim() || undefined;
+  const result = await b2bQueueService.generateDraftForCompany(sb, {
+    company_id: old.company_id,
+    steer,
+    message_type: old.message_type,
+  });
+  return apiB2bGetDraft(result.draft_id);
+}
+
+// Generate a draft for a queue row that doesn't have one yet (the queue
+// computes what's due; the row click is the trigger). Same shared lib path
+// as the b2b_draft console tool.
+async function apiB2bGenerateDraft(companyId, body = {}) {
+  const sb = getSupabaseClient();
+  const steer = (body.steer || '').trim() || undefined;
+  const result = await b2bQueueService.generateDraftForCompany(sb, {
+    company_id: companyId,
+    steer,
+    message_type: body.message_type || undefined,
+  });
+  if (!result) {
+    const err = new Error(`${companyId} has nothing due — nothing to draft`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return apiB2bGetDraft(result.draft_id);
+}
+
+async function apiB2bDismissDraft(id) {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase
+    .from('b2b_drafts').update({ status: 'dismissed' })
+    .eq('id', id).eq('status', 'pending').select('id');
+  if (error) throw new Error(error.message);
+  if (!data?.length) {
+    const err = new Error(`Draft #${id} is not pending — nothing to dismiss`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return { success: true };
+}
+
+// Two-phase send of a stored draft. Phase 1 (no confirmed) returns the
+// preview + gate_enabled; phase 2 passes through blocked/sent from
+// sendB2bEmail (HARD-GATED on b2b_send_enabled).
+async function apiB2bSend(body = {}) {
+  if (!body.draft_id) {
+    const err = new Error('draft_id required');
+    err.statusCode = 400;
+    throw err;
+  }
+  return b2bQueueService.sendDraftById(getSupabaseClient(), {
+    draft_id: parseInt(body.draft_id),
+    confirmed: !!body.confirmed,
+  });
+}
+
 async function apiGetTicket(id) {
   const supabase = getSupabaseClient();
 
@@ -2871,6 +2959,7 @@ const routes = {
   'GET /api/tickets/search': (req) => apiSearchTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/stats': () => apiGetTicketStats(),
   'GET /api/autosend-config': () => apiGetAutosendConfig(),
+  'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');
     const exclude = new Set(['customer_support', 'spam', 'auto_reply', 'newsletter', 'skip', 'pipeline', 'internal']);
@@ -2893,6 +2982,12 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute-and-send$/, handler: (body, id) => apiExecuteAndSend(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
   { method: 'POST', pattern: /^\/api\/autosend-config$/, handler: (body) => apiSetAutosendConfig(body) },
+  // B2B Outreach panel
+  { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)$/, handler: (_, id) => apiB2bGetDraft(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/regenerate$/, handler: (body, id) => apiB2bRegenerateDraft(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },

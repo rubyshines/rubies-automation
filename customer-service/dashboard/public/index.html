@@ -51,6 +51,7 @@
       <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
       <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
+      <button class="tab" data-tab="outreach" onclick="switchTab('outreach')">Outreach</button>
       <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
     </nav>
     <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
@@ -249,6 +250,17 @@
       </div>
     </div>
 
+    <!-- Outreach panel — B2B outreach queue: retailers, LGBTQ+ orgs, affiliates -->
+    <div id="panel-outreach" class="panel" style="display:none">
+      <div class="sidebar">
+        <div id="outreach-queue-list"><div class="outreach-loading">Loading&hellip;</div></div>
+      </div>
+      <div class="detail">
+        <div id="outreach-placeholder" class="outreach-placeholder">Select a company to review</div>
+        <div id="outreach-detail" style="display:none"></div>
+      </div>
+    </div>
+
   </main>
 
   <!-- Mobile bottom nav (hidden on desktop) -->
@@ -274,6 +286,7 @@
       <button onclick="bottomMoreSelect('onme')" class="bottom-more-onme">On Me <span class="bottom-tab-count" id="bottom-count-onme"></span></button>
       <button onclick="bottomMoreSelect('parked')">Parked <span class="bottom-tab-count" id="bottom-count-parked"></span></button>
       <button onclick="bottomMoreSelect('snoozed')">Snoozed <span class="bottom-tab-count" id="bottom-count-snoozed"></span></button>
+      <button onclick="bottomMoreSelect('outreach')">Outreach</button>
       <button onclick="toggleBottomMore(event);openAutosendPanel()">Auto-send</button>
       <a href="/stats">Stats</a>
     </div>
