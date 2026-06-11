@@ -356,9 +356,14 @@ prompts → console tools (b2b_queue / b2b_draft / send_b2b_email). Sending is h
   validation of the steer scenario pending an Opus-stable window (API flapped all night) —
   run `node customer-service/test/scenarios/steerProseLoss.js` in the advisor-api worktree
   before merging that branch.
-- **Prospect research: 700 of 2,488 survivors researched** across 3 batches (batch 3 running):
-  cumulative **20 qualified retailers + 57 community-partner orgs**, zero errors. These feed
-  Phase 2/3 of the warm-first migration.
+- **Prospect research: THE ENTIRE BACKLOG IS DONE.** All 3,537 rows from the February
+  discovery run (dead since March): pre-filtered, researched, scored, routed across 5
+  overnight batches. Final: **41 qualified retail prospects + 144 community-partner orgs**,
+  1,687 fully researched, 0 analysis errors (~330 had no findable website — skipped, marked).
+  Phase 2/3 of the warm-first migration now has a stocked, scored pipeline. Review the
+  qualified list whenever: `retailer_prospects` status='qualified', or via b2b_review flows.
+- **Opus outage update: still down at 06:20** (12+ hours). Steer-fix validation runs the
+  moment it recovers — the only remaining gate on sprint/advisor-api.
 
 ## OUTREACH ENGINE BUILD — active build order (started 2026-06-10 evening)
 
