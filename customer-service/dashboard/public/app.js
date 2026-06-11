@@ -190,8 +190,9 @@ async function autoRefreshTick() {
     const json = JSON.stringify(stats);
     if (json !== _lastStatsJson) {
       _lastStatsJson = json;
-      // Don't replace search results with the tab queue on a background tick.
-      if (!searchActive) loadTicketQueue();
+      // Don't replace search results with the tab queue on a background tick,
+      // and don't fetch the ticket queue while a non-ticket tab is showing.
+      if (!searchActive && !['adhoc', 'outreach'].includes(currentTab)) loadTicketQueue();
       loadStats();
     }
   } catch { /* network error — skip this tick */ }
@@ -236,7 +237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -342,6 +343,19 @@ function switchTab(tab) {
 
   const ticketsPanel = document.getElementById('panel-tickets');
   const adhocPanel = document.getElementById('panel-adhoc');
+  const outreachPanel = document.getElementById('panel-outreach');
+
+  if (tab === 'outreach') {
+    ticketsPanel.style.display = 'none';
+    adhocPanel.style.display = 'none';
+    outreachPanel.style.display = 'flex';
+    localStorage.setItem('activeTab', tab);
+    // Clear any stale ticket hash so a refresh restores Outreach, not the prior ticket
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    loadOutreachQueue();
+    return;
+  }
+  outreachPanel.style.display = 'none';
 
   if (tab === 'adhoc') {
     ticketsPanel.style.display = 'none';
@@ -4527,6 +4541,299 @@ async function setAutosendFlag(key, enabled) {
     showToast(`Toggle failed: ${err.message}`, 'error');
   }
   loadAutosendConfig(); // re-render from server truth either way
+}
+
+// ---------------------------------------------------------------------------
+// Outreach panel (Design #4 V1.1) — the B2B outreach queue across retailers,
+// LGBTQ+ orgs, and affiliates. Rows come from /api/b2b/queue (6-tier priority);
+// row click opens the pending draft (or generates one). Regenerate-with-steer /
+// Dismiss / two-phase Send — the b2b_send_enabled gate state is shown plainly,
+// never as an error.
+// ---------------------------------------------------------------------------
+
+let outreachChannel = '';        // '' = all | wholesale | lgbtq_org | affiliate
+let outreachQueue = [];
+let outreachSelectedId = null;   // company_id of the selected row
+let outreachDraft = null;        // full b2b_drafts row currently shown
+let outreachSendPreview = null;  // phase-1 send preview (while confirming)
+
+const OUTREACH_FILTERS = [
+  { value: '', label: 'All' },
+  { value: 'wholesale', label: 'Retailer' },
+  { value: 'lgbtq_org', label: 'Org' },
+  { value: 'affiliate', label: 'Affiliate' },
+];
+const OUTREACH_CHANNEL_LABELS = { wholesale: 'retailer', lgbtq_org: 'org', affiliate: 'affiliate' };
+
+async function loadOutreachQueue() {
+  const container = document.getElementById('outreach-queue-list');
+  try {
+    const url = outreachChannel ? `/api/b2b/queue?channel=${encodeURIComponent(outreachChannel)}` : '/api/b2b/queue';
+    outreachQueue = await api(url);
+  } catch (err) {
+    container.innerHTML = outreachFilterHtml() + `<div class="outreach-loading">Failed to load queue: ${esc(err.message)}</div>`;
+    return;
+  }
+  renderOutreachQueue();
+}
+
+function setOutreachChannel(channel) {
+  outreachChannel = channel;
+  loadOutreachQueue();
+}
+
+function outreachFilterHtml() {
+  return `<div class="queue-filter-row">` + OUTREACH_FILTERS.map(f =>
+    `<button class="filter-chip ${outreachChannel === f.value ? 'active' : ''}" onclick="setOutreachChannel('${f.value}')">${f.label}</button>`
+  ).join('') + `</div>`;
+}
+
+function renderOutreachQueue() {
+  const container = document.getElementById('outreach-queue-list');
+  if (!outreachQueue.length) {
+    container.innerHTML = outreachFilterHtml() + '<div class="outreach-loading">Outreach queue is empty &mdash; nothing due today.</div>';
+    return;
+  }
+  container.innerHTML = outreachFilterHtml() + outreachQueue.map(outreachRowHtml).join('');
+}
+
+function outreachRowHtml(e) {
+  const channelLabel = OUTREACH_CHANNEL_LABELS[e.channel] || e.channel || '?';
+  const typeLabel = e.message_type ? e.message_type.replace(/_/g, ' ') : 'reply needed';
+  return `
+  <div class="queue-item outreach-row ${e.company_id === outreachSelectedId ? 'active' : ''}"
+       data-company-id="${esc(e.company_id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="outreach-tier outreach-tier-${e.tier}">T${e.tier}</span>
+        <span class="queue-item-name">${esc(e.company_name)}</span>
+        <span class="outreach-channel-chip outreach-channel-${esc(e.channel)}">${esc(channelLabel)}</span>
+      </div>
+      <div class="outreach-row-reason">${esc(e.reason || '')}</div>
+      <div class="queue-item-row2">
+        <span class="category-badge ${e.message_type ? 'category-general' : 'category-order'}">${esc(typeLabel)}</span>
+        ${e.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
+      </div>
+      ${e.draft?.snippet ? `<div class="outreach-row-snippet">${esc(e.draft.snippet)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function selectOutreachEntry(companyId) {
+  const entry = outreachQueue.find(e => e.company_id === companyId);
+  if (!entry) return;
+  outreachSelectedId = companyId;
+  outreachDraft = null;
+  outreachSendPreview = null;
+  renderOutreachQueue(); // refresh active highlight
+
+  const detailEl = document.getElementById('outreach-detail');
+  document.getElementById('outreach-placeholder').style.display = 'none';
+  detailEl.style.display = 'block';
+
+  if (!entry.draft) {
+    renderOutreachDetail(entry, null);
+    return;
+  }
+  detailEl.innerHTML = `<div class="outreach-loading">Loading draft #${entry.draft.id}&hellip;</div>`;
+  try {
+    const draft = await api(`/api/b2b/drafts/${entry.draft.id}`);
+    if (outreachSelectedId !== companyId) return; // user clicked elsewhere meanwhile
+    outreachDraft = draft;
+    renderOutreachDetail(entry, draft);
+  } catch (err) {
+    if (outreachSelectedId !== companyId) return;
+    detailEl.innerHTML = `<div class="outreach-loading">Failed to load draft: ${esc(err.message)}</div>`;
+  }
+}
+
+function outreachListHtml(title, items, cls) {
+  return `<div class="outreach-list ${cls}">
+    <div class="outreach-field-label">${title}</div>
+    <ul>${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+  </div>`;
+}
+
+function renderOutreachDetail(entry, draft) {
+  const el = document.getElementById('outreach-detail');
+  const s = (draft && draft.structured) || {};
+  const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '?';
+
+  const header = `
+    <div class="outreach-detail-head">
+      <h2>${esc(entry.company_name)}</h2>
+      <span class="outreach-tier outreach-tier-${entry.tier}">T${entry.tier}</span>
+      <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
+    </div>
+    <div class="outreach-detail-sub">${esc(entry.reason || '')}</div>`;
+
+  const steerBlock = `
+    <div class="steer-row outreach-steer-row">
+      <textarea id="outreach-steer" class="steer-input" rows="1"
+        placeholder="optional steer (final authority on intent)"></textarea>
+      <button class="btn btn-ghost" id="outreach-regenerate-btn" onclick="regenerateOutreachDraft()">${draft ? 'Regenerate' : 'Generate draft'}</button>
+    </div>`;
+
+  if (!draft) {
+    const what = entry.message_type
+      ? `the <strong>${esc(entry.message_type.replace(/_/g, ' '))}</strong> message`
+      : 'a reply (the advisor reads the thread and drafts Jamie’s response)';
+    el.innerHTML = header + `
+      <div class="detail-section outreach-card">
+        <div class="outreach-empty-note">No draft yet &mdash; generating will write ${what}.</div>
+        ${steerBlock}
+      </div>`;
+    return;
+  }
+
+  const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
+  const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
+
+  el.innerHTML = header + `
+    <div class="detail-section outreach-card">
+      <h3>Draft #${draft.id}
+        <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>
+        ${s.confidence ? `<span class="badge badge-${esc(s.confidence)}">${esc(s.confidence)}</span>` : ''}
+        ${draft.advisor ? `<span class="badge badge-muted">${esc(draft.advisor.replace(/^b2b_/, '').replace(/_/g, ' '))}</span>` : ''}
+      </h3>
+      ${s.needs_review_reason ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
+      <div class="outreach-subject"><span class="outreach-field-label">Subject</span>${esc(draft.subject || '(inherits thread subject)')}</div>
+      <div class="outreach-body">${esc(draft.body)}</div>
+      ${facts.length ? outreachListHtml('Facts to verify', facts, 'outreach-facts') : ''}
+      ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
+      ${steerBlock}
+      <div class="btn-row btn-row-primary outreach-actions">
+        <button class="btn btn-primary" id="outreach-send-btn" onclick="outreachPreviewSend()">Send&hellip;</button>
+        <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
+      </div>
+      <div id="outreach-send-panel"></div>
+    </div>`;
+}
+
+async function regenerateOutreachDraft() {
+  const entry = outreachQueue.find(e => e.company_id === outreachSelectedId);
+  if (!entry) return;
+  const steer = (document.getElementById('outreach-steer')?.value || '').trim();
+  const btn = document.getElementById('outreach-regenerate-btn');
+  const hadDraft = !!outreachDraft;
+  if (btn) { btn.disabled = true; btn.textContent = 'Drafting…'; }
+  try {
+    const draft = hadDraft
+      ? await api(`/api/b2b/drafts/${outreachDraft.id}/regenerate`, { method: 'POST', body: { steer } })
+      : await api(`/api/b2b/companies/${encodeURIComponent(entry.company_id)}/draft`, { method: 'POST', body: { steer } });
+    outreachDraft = draft;
+    outreachSendPreview = null;
+    entry.draft = { id: draft.id, subject: draft.subject, snippet: (draft.body || '').replace(/\s+/g, ' ').slice(0, 140) };
+    renderOutreachQueue();
+    renderOutreachDetail(entry, draft);
+    showToast(`Draft #${draft.id} ready`, 'success');
+  } catch (err) {
+    showToast(`Draft failed: ${err.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = hadDraft ? 'Regenerate' : 'Generate draft'; }
+  }
+}
+
+async function dismissOutreachDraft() {
+  if (!outreachDraft) return;
+  try {
+    await api(`/api/b2b/drafts/${outreachDraft.id}/dismiss`, { method: 'POST', body: {} });
+    showToast(`Draft #${outreachDraft.id} dismissed`, 'success');
+  } catch (err) {
+    showToast(`Dismiss failed: ${err.message}`, 'error');
+    return;
+  }
+  outreachDraft = null;
+  outreachSelectedId = null;
+  outreachSendPreview = null;
+  document.getElementById('outreach-detail').style.display = 'none';
+  document.getElementById('outreach-placeholder').style.display = 'flex';
+  loadOutreachQueue();
+}
+
+// Phase 1: always preview first. The response includes gate_enabled so the
+// confirm button can state the b2b_send_enabled flag state up front.
+async function outreachPreviewSend() {
+  if (!outreachDraft) return;
+  const panel = document.getElementById('outreach-send-panel');
+  panel.innerHTML = '<div class="outreach-loading">Building preview&hellip;</div>';
+  try {
+    outreachSendPreview = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id } });
+  } catch (err) {
+    panel.innerHTML = `<div class="outreach-send-error">Preview failed: ${esc(err.message)}</div>`;
+    return;
+  }
+  if (outreachSendPreview.ok === false) {
+    // e.g. no active contact / missing subject — a fixable data problem
+    panel.innerHTML = `<div class="outreach-send-error">${esc(outreachSendPreview.error || 'Preview failed')}</div>`;
+    outreachSendPreview = null;
+    return;
+  }
+  renderOutreachSendPanel();
+}
+
+function renderOutreachSendPanel() {
+  const p = outreachSendPreview;
+  const panel = document.getElementById('outreach-send-panel');
+  if (!p) { panel.innerHTML = ''; return; }
+  const gateNote = p.gate_enabled
+    ? '<div class="outreach-gate-note outreach-gate-on">Sending is LIVE &mdash; confirming emails this immediately.</div>'
+    : '<div class="outreach-gate-note">Sending is currently off (the <code>b2b_send_enabled</code> flag is disabled). This preview is exactly what would send. Going live is a Jamie decision in a cowork session.</div>';
+  panel.innerHTML = `
+    <div class="outreach-send-preview">
+      <div class="outreach-field-label">Preview &mdash; nothing sent yet</div>
+      <div class="outreach-preview-meta">
+        <div><span>To</span>${esc(p.to)}${p.to_name ? ` (${esc(p.to_name)})` : ''} <span class="outreach-preview-via">via ${esc(p.resolved_via)}</span></div>
+        <div><span>From</span>${esc(p.from)}</div>
+        <div><span>Subject</span>${esc(p.subject)}</div>
+        <div><span>Threading</span>${esc(p.threading)}</div>
+      </div>
+      ${gateNote}
+      <div class="btn-row">
+        <button class="btn ${p.gate_enabled ? 'btn-primary' : 'btn-secondary'}" id="outreach-confirm-btn" onclick="outreachConfirmSend()">
+          ${p.gate_enabled ? 'Confirm send' : 'Confirm send (gate off — will not send)'}
+        </button>
+        <button class="btn btn-ghost" onclick="cancelOutreachSend()">Cancel</button>
+      </div>
+      <div id="outreach-send-result"></div>
+    </div>`;
+}
+
+function cancelOutreachSend() {
+  outreachSendPreview = null;
+  const panel = document.getElementById('outreach-send-panel');
+  if (panel) panel.innerHTML = '';
+}
+
+async function outreachConfirmSend() {
+  if (!outreachDraft || !outreachSendPreview) return;
+  const btn = document.getElementById('outreach-confirm-btn');
+  const resultEl = document.getElementById('outreach-send-result');
+  const btnLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  let res;
+  try {
+    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true } });
+  } catch (err) {
+    resultEl.innerHTML = `<div class="outreach-send-error">Send failed: ${esc(err.message)}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+    return;
+  }
+  if (res.phase === 'sent') {
+    showToast(`Sent to ${res.to}`, 'success');
+    outreachDraft = null;
+    outreachSelectedId = null;
+    outreachSendPreview = null;
+    document.getElementById('outreach-detail').style.display = 'none';
+    document.getElementById('outreach-placeholder').style.display = 'flex';
+    loadOutreachQueue();
+  } else if (res.phase === 'blocked') {
+    // The gate is off by design — state it plainly, not as an error.
+    resultEl.innerHTML = `<div class="outreach-gate-note">${esc(res.error)}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+  } else {
+    resultEl.innerHTML = `<div class="outreach-send-error">Not sent: ${esc(res.error || 'unknown result')}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -27,17 +27,10 @@ function isMissingTable(err) {
 
 async function handleQueue(input = {}) {
   try {
-    const { assembleQueue } = require(path.join(B2B_LIB, 'queue'));
-    const { buildContexts } = require(path.join(B2B_LIB, 'queueContext'));
+    const { fetchOutreachQueue } = require(path.join(B2B_LIB, 'queueService'));
     const sb = getSupabaseClient();
 
-    let q = sb.from('b2b_companies').select('*');
-    if (input.channel) q = q.eq('relationship_type', input.channel);
-    const { data: companies, error } = await q;
-    if (error) throw new Error(error.message);
-
-    const contexts = await buildContexts(sb, companies || []);
-    const queue = assembleQueue((companies || []).map(c => ({ company: c, ctx: contexts.get(c.id) })));
+    const queue = await fetchOutreachQueue(sb, { channel: input.channel });
     const top = queue.slice(0, input.limit || 25);
 
     if (!top.length) return text('Outreach queue is empty — nothing due today.');
@@ -63,24 +56,13 @@ async function handleDraft(input = {}) {
     }
 
     // Generate (or regenerate with steer) for one company
-    const { assembleQueue } = require(path.join(B2B_LIB, 'queue'));
-    const { buildContexts } = require(path.join(B2B_LIB, 'queueContext'));
-    const { generateDraft } = require(path.join(B2B_LIB, 'outreachAdvisor'));
+    const { generateDraftForCompany } = require(path.join(B2B_LIB, 'queueService'));
+    const d = await generateDraftForCompany(sb, { company_id: input.company_id, steer: input.steer, message_type: input.message_type });
+    if (!d) return text(`Company '${input.company_id}' has nothing due (and no message_type was forced). Pass message_type to draft anyway.`);
 
-    const { data: company, error } = await sb.from('b2b_companies').select('*').eq('id', input.company_id).maybeSingle();
-    if (error || !company) throw new Error(error?.message || `company '${input.company_id}' not found`);
-
-    const contexts = await buildContexts(sb, [company]);
-    let [entry] = assembleQueue([{ company, ctx: { ...contexts.get(company.id), hasPendingDraft: false } }]);
-    if (!entry && input.message_type) {
-      entry = { tier: 3, message_type: input.message_type, reason: 'operator-requested draft', company_id: company.id };
-    }
-    if (!entry) return text(`${company.name} has nothing due (and no message_type was forced). Pass message_type to draft anyway.`);
-
-    const d = await generateDraft({ company_id: company.id, queueEntry: entry, steer: input.steer });
     const s = d.facts_to_verify?.length ? `\n\nFACTS TO VERIFY: ${d.facts_to_verify.join(' · ')}` : '';
     const c = d.open_commitments?.length ? `\nCOMMITMENTS: ${d.open_commitments.join(' · ')}` : '';
-    return text(`Draft #${d.draft_id} (${d.advisor}, ${d.message_type}, confidence ${d.confidence})\n\nSubject: ${d.email_subject}\n\n${d.email_body}${s}${c}\n\nSend with: send_b2b_email { company_id: "${company.id}", ... } — preview first, confirmed:true to send (currently gated OFF).`);
+    return text(`Draft #${d.draft_id} (${d.advisor}, ${d.message_type}, confidence ${d.confidence})\n\nSubject: ${d.email_subject}\n\n${d.email_body}${s}${c}\n\nSend with: send_b2b_email { company_id: "${input.company_id}", ... } — preview first, confirmed:true to send (currently gated OFF).`);
   } catch (err) {
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
   }
