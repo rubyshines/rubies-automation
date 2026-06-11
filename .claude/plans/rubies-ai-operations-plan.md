@@ -325,6 +325,35 @@ day 1-2 and finish on their own; auto-send flips live only when its data says so
   garbled-draft repro in flight — address-regex theory eliminated by experiment; awaiting
   live artifact. Branch unmerged until resolved + cowork.
 
+## ☕ MORNING REPORT — night 2 (2026-06-11)
+
+**The outreach engine is built.** Steps 1-6 + 8 complete on `sprint/outreach` (8 commits,
+~45 new tests, suite green). Schemas → cadence brain → gated send tool → reply correlation
+(wired into the Gmail push handler) → 6-tier queue + sweep → both advisors with materialized
+prompts → console tools (b2b_queue / b2b_draft / send_b2b_email). Sending is hard-gated off.
+
+**Your 3 morning actions:**
+1. **Paste `gmail-management/b2b-outreach-schema.sql` into the Supabase SQL Editor** (2 min).
+   Then I run the seed: `node b2b-outreach/sweep.js --draft 5` → your first real outreach
+   drafts to review in the console.
+2. **Cowork merge moment** (15 min): sprint/outreach + sprint/advisor-api + sprint/autosend-ui
+   → main, dashboard restart, eyeball the auto-send panel.
+3. Skim `b2b-advisor-prompts-draft.md` if you haven't (your 5 answers already applied).
+
+**Overnight events worth knowing:**
+- **Anthropic Opus had a multi-hour 529 outage** (~18:00 ET onward, still flapping at 01:50).
+  Production CS intake rides Opus — tickets during the window draft late (poller retries),
+  not never. Check the morning queue for a backlog blip.
+- **The "garbled draft" mystery: SOLVED.** It was degraded model inference during overload
+  windows (mangled tokens + repetition loops + truncation), not our code. Twice observed,
+  both inside outage brackets; 7/8 scenarios pristine on healthy Opus. Shipped a guard on
+  sprint/advisor-api: malformed output now routes to human with a clean placeholder instead
+  of occupying the draft slot (843/843 tests). Final steer-scenario validation still pending
+  Opus stability — last blocker on that branch.
+- **Prospect research: 700 of 2,488 survivors researched** across 3 batches (batch 3 running):
+  cumulative **20 qualified retailers + 57 community-partner orgs**, zero errors. These feed
+  Phase 2/3 of the warm-first migration.
+
 ## OUTREACH ENGINE BUILD — active build order (started 2026-06-10 evening)
 
 Design is COMPLETE (b2b-outreach-system.md — all locked/drafted; prompts draft + Jamie's
