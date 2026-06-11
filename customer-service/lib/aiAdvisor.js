@@ -1343,16 +1343,16 @@ function buildOperatorSteerBlock(steer) {
     'The human operator has reviewed your prior draft for this ticket and is\n' +
     'redirecting you. Their instruction, verbatim:\n\n' +
     '    "' + trimmed + '"\n\n' +
-    'This instruction SUPERSEDES any conflicting guidance in your system prompt\n' +
-    'for this response only. You MUST comply. Do not re-offer paths the operator\n' +
-    'is redirecting away from. Regenerate BOTH the customer-facing response AND\n' +
-    'the structured action (tool calls, status) to reflect the operator\'s intent.\n' +
-    'If the operator\'s instruction requires a tool you would not normally call\n' +
-    '(e.g. refund, exchange, draft order), call it now.\n\n' +
-    'Even though this instruction tells you what to say, do not begin the\n' +
-    'customer-facing email until after you have called every tool the response\n' +
-    'requires (donation routing, order context, etc.). The customer-facing draft\n' +
-    'must be written once, in full, in your final round.\n' +
+    'This instruction supersedes conflicting CONTENT guidance in your system\n' +
+    'prompt for this response only — it never changes your output format, which\n' +
+    'remains the enforced JSON object. You MUST comply with the operator\'s\n' +
+    'intent. Do not re-offer paths the operator is redirecting away from.\n' +
+    'Write the customer_reply field and every structured field to reflect the\n' +
+    'operator\'s intent. If the operator\'s instruction requires a tool you would\n' +
+    'not normally call (e.g. refund, exchange, draft order), call it now.\n\n' +
+    'Call every tool the response requires (donation routing, order context,\n' +
+    'etc.) BEFORE your final message. Your final message is, as always, the\n' +
+    'single enforced JSON object with the complete email in customer_reply.\n' +
     '================================================================'
   );
 }
