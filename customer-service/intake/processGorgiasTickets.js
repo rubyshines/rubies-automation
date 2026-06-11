@@ -165,9 +165,17 @@ function cleanHelpCenterBody(body) {
  * Check if a new ticket is a duplicate of an existing open/snoozed ticket
  * from the same customer. Only calls the AI when there IS an existing ticket.
  *
+ * Only applies at first contact — a ticket whose latest customer message is
+ * its first. Once the customer has sent a second message they are replying on
+ * a thread we already ingested (and likely answered); closing that ticket as a
+ * "duplicate" eats the unprocessed reply, so it is never a close candidate.
+ *
  * @returns {string|object} 'close_new' | { action: 'close_existing', ticketsToClose } | 'keep_both' | null
  */
 async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, newMessages) {
+  const customerMsgCount = newMessages.filter(m => !m.from_agent).length;
+  if (customerMsgCount > 1) return null; // established conversation, not a new ticket
+
   // Quick check: does this customer have any non-closed tickets?
   const { data: existingTickets } = await supabase
     .from('cs_tickets')
