@@ -327,6 +327,15 @@ day 1-2 and finish on their own; auto-send flips live only when its data says so
 
 ## ☕ MORNING REPORT — night 2 (2026-06-11)
 
+**08:30 final update — every blocker fell overnight. The advisor branch is MERGE-READY.**
+The 529 saga ended as a feature: paired-evidence diagnosis (largest schema-enforced requests
+get load-shed; identical no-schema requests pass) → built a graceful fallback (529 → one
+mode-flip to the legacy <structured> path per draft) → **live-validated against the ongoing
+incident**: the steer scenario 529'd, fell back, and PASSED with correct steered content
+(73dbe49). Plus the steer-block root-cause fix (dfaa46f) and the degraded-output guard
+(5a57b37). 843/843 tests. Cowork merge list is now: sprint/advisor-api + sprint/outreach +
+sprint/autosend-ui.
+
 **The outreach engine is built.** Steps 1-6 + 8 complete on `sprint/outreach` (8 commits,
 ~45 new tests, suite green). Schemas → cadence brain → gated send tool → reply correlation
 (wired into the Gmail push handler) → 6-tier queue + sweep → both advisors with materialized
