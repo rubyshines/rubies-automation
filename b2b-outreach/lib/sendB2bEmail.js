@@ -1,0 +1,177 @@
+/**
+ * sendB2bEmail.js — the outreach engine's ONLY outbound path (Design #6).
+ *
+ * Two-phase, like every order tool:
+ *   Phase 1 (no `confirmed`): resolve recipient + render preview. Never sends.
+ *   Phase 2 (`confirmed: true`): HARD-GATED on the `b2b_send_enabled` system
+ *     flag (default OFF — flipping it is a Jamie-only go-live act). Sends via
+ *     Gmail API as jamie@rubyshines.com with proper threading headers, then
+ *     writes the b2b_messages row (the ONLY writer of outbound rows — never
+ *     Gmail-sync, per the draft-checkpoint dedupe rule), updates b2b_drafts /
+ *     b2b_companies cadence fields.
+ *
+ * Agent-agnostic: callable by either B2B advisor, the operator console, or MCP.
+ */
+const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { isFlagEnabled } = require('../../shared/systemFlags');
+const { nextActionDateAfterSend } = require('./cadence');
+
+const FROM_EMAIL = 'jamie@rubyshines.com';
+const SEND_FLAG = 'b2b_send_enabled';
+
+/** RFC 2047 encode a subject if it has non-ASCII. */
+function encodeSubject(subject) {
+  if (!subject || /^[\x20-\x7e]*$/.test(subject)) return subject || '';
+  return `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
+}
+
+/** Build the RFC822 message, base64url-encoded for gmail.users.messages.send. */
+function buildRawMessage({ to, subject, body, inReplyTo, references }) {
+  const headers = [
+    `From: Jamie Alexander <${FROM_EMAIL}>`,
+    `To: ${to}`,
+    `Subject: ${encodeSubject(subject)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 7bit',
+  ];
+  if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) headers.push(`References: ${references}`);
+  const raw = headers.join('\r\n') + '\r\n\r\n' + body;
+  return Buffer.from(raw, 'utf8').toString('base64url');
+}
+
+/** Resolve the recipient for a company: primary active contact, else general_email. */
+async function resolveRecipient(sb, companyId) {
+  const { data: contacts, error } = await sb.from('b2b_contacts')
+    .select('email, full_name, is_primary, is_active')
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .order('is_primary', { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`contact lookup: ${error.message}`);
+  if (contacts?.length) return { email: contacts[0].email, name: contacts[0].full_name || null, via: 'contact' };
+
+  const { data: company, error: cErr } = await sb.from('b2b_companies')
+    .select('general_email').eq('id', companyId).maybeSingle();
+  if (cErr) throw new Error(`company lookup: ${cErr.message}`);
+  if (company?.general_email) return { email: company.general_email, name: null, via: 'general_email' };
+  return null;
+}
+
+/**
+ * sendB2bEmail — see module doc.
+ * @param {object} p { company_id, thread_id?, message_type, variant_id?,
+ *                     subject?, body, confirmed? }
+ */
+async function sendB2bEmail(p = {}) {
+  const { company_id, thread_id, message_type, variant_id, body, confirmed } = p;
+  if (!company_id) throw new Error('company_id required');
+  if (!message_type) throw new Error('message_type required');
+  if (!body || !body.trim()) throw new Error('body required');
+
+  const sb = getSupabaseClient();
+  const recipient = await resolveRecipient(sb, company_id);
+  if (!recipient) {
+    return { ok: false, error: `No active contact or general_email for ${company_id} — fix the contact record first.` };
+  }
+
+  // Thread context (reply headers + subject inheritance)
+  let thread = null;
+  if (thread_id) {
+    const { data, error } = await sb.from('b2b_threads').select('*').eq('id', thread_id).maybeSingle();
+    if (error) throw new Error(`thread lookup: ${error.message}`);
+    thread = data;
+  }
+  let subject = p.subject || (thread?.subject ? (thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`) : null);
+  if (!subject) return { ok: false, error: 'subject required for a new thread' };
+
+  // Last outbound/inbound message in the thread → In-Reply-To / References
+  let inReplyTo = null;
+  if (thread) {
+    const { data: lastMsg } = await sb.from('b2b_messages')
+      .select('gmail_message_id')
+      .eq('thread_id', thread.id)
+      .not('gmail_message_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastMsg?.gmail_message_id) inReplyTo = `<${lastMsg.gmail_message_id}>`;
+  }
+
+  const preview = {
+    ok: true,
+    phase: 'preview',
+    to: recipient.email,
+    to_name: recipient.name,
+    resolved_via: recipient.via,
+    from: FROM_EMAIL,
+    subject,
+    body,
+    message_type,
+    variant_id: variant_id || null,
+    thread_id: thread?.id || null,
+    threading: inReplyTo ? `reply (In-Reply-To ${inReplyTo})` : 'new thread',
+  };
+
+  if (!confirmed) return preview;
+
+  // ---- PHASE 2: the gate ---------------------------------------------------
+  if (!(await isFlagEnabled(SEND_FLAG))) {
+    return {
+      ok: false,
+      phase: 'blocked',
+      error: `B2B sending is disabled (system flag '${SEND_FLAG}' is off). Preview above is what WOULD send. Go-live is a Jamie decision in a cowork session.`,
+      preview,
+    };
+  }
+
+  // Send via Gmail API (gmail.modify scope covers send)
+  const { getGmail } = require('../../gmail-management/lib/gmailClient');
+  const gmail = await getGmail();
+  const raw = buildRawMessage({ to: recipient.email, subject, body, inReplyTo, references: inReplyTo });
+  const sendRes = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw, ...(thread?.gmail_thread_id ? { threadId: thread.gmail_thread_id } : {}) },
+  });
+  const gmailMessageId = sendRes.data.id;
+  const gmailThreadId = sendRes.data.threadId;
+  const sentAt = new Date().toISOString();
+
+  // Ensure thread row
+  let threadRowId = thread?.id || null;
+  if (!threadRowId) {
+    const { data: newThread, error: tErr } = await sb.from('b2b_threads').insert({
+      company_id, thread_type: 'intro', subject, gmail_thread_id: gmailThreadId,
+      last_message_at: sentAt,
+    }).select('id').single();
+    if (tErr) throw new Error(`thread insert: ${tErr.message}`);
+    threadRowId = newThread.id;
+  } else {
+    await sb.from('b2b_threads').update({
+      gmail_thread_id: thread.gmail_thread_id || gmailThreadId,
+      last_message_at: sentAt,
+    }).eq('id', threadRowId);
+  }
+
+  // The ONLY outbound b2b_messages writer (dedupe rule)
+  const { error: mErr } = await sb.from('b2b_messages').insert({
+    thread_id: threadRowId, company_id, direction: 'outbound', message_type,
+    variant_id: variant_id || null, gmail_message_id: gmailMessageId,
+    gmail_thread_id: gmailThreadId, in_reply_to: inReplyTo,
+    from_email: FROM_EMAIL, to_email: recipient.email, body_text: body,
+    sent_at: sentAt, source: 'send_tool',
+  });
+  if (mErr) console.error(`[sendB2bEmail] b2b_messages insert failed (sent ok): ${mErr.message}`);
+
+  // Cadence bookkeeping
+  await sb.from('b2b_companies').update({
+    last_outbound_at: sentAt,
+    next_action_date: nextActionDateAfterSend(message_type, new Date(sentAt)),
+    updated_at: sentAt,
+  }).eq('id', company_id);
+
+  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
+}
+
+module.exports = { sendB2bEmail, buildRawMessage, resolveRecipient, encodeSubject, FROM_EMAIL, SEND_FLAG };

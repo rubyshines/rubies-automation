@@ -1,4 +1,3 @@
-const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 

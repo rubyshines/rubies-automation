@@ -52,6 +52,7 @@ function loadAllOperatorTools() {
     require('./tools/warehouseAllocation'),
     require('./tools/donationPartners'),
     require('./tools/storeLocator'),
+    require('./tools/b2bOutreach'),
   ];
 
   const tools = [];

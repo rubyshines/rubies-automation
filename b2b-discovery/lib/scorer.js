@@ -80,4 +80,18 @@ function getStatus(score, isRelevant, threshold = DEFAULT_SCORE_THRESHOLD) {
   return score >= threshold ? 'qualified' : 'dismissed';
 }
 
-module.exports = { scoreProspect, getStatus };
+// Route a researched prospect to a pipeline status (Design #2 — three paths,
+// not two). Community orgs with LGBTQ/trans relevance go to the LGBTQ+
+// pipeline as 'community-partner' instead of being dismissed for not being a
+// retail/wholesale fit. Everything else follows the score threshold.
+function routeStatus(analysis, score, threshold = DEFAULT_SCORE_THRESHOLD) {
+  if (
+    analysis.subcategory === 'community-org' &&
+    (analysis.mentionsLGBTQ || analysis.mentionsTransOrGenderAffirming)
+  ) {
+    return 'community-partner';
+  }
+  return getStatus(score, analysis.isRelevant, threshold);
+}
+
+module.exports = { scoreProspect, getStatus, routeStatus };
