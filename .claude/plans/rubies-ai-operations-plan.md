@@ -344,12 +344,18 @@ prompts → console tools (b2b_queue / b2b_draft / send_b2b_email). Sending is h
 - **Anthropic Opus had a multi-hour 529 outage** (~18:00 ET onward, still flapping at 01:50).
   Production CS intake rides Opus — tickets during the window draft late (poller retries),
   not never. Check the morning queue for a backlog blip.
-- **The "garbled draft" mystery: SOLVED.** It was degraded model inference during overload
-  windows (mangled tokens + repetition loops + truncation), not our code. Twice observed,
-  both inside outage brackets; 7/8 scenarios pristine on healthy Opus. Shipped a guard on
-  sprint/advisor-api: malformed output now routes to human with a clean placeholder instead
-  of occupying the draft slot (843/843 tests). Final steer-scenario validation still pending
-  Opus stability — last blocker on that branch.
+- **The "garbled draft" mystery: ACTUALLY solved (3am correction — my earlier "degraded
+  inference, not our code" conclusion was WRONG).** Controlled A/B at 02:55: steer scenario
+  garbles on the schema branch, passes on main, same minutes; steer-less scenarios pass on
+  both. Root cause: the operator-steer block's old two-part-output language ("SUPERSEDES
+  your system prompt… regenerate BOTH the response AND the structured action") contradicts
+  the enforced JSON grammar — constrained decoding under a format-contradicting top-authority
+  instruction degenerates (mid-string garbage, repetition loops). Fixed: steer block now
+  scopes its authority to content and reaffirms the enforced output shape (dfaa46f). The
+  degraded-output→route-to-human guard (5a57b37) stays as defense in depth. Final live
+  validation of the steer scenario pending an Opus-stable window (API flapped all night) —
+  run `node customer-service/test/scenarios/steerProseLoss.js` in the advisor-api worktree
+  before merging that branch.
 - **Prospect research: 700 of 2,488 survivors researched** across 3 batches (batch 3 running):
   cumulative **20 qualified retailers + 57 community-partner orgs**, zero errors. These feed
   Phase 2/3 of the warm-first migration.
