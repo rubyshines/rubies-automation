@@ -32,7 +32,7 @@ const {
 } = require('./sizingEngine');
 const { prescribeDonationRouting } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
-const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE } = require('./advisorOutputSchema');
+const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE } = require('./advisorOutputSchema');
 
 let _client = null;
 function getClient() {
@@ -1426,6 +1426,15 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     systemBlocks.push({ type: 'text', text: dynamicPart });
   }
 
+  // Legacy-mode system blocks for the 529 fallback: identical prompt with the
+  // enforced-schema note swapped for the old <structured> template. Very large
+  // schema-enforced requests get load-shed under capacity pressure (529) while
+  // the identical request without output_config succeeds — observed 2026-06-11.
+  const legacySystemBlocks = [
+    { type: 'text', text: staticPart.replace(STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE), cache_control: { type: 'ephemeral' } },
+    ...(dynamicPart ? [{ type: 'text', text: dynamicPart }] : []),
+  ];
+
   // Filter tools: remove redundant ones that waste tokens and can trigger unnecessary tool loops
   // - get_tone_samples: never called (0% in production data) — all samples are in the system prompt
   // - get_order_context: when preContext exists, data is already in the system prompt
@@ -1485,44 +1494,74 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // send-time logger can call logDonationRouting() with the right partner.
   const donationRoutingSink = {};
 
+  let legacyMode = false; // flips on 529 of a schema-enforced call — see fallback below
+
   while (toolCallCount < MAX_TOOL_CALLS) {
     const _tApi = Date.now();
     const apiParams = {
       model: MODELS.OPUS,
       max_tokens: 4096,
-      system: systemBlocks,
+      system: legacyMode ? legacySystemBlocks : systemBlocks,
       tools: filteredTools,
       messages: currentMessages,
       // Enforced output schema (#2): the final message IS this JSON — no
       // <structured> tag parsing, no malformed-output class, no thinking
       // leakage into prose (customer_reply is a schema-constrained field).
-      output_config: { format: { type: 'json_schema', schema: ADVISOR_OUTPUT_SCHEMA } },
+      ...(legacyMode ? {} : { output_config: { format: { type: 'json_schema', schema: ADVISOR_OUTPUT_SCHEMA } } }),
     };
 
-    if (useStreaming) {
-      // Streaming mode — the model streams the output JSON; customer_reply is
-      // the first schema property, so the extractor surfaces the email text
-      // live and fires prose_complete at its closing quote. The remaining
-      // structured fields stream invisibly after ("Finalizing…" phase).
-      const feedExtractor = createCustomerReplyStreamExtractor({
-        onReplyText: (text) => _emit({ type: 'text_delta', text }),
-        onProseComplete: () => _emit({ type: 'prose_complete' }),
-      });
-      response = await callClaude({
-        component: 'cs_advisor',
-        ...apiParams,
-        stream: true,
-        onText: feedExtractor,
-        ticket_id, draft_id, parent_call_id: parentCallId,
-        metadata: { customer_email },
-      });
-    } else {
-      response = await callClaude({
-        component: 'cs_advisor',
-        ...apiParams,
-        ticket_id, draft_id, parent_call_id: parentCallId,
-        metadata: { customer_email },
-      });
+    try {
+      if (useStreaming) {
+        let onText;
+        if (legacyMode) {
+          // Legacy streaming: raw deltas; prose_complete when <structured> opens.
+          let runningText = '';
+          let proseDone = false;
+          onText = (text) => {
+            runningText += text;
+            _emit({ type: 'text_delta', text });
+            if (!proseDone && runningText.includes('<structured>')) {
+              proseDone = true;
+              _emit({ type: 'prose_complete' });
+            }
+          };
+        } else {
+          // Schema streaming — customer_reply is the first schema property, so
+          // the extractor surfaces the email text live and fires prose_complete
+          // at its closing quote; remaining fields stream invisibly after.
+          onText = createCustomerReplyStreamExtractor({
+            onReplyText: (text) => _emit({ type: 'text_delta', text }),
+            onProseComplete: () => _emit({ type: 'prose_complete' }),
+          });
+        }
+        response = await callClaude({
+          component: 'cs_advisor',
+          ...apiParams,
+          stream: true,
+          onText,
+          ticket_id, draft_id, parent_call_id: parentCallId,
+          metadata: { customer_email },
+        });
+      } else {
+        response = await callClaude({
+          component: 'cs_advisor',
+          ...apiParams,
+          ticket_id, draft_id, parent_call_id: parentCallId,
+          metadata: { customer_email },
+        });
+      }
+    } catch (err) {
+      // 529 fallback: very large schema-enforced requests get load-shed while
+      // the identical request without output_config succeeds (paired evidence
+      // 2026-06-11, 14h window). One mode flip per draft; rethrow anything else.
+      const overloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
+      if (!legacyMode && overloaded) {
+        legacyMode = true;
+        audit.push('529 on schema-enforced call — falling back to legacy <structured> output mode for this draft');
+        console.warn('[advisor] 529 on schema call — retrying in legacy output mode');
+        continue;
+      }
+      throw err;
     }
     if (parentCallId === null) parentCallId = response._ai_call_id;
 
@@ -1633,6 +1672,11 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   }
   if (response.stop_reason === 'max_tokens') {
     audit.push('WARNING: response hit max_tokens — output was truncated');
+  }
+  // Legacy mode emits prose-then-<structured>; the old thinking-leak strip
+  // applies to that shape (it's a no-op for schema mode, which never runs it).
+  if (legacyMode && parsedStructured) {
+    composedResponse = stripInternalThinking(composedResponse);
   }
 
   // Validate for hallucinations (may correct the response).
