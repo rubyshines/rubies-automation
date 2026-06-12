@@ -83,7 +83,7 @@ async function getOnlineStorePublicationId() {
   return pub.id;
 }
 
-async function ensureGiftCollection() {
+async function ensureGiftCollection(log = () => {}) {
   const existing = await shopifyGraphQL(`
     query collectionByHandle($handle: String!) {
       collectionByHandle(handle: $handle) { id title }
@@ -110,7 +110,7 @@ async function ensureGiftCollection() {
     }
   `, { id: collectionId, input: [{ publicationId }] });
 
-  console.log(`✓ Created gift collection "${GIFT_COLLECTION_TITLE}" (${GIFT_COLLECTION_HANDLE})`);
+  log(`✓ Created gift collection "${GIFT_COLLECTION_TITLE}" (${GIFT_COLLECTION_HANDLE})`);
   return collectionId;
 }
 
@@ -134,7 +134,7 @@ function giftHandleFor(sourceHandle) {
 
 // --- create ---
 
-async function createTwin(sourceHandle) {
+async function createTwin(sourceHandle, log = () => {}) {
   const source = await getProductByHandle(sourceHandle);
   if (!source) throw new Error(`Source product not found: ${sourceHandle}`);
   const sourceVariant = source.variants.nodes[0];
@@ -143,11 +143,11 @@ async function createTwin(sourceHandle) {
   }
 
   const giftHandle = giftHandleFor(sourceHandle);
-  const collectionId = await ensureGiftCollection();
+  const collectionId = await ensureGiftCollection(log);
 
   let gift = await getProductByHandle(giftHandle);
   if (gift) {
-    console.log(`✓ Gift twin already exists: ${gift.title} (${gift.status}) — reusing`);
+    log(`✓ Gift twin already exists: ${gift.title} (${gift.status}) — reusing`);
   } else {
     const created = await shopifyGraphQL(`
       mutation productCreate($input: ProductInput!) {
@@ -166,7 +166,7 @@ async function createTwin(sourceHandle) {
       },
     });
     gift = created.productCreate.product;
-    console.log(`✓ Created gift twin: ${gift.title} (${giftHandle}, DRAFT)`);
+    log(`✓ Created gift twin: ${gift.title} (${giftHandle}, DRAFT)`);
 
     // $0 price, source price as compare-at, same SKU so the warehouse picks
     // the same physical item. Inventory untracked: stock truth stays on the
@@ -189,7 +189,7 @@ async function createTwin(sourceHandle) {
         inventoryItem: { sku: sourceVariant.sku, tracked: false },
       }],
     });
-    console.log(`✓ Variant set: $0.00 (compare at $${sourceVariant.price}), SKU ${sourceVariant.sku || '(none — source has no SKU!)'}, untracked`);
+    log(`✓ Variant set: $0.00 (compare at $${sourceVariant.price}), SKU ${sourceVariant.sku || '(none — source has no SKU!)'}, untracked`);
 
     if (source.featuredMedia?.image?.url) {
       await shopifyGraphQL(`
@@ -203,7 +203,7 @@ async function createTwin(sourceHandle) {
         productId: gift.id,
         media: [{ originalSource: source.featuredMedia.image.url, mediaContentType: 'IMAGE' }],
       });
-      console.log('✓ Copied product image from source');
+      log('✓ Copied product image from source');
     }
 
     // Hide from storefront search / sitemap
@@ -218,7 +218,7 @@ async function createTwin(sourceHandle) {
     `, {
       metafields: [{ ownerId: shopAwareGiftId, namespace: 'seo', key: 'hidden', type: 'number_integer', value: '1' }],
     });
-    console.log('✓ Hidden from storefront search (seo.hidden)');
+    log('✓ Hidden from storefront search (seo.hidden)');
 
     const publicationId = await getOnlineStorePublicationId();
     await shopifyGraphQL(`
@@ -228,7 +228,7 @@ async function createTwin(sourceHandle) {
         }
       }
     `, { id: gift.id, input: [{ publicationId }] });
-    console.log('✓ Published to Online Store sales channel (required for cart add)');
+    log('✓ Published to Online Store sales channel (required for cart add)');
   }
 
   await shopifyGraphQL(`
@@ -240,13 +240,13 @@ async function createTwin(sourceHandle) {
   `, { id: collectionId, productIds: [gift.id] }).catch((err) => {
     if (!String(err.message).includes('already')) throw err;
   });
-  console.log(`✓ In gift collection. Twin stays DRAFT until "enable".`);
-  console.log(`\nNext: node promotions/freeOffer.js enable --minimum 0 --start YYYY-MM-DD --end YYYY-MM-DD`);
+  log(`✓ In gift collection. Twin stays DRAFT until "enable".`);
+  log(`\nNext: node promotions/freeOffer.js enable --minimum 0 --start YYYY-MM-DD --end YYYY-MM-DD`);
 }
 
 // --- remove (from offer; product kept for reuse) ---
 
-async function removeTwin(sourceHandle) {
+async function removeTwin(sourceHandle, log = () => {}) {
   const giftHandle = giftHandleFor(sourceHandle);
   const gift = await getProductByHandle(giftHandle);
   if (!gift) throw new Error(`No gift twin found for ${sourceHandle} (looked for handle ${giftHandle})`);
@@ -268,12 +268,12 @@ async function removeTwin(sourceHandle) {
       }
     }
   `, { input: { id: gift.id, status: 'DRAFT' } });
-  console.log(`✓ ${gift.title} removed from the offer and set to DRAFT (kept for future reuse)`);
+  log(`✓ ${gift.title} removed from the offer and set to DRAFT (kept for future reuse)`);
 }
 
 // --- enable / disable ---
 
-async function ensureMetafieldDefinitions() {
+async function ensureMetafieldDefinitions(log = () => {}) {
   const defs = [
     { key: 'free_gift_offer_collection', type: 'collection_reference', name: 'Free gift offer collection' },
     { key: 'free_gift_offer_minimum', type: 'number_integer', name: 'Free gift offer minimum (USD)' },
@@ -298,7 +298,7 @@ async function ensureMetafieldDefinitions() {
           ownerType: 'SHOP',
         },
       });
-      console.log(`✓ Created metafield definition custom.${def.key}`);
+      log(`✓ Created metafield definition custom.${def.key}`);
     } catch (err) {
       if (String(err.message).includes('TAKEN') || String(err.message).includes('in use')) continue;
       throw err;
@@ -306,7 +306,7 @@ async function ensureMetafieldDefinitions() {
   }
 }
 
-async function enableOffer(flags) {
+async function enableOffer(flags, log = () => {}) {
   const minimum = flags.minimum != null ? String(flags.minimum) : '0';
   const start = flags.start;
   const end = flags.end;
@@ -319,7 +319,7 @@ async function enableOffer(flags) {
     throw new Error('Gift collection is empty — run "create --source <handle>" first');
   }
 
-  await ensureMetafieldDefinitions();
+  await ensureMetafieldDefinitions(log);
 
   for (const product of collection.products.nodes) {
     if (product.status !== 'ACTIVE') {
@@ -331,7 +331,7 @@ async function enableOffer(flags) {
           }
         }
       `, { input: { id: product.id, status: 'ACTIVE' } });
-      console.log(`✓ ${product.title} → ACTIVE`);
+      log(`✓ ${product.title} → ACTIVE`);
     }
   }
 
@@ -352,11 +352,11 @@ async function enableOffer(flags) {
     ],
   });
 
-  console.log(`\n✓ Offer ENABLED: ${collection.products.nodes.length} gift(s), minimum $${minimum}, ${start} → ${end} (inclusive)`);
-  console.log('  The theme widget activates inside the date window automatically.');
+  log(`\n✓ Offer ENABLED: ${collection.products.nodes.length} gift(s), minimum $${minimum}, ${start} → ${end} (inclusive)`);
+  log('  The theme widget activates inside the date window automatically.');
 }
 
-async function disableOffer() {
+async function disableOffer(log = () => {}) {
   const collection = await getGiftCollectionProducts();
   if (collection) {
     for (const product of collection.products.nodes) {
@@ -369,18 +369,18 @@ async function disableOffer() {
             }
           }
         `, { input: { id: product.id, status: 'DRAFT' } });
-        console.log(`✓ ${product.title} → DRAFT`);
+        log(`✓ ${product.title} → DRAFT`);
       }
     }
   }
 
-  await clearOfferMetafields();
-  console.log('\n✓ Offer DISABLED (gift products kept as DRAFT — run "delete --all" for full teardown)');
+  await clearOfferMetafields(log);
+  log('\n✓ Offer DISABLED (gift products kept as DRAFT — run "delete --all" for full teardown)');
 }
 
 // --- delete (permanent) ---
 
-async function deleteProductById(id, title) {
+async function deleteProductById(id, title, log = () => {}) {
   await shopifyGraphQL(`
     mutation productDelete($input: ProductDeleteInput!) {
       productDelete(input: $input) {
@@ -389,18 +389,18 @@ async function deleteProductById(id, title) {
       }
     }
   `, { input: { id } });
-  console.log(`✓ Deleted ${title}`);
+  log(`✓ Deleted ${title}`);
 }
 
-async function deleteTwin(flags) {
+async function deleteTwin(flags, log = () => {}) {
   if (flags.all) {
     const collection = await getGiftCollectionProducts();
     if (!collection) {
-      console.log('Gift collection does not exist — nothing to delete.');
+      log('Gift collection does not exist — nothing to delete.');
       return;
     }
     for (const product of collection.products.nodes) {
-      await deleteProductById(product.id, product.title);
+      await deleteProductById(product.id, product.title, log);
     }
     await shopifyGraphQL(`
       mutation collectionDelete($input: CollectionDeleteInput!) {
@@ -410,9 +410,9 @@ async function deleteTwin(flags) {
         }
       }
     `, { input: { id: collection.id } });
-    console.log(`✓ Deleted collection "${GIFT_COLLECTION_TITLE}"`);
-    await clearOfferMetafields();
-    console.log('\n✓ Full teardown complete. Next campaign starts fresh with "create".');
+    log(`✓ Deleted collection "${GIFT_COLLECTION_TITLE}"`);
+    await clearOfferMetafields(log);
+    log('\n✓ Full teardown complete. Next campaign starts fresh with "create".');
     return;
   }
 
@@ -420,10 +420,10 @@ async function deleteTwin(flags) {
   const giftHandle = giftHandleFor(flags.source);
   const gift = await getProductByHandle(giftHandle);
   if (!gift) throw new Error(`No gift twin found for ${flags.source} (looked for handle ${giftHandle})`);
-  await deleteProductById(gift.id, gift.title);
+  await deleteProductById(gift.id, gift.title, log);
 }
 
-async function clearOfferMetafields() {
+async function clearOfferMetafields(log = () => {}) {
   const shopId = await getShopId();
   const existing = await shopifyGraphQL(`
     { shop { metafields(first: 30, namespace: "custom") { nodes { id key } } } }
@@ -440,13 +440,13 @@ async function clearOfferMetafields() {
         }
       }
     `, { metafields: toDelete });
-    console.log(`✓ Cleared ${toDelete.length} offer metafield(s)`);
+    log(`✓ Cleared ${toDelete.length} offer metafield(s)`);
   }
 }
 
 // --- status ---
 
-async function status() {
+async function getStatus() {
   const data = await shopifyGraphQL(`
     { shop { metafields(first: 30, namespace: "custom") { nodes { key value } } } }
   `);
@@ -454,24 +454,28 @@ async function status() {
     data.shop.metafields.nodes.filter((m) => METAFIELD_KEYS.includes(m.key)).map((m) => [m.key, m.value]),
   );
   const collection = await getGiftCollectionProducts();
+  return { metafields: mfs, collection };
+}
 
-  console.log('Free gift offer status');
-  console.log('──────────────────────');
+async function printStatus(log = console.log) {
+  const { metafields: mfs, collection } = await getStatus();
+  log('Free gift offer status');
+  log('──────────────────────');
   if (Object.keys(mfs).length === 0) {
-    console.log('Offer metafields: not set (offer disabled)');
+    log('Offer metafields: not set (offer disabled)');
   } else {
-    console.log(`Minimum:    $${mfs.free_gift_offer_minimum ?? '(unset)'}`);
-    console.log(`Window:     ${mfs.free_gift_offer_start ?? '?'} → ${mfs.free_gift_offer_end ?? '?'} (inclusive, store TZ)`);
-    console.log(`Collection: ${mfs.free_gift_offer_collection ?? '(unset)'}`);
+    log(`Minimum:    $${mfs.free_gift_offer_minimum ?? '(unset)'}`);
+    log(`Window:     ${mfs.free_gift_offer_start ?? '?'} → ${mfs.free_gift_offer_end ?? '?'} (inclusive, store TZ)`);
+    log(`Collection: ${mfs.free_gift_offer_collection ?? '(unset)'}`);
   }
   if (!collection) {
-    console.log('Gift collection: does not exist yet');
+    log('Gift collection: does not exist yet');
     return;
   }
-  console.log(`Gift collection (${GIFT_COLLECTION_HANDLE}): ${collection.products.nodes.length} product(s)`);
+  log(`Gift collection (${GIFT_COLLECTION_HANDLE}): ${collection.products.nodes.length} product(s)`);
   for (const p of collection.products.nodes) {
     const v = p.variants.nodes[0] || {};
-    console.log(`  - ${p.title} [${p.status}] $${v.price} (compare at $${v.compareAtPrice ?? '—'}) SKU=${v.sku || '(none)'}`);
+    log(`  - ${p.title} [${p.status}] $${v.price} (compare at $${v.compareAtPrice ?? '—'}) SKU=${v.sku || '(none)'}`);
   }
 }
 
@@ -482,23 +486,23 @@ async function main() {
   switch (command) {
     case 'create':
       if (!flags.source) throw new Error('create requires --source <product-handle>');
-      await createTwin(flags.source);
+      await createTwin(flags.source, console.log);
       break;
     case 'remove':
       if (!flags.source) throw new Error('remove requires --source <product-handle>');
-      await removeTwin(flags.source);
+      await removeTwin(flags.source, console.log);
       break;
     case 'enable':
-      await enableOffer(flags);
+      await enableOffer(flags, console.log);
       break;
     case 'disable':
-      await disableOffer();
+      await disableOffer(console.log);
       break;
     case 'delete':
-      await deleteTwin(flags);
+      await deleteTwin(flags, console.log);
       break;
     case 'status':
-      await status();
+      await printStatus();
       break;
     default:
       console.log('Usage: node promotions/freeOffer.js <create|remove|enable|disable|status> [flags]');
@@ -512,7 +516,19 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`✗ ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`✗ ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  createTwin,
+  removeTwin,
+  enableOffer,
+  disableOffer,
+  deleteTwin,
+  getStatus,
+  GIFT_COLLECTION_HANDLE,
+};
