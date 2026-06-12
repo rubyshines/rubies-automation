@@ -32,7 +32,10 @@ const {
 } = require('./sizingEngine');
 const { prescribeDonationRouting } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
-const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply } = require('./advisorOutputSchema');
+const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker } = require('./advisorOutputSchema');
+
+// Process-wide: one breaker shared by every draft this process generates.
+const schemaLoadShedBreaker = createLoadShedBreaker();
 
 let _client = null;
 function getClient() {
@@ -1498,7 +1501,14 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // send-time logger can call logDonationRouting() with the right partner.
   const donationRoutingSink = {};
 
-  let legacyMode = false; // flips on 529 of a schema-enforced call — see fallback below
+  // Flips on 529 of a schema-enforced call (see fallback below). Starts true
+  // when a recent schema 529 tripped the load-shed breaker — during an
+  // incident window schema attempts don't fail fast (the API holds the stream
+  // 47-150s before erroring), so skip straight to the mode that works.
+  let legacyMode = schemaLoadShedBreaker.active();
+  if (legacyMode) {
+    audit.push('Schema mode skipped — recent 529 tripped the load-shed breaker; starting in legacy output mode');
+  }
 
   while (toolCallCount < MAX_TOOL_CALLS) {
     const _tApi = Date.now();
@@ -1569,8 +1579,9 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       const overloaded = err?.status === 529 || err?.error?.error?.type === 'overloaded_error';
       if (!legacyMode && overloaded) {
         legacyMode = true;
+        schemaLoadShedBreaker.trip(); // subsequent drafts skip schema for the cooldown window
         audit.push('529 on schema-enforced call — falling back to legacy <structured> output mode for this draft');
-        console.warn('[advisor] 529 on schema call — retrying in legacy output mode');
+        console.warn('[advisor] 529 on schema call — retrying in legacy output mode (breaker tripped: next drafts start legacy)');
         continue;
       }
       throw err;

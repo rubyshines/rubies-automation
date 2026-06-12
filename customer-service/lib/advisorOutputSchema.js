@@ -291,4 +291,17 @@ function isDegenerateReply(text) {
   return letters < 15;
 }
 
-module.exports = { ADVISOR_OUTPUT_SCHEMA: EFFECTIVE_SCHEMA, FULL_SCHEMA: ADVISOR_OUTPUT_SCHEMA, stripDescriptions, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply };
+// Load-shed circuit breaker for schema mode. A schema-call 529 means Anthropic
+// is shedding large-grammar requests; during an incident window subsequent
+// schema attempts don't fail fast — the server holds the streaming request
+// (observed 47-150s) before erroring. So after any schema 529, start drafts
+// directly in legacy mode for a cooldown, then probe schema again.
+function createLoadShedBreaker(cooldownMs = 10 * 60 * 1000) {
+  let lastTrippedAt = 0;
+  return {
+    trip(now = Date.now()) { lastTrippedAt = now; },
+    active(now = Date.now()) { return lastTrippedAt > 0 && (now - lastTrippedAt) < cooldownMs; },
+  };
+}
+
+module.exports = { ADVISOR_OUTPUT_SCHEMA: EFFECTIVE_SCHEMA, FULL_SCHEMA: ADVISOR_OUTPUT_SCHEMA, stripDescriptions, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker };

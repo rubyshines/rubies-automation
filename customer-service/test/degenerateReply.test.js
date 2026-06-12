@@ -38,3 +38,32 @@ describe('isDegenerateReply', () => {
     );
   });
 });
+
+const { createLoadShedBreaker } = require('../lib/advisorOutputSchema');
+
+describe('createLoadShedBreaker', () => {
+  it('is inactive until tripped', () => {
+    const b = createLoadShedBreaker(10_000);
+    assert.equal(b.active(1_000_000), false);
+  });
+
+  it('is active within the cooldown window after a trip', () => {
+    const b = createLoadShedBreaker(10_000);
+    b.trip(1_000_000);
+    assert.equal(b.active(1_000_000 + 1), true);
+    assert.equal(b.active(1_000_000 + 9_999), true);
+  });
+
+  it('resets after the cooldown elapses', () => {
+    const b = createLoadShedBreaker(10_000);
+    b.trip(1_000_000);
+    assert.equal(b.active(1_000_000 + 10_000), false);
+  });
+
+  it('a new trip extends the window', () => {
+    const b = createLoadShedBreaker(10_000);
+    b.trip(1_000_000);
+    b.trip(1_000_000 + 8_000);
+    assert.equal(b.active(1_000_000 + 15_000), true);
+  });
+});
