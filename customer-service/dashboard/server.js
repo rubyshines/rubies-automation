@@ -3365,7 +3365,10 @@ async function handleRequest(req, res) {
       res.writeHead(404);
       res.end(JSON.stringify({ error: 'Not found' }));
     } catch (err) {
-      console.error(`[dashboard] API error: ${err.message}\n${err.stack}`);
+      // undici's "fetch failed" TypeError carries the real reason in err.cause
+      // and often has no stack — log route + cause or the message is useless.
+      const cause = err.cause ? ` — cause: ${err.cause.message || err.cause}` : '';
+      console.error(`[dashboard] API error on ${req.method} ${pathname}: ${err.message}${cause}\n${err.stack || ''}`);
       if (!res.headersSent) {
         // Handlers may throw with err.statusCode for client errors (e.g. 400)
         res.writeHead(err.statusCode || 500);
