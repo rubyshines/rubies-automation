@@ -6,15 +6,20 @@
  * hidden $0 "twin" of the gift product; the theme auto-adds it to qualifying
  * carts and renders it as FREE. See rubies-ecom-v4 snippets/free-gift-section.liquid.
  *
- * Lifecycle (gift products are reused across campaigns, never deleted —
- * deleting a sold product degrades order history, and a stable product/SKU
- * keeps the Warehance mapping working):
+ * Lifecycle:
  *
  *   node promotions/freeOffer.js create --source <handle>     # make $0 twin of a product, add to gift collection
  *   node promotions/freeOffer.js remove --source <handle>     # take a twin out of the gift collection (product stays, draft)
  *   node promotions/freeOffer.js enable --minimum 0 --start 2026-06-15 --end 2026-06-30
  *   node promotions/freeOffer.js disable                      # twins -> draft, offer metafields cleared
+ *   node promotions/freeOffer.js delete --source <handle>     # permanently delete one twin product
+ *   node promotions/freeOffer.js delete --all                 # full teardown: delete all twins + collection + metafields
  *   node promotions/freeOffer.js status
+ *
+ * After a campaign: run `disable` when the promo ends, then `delete --all`
+ * once fulfillments have settled. Deleting is permanent — Shopify keeps the
+ * line-item snapshot on past orders, but product-level reporting links break
+ * and next campaign needs a fresh `create` (and Warehance mapping).
  *
  * Theme contract (shop metafields, namespace "custom"):
  *   free_gift_offer_collection (collection_reference) — gift options shown in cart
@@ -369,8 +374,57 @@ async function disableOffer() {
     }
   }
 
+  await clearOfferMetafields();
+  console.log('\n✓ Offer DISABLED (gift products kept as DRAFT — run "delete --all" for full teardown)');
+}
+
+// --- delete (permanent) ---
+
+async function deleteProductById(id, title) {
+  await shopifyGraphQL(`
+    mutation productDelete($input: ProductDeleteInput!) {
+      productDelete(input: $input) {
+        deletedProductId
+        userErrors { field message }
+      }
+    }
+  `, { input: { id } });
+  console.log(`✓ Deleted ${title}`);
+}
+
+async function deleteTwin(flags) {
+  if (flags.all) {
+    const collection = await getGiftCollectionProducts();
+    if (!collection) {
+      console.log('Gift collection does not exist — nothing to delete.');
+      return;
+    }
+    for (const product of collection.products.nodes) {
+      await deleteProductById(product.id, product.title);
+    }
+    await shopifyGraphQL(`
+      mutation collectionDelete($input: CollectionDeleteInput!) {
+        collectionDelete(input: $input) {
+          deletedCollectionId
+          userErrors { field message }
+        }
+      }
+    `, { input: { id: collection.id } });
+    console.log(`✓ Deleted collection "${GIFT_COLLECTION_TITLE}"`);
+    await clearOfferMetafields();
+    console.log('\n✓ Full teardown complete. Next campaign starts fresh with "create".');
+    return;
+  }
+
+  if (!flags.source) throw new Error('delete requires --source <product-handle> or --all');
+  const giftHandle = giftHandleFor(flags.source);
+  const gift = await getProductByHandle(giftHandle);
+  if (!gift) throw new Error(`No gift twin found for ${flags.source} (looked for handle ${giftHandle})`);
+  await deleteProductById(gift.id, gift.title);
+}
+
+async function clearOfferMetafields() {
   const shopId = await getShopId();
-  const numericShopId = shopId.split('/').pop();
   const existing = await shopifyGraphQL(`
     { shop { metafields(first: 30, namespace: "custom") { nodes { id key } } } }
   `);
@@ -388,7 +442,6 @@ async function disableOffer() {
     `, { metafields: toDelete });
     console.log(`✓ Cleared ${toDelete.length} offer metafield(s)`);
   }
-  console.log(`\n✓ Offer DISABLED (gift products kept as DRAFT for reuse, shop ${numericShopId})`);
 }
 
 // --- status ---
@@ -441,6 +494,9 @@ async function main() {
     case 'disable':
       await disableOffer();
       break;
+    case 'delete':
+      await deleteTwin(flags);
+      break;
     case 'status':
       await status();
       break;
@@ -450,6 +506,7 @@ async function main() {
       console.log('  remove  --source <handle>                        take a twin out of the offer (kept for reuse)');
       console.log('  enable  --minimum <usd> --start <date> --end <date>   turn the offer on');
       console.log('  disable                                          turn the offer off');
+      console.log('  delete  --source <handle> | --all                permanently delete twin(s) (+collection/metafields with --all)');
       console.log('  status                                           show current offer state');
       process.exitCode = command ? 1 : 0;
   }
