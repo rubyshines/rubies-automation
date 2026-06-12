@@ -32,7 +32,7 @@ const {
 } = require('./sizingEngine');
 const { prescribeDonationRouting } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
-const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE } = require('./advisorOutputSchema');
+const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply } = require('./advisorOutputSchema');
 
 let _client = null;
 function getClient() {
@@ -391,6 +391,9 @@ async function executeToolCall(toolName, toolInput) {
             sku_size: li._skuSize,
             raw_sku_size: li._rawSkuSize,
             unit_price: li.originalUnitPriceSet?.shopMoney?.amount || null,
+            // The Pre-order target the customer saw at checkout (line-item
+            // attribute, persists after the window closes). Null = not a pre-order.
+            pre_order: (li.customAttributes || []).find(a => a.key === 'Pre-order')?.value || null,
           })),
         } : null,
         fulfilled_order_count: ctx.fulfilled.length,
@@ -1062,7 +1065,7 @@ For other routine profile updates with no automated tool — phone number change
 ### Shipping & Fulfillment Inquiries ("where is my order?", "why hasn't it shipped?")
 When a customer asks about a delayed or unshipped order:
 1. Check the fulfillment_status in the order context
-2. If UNFULFILLED: call check_unfulfilled_order to investigate why
+2. If UNFULFILLED: your next action is the check_unfulfilled_order tool call — always run it before composing any reply about why the order hasn't shipped. The order context alone can't tell you about warehouse holds or current inventory state, so never conclude "stuck" or "delayed" without the tool result. (The line_items in the order context do carry a pre_order field with the checkout target date — if it's set the item is a pre-order, but still run check_unfulfilled_order to confirm the current state.)
 3. If FULFILLED (the order has shipped): call shipping_lookup. It pulls the carrier tracking events and returns a draft response covering the actual carrier state — delivered, in transit, out for delivery, exception, returned to sender, stale tracking. Use shipping_lookup's draft as the basis of your reply. Do NOT call check_unfulfilled_order on a FULFILLED order; "fulfilled but no deliveredAt" means in transit, not stuck.
 4. Use the investigation results to give an honest, specific response:
 
@@ -1095,7 +1098,7 @@ Swap precedence (follow this order):
 
 **Pre-order resolved but a different item is blocking:** When a past-target pre-order is now in stock but something else (a future-target pre-order, an OOS item, etc.) is still holding the order, focus on the current blocker. Don't reference the resolved pre-order as a reason for the delay — its inventory is here.
 
-**Order stuck (3+ business days, no issues found):** "I'm sorry for the delay. I'm looking into this and will get back to you." Set status to "route_to_human" so Jamie can investigate.
+**Order stuck (3+ business days, no issues found):** "I'm sorry for the delay. I'm looking into this and will get back to you." Set status to "route_to_human" so Jamie can investigate. This scenario applies ONLY after check_unfulfilled_order has been run in this conversation and returned no cause (no pre-order, no OOS item, no hold). "No tool result yet" is not "no issues found" — if you haven't called the tool, call it now instead of using this reply.
 
 **Normal processing (0-2 business days):** "Your order is being prepared and should ship today/tomorrow. You'll get a shipping confirmation with tracking once it's on its way."
 
@@ -1159,6 +1162,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 - Default to they/them pronouns unless the customer uses gendered language ("my daughter" = she/her, "my son" = he/him).
 - Match the customer's energy. Short customer message = short response. Don't expand "it's too big" into a paragraph.
 - **Get to the point — never recap what the customer wrote, and never repeat what you already said.** Your first sentence after the greeting must be your action, direct answer, or question. Do not open by restating or paraphrasing the customer's situation — they already know what they wrote. "I understand you paid for expedited shipping expecting delivery by Friday..." is wasted words; open instead with what you are doing or asking. Equally, never repeat information you already gave in an earlier turn: if you told them the next size adds 2 inches, don't say it again when confirming the exchange. State only what is new.
+- **The body contains only what moves things forward:** the new information, the action you took or will take, and the question you need answered — plus at most one short warm sentence when the customer shared something personal. Don't list back the contents of their order (they know what they bought), don't lecture about a policy window you're already making work, and don't explain product details they didn't ask about. When you're tempted to add context "to be helpful", leave it out: the next email can cover it if the customer asks.
 - **Post-action closing:** When the customer's last message is a simple thank-you or confirmation AFTER an action has already been taken (exchange created, refund processed), keep your reply under 20 words. Don't repeat anything already said in the conversation (donation info, vacation wishes, product details). Just acknowledge warmly and close. Example: "You're welcome! Take care, Jamie Alexander, RUBIES Founder"
 - Signature: "Talk soon," (57%) if you're expecting a reply, "Take care," (43%) if the conversation is resolved or you just created an order. Always end with "Jamie Alexander, RUBIES Founder".
 - When the customer says they emailed before or are following up, acknowledge: "Sorry I must have missed your previous email." If it's clear YOU dropped the ball (e.g., exchange was never created), take full ownership: "I am so sorry. It looks like I never ended up creating your order."
@@ -1510,6 +1514,12 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       ...(legacyMode ? {} : { output_config: { format: { type: 'json_schema', schema: ADVISOR_OUTPUT_SCHEMA } } }),
     };
 
+    // Schema-enforced calls fail fast on 529 (no SDK retries): load-shed of
+    // large-grammar requests persists for hours, so the SDK's retry-after
+    // backoff (~45-150s observed 2026-06-11) only freezes the draft before
+    // the legacy fallback below can run. Legacy calls keep default retries.
+    const schemaRequestOptions = legacyMode ? {} : { requestOptions: { maxRetries: 0 } };
+
     try {
       if (useStreaming) {
         let onText;
@@ -1537,6 +1547,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
         response = await callClaude({
           component: 'cs_advisor',
           ...apiParams,
+          ...schemaRequestOptions,
           stream: true,
           onText,
           ticket_id, draft_id, parent_call_id: parentCallId,
@@ -1546,6 +1557,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
         response = await callClaude({
           component: 'cs_advisor',
           ...apiParams,
+          ...schemaRequestOptions,
           ticket_id, draft_id, parent_call_id: parentCallId,
           metadata: { customer_email },
         });
@@ -1677,6 +1689,19 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // applies to that shape (it's a no-op for schema mode, which never runs it).
   if (legacyMode && parsedStructured) {
     composedResponse = stripInternalThinking(composedResponse);
+  }
+
+  // Degraded-output guard, part 2: a structurally VALID parse can still carry
+  // a degenerate reply — under load pressure the free-text fields collapse to
+  // single punctuation tokens while the rest of the JSON stays coherent
+  // (observed 2026-06-12, draft 1757: customer_reply was ","). Same treatment
+  // as the malformed case: never let it occupy the customer-facing slot.
+  if (parsedStructured && isDegenerateReply(composedResponse)) {
+    audit.push(`Draft replaced with route-to-human placeholder (degenerate customer_reply ${JSON.stringify(String(composedResponse).slice(0, 40))} — degraded inference; retry by regenerating)`);
+    composedResponse = '[AI could not draft a response — needs manual reply]\n\nReason: the model returned an empty/degenerate reply (this correlates with API overload windows). Regenerate the draft, or reply manually.';
+    // Force route_to_human so no auto path (auto-send, thank-you close) can
+    // ever act on a draft whose real reply was lost.
+    parsedStructured.status = 'route_to_human';
   }
 
   // Validate for hallucinations (may correct the response).
@@ -1882,6 +1907,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
         variant: li.variant,
         quantity: li.quantity,
         sku: li.sku,
+        pre_order: li.pre_order || null,
       })),
     } : null,
     action_type,

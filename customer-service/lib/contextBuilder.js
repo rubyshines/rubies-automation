@@ -130,6 +130,9 @@ function supabaseOrderToShopify(orderRow, lineItems) {
       quantity: li.quantity,
       sku: li.sku,
       variant: li.shopify_variant_id ? { id: li.shopify_variant_id } : null,
+      // Per-line customAttributes (e.g. the Pre-order target shown at checkout).
+      // The attribute persists after the pre-order window closes; product tags don't.
+      customAttributes: li.custom_attributes || [],
       originalUnitPriceSet: {
         shopMoney: { amount: String(li.unit_price || 0), currencyCode: li.unit_price_currency },
       },

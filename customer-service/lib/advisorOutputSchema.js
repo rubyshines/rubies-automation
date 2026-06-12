@@ -280,4 +280,15 @@ const EFFECTIVE_SCHEMA = process.env.ADVISOR_LEAN_SCHEMA === '1'
   ? stripDescriptions(ADVISOR_OUTPUT_SCHEMA)
   : ADVISOR_OUTPUT_SCHEMA;
 
-module.exports = { ADVISOR_OUTPUT_SCHEMA: EFFECTIVE_SCHEMA, FULL_SCHEMA: ADVISOR_OUTPUT_SCHEMA, stripDescriptions, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE };
+// Degraded-inference detector for the customer_reply field. Schema enforcement
+// guarantees SHAPE, not content: under API load pressure the model can emit a
+// structurally valid JSON whose free-text fields collapse to single punctuation
+// tokens (observed 2026-06-12: customer_reply ",", items[].current_size ":").
+// The shortest legitimate reply (post-action closing + signature) is far above
+// 15 letters, so a letter-count floor separates the two cleanly.
+function isDegenerateReply(text) {
+  const letters = (String(text || '').match(/[a-zA-Z]/g) || []).length;
+  return letters < 15;
+}
+
+module.exports = { ADVISOR_OUTPUT_SCHEMA: EFFECTIVE_SCHEMA, FULL_SCHEMA: ADVISOR_OUTPUT_SCHEMA, stripDescriptions, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply };
