@@ -2599,6 +2599,35 @@ function sendDraft(afterAction) {
     ? { response, notes, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) }
     : { message: response, after: afterAction, focus_time_seconds: focusSeconds, ...(attachments.length && { attachments }) };
 
+  // Unexecuted-action check happens HERE, synchronous with the click — same
+  // ticket-level union as the server's apiSendDraft guard. The old flow asked
+  // via confirm() from the background task after the optimistic advance, which
+  // iOS standalone silently drops, surfacing as a send error with no choice
+  // offered. Declining keeps the draft in place with no error; accepting sends
+  // with the explicit override. The server 409 + background catch stay as the
+  // backstop for stale client state.
+  const activeDraft = ticket.active_draft;
+  if (draftId && activeDraft?.action_type) {
+    const executedTypes = new Set(
+      (ticket.drafts || [activeDraft]).filter(Boolean)
+        .flatMap(d => Array.isArray(d.actions) ? d.actions : [])
+        .map(a => a.action_type).filter(Boolean)
+    );
+    if (activeDraft.action_executed_at) {
+      activeDraft.action_type.split('+').forEach(t => executedTypes.add(t.trim()));
+    }
+    const missing = activeDraft.action_type.split('+')
+      .map(t => t.trim())
+      .filter(t => t && !executedTypes.has(t));
+    if (missing.length) {
+      const label = EXEC_ACTION_LABELS[activeDraft.action_type] || activeDraft.action_type;
+      if (!confirm(`The draft proposes an action (${label}) that hasn't been executed on this ticket.\n\nSend the email anyway, without the action?`)) {
+        return; // operator declined — draft stays pending, no error
+      }
+      body.force_unexecuted_action = true;
+    }
+  }
+
   // Optimistic: clear local state and advance immediately
   clearDraftAttachments();
   localStorage.removeItem(`draft-ticket-${ticketId}`);
