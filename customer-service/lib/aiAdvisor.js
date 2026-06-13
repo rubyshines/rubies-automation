@@ -37,6 +37,16 @@ const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OU
 // Process-wide: one breaker shared by every draft this process generates.
 const schemaLoadShedBreaker = createLoadShedBreaker();
 
+// Output mode. Enforced json_schema output (shipped 2026-06-11) constrains the
+// final message to ADVISOR_OUTPUT_SCHEMA. A 2026-06-13 live probe showed that
+// grammar makes every advisor call 3-20x slower (5-25s vs 1-2s plain) AND is
+// the request shape Anthropic load-sheds first — the 529 storm, 47-150s
+// freezes, garbled/empty drafts that began 06-10/11 all trace to it. Plain
+// output is fast and not shed. So schema is OFF by default; the proven legacy
+// <structured>-text path (also the 529 fallback) is the default. Re-enable
+// with ADVISOR_SCHEMA_OUTPUT=1 once Anthropic's grammar scheduling stabilises.
+const SCHEMA_OUTPUT_ENABLED = process.env.ADVISOR_SCHEMA_OUTPUT === '1';
+
 let _client = null;
 function getClient() {
   if (!_client) _client = new Anthropic();
@@ -1501,12 +1511,13 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // send-time logger can call logDonationRouting() with the right partner.
   const donationRoutingSink = {};
 
-  // Flips on 529 of a schema-enforced call (see fallback below). Starts true
-  // when a recent schema 529 tripped the load-shed breaker — during an
-  // incident window schema attempts don't fail fast (the API holds the stream
-  // 47-150s before erroring), so skip straight to the mode that works.
-  let legacyMode = schemaLoadShedBreaker.active();
-  if (legacyMode) {
+  // Output mode. Default legacy (see SCHEMA_OUTPUT_ENABLED above) — the
+  // <structured>-text path is fast (1-2s) and not load-shed. Schema mode, when
+  // enabled, still flips to legacy on a 529 (fallback below) and starts in
+  // legacy when a recent 529 tripped the breaker (the API holds the stream
+  // 47-150s before erroring, so skip straight to the mode that works).
+  let legacyMode = !SCHEMA_OUTPUT_ENABLED || schemaLoadShedBreaker.active();
+  if (legacyMode && SCHEMA_OUTPUT_ENABLED) {
     audit.push('Schema mode skipped — recent 529 tripped the load-shed breaker; starting in legacy output mode');
   }
 
