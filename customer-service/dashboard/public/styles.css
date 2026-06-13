@@ -191,6 +191,7 @@ main { height: calc(100vh - 56px); }
   min-width: 360px;
   border-right: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden; /* overflow-y:auto alone computes overflow-x to auto — a wide child would scroll the pane (and page) sideways */
   background: var(--surface);
 }
 
@@ -417,6 +418,7 @@ main { height: calc(100vh - 56px); }
 .detail {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden; /* same: prevent a wide child (fixed-width email tables, long tokens) from scrolling the page horizontally */
   padding: 24px 32px;
   background: var(--bg);
 }
@@ -1832,7 +1834,9 @@ main { height: calc(100vh - 56px); }
 .quoted-toggle.expanded .quoted-dots { letter-spacing: normal; }
 
 .msg-body img { max-width: 100%; height: auto; border-radius: 4px; }
-.msg-body table { font-size: 12px; border-collapse: collapse; }
+/* Fixed-width email tables (e.g. width="600") overflow on mobile — let them
+   scroll inside their own box instead of widening the page. */
+.msg-body table { font-size: 12px; border-collapse: collapse; display: block; max-width: 100%; overflow-x: auto; }
 .msg-body td, .msg-body th { padding: 2px 6px; }
 .msg-body blockquote { border-left: 3px solid var(--border); padding-left: 10px; margin: 8px 0; color: var(--text-secondary); }
 .msg-body a { color: var(--teal); }
