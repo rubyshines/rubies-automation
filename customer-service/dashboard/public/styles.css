@@ -4234,7 +4234,6 @@ main { height: calc(100vh - 56px); }
   nav {
     flex: 1;
     overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     gap: 0;
   }
@@ -4291,7 +4290,6 @@ main { height: calc(100vh - 56px); }
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
     overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
   }
 
   /* When a ticket is selected, show detail */
@@ -4437,7 +4435,6 @@ main { height: calc(100vh - 56px); }
     box-shadow: 0 2px 4px rgba(28, 25, 23, 0.06);
     max-height: 60vh;
     overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
   }
 
   /* When detail view is active: sidebar slides left, detail shows */
@@ -4567,7 +4564,17 @@ main { height: calc(100vh - 56px); }
      input RENDERED below 16px, and every workaround tried (transform: scale,
      CSS zoom, focus-time font swapping) either breaks WebKit's textarea
      caret positioning or visibly flashes. 16px is the iOS-native body size.
-     Don't set any mobile input below 16px, and don't reintroduce scaling. */
+     Don't set any mobile input below 16px, and don't reintroduce scaling.
+
+     NOTE: 16px was NOT the draft-editor caret-offset fix — that was a separate
+     bug. The caret landed away from the text because the editor auto-grew
+     taller than the screen and was scrolled by the .detail container, and iOS
+     miscomputes a textarea's caret when an ancestor controls its visible
+     region (WebKit #138201 caret-vs-overflow-scrolling, #176896 caret-in-
+     fixed-parent). Fixed structurally: the editor now caps at 55dvh and
+     scrolls its own content (see #draft-editor below), and
+     -webkit-overflow-scrolling: touch was removed from all scrollers (it's a
+     no-op on iOS 13+ and the #138201 trigger). Do not reintroduce either. */
 
   textarea, input[type="text"], input[type="email"], input[type="search"], select {
     font-size: 16px;
@@ -4586,6 +4593,17 @@ main { height: calc(100vh - 56px); }
     padding: 10px 12px;
     min-height: 35vh;
     min-height: 35dvh;
+    /* Cap the editor and let it scroll its OWN content instead of growing
+       taller than the screen and relying on .detail (the outer scroller) to
+       reveal it. iOS miscomputes the caret of a textarea whose visible region
+       is controlled by an ancestor's scroll (WebKit #138201 + #176896) — the
+       caret lands where the text would be at scrollTop 0, not where it
+       actually is. Self-scrolling keeps caret math inside the textarea's own
+       box, where it is correct. Pair with the removal of
+       -webkit-overflow-scrolling below. */
+    max-height: 55vh;
+    max-height: 55dvh;
+    overflow-y: auto;
   }
 
   .msg {
@@ -4737,7 +4755,6 @@ main { height: calc(100vh - 56px); }
   max-height: none;
   min-height: 0;
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   margin-bottom: 14px;
 }
 

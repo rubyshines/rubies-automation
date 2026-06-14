@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rubies-care-v2'; // bump to evict every client's old asset cache
+const CACHE_NAME = 'rubies-care-v3'; // bump to evict every client's old asset cache
 const SHELL = ['/', '/styles.css', '/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {
