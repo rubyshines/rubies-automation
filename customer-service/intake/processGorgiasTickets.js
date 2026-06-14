@@ -76,7 +76,10 @@ async function autoExecuteAdvisorHold(structured) {
   if (structured?.action_type !== 'warehouse_hold') return null;
   const orderName = structured?.order?.name || '';
   const orderNumber = parseInt(String(orderName).replace(/^#/, ''), 10);
-  if (!orderNumber) return null;
+  if (!orderNumber) {
+    recordHoldFailure(structured, orderName || '(none)', 'advisor proposed a hold but no order number was on its output');
+    return null;
+  }
 
   const { handleWarehouseHold } = require('../lib/tools/orderNotes');
   const reason = structured?.intake?.message_type === 'cancellation'
@@ -87,7 +90,7 @@ async function autoExecuteAdvisorHold(structured) {
     const result = await handleWarehouseHold({ order_number: orderNumber, reason });
     const text = result?.content?.[0]?.text || '';
     if (result?.isError) {
-      console.warn(`[intake] Auto-hold failed for #${orderNumber}: ${text}`);
+      recordHoldFailure(structured, orderNumber, text);
       return null;
     }
     return {
@@ -97,9 +100,21 @@ async function autoExecuteAdvisorHold(structured) {
       links: [],
     };
   } catch (err) {
-    console.warn(`[intake] Auto-hold exception for #${orderNumber}: ${err.message}`);
+    recordHoldFailure(structured, orderNumber, err.message);
     return null;
   }
+}
+
+// Record an auto-hold failure where it's actually visible — the draft's audit
+// trail (persisted to cs_ai_drafts.audit_trail) plus a server error log. The
+// old code only console.warn'd, which rolled off Railway and left a 0% success
+// rate invisible for weeks. The backstop sweep (lib/holdReconcile.js) retries
+// the hold; this captures WHY the synchronous intake attempt failed.
+function recordHoldFailure(structured, order, reason) {
+  const msg = `Auto-hold at intake FAILED for #${order}: ${reason} — backstop sweep will retry`;
+  if (!Array.isArray(structured.audit)) structured.audit = [];
+  structured.audit.push(msg);
+  console.error(`[intake] ${msg}`);
 }
 
 // AI Bot user ID — cached after first lookup

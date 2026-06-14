@@ -7,6 +7,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 # Parked Items
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
+## Use AI (not heuristics) to separate customer text from boilerplate/quoted chains
+- Parked: 2026-06-14
+- Last touched: 2026-06-14
+- Type: idea
+- Domains: cs
+- Notes: The dashboard separates the customer's free-text from auto-appended order-form metadata and quoted reply chains using brittle regex heuristics (`isHelpCenterForm`/`splitHelpCenterForm`/`isOrderFormOutput`/the email-branch boilerplate strip in [app.js](../../customer-service/dashboard/public/app.js), plus `extractCleanBody`/`cleanHelpCenterBody` at intake in [processGorgiasTickets.js](../../customer-service/intake/processGorgiasTickets.js)). These break on shape variations — e.g. a single-message chat "edit my order" form routed to the email-intake path had its question stripped because the strip assumed header-then-divider-then-content when it was question-then-divider-then-metadata (fixed 2026-06-14 by routing through splitHelpCenterForm, but the underlying approach is fragile). Jamie's call: this is exactly the kind of parsing our AI-first principle says shouldn't be regex. Replace the heuristic split with an AI pass (cheap Haiku triage is acceptable per CLAUDE.md — it's a pre-extraction, not a customer-facing decision) that returns {customer_message, order_metadata, quoted_history}. Note the intake stores Gorgias `stripped_html` already; scope whether this belongs at intake (one parse, stored structured) vs render-time. Relates to the "customer signature/address missing from advisor view" watch item.
+
 ## Event donation follow-up: photo collection → collaborations page + Instagram
 - Parked: 2026-05-29
 - Last touched: 2026-05-29

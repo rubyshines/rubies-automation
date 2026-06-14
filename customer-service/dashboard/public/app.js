@@ -4399,18 +4399,31 @@ function renderConversation(messages, ticket) {
     } else {
       // --- Email/contact form intake: show first customer email as intake card ---
       const firstMsg = messages[0];
-      let body = (firstMsg.body || '').trim();
-      // Strip contact form boilerplate header (e.g. "Product Question\n---\nActual message")
-      body = body.replace(/^[^\n]+\n-{3,}\n/s, '').trim();
-      if (body) {
+      const rawBody = (firstMsg.body || '').trim();
+      let body = rawBody;
+      let orderItems = [];
+      if (isHelpCenterForm(rawBody)) {
+        // Help-center / chat form: "I'd like to edit my order ----- Order: #... Item names: ...".
+        // The customer's question and the order-metadata block can be in either
+        // order; splitHelpCenterForm figures out which is which. The old blind
+        // strip ("first line + divider") assumed header-then-content and so
+        // deleted the customer's actual words whenever the question came first.
+        const split = splitHelpCenterForm(rawBody);
+        body = split.question;
+        orderItems = parseOrderFormItems(split.metadata);
+      } else {
+        // Contact form boilerplate header (e.g. "Product Question\n---\nActual message")
+        body = rawBody.replace(/^[^\n]+\n-{3,}\n/s, '').trim();
+      }
+      if (body || orderItems.length) {
         const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
         const cleaned = cleanMessageBody(rawHtml);
         const processed = collapseQuotedContent(cleaned);
         const intent = extractFormIntent([firstMsg]);
         parts.push(renderIntakeCard({
           channel: firstChannel,
-          customerWords: [processed],
-          orderItems: [],
+          customerWords: body ? [processed] : [],
+          orderItems,
           intent,
           timestamp: firstMsg.created_at,
           attachments: firstMsg.attachments,

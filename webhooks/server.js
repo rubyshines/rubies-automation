@@ -198,6 +198,28 @@ const server = app.listen(PORT, () => {
 // Auto follow-ups are now event-driven off Gorgias snooze expiry webhooks
 // (handled in webhooks/handlers/gorgiasTicketUpdated.js). No polling timer needed.
 
+// Warehouse-hold backstop: the synchronous auto-hold at intake fails when the
+// order isn't yet in Warehance (ingestion lag right after the customer orders).
+// There's no Warehance "order ingested" webhook to hang this on, so a short
+// poll places any hold the advisor proposed but intake couldn't land. Cheap
+// (DB query + a Warehance call per outstanding candidate, normally zero) and
+// idempotent. See customer-service/lib/holdReconcile.js.
+const { reconcilePendingHolds } = require('../customer-service/lib/holdReconcile');
+const HOLD_SWEEP_MS = 3 * 60 * 1000;
+let holdSweepRunning = false;
+const holdSweepTimer = setInterval(async () => {
+  if (holdSweepRunning) return; // never overlap a slow sweep with the next tick
+  holdSweepRunning = true;
+  try {
+    await reconcilePendingHolds();
+  } catch (e) {
+    console.error(`[hold-reconcile] sweep error: ${e.message}`);
+  } finally {
+    holdSweepRunning = false;
+  }
+}, HOLD_SWEEP_MS);
+holdSweepTimer.unref(); // don't keep the process alive for the timer alone
+
 // Graceful shutdown
 function shutdown(signal) {
   console.log(`[webhook] ${signal} received, shutting down...`);
