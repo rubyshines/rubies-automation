@@ -4604,6 +4604,11 @@ main { height: calc(100vh - 56px); }
     max-height: 55vh;
     max-height: 55dvh;
     overflow-y: auto;
+    /* Tighter line box so the caret hugs the text. iOS draws the textarea
+       caret at the line-box height; with the desktop 1.55 leading there's a
+       gap and the caret sits visibly low. 1.4 closes it without cramping a
+       multi-paragraph draft. (If a hair still shows, 1.3 is the next step.) */
+    line-height: 1.4;
   }
 
   .msg {
