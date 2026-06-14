@@ -9,6 +9,17 @@ require('dotenv').config();
 
 const BASE_URL = 'https://judge.me/api/v1';
 
+// Transient failures (network blips, 429s, 5xx) were silently dropping ~1 daily
+// pipeline run per week — a single failed fetch killed the whole sub-step with
+// no retry. Retry with exponential backoff at the one chokepoint so all call
+// sites are protected. Base delay is overridable for tests.
+const MAX_ATTEMPTS = 4;
+const RETRY_BASE_MS = Number(process.env.JUDGEME_RETRY_BASE_MS) || 500;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 let client = null;
 
 function getJudgemeClient() {
@@ -25,14 +36,34 @@ function getJudgemeClient() {
   async function apiFetch(path) {
     const separator = path.includes('?') ? '&' : '?';
     const url = `${BASE_URL}${path}${separator}${authParams()}`;
-    const res = await fetch(url, {
-      headers: { accept: 'application/json' },
-    });
-    if (!res.ok) {
+
+    let lastErr;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let res;
+      try {
+        res = await fetch(url, { headers: { accept: 'application/json' } });
+      } catch (err) {
+        // Network-level failure (TypeError: fetch failed) — transient, retry.
+        lastErr = err;
+        if (attempt === MAX_ATTEMPTS) throw err;
+        await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+        continue;
+      }
+
+      if (res.ok) return res.json();
+
       const body = await res.text();
-      throw new Error(`Judge.me ${res.status}: ${body.slice(0, 300)}`);
+      const err = new Error(`Judge.me ${res.status}: ${body.slice(0, 300)}`);
+      // Retry rate-limit + server errors; fail fast on other 4xx (e.g. bad token
+      // won't fix itself on retry).
+      if ((res.status === 429 || res.status >= 500) && attempt < MAX_ATTEMPTS) {
+        lastErr = err;
+        await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
+        continue;
+      }
+      throw err;
     }
-    return res.json();
+    throw lastErr;
   }
 
   // ── reviews ──────────────────────────────────────────────────────────
