@@ -4568,20 +4568,23 @@ main { height: calc(100vh - 56px); }
      caret positioning or visibly flashes. 16px is the iOS-native body size.
      Don't set any mobile input below 16px, and don't reintroduce scaling.
 
-     CARET HISTORY (read before touching #draft-editor): the draft-editor caret
-     landing away from the text was chased three times with CSS — offset, then
-     line-height, then capping the editor at 55dvh with its own overflow-y:auto
-     so it self-scrolled (theory: iOS miscomputes a textarea's caret when an
-     ancestor scroller controls its visible region, WebKit #138201/#176896).
-     That self-scroll cap traded a static offset for a STATEFUL bug: deleting a
-     chunk of text and re-opening the draft left a stale internal scrollTop, so
-     the caret landed at the old scroll position until a manual blur+refocus
-     forced WebKit to recompute. A full-height auto-growing textarea (overflow
-     hidden, page scrolls) has no internal scroll to go stale — the standard
-     compose pattern. So the cap was reverted 2026-06-14. Do NOT reintroduce a
-     max-height + overflow-y:auto on #draft-editor; if a static offset returns,
-     instrument scrollTop/scrollHeight/clientHeight/caret-rect on device first
-     rather than adding a fourth blind CSS patch.
+     CARET HISTORY (read before touching #draft-editor). Root cause, found by
+     instrumenting the real editor on device (2026-06-15): the editor must
+     SELF-SCROLL (max-height + overflow-y:auto). iOS reveals a focused caret by
+     scrolling the nearest scrollable box. A full-height editor (overflow
+     hidden) gives iOS no local target, so when the keyboard opens it scrolls
+     the window/visual-viewport instead — and because the editor lives in
+     .detail (position:absolute; inset:0; overflow:auto), that window scroll
+     runs away (pageY/visualViewport.offsetTop climbed to 400+ while taScroll
+     stayed 0), desyncing the caret. position:fixed on body does NOT stop this.
+     Capping the editor gives iOS a local scroll target (taScroll), keeping the
+     reveal and the caret math inside the textarea's box. The earlier CSS rounds
+     (offset, line-height) were chasing the same bug at the wrong layer; an
+     intermediate revert to full-height (2026-06-14) briefly removed the cap and
+     this is what brought the bug back. The cap's only side effect — a stale
+     internal scrollTop after delete+reopen — is handled in JS, not by removing
+     the cap: app.js resets editor.scrollTop = 0 on draft load. KEEP the cap and
+     that reset together; removing either reopens one of the two bugs.
      -webkit-overflow-scrolling: touch stays removed from all scrollers (no-op
      on iOS 13+); that part was independent of the caret bug. */
 
@@ -4602,14 +4605,21 @@ main { height: calc(100vh - 56px); }
     padding: 10px 12px;
     min-height: 35vh;
     min-height: 35dvh;
-    /* Auto-grows to full content height via autoExpandTextarea (overflow
-       hidden); the .detail container scrolls. No max-height + overflow-y here —
-       a self-scrolling editor strands a stale scrollTop that throws the caret
-       off after a delete+reopen. See CARET HISTORY above. */
-    /* Tighter line box so the caret hugs the text. iOS draws the textarea
-       caret at the line-box height; with the desktop 1.55 leading there's a
-       gap and the caret sits visibly low. 1.4 closes it without cramping a
-       multi-paragraph draft. */
+    /* Cap + self-scroll so the textarea has its OWN scroll target. iOS reveals
+       a focused caret by scrolling the nearest scrollable box; a full-height
+       editor (overflow hidden) gives it none, so when the keyboard opens iOS
+       runs the whole window/visual-viewport away and the caret desyncs —
+       confirmed on-device 2026-06-15 (pageY/visualViewport.offsetTop climbing
+       to 400+ while taScroll stayed 0 and .detail.scrollTop was pinned).
+       Self-scrolling keeps the reveal — and the caret math — inside the
+       textarea's box. The stale-scrollTop regression this caused before is now
+       fixed in JS (editor.scrollTop reset on draft load in app.js), NOT by
+       removing the cap. Do not remove the cap without that reset in place. */
+    max-height: 55vh;
+    max-height: 55dvh;
+    overflow-y: auto;
+    /* Tighter line box so the caret hugs the text (iOS draws the caret at the
+       line-box height; desktop 1.55 leaves a visible gap). */
     line-height: 1.4;
   }
 

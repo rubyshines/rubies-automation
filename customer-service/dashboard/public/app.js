@@ -883,6 +883,10 @@ function renderTicketDetail(ticket) {
     const useLocal = savedDraft && savedDraftId && parseInt(savedDraftId) === d.id;
     editor.value = useLocal ? savedDraft : d.draft_response;
     autoExpandTextarea(editor);
+    // The editor self-scrolls (overflow-y:auto on mobile). On reopen, iOS keeps
+    // a stale internal scrollTop, which strands the caret until a blur/refocus.
+    // Reset to top so the caret is computed from a clean scroll state.
+    editor.scrollTop = 0;
 
     // Message type + confidence + status badges
     const msgTypeEl = document.getElementById('detail-message-type');
