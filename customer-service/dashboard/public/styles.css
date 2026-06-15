@@ -3906,6 +3906,8 @@ main { height: calc(100vh - 56px); }
   letter-spacing: 0.02em;
 }
 .version-badge:hover { color: var(--text-secondary); background: var(--border); }
+/* Frontend bundle is older than what the server serves — tap to force refresh. */
+.version-badge.version-stale { color: #fff; background: var(--danger, #c0392b); }
 
 /* ─── Auto-send Panel ───────────────────────────────────── */
 

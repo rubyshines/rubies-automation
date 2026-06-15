@@ -19,14 +19,47 @@ if (!process.env.SUPABASE_URL) {
 
 const { execSync } = require('child_process');
 
-// Capture git version at startup
-let GIT_VERSION;
-try {
-  const hash = execSync('git rev-parse HEAD', { cwd: __dirname, encoding: 'utf8' }).trim();
-  const short = hash.slice(0, 7);
-  const date = execSync('git log -1 --format=%ci', { cwd: __dirname, encoding: 'utf8' }).trim();
-  GIT_VERSION = { hash, short, date, started: new Date().toISOString() };
-} catch { GIT_VERSION = { hash: 'unknown', short: '???', date: '', started: new Date().toISOString() }; }
+// Build identity, captured at startup. Two independent fingerprints:
+//   - commit: which git commit this server is running. Railway's runtime
+//     container has NO .git directory, so `git rev-parse` throws there (that's
+//     why this used to report "unknown" in production). Railway injects the SHA
+//     as an env var instead — prefer that, fall back to git for local dev.
+//   - assetHash: a content hash of the actual frontend files this server is
+//     serving. Git-independent, changes iff the bytes change. This is the TRUE
+//     "is the frontend fresh" signal — it's injected into index.html and the
+//     served asset URLs so a stale PWA self-busts and the client can compare
+//     what it loaded against what the server now has on disk.
+function computeBuildInfo() {
+  let hash = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || null;
+  let message = process.env.RAILWAY_GIT_COMMIT_MESSAGE || '';
+  let date = '';
+  if (!hash) {
+    try {
+      hash = execSync('git rev-parse HEAD', { cwd: __dirname, encoding: 'utf8' }).trim();
+      date = execSync('git log -1 --format=%ci', { cwd: __dirname, encoding: 'utf8' }).trim();
+      if (!message) message = execSync('git log -1 --format=%s', { cwd: __dirname, encoding: 'utf8' }).trim();
+    } catch { /* no git in this environment */ }
+  }
+  // Hash the bytes of every file the browser actually runs.
+  const publicDir = path.join(__dirname, 'public');
+  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'sw.js'];
+  const h = crypto.createHash('sha256');
+  for (const f of assetFiles) {
+    try { h.update(fs.readFileSync(path.join(publicDir, f))); } catch { /* file optional */ }
+  }
+  const assetHash = h.digest('hex').slice(0, 8);
+  const short = hash ? hash.slice(0, 7) : 'nogit';
+  return {
+    hash: hash || 'unknown',
+    short,
+    message: (message || '').split('\n')[0].slice(0, 120),
+    date,
+    assetHash,
+    deploymentId: process.env.RAILWAY_DEPLOYMENT_ID || '',
+    started: new Date().toISOString(),
+  };
+}
+const GIT_VERSION = computeBuildInfo();
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
@@ -3390,15 +3423,30 @@ async function handleRequest(req, res) {
   }
 
   try {
-    const content = fs.readFileSync(fullPath);
     const ext = path.extname(fullPath);
     res.setHeader('Content-Type', MIME[ext] || 'application/octet-stream');
     // Without this, Safari heuristically reuses stale JS/CSS (no validators
     // are sent), and the service worker's fetch() reads that stale HTTP
     // cache — old app code survives deploys. Force revalidation.
     res.setHeader('Cache-Control', 'no-cache');
+
+    if (ext === '.html') {
+      // Stamp the build into the served HTML so the running frontend knows
+      // exactly which bundle it loaded, and version the asset URLs with the
+      // content hash so a new deploy busts any cached app.js/styles.css.
+      const v = GIT_VERSION.assetHash;
+      let html = fs.readFileSync(fullPath, 'utf8')
+        .replace(/(href|src)="(\/(?:app|styles|voiceInput)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
+        .replace('</head>', `<script>window.__BUILD__=${JSON.stringify({
+          commit: GIT_VERSION.short, assetHash: v, started: GIT_VERSION.started,
+        })};</script>\n</head>`);
+      res.writeHead(200);
+      res.end(html);
+      return;
+    }
+
     res.writeHead(200);
-    res.end(content);
+    res.end(fs.readFileSync(fullPath));
   } catch {
     res.writeHead(404);
     res.end('Not found');

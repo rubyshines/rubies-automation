@@ -4499,22 +4499,75 @@ function formatAddress(a) {
 
 let _serverVersion = null;
 
+// The build stamp the server injected into THIS html (see server.js). Tells us
+// exactly which asset bundle the running tab loaded — null only if the HTML
+// itself came from a very old cache that predates the stamp.
+function _frontendBuild() {
+  return (typeof window !== 'undefined' && window.__BUILD__) || null;
+}
+
+// Frontend is stale when the bundle this tab loaded differs from what the
+// server now serves on disk. If either side is unknown, don't cry wolf.
+function _frontendStale(server) {
+  const fe = _frontendBuild();
+  if (!server || !fe) return false;
+  return fe.assetHash !== server.assetHash;
+}
+
 async function loadVersion() {
   try {
-    const res = await fetch('/api/version');
+    const res = await fetch('/api/version', { cache: 'no-store' });
     const data = await res.json();
     _serverVersion = data.version;
     const badge = document.getElementById('version-badge');
-    if (badge && _serverVersion) badge.textContent = _serverVersion.short;
+    if (badge && _serverVersion) {
+      const stale = _frontendStale(_serverVersion);
+      badge.textContent = (stale ? '⚠ ' : '') + _serverVersion.short;
+      badge.classList.toggle('version-stale', stale);
+    }
   } catch { /* ignore */ }
 }
 
 function showVersionInfo() {
-  if (!_serverVersion) return;
-  const v = _serverVersion;
-  const started = v.started ? new Date(v.started).toLocaleString('en-US', { timeZone: 'America/New_York' }) : '?';
-  const committed = v.date || '?';
-  alert(`Version: ${v.hash}\nCommitted: ${committed}\nServer started: ${started}`);
+  const s = _serverVersion;
+  if (!s) { alert('Version info not loaded yet.'); return; }
+  const fe = _frontendBuild();
+  const started = s.started ? new Date(s.started).toLocaleString('en-US', { timeZone: 'America/New_York' }) : '?';
+  const stale = _frontendStale(s);
+  const lines = [
+    `Server commit: ${s.short}${s.message ? ' — ' + s.message : ''}`,
+    `Server started: ${started} ET`,
+    '',
+    `Frontend loaded: ${fe ? fe.assetHash : 'unknown (old cache)'}`,
+    `Server on disk:  ${s.assetHash}`,
+    '',
+    stale
+      ? '⚠ STALE — the server has a newer build than this tab is running.'
+      : (fe ? '✓ Up to date — frontend matches the server.'
+            : '? Can’t confirm the frontend (no build stamp). Reload to be sure.'),
+  ];
+  if (stale || !fe) {
+    if (confirm(lines.join('\n') + '\n\nForce refresh to the latest now?')) hardRefresh();
+  } else {
+    alert(lines.join('\n'));
+  }
+}
+
+// Nuke the service worker + all caches, then reload from the network. This is
+// the one-tap version of "kill the app and reopen" — guarantees the latest
+// server + frontend on the next paint.
+async function hardRefresh() {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch { /* best effort */ }
+  location.reload();
 }
 
 // ---------------------------------------------------------------------------
