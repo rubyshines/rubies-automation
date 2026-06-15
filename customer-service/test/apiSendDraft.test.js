@@ -93,7 +93,7 @@ require.cache[autoLinkerPath] = {
   exports: { autoLinkProducts: (html) => html },
 };
 
-const { apiSendDraft } = require('../dashboard/server');
+const { apiSendDraft, actionTypeFromTool, WRITE_TOOLS } = require('../dashboard/server');
 
 // ---------------------------------------------------------------------------
 
@@ -208,5 +208,32 @@ describe('apiSendDraft — unexecuted-action guard', () => {
     });
     assert.equal(result.success, true);
     assert.equal(captured.replies.length, 1);
+  });
+
+  // Regression for #31584: the advisor proposed order_modification and the
+  // operator agent expedited the order via update_shipping_speed. The expedite
+  // committed to Warehance but was filed onto the draft as order_modification
+  // (see actionTypeFromTool), so the guard must treat it as satisfied — no
+  // spurious "send anyway?" prompt for a legit expedite.
+  it('an executed update_shipping_speed (filed as order_modification) satisfies the proposal', async () => {
+    DRAFT.action_type = 'order_modification';
+    DRAFT.actions = [{ action_type: 'order_modification', executed_at: '2026-06-15T12:07:56Z', summary: 'Shipping updated to US Expedited Shipping' }];
+    const result = await apiSendDraft(1106, { response: "I've expedited your package, no extra charge.", after: 'snooze' });
+    assert.equal(result.success, true);
+    assert.equal(captured.replies.length, 1);
+  });
+});
+
+describe('action ledger — update_shipping_speed registration', () => {
+  it('update_shipping_speed is a recognized write tool (so its execution gets filed)', () => {
+    assert.ok(WRITE_TOOLS.has('update_shipping_speed'),
+      'update_shipping_speed must be in WRITE_TOOLS or its execution is never filed to actions[]');
+  });
+
+  it('update_shipping_speed files under the order_modification action_type', () => {
+    // The advisor proposes order_modification for a shipping upgrade; the
+    // executed tool must file under the same type or the send guard misfires.
+    assert.equal(actionTypeFromTool('update_shipping_speed', null), 'order_modification');
+    assert.equal(actionTypeFromTool('update_shipping_speed', 'order_modification'), 'order_modification');
   });
 });

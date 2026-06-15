@@ -1435,6 +1435,7 @@ const WRITE_TOOLS = new Set([
   'create_wholesale_order',
   'refund_order',
   'edit_order',
+  'update_shipping_speed',
   'cancel_order',
   'warehouse_hold',
   'release_warehouse_hold',
@@ -1906,6 +1907,7 @@ function actionTypeFromTool(toolName, draftActionType) {
     case 'create_exchange_order': return draftActionType === 'free_order' ? 'free_order' : 'exchange';
     case 'refund_order':          return 'refund';
     case 'edit_order':            return 'order_modification';
+    case 'update_shipping_speed': return 'order_modification';
     case 'warehouse_hold':        return 'warehouse_hold';
     case 'cancel_order':          return 'cancellation';
     case 'update_customer':       return 'customer_profile_update';
@@ -3485,4 +3487,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, resolveChatPendingPreview };
+module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
