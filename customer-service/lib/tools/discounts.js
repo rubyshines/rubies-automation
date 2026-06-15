@@ -13,6 +13,10 @@ const {
   listRegistry, auditAutomatic,
 } = require('../../../promotions/discounts');
 
+// Each tier is a separate automatic-discount page in Shopify admin.
+const STORE_HANDLE = (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '') || 'rubies-active-wear';
+const adminDiscountUrl = (nodeId) => `https://admin.shopify.com/store/${STORE_HANDLE}/discounts/${nodeId}`;
+
 function fmtRegistryRow(r) {
   const tierStr = (r.tiers || []).map((t) => r.kind === 'volume'
     ? `${t.threshold}+@${t.percentage}%`
@@ -20,7 +24,12 @@ function fmtRegistryRow(r) {
   const window = `${r.starts_at ? r.starts_at.slice(0, 10) : 'now'} → ${r.ends_at ? r.ends_at.slice(0, 10) : 'no end'}`;
   const target = r.kind === 'volume' ? `SKUs ${(r.sku_prefixes || []).join(', ')}` : `collection "${r.collection_handle}"`;
   const gift = r.free_gift_handle ? ` +gift(${r.free_gift_handle})` : '';
-  return `- [${r.kind} · ${r.status}] **${r.name}** — ${tierStr} | ${target} | ${window}${gift}`;
+  // Admin link per tier node (tiers[i] aligns with shopify_node_ids[i]), labeled by %.
+  const links = (r.shopify_node_ids || [])
+    .map((id, i) => `[${r.tiers && r.tiers[i] ? `${r.tiers[i].percentage}%` : `#${i + 1}`}](${adminDiscountUrl(id)})`)
+    .join(', ');
+  const admin = links ? ` | admin: ${links}` : '';
+  return `- [${r.kind} · ${r.status}] **${r.name}** — ${tierStr} | ${target} | ${window}${gift}${admin}`;
 }
 
 const tools = [

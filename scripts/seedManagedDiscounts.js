@@ -74,11 +74,12 @@ function longestCommonPrefix(strings) {
   }
 
   const rows = Object.entries(groups).map(([name, g]) => {
-    const tiers = g.tiers.sort((a, b) => a.threshold - b.threshold);
+    // Sort tier+node PAIRS together so shopify_node_ids[i] always matches tiers[i].
+    const paired = g.tiers.map((t, i) => ({ tier: t, id: g.nodeIds[i] })).sort((a, b) => a.tier.threshold - b.tier.threshold);
     const prefix = longestCommonPrefix([...g.skus]).replace(/[-_].*$/, '').replace(/\d+$/, '') || longestCommonPrefix([...g.skus]);
     return {
       kind: 'volume', name, sku_prefixes: [prefix], collection_handle: null,
-      tiers, shopify_node_ids: g.nodeIds, status: 'active',
+      tiers: paired.map((p) => p.tier), shopify_node_ids: paired.map((p) => p.id), status: 'active',
       starts_at: g.startsAt || null, ends_at: g.endsAt || null,
     };
   });
