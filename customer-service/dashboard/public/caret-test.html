@@ -122,6 +122,8 @@
   const mirror = document.createElement('div');
   mirror.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0;';
   document.body.appendChild(mirror);
+  // Sync the mirror's box metrics ONCE (and on resize/orientation) — getComputedStyle
+  // is expensive and was being run on every event, forcing constant reflow.
   function syncMirror() {
     const cs = getComputedStyle(ta);
     const m = mirror.style;
@@ -139,14 +141,12 @@
     m.overflowWrap = 'break-word';
   }
   function mirrorHeight() {
-    syncMirror();
     mirror.textContent = ta.value + '​';
     return mirror.scrollHeight;
   }
   // Pixel top of the caret for a given character index, in textarea CONTENT
   // coordinates (i.e. before subtracting scrollTop).
   function caretTop(pos) {
-    syncMirror();
     mirror.textContent = '';
     mirror.appendChild(document.createTextNode(ta.value.slice(0, pos)));
     const span = document.createElement('span');
@@ -159,7 +159,22 @@
   const buffer = [];
   let lastTap = null; // {x, y} relative to textarea box (viewport-ish)
 
+  // Coalesce all measurement into ONE requestAnimationFrame per frame. Dragging
+  // a selection fires selectionchange continuously; measuring (which reflows)
+  // on each one disturbs the native cut/copy/paste menu and the caret itself.
+  let _pending = null, _rafQueued = false;
   function snap(type, extra) {
+    _pending = { type, extra: extra || {} };
+    if (_rafQueued) return;
+    _rafQueued = true;
+    requestAnimationFrame(() => {
+      _rafQueued = false;
+      const p = _pending; _pending = null;
+      if (p) measureAndLog(p.type, p.extra);
+    });
+  }
+
+  function measureAndLog(type, extra) {
     const sel = ta.selectionStart;
     const cTop = caretTop(sel);                 // content coords
     const cView = cTop - ta.scrollTop;          // viewport coords within textarea
@@ -275,6 +290,8 @@
   };
   window.clearLog = function () { buffer.length = 0; logEl.textContent = ''; readoutEl.textContent = 'cleared'; };
 
+  syncMirror();
+  window.addEventListener('resize', () => { syncMirror(); snap('resize'); });
   applyVariant('A');
 })();
 </script>
