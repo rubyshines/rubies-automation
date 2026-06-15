@@ -37,6 +37,7 @@ const { checkShippingDelays } = require('./lib/shippingDelays');
 const { detectAndDraftUnnotifiedPreOrders } = require('./lib/unnotifiedPreOrder');
 const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
 const { reconcileNotes } = require('../customer-service/lib/noteLifecycle');
+const { listRegistry } = require('../promotions/discounts');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -250,6 +251,28 @@ function shippingRow(a, overrideColor, overrideLabel) {
 // ---------------------------------------------------------------------------
 // Combined HTML email
 // ---------------------------------------------------------------------------
+
+/** Pink banner listing any active sales (name, highest %, end date + days-left, free gift). */
+function activeSalesBanner(activeSales) {
+  if (!activeSales || activeSales.length === 0) return '';
+  const cards = activeSales.map((s) => {
+    const highest = Math.max(...(s.tiers || []).map((t) => t.percentage));
+    let tail;
+    if (s.ends_at) {
+      const days = Math.ceil((new Date(s.ends_at) - new Date()) / 86400000);
+      const end = s.ends_at.slice(0, 10);
+      tail = days >= 0 ? ` &middot; ends ${end} (${days} day${days === 1 ? '' : 's'} left)` : ` &middot; ended ${end}`;
+    } else {
+      tail = ' &middot; <strong style="color:#dc2626;">no end date set</strong>';
+    }
+    const gift = s.free_gift_handle ? ' &middot; +free gift' : '';
+    return `<div style="font-size:13px;">🏷️ <strong>${esc(s.name)}</strong> — up to ${highest}% off${tail}${gift}</div>`;
+  }).join('');
+  return `<div style="margin:12px 0;padding:8px 12px;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:6px;">
+      <div style="font-weight:bold;color:#be185d;margin-bottom:4px;">Active Sale${activeSales.length > 1 ? 's' : ''}</div>
+      ${cards}
+    </div>`;
+}
 
 function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const today = new Date().toISOString().split('T')[0];
@@ -467,6 +490,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:0 8px;">
       <h2 style="margin-bottom:4px;font-size:18px;">Daily Order Alerts \u2014 ${today}</h2>
       <p style="color:#6b7280;margin-top:0;">${summaryParts.join(' &middot; ')}</p>
+      ${activeSalesBanner(extra.activeSales)}
 
       ${allClearHtml}
       ${section('Urgent', '#dc2626', urgentRows)}
@@ -714,8 +738,17 @@ async function run() {
     console.warn(`[alerts] Could not fetch pending_operator tickets: ${err.message}`);
   }
 
+  // Active sales (managed_discounts registry) — fail-soft so a missing table never
+  // breaks the daily email. Surfaces "this sale is still on, ends X (N days left)".
+  let activeSales = [];
+  try {
+    activeSales = (await listRegistry()).filter((r) => r.kind === 'sale' && r.status === 'active');
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch active sales: ${err.message}`);
+  }
+
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled, activeSales });
 
   const sgMail = opts.noEmail ? null : getSendgridClient();
   if (opts.noEmail) console.log('Email skipped (--no-email)');
