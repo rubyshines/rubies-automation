@@ -307,11 +307,18 @@ async function ensureMetafieldDefinitions(log = () => {}) {
 }
 
 async function enableOffer(flags, log = () => {}) {
-  const minimum = flags.minimum != null ? String(flags.minimum) : '0';
-  const start = flags.start;
-  const end = flags.end;
-  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
-    throw new Error('enable requires --start YYYY-MM-DD and --end YYYY-MM-DD (inclusive, store timezone)');
+  if (flags.minimum == null) {
+    throw new Error('minimum is required (pass 0 for "gift on every order"). Refusing to default silently.');
+  }
+  const minimum = String(flags.minimum);
+  const start = flags.start || null;
+  const end = flags.end || null;
+  const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  if ((start && !end) || (!start && end)) {
+    throw new Error('Provide BOTH start and end dates, or NEITHER (always-on). Got only one.');
+  }
+  if (start && (!dateRe.test(start) || !dateRe.test(end))) {
+    throw new Error('Dates must be YYYY-MM-DD (inclusive, store timezone).');
   }
 
   const collection = await getGiftCollectionProducts();
@@ -336,6 +343,16 @@ async function enableOffer(flags, log = () => {}) {
   }
 
   const shopId = await getShopId();
+  const metafields = [
+    { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_collection', type: 'collection_reference', value: collection.id },
+    { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_minimum', type: 'number_integer', value: minimum },
+  ];
+  if (start && end) {
+    metafields.push(
+      { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_start', type: 'date', value: start },
+      { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_end', type: 'date', value: end },
+    );
+  }
   await shopifyGraphQL(`
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -343,17 +360,27 @@ async function enableOffer(flags, log = () => {}) {
         userErrors { field message }
       }
     }
-  `, {
-    metafields: [
-      { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_collection', type: 'collection_reference', value: collection.id },
-      { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_minimum', type: 'number_integer', value: minimum },
-      { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_start', type: 'date', value: start },
-      { ownerId: shopId, namespace: 'custom', key: 'free_gift_offer_end', type: 'date', value: end },
-    ],
-  });
+  `, { metafields });
 
-  log(`\n✓ Offer ENABLED: ${collection.products.nodes.length} gift(s), minimum $${minimum}, ${start} → ${end} (inclusive)`);
-  log('  The theme widget activates inside the date window automatically.');
+  // Always-on (no dates): clear any leftover window so a previously-dated offer
+  // doesn't stay gated. The theme treats blank start/end as always-active.
+  if (!start && !end) {
+    const existing = await shopifyGraphQL('{ shop { metafields(first: 50, namespace: "custom") { nodes { key } } } }');
+    const dateKeys = existing.shop.metafields.nodes
+      .filter((m) => m.key === 'free_gift_offer_start' || m.key === 'free_gift_offer_end')
+      .map((m) => ({ ownerId: shopId, namespace: 'custom', key: m.key }));
+    if (dateKeys.length) {
+      await shopifyGraphQL(`
+        mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+          metafieldsDelete(metafields: $metafields) { deletedMetafields { key } userErrors { field message } }
+        }
+      `, { metafields: dateKeys });
+    }
+  }
+
+  const window = start && end ? `${start} → ${end} (inclusive)` : 'always-on (no end date)';
+  log(`\n✓ Offer ENABLED: ${collection.products.nodes.length} gift(s), minimum $${minimum}, ${window}`);
+  log('  The theme widget activates automatically (inside the date window, or always if no dates).');
 }
 
 async function disableOffer(log = () => {}) {

@@ -30,7 +30,7 @@
 require('dotenv').config();
 const { shopifyGraphQL } = require('../customer-service/lib/shopify');
 const { getSupabaseClient } = require('../shared/supabaseClient');
-const { createTwin, enableOffer, disableOffer } = require('./freeOffer');
+const { createTwin, enableOffer, disableOffer, getStatus } = require('./freeOffer');
 
 const REGISTRY_TABLE = 'managed_discounts';
 const SALE_COLLECTION_HANDLE = 'discounts';
@@ -386,7 +386,7 @@ async function removeVolumeDiscount(name, log = () => {}) {
 // Sales
 // ---------------------------------------------------------------------------
 
-async function startSale({ name, tiers, collectionHandle, startDate, endDate, freeGiftHandle }, log = () => {}) {
+async function startSale({ name, tiers, collectionHandle, startDate, endDate, freeGiftHandle, freeGiftMinimum }, log = () => {}) {
   const parsed = Array.isArray(tiers) ? tiers : parseTiers(tiers);
   if (!parsed) throw new Error(`Could not parse tiers: ${tiers}`);
   const existing = await getRegistryRow(name);
@@ -415,9 +415,10 @@ async function startSale({ name, tiers, collectionHandle, startDate, endDate, fr
   log('✓ Sale store metafields set (theme banner / modal / tag).');
 
   if (freeGiftHandle) {
+    if (freeGiftMinimum == null) throw new Error('freeGiftMinimum is required when attaching a free gift (pass 0 for every order).');
     await createTwin(freeGiftHandle, log);
-    await enableOffer({ minimum: '0', start: startDate, end: endDate }, log);
-    log(`✓ Free gift attached (${freeGiftHandle}).`);
+    await enableOffer({ minimum: String(freeGiftMinimum), start: startDate, end: endDate }, log);
+    log(`✓ Free gift attached (${freeGiftHandle}, min $${freeGiftMinimum}).`);
   }
 
   await upsertRegistryRow({
@@ -435,7 +436,11 @@ async function extendSale(name, newEndDate, log = () => {}) {
   for (const id of row.shopify_node_ids) { await updateNodeEndsAt(id, endsAt); log(`✓ Node ${id} → ends ${newEndDate}`); }
   await setSaleMetafields({ name, tiers: row.tiers, startDate: row.starts_at ? row.starts_at.slice(0, 10) : null, endDate: newEndDate });
   if (row.free_gift_handle) {
-    await enableOffer({ minimum: '0', start: row.starts_at ? row.starts_at.slice(0, 10) : newEndDate, end: newEndDate }, log);
+    // Preserve the gift's existing minimum (read from the live metafield) — don't reset it to 0.
+    const { metafields } = await getStatus();
+    const currentMin = metafields.free_gift_offer_minimum != null ? metafields.free_gift_offer_minimum : '0';
+    const giftStart = row.starts_at ? row.starts_at.slice(0, 10) : newEndDate;
+    await enableOffer({ minimum: currentMin, start: giftStart, end: newEndDate }, log);
   }
   await upsertRegistryRow({ ...row, status: 'active', ends_at: endsAt });
   log(`✓ Sale "${name}" extended to ${newEndDate}.`);

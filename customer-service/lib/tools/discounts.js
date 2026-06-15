@@ -35,7 +35,7 @@ function fmtRegistryRow(r) {
 const tools = [
   {
     name: 'manage_discount',
-    description: 'Manage RUBIES automatic discounts (volume discounts + sales) — the discounts Jamie hand-runs. Backed by the managed_discounts registry; replaces the old script+spreadsheet. Volume discounts are product-level (by SKU prefix) on quantity tiers; sales are collection-level on subtotal tiers (or a flat %). Both auto-apply highest-wins (never stack) and combine with the Smile loyalty reward + free-gift offer. Actions: "add_volume" (name, sku_prefixes, tiers like "3+@10%,5+@15%"); "start_sale" (name, tiers like "20%" or "$100+@15%,$200+@20%", optional collection_handle [default "discounts"], start_date/end_date YYYY-MM-DD ET inclusive, optional free_gift_handle to attach a free gift); "extend_sale" (name, end_date); "end_sale" (name — deletes the sale discount, clears the theme banner, disables any attached gift); "remove" (name — removes a volume discount; to change tiers, remove then add_volume); "list" (all managed discounts); "audit" (read-only reconcile of live automatic discounts vs the registry — flags orphans, missing nodes, combinesWith drift). NOTE: this does NOT manage Smile/Klaviyo/comp codes, and audit does not scan the 16k code-discount pool (that is a separate cleanup script).',
+    description: 'Manage RUBIES automatic discounts (volume discounts + sales) — the discounts Jamie hand-runs. Backed by the managed_discounts registry; replaces the old script+spreadsheet. Volume discounts are product-level (by SKU prefix) on quantity tiers; sales are collection-level on subtotal tiers (or a flat %). Both auto-apply highest-wins (never stack) and combine with the Smile loyalty reward + free-gift offer. Actions: "add_volume" (name, sku_prefixes, tiers like "3+@10%,5+@15%"); "start_sale" (name, tiers like "20%" or "$100+@15%,$200+@20%", optional collection_handle [default "discounts"], start_date/end_date YYYY-MM-DD ET inclusive, optional free_gift_handle + free_gift_minimum to attach a single free gift — minimum required if a gift is attached, tool asks if omitted); "extend_sale" (name, end_date — preserves any attached gift minimum); "end_sale" (name — deletes the sale discount, clears the theme banner, disables any attached gift); "remove" (name — removes a volume discount; to change tiers, remove then add_volume); "list" (all managed discounts); "audit" (read-only reconcile of live automatic discounts vs the registry — flags orphans, missing nodes, combinesWith drift). NOTE: this does NOT manage Smile/Klaviyo/comp codes, and audit does not scan the 16k code-discount pool (that is a separate cleanup script).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -63,7 +63,8 @@ const tools = [
         },
         start_date: { type: 'string', description: 'start_sale: YYYY-MM-DD (Eastern Time, inclusive). Optional — omit to start now.' },
         end_date: { type: 'string', description: 'start_sale / extend_sale: YYYY-MM-DD (Eastern Time, inclusive last day).' },
-        free_gift_handle: { type: 'string', description: 'start_sale: source product handle of a free gift to attach (routes through the free-gift offer, which is not discount-engine based).' },
+        free_gift_handle: { type: 'string', description: 'start_sale: source product handle of a single free gift to attach (routes through the free-gift offer, which is not discount-engine based; the gift window is set to the sale dates). For a MULTI-product gift pool, use manage_free_offer instead.' },
+        free_gift_minimum: { type: 'number', description: 'start_sale: minimum cart subtotal in USD to qualify for the attached free gift. REQUIRED whenever free_gift_handle is set — pass 0 explicitly for "every order", or a threshold. If a gift is attached without this, the tool stops and asks.' },
       },
       required: ['action'],
     },
@@ -82,7 +83,15 @@ const tools = [
           case 'start_sale':
             needName('start_sale');
             if (!input.tiers) throw new Error('start_sale requires tiers (e.g. "20%" or "$100+@15%,$200+@20%").');
-            await startSale({ name: input.name, tiers: input.tiers, collectionHandle: input.collection_handle, startDate: input.start_date, endDate: input.end_date, freeGiftHandle: input.free_gift_handle }, log);
+            if (input.free_gift_handle) {
+              if (input.free_gift_minimum == null) {
+                return { content: [{ type: 'text', text: `**Free-gift minimum not specified.** You're attaching the gift "${input.free_gift_handle}" to this sale, but no minimum was given. Re-run start_sale with either free_gift_minimum: 0 (gift on EVERY order) or a dollar threshold (e.g. free_gift_minimum: 100).` }] };
+              }
+              if (!input.start_date || !input.end_date) {
+                return { content: [{ type: 'text', text: '**A gifted sale needs both start_date and end_date.** The free gift window follows the sale dates, so provide both (YYYY-MM-DD).' }] };
+              }
+            }
+            await startSale({ name: input.name, tiers: input.tiers, collectionHandle: input.collection_handle, startDate: input.start_date, endDate: input.end_date, freeGiftHandle: input.free_gift_handle, freeGiftMinimum: input.free_gift_minimum }, log);
             break;
           case 'extend_sale':
             needName('extend_sale');

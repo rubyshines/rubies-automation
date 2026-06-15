@@ -45,7 +45,7 @@ function formatStatus({ metafields: mfs, collection }) {
 const tools = [
   {
     name: 'manage_free_offer',
-    description: 'Manage the free-gift-with-purchase offer (hidden $0 twin products auto-added by the storefront cart, NOT discount-engine based, so it never conflicts with discount codes). Actions: "create" makes a $0 twin of a product and adds it to the gift pool (source_handle required; product must be single-variant); "remove" takes a twin out of the pool but keeps it as draft for reuse; "enable" turns the offer on (minimum in USD, 0 = every order; start_date/end_date YYYY-MM-DD inclusive, store timezone — the theme switches itself on/off on those dates); "disable" turns the offer off (twins go draft, config cleared); "delete" permanently deletes one twin (source_handle) or everything (all=true) — destructive, requires confirmed=true; "status" shows current config and gift pool. One gift in the pool = auto-added to qualifying carts; multiple = customer picks in the cart drawer.',
+    description: 'Manage the free-gift-with-purchase offer (hidden $0 twin products auto-added by the storefront cart, NOT discount-engine based, so it never conflicts with discount codes). Actions: "create" makes a $0 twin of a product and adds it to the gift pool (source_handle required; product must be single-variant); "remove" takes a twin out of the pool but keeps it as draft for reuse; "enable" turns the offer on (minimum REQUIRED in USD — pass 0 explicitly for "every order", or a threshold; if omitted the tool stops and asks rather than defaulting. start_date/end_date YYYY-MM-DD inclusive, store timezone — OPTIONAL: provide BOTH for a dated window, or NEITHER for an always-on offer; the theme switches itself on/off accordingly); "disable" turns the offer off (twins go draft, config cleared); "delete" permanently deletes one twin (source_handle) or everything (all=true) — destructive, requires confirmed=true; "status" shows current config and gift pool. One gift in the pool = auto-added to qualifying carts; multiple = customer picks in the cart drawer.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,15 +60,15 @@ const tools = [
         },
         minimum: {
           type: 'number',
-          description: 'Minimum cart subtotal in USD to qualify (enable only). 0 = every order. Below the minimum the cart shows a "you are $X away" teaser.',
+          description: 'Minimum cart subtotal in USD to qualify (enable only). REQUIRED — pass 0 explicitly for "every order", or a threshold. If omitted, the tool stops and asks rather than defaulting. Below the minimum the cart shows a "you are $X away" teaser.',
         },
         start_date: {
           type: 'string',
-          description: 'Offer start date YYYY-MM-DD, inclusive, store timezone (enable only).',
+          description: 'Offer start date YYYY-MM-DD, inclusive, store timezone (enable only). OPTIONAL — provide both start_date and end_date for a dated window, or neither for an always-on offer.',
         },
         end_date: {
           type: 'string',
-          description: 'Offer end date YYYY-MM-DD, inclusive, store timezone (enable only).',
+          description: 'Offer end date YYYY-MM-DD, inclusive, store timezone (enable only). OPTIONAL — must be paired with start_date; omit both for always-on.',
         },
         all: {
           type: 'boolean',
@@ -99,9 +99,12 @@ const tools = [
             await removeTwin(input.source_handle, log);
             break;
           case 'enable':
+            if (input.minimum == null) {
+              return { content: [{ type: 'text', text: '**Minimum not specified.** A free-gift offer needs an explicit minimum so it doesn\'t silently go to every order. Re-run `enable` with either `minimum: 0` (gift on EVERY order) or a dollar threshold (e.g. `minimum: 100`).' }] };
+            }
             await enableOffer(
               {
-                minimum: input.minimum != null ? String(input.minimum) : '0',
+                minimum: input.minimum,
                 start: input.start_date,
                 end: input.end_date,
               },

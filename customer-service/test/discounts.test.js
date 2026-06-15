@@ -5,6 +5,27 @@ const {
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText, volumeMetafieldText,
 } = require('../../promotions/discounts');
 
+// The manage_discount tool's start_sale guards short-circuit BEFORE any Shopify/DB
+// I/O, so they're unit-testable without stubs.
+const manageDiscount = require('../lib/tools/discounts').find((t) => t.name === 'manage_discount');
+
+test('start_sale: attaching a gift with no minimum stops and asks', async () => {
+  const res = await manageDiscount.handler({
+    action: 'start_sale', name: 'Test Sale', tiers: '20%',
+    start_date: '2026-06-15', end_date: '2026-06-16', free_gift_handle: 'pride-earrings',
+  });
+  assert.ok(!res.isError);
+  assert.match(res.content[0].text, /minimum not specified/i);
+});
+
+test('start_sale: gifted sale without dates stops and asks for both', async () => {
+  const res = await manageDiscount.handler({
+    action: 'start_sale', name: 'Test Sale', tiers: '20%',
+    free_gift_handle: 'pride-earrings', free_gift_minimum: 100,
+  });
+  assert.match(res.content[0].text, /needs both start_date and end_date/i);
+});
+
 test('parseTiers: quantity tiers', () => {
   assert.deepEqual(parseTiers('3+@10%,5+@15%'), [
     { threshold: 3, percentage: 10 },
