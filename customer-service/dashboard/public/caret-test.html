@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <title>Caret diagnostic</title>
+  <style>
+    /* Self-contained. No app.js / styles.css / service-worker styling — this
+       page exists to test ONE textarea in isolation. */
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      font-size: 14px; color: #1c1917; background: #faf9f7;
+      padding: env(safe-area-inset-top) 10px 10px;
+    }
+    h1 { font-size: 15px; margin: 8px 0 4px; }
+    .hint { font-size: 12px; color: #78716c; margin: 0 0 8px; line-height: 1.45; }
+    .bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    button {
+      font-size: 13px; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid #d6d3d1; background: #fff; color: #1c1917;
+      font-family: inherit; cursor: pointer; line-height: 1;
+    }
+    button.on { background: #1c1917; color: #fff; border-color: #1c1917; }
+    button.alt { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .variants button { flex: 1 1 30%; min-width: 96px; text-align: left; }
+    /* The single most-important live line — visible above the keyboard. */
+    #readout {
+      font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+      background: #1c1917; color: #e7e5e4; border-radius: 8px;
+      padding: 8px 10px; margin-bottom: 8px; white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    #readout b { color: #fca5a5; }
+    .wrap { position: relative; margin-bottom: 8px; }
+    /* Match the real draft editor's metrics as closely as possible. */
+    #ta {
+      width: 100%; font-family: -apple-system, system-ui, sans-serif;
+      font-size: 16px; line-height: 1.4; padding: 10px 12px;
+      border: 1px solid #c0392b; border-radius: 8px; background: #fff;
+      color: #1c1917; resize: none; overflow: hidden;
+      min-height: 30vh; min-height: 30dvh; display: block;
+    }
+    /* Red line = where the mirror says the caret SHOULD be for the current
+       selection. If the blinking iOS caret sits far from this line, that gap
+       IS the bug, made visible. */
+    #expected {
+      position: absolute; left: 12px; right: 12px; height: 0;
+      border-top: 2px solid rgba(220,38,38,0.9); pointer-events: none;
+      display: none;
+    }
+    #expected::before {
+      content: 'expected caret'; position: absolute; right: 0; top: -14px;
+      font-size: 10px; color: #dc2626; font-family: ui-monospace, monospace;
+    }
+    /* Blue dot = where your finger last tapped. */
+    #tapdot {
+      position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+      border-radius: 50%; background: rgba(37,99,235,0.9);
+      pointer-events: none; display: none;
+    }
+    #log {
+      font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+      background: #fff; border: 1px solid #e7e5e4; border-radius: 8px;
+      padding: 8px; height: 22vh; overflow-y: auto; white-space: pre;
+      color: #44403c;
+    }
+  </style>
+</head>
+<body>
+  <h1>Caret diagnostic</h1>
+  <p class="hint">
+    Pick a variant, tap <b>Load long text</b>, then highlight some text and type — or just tap around.
+    Watch the <span style="color:#dc2626">red line</span> (where the caret should be) vs the real iOS caret,
+    and the <span style="color:#2563eb">blue dot</span> (your last tap). Reproduce the bug, then
+    <b>Copy log</b> and paste it back.
+  </p>
+
+  <div class="bar variants" id="variants"></div>
+  <div class="bar">
+    <button onclick="loadText('long')">Load long text</button>
+    <button onclick="loadText('short')">Load short text</button>
+    <button class="alt" onclick="copyLog()">Copy log</button>
+    <button onclick="clearLog()">Clear log</button>
+  </div>
+
+  <div id="readout">waiting…</div>
+
+  <div class="wrap">
+    <textarea id="ta" placeholder="Type here…"></textarea>
+    <div id="expected"></div>
+    <div id="tapdot"></div>
+  </div>
+
+  <div id="log"></div>
+
+<script>
+(function () {
+  const ta = document.getElementById('ta');
+  const expected = document.getElementById('expected');
+  const tapdot = document.getElementById('tapdot');
+  const readoutEl = document.getElementById('readout');
+  const logEl = document.getElementById('log');
+
+  // ── Resize-strategy variants ───────────────────────────────────────────
+  // Each is a different way of growing the textarea. We're hunting which one
+  // does NOT corrupt the caret on iOS once content exceeds the initial size.
+  const variants = {
+    A: { label: 'A · current', fn: (el) => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } },
+    B: { label: 'B · no resize', fixed: true },
+    C: { label: 'C · grow-only', fn: (el) => { const n = el.scrollHeight; const cur = parseFloat(el.style.height) || 0; if (n > cur) el.style.height = n + 'px'; } },
+    D: { label: 'D · deferred(rAF)', fn: (el) => { requestAnimationFrame(() => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }); } },
+    E: { label: 'E · mirror-measured', fn: (el) => { const h = mirrorHeight(); const cur = parseFloat(el.style.height) || 0; if (h && Math.abs(h - cur) > 0.5) el.style.height = h + 'px'; } },
+  };
+  let current = 'A';
+
+  // ── Hidden mirror — measures text geometry WITHOUT touching the live,
+  //    focused textarea (no height='auto', no scrollHeight read on it). ──────
+  const mirror = document.createElement('div');
+  mirror.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0;';
+  document.body.appendChild(mirror);
+  function syncMirror() {
+    const cs = getComputedStyle(ta);
+    const m = mirror.style;
+    m.boxSizing = 'border-box';
+    m.width = ta.clientWidth + 'px';
+    m.font = cs.font;
+    m.fontFamily = cs.fontFamily;
+    m.fontSize = cs.fontSize;
+    m.lineHeight = cs.lineHeight;
+    m.padding = cs.padding;
+    m.border = cs.border;
+    m.letterSpacing = cs.letterSpacing;
+    m.whiteSpace = 'pre-wrap';
+    m.wordWrap = 'break-word';
+    m.overflowWrap = 'break-word';
+  }
+  function mirrorHeight() {
+    syncMirror();
+    mirror.textContent = ta.value + '​';
+    return mirror.scrollHeight;
+  }
+  // Pixel top of the caret for a given character index, in textarea CONTENT
+  // coordinates (i.e. before subtracting scrollTop).
+  function caretTop(pos) {
+    syncMirror();
+    mirror.textContent = '';
+    mirror.appendChild(document.createTextNode(ta.value.slice(0, pos)));
+    const span = document.createElement('span');
+    span.textContent = ta.value.slice(pos, pos + 1) || '.';
+    mirror.appendChild(span);
+    return span.offsetTop;
+  }
+
+  // ── Logging ────────────────────────────────────────────────────────────
+  const buffer = [];
+  let lastTap = null; // {x, y} relative to textarea box (viewport-ish)
+
+  function snap(type, extra) {
+    const sel = ta.selectionStart;
+    const cTop = caretTop(sel);                 // content coords
+    const cView = cTop - ta.scrollTop;          // viewport coords within textarea
+    const row = Object.assign({
+      t: type,
+      v: current,
+      sel: ta.selectionStart + '-' + ta.selectionEnd,
+      len: ta.value.length,
+      scrollTop: Math.round(ta.scrollTop),
+      scrollH: Math.round(ta.scrollHeight),
+      clientH: Math.round(ta.clientHeight),
+      styleH: ta.style.height || '(unset)',
+      caretContentY: Math.round(cTop),
+      caretViewY: Math.round(cView),
+    }, extra || {});
+    if (lastTap && (type === 'tap' || type === 'post-tap')) {
+      row.tapY = Math.round(lastTap.y);
+      row.tapMinusCaret = Math.round(lastTap.y - cView); // ← the key desync number
+    }
+    buffer.push(row);
+    if (buffer.length > 400) buffer.shift();
+
+    // Draw the expected-caret line + tap dot
+    const top = ta.offsetTop + cView;
+    expected.style.top = top + 'px';
+    expected.style.display = (cView >= 0 && cView <= ta.clientHeight) ? 'block' : 'none';
+    if (lastTap) {
+      tapdot.style.top = (ta.offsetTop + lastTap.y) + 'px';
+      tapdot.style.left = (ta.offsetLeft + lastTap.x) + 'px';
+      tapdot.style.display = 'block';
+    }
+    render(row);
+  }
+
+  function render(row) {
+    const tline = row.tapMinusCaret !== undefined
+      ? `\ntap−caret: <b>${row.tapMinusCaret}px</b>  (tapY ${row.tapY})`
+      : '';
+    readoutEl.innerHTML =
+      `variant ${row.v}   ${row.t}\n` +
+      `sel ${row.sel}   len ${row.len}\n` +
+      `scrollTop ${row.scrollTop}   scrollH ${row.scrollH}   clientH ${row.clientH}\n` +
+      `caret contentY ${row.caretContentY}  → viewY ${row.caretViewY}` +
+      tline;
+    // Tail of the full log
+    const tail = buffer.slice(-40).map(r => JSON.stringify(r)).join('\n');
+    logEl.textContent = tail;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // ── Wire the textarea ────────────────────────────────────────────────────
+  function resize() { const vr = variants[current]; if (vr.fn) vr.fn(ta); }
+
+  ta.addEventListener('input', () => { resize(); snap('input'); });
+  ta.addEventListener('scroll', () => snap('scroll'));
+  ta.addEventListener('focus', () => snap('focus'));
+  ta.addEventListener('blur', () => snap('blur'));
+  document.addEventListener('selectionchange', () => {
+    if (document.activeElement === ta) snap('selchange');
+  });
+  // Capture taps with coordinates relative to the textarea box.
+  function recordTap(clientX, clientY) {
+    const rect = ta.getBoundingClientRect();
+    lastTap = { x: clientX - rect.left, y: clientY - rect.top };
+    snap('tap');
+    // Re-read after iOS settles the caret from the tap.
+    setTimeout(() => snap('post-tap'), 30);
+  }
+  ta.addEventListener('touchend', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (t) recordTap(t.clientX, t.clientY);
+  });
+  ta.addEventListener('click', (e) => recordTap(e.clientX, e.clientY));
+
+  // ── Controls ─────────────────────────────────────────────────────────────
+  function applyVariant(key) {
+    current = key;
+    [...document.querySelectorAll('#variants button')].forEach(b =>
+      b.classList.toggle('on', b.dataset.k === key));
+    if (variants[key].fixed) {
+      ta.style.overflowY = 'auto';
+      ta.style.height = '30vh';
+    } else {
+      ta.style.overflowY = 'hidden';
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    }
+    snap('variant→' + key);
+  }
+  const vbar = document.getElementById('variants');
+  Object.entries(variants).forEach(([k, v]) => {
+    const b = document.createElement('button');
+    b.textContent = v.label; b.dataset.k = k;
+    b.onclick = () => applyVariant(k);
+    vbar.appendChild(b);
+  });
+
+  window.loadText = function (kind) {
+    const para = "Thank you, Jamie! We need it by tomorrow. It is for my Daughter's show, I didn't think they needed it for the dress rehearsal, which is why I thought we had more time. But they need it for the rehearsal as well.";
+    ta.value = kind === 'long'
+      ? (para + "\n\n" + para + "\n\n" + para + "\n\nMy apologies for all of this.")
+      : "Short note that fits inside the initial box.";
+    resize();
+    ta.focus();
+    snap('load-' + kind);
+  };
+  window.copyLog = function () {
+    const text = JSON.stringify(buffer, null, 0);
+    navigator.clipboard.writeText(text).then(
+      () => { readoutEl.innerHTML = 'copied ' + buffer.length + ' events ✓'; },
+      () => { logEl.textContent = text; readoutEl.innerHTML = 'clipboard blocked — select the log box below and copy manually'; }
+    );
+  };
+  window.clearLog = function () { buffer.length = 0; logEl.textContent = ''; readoutEl.textContent = 'cleared'; };
+
+  applyVariant('A');
+})();
+</script>
+</body>
+</html>

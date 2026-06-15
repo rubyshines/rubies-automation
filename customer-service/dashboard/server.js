@@ -201,7 +201,7 @@ function isAuthEnabled() {
 }
 
 // Paths that don't require auth
-const AUTH_WHITELIST = new Set(['/login.html', '/health', '/manifest.json', '/sw.js']);
+const AUTH_WHITELIST = new Set(['/login.html', '/health', '/manifest.json', '/sw.js', '/caret-test.html']);
 function isAuthWhitelisted(pathname) {
   if (AUTH_WHITELIST.has(pathname)) return true;
   if (pathname.startsWith('/auth/')) return true;
