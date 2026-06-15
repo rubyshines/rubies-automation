@@ -163,7 +163,9 @@
 
   window.loadText = function (kind) {
     const para = "Thank you, Jamie! We need it by tomorrow. It is for my Daughter's show, I didn't think they needed it for the dress rehearsal, which is why I thought we had more time. But they need it for the rehearsal as well.";
-    ta.value = kind === 'long' ? (para + "\n\n" + para + "\n\n" + para + "\n\nMy apologies for all of this.") : "Short note that fits inside the initial box.";
+    ta.value = kind === 'long'
+      ? (Array.from({ length: 6 }, () => para).join("\n\n") + "\n\nMy apologies for all of this.")
+      : "Short note that fits inside the initial box.";
     resize(); ta.focus(); snap('load-' + kind);
   };
   window.copyLog = function () {
