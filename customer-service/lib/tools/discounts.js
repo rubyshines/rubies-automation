@@ -10,12 +10,26 @@
 const {
   addVolumeDiscount, removeVolumeDiscount,
   startSale, extendSale, endSale,
-  listRegistry, auditAutomatic,
+  listRegistry, auditAutomatic, getRegistryRow,
 } = require('../../../promotions/discounts');
 
 // Each tier is a separate automatic-discount page in Shopify admin.
 const STORE_HANDLE = (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '') || 'rubies-active-wear';
 const adminDiscountUrl = (nodeId) => `https://admin.shopify.com/store/${STORE_HANDLE}/discounts/${nodeId}`;
+
+// One admin link per tier node (tiers[i] aligns with shopify_node_ids[i]), labeled by %.
+function adminLinks(r) {
+  return (r.shopify_node_ids || [])
+    .map((id, i) => `[${r.tiers && r.tiers[i] ? `${r.tiers[i].percentage}%` : `#${i + 1}`}](${adminDiscountUrl(id)})`)
+    .join(', ');
+}
+
+// After a create/extend, append the admin link(s) so the operator can jump straight to the discount.
+async function appendAdminLinks(name, log) {
+  const row = await getRegistryRow(name);
+  const links = row ? adminLinks(row) : '';
+  if (links) log(`admin: ${links}`);
+}
 
 function fmtRegistryRow(r) {
   const tierStr = (r.tiers || []).map((t) => r.kind === 'volume'
@@ -24,10 +38,7 @@ function fmtRegistryRow(r) {
   const window = `${r.starts_at ? r.starts_at.slice(0, 10) : 'now'} → ${r.ends_at ? r.ends_at.slice(0, 10) : 'no end'}`;
   const target = r.kind === 'volume' ? `SKUs ${(r.sku_prefixes || []).join(', ')}` : `collection "${r.collection_handle}"`;
   const gift = r.free_gift_handle ? ` +gift(${r.free_gift_handle})` : '';
-  // Admin link per tier node (tiers[i] aligns with shopify_node_ids[i]), labeled by %.
-  const links = (r.shopify_node_ids || [])
-    .map((id, i) => `[${r.tiers && r.tiers[i] ? `${r.tiers[i].percentage}%` : `#${i + 1}`}](${adminDiscountUrl(id)})`)
-    .join(', ');
+  const links = adminLinks(r);
   const admin = links ? ` | admin: ${links}` : '';
   return `- [${r.kind} · ${r.status}] **${r.name}** — ${tierStr} | ${target} | ${window}${gift}${admin}`;
 }
@@ -79,6 +90,7 @@ const tools = [
             if (!input.sku_prefixes || input.sku_prefixes.length === 0) throw new Error('add_volume requires sku_prefixes.');
             if (!input.tiers) throw new Error('add_volume requires tiers (e.g. "3+@10%,5+@15%").');
             await addVolumeDiscount({ name: input.name, skuPrefixes: input.sku_prefixes, tiers: input.tiers, startDate: input.start_date, endDate: input.end_date }, log);
+            await appendAdminLinks(input.name, log);
             break;
           case 'start_sale':
             needName('start_sale');
@@ -92,11 +104,13 @@ const tools = [
               }
             }
             await startSale({ name: input.name, tiers: input.tiers, collectionHandle: input.collection_handle, startDate: input.start_date, endDate: input.end_date, freeGiftHandle: input.free_gift_handle, freeGiftMinimum: input.free_gift_minimum }, log);
+            await appendAdminLinks(input.name, log);
             break;
           case 'extend_sale':
             needName('extend_sale');
             if (!input.end_date) throw new Error('extend_sale requires end_date.');
             await extendSale(input.name, input.end_date, log);
+            await appendAdminLinks(input.name, log);
             break;
           case 'end_sale':
             needName('end_sale');
