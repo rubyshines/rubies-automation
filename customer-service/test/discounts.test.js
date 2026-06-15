@@ -76,7 +76,7 @@ test('resolveDates: null inputs → nulls', () => {
 test('constructSaleText: single flat tier', () => {
   const txt = constructSaleText([{ threshold: 0, percentage: 20 }], '2026-06-30');
   assert.match(txt, /20% off your entire cart!/);
-  assert.match(txt, /Valid now until midnight Eastern Time June 30, 2026\./);
+  assert.match(txt, /Valid through June 30, 2026 \(Eastern Time\)\./);
   assert.match(txt, /no code needed\./);
 });
 

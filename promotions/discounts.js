@@ -250,7 +250,7 @@ function constructSaleText(tiers, endDate, withLineBreaks = false) {
       parts.push(`Spend between $${t.threshold}-$${next.threshold}, save ${t.percentage}%.`);
     }
   }
-  if (endDate) parts.push(`Valid now until midnight Eastern Time ${formatDateReadable(endDate)}.`);
+  if (endDate) parts.push(`Valid through ${formatDateReadable(endDate)} (Eastern Time).`);
   parts.push('Discount applied automatically in the cart, no code needed.');
   return parts.join(withLineBreaks ? '\n' : ' ');
 }
