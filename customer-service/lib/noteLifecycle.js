@@ -21,8 +21,9 @@
  * Scope guard: only OUTREACH-RELATED notes are ever touched automatically —
  * `author='auto'` notes, or operator notes written when staging/sending an
  * outreach draft. Operator judgment notes (Passport reship decisions,
- * waiting-on-customer states) are never auto-resolved; the report ages them
- * instead.
+ * waiting-on-customer states) are never auto-resolved while the order is still
+ * live; the report ages them instead. The one exception is a CANCELLED order:
+ * it's terminal, so any note about it (operator or auto) is auto-resolved.
  *
  * All writes are append-only inserts (latest-note-wins governs bucketing),
  * so every function is idempotent: a re-run sees the superseding/resolved
@@ -136,9 +137,10 @@ async function resolveOnTicketClose({ supabase = getSupabaseClient(), orderNumbe
 
 /**
  * Daily sweep. For every order whose latest note is unresolved:
- *   R1 — auto-author note + order shipped or cancelled → resolve.
- *   R2 — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
- * Operator judgment notes fall through both rules and stay open.
+ *   R1a — order cancelled (terminal) → resolve, regardless of note author.
+ *   R1b — auto-author note + order shipped → resolve.
+ *   R2  — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
+ * Operator judgment notes on still-live orders fall through all rules and stay open.
  *
  * @returns {Promise<{checked: number, resolved: Array<{order_number, rule, reason}>}>}
  */
@@ -173,16 +175,25 @@ async function reconcileNotes({ supabase = getSupabaseClient() } = {}) {
   const resolved = [];
   for (const note of open) {
     const order = orderByNum.get(note.order_number);
-    const orderDone = order && (order.cancelled_at || order.fulfillment_status === 'FULFILLED');
+    const orderCancelled = !!(order && order.cancelled_at);
+    const orderShipped = !!(order && order.fulfillment_status === 'FULFILLED');
 
     let rule = null;
     let reason = null;
 
-    if (note.author === 'auto' && orderDone) {
+    if (orderCancelled) {
+      // A cancelled order is terminal — it's out of the fulfillment pipeline,
+      // so ANY lingering note about it (operator or auto) is moot. Resolve it
+      // regardless of author. This is the deliberate exception to the
+      // "never auto-resolve operator judgment notes" rule: the report is about
+      // orders that still need fulfillment attention, and a cancelled order
+      // needs none. (Shipped orders keep the auto-only gate below — an operator
+      // note on a shipped order may still track a real follow-up.)
+      rule = 'order_cancelled';
+      reason = 'Order cancelled — note auto-resolved (reconciler)';
+    } else if (note.author === 'auto' && orderShipped) {
       rule = 'order_done';
-      reason = order.cancelled_at
-        ? 'Order cancelled — note auto-resolved (reconciler)'
-        : 'Order shipped — outreach no longer pending (reconciler)';
+      reason = 'Order shipped — outreach no longer pending (reconciler)';
     } else if (isOutreachNote(note)) {
       const orderTickets = ticketsByOrder.get(note.order_number) || [];
       if (orderTickets.length > 0 && orderTickets.every(t => t.status === 'closed')) {
