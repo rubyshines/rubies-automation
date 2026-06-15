@@ -183,3 +183,11 @@ Most completed work does not warrant a memory update. Before proposing one, appl
 ## Memory updates go in the same commit as the code they document
 
 Now that `.claude/memory/` is in the repo, don't commit code then update memory as a separate step. Bundle them together — one commit with both the code change and the memory update that documents it. For memory-only updates (design sessions, planning, no code changed), commit and push at the end of the session.
+
+## Always include the admin link when relaying a discount list entry
+
+When showing a discount from `manage_discount list` (or describing one in prose), always keep its Shopify admin link(s). The tool output already includes them per tier; don't paraphrase an entry in a way that drops them.
+
+**Why:** Jamie wants to click straight through to the discount in Shopify admin. Summarizing the list without the links forces him to go re-fetch them.
+
+**How to apply:** Relay the tool's actual list line (which carries `admin: [%](url)` per tier), or if reformatting, carry the link(s) forward. Applies to any entry shown, not just the ones being changed.
