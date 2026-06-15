@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex">
   <meta http-equiv="Cache-Control" content="no-store">
+  <!-- Launch standalone (no Safari chrome) when added to the home screen, so we
+       can reproduce the bug in PWA display mode with the DOM held constant. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Caret test">
   <title>Caret diagnostic</title>
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
