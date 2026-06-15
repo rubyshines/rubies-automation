@@ -31,11 +31,21 @@ async function appendAdminLinks(name, log) {
   if (links) log(`admin: ${links}`);
 }
 
+// Render a UTC timestamp as an Eastern-Time datetime, so the inclusive-end cutoff
+// (3am ET the day after the last sale day) reads correctly instead of as a bare date.
+function fmtET(iso) {
+  if (!iso) return null;
+  return `${new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  })} ET`;
+}
+
 function fmtRegistryRow(r) {
   const tierStr = (r.tiers || []).map((t) => r.kind === 'volume'
     ? `${t.threshold}+@${t.percentage}%`
     : (t.threshold === 0 ? `${t.percentage}%` : `$${t.threshold}+@${t.percentage}%`)).join(', ');
-  const window = `${r.starts_at ? r.starts_at.slice(0, 10) : 'now'} → ${r.ends_at ? r.ends_at.slice(0, 10) : 'no end'}`;
+  const window = `${fmtET(r.starts_at) || 'now'} → ${fmtET(r.ends_at) || 'no end'}`;
   const target = r.kind === 'volume' ? `SKUs ${(r.sku_prefixes || []).join(', ')}` : `collection "${r.collection_handle}"`;
   const gift = r.free_gift_handle ? ` +gift(${r.free_gift_handle})` : '';
   const links = adminLinks(r);
