@@ -25,6 +25,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Daily Sales Report:** ShopifyQL for daily/MTD/YTD revenue, conversion rates, channel breakdown. 7-day + 365-day trending. HTML email.
 
+**Discount Management (MCP):** `manage_discount` tool + `managed_discounts` Supabase registry — volume discounts + sales lifecycle (start/extend/end, optional attached free gift), with audit/reconcile and an active-sales banner in the daily order alerts. Replaced the rubies-utilities discount script + Google Sheet.
+
 ## Current Status
 
 - **Production:** SEO daily pipeline + weekly digest. Klaviyo email tracking. Competitor pricing monthly. Sales reports daily.
@@ -37,6 +39,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `klaviyo-tracking/daily-email-tracking.js` — Klaviyo email metrics sync.
 - `competitor-pricing/monthly-competitor-pricing.js` — Competitor price scraping.
 - `customer-service/lib/tools/blogResearch.js` — Blog/SEO MCP tools.
+- `promotions/discounts.js` — Discount engine (volume + sales, combination invariants).
+- `customer-service/lib/tools/discounts.js` — `manage_discount` MCP tool.
 
 ## Key Decisions
 
@@ -46,6 +50,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **GA4 vs Shopify capture rate is ~70% of web orders by design.** Structural undercount: ~13% non-web sources (Shop App / POS / draft orders / partner APIs) can't fire web pixels at all, ~5–10% baseline from iOS Safari ITP and ad blockers. Shop Pay accelerated checkout DOES fire `purchase` with a well-formed payload — the residual gap is downstream cookie/tracking attrition, not a pixel issue. When comparing GA4 to Shopify, exclude non-web `sourceName` orders from the comparator.
 - **GA4 `itemId` format:** `shopify_<COUNTRY>_<PRODUCT_ID>_<VARIANT_ID>` (Merchant Center offer ID). Parse with `/^shopify_([A-Z]{2})_(\d+)_(\d+)$/` to join GA4 item-level data to the Shopify catalog. No fuzzy-name matching needed.
 - **Competitor pricing comparison uses base-currency, not customer-facing prices.** RUBIES side pulls live adult-tier max-variant from rubyshines.com (USD base). Competitor side pulls each store's base currency via minimal-headers Shopify JSON + `/meta.json` (deliberately bypassing Shopify Markets geo-pricing pads). Both convert to USD via market FX. Change detection compares local-currency prices, not USD, so FX wobble doesn't fire phantom changes. This compares intrinsic merchant pricing, not what an individual customer in any one geo would pay.
+
+- **Discounts never stack — by design.** All managed discounts are product-level (volume) or collection-level (sale), so Shopify applies only the single highest discount per item (volume vs sale resolve to the better one, never the sum). Every managed discount sets combinesWith all-true so the Smile loyalty reward and the free-gift twin coexist alongside. Smile/Klaviyo/comp codes (16k+) are machine-generated and deliberately out of the registry; `manage_discount audit` reconciles automatic discounts only.
 
 ## What's Next
 
