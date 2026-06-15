@@ -4945,28 +4945,31 @@ function isMobile() {
 
 function autoExpandTextarea(el) {
   if (!el) return;
-  el.style.height = 'auto';
-  const h = el.scrollHeight;
-  if (h > 0) {
-    el.style.height = h + 'px';
-    return;
-  }
-  // scrollHeight === 0 means the element isn't laid out yet (panel just
-  // toggled from display:none, fonts still loading). Retry on the next
-  // frame, and again after fonts settle. Without this the editor locks at
-  // min-height on first ticket load.
-  requestAnimationFrame(() => {
+  // Grow to fit content, but NEVER set a height taller than the element's own
+  // max-height. On mobile #draft-editor is capped (max-height:55dvh) +
+  // overflow-y:auto. If we set height past the cap, the box clips at max-height
+  // but the textarea believes it's full-height, so it never scrolls to keep the
+  // caret in view (taScroll stays 0) — the caret strands below the fold and
+  // taps don't land (confirmed on-device 2026-06-15: taCH 490, taSH 1318,
+  // taScroll 0, caret at content Y 1286). Clamping to max-height makes it a
+  // proper self-scrolling box. Desktop has max-height:none → NaN → grows freely.
+  const fit = () => {
     el.style.height = 'auto';
-    const h2 = el.scrollHeight;
-    if (h2 > 0) el.style.height = h2 + 'px';
-  });
+    const h = el.scrollHeight;
+    if (h <= 0) return false; // not laid out yet
+    const maxH = parseFloat(getComputedStyle(el).maxHeight); // NaN when 'none'
+    el.style.height = (maxH && h > maxH ? maxH : h) + 'px';
+    return true;
+  };
+  if (fit()) return;
+  // scrollHeight === 0 means the element isn't laid out yet (panel just
+  // toggled from display:none, fonts still loading). Retry on the next frame,
+  // and again after fonts settle. Without this the editor locks at min-height
+  // on first ticket load.
+  requestAnimationFrame(fit);
   if (document.fonts && document.fonts.ready && !el.dataset.fontsHooked) {
     el.dataset.fontsHooked = '1';
-    document.fonts.ready.then(() => {
-      el.style.height = 'auto';
-      const h3 = el.scrollHeight;
-      if (h3 > 0) el.style.height = h3 + 'px';
-    });
+    document.fonts.ready.then(fit);
   }
 }
 
