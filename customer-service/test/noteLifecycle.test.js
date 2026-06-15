@@ -171,6 +171,34 @@ test('reconcileNotes R1: auto note + cancelled order → resolved', async () => 
   assert.match(resolved[0].reason, /cancelled/i);
 });
 
+test('reconcileNotes R1: OPERATOR note + cancelled order → resolved (regression for #31566)', async () => {
+  // A cancelled order is terminal — even an operator judgment note (which is
+  // never auto-resolved while the order is live) must resolve, because the
+  // order no longer needs any fulfillment attention. Before this fix the
+  // author='auto' gate left cancelled orders stuck in the report indefinitely.
+  const sb = makeStub({
+    notes: [note(31566, 'Warehouse hold placed: Customer issue being resolved — hold requested by operator')],
+    orders: [{ order_number: 31566, fulfillment_status: 'UNFULFILLED', cancelled_at: '2026-06-15T02:23:29Z' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'order_cancelled');
+  assert.match(resolved[0].reason, /cancelled/i);
+  assert.equal(sb._inserts[0].row.resolved, true);
+  assert.equal(sb._inserts[0].row.author, 'auto');
+});
+
+test('reconcileNotes R1: OPERATOR note + shipped (not cancelled) order stays open', async () => {
+  // The cancelled exception must NOT widen to shipped orders — an operator note
+  // on a shipped order may still track a real follow-up and should age visibly.
+  const sb = makeStub({
+    notes: [note(31600, 'Warehouse hold placed: Customer requested address change')],
+    orders: [{ order_number: 31600, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
 test('reconcileNotes R1: auto note + unfulfilled order stays open', async () => {
   const sb = makeStub({
     notes: [note(31399, '[auto-draft] outreach drafted', { author: 'auto' })],
