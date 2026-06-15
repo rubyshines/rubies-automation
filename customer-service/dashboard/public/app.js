@@ -1011,9 +1011,21 @@ function shopifyAdminUrl(shopifyOrderId) {
 }
 
 async function loadCustomerContext(email, orderNumber) {
+  // Capture the ticket this fetch was started for. The shared context panels
+  // (customer card, ticket order, other orders, past tickets) are single DOM
+  // elements reused across all tickets, and this fetch is slow when there's a
+  // real order to enrich (line items + tracking snapshot + Warehance). If the
+  // operator switches tickets mid-flight, a late resolution must NOT clobber
+  // the new ticket's panels with the previous customer's data. currentTicketId
+  // is set synchronously at the top of selectTicket, so it's a reliable token.
+  const ticketAtStart = currentTicketId;
   try {
     const params = orderNumber ? `?order=${orderNumber}` : '';
     const ctx = await api(`/api/customer/${encodeURIComponent(email)}/context${params}`);
+
+    // Operator navigated to a different ticket while this was in flight — drop
+    // the stale result rather than overwriting the current ticket's panels.
+    if (currentTicketId !== ticketAtStart) return;
 
     // Update customer card with enriched data
     const c = ctx.customer;
@@ -1136,6 +1148,7 @@ async function loadCustomerContext(email, orderNumber) {
 
   } catch (err) {
     console.warn('Failed to load customer context:', err);
+    if (currentTicketId !== ticketAtStart) return;
     document.getElementById('ltv-stats').innerHTML = `<span style="color:var(--text-tertiary);font-size:11px">Context unavailable</span>`;
   }
 }
