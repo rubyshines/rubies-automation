@@ -7,8 +7,6 @@
   <meta http-equiv="Cache-Control" content="no-store">
   <title>Caret diagnostic</title>
   <style>
-    /* Self-contained. No app.js / styles.css / service-worker styling — this
-       page tests ONE textarea in isolation. */
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { margin: 0; padding: 0; }
     body {
@@ -25,221 +23,137 @@
       border: 1px solid #d6d3d1; background: #fff; color: #1c1917;
       font-family: inherit; cursor: pointer; line-height: 1;
     }
-    button.on { background: #1c1917; color: #fff; border-color: #1c1917; }
-    button.mode.on { background: #c0392b; border-color: #c0392b; }
+    button.toggle.on { background: #c0392b; color: #fff; border-color: #c0392b; }
     button.alt { background: #2563eb; color: #fff; border-color: #2563eb; }
-    .modes button, .variants button { flex: 1 1 30%; min-width: 90px; text-align: left; }
     #readout {
       font-family: ui-monospace, Menlo, monospace; font-size: 12px;
       background: #1c1917; color: #e7e5e4; border-radius: 8px;
       padding: 8px 10px; margin: 8px 0; white-space: pre-wrap; line-height: 1.5;
     }
-    #readout b { color: #fca5a5; }
-    /* The "ancestor" scroll container — mimics the dashboard's .detail box. */
-    #scrollbox { margin-bottom: 8px; }
-    #scrollbox.scrolls { border: 2px dashed #2563eb; border-radius: 8px; }
+
+    /* ── Faithful replica of the dashboard's detail view ──────────────────── */
+    #stage { position: relative; height: 70vh; height: 70dvh;
+             border: 2px dashed #2563eb; border-radius: 8px; overflow: hidden; margin-bottom: 8px; }
+    /* #scrollbox mirrors .detail: absolutely-positioned inset:0 scroller. */
+    #scrollbox { position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+                 overflow-y: auto; padding: 0 10px 14px; }
+    #scrollbox.static { position: static; height: 100%; }
+    /* #stickybar mirrors .mobile-header-bar: sticky top inside the scroller. */
+    #stickybar { position: sticky; top: 0; z-index: 10; background: #fde68a;
+                 padding: 10px 12px; margin: 0 -10px 10px; border-bottom: 1px solid #d6d3d1;
+                 font-size: 13px; font-weight: 600; }
+    #stickybar.off { position: static; }
+    #filler { color: #a8a29e; font-size: 13px; line-height: 1.5; }
+    #filler.off { display: none; }
     #ta {
       width: 100%; font-family: -apple-system, system-ui, sans-serif;
-      font-size: 16px; line-height: 1.4; padding: 10px 12px;
+      font-size: 16px; line-height: 1.4; padding: 10px 12px; margin-top: 10px;
       border: 1px solid #c0392b; border-radius: 8px; background: #fff;
-      color: #1c1917; resize: none; overflow: hidden;
-      min-height: 28vh; min-height: 28dvh; display: block;
-    }
-    /* Overlays use position:fixed (viewport coords) so they're correct no
-       matter who scrolls — page, ancestor box, or the textarea itself. */
-    #expected {
-      position: fixed; height: 0; border-top: 2px solid rgba(220,38,38,0.9);
-      pointer-events: none; z-index: 9; display: none;
-    }
-    #expected::before {
-      content: 'expected caret'; position: absolute; right: 0; top: -14px;
-      font-size: 10px; color: #dc2626; font-family: ui-monospace, monospace;
-    }
-    #tapdot {
-      position: fixed; width: 12px; height: 12px; margin: -6px 0 0 -6px;
-      border-radius: 50%; background: rgba(37,99,235,0.9);
-      pointer-events: none; z-index: 9; display: none;
+      color: #1c1917; resize: none; overflow: hidden; min-height: 24vh; display: block;
     }
     #log {
       font-family: ui-monospace, Menlo, monospace; font-size: 11px;
       background: #fff; border: 1px solid #e7e5e4; border-radius: 8px;
-      padding: 8px; height: 18vh; overflow-y: auto; white-space: pre; color: #44403c;
+      padding: 8px; height: 16vh; overflow-y: auto; white-space: pre; color: #44403c;
     }
   </style>
 </head>
 <body>
   <h1>Caret diagnostic</h1>
   <p class="hint">
-    Pick a <b>scroll mode</b>, tap <b>Load long text</b>, then scroll so the editor top is off-screen and
-    highlight + type mid-text. The real dashboard is <b>ANCESTOR</b> mode. Watch the
-    <span style="color:#dc2626">red line</span> (where the caret should be) vs the real iOS caret.
+    The blue dashed box replicates the dashboard's detail view. Toggle the suspects below,
+    <b>Load long text</b>, scroll the editor under the yellow sticky bar, then highlight + type.
+    Watch the <b>real caret</b> only. All three ON = the real dashboard.
   </p>
 
-  <div class="label">Scroll container (the real variable)</div>
-  <div class="bar modes" id="modes"></div>
-
-  <div class="label">Resize strategy</div>
-  <div class="bar variants" id="variants"></div>
+  <div class="label">Structural suspects (red = on)</div>
+  <div class="bar" id="toggles"></div>
 
   <div class="bar" style="margin-top:6px">
     <button onclick="loadText('long')">Load long text</button>
     <button onclick="loadText('short')">Load short text</button>
     <button class="alt" onclick="copyLog()">Copy log</button>
-    <button onclick="clearLog()">Clear log</button>
+    <button onclick="clearLog()">Clear</button>
   </div>
 
   <div id="readout">waiting…</div>
 
-  <div id="scrollbox"><textarea id="ta" placeholder="Type here…"></textarea></div>
-  <div id="log"></div>
+  <div id="stage">
+    <div id="scrollbox">
+      <div id="stickybar">☰ sticky header (like the dashboard back/summary bar)</div>
+      <div id="filler"></div>
+      <textarea id="ta" placeholder="Type here…"></textarea>
+      <div style="height:30vh"></div>
+    </div>
+  </div>
 
-  <div id="expected"></div>
-  <div id="tapdot"></div>
+  <div id="log"></div>
 
 <script>
 (function () {
   const ta = document.getElementById('ta');
+  const stage = document.getElementById('stage');
   const box = document.getElementById('scrollbox');
-  const expected = document.getElementById('expected');
-  const tapdot = document.getElementById('tapdot');
+  const sticky = document.getElementById('stickybar');
+  const filler = document.getElementById('filler');
   const readoutEl = document.getElementById('readout');
   const logEl = document.getElementById('log');
 
-  // ── Scroll-container modes — the variable the harness just pointed at ──────
-  //  PAGE     : textarea grows full height, the document scrolls it (proven clean)
-  //  ANCESTOR : textarea grows full height inside a fixed-height overflow:auto
-  //             box that scrolls it — exactly how .detail scrolls it in the app
-  //  SELF     : textarea caps its own height and scrolls internally (the
-  //             reverted 55dvh approach — expect the stale-scrollTop variant)
-  const modes = {
-    PAGE: () => { box.classList.remove('scrolls'); box.style.cssText = ''; ta.style.maxHeight = 'none'; ta.style.overflowY = 'hidden'; },
-    ANCESTOR: () => { box.classList.add('scrolls'); box.style.cssText = 'height:55dvh;overflow-y:auto;margin-bottom:8px'; ta.style.maxHeight = 'none'; ta.style.overflowY = 'hidden'; },
-    SELF: () => { box.classList.remove('scrolls'); box.style.cssText = ''; ta.style.maxHeight = '55dvh'; ta.style.overflowY = 'auto'; },
+  // The three structural suspects, each independently toggleable. All ON
+  // reproduces the dashboard; flip them off one at a time to find the trigger.
+  const toggles = {
+    'Abs scroller': { on: true, apply: v => box.classList.toggle('static', !v) },
+    'Sticky header': { on: true, apply: v => sticky.classList.toggle('off', !v) },
+    'Tall content': { on: true, apply: v => filler.classList.toggle('off', !v) },
   };
-  let mode = 'ANCESTOR';
 
-  // ── Resize-strategy variants ──────────────────────────────────────────────
-  const variants = {
-    A: { label: 'A · current', fn: (el) => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } },
-    C: { label: 'C · grow-only', fn: (el) => { const n = el.scrollHeight; const cur = parseFloat(el.style.height) || 0; if (n > cur) el.style.height = n + 'px'; } },
-    D: { label: 'D · deferred', fn: (el) => { requestAnimationFrame(() => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }); } },
-    E: { label: 'E · mirror', fn: () => { const h = mirrorHeight(); const cur = parseFloat(ta.style.height) || 0; if (h && Math.abs(h - cur) > 0.5) ta.style.height = h + 'px'; } },
-  };
-  let variant = 'A';
+  function resize() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
 
-  // ── Hidden mirror (synced once + on resize) ───────────────────────────────
-  const mirror = document.createElement('div');
-  mirror.style.cssText = 'position:absolute;visibility:hidden;left:-9999px;top:0;';
-  document.body.appendChild(mirror);
-  function syncMirror() {
-    const cs = getComputedStyle(ta), m = mirror.style;
-    m.boxSizing = 'border-box'; m.width = ta.clientWidth + 'px';
-    m.font = cs.font; m.fontFamily = cs.fontFamily; m.fontSize = cs.fontSize;
-    m.lineHeight = cs.lineHeight; m.padding = cs.padding; m.border = cs.border;
-    m.letterSpacing = cs.letterSpacing; m.whiteSpace = 'pre-wrap';
-    m.wordWrap = 'break-word'; m.overflowWrap = 'break-word';
-  }
-  function mirrorHeight() { mirror.textContent = ta.value + '​'; return mirror.scrollHeight; }
-  // Caret top in textarea CONTENT coords (before subtracting scrollTop).
-  function caretTop(pos) {
-    mirror.textContent = '';
-    mirror.appendChild(document.createTextNode(ta.value.slice(0, pos)));
-    const span = document.createElement('span');
-    span.textContent = ta.value.slice(pos, pos + 1) || '.';
-    mirror.appendChild(span);
-    return span.offsetTop;
-  }
-
-  // ── Measurement, coalesced to one rAF per frame ───────────────────────────
+  // Lightweight, rAF-coalesced logging (no reflow storms, no misleading overlays).
   const buffer = [];
-  let lastTap = null; // {clientX, clientY} viewport coords of last tap
-  let _pending = null, _rafQueued = false;
-  function snap(type, extra) {
-    _pending = { type, extra: extra || {} };
-    if (_rafQueued) return;
-    _rafQueued = true;
-    requestAnimationFrame(() => { _rafQueued = false; const p = _pending; _pending = null; if (p) measure(p.type, p.extra); });
+  let _pending = null, _q = false;
+  function snap(type) {
+    _pending = type;
+    if (_q) return; _q = true;
+    requestAnimationFrame(() => { _q = false; const t = _pending; _pending = null; if (t) measure(t); });
   }
-
-  function measure(type, extra) {
-    const sel = ta.selectionStart;
-    const cTop = caretTop(sel);                       // content coords
-    const rect = ta.getBoundingClientRect();
-    const padTop = parseFloat(getComputedStyle(ta).paddingTop) || 0;
-    const caretScreenY = rect.top + (cTop - ta.scrollTop); // viewport Y of caret row
-    const row = Object.assign({
-      t: type, mode, v: variant,
+  function measure(type) {
+    const row = {
+      t: type,
       sel: ta.selectionStart + '-' + ta.selectionEnd, len: ta.value.length,
-      taScrollTop: Math.round(ta.scrollTop),
-      boxScrollTop: Math.round(box.scrollTop || 0),
+      taScroll: Math.round(ta.scrollTop),
+      boxScroll: Math.round(box.scrollTop || 0),
       pageY: Math.round(window.scrollY),
-      scrollH: Math.round(ta.scrollHeight), clientH: Math.round(ta.clientHeight),
-      caretContentY: Math.round(cTop), caretScreenY: Math.round(caretScreenY),
-    }, extra || {});
-    if (lastTap && (type === 'tap' || type === 'post-tap')) {
-      row.tapScreenY = Math.round(lastTap.clientY);
-      row.tapMinusCaret = Math.round(lastTap.clientY - caretScreenY); // ← key desync number
-    }
-    buffer.push(row);
-    if (buffer.length > 400) buffer.shift();
-
-    // Draw overlays in viewport (fixed) coords — mode-independent.
-    const onScreen = caretScreenY >= rect.top && caretScreenY <= rect.bottom;
-    expected.style.display = onScreen ? 'block' : 'none';
-    expected.style.top = caretScreenY + 'px';
-    expected.style.left = (rect.left + 12) + 'px';
-    expected.style.width = Math.max(0, rect.width - 24) + 'px';
-    if (lastTap) {
-      tapdot.style.display = 'block';
-      tapdot.style.top = lastTap.clientY + 'px';
-      tapdot.style.left = lastTap.clientX + 'px';
-    }
-    render(row);
-  }
-
-  function render(row) {
-    const tline = row.tapMinusCaret !== undefined ? `\ntap−caret: <b>${row.tapMinusCaret}px</b>  (tapY ${row.tapScreenY})` : '';
-    readoutEl.innerHTML =
-      `mode ${row.mode}   variant ${row.v}   ${row.t}\n` +
+      taTop: Math.round(ta.getBoundingClientRect().top),
+      cfg: Object.entries(toggles).filter(([, t]) => t.on).map(([k]) => k[0]).join(''),
+    };
+    buffer.push(row); if (buffer.length > 400) buffer.shift();
+    readoutEl.textContent =
+      `[${row.cfg || 'none'}]  ${row.t}\n` +
       `sel ${row.sel}   len ${row.len}\n` +
-      `taScroll ${row.taScrollTop}  boxScroll ${row.boxScrollTop}  pageY ${row.pageY}\n` +
-      `caret contentY ${row.caretContentY} → screenY ${row.caretScreenY}` + tline;
+      `taScroll ${row.taScroll}  boxScroll ${row.boxScroll}  pageY ${row.pageY}\n` +
+      `textarea top (viewport): ${row.taTop}`;
     logEl.textContent = buffer.slice(-40).map(r => JSON.stringify(r)).join('\n');
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  function resize() { const vr = variants[variant]; if (vr.fn) vr.fn(ta); }
-
   ta.addEventListener('input', () => { resize(); snap('input'); });
   ta.addEventListener('scroll', () => snap('ta-scroll'));
   box.addEventListener('scroll', () => snap('box-scroll'));
-  window.addEventListener('scroll', () => snap('page-scroll'), { passive: true });
   ta.addEventListener('focus', () => snap('focus'));
   ta.addEventListener('blur', () => snap('blur'));
   document.addEventListener('selectionchange', () => { if (document.activeElement === ta) snap('selchange'); });
-  function recordTap(clientX, clientY) { lastTap = { clientX, clientY }; snap('tap'); setTimeout(() => snap('post-tap'), 30); }
-  ta.addEventListener('touchend', (e) => { const t = e.changedTouches && e.changedTouches[0]; if (t) recordTap(t.clientX, t.clientY); });
-  ta.addEventListener('click', (e) => recordTap(e.clientX, e.clientY));
+  ta.addEventListener('touchend', () => snap('tap'));
+  ta.addEventListener('click', () => snap('tap'));
 
-  // ── Controls ──────────────────────────────────────────────────────────────
-  function applyMode(k) {
-    mode = k;
-    [...document.querySelectorAll('#modes button')].forEach(b => b.classList.toggle('on', b.dataset.k === k));
-    modes[k]();
-    applyVariant(variant); // re-grow under the new container
-  }
-  function applyVariant(k) {
-    variant = k;
-    [...document.querySelectorAll('#variants button')].forEach(b => b.classList.toggle('on', b.dataset.k === k));
-    if (modes[mode] !== modes.SELF) { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
-    else { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
-    syncMirror();
-    snap('apply ' + mode + '/' + k);
-  }
-  const mbar = document.getElementById('modes');
-  Object.keys(modes).forEach(k => { const b = document.createElement('button'); b.className = 'mode'; b.textContent = k; b.dataset.k = k; b.onclick = () => applyMode(k); mbar.appendChild(b); });
-  const vbar = document.getElementById('variants');
-  Object.entries(variants).forEach(([k, v]) => { const b = document.createElement('button'); b.textContent = v.label; b.dataset.k = k; b.onclick = () => applyVariant(k); vbar.appendChild(b); });
+  // Toggle buttons
+  const tbar = document.getElementById('toggles');
+  Object.entries(toggles).forEach(([name, t]) => {
+    const b = document.createElement('button');
+    b.className = 'toggle on'; b.textContent = name;
+    b.onclick = () => { t.on = !t.on; b.classList.toggle('on', t.on); t.apply(t.on); resize(); snap('toggle ' + name + '=' + t.on); };
+    tbar.appendChild(b);
+  });
 
   window.loadText = function (kind) {
     const para = "Thank you, Jamie! We need it by tomorrow. It is for my Daughter's show, I didn't think they needed it for the dress rehearsal, which is why I thought we had more time. But they need it for the rehearsal as well.";
@@ -249,15 +163,16 @@
   window.copyLog = function () {
     const text = JSON.stringify(buffer, null, 0);
     navigator.clipboard.writeText(text).then(
-      () => { readoutEl.innerHTML = 'copied ' + buffer.length + ' events ✓'; },
-      () => { logEl.textContent = text; readoutEl.innerHTML = 'clipboard blocked — select the log box and copy manually'; }
+      () => { readoutEl.textContent = 'copied ' + buffer.length + ' events ✓'; },
+      () => { logEl.textContent = text; readoutEl.textContent = 'clipboard blocked — select the log box and copy manually'; }
     );
   };
   window.clearLog = function () { buffer.length = 0; logEl.textContent = ''; readoutEl.textContent = 'cleared'; };
 
-  syncMirror();
-  window.addEventListener('resize', () => { syncMirror(); snap('resize'); });
-  applyMode('ANCESTOR');
+  // Mimic the dashboard's tall conversation above the editor.
+  filler.textContent = Array.from({ length: 14 }, (_, i) => `conversation line ${i + 1} — scroll past me to reach the editor`).join('\n');
+  Object.values(toggles).forEach(t => t.apply(t.on));
+  resize();
 })();
 </script>
 </body>
