@@ -290,23 +290,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Full-screen editor on focus (mobile). The editor normally sits inside
   // .detail, a second scroll container; a textarea self-scrolling inside
   // another scroller makes iOS lose the caret. On focus we promote it to a
-  // fixed full-viewport overlay (single clean scroll context) and add a Done
-  // bar to collapse back. See styles.css "Full-screen editor on focus".
-  const draftWrap = document.getElementById('draft-editor-wrap');
-  if (draftWrap && !draftWrap.querySelector('.editor-fs-bar')) {
-    const fsBar = document.createElement('div');
-    fsBar.className = 'editor-fs-bar';
-    const title = document.createElement('span');
-    title.className = 'editor-fs-title';
-    title.textContent = 'Edit reply';
-    const done = document.createElement('button');
-    done.type = 'button';
-    done.className = 'editor-fs-done';
-    done.textContent = 'Done';
-    done.addEventListener('click', () => draftEditor.blur());
-    fsBar.append(title, done);
-    draftWrap.insertBefore(fsBar, draftWrap.firstChild);
-  }
+  // fixed full-viewport overlay (single clean scroll context). The keyboard's
+  // Done/checkmark dismisses the keyboard, which blurs the field and collapses
+  // it back — so no in-app Done button is needed. See styles.css
+  // "Full-screen editor on focus".
   draftEditor.addEventListener('focus', () => {
     if (isMobile()) document.body.classList.add('editor-fullscreen');
   });

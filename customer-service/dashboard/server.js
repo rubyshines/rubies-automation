@@ -42,7 +42,7 @@ function computeBuildInfo() {
   }
   // Hash the bytes of every file the browser actually runs.
   const publicDir = path.join(__dirname, 'public');
-  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'caretDebug.js', 'sw.js'];
+  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'sw.js'];
   const h = crypto.createHash('sha256');
   for (const f of assetFiles) {
     try { h.update(fs.readFileSync(path.join(publicDir, f))); } catch { /* file optional */ }
@@ -60,10 +60,6 @@ function computeBuildInfo() {
   };
 }
 const GIT_VERSION = computeBuildInfo();
-
-// TEMPORARY: in-memory caret-debug capture buffer (see /api/caret-debug). Remove
-// with caretDebug.js once the mobile caret bug is confirmed fixed.
-let _caretDebug = [];
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
@@ -205,7 +201,7 @@ function isAuthEnabled() {
 }
 
 // Paths that don't require auth
-const AUTH_WHITELIST = new Set(['/login.html', '/health', '/manifest.json', '/sw.js', '/caret-test.html']);
+const AUTH_WHITELIST = new Set(['/login.html', '/health', '/manifest.json', '/sw.js']);
 function isAuthWhitelisted(pathname) {
   if (AUTH_WHITELIST.has(pathname)) return true;
   if (pathname.startsWith('/auth/')) return true;
@@ -3146,34 +3142,6 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // ── Caret debug capture (TEMPORARY diagnostic — remove with caretDebug.js) ──
-  // POST {events:[...], reason} appends to an in-memory buffer; GET returns it;
-  // ?clear=1 (or DELETE) empties it. No auth so the PWA can post freely and the
-  // dev can read it via `curl https://ops.rubyshines.com/api/caret-debug`.
-  if (pathname === '/api/caret-debug') {
-    res.setHeader('Content-Type', 'application/json');
-    if (req.method === 'POST') {
-      const body = await readBody(req);
-      const events = Array.isArray(body) ? body : (Array.isArray(body && body.events) ? body.events : []);
-      const stampedReason = body && body.reason ? body.reason : '';
-      _caretDebug.push({ _rx: new Date().toISOString(), _reason: stampedReason, _count: events.length });
-      for (const e of events) _caretDebug.push(e);
-      if (_caretDebug.length > 6000) _caretDebug = _caretDebug.slice(-6000);
-      res.writeHead(200);
-      res.end(JSON.stringify({ ok: true, stored: _caretDebug.length }));
-      return;
-    }
-    if (req.method === 'DELETE' || url.searchParams.get('clear') === '1') {
-      _caretDebug = [];
-      res.writeHead(200);
-      res.end(JSON.stringify({ ok: true, cleared: true }));
-      return;
-    }
-    res.writeHead(200);
-    res.end(JSON.stringify({ count: _caretDebug.length, events: _caretDebug }));
-    return;
-  }
-
   // ── Auth endpoints ──
   if (pathname.startsWith('/auth/')) {
     res.setHeader('Content-Type', 'application/json');
@@ -3468,7 +3436,7 @@ async function handleRequest(req, res) {
       // content hash so a new deploy busts any cached app.js/styles.css.
       const v = GIT_VERSION.assetHash;
       let html = fs.readFileSync(fullPath, 'utf8')
-        .replace(/(href|src)="(\/(?:app|styles|voiceInput|caretDebug)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
+        .replace(/(href|src)="(\/(?:app|styles|voiceInput)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
         .replace('</head>', `<script>window.__BUILD__=${JSON.stringify({
           commit: GIT_VERSION.short, assetHash: v, started: GIT_VERSION.started,
         })};</script>\n</head>`);

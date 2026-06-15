@@ -2252,10 +2252,6 @@ main { height: calc(100vh - 56px); }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* Full-screen mobile editor bar — hidden by default everywhere (only shown
-   when body.editor-fullscreen is set on mobile; see the @media block). */
-.editor-fs-bar { display: none; }
-
 /* ─── Reasoning Trace ──────────────────────────────────────
    Shared component for AI Draft refresh + Operator Agent.
    A quiet, breathing timeline of what the model is doing.
@@ -4639,6 +4635,7 @@ main { height: calc(100vh - 56px); }
     inset: 0;
     z-index: 2000;
     margin: 0;
+    padding-top: env(safe-area-inset-top, 0px); /* clear the status bar/notch */
     background: var(--surface);
     display: flex;
     flex-direction: column;
@@ -4650,21 +4647,6 @@ main { height: calc(100vh - 56px); }
     min-height: 0;
     border: 0;
     border-radius: 0;
-  }
-  body.editor-fullscreen .editor-fs-bar {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: space-between;
-    padding: calc(env(safe-area-inset-top, 0px) + 8px) 14px 8px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-  .editor-fs-title { font-weight: 600; font-size: 15px; color: var(--text); }
-  .editor-fs-done {
-    font-family: inherit; font-size: 15px; font-weight: 600;
-    color: #fff; background: var(--accent);
-    border: 0; border-radius: 8px; padding: 8px 18px;
   }
 
   .msg {
