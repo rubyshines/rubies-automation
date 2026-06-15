@@ -172,6 +172,14 @@ When designing B2B outreach features, keep the sales goal front and center: does
 
 **How to apply:** Before raising a design option, ask "does this make the conversation more likely to happen?" If yes, propose it. If no or marginal, make the call and move on. Own the recommendation — do not outsource obvious judgment calls to Jamie.
 
+## High bar for memory writes — default to NOT writing
+
+Most completed work does not warrant a memory update. Before proposing one, apply the test: "Would a future session make a materially worse decision without this, AND can it not be re-derived from the code/tests?" If either half fails, don't write it. Implementation-level behavior — a reconciler's author gate, a specific edge-case branch, which column a tool writes — lives in code and tests, even when it was a deliberate choice made this session. Domain Key Decisions are for architecture and cross-cutting choices that shape how we build, not for documenting what a function does.
+
+**Why:** Memory collected so much low-value detail it needed a full cleanup (April 2026). Proposing a one-line behavior detail (e.g. a "cancelled orders auto-resolve any note" exception) as a domain Key Decision is exactly the minutiae that re-bloats it. The fix already documents itself in the commit, the code comment, and the regression test.
+
+**How to apply:** When I catch myself drafting a Key Decision that restates what a function/branch does, stop — that's a code concern. Only surface a memory update when the *architecture, ownership, or a genuinely surprising cross-cutting constraint* changed. When unsure, don't propose it.
+
 ## Memory updates go in the same commit as the code they document
 
 Now that `.claude/memory/` is in the repo, don't commit code then update memory as a separate step. Bundle them together — one commit with both the code change and the memory update that documents it. For memory-only updates (design sessions, planning, no code changed), commit and push at the end of the session.
