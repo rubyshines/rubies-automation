@@ -52,6 +52,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **Competitor pricing comparison uses base-currency, not customer-facing prices.** RUBIES side pulls live adult-tier max-variant from rubyshines.com (USD base). Competitor side pulls each store's base currency via minimal-headers Shopify JSON + `/meta.json` (deliberately bypassing Shopify Markets geo-pricing pads). Both convert to USD via market FX. Change detection compares local-currency prices, not USD, so FX wobble doesn't fire phantom changes. This compares intrinsic merchant pricing, not what an individual customer in any one geo would pay.
 
 - **Discounts never stack — by design.** All managed discounts are product-level (volume) or collection-level (sale), so Shopify applies only the single highest discount per item (volume vs sale resolve to the better one, never the sum). Every managed discount sets combinesWith all-true so the Smile loyalty reward and the free-gift twin coexist alongside. Smile/Klaviyo/comp codes (16k+) are machine-generated and deliberately out of the registry; `manage_discount audit` reconciles automatic discounts only.
+- **`manage_discount audit` has a transient false-positive right after create.** Shopify's `automaticDiscountNodes` list query is eventually consistent, so a just-created discount can briefly flag as "MISSING NODES" (the node exists and works — fetch-by-id confirms it — it just hasn't hit the list index yet). Re-running audit a few seconds later clears it. Not a bug; don't chase it.
 
 ## What's Next
 

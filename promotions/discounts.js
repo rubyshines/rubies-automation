@@ -182,11 +182,17 @@ async function updateNodeEndsAt(numericId, endsAt) {
 }
 
 async function deleteNode(numericId) {
-  await shopifyGraphQL(`
-    mutation($id: ID!) {
-      discountAutomaticDelete(id: $id) { deletedAutomaticDiscountId userErrors { field message } }
-    }
-  `, { id: NODE_ID(numericId) });
+  // Tolerate already-deleted nodes so remove/end stay re-runnable after a partial failure.
+  try {
+    await shopifyGraphQL(`
+      mutation($id: ID!) {
+        discountAutomaticDelete(id: $id) { deletedAutomaticDiscountId userErrors { field message } }
+      }
+    `, { id: NODE_ID(numericId) });
+  } catch (err) {
+    if (/not found|does not exist|doesn't exist/i.test(err.message)) return;
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,8 +217,8 @@ async function removeProductMetafields(productGids, key) {
     const mf = data.product && data.product.metafield;
     if (mf) {
       await shopifyGraphQL(`
-        mutation($ids: [ID!]!) { metafieldsDelete(metafields: $ids) { deletedMetafields { key } userErrors { field message } } }
-      `, { ids: [{ ownerId: gid, namespace: 'custom', key }] });
+        mutation($metafields: [MetafieldIdentifierInput!]!) { metafieldsDelete(metafields: $metafields) { deletedMetafields { key } userErrors { field message } } }
+      `, { metafields: [{ ownerId: gid, namespace: 'custom', key }] });
     }
   }
 }
