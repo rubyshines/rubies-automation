@@ -61,6 +61,10 @@ function computeBuildInfo() {
 }
 const GIT_VERSION = computeBuildInfo();
 
+// TEMPORARY: in-memory caret-debug capture buffer (see /api/caret-debug). Remove
+// with caretDebug.js once the mobile caret bug is confirmed fixed.
+let _caretDebug = [];
+
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
 const gorgias = require('../import/gorgiasClient');
@@ -3139,6 +3143,34 @@ async function handleRequest(req, res) {
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(200);
     res.end(JSON.stringify({ status: 'ok', version: GIT_VERSION }));
+    return;
+  }
+
+  // ── Caret debug capture (TEMPORARY diagnostic — remove with caretDebug.js) ──
+  // POST {events:[...], reason} appends to an in-memory buffer; GET returns it;
+  // ?clear=1 (or DELETE) empties it. No auth so the PWA can post freely and the
+  // dev can read it via `curl https://ops.rubyshines.com/api/caret-debug`.
+  if (pathname === '/api/caret-debug') {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'POST') {
+      const body = await readBody(req);
+      const events = Array.isArray(body) ? body : (Array.isArray(body && body.events) ? body.events : []);
+      const stampedReason = body && body.reason ? body.reason : '';
+      _caretDebug.push({ _rx: new Date().toISOString(), _reason: stampedReason, _count: events.length });
+      for (const e of events) _caretDebug.push(e);
+      if (_caretDebug.length > 6000) _caretDebug = _caretDebug.slice(-6000);
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, stored: _caretDebug.length }));
+      return;
+    }
+    if (req.method === 'DELETE' || url.searchParams.get('clear') === '1') {
+      _caretDebug = [];
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, cleared: true }));
+      return;
+    }
+    res.writeHead(200);
+    res.end(JSON.stringify({ count: _caretDebug.length, events: _caretDebug }));
     return;
   }
 

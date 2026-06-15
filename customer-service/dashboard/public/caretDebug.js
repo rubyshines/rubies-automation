@@ -1,19 +1,23 @@
 /* Caret debugger for the REAL draft editor — temporary diagnostic.
  *
- * The isolated harness (caret-test.html) never reproduced the mobile caret bug
- * across every structural variant, so this instruments the actual editor where
- * it does happen. Tap the 🐞 button (bottom-left), then reproduce the bug and
- * hit "Copy log".
+ * Tap 🐞 to arm. Then reproduce the bug and tap the big MARK button the instant
+ * the caret goes wrong — it injects a marker and POSTs the whole event buffer to
+ * /api/caret-debug (no clipboard, no scrolling). It also auto-sends every few
+ * seconds as a backup. The dev reads it server-side:
+ *     curl https://ops.rubyshines.com/api/caret-debug
  *
- * DELETE WHEN DONE: this file, its <script> tag in index.html, and the
- * caretDebug entries in server.js (asset-hash list + version-injection regex).
+ * The panel/buttons are pinned to the VISUAL viewport so they stay reachable
+ * with the keyboard up (a position:fixed panel otherwise scrolls out of view).
+ *
+ * DELETE WHEN DONE: this file, its <script> tag in index.html, the caretDebug
+ * entries in server.js (asset-hash list, version regex, /api/caret-debug route,
+ * and the _caretDebug buffer).
  */
 (function () {
   const $ = (id) => document.getElementById(id);
   const buffer = [];
-  let on = false, ta, scroller, panel, readout, lastTap = null;
+  let on = false, ta, scroller, panel, readout, lastTap = null, lastSentLen = 0;
 
-  // Hidden mirror → compute where the caret SHOULD be for the current selection.
   let mirror;
   function makeMirror() {
     mirror = document.createElement('div');
@@ -37,7 +41,6 @@
     return span.offsetTop;
   }
   function findScroller() {
-    // We know the real structure (.detail), but resolve defensively.
     const known = $('draft-detail');
     if (known) return known;
     let n = ta.parentElement;
@@ -51,6 +54,7 @@
 
   let _p = null, _q = false;
   function snap(type) {
+    if (!on) return;
     _p = type; if (_q) return; _q = true;
     requestAnimationFrame(() => { _q = false; const t = _p; _p = null; if (t) measure(t); });
   }
@@ -72,20 +76,45 @@
       pageY: Math.round(window.scrollY),
       vvTop: vv ? Math.round(vv.offsetTop) : null, vvH: vv ? Math.round(vv.height) : null,
       caretContentY: Math.round(cTop),
-      expCaretY: Math.round(rect.top + (cTop - ta.scrollTop)), // expected viewport Y of caret
+      expCaretY: Math.round(rect.top + (cTop - ta.scrollTop)),
     };
     if (lastTap && (type === 'tap' || type === 'post-tap')) {
       row.tapY = Math.round(lastTap.y);
       row.tapMinusExp = Math.round(lastTap.y - row.expCaretY);
     }
     buffer.push(row);
-    if (buffer.length > 500) buffer.shift();
+    if (buffer.length > 600) buffer.shift();
+    reposition();
     if (readout) readout.textContent =
-      `${row.t}   sel ${row.sel}  len ${row.len}\n` +
-      `ta.scrollTop ${row.taScroll}   ${row.sc}.scrollTop ${row.scTop}\n` +
-      `ta top(vp) ${row.taTop}   expCaretY ${row.expCaretY}\n` +
-      `vv.offsetTop ${row.vvTop}  vv.h ${row.vvH}  pageY ${row.pageY}` +
-      (row.tapMinusExp !== undefined ? `\ntap−exp ${row.tapMinusExp}px` : '');
+      `${row.t}  sel ${row.sel}  len ${row.len}  (${buffer.length})\n` +
+      `taScroll ${row.taScroll}   ${row.sc}.scrollTop ${row.scTop}\n` +
+      `taTop ${row.taTop}   expCaretY ${row.expCaretY}\n` +
+      `pageY ${row.pageY}   vvTop ${row.vvTop}  vvH ${row.vvH}`;
+  }
+
+  function send(reason) {
+    lastSentLen = buffer.length;
+    try {
+      fetch('/api/caret-debug', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, events: buffer }),
+      }).then(r => r.json()).then(j => { if (readout) readout.textContent = `SENT (${reason}) — server has ${j.stored} rows`; })
+        .catch(() => { if (readout) readout.textContent = 'send failed (offline?)'; });
+    } catch (e) { /* ignore */ }
+  }
+  function mark() {
+    buffer.push({ t: '*** MARK — BUG HERE ***', sel: ta ? ta.selectionStart + '-' + ta.selectionEnd : '' });
+    measure('after-mark');
+    send('MARK');
+  }
+
+  // Keep the panel pinned to the visible (visual) viewport so MARK is always
+  // reachable with the keyboard up.
+  function reposition() {
+    if (!panel) return;
+    const vv = window.visualViewport;
+    panel.style.top = ((vv ? vv.offsetTop : 0) + 6) + 'px';
+    panel.style.left = ((vv ? vv.offsetLeft : 0) + 6) + 'px';
   }
 
   function attach() {
@@ -105,33 +134,34 @@
       snap('tap'); setTimeout(() => snap('post-tap'), 40);
     });
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', () => snap('vv-resize'));
-      window.visualViewport.addEventListener('scroll', () => snap('vv-scroll'));
+      window.visualViewport.addEventListener('resize', () => { reposition(); snap('vv-resize'); });
+      window.visualViewport.addEventListener('scroll', () => { reposition(); snap('vv-scroll'); });
     }
+    // Auto-send backup: if new events have accumulated, push them every 4s.
+    setInterval(() => { if (on && buffer.length !== lastSentLen) send('auto'); }, 4000);
     return true;
   }
 
   function buildPanel() {
     panel = document.createElement('div');
-    panel.style.cssText = 'position:fixed;left:6px;top:calc(env(safe-area-inset-top,0px) + 6px);z-index:99999;max-width:72vw;background:rgba(28,25,23,.93);color:#e7e5e4;font:11px ui-monospace,Menlo,monospace;padding:8px 9px;border-radius:8px;white-space:pre-wrap;line-height:1.45;';
+    panel.style.cssText = 'position:fixed;z-index:99999;max-width:72vw;background:rgba(28,25,23,.93);color:#e7e5e4;font:11px ui-monospace,Menlo,monospace;padding:8px 9px;border-radius:8px;white-space:pre-wrap;line-height:1.45;';
     readout = document.createElement('div');
-    readout.textContent = 'caret debug on — reproduce, then Copy log';
-    const copyBtn = document.createElement('button');
-    copyBtn.textContent = 'Copy log';
-    copyBtn.style.cssText = 'margin-top:6px;font-size:12px;padding:6px 9px;border-radius:6px;border:0;background:#2563eb;color:#fff;';
-    copyBtn.onclick = () => {
-      const tx = JSON.stringify(buffer);
-      navigator.clipboard.writeText(tx).then(
-        () => { readout.textContent = 'copied ' + buffer.length + ' events ✓'; },
-        () => { readout.textContent = 'clipboard blocked'; }
-      );
-    };
+    readout.textContent = 'armed — reproduce, then tap MARK';
+    const markBtn = document.createElement('button');
+    markBtn.textContent = '⬛ MARK (bug now)';
+    markBtn.style.cssText = 'display:block;width:100%;margin-top:8px;font-size:15px;font-weight:700;padding:12px;border-radius:8px;border:0;background:#c0392b;color:#fff;';
+    markBtn.onclick = mark;
+    const sendBtn = document.createElement('button');
+    sendBtn.textContent = 'Send';
+    sendBtn.style.cssText = 'margin-top:6px;font-size:12px;padding:7px 9px;border-radius:6px;border:0;background:#2563eb;color:#fff;';
+    sendBtn.onclick = () => send('manual');
     const clr = document.createElement('button');
     clr.textContent = 'Clear';
-    clr.style.cssText = 'margin:6px 0 0 6px;font-size:12px;padding:6px 9px;border-radius:6px;border:0;background:#57534e;color:#fff;';
-    clr.onclick = () => { buffer.length = 0; readout.textContent = 'cleared'; };
-    panel.append(readout, copyBtn, clr);
+    clr.style.cssText = 'margin:6px 0 0 6px;font-size:12px;padding:7px 9px;border-radius:6px;border:0;background:#57534e;color:#fff;';
+    clr.onclick = () => { buffer.length = 0; lastSentLen = 0; readout.textContent = 'cleared (local)'; };
+    panel.append(readout, markBtn, sendBtn, clr);
     document.body.appendChild(panel);
+    reposition();
   }
 
   function toggle() {
