@@ -4647,6 +4647,10 @@ main { height: calc(100vh - 56px); }
     min-height: 0;
     border: 0;
     border-radius: 0;
+    /* Tame iOS rubber-band: keep the bounce contained so the caret overlay
+       doesn't drift during overscroll. Doesn't fully remove iOS's intrinsic
+       bounce, but stops it chaining. */
+    overscroll-behavior: contain;
   }
 
   .msg {
