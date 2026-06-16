@@ -148,3 +148,25 @@ test('advisor hold PROPOSAL (action_type on draft) does not count as placed', ()
   }));
   assert.match(prompt, /Warehouse hold: not placed/);
 });
+
+// --- buildSystemPrompt: net-price-difference exchange routing -------------------
+// Regression guard for ticket #29649 (Eitan): an exchange whose replacements cost
+// more than what's returned must route to ONE create_invoice_order call with
+// return_credit — never exchange_items (bills $0), never a separate exchange +
+// invoice split, and the size-swap case must NOT pull it off this pattern.
+
+test('prompt documents the net-price-difference pattern (return_credit, one call)', () => {
+  const prompt = buildSystemPrompt(ctx());
+  assert.match(prompt, /Net price difference/);
+  assert.match(prompt, /return_credit/);
+});
+
+test('prompt forbids splitting a price-difference exchange into two orders', () => {
+  const prompt = buildSystemPrompt(ctx());
+  assert.match(prompt, /NEVER split this into a separate exchange order/);
+});
+
+test('prompt keeps the price-difference pattern even when items are size swaps', () => {
+  const prompt = buildSystemPrompt(ctx());
+  assert.match(prompt, /EVEN IF some of the items are size swaps/);
+});
