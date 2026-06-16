@@ -195,38 +195,48 @@ describe('create_wholesale_order — shipping_speed defaults & title selection',
     assert.deepEqual(lastCreateDraftOrderArgs.tags, ['wholesale', 'cs-mcp']);
   });
 
-  it('Canadian wholesale defaults to standard (Free Canada Standard Shipping)', async () => {
+  it('Canadian wholesale defaults to expedited (Canada Expedited Shipping)', async () => {
     const result = await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'CA',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free Canada Standard Shipping');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Canada Expedited Shipping');
     assert.equal(lastCreateDraftOrderArgs.shippingLine.price, '0.00');
-    assert.match(result.content[0].text, /Free Canada Standard Shipping/);
+    assert.match(result.content[0].text, /Canada Expedited Shipping/);
     assert.ok(!lastCreateDraftOrderArgs.tags.some(t => t.startsWith('ship fedex')));
   });
 
-  it('DDP-zone wholesale (GB) defaults to standard International title', async () => {
+  it('DDP-zone wholesale (GB) defaults to expedited International title', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'GB',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
     assert.equal(lastCreateDraftOrderArgs.shippingLine.title,
-      'Free International Shipping - All Duties and Import Fees Included');
+      'Expedited International Shipping - All Duties and Import Fees Included');
   });
 
-  it('DDU-zone wholesale (AR) defaults to standard International title', async () => {
+  it('DDU-zone wholesale (AR) defaults to expedited International title', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'AR',
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
-    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free Standard International Shipping');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Expedited International Shipping');
   });
 
-  it('operator can override Canadian wholesale to expedited', async () => {
+  it('operator can override non-US wholesale back to standard', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'CA',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+      shipping_speed: 'standard',
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free Canada Standard Shipping');
+  });
+
+  it('operator can still pass expedited explicitly for non-US wholesale', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'CA',

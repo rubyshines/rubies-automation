@@ -278,7 +278,7 @@ const tools = [
       'Phase 1 (confirmed omitted or false): creates draft order(s) in Shopify and returns a preview with clickable admin links, shipping address, and item breakdown. For AU orders, auto-splits if total exceeds $1,000 AUD.',
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
-      'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for every destination — pass shipping_speed="expedited" only when the operator has explicitly asked for it.',
+      'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for every non-US destination — pass shipping_speed explicitly to override either default.',
       'Set pre_increase_pricing=true to invoice transitional retailers at pre-Apr-16 2026 retail × wholesale discount (uses price_history.previous_price per variant; SKUs that didn\'t change use current retail). Per-item override: set items[].use_current_pricing=true on individual lines to keep them at current retail × discount even when pre_increase_pricing is on (e.g. items the customer never ordered before so old prices don\'t apply).',
       'When the customer has explicitly asked to ship to a new address (different from what is on file), pass shipping_address with the new address fields — this overrides the customer default.',
     ].join(' '),
@@ -321,7 +321,7 @@ const tools = [
         shipping_speed: {
           type: 'string',
           enum: ['standard', 'expedited'],
-          description: 'Shipping speed. Default "standard" for every destination — pass "expedited" only when the operator has explicitly requested it. Sets the Shopify shipping line title at $0; Warehance auto-maps to the carrier.',
+          description: 'Shipping speed. Defaults to "standard" for US wholesale and "expedited" for every non-US destination. Pass explicitly to override the per-country default. Sets the Shopify shipping line title at $0; Warehance auto-maps to the carrier.',
         },
         shipping_address: SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
         confirmed: {
@@ -489,11 +489,13 @@ const tools = [
       const noteSuffix = pre_increase_pricing ? ' | pre-Apr-16 pricing' : '';
       const defaultNote = `Wholesale order - ${discountPercent}% ${cc} discount via CS MCP server${noteSuffix}`;
 
-      // Default shipping speed is "standard" for every destination — operator
-      // must explicitly pass "expedited" to upgrade. (This matches the policy
-      // for create_order, create_invoice_order, and create_exchange_order so
-      // the agent never silently chooses a faster method.)
-      const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
+      // Default shipping speed: US wholesale ships standard; every non-US
+      // wholesale destination ships expedited (Passport DDP/DDU or Fedex via
+      // Warehance). An explicit shipping_speed always wins — operator can force
+      // either speed for any country.
+      const speed = (shipping_speed === 'expedited' || shipping_speed === 'standard')
+        ? shipping_speed
+        : (cc === 'US' ? 'standard' : 'expedited');
       const shippingTitle = await getShippingMethodTitle(cc, speed);
 
       function buildDraftInput(itemList, orderNote) {
