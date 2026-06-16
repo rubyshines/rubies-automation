@@ -1543,8 +1543,19 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
   }
   console.log(`[apiActionChat] context ready elapsed=${Date.now()-_t0}ms, calling operatorAgent`);
 
+  // The operator agent grades divergence ("⚠️ Note" + AUTO_CONFIRM HOLD) against
+  // draft.draft_response. Operator edits to the AI Draft box are NOT persisted to
+  // draft_response (they live in the textarea/localStorage and are sent as
+  // body.response at send time), so without this the flag is evaluated against the
+  // stale original draft — flagging a mismatch the operator already fixed. When the
+  // caller passes the in-flight edited text, evaluate against that instead. Same
+  // pattern as apiSendDraft's `body.response || draft.draft_response`.
+  const evalDraft = typeof body.current_draft === 'string' && body.current_draft.trim()
+    ? { ...draft, draft_response: body.current_draft }
+    : draft;
+
   const context = {
-    draft,
+    draft: evalDraft,
     customer_email: draft.customer_email,
     order_number: (draft.order_number || '').replace('#', ''),
     order_items: structured.order?.items || ticketOrderCtx.items || [],
@@ -1889,7 +1900,9 @@ async function apiExecuteAndSend(draftId, body = {}) {
     command,
     // apiActionChat persists the phase-1 chat scratchpad, so a HOLD leaves the
     // operator a preview + quick-reply buttons when they reopen.
-    runPhase1: () => apiActionChat(draftId, { message: command, history: [] }),
+    // Pass the operator-edited box (body.response) so phase-1 grades divergence
+    // against what the operator actually has, not the stale stored draft.
+    runPhase1: () => apiActionChat(draftId, { message: command, history: [], current_draft: body.response }),
     runPhase2: (r1) => apiActionChat(draftId, { message: 'yes confirm', history: r1.history }),
     sendDraft: () => apiSendDraft(draftId, {
       response: body.response,

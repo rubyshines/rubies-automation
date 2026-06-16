@@ -133,6 +133,31 @@ test('prompt omits the completed block when nothing has executed', () => {
   assert.ok(!/Already Completed This Ticket/.test(prompt));
 });
 
+// --- buildSystemPrompt: divergence is graded against the supplied draft --------
+// The agent's "⚠️ Note" + AUTO_CONFIRM HOLD compare the action to the draft body
+// it's handed via context.draft.draft_response. apiActionChat substitutes the
+// operator's in-flight edited box (body.current_draft) for the stored draft so the
+// flag reflects what the operator actually has, not a stale original. These guard
+// that contract: whatever draft_response is passed is what the prompt grades on.
+
+test('prompt embeds the supplied draft_response as the reference reply', () => {
+  const prompt = buildSystemPrompt(ctx({
+    draft: { draft_response: 'I have sent an invoice for the difference.', actions: [] },
+  }));
+  assert.match(prompt, /AI Draft Reply \(reference/);
+  assert.match(prompt, /I have sent an invoice for the difference\./);
+});
+
+test('edited draft is graded, stale original phrasing is absent', () => {
+  // Simulates apiActionChat overriding draft_response with the operator's edit:
+  // only the edited text reaches the prompt, so the stale "free exchange" copy
+  // the agent would otherwise flag against is gone.
+  const edited = 'I have sent an invoice for the $30 difference.';
+  const prompt = buildSystemPrompt(ctx({ draft: { draft_response: edited, actions: [] } }));
+  assert.match(prompt, /invoice for the \$30 difference/);
+  assert.ok(!/nothing more owed/i.test(prompt), 'stale original copy must not appear');
+});
+
 // --- buildSystemPrompt: warehouse hold signal ----------------------------------
 
 test('hold placed in a PRIOR turn reads as ALREADY PLACED', () => {

@@ -1983,6 +1983,7 @@ async function runChatTurn({
   images = [],
   pdfs = [],
   attachments = [],
+  currentDraft = null,
 }) {
   // The bubble shows `message` (what the operator typed). The API receives
   // `apiMessage` if provided, otherwise the bubble text. This split exists
@@ -2065,7 +2066,7 @@ async function runChatTurn({
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: messageForApi, history, images, pdfs }),
+      body: JSON.stringify({ message: messageForApi, history, images, pdfs, ...(currentDraft != null && { current_draft: currentDraft }) }),
     });
 
     const reader = resp.body.getReader();
@@ -2176,6 +2177,9 @@ async function sendActionMessage() {
     inputEl: input,
     sendBtnEl: sendBtn,
     onSend: sendActionMessage,
+    // Send the operator's in-flight edited draft so the agent grades divergence
+    // against what's in the box now, not the stale stored draft_response.
+    currentDraft: document.getElementById('draft-editor')?.value ?? null,
   });
 
   _actionChatHistory = history;
