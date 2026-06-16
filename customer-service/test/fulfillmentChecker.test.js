@@ -58,6 +58,19 @@ require.cache[shopifyPath] = {
   exports: { shopifyGraphQL: stubShopifyGraphQL },
 };
 
+// Stub the Warehance client so the hold check in analyzeUnfulfilledOrder never
+// hits the network. Keyed by bare order number; only #31353 is held.
+const warehancePath = require.resolve('../../reports/lib/warehanceClient');
+const WH_FIXTURE = {
+  '31353': { id: 'wh-31353', has_hold: true, warehouse_hold: true, address_hold: false },
+};
+require.cache[warehancePath] = {
+  id: warehancePath,
+  filename: warehancePath,
+  loaded: true,
+  exports: { fetchOrderByNumber: async (num) => WH_FIXTURE[String(num).replace('#', '')] || null },
+};
+
 const { analyzeUnfulfilledOrder } = require('../lib/tracking/fulfillmentChecker');
 
 function buildOrder(lineItems) {
@@ -146,5 +159,59 @@ describe('analyzeUnfulfilledOrder — pre-order detection', () => {
     const result = await analyzeUnfulfilledOrder(order);
     assert.equal(result.hasPreOrderItems, false);
     assert.equal(result.issues.filter(i => i.type === 'pre_order').length, 0);
+  });
+});
+
+describe('analyzeUnfulfilledOrder — warehouse hold detection', () => {
+  function heldOrder() {
+    return {
+      name: '#31353', // matches WH_FIXTURE — warehouse_hold: true
+      createdAt: new Date(Date.now() - 9 * 86400000).toISOString(),
+      fulfillments: [],
+      lineItems: [{
+        title: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR',
+        sku: 'GAF-BLK-M', quantity: 1,
+        variantId: 'gid://shopify/ProductVariant/200', // in stock
+        customAttributes: [],
+      }],
+    };
+  }
+
+  it('reports an active warehouse hold as the cause and suppresses the stuck flag', async () => {
+    const result = await analyzeUnfulfilledOrder(heldOrder());
+    assert.equal(result.onHold, true);
+    assert.deepEqual(result.holds, ['warehouse']);
+    const holdIssue = result.issues.find(i => i.type === 'hold');
+    assert.ok(holdIssue, 'expected a hold issue');
+    assert.match(holdIssue.description, /hold/i);
+    assert.equal(result.severity, 'attention');
+    assert.equal(result.issues.some(i => i.type === 'stuck'), false, 'a held order is not "stuck"');
+    assert.equal(result.issues.some(i => i.type === 'slow'), false);
+  });
+
+  it('the deterministic response reassures and explains the hold', async () => {
+    const { buildUnfulfilledResponse } = require('../lib/tracking/fulfillmentChecker');
+    const result = await analyzeUnfulfilledOrder(heldOrder());
+    const { text, needsHumanFollowUp } = buildUnfulfilledResponse(result, { customerName: 'Alex' });
+    assert.match(text, /didn't do anything wrong/i);
+    assert.match(text, /hold/i);
+    assert.equal(needsHumanFollowUp, true);
+  });
+
+  it('an in-stock order with no hold (and old) still flags stuck', async () => {
+    const order = {
+      name: '#NOHOLD', // not in WH_FIXTURE → not held
+      createdAt: new Date(Date.now() - 9 * 86400000).toISOString(),
+      fulfillments: [],
+      lineItems: [{
+        title: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR',
+        sku: 'GAF-BLK-M', quantity: 1,
+        variantId: 'gid://shopify/ProductVariant/200',
+        customAttributes: [],
+      }],
+    };
+    const result = await analyzeUnfulfilledOrder(order);
+    assert.equal(result.onHold, false);
+    assert.equal(result.issues.some(i => i.type === 'stuck'), true, 'no hold → stuck heuristic still applies');
   });
 });

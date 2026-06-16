@@ -336,18 +336,22 @@ const tools = [
           `**New address:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}`,
         ];
 
-        // When country changes, update the Warehance shipping method to match
-        // the new destination. Shopify's shipping line title is immutable on
-        // placed orders, so Warehance is the only place we can correct routing.
-        if (countryChanged) {
-          try {
-            const currentTitle = order.shippingLines?.[0]?.title || '';
-            const isExpedited = /expedited/i.test(currentTitle);
-            const newZone = await getShippingZone(newCountry);
-            const orderNum = order.name.replace('#', '');
-            const whOrder = await fetchOrderByNumber(orderNum);
-
-            if (whOrder) {
+        // Fetch the Warehance order once for two post-update tasks:
+        //   1. On a country change, correct the shipping method to the new zone
+        //      (Shopify's shipping line title is immutable on placed orders, so
+        //      Warehance is the only place to fix routing).
+        //   2. Release any warehouse hold that was freezing the order until the
+        //      address was fixed — the change is applied now, so it must ship.
+        //      Without this, an address change leaves the order held forever
+        //      (the order can't ship and nothing else releases it).
+        try {
+          const orderNum = order.name.replace('#', '');
+          const whOrder = await fetchOrderByNumber(orderNum);
+          if (whOrder) {
+            if (countryChanged) {
+              const currentTitle = order.shippingLines?.[0]?.title || '';
+              const isExpedited = /expedited/i.test(currentTitle);
+              const newZone = await getShippingZone(newCountry);
               const methods = await fetchShippingMethods();
               const match = matchWarehanceShippingMethod(methods, newZone, isExpedited);
               if (match) {
@@ -357,10 +361,14 @@ const tools = [
                 lines.push(`**⚠️ Warehance shipping:** No method matched for zone "${newZone}"/${isExpedited ? 'expedited' : 'standard'} — update manually in Warehance`);
               }
             }
-            // If whOrder is null, the order hasn't reached Warehance yet — no action needed
-          } catch (e) {
-            lines.push(`**⚠️ Warehance shipping:** Update failed (${e.message}) — update manually in Warehance`);
+            if (whOrder.warehouse_hold) {
+              await releaseWarehouseHold(whOrder.id);
+              lines.push('**Warehouse hold:** Released — the address change is applied, so the order can ship.');
+            }
           }
+          // If whOrder is null, the order hasn't reached Warehance yet — no action needed.
+        } catch (e) {
+          lines.push(`**⚠️ Warehance:** Post-update step failed (${e.message}) — check the shipping method / hold manually in Warehance`);
         }
 
         writeAuditEntry({

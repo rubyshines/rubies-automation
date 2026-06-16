@@ -111,6 +111,8 @@ async function analyzeUnfulfilledOrder(order) {
     hasPreOrderItems: false,
     hasOutOfStockItems: false,
     isPartiallyFulfilled: false,
+    onHold: false,
+    holds: [],
     severity: 'normal', // normal, attention, urgent
   };
 
@@ -155,9 +157,47 @@ async function analyzeUnfulfilledOrder(order) {
     }
   }
 
-  // Determine severity
+  // Check for an active Warehance hold — the most common reason a paid, in-stock
+  // order sits unfulfilled (e.g. a CS-placed hold from an address/item change
+  // that was never released). This is authoritative: if held, THAT is why it
+  // hasn't shipped, so it must short-circuit the "stuck/slow" heuristics below —
+  // otherwise the advisor reports a held order as "mysteriously stuck" and
+  // routes to a human instead of explaining the hold.
+  try {
+    const { fetchOrderByNumber } = require('../../../reports/lib/warehanceClient');
+    const orderNum = String(order.name || '').replace('#', '');
+    const whOrder = orderNum ? await fetchOrderByNumber(orderNum) : null;
+    if (whOrder && whOrder.has_hold) {
+      const holds = [];
+      if (whOrder.warehouse_hold) holds.push('warehouse');
+      if (whOrder.address_hold) holds.push('address');
+      if (whOrder.fraud_hold) holds.push('fraud');
+      if (whOrder.payment_hold) holds.push('payment');
+      if (whOrder.allocation_hold) holds.push('allocation');
+      if (whOrder.store_hold) holds.push('store');
+      if (holds.length) {
+        investigation.onHold = true;
+        investigation.holds = holds;
+        investigation.issues.push({
+          type: 'hold',
+          holds,
+          description: `Order is on a ${holds.join(' + ')} hold in the warehouse — that is why it hasn't shipped. An operator can release it once the change it was placed for is done.`,
+        });
+      }
+    }
+  } catch (e) {
+    investigation.issues.push({
+      type: 'hold_check_failed',
+      description: `Could not check warehouse hold status: ${e.message}`,
+    });
+  }
+
+  // Determine severity. A hold is a KNOWN, resolvable cause — it takes priority
+  // and suppresses the stuck/slow heuristics (a held order isn't "stuck").
   // SLA: orders ship within 1 business day. 2 biz days = leeway. Beyond that = flag.
-  if (investigation.hasOutOfStockItems) {
+  if (investigation.onHold) {
+    investigation.severity = 'attention';
+  } else if (investigation.hasOutOfStockItems) {
     investigation.severity = 'urgent';
   } else if (investigation.hasPreOrderItems) {
     investigation.severity = 'attention';
@@ -200,7 +240,16 @@ function buildUnfulfilledResponse(investigation, context) {
     }
   }
 
-  if (investigation.hasPreOrderItems) {
+  if (investigation.onHold) {
+    // On a warehouse/address hold — that's why it hasn't shipped. Reassure
+    // (common follow-up: "did I do something wrong?"), explain, and flag for an
+    // operator to release (the advisor can't release holds itself).
+    parts.push(`${greeting}, you didn't do anything wrong.`);
+    parts.push(`Your order is on a brief hold on our end (usually from a recent change like an address or item update), which is why it hasn't shipped yet.`);
+    parts.push(`I'm getting that cleared so it ships right away, and you'll get a tracking email once it's on its way.`);
+    needsHumanFollowUp = true;
+
+  } else if (investigation.hasPreOrderItems) {
     // Pre-order
     const preOrderItems = investigation.issues.filter(i => i.type === 'pre_order');
     parts.push(`${greeting}, when you placed your order you would have seen a message that ${preOrderItems.length === 1 ? preOrderItems[0].item + ' is' : 'some items are'} a pre-order.`);
