@@ -20,7 +20,7 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 
 **Intake Pipeline:** Two pathways -- Gorgias ticket webhooks and Gmail CS parsing. Both feed through the AI advisor, store drafts in Supabase, and auto-assign handled tickets to "RUBIES AI" in Gorgias.
 
-**Exchange System:** Two-phase flow. Phase 1: AI determines size, creates draft order in Shopify, shows preview with links. Phase 2: operator confirms, marks paid. Only uses FULFILLED non-cancelled orders for current size (ignores $0 exchange orders). Auto-finds correct order unless operator specifies one.
+**Exchange System:** Two-phase flow. Phase 1: AI determines size, creates draft order in Shopify, shows preview with links. Phase 2: operator confirms, marks paid. Only uses FULFILLED non-cancelled orders for current size (ignores $0 exchange orders). Auto-finds correct order unless operator specifies one. Differing-items exchanges route through `exchange_difference` (read-only planning tool) — applies live volume/sale discounts to the new items per line (Shopify won't auto-apply automatic discounts to API draft orders), credits returns at actual-paid via Shopify's refund calc, and returns a recommended action: invoice (only if the operator explicitly asked to charge the difference) / auto-refund (net<0, no asking) / free exchange. Straight swaps skip it. See [exchangeMath.js](../../customer-service/lib/exchangeMath.js) + [tools/exchangeDifference.js](../../customer-service/lib/tools/exchangeDifference.js).
 
 **Donation Routing:** After exchange, routes old items to LGBTQ+ partners. Geographic matching (Google Maps geocoding + haversine distance), load-balanced across 3 closest partners. Skips for defects. Full explanation of gender-affirming program in customer message.
 
