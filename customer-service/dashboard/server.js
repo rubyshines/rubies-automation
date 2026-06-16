@@ -1914,7 +1914,10 @@ function actionTypeFromTool(toolName, draftActionType) {
     case 'create_discount_code':  return 'discount_code';
     case 'split_shipment':        return 'split_shipment';
     case 'consolidate_orders':    return 'order_consolidation';
-    case 'create_invoice_order':  return 'invoice_kept_items';
+    // create_invoice_order backs both kept-items invoices AND price-difference
+    // exchanges (exchange_items/return_credit). Respect the draft's own type so
+    // an exchange reads as "Exchange", not "Invoice Kept Items".
+    case 'create_invoice_order':  return (draftActionType === 'exchange' || draftActionType === 'exchange+refund') ? draftActionType : 'invoice_kept_items';
     default:                      return null;
   }
 }

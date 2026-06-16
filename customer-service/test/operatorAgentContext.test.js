@@ -6,8 +6,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { unionTicketActions, resolveChatPendingPreview } = require('../dashboard/server');
+const { unionTicketActions, resolveChatPendingPreview, actionTypeFromTool } = require('../dashboard/server');
 const { buildSystemPrompt } = require('../lib/operatorAgent');
+
+// --- actionTypeFromTool: create_invoice_order is dual-purpose --------------------
+test('create_invoice_order on an exchange draft labels as exchange, not invoice_kept_items', () => {
+  assert.equal(actionTypeFromTool('create_invoice_order', 'exchange'), 'exchange');
+  assert.equal(actionTypeFromTool('create_invoice_order', 'exchange+refund'), 'exchange+refund');
+});
+test('create_invoice_order with no exchange context stays invoice_kept_items', () => {
+  assert.equal(actionTypeFromTool('create_invoice_order', 'invoice_kept_items'), 'invoice_kept_items');
+  assert.equal(actionTypeFromTool('create_invoice_order', undefined), 'invoice_kept_items');
+});
 
 function ctx(overrides = {}) {
   return {
