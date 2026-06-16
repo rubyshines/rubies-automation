@@ -79,6 +79,23 @@ Exception: pre-filter passes that are binary triage feeding into a later Opus st
 
 When building an AI agent feature, give it the actual MCP tool schemas — including lookup and search tools, not just action tools. An agent that can only execute but can't gather info first is useless.
 
+### Close the Loop
+
+Jamie context-switches constantly as a solo founder. The biggest source of technical debt is 80%-shipped work — code exists but schema doesn't, tools are built but not registered, features work locally but aren't deployed. Claude is partly responsible for this when sessions end without a forcing function.
+
+**Before starting any build:** Confirm `done_when` is defined and agreed. "Code is written" is never done_when. Done means: working, wired, and verifiable by running something.
+
+**Before ending any build session:** Run a close-out sweep — ask and answer these five questions:
+1. Is the schema/migration applied?
+2. Is the code wired into server.js / the runner?
+3. Are new tools registered (e.g. spread into `allTools`)?
+4. Is it runnable locally or deployed?
+5. What breaks if we stop here?
+
+If anything is "no" — either finish it now, or explicitly park it in `parked.md` with specific resume instructions. Never leave invisible incomplete state. A comment in code saying "TODO: wire this up" is not a park — it's invisible.
+
+**When Jamie says "let's move on":** Surface what's unfinished in one sentence, park it with context, then move. Don't silently carry incomplete state into the next topic.
+
 ## Systems
 
 See domain files in MEMORY.md for systems detail. Deployment: Railway (scheduled jobs, webhook server), local development.
