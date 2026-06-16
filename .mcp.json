@@ -3,7 +3,7 @@
     "rubies-cs": {
       "command": "/Users/jamiealexander/.nvm/versions/node/v22.20.0/bin/node",
       "args": [
-        "/Users/jamiealexander/Library/Mobile Documents/com~apple~CloudDocs/Documents/RUBIES creative content/code/rubies-repo/rubies-automations/customer-service/server.js"
+        "/Users/jamiealexander/Code/rubies-repo/rubies-automations/customer-service/server.js"
       ]
     }
   }
