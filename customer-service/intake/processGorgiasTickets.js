@@ -117,6 +117,132 @@ function recordHoldFailure(structured, order, reason) {
   console.error(`[intake] ${msg}`);
 }
 
+// Record an advisor flag on the draft's structured output so it surfaces in the
+// dashboard (prescription.flags renders as a chip on the ticket). Used when an
+// auto-action could NOT complete as the draft prose implies and an operator
+// must intervene.
+function recordAdvisorFlag(structured, message) {
+  if (!structured.prescription) structured.prescription = {};
+  if (!Array.isArray(structured.prescription.flags)) structured.prescription.flags = [];
+  structured.prescription.flags.push(message);
+}
+
+function addressOneLine(addr) {
+  return [addr.address1, addr.address2, addr.city, addr.province, addr.zip, addr.country]
+    .filter(Boolean)
+    .join(', ');
+}
+
+// Auto-apply a SAME-COUNTRY shipping-address change the moment the advisor
+// classifies a ticket as `action_type: order_modification` with a new address.
+// The advisor reply is past-tense ("I've updated the shipping address"), so the
+// edit must land before the draft is filed. Two safety gates fall back to a
+// protective hold instead of auto-applying:
+//   - cross-border changes (resolved country != current) affect shipping cost +
+//     duties, so an operator handles them.
+//   - addresses that don't validate (geocode fails / partial match) need a
+//     human to confirm with the customer.
+// On any fallback we flip action_type to warehouse_hold (so the hold backstop
+// sweep guarantees the freeze even if the synchronous hold can't land yet), flag
+// the draft so the operator fixes the now-inaccurate reply, and return the hold
+// action. Returns an `actions` entry to append to the draft, or null.
+async function autoExecuteAddressChange(structured) {
+  if (structured?.action_type !== 'order_modification') return null;
+  const newAddr = structured?.prescription?.shipping_address;
+  // Only handle address changes here — item-swap order_modifications carry no
+  // shipping_address and are executed by the operator.
+  if (!newAddr || !newAddr.address1) return null;
+
+  const orderName = structured?.order?.name || '';
+  const orderNumber = parseInt(String(orderName).replace(/^#/, ''), 10);
+  if (!orderNumber) {
+    return fallbackToHold(structured, orderName || '(none)',
+      'address change proposed but no order number was on the advisor output');
+  }
+
+  const oldCountry = (structured?.customer?.country || structured?.customer?.address?.country || '').toUpperCase();
+
+  const { validateShippingAddress } = require('../lib/addressValidation');
+  const verdict = await validateShippingAddress(newAddr);
+  const resolvedCountry = (verdict.country_code || newAddr.country || '').toUpperCase();
+
+  // Cross-border → operator handles (shipping cost + duties).
+  if (oldCountry && resolvedCountry && resolvedCountry !== oldCountry) {
+    return fallbackToHold(structured, orderNumber,
+      `Cross-border address change (${oldCountry} -> ${resolvedCountry}) needs an operator (shipping cost + duties). Requested address: ${addressOneLine(newAddr)}`);
+  }
+  // Unverifiable → operator confirms with the customer.
+  if (!verdict.ok) {
+    return fallbackToHold(structured, orderNumber,
+      `Address could not be auto-applied (${verdict.reason}). Confirm with customer before shipping. Requested address: ${addressOneLine(newAddr)}`);
+  }
+
+  // Same-country + validated → apply the customer's address verbatim.
+  const { handleEditOrder } = require('../lib/tools/editOrder');
+  try {
+    const result = await handleEditOrder({
+      order_number: orderNumber,
+      shipping_address: newAddr,
+      note: 'CS auto-applied same-country address change',
+    });
+    const text = result?.content?.[0]?.text || '';
+    if (result?.isError) {
+      return fallbackToHold(structured, orderNumber,
+        `Auto address update failed (${text}). Requested address: ${addressOneLine(newAddr)}`);
+    }
+    return {
+      executed_at: new Date().toISOString(),
+      action_type: 'order_modification',
+      summary: text,
+      links: [],
+    };
+  } catch (err) {
+    return fallbackToHold(structured, orderNumber,
+      `Auto address update errored (${err.message}). Requested address: ${addressOneLine(newAddr)}`);
+  }
+}
+
+// When an address change can't be auto-applied, protect the order with a hold
+// instead. Flips action_type to warehouse_hold (so the hold backstop sweep
+// covers the not-yet-in-Warehance case), flags the draft for the operator, and
+// attempts the hold synchronously. Returns the hold action entry, or null on
+// synchronous failure (the sweep retries — action_type is already flipped).
+async function fallbackToHold(structured, order, reason) {
+  structured.action_type = 'warehouse_hold';
+  recordAdvisorFlag(structured, `Address change not auto-applied — ${reason}`);
+  if (!Array.isArray(structured.audit)) structured.audit = [];
+  const numeric = parseInt(String(order).replace(/^#/, ''), 10);
+  if (!numeric) {
+    structured.audit.push(`Address auto-apply fell back to hold but no order number: ${reason}`);
+    console.error(`[intake] Address auto-apply fell back to hold (no order number): ${reason}`);
+    return null;
+  }
+  structured.audit.push(`Address auto-apply fell back to hold for #${numeric}: ${reason}`);
+  console.error(`[intake] Address auto-apply fell back to hold for #${numeric}: ${reason}`);
+
+  const { handleWarehouseHold } = require('../lib/tools/orderNotes');
+  try {
+    const result = await handleWarehouseHold({
+      order_number: numeric,
+      reason: 'Auto-hold: address change needs operator review',
+    });
+    const text = result?.content?.[0]?.text || '';
+    if (result?.isError) {
+      structured.audit.push(`Fallback hold at intake FAILED for #${numeric}: ${text} — backstop sweep will retry`);
+      return null;
+    }
+    return {
+      executed_at: new Date().toISOString(),
+      action_type: 'warehouse_hold',
+      summary: text,
+      links: [],
+    };
+  } catch (err) {
+    structured.audit.push(`Fallback hold at intake FAILED for #${numeric}: ${err.message} — backstop sweep will retry`);
+    return null;
+  }
+}
+
 // AI Bot user ID — cached after first lookup
 let _aiBotUserId = null;
 const AI_BOT_NAME = 'RUBIES AI';
@@ -779,7 +905,12 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   // we seed the draft's `actions` array; on failure we leave it empty and the
   // operator agent will see the hold isn't placed.
   const autoHoldAction = await autoExecuteAdvisorHold(structured);
-  const initialActions = autoHoldAction ? [autoHoldAction] : [];
+  // Same-country address changes auto-apply; cross-border / unverifiable ones
+  // fall back to a protective hold inside autoExecuteAddressChange. Mutually
+  // exclusive with the hold path above (keyed on a different action_type).
+  const autoAddressAction = autoHoldAction ? null : await autoExecuteAddressChange(structured);
+  const autoAction = autoHoldAction || autoAddressAction;
+  const initialActions = autoAction ? [autoAction] : [];
   const nowIso = new Date().toISOString();
 
   // Auto-send shadow phase (#4): mark drafts that WOULD have auto-sent so the
@@ -822,7 +953,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       customer_context: structured.customer || null,
       action_type: structured.action_type || null,
       actions: initialActions,
-      action_executed_at: autoHoldAction ? nowIso : null,
+      action_executed_at: autoAction ? nowIso : null,
       previous_draft_id: previousDraftId,
     })
     .select('id')
@@ -994,4 +1125,6 @@ module.exports = {
   tryAutoCloseThankYou,
   buildConversationHistorySnapshot,
   extractCleanBody,
+  autoExecuteAdvisorHold,
+  autoExecuteAddressChange,
 };

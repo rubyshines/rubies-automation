@@ -1583,6 +1583,19 @@ function renderActionPanel(draft) {
     headerEl.innerHTML = `<span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--yellow)">Action</span>`;
   }
 
+  // Advisor flags (structured_output.prescription.flags) — surfaced as a warning
+  // banner so an operator sees when an auto-action fell back. Example: a
+  // same-country address change couldn't be auto-applied (cross-border, or the
+  // address didn't validate), so a protective hold was placed instead and the
+  // past-tense reply needs fixing before send. This field was never rendered
+  // before — drafts carried flags that nobody could see.
+  const advisorFlags = draft.structured_output?.prescription?.flags || [];
+  if (advisorFlags.length) {
+    headerEl.innerHTML += advisorFlags.map((f) =>
+      `<div class="advisor-flag" style="margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(245,158,11,0.12);border:1px solid var(--yellow);color:var(--text-primary);font-size:12px;line-height:1.4;font-weight:500;">⚠️ ${esc(String(f))}</div>`
+    ).join('');
+  }
+
   // Completed actions are filed into the conversation timeline (rendered by
   // renderConversation as `.timeline-action` blocks). The bottom panel only
   // shows in-progress chat or a fresh advisor proposal — never replays

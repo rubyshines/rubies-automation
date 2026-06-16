@@ -729,3 +729,10 @@ module.exports = tools;
 module.exports._bucketPendingOrders = bucketPendingOrders;
 module.exports._buildOrphanRows = buildOrphanRows;
 module.exports.fetchFulfilledOrphanNotes = fetchFulfilledOrphanNotes;
+// Named export of the warehouse-hold handler so the intake auto-hold
+// (processGorgiasTickets.autoExecuteAdvisorHold) and the backstop sweep
+// (holdReconcile.reconcilePendingHolds) can call it directly. Both destructure
+// `{ handleWarehouseHold }` from this module — without this export it resolved
+// to undefined and every automatic hold threw, so holds only ever landed when
+// an operator placed them by hand.
+module.exports.handleWarehouseHold = handleWarehouseHold;

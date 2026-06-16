@@ -758,3 +758,7 @@ const tools = [
 ];
 
 module.exports = tools;
+// Named export of the edit_order handler so the intake auto-apply of
+// same-country address changes (processGorgiasTickets.autoExecuteAddressChange)
+// can call it directly with { order_number, shipping_address }.
+module.exports.handleEditOrder = tools.find((t) => t.name === 'edit_order').handler;
