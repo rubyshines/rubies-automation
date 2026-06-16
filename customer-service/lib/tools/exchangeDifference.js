@@ -95,13 +95,18 @@ const tools = [
       const bySku = new Map((order.lineItems || []).map((li) => [String(li.sku || '').toUpperCase(), li]));
       const refundLineItems = [];
       const unmatched = [];
+      const missingId = [];
       for (const ri of return_items || []) {
         const li = bySku.get(String(ri.sku || '').toUpperCase());
         if (!li) { unmatched.push(ri.sku); continue; }
+        if (!li.id) { missingId.push(ri.sku); continue; }
         refundLineItems.push({ lineItemId: li.id, quantity: ri.quantity });
       }
       if (unmatched.length) {
         return { content: [{ type: 'text', text: `These return SKUs aren't on ${order.name}: ${unmatched.join(', ')}. Check the order's items.` }] };
+      }
+      if (missingId.length) {
+        return { content: [{ type: 'text', text: `Could not resolve line-item IDs for ${missingId.join(', ')} on ${order.name} — cannot compute the return credit. This is an internal error, not a customer issue; stop and report it.` }] };
       }
       const refund = await calculateRefund(order.id, refundLineItems);
       const returnCredit = parseFloat(refund.subtotalSet?.shopMoney?.amount || '0');

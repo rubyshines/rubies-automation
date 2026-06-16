@@ -197,6 +197,7 @@ async function getOrderByNumber(orderNumber) {
             lineItems(first: 50) {
               edges {
                 node {
+                  id
                   title
                   variantTitle
                   quantity

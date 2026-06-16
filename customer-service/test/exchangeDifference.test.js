@@ -35,6 +35,7 @@ stub('shopify', {
     lineItems: [
       { id: 'li-flo', sku: 'FLO-SND-12', quantity: 1 },
       { id: 'li-aj', sku: 'AJ-SND-12', quantity: 3 },
+      { sku: 'NOID-SKU', quantity: 1 }, // line item missing id (regression guard)
     ],
   }),
   // suggestedRefund subtotal = what they actually paid: Flo $28.79 + 3x AJ $23.12
@@ -72,4 +73,17 @@ test('Same items + net>0 but invoice NOT requested → free_exchange (we absorb)
     return_order_number: '#29649', return_items: EITAN_RETURN, new_items: EITAN_NEW, invoice_requested: false,
   });
   assert.equal(res._plan.recommended, 'free_exchange');
+});
+
+// Regression: a returned line item with no resolvable id must error clearly,
+// NOT pass lineItemId:null to Shopify's refund calc (the live #29649 bug).
+test('return item without a line-item id → clear error, no Shopify call with null', async () => {
+  const res = await exchangeDifference.handler({
+    return_order_number: '#29649',
+    return_items: [{ sku: 'NOID-SKU', quantity: 1 }],
+    new_items: [{ sku: 'AJ-BLK-10', quantity: 1 }],
+    invoice_requested: true,
+  });
+  assert.match(res.content[0].text, /Could not resolve line-item IDs/);
+  assert.equal(res._plan, undefined, 'no plan produced when ids are missing');
 });
