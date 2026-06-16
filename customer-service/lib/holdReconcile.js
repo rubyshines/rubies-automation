@@ -52,6 +52,13 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
   const supabase = getSupabaseClient();
   const since = new Date(now.getTime() - LOOKBACK_DAYS * 86400000).toISOString();
 
+  // Kill switch: the sweep is the backstop for the same warehouse_hold
+  // auto-action governed by the dashboard. If it's disabled, don't place holds.
+  const { isAutoactionEnabled } = require('./autoactionGate');
+  if (!(await isAutoactionEnabled('warehouse_hold'))) {
+    return { checked: 0, placed: 0, impossible: 0, pending: 0, disabled: true };
+  }
+
   const { data: drafts, error } = await supabase
     .from('cs_ai_drafts')
     .select('id, ticket_id, order_number, actions, audit_trail, status')
@@ -101,11 +108,13 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
     const text = result?.content?.[0]?.text || '';
 
     if (outcome === 'placed') {
+      const { SOURCE } = require('./autoactionGate');
       const action = {
         executed_at: new Date().toISOString(),
         action_type: 'warehouse_hold',
         summary: text,
         links: [],
+        source: SOURCE.HOLD_SWEEP,
       };
       await supabase
         .from('cs_ai_drafts')

@@ -70,6 +70,7 @@ const { canonicalMessageType } = require('../lib/messageTypes');
 const { markOutreachSent, resolveOnTicketClose } = require('../lib/noteLifecycle');
 const { buildSendFeedbackRow, buildManualSendFeedbackRow } = require('../lib/feedbackSignals');
 const { fetchAutosendConfig, validateAutosendFlagKey } = require('../lib/autosendConfig');
+const { fetchAutoactionConfig, validateAutoactionFlagKey } = require('../lib/autoactionConfig');
 const { setFlag } = require('../../shared/systemFlags');
 
 // Product config for auto-linking (loaded at startup)
@@ -2563,6 +2564,30 @@ async function apiSetAutosendConfig(body = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-action kill-switches — master + per-kind flags, plus a recent feed of
+// actions the system executed on its own. Assembly lives in
+// lib/autoactionConfig.js. No shadow phase: these run live, the toggles are
+// kill switches (default-ON).
+// ---------------------------------------------------------------------------
+
+async function apiGetAutoactionConfig() {
+  return fetchAutoactionConfig(getSupabaseClient());
+}
+
+async function apiSetAutoactionConfig(body = {}) {
+  const { key, enabled } = body;
+  const check = validateAutoactionFlagKey(key);
+  if (!check.ok) {
+    const err = new Error(check.error);
+    err.statusCode = 400;
+    throw err;
+  }
+  await setFlag(key, !!enabled, 'dashboard auto-action panel');
+  console.log(`[dashboard] auto-action flag ${key} → ${!!enabled}`);
+  return { success: true, key, enabled: !!enabled };
+}
+
+// ---------------------------------------------------------------------------
 // B2B Outreach panel (Design #4 V1.1) — thin wrappers over the b2b-outreach
 // libs. Shared logic lives in b2b-outreach/lib/queueService.js so these
 // endpoints and the MCP console tools (lib/tools/b2bOutreach.js) never drift.
@@ -3010,6 +3035,7 @@ const routes = {
   'GET /api/tickets/search': (req) => apiSearchTickets(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/tickets/stats': () => apiGetTicketStats(),
   'GET /api/autosend-config': () => apiGetAutosendConfig(),
+  'GET /api/autoaction-config': () => apiGetAutoactionConfig(),
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');
@@ -3033,6 +3059,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/execute-and-send$/, handler: (body, id) => apiExecuteAndSend(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
   { method: 'POST', pattern: /^\/api\/autosend-config$/, handler: (body) => apiSetAutosendConfig(body) },
+  { method: 'POST', pattern: /^\/api\/autoaction-config$/, handler: (body) => apiSetAutoactionConfig(body) },
   // B2B Outreach panel
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)$/, handler: (_, id) => apiB2bGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/regenerate$/, handler: (body, id) => apiB2bRegenerateDraft(parseInt(id), body) },

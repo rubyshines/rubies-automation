@@ -4735,6 +4735,96 @@ async function setAutosendFlag(key, enabled) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-actions panel — kill switches for the actions the system runs on its own
+// (warehouse holds, same-country address edits) plus a feed of recent ones.
+// Reuses the autosend panel's CSS classes; no shadow phase. Toggles default ON.
+// ---------------------------------------------------------------------------
+
+function openAutoactionPanel() {
+  document.getElementById('autoaction-overlay').classList.add('active');
+  loadAutoactionConfig();
+}
+
+function closeAutoactionPanel() {
+  document.getElementById('autoaction-overlay').classList.remove('active');
+}
+
+async function loadAutoactionConfig() {
+  const rowsEl = document.getElementById('autoaction-rows');
+  try {
+    const cfg = await api('/api/autoaction-config');
+    renderAutoactionPanel(cfg);
+  } catch (err) {
+    rowsEl.innerHTML = `<div class="autosend-loading">Failed to load: ${esc(err.message)}</div>`;
+  }
+}
+
+function autoactionToggleHtml(key, enabled, disabled) {
+  return `<button class="autosend-toggle ${enabled ? 'on' : ''}" role="switch" aria-checked="${enabled}"
+    ${disabled ? 'disabled title="Operator-only — can never auto-execute"' : `onclick="setAutoactionFlag('${esc(key)}', ${!enabled})"`}>
+    <span class="autosend-knob"></span></button>`;
+}
+
+function renderAutoactionPanel(cfg) {
+  document.getElementById('autoaction-master').innerHTML = `
+    <div class="autosend-row autosend-row-master">
+      <div class="autosend-row-main">
+        <span class="autosend-row-name">Auto-actions</span>
+        <span class="autosend-row-note">master kill switch &mdash; off means every action waits for an operator</span>
+      </div>
+      ${autoactionToggleHtml('autoaction_enabled', cfg.master_enabled, false)}
+    </div>`;
+
+  const win = cfg.window_days || 30;
+  document.getElementById('autoaction-rows').innerHTML = cfg.kinds.map(k => {
+    const note = k.never_listed
+      ? 'operator only'
+      : `${k.executed} run &middot; ${win}d${k.fallback ? ` &middot; ${k.fallback} fell back` : ''}`;
+    return `
+    <div class="autosend-row ${k.never_listed ? 'autosend-row-never' : ''}">
+      <div class="autosend-row-main">
+        <span class="autosend-row-name">${esc(k.label)}${k.never_listed ? ' <span class="autosend-never-tag">never</span>' : ''}</span>
+        <span class="autosend-row-note">${note}</span>
+      </div>
+      ${autoactionToggleHtml('autoaction_' + k.kind, k.enabled, k.never_listed)}
+    </div>`;
+  }).join('');
+
+  const feedEl = document.getElementById('autoaction-feed');
+  if (!cfg.feed || !cfg.feed.length) {
+    feedEl.innerHTML = `<div class="autosend-row-note" style="padding:4px 0;">No auto-actions in the last ${win} days.</div>`;
+    return;
+  }
+  feedEl.innerHTML = cfg.feed.map(f => {
+    const badge = f.kind === 'address_change' ? 'edit' : 'hold';
+    const label = f.source === 'auto_address_fallback' ? 'hold (fallback)'
+      : f.kind === 'address_change' ? 'address' : 'hold';
+    const order = f.order_number ? esc(String(f.order_number)) : '';
+    const when = f.executed_at ? timeAgo(f.executed_at) : '';
+    const tid = f.ticket_id;
+    return `
+    <div class="autosend-row" ${tid ? `style="cursor:pointer" onclick="closeAutoactionPanel();selectTicket(${tid})"` : ''}>
+      <div class="autosend-row-main">
+        <span class="autosend-row-name"><span class="action-type-badge ${badge}">${label}</span> ${order}</span>
+        <span class="autosend-row-note">${esc((f.summary || '').slice(0, 90))}</span>
+      </div>
+      <span class="autosend-row-note">${when}</span>
+    </div>`;
+  }).join('');
+}
+
+async function setAutoactionFlag(key, enabled) {
+  const label = key === 'autoaction_enabled' ? 'Auto-actions' : key.replace('autoaction_', '').replace(/_/g, ' ');
+  try {
+    await api('/api/autoaction-config', { method: 'POST', body: { key, enabled } });
+    showToast(`${label} ${enabled ? 'on' : 'off'}`, 'success');
+  } catch (err) {
+    showToast(`Toggle failed: ${err.message}`, 'error');
+  }
+  loadAutoactionConfig(); // re-render from server truth either way
+}
+
+// ---------------------------------------------------------------------------
 // Outreach panel (Design #4 V1.1) — the B2B outreach queue across retailers,
 // LGBTQ+ orgs, and affiliates. Rows come from /api/b2b/queue (6-tier priority);
 // row click opens the pending draft (or generates one). Regenerate-with-steer /

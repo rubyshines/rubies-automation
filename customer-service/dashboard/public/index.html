@@ -55,6 +55,7 @@
       <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
     </nav>
     <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
+    <button class="btn-stats btn-autoaction" onclick="openAutoactionPanel()" title="Auto-actions the system runs on its own">Auto-actions</button>
     <a href="/stats" class="btn-stats btn-stats-follow" title="Performance stats">Stats</a>
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
     <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
@@ -302,6 +303,21 @@
       <div id="autosend-master"></div>
       <div id="autosend-rows"><div class="autosend-loading">Loading&hellip;</div></div>
       <div class="autosend-foot">Clean % = judge verdicts identical or cosmetic, trailing 90 days. Never-list categories can never auto-send, regardless of flags.</div>
+    </div>
+  </div>
+
+  <!-- Auto-action panel (reuses autosend panel styles) -->
+  <div class="autosend-overlay" id="autoaction-overlay" onclick="if(event.target===this)closeAutoactionPanel()">
+    <div class="autosend-panel">
+      <div class="autosend-head">
+        <h2>Auto-actions</h2>
+        <button class="autosend-close" onclick="closeAutoactionPanel()" aria-label="Close">&times;</button>
+      </div>
+      <div id="autoaction-master"></div>
+      <div id="autoaction-rows"><div class="autosend-loading">Loading&hellip;</div></div>
+      <div class="autosend-foot">Actions the system runs on its own (no operator click). Toggles are kill switches &mdash; off means the operator does it. Operator-only kinds can never auto-execute.</div>
+      <div class="autosend-head" style="margin-top:14px;margin-bottom:6px;"><h2 style="font-size:13px;">Recent auto-actions</h2></div>
+      <div id="autoaction-feed"></div>
     </div>
   </div>
 

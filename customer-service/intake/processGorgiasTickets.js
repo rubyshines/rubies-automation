@@ -81,6 +81,15 @@ async function autoExecuteAdvisorHold(structured) {
     return null;
   }
 
+  // Kill switch: skip auto-execution if warehouse_hold auto-actions are disabled
+  // (dashboard Auto-actions panel). The hold stays a proposal for the operator.
+  const { isAutoactionEnabled, SOURCE } = require('../lib/autoactionGate');
+  if (!(await isAutoactionEnabled('warehouse_hold'))) {
+    if (!Array.isArray(structured.audit)) structured.audit = [];
+    structured.audit.push(`Auto-hold skipped for #${orderNumber}: warehouse_hold auto-action disabled — operator places it`);
+    return null;
+  }
+
   const { handleWarehouseHold } = require('../lib/tools/orderNotes');
   const reason = structured?.intake?.message_type === 'cancellation'
     ? 'Auto-hold: customer asked to cancel, holding before we cancel'
@@ -98,6 +107,7 @@ async function autoExecuteAdvisorHold(structured) {
       action_type: 'warehouse_hold',
       summary: text,
       links: [],
+      source: SOURCE.HOLD,
     };
   } catch (err) {
     recordHoldFailure(structured, orderNumber, err.message);
@@ -153,6 +163,16 @@ async function autoExecuteAddressChange(structured) {
   // shipping_address and are executed by the operator.
   if (!newAddr || !newAddr.address1) return null;
 
+  // Kill switch: if address-change auto-actions are disabled (dashboard
+  // Auto-actions panel), leave the order_modification draft for the operator to
+  // apply — no auto-apply and no protective hold.
+  const { isAutoactionEnabled, SOURCE } = require('../lib/autoactionGate');
+  if (!(await isAutoactionEnabled('address_change'))) {
+    if (!Array.isArray(structured.audit)) structured.audit = [];
+    structured.audit.push('Auto address-apply skipped: address_change auto-action disabled — operator applies it');
+    return null;
+  }
+
   const orderName = structured?.order?.name || '';
   const orderNumber = parseInt(String(orderName).replace(/^#/, ''), 10);
   if (!orderNumber) {
@@ -195,6 +215,7 @@ async function autoExecuteAddressChange(structured) {
       action_type: 'order_modification',
       summary: text,
       links: [],
+      source: SOURCE.ADDRESS,
     };
   } catch (err) {
     return fallbackToHold(structured, orderNumber,
@@ -221,6 +242,7 @@ async function fallbackToHold(structured, order, reason) {
   console.error(`[intake] Address auto-apply fell back to hold for #${numeric}: ${reason}`);
 
   const { handleWarehouseHold } = require('../lib/tools/orderNotes');
+  const { SOURCE } = require('../lib/autoactionGate');
   try {
     const result = await handleWarehouseHold({
       order_number: numeric,
@@ -236,6 +258,7 @@ async function fallbackToHold(structured, order, reason) {
       action_type: 'warehouse_hold',
       summary: text,
       links: [],
+      source: SOURCE.ADDRESS_FALLBACK,
     };
   } catch (err) {
     structured.audit.push(`Fallback hold at intake FAILED for #${numeric}: ${err.message} — backstop sweep will retry`);
