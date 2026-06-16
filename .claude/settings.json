@@ -7,7 +7,26 @@
       "WebFetch(domain:defensivecss.dev)",
       "Edit(*)",
       "Write(.claude/memory/*)",
-      "Bash(rm .claude/memory/*)"
+      "Bash(rm .claude/memory/*)",
+      "mcp__rubies-cs__get_order_details",
+      "mcp__rubies-cs__donation_partner_list",
+      "mcp__rubies-cs__donation_partner_publish"
+    ],
+    "additionalDirectories": [
+      "/Users/jamiealexander/Code/rubies-repo/worktrees/unshipped-holds/.claude/memory"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-main-edits.js\""
+          }
+        ]
+      }
     ]
   }
 }
