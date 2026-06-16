@@ -25,6 +25,7 @@
  * anything unexpected (no command, parse error, not a git repo).
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execSync } = require('child_process');
 
@@ -45,12 +46,18 @@ const MUTATING = /\bgit\b[^\n;&|]*?\b(commit|merge|rebase|cherry-pick)\b/;
 if (!MUTATING.test(command)) allow();
 
 // Resolve the effective directory the git command runs in. Default to the hook's
-// cwd; if the command leads with `cd <path> &&`, honour that target instead.
-let dir = (data && data.cwd) || process.cwd();
-const cdMatch = command.match(/^\s*cd\s+("([^"]+)"|'([^']+)'|([^\s&;|]+))\s*(&&|;)/);
-if (cdMatch) {
-  const target = cdMatch[2] || cdMatch[3] || cdMatch[4];
-  dir = path.isAbsolute(target) ? target : path.resolve(dir, target);
+// cwd. If the command changes directory (`cd <path>`), honour the LAST such target
+// — handles `VAR=x && cd <path> && git ...`, chained cds, and leading `~`.
+const cwd = (data && data.cwd) || process.cwd();
+let dir = cwd;
+const expandHome = (p) =>
+  p === '~' ? os.homedir() : p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
+const cdRe = /(?:^|&&|;|\|)\s*cd\s+("([^"]+)"|'([^']+)'|([^\s&;|]+))/g;
+let m, lastCd = null;
+while ((m = cdRe.exec(command)) !== null) lastCd = m;
+if (lastCd) {
+  const target = expandHome(lastCd[2] || lastCd[3] || lastCd[4]);
+  dir = path.isAbsolute(target) ? target : path.resolve(cwd, target);
 }
 
 // Walk up to the nearest existing directory (defensive).
