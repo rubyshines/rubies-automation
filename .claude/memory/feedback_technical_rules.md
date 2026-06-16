@@ -167,6 +167,7 @@ working in the same tree).
   before starting — revert main to tag + push = production rollback. Merges happen at
   checkpoints (tests green; live-CS-path changes only with Jamie present).
 - Remove with `git worktree remove <path>` after merge; `git worktree list` to audit.
+- **Enforced by a `PreToolUse` hook** (`.claude/hooks/block-main-edits.js`, wired in `.claude/settings.json`): `Edit`/`Write`/`NotebookEdit` to a file whose working tree is on `main`/`master` is blocked with instructions to create a worktree. Worktrees (`wt/*`, `sprint/*`) pass; `.claude/*`, plans, and `CLAUDE.md` are exempt. The hook stops the *current* session editing main — it can't stop a concurrent session committing, so the protection only holds if every checkout carries it (it's project-scoped, so it does here). Hook changes load at session start; a settings edit needs a Claude Code restart to arm.
 
 ## MCP tools must be agent-agnostic
 
