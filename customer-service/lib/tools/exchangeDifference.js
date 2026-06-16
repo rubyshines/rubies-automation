@@ -151,18 +151,24 @@ const tools = [
         sku: r.sku, quantity: r.quantity, discount_percent: plan.lines[i].effectivePct || undefined,
       }));
 
+      // The customer is on the original order — hand the agent the real id so it
+      // never fabricates one (e.g. wrapping the email in a fake GID).
+      const customerGid = order.customer && order.customer.id;
+      const custArg = customerGid ? `customer_id="${customerGid}", ` : '';
+
+      lines.push(`**Customer:** ${customerGid || '(look up — not on order)'}`);
       lines.push(`**Recommended action: ${recommended}**`);
       if (recommended === 'invoice') {
-        lines.push(`Call create_invoice_order with paid_items=${JSON.stringify(paidItemsJson)}, return_credit=${plan.returnCredit}, return_credit_note="Return credit from ${order.name}".`);
+        lines.push(`Call create_invoice_order with ${custArg}paid_items=${JSON.stringify(paidItemsJson)}, return_credit=${plan.returnCredit}, return_credit_note="Return credit from ${order.name}". Use the customer_id above exactly — do NOT construct one from the email.`);
       } else if (recommended === 'refund') {
-        lines.push(`Customer is owed money. Call create_exchange_order to ship the new items free, then refund_order on ${order.name} for $${Math.abs(plan.net).toFixed(2)}. Both are two-phase (preview, then confirm).`);
+        lines.push(`Customer is owed money. Call create_exchange_order (${custArg}new items, free), then refund_order on ${order.name} for $${Math.abs(plan.net).toFixed(2)}. Both are two-phase. Use the customer_id above exactly.`);
       } else {
-        lines.push('Treat as a free exchange: call create_exchange_order to ship the new items at $0 (no invoice — either an even swap, a straight swap, or the operator did not ask to charge the difference).');
+        lines.push(`Treat as a free exchange: call create_exchange_order (${custArg}new items at $0, no invoice — even/straight swap, or the operator did not ask to charge the difference). Use the customer_id above exactly.`);
       }
 
       return {
         content: [{ type: 'text', text: lines.join('\n') }],
-        _plan: { ...plan, itemsIdentical, recommended, order: order.name },
+        _plan: { ...plan, itemsIdentical, recommended, order: order.name, customerId: customerGid || null },
       };
     },
   },

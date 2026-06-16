@@ -92,6 +92,11 @@ const tools = [
       required: ['customer_id'],
     },
     handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, shipping_speed, shipping_address, confirmed, draft_order_id }) => {
+      // Guard against a fabricated id (e.g. an email jammed into a GID). Shopify
+      // would reject it with a cryptic "Invalid global id" — fail clearly instead.
+      if (!confirmed && customer_id && /@/.test(String(customer_id))) {
+        return { content: [{ type: 'text', text: `customer_id looks like an email ("${customer_id}"), not a Shopify customer ID. Look up the customer (lookup_customer) and pass the numeric/GID id.` }] };
+      }
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Send invoice for existing draft ---

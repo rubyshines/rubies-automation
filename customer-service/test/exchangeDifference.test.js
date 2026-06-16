@@ -32,6 +32,7 @@ stub('shopify', {
   getOrderByNumber: async () => ({
     id: 'gid://shopify/Order/29649',
     name: '#29649',
+    customer: { id: 'gid://shopify/Customer/8065558413590', email: 'eitan@grinspun.com' },
     lineItems: [
       { id: 'li-flo', sku: 'FLO-SND-12', quantity: 1 },
       { id: 'li-aj', sku: 'AJ-SND-12', quantity: 3 },
@@ -66,6 +67,9 @@ test('Eitan: Ruby 2+ discount applied, real credit from refund calc, net = 48.65
   assert.equal(p.recommended, 'invoice', 'operator asked to invoice → invoice');
   // the text preview hands the agent paid_items carrying the discount
   assert.match(res.content[0].text, /discount_percent/);
+  // and the real customer id, so the agent never fabricates one from the email
+  assert.equal(p.customerId, 'gid://shopify/Customer/8065558413590');
+  assert.match(res.content[0].text, /customer_id="gid:\/\/shopify\/Customer\/8065558413590"/);
 });
 
 test('Same items + net>0 but invoice NOT requested → free_exchange (we absorb)', async () => {
