@@ -1371,6 +1371,30 @@ describe('prescribeDonationRouting', () => {
     const result = await prescribeDonationRouting(intake, ctx);
     assert.equal(result.type, 'local_no_partner');
   });
+
+  it('renders the partner description verbatim and the wash reminder on its own line', async () => {
+    mockSupabaseData.partners = [{
+      id: 1,
+      name: 'Test Org',
+      mailing_address: 'RUBIES Returns\nc/o Test Org\n1 Main St\nBoston, MA\n02101',
+      description: 'We have bins around the space with affirming items, free of charge.',
+      donations_routed: 0,
+    }];
+    const intake = makeIntake({ items: [makeItem({ issue: 'close_fit_tight' })] });
+    const ctx = makeContext({
+      targetOrder: makeOrder({
+        lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', quantity: 3 }],
+      }),
+    });
+    const result = await prescribeDonationRouting(intake, ctx);
+    assert.equal(result.type, 'partner');
+    // Description shown as authored — not spliced after "They" and lowercased.
+    assert.ok(result.response_text.includes('We have bins around the space with affirming items, free of charge.'));
+    assert.ok(!result.response_text.includes('They we have bins'));
+    // Wash reminder carries the worn/tried-on vs new-with-tags distinction.
+    assert.ok(result.response_text.includes('Please wash any items that have been worn or tried on before donating.'));
+    assert.ok(result.response_text.includes('Anything still new with tags can be sent as is.'));
+  });
 });
 
 // Phase 7: Positive Feedback — now handled by AI parser (intake._positiveFeedback)

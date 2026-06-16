@@ -136,17 +136,22 @@ async function prescribeDonationRouting(intake, context) {
       '',
       addressBlock,
       '',
-      `They ${partner.description.toLowerCase()} ${washReminder}`,
+      // Partner descriptions are authored as standalone sentences (and some run
+      // multiple paragraphs), so present each as written rather than splicing it
+      // after "They ..." — that produced mangled openings like "They we have bins".
+      (partner.description || '').trim(),
+      '',
+      washReminder,
       '',
       'Your return will be greatly appreciated by someone in our community.',
       '',
       'Take care,',
-    ];
+    ].filter((line, i, arr) => !(line === '' && arr[i - 1] === ''));
     return lines.join('\n');
   }
 
   const programExplanation = 'We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs.';
-  const washReminder = 'Please wash any items that have been worn or tried on before donating.';
+  const washReminder = 'Please wash any items that have been worn or tried on before donating. Anything still new with tags can be sent as is.';
 
   if (partners.length === 0) {
     return {
