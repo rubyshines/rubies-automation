@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+/**
+ * PreToolUse(Bash) hook: block history-mutating git commands in the MAIN checkout.
+ *
+ * The worktree rule keeps the shared `main` checkout out of integration entirely:
+ *   - branch every worktree off `origin/main` (after a fetch), not local HEAD
+ *   - land work by pushing the worktree branch straight to `origin/main`
+ *   - the local `main` checkout is a READ-ONLY MIRROR of the remote — nobody
+ *     ever commits/merges/rebases into it
+ *
+ * Why: if a session commits or fast-forward-merges into the local `main` checkout
+ * and doesn't push immediately, local `main` ends up ahead of `origin/main`. The
+ * next session then branches its worktree off that ahead-of-remote `main`
+ * (inheriting the unpushed commit) and stacks its own work on top — so a single
+ * push deploys another session's in-flight work. Taking local `main` out of
+ * integration removes the coupling.
+ *
+ * This hook enforces that by blocking `git commit | merge | rebase | cherry-pick`
+ * when the command's working tree IS the main checkout (i.e. NOT a linked worktree)
+ * and it sits on main/master. Linked worktrees (wt/*, sprint/*) are unaffected.
+ * Read-only refresh of the mirror (`git fetch`, `git pull --ff-only`) and rollback
+ * (`git reset` + push) are intentionally NOT blocked.
+ *
+ * Exit 2 = block + feed stderr back to the agent. Exit 0 = allow. Fail-open on
+ * anything unexpected (no command, parse error, not a git repo).
+ */
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+function allow() { process.exit(0); }
+
+let raw = '';
+try { raw = fs.readFileSync(0, 'utf8'); } catch { allow(); }
+
+let data;
+try { data = JSON.parse(raw); } catch { allow(); }
+
+const command = data && data.tool_input && data.tool_input.command;
+if (!command || typeof command !== 'string') allow();
+
+// Only care about history-mutating git verbs. `reset`, `pull`, `fetch`, `push`
+// are deliberately allowed (mirror refresh + rollback escape hatch).
+const MUTATING = /\bgit\b[^\n;&|]*?\b(commit|merge|rebase|cherry-pick)\b/;
+if (!MUTATING.test(command)) allow();
+
+// Resolve the effective directory the git command runs in. Default to the hook's
+// cwd; if the command leads with `cd <path> &&`, honour that target instead.
+let dir = (data && data.cwd) || process.cwd();
+const cdMatch = command.match(/^\s*cd\s+("([^"]+)"|'([^']+)'|([^\s&;|]+))\s*(&&|;)/);
+if (cdMatch) {
+  const target = cdMatch[2] || cdMatch[3] || cdMatch[4];
+  dir = path.isAbsolute(target) ? target : path.resolve(dir, target);
+}
+
+// Walk up to the nearest existing directory (defensive).
+while (dir && dir !== '/' && !fs.existsSync(dir)) dir = path.dirname(dir);
+
+let gitDir, commonDir, branch;
+try {
+  const out = execSync('git rev-parse --git-dir --git-common-dir --abbrev-ref HEAD', {
+    cwd: dir,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).toString().trim().split('\n');
+  gitDir = path.resolve(dir, out[0]);
+  commonDir = path.resolve(dir, out[1]);
+  branch = (out[2] || '').trim();
+} catch {
+  allow(); // not a git repo — not our concern
+}
+
+// In the main checkout, --git-dir === --git-common-dir. In a linked worktree they
+// differ (git-dir points at .git/worktrees/<name>). Only block the main checkout.
+const isMainCheckout = gitDir === commonDir;
+const onMain = branch === 'main' || branch === 'master';
+
+if (isMainCheckout && onMain) {
+  process.stderr.write(
+    `BLOCKED: history-mutating git command in the MAIN checkout (on '${branch}').\n` +
+    `The local main checkout is a READ-ONLY MIRROR of origin/main — never commit, ` +
+    `merge, rebase, or cherry-pick into it. Do your work in a worktree and push it ` +
+    `straight to origin/main:\n\n` +
+    `  git fetch origin\n` +
+    `  git worktree add ~/Code/rubies-repo/worktrees/<name> -b wt/<name> origin/main\n` +
+    `  ln -sf "$(git rev-parse --show-toplevel)/.env" ~/Code/rubies-repo/worktrees/<name>/.env\n` +
+    `  ln -sfn "$(git rev-parse --show-toplevel)/node_modules" ~/Code/rubies-repo/worktrees/<name>/node_modules\n` +
+    `  # ...edit + commit inside the worktree, run tests, then land it:\n` +
+    `  cd ~/Code/rubies-repo/worktrees/<name>\n` +
+    `  git fetch origin && git rebase origin/main && git push origin HEAD:main\n\n` +
+    `Refresh the read-only mirror with 'git pull --ff-only' (allowed). ` +
+    `Rollback (git reset + push) is also allowed.\n`
+  );
+  process.exit(2);
+}
+
+allow();

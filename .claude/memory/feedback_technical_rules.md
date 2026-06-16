@@ -139,35 +139,63 @@ When you need an LLM behavior to be reliable, frame it as a positive instruction
 - If a behavior needs both inclusion and exclusion, lead with the positive ("DO this") and let the negative emerge implicitly. Don't pile on negative rules to cover edge cases — each one is fragile.
 - If you find yourself adding more "DO NOT" rules to fix a recurring lapse, that's a sign the prompt structure is wrong, not that the rules need to be louder. Restructure into positive form, or accept the variance and add a downstream guard (operator review, validateResponse-style strip).
 
-## Code edits happen in worktrees, not the main checkout
+## Code work happens in worktrees; the main checkout is a read-only mirror
 
-Any session that edits code works in a worktree by default. The main checkout is reserved for
-read-only work, memory/plan edits, and a commit that will be pushed in the same sitting with
-Jamie present. Each workstream gets a worktree at `~/Code/rubies-repo/worktrees/<name>` on a
-`wt/<name>` (or `sprint/<name>` for sprints) branch.
+Every session that touches code works in a worktree. **The local `main` checkout is a read-only
+mirror of `origin/main` — never commit, merge, rebase, or cherry-pick into it.** Integration
+happens on the remote, not in the shared local tree. Each workstream gets a worktree at
+`~/Code/rubies-repo/worktrees/<name>` on a `wt/<name>` (or `sprint/<name>` for sprints) branch.
 
-**Why:** Two failure modes, both real. (1) Railway deploys from `main` — a session pushing
-intermediate states to main deploys them to production. (2) Concurrent sessions share the main
-checkout's working tree — one session's local commits and uncommitted edits confuse and block
-the other (hit 2026-06-10: a dashboard fix committed to local main while a second session was
-working in the same tree).
+**Why — the coupling we removed (2026-06-16):** the old protocol landed work by fast-forward
+merging your branch *into the local `main` checkout*, then pushing. That made the shared local
+`main` the integration point. If a session merged but didn't push immediately, local `main` sat
+ahead of `origin/main`; the next session then (a) created its worktree off that ahead-of-remote
+`main`, silently inheriting the unpushed commit, and (b) stacked its own commit on top — so one
+`git push` deployed another session's in-flight work. Taking local `main` out of integration
+entirely removes the coupling: sessions only ever read from local `main` and only ever write to
+`origin/main` through their own worktree branch. (Earlier failure modes this also fixes: Railway
+deploys from `main`, and concurrent sessions sharing the main tree's commits/edits blocked each
+other — 2026-06-10.)
 
-**How to apply:**
-- Hard cue: if `git status` at orient shows changes you didn't make, another session owns the
-  main checkout — create a worktree before touching any file.
-- `git worktree add ~/Code/rubies-repo/worktrees/<name> -b wt/<name>`
-- Worktrees don't carry gitignored files: symlink `.env` and `node_modules` from the main
-  checkout (`ln -sf .../rubies-automations/.env <wt>/.env`, `ln -sfn .../node_modules <wt>/node_modules`).
-  Verified working 2026-06-10 (780/780 tests pass inside a worktree with symlinks).
-- Default ports are shared state too: a server started from a worktree must use a non-default
-  port (`PORT=3848 node customer-service/dashboard/server.js`) — otherwise the sessions
-  silently replace each other's server and serve the wrong code (hit 2026-06-10: a mobile fix
-  was "still broken" because the other session's main-checkout server had taken port 3847).
-- Sprints additionally use the rollback tag convention: `pre-sprint-<date>` pushed to origin
-  before starting — revert main to tag + push = production rollback. Merges happen at
-  checkpoints (tests green; live-CS-path changes only with Jamie present).
-- Remove with `git worktree remove <path>` after merge; `git worktree list` to audit.
-- **Enforced by a `PreToolUse` hook** (`.claude/hooks/block-main-edits.js`, wired in `.claude/settings.json`): `Edit`/`Write`/`NotebookEdit` to a file whose working tree is on `main`/`master` is blocked with instructions to create a worktree. Worktrees (`wt/*`, `sprint/*`) pass; `.claude/*`, plans, and `CLAUDE.md` are exempt. The hook stops the *current* session editing main — it can't stop a concurrent session committing, so the protection only holds if every checkout carries it (it's project-scoped, so it does here). Hook changes load at session start; a settings edit needs a Claude Code restart to arm.
+**How to apply — create a worktree off `origin/main`:**
+```
+git fetch origin
+git worktree add ~/Code/rubies-repo/worktrees/<name> -b wt/<name> origin/main
+ln -sf "$(git rev-parse --show-toplevel)/.env" ~/Code/rubies-repo/worktrees/<name>/.env
+ln -sfn "$(git rev-parse --show-toplevel)/node_modules" ~/Code/rubies-repo/worktrees/<name>/node_modules
+```
+Branching off `origin/main` (not local HEAD) is what guarantees a worktree never inherits another
+session's unpushed commit. Symlinks are required because worktrees don't carry gitignored files
+(verified 2026-06-10: full suite passes inside a worktree with symlinks).
+
+**How to apply — land work by pushing the worktree branch straight to `origin/main`:**
+```
+# inside the worktree, after committing + tests green:
+git fetch origin
+git rebase origin/main          # replay your commits on the latest remote main
+node --test customer-service/test/*.test.js   # re-run after the rebase
+git push origin HEAD:main        # push only your commits to remote main
+git worktree remove <path>       # from the main checkout, once landed
+```
+Never `git merge` your branch into the local `main` checkout. To refresh the read-only mirror,
+`git pull --ff-only` (or just `git fetch`). Rollback stays `git reset` to a tag + push.
+
+**Other shared state:**
+- Default ports are shared too: a server started from a worktree must use a non-default port
+  (`PORT=3848 node customer-service/dashboard/server.js`), or sessions silently replace each
+  other's server and serve the wrong code (hit 2026-06-10).
+- Sprints keep the rollback-tag convention: `pre-sprint-<date>` pushed to origin before starting.
+
+**Enforced by two `PreToolUse` hooks (wired in `.claude/settings.json`):**
+- `block-main-edits.js` (matcher `Edit|Write|NotebookEdit`): blocks code edits to a file whose
+  working tree is on `main`/`master`. `.claude/*`, plans, and `CLAUDE.md` are exempt.
+- `block-main-checkout-git.js` (matcher `Bash`): blocks `git commit|merge|rebase|cherry-pick`
+  when the command's working tree is the **main checkout** (detected via `--git-dir` ==
+  `--git-common-dir`, so linked worktrees pass) and it's on `main`/`master`. `git fetch`,
+  `pull --ff-only`, `reset`, and `push` stay allowed (mirror refresh + rollback).
+Both are project-scoped, so every checkout carries them. The hooks stop the *current* session;
+they can't stop a concurrent session that lacks them. Hook/settings changes need a Claude Code
+restart to arm.
 
 ## MCP tools must be agent-agnostic
 
