@@ -19,6 +19,7 @@ function loadAllOperatorTools() {
     require('./tools/exchangeOrder'),
     require('./tools/wholesaleOrder'),
     require('./tools/invoiceOrder'),
+    require('./tools/exchangeDifference'),
     require('./tools/reloadProducts'),
     require('./tools/seoTrends'),
     require('./tools/klaviyo'),

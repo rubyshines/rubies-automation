@@ -149,24 +149,40 @@ test('advisor hold PROPOSAL (action_type on draft) does not count as placed', ()
   assert.match(prompt, /Warehouse hold: not placed/);
 });
 
-// --- buildSystemPrompt: net-price-difference exchange routing -------------------
-// Regression guard for ticket #29649 (Eitan): an exchange whose replacements cost
-// more than what's returned must route to ONE create_invoice_order call with
-// return_credit — never exchange_items (bills $0), never a separate exchange +
-// invoice split, and the size-swap case must NOT pull it off this pattern.
+// --- buildSystemPrompt: differing-items exchange routing -----------------------
+// Regression guard for ticket #29649 (Eitan). The decision matrix Jamie set:
+//   straight swap → free; different items → exchange_difference first;
+//   invoice ONLY if explicitly asked; refund ALWAYS when net<0 (no asking).
 
-test('prompt documents the net-price-difference pattern (return_credit, one call)', () => {
+test('prompt routes differing-items exchanges through exchange_difference first', () => {
   const prompt = buildSystemPrompt(ctx());
-  assert.match(prompt, /Net price difference/);
-  assert.match(prompt, /return_credit/);
+  assert.match(prompt, /exchange_difference/);
+  assert.match(prompt, /recommended_action/);
 });
 
-test('prompt forbids splitting a price-difference exchange into two orders', () => {
+test('prompt: invoice only when the operator explicitly asked to charge the difference', () => {
   const prompt = buildSystemPrompt(ctx());
-  assert.match(prompt, /NEVER split this into a separate exchange order/);
+  assert.match(prompt, /invoice_requested: true.+ONLY if the operator explicitly/);
 });
 
-test('prompt keeps the price-difference pattern even when items are size swaps', () => {
+test('prompt: refund is automatic when the customer is owed money (no asking)', () => {
   const prompt = buildSystemPrompt(ctx());
-  assert.match(prompt, /EVEN IF some of the items are size swaps/);
+  assert.match(prompt, /ALWAYS happens when the customer is owed money/);
+});
+
+test('prompt: upcharge with no invoice instruction defaults to free exchange', () => {
+  const prompt = buildSystemPrompt(ctx());
+  assert.match(prompt, /upcharge but the operator did NOT ask to invoice it \(we absorb it\)/);
+});
+
+test('prompt: straight swap is never invoiced, never calls exchange_difference', () => {
+  const prompt = buildSystemPrompt(ctx());
+  assert.match(prompt, /Straight swap.+Do NOT call exchange_difference/s);
+  assert.match(prompt, /never invoiced even if the new size has a different list price/);
+});
+
+test('prompt forbids splitting or self-estimating the difference', () => {
+  const prompt = buildSystemPrompt(ctx());
+  assert.match(prompt, /never split into a separate exchange order plus a separate invoice order/);
+  assert.match(prompt, /Never estimate prices or the difference yourself/);
 });

@@ -61,6 +61,7 @@ const tools = [
               target_size: { type: 'string', description: 'Target size when using sku to find a sibling variant in a different size' },
               query: { type: 'string', description: 'Fuzzy search fallback' },
               quantity: { type: 'number' },
+              discount_percent: { type: 'number', description: 'Optional per-line discount % (e.g. an automatic volume/sale discount from exchange_difference). Shopify does NOT auto-apply automatic discounts to draft orders, so pass the % here to mirror storefront pricing.' },
             },
           },
         },
@@ -146,8 +147,15 @@ const tools = [
           appliedDiscount: { title: 'Exchange', value: 100, valueType: 'PERCENTAGE' },
         });
       }
-      for (const r of resolvedPaid) {
-        lineItems.push({ variantId: r.variantId, quantity: r.quantity });
+      // resolveLineItems preserves order, so allPaid[i] ↔ resolvedPaid[i].
+      for (let i = 0; i < resolvedPaid.length; i++) {
+        const r = resolvedPaid[i];
+        const li = { variantId: r.variantId, quantity: r.quantity };
+        const dp = Number(allPaid[i] && allPaid[i].discount_percent) || 0;
+        if (dp > 0) {
+          li.appliedDiscount = { title: 'Discount', value: dp, valueType: 'PERCENTAGE' };
+        }
+        lineItems.push(li);
       }
 
       // Shipping line title is driven by destination + speed. Price is always $0;
@@ -208,10 +216,14 @@ const tools = [
       if (resolvedPaid.length > 0) {
         lines.push('**Paid items:**');
         let paidTotal = 0;
-        for (const r of resolvedPaid) {
-          const lineTotal = parseFloat(r.price || 0) * r.quantity;
+        for (let i = 0; i < resolvedPaid.length; i++) {
+          const r = resolvedPaid[i];
+          const unit = parseFloat(r.price || 0);
+          const dp = Number(allPaid[i] && allPaid[i].discount_percent) || 0;
+          const lineTotal = unit * r.quantity * (1 - dp / 100);
           paidTotal += lineTotal;
-          lines.push(`  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} → $${parseFloat(r.price || 0).toFixed(2)} each = $${lineTotal.toFixed(2)}`);
+          const discNote = dp > 0 ? ` (−${dp}%)` : '';
+          lines.push(`  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} → $${unit.toFixed(2)} each${discNote} = $${lineTotal.toFixed(2)}`);
           if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
             lines.push(`  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})`);
           }
