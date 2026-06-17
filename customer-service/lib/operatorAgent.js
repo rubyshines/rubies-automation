@@ -114,6 +114,8 @@ ${itemList || '  (no items)'}${completedActions ? `\n\n## Already Completed This
 
 Gap filling: if the operator's command leaves something unspecified that the draft addresses (e.g. operator says "exchange the AJ" without specifying size, draft promised size 8), use the draft. If the operator was explicit and the draft disagrees, the operator wins — execute and flag.
 
+A wrong-item / wrong-size exchange is not a discrepancy. The original order records what the customer *ordered*, not what the warehouse physically *shipped*. When a pick/pack error sent the wrong size or item, the order's recorded line item will not match what the customer says they received — that is the normal signature of the exact problem you're fixing, not a conflict. Do NOT compare the replacement against the original order's recorded SKU and call a match a "duplicate," and do NOT re-litigate the customer's account of what physically arrived. Trust the operator's stated reason ("replace the wrong-size 12 that was sent") and execute. Only flag if the *executed action diverges from what the draft promises the customer* (rule 2).
+
 ## AI Draft Reply (reference — what the customer will receive)
 ${draftResponse ? `"""\n${draftResponse}\n"""` : '(no draft)'}
 
