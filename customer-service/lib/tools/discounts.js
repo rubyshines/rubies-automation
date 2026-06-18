@@ -14,8 +14,9 @@ const {
 } = require('../../../promotions/discounts');
 
 // Each tier is a separate automatic-discount page in Shopify admin.
-const STORE_HANDLE = (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '') || 'rubies-active-wear';
-const adminDiscountUrl = (nodeId) => `https://admin.shopify.com/store/${STORE_HANDLE}/discounts/${nodeId}`;
+// Slug resolution is centralized in shopify.getAdminStoreSlug (placeholder-safe).
+const { getAdminStoreSlug } = require('../shopify');
+const adminDiscountUrl = (nodeId) => `https://admin.shopify.com/store/${getAdminStoreSlug()}/discounts/${nodeId}`;
 
 // One admin link per tier node (tiers[i] aligns with shopify_node_ids[i]), labeled by %.
 function adminLinks(r) {
