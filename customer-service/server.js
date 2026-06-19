@@ -61,6 +61,7 @@ const inventoryProjectionTools = require('./lib/tools/inventoryProjection');
 const productionOrderTools = require('./lib/tools/productionOrders');
 const freeOfferTools = require('./lib/tools/freeOffer');
 const discountTools = require('./lib/tools/discounts');
+const emailStudioTools = require('./lib/tools/emailStudio');
 
 const allTools = [
   ...customerLookupTools,
@@ -108,6 +109,7 @@ const allTools = [
   ...productionOrderTools,
   ...freeOfferTools,
   ...discountTools,
+  ...emailStudioTools,
 ];
 
 /**

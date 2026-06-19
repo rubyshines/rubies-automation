@@ -33,3 +33,4 @@ scripts/_*.js
 .claude/settings.local.json
 .claude/projects/
 .ngrok/
+reports/output/
