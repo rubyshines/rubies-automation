@@ -54,6 +54,7 @@ function loadAllOperatorTools() {
     require('./tools/donationPartners'),
     require('./tools/storeLocator'),
     require('./tools/b2bOutreach'),
+    require('./tools/emailStudio'),
   ];
 
   const tools = [];

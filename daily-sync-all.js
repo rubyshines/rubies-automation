@@ -30,6 +30,14 @@ const PIPELINES = [
     run: () => require('./klaviyo-tracking/daily-email-tracking').run(),
   },
   {
+    name: 'Audience (list growth + forms)',
+    run: () => require('./klaviyo-tracking/sync-audience').run(),
+  },
+  {
+    name: 'Store Sessions',
+    run: () => require('./analytics/sync-sessions').run(),
+  },
+  {
     name: 'Reviews',
     run: () => require('./review-tracking/daily-review-tracking').run(),
   },

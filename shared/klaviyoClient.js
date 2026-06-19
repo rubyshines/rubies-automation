@@ -133,10 +133,94 @@ function getKlaviyoClient() {
     return data.data || [];
   }
 
+  // Flow performance for a custom window, aggregated to flow level.
+  // Klaviyo returns one row per flow-message; we sum across messages per flow
+  // and recompute rates so the result matches the flow-level view in Klaviyo.
+  // `start`/`end` are ISO date strings (end is exclusive at midnight).
+  async function getFlowValuesReport({ start, end, channel = 'email', conversionMetricId } = {}) {
+    const body = {
+      data: {
+        type: 'flow-values-report',
+        attributes: {
+          timeframe: { start: `${start}T00:00:00`, end: `${end}T00:00:00` },
+          conversion_metric_id: conversionMetricId,
+          filter: `equals(send_channel,'${channel}')`,
+          statistics: [
+            'recipients', 'delivered', 'opens', 'clicks',
+            'open_rate', 'click_rate', 'conversions', 'conversion_value',
+            'conversion_rate', 'unsubscribe_rate',
+          ],
+        },
+      },
+    };
+    // Reporting endpoints throttle hard (~1/s). Retry on 429, honoring the
+    // "Expected available in N seconds" hint, with exponential fallback.
+    let data;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        data = await apiFetch('/api/flow-values-reports', {
+          method: 'POST', body: JSON.stringify(body),
+        });
+        break;
+      } catch (err) {
+        const is429 = /Klaviyo 429/.test(err.message);
+        if (!is429 || attempt >= 6) throw err;
+        const hint = /available in (\d+) second/.exec(err.message);
+        const waitMs = hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, 30000);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
+    const results = data.data?.attributes?.results || [];
+
+    // Aggregate flow-message rows into flow-level totals.
+    const byFlow = {};
+    for (const r of results) {
+      const id = r.groupings?.flow_id;
+      if (!id) continue;
+      const s = r.statistics || {};
+      const f = (byFlow[id] ||= {
+        flow_id: id, channel,
+        recipients: 0, delivered: 0, opens: 0, clicks: 0,
+        conversions: 0, conversion_value: 0, unsubscribes: 0,
+      });
+      f.recipients += s.recipients || 0;
+      f.delivered += s.delivered || 0;
+      f.opens += s.opens || 0;
+      f.clicks += s.clicks || 0;
+      f.conversions += s.conversions || 0;
+      f.conversion_value += s.conversion_value || 0;
+      // unsubscribe_rate is per-message; reconstruct a count to re-derive a flow rate.
+      f.unsubscribes += (s.unsubscribe_rate || 0) * (s.recipients || 0);
+    }
+    return Object.values(byFlow).map((f) => ({
+      ...f,
+      conversion_value: Math.round(f.conversion_value * 100) / 100,
+      open_rate: f.delivered ? f.opens / f.delivered : 0,
+      click_rate: f.delivered ? f.clicks / f.delivered : 0,
+      conversion_rate: f.recipients ? f.conversions / f.recipients : 0,
+      unsubscribe_rate: f.recipients ? f.unsubscribes / f.recipients : 0,
+    }));
+  }
+
   // ── lists & segments ─────────────────────────────────────────────────
 
   async function getLists() {
     return fetchAll('/api/lists');
+  }
+
+  // Current profile count for a list (the live subscriber total). Retries on 429.
+  async function getListSize(listId) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const d = await apiFetch(`/api/lists/${listId}?additional-fields[list]=profile_count`);
+        return d.data?.attributes?.profile_count ?? null;
+      } catch (err) {
+        const is429 = /Klaviyo 429/.test(err.message);
+        if (!is429 || attempt >= 6) return null;
+        const hint = /available in (\d+) second/.exec(err.message);
+        await new Promise((r) => setTimeout(r, hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, 20000)));
+      }
+    }
   }
 
   async function getSegments() {
@@ -169,6 +253,33 @@ function getKlaviyoClient() {
     // Sum up daily counts into a single total
     const counts = data.data?.attributes?.data?.[0]?.measurements?.count || [];
     return counts.reduce((a, b) => a + b, 0);
+  }
+
+  // Counts for any metric over a window (subscribes, form views, etc).
+  // Returns { 'YYYY-MM': count } for interval=month, { 'YYYY-MM-DD': count } for day.
+  async function getMonthlyMetricCounts({ metricId, start, endExcl, measurement = 'count', interval = 'month' }) {
+    const body = { data: { type: 'metric-aggregate', attributes: {
+      metric_id: metricId, measurements: [measurement], interval,
+      page_size: 500, timezone: 'UTC',
+      filter: [`greater-or-equal(datetime,${start}T00:00:00+00:00)`, `less-than(datetime,${endExcl}T00:00:00+00:00)`],
+    } } };
+    let d;
+    for (let attempt = 0; ; attempt++) {
+      try { d = await apiFetch('/api/metric-aggregates', { method: 'POST', body: JSON.stringify(body) }); break; }
+      catch (err) {
+        const is429 = /Klaviyo 429/.test(err.message);
+        if (!is429 || attempt >= 6) throw err;
+        const hint = /available in (\d+) second/.exec(err.message);
+        const waitMs = hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, 30000);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
+    const dates = d.data?.attributes?.dates || [];
+    const vals = d.data?.attributes?.data?.[0]?.measurements?.[measurement] || [];
+    const out = {};
+    const klen = interval === 'day' ? 10 : 7;
+    for (let i = 0; i < dates.length; i++) out[dates[i].slice(0, klen)] = vals[i] || 0;
+    return out;
   }
 
   // ── profiles ───────────────────────────────────────────────────────
@@ -319,7 +430,10 @@ function getKlaviyoClient() {
     getCampaignMessage,
     getFlows,
     getFlowMessages,
+    getFlowValuesReport,
+    getMonthlyMetricCounts,
     getLists,
+    getListSize,
     getSegments,
     queryMetricAggregates,
     getProfileByEmail,
