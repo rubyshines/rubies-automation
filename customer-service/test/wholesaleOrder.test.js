@@ -99,10 +99,24 @@ require.cache[shopifyPath] = {
     completeDraftOrder: () => Promise.resolve({ name: 'D999', order: { id: 'gid://shopify/Order/1', name: '#1001' } }),
     sendDraftOrderInvoice: () => Promise.resolve({ name: 'D999', invoiceUrl: 'https://example.com/inv' }),
     getDraftOrderRecap: (id) => Promise.resolve(stubDraftRecaps[id] || null),
+    updateDraftOrderAppliedDiscount: (id, { amount }) => {
+      lastAppliedDiscountArgs = { id, amount };
+      // Return a draft whose total is reduced by the credit so the preview's
+      // presentment-delta math can be exercised.
+      const base = lastCreateDraftOrderArgs ? buildDraftResponseFromInput(lastCreateDraftOrderArgs) : { totalPriceSet: { presentmentMoney: { amount: '100.00', currencyCode: 'USD' } }, totalPrice: '100.00' };
+      const newTotal = Math.max(0, parseFloat(base.totalPriceSet.presentmentMoney.amount) - amount);
+      return Promise.resolve({
+        ...base,
+        id,
+        totalPrice: newTotal.toFixed(2),
+        totalPriceSet: { presentmentMoney: { amount: newTotal.toFixed(2), currencyCode: 'USD' } },
+      });
+    },
     normalizeGid: (id, type) => (typeof id === 'string' && id.startsWith('gid://')) ? id : `gid://shopify/${type}/${id}`,
     getAdminUrl: (gid) => `https://admin.shopify.com/store/rubyshines/${gid}`,
   },
 };
+let lastAppliedDiscountArgs = null;
 
 require.cache[productCachePath] = {
   id: productCachePath, filename: productCachePath, loaded: true,
@@ -682,5 +696,87 @@ describe('create_wholesale_order — shipping_address operator override', () => 
     assert.equal(lastCreateDraftOrderArgs.shippingAddress.city, 'X');
     assert.equal(lastCreateDraftOrderArgs.shippingAddress.country, 'CA');
     assert.equal(lastCreateDraftOrderArgs.shippingAddress.firstName, 'Test');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defect/goodwill credit (credit_items)
+// ---------------------------------------------------------------------------
+
+describe('create_wholesale_order — credit_items (defect credit)', () => {
+  const { computeCreditAmount } = wholesaleTools;
+
+  beforeEach(() => {
+    lastCreateDraftOrderArgs = null;
+    lastAppliedDiscountArgs = null;
+    stubVariantPrices = {};
+    stubPriceHistoryRows = [];
+  });
+
+  it('computeCreditAmount sums wholesale unit price of in-order SKUs (percentage lines)', () => {
+    const resolved = [
+      { sku: 'BB-BLK-M', productTitle: 'BROOKE SHAPING BRA', price: '42.00' },
+      { sku: 'SB-BLK-S', productTitle: 'AVA SEAMLESS SHAPING BRA', price: '46.00' },
+    ];
+    const credit = computeCreditAmount(
+      [{ sku: 'BB-BLK-M', quantity: 1 }, { sku: 'SB-BLK-S', quantity: 1 }],
+      resolved,
+      50,
+    );
+    // 42*0.5 + 46*0.5 = 21 + 23 = 44
+    assert.equal(credit.amount, 44);
+    assert.equal(credit.errors.length, 0);
+    assert.match(credit.description, /BROOKE SHAPING BRA/);
+    assert.match(credit.description, /AVA SEAMLESS SHAPING BRA/);
+  });
+
+  it('computeCreditAmount uses pre-increase wholesale when a line carries fixedDiscountAmount', () => {
+    // current retail 42, old retail 39 → old wholesale 19.50 → fixedDiscount = 42 - 19.50 = 22.50
+    const resolved = [
+      { sku: 'BB-BLK-M', productTitle: 'BROOKE SHAPING BRA', price: '42.00', fixedDiscountAmount: 22.5 },
+    ];
+    const credit = computeCreditAmount([{ sku: 'BB-BLK-M', quantity: 2 }], resolved, 50);
+    // (42 - 22.50) * 2 = 39
+    assert.equal(credit.amount, 39);
+  });
+
+  it('computeCreditAmount reports SKUs not present in the order as errors', () => {
+    const resolved = [{ sku: 'BB-BLK-M', productTitle: 'BROOKE SHAPING BRA', price: '42.00' }];
+    const credit = computeCreditAmount([{ sku: 'NOPE-X', quantity: 1 }], resolved, 50);
+    assert.deepEqual(credit.errors, ['NOPE-X']);
+    assert.equal(credit.amount, 0);
+  });
+
+  it('handler applies the credit as an order-level fixed-amount discount in base currency', async () => {
+    stubVariantPrices = {
+      'gid://shopify/ProductVariant/100': '42.00', // Brooke
+      'gid://shopify/ProductVariant/101': '46.00', // Ava
+    };
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [
+        { variant_id: 'gid://shopify/ProductVariant/100', sku: 'BB-BLK-M', quantity: 3 },
+        { variant_id: 'gid://shopify/ProductVariant/101', sku: 'SB-BLK-S', quantity: 5 },
+      ],
+      credit_items: [{ sku: 'BB-BLK-M', quantity: 1 }, { sku: 'SB-BLK-S', quantity: 1 }],
+    });
+    // Credit passed to Shopify is in base currency: 21 + 23 = 44
+    assert.ok(lastAppliedDiscountArgs, 'applied-discount mutation was called');
+    assert.equal(lastAppliedDiscountArgs.amount, 44);
+    assert.match(result.content[0].text, /Defect credit:/);
+  });
+
+  it('handler refuses (no invoice) when credit_items references a SKU not in the order', async () => {
+    stubVariantPrices = { 'gid://shopify/ProductVariant/100': '42.00' };
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [{ variant_id: 'gid://shopify/ProductVariant/100', sku: 'BB-BLK-M', quantity: 1 }],
+      credit_items: [{ sku: 'GHOST-1', quantity: 1 }],
+    });
+    assert.equal(lastAppliedDiscountArgs, null, 'no discount applied on error');
+    assert.match(result.content[0].text, /must reference SKUs already in the order/);
+    assert.match(result.content[0].text, /GHOST-1/);
   });
 });

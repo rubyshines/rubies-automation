@@ -660,6 +660,60 @@ async function updateDraftOrderShipping(draftOrderId, { title, price = '0.00' })
   return data.draftOrderUpdate.draftOrder;
 }
 
+// Apply an order-level fixed-amount discount to a draft order (e.g. a goodwill
+// or defect credit). `amount` is in the order's BASE/shop currency (USD) — the
+// same unit Shopify uses for line-item appliedDiscount FIXED_AMOUNT values — and
+// is presented in the customer's currency on the invoice. Returns the updated
+// draft with the same field selection as createDraftOrder so callers can reuse
+// the preview renderer.
+async function updateDraftOrderAppliedDiscount(draftOrderId, { amount, description, title } = {}) {
+  const gid = normalizeGid(draftOrderId, 'DraftOrder');
+  const data = await shopifyGraphQL(`
+    mutation updateDraftDiscount($id: ID!, $input: DraftOrderInput!) {
+      draftOrderUpdate(id: $id, input: $input) {
+        draftOrder {
+          id
+          name
+          invoiceUrl
+          totalPrice
+          subtotalPrice
+          presentmentCurrencyCode
+          totalPriceSet { presentmentMoney { amount currencyCode } }
+          subtotalPriceSet { presentmentMoney { amount currencyCode } }
+          lineItems(first: 250) {
+            edges {
+              node {
+                title
+                variant { id title }
+                quantity
+                originalUnitPrice
+                originalUnitPriceSet { presentmentMoney { amount currencyCode } }
+                discountedUnitPriceSet { presentmentMoney { amount currencyCode } }
+              }
+            }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `, {
+    id: gid,
+    input: {
+      appliedDiscount: {
+        title: title || 'Credit',
+        description: description || 'Credit',
+        value: amount,
+        valueType: 'FIXED_AMOUNT',
+      },
+    },
+  });
+  const errs = data.draftOrderUpdate.userErrors || [];
+  if (errs.length) {
+    throw new Error(`draftOrderUpdate (applied discount) failed: ${errs.map(e => `${e.field}: ${e.message}`).join('; ')}`);
+  }
+  return data.draftOrderUpdate.draftOrder;
+}
+
 async function listDraftOrders({ status, limit = 20 } = {}) {
   const queryParts = [];
   if (status) queryParts.push(`status:${status}`);
@@ -1918,6 +1972,7 @@ module.exports = {
   getDraftOrderRecap,
   getDraftOrderByName,
   updateDraftOrderShipping,
+  updateDraftOrderAppliedDiscount,
   listDraftOrders,
   normalizeGid,
   isTipLineItem,
