@@ -27,9 +27,11 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Discount Management (MCP):** `manage_discount` tool + `managed_discounts` Supabase registry — volume discounts + sales lifecycle (start/extend/end, optional attached free gift), with audit/reconcile and an active-sales banner in the daily order alerts. Replaced the rubies-utilities discount script + Google Sheet.
 
+**Email Marketing Report & Studio (for the email contractor, Sadie):** A Supabase-backed report generator (`reports/email-report.js`) producing a branded HTML report for any month/quarter/range, grouped Overview / Lists / Campaigns / Flows / Strategy with per-domain strategy blocks. Covers audience growth (list size + reconstructed curve, 1yr/90d/30d growth, churn, value-of-subscriber, signup conversion, capture funnel), revenue-over-time, period + 30/90-day comparisons, engagement funnel, top flows, campaign heatmap, live creative gallery, and holistic AI takeaways; ships with a plain-language `how-it-works.html` explainer. Seven marketing-studio MCP tools (`email_report`, `email_campaign_ideas`, `email_subject_lab`, `email_campaign_draft`, `email_calendar_plan`, `refresh_playbook`, `find_review_quotes`) generate ideas/drafts/calendars grounded in real performance + brand voice; drafts pull real review quotes. The **Marketing Playbook** (`marketing_playbook`) is a recency-weighted ground-truths + strategic-priorities artifact over full history, refreshed on demand. New daily feeds: `klaviyo_flow_metrics` (flow economics), `klaviyo_audience_daily` (list growth, forms, list-size snapshots), `shopify_sessions_daily` (traffic). Shipped 2026-06-19 (PR #8).
+
 ## Current Status
 
-- **Production:** SEO daily pipeline + weekly digest. Klaviyo email tracking. Competitor pricing monthly. Sales reports daily.
+- **Production:** SEO daily pipeline + weekly digest. Klaviyo email tracking. Competitor pricing monthly. Sales reports daily. Email marketing report + studio tools + Playbook + audience/sessions feeds (shipped 2026-06-19).
 - **Partial:** Blog prioritization based on keyword impressions (heuristic, not ML). Anomaly thresholds hardcoded in config (not adaptive).
 
 ## Key Files
@@ -41,6 +43,10 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/lib/tools/blogResearch.js` — Blog/SEO MCP tools.
 - `promotions/discounts.js` — Discount engine (volume + sales, combination invariants).
 - `customer-service/lib/tools/discounts.js` — `manage_discount` MCP tool.
+- `reports/email-report.js` — Email marketing report generator (Supabase-backed; writes `how-it-works.html` via `reports/methodology.js`).
+- `customer-service/lib/tools/emailStudio.js` — Marketing studio MCP tools (report, ideas, subject lab, draft, calendar, refresh_playbook).
+- `customer-service/lib/playbook.js` — Recency-weighted Marketing Playbook (stats + Opus synthesis).
+- `shared/marketingContext.js` — Brand voice + campaign-objectives model fed to the studio tools.
 
 ## Key Decisions
 
@@ -53,8 +59,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 - **Discounts never stack — by design.** All managed discounts are product-level (volume) or collection-level (sale), so Shopify applies only the single highest discount per item (volume vs sale resolve to the better one, never the sum). Every managed discount sets combinesWith all-true so the Smile loyalty reward and the free-gift twin coexist alongside. Smile/Klaviyo/comp codes (16k+) are machine-generated and deliberately out of the registry; `manage_discount audit` reconciles automatic discounts only.
 - **`manage_discount audit` has a transient false-positive right after create.** Shopify's `automaticDiscountNodes` list query is eventually consistent, so a just-created discount can briefly flag as "MISSING NODES" (the node exists and works — fetch-by-id confirms it — it just hasn't hit the list index yet). Re-running audit a few seconds later clears it. Not a bug; don't chase it.
+- **Email revenue attribution is last-touch, no double-counting.** Each order is credited to the single campaign or flow the buyer last engaged with (Klaviyo's model), so campaigns + flows + other = store revenue exactly (validated: campaign+flow conversions never exceed total orders). But attributed ≠ incremental — last-touch credits email for any recent open/click, so the ~40-50% email share is an upper bound, not "email caused this." True lift needs a holdout test.
+- **The email report reads 100% from Supabase feeds.** The generator is a pure consumer (only live call is the optional creative-gallery email HTML); feeds populate via `daily-sync-all`. Store revenue comes from the Shopify `orders` table; total sessions from Shopify ShopifyQL (`ga4_daily` is organic-only, ~25% of traffic, so unsuitable as the traffic denominator).
+- **Campaign-objectives model.** Judge each send by its real objective (revenue / R&D / community / list-growth / education), not revenue alone; R&D sends (naming, fit-test) are tied to the product dev cycle, not scheduled arbitrarily. Lives in `shared/marketingContext.js`, fed to the report takeaways and all studio tools.
+- **Playbook = deterministic stats + one Opus synthesis, recency-weighted (12-month half-life), refreshed on demand.** Separates expensive "learning the patterns" from cheap per-call use; both the report takeaways and the studio tools read it. Priorities are split by domain (Audience / Campaigns / Flows) so each report section pulls its own.
 
 ## What's Next
 
 - Attribution: connect SEO keywords to actual sales
 - Conversion funnel tracking
+- Holdout test for true incremental email lift (attributed ≠ caused — the headline open question)
+- Revenue by channel (Shopify sales-by-channel: email vs direct vs organic vs social vs paid)
+- Single-file shareable report (inline the explainer so it's one self-contained HTML)

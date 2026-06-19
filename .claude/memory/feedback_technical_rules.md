@@ -205,6 +205,14 @@ Don't wire a tool to a specific advisor or agent. Any advisor should be able to 
 
 **How to apply:** When building a tool, ask "could a different advisor call this?" If no, the tool has absorbed reasoning that belongs in the agent's prompt, not in the tool itself.
 
+## User-facing systems with an explainer page keep it in sync
+
+When a system ships a human-facing methodology/explainer page (e.g. the email report's `reports/methodology.js` → `how-it-works.html`, written for non-technical readers like Sadie), updating that page is part of the same change as adding or altering a feature. A new report section, chart, or AI tool is not "done" until the explainer describes it and (where relevant) the report links to it via the per-section `Methodology` anchor.
+
+**Why:** The explainer is the only thing that lets a non-technical operator trust and use the system. A feature the page doesn't describe is invisible to them, and stale docs erode trust faster than missing docs.
+
+**How to apply:** After adding/changing a report section or studio tool, update the matching `<section>` (and anchor) in `reports/methodology.js`, plus the data-flow diagram if the plumbing changed. Treat it like a test: the change isn't complete without it.
+
 ## Operator edits to AI drafts are training signal — capture them
 
 Store the AI-generated content and the final sent content separately. A boolean (`operator_edited`) is not enough.
