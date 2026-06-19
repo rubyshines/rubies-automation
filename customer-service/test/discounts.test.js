@@ -3,6 +3,7 @@ const assert = require('node:assert');
 
 const {
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText, volumeMetafieldText,
+  giftSentenceClause, giftShortClause,
 } = require('../../promotions/discounts');
 
 // The manage_discount tool's start_sale guards short-circuit BEFORE any Shopify/DB
@@ -91,6 +92,51 @@ test('convertToRichText: bolds percentages, valid JSON root', () => {
   assert.equal(json.type, 'root');
   const bolded = json.children[0].children.find((c) => c.bold);
   assert.equal(bolded.value, '20%');
+});
+
+test('convertToRichText: bolds the "$N USD" gift threshold', () => {
+  const json = JSON.parse(convertToRichText('Plus free Pride merch on orders $125 USD+.'));
+  const bolded = json.children[0].children.find((c) => c.bold);
+  assert.equal(bolded.value, '$125 USD');
+});
+
+test('giftSentenceClause: threshold vs every-order vs empty', () => {
+  assert.equal(giftSentenceClause('free Pride merch', 125), 'free Pride merch on orders $125 USD+');
+  assert.equal(giftSentenceClause('free Pride merch', 0), 'free Pride merch with every order');
+  assert.equal(giftSentenceClause('', 125), null);
+  assert.equal(giftSentenceClause(null, 125), null);
+});
+
+test('giftShortClause: compact form for the announcement bar', () => {
+  assert.equal(giftShortClause('free Pride merch', 125), 'free Pride merch on $125 USD+');
+  assert.equal(giftShortClause('free Pride merch', 0), 'free Pride merch');
+  assert.equal(giftShortClause(null, 0), null);
+});
+
+test('constructSaleText: weaves a gift inline on the discount sentence', () => {
+  const gift = giftSentenceClause('free Pride merch', 125);
+  const txt = constructSaleText([{ threshold: 0, percentage: 15 }], '2026-06-30', false, gift);
+  assert.match(txt, /15% off your entire cart, plus free Pride merch on orders \$125 USD\+! Valid through June 30, 2026/);
+  assert.match(txt, /no code needed\.$/);
+});
+
+test('constructSaleText: gift sits on its own line in the line-break (modal) form', () => {
+  const gift = giftSentenceClause('free Pride merch', 125);
+  const lines = constructSaleText([{ threshold: 0, percentage: 15 }], '2026-06-30', true, gift).split('\n');
+  assert.equal(lines[0], '15% off your entire cart!');
+  assert.equal(lines[1], 'Plus free Pride merch on orders $125 USD+.');
+  assert.match(lines[2], /^Valid through June 30, 2026/);
+});
+
+test('constructSaleText: no gift clause leaves the original copy untouched', () => {
+  const txt = constructSaleText([{ threshold: 0, percentage: 15 }], '2026-06-30', false, null);
+  assert.match(txt, /^15% off your entire cart! Valid through/);
+});
+
+test('constructSaleText: gift weaves onto the top tier of a tiered sale', () => {
+  const gift = giftSentenceClause('free socks', 0);
+  const txt = constructSaleText([{ threshold: 100, percentage: 15 }, { threshold: 200, percentage: 20 }], null, false, gift);
+  assert.match(txt, /Spend \$200\+, save 20%, plus free socks with every order!/);
 });
 
 test('volumeMetafieldText: sorted, bolded thresholds', () => {

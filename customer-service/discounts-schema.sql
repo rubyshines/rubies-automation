@@ -19,6 +19,8 @@ create table if not exists managed_discounts (
   tiers             jsonb not null,                  -- [{threshold:int, percentage:number}] threshold = qty (volume) | subtotal $ (sale)
   shopify_node_ids  text[] not null default '{}',    -- DiscountAutomaticNode numeric ids, one per tier (ordered with tiers)
   free_gift_handle  text,                            -- sale only: source product handle of an attached free-gift twin (optional)
+  free_gift_text    text,                            -- sale only: customer-facing gift description woven into sale copy (e.g. "free Pride merch")
+  free_gift_minimum integer,                          -- sale only: USD cart minimum to qualify for the gift (0 = every order)
   status            text not null default 'active' check (status in ('active', 'ended')),
   starts_at         timestamptz,
   ends_at           timestamptz,
@@ -27,3 +29,7 @@ create table if not exists managed_discounts (
 );
 
 create index if not exists managed_discounts_kind_status_idx on managed_discounts (kind, status);
+
+-- Existing installs: add the free-gift copy columns (idempotent).
+alter table managed_discounts add column if not exists free_gift_text    text;
+alter table managed_discounts add column if not exists free_gift_minimum integer;

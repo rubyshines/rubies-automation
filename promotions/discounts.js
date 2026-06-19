@@ -232,8 +232,33 @@ function formatDateReadable(ymd) {
   return `${months[m - 1]} ${d}, ${y}`;
 }
 
-/** Plain sale text from tiers, e.g. "Spend $100+, save 15%! ... Valid now until ...". */
-function constructSaleText(tiers, endDate, withLineBreaks = false) {
+// ---- Free-gift copy clauses (woven into sale text when a gift is attached) ----
+// Threshold always reads "$<n> USD" so customers aren't left guessing the currency
+// (RUBIES sells in many geos and converting is a pain — Jamie, 2026-06-19).
+
+/** Full-sentence gift clause for sale_text / modal, e.g. "free Pride merch on orders $125 USD+". */
+function giftSentenceClause(giftText, minimum) {
+  const text = giftText && String(giftText).trim();
+  if (!text) return null;
+  const min = Number(minimum) || 0;
+  return min > 0 ? `${text} on orders $${min} USD+` : `${text} with every order`;
+}
+
+/** Compact gift clause for the announcement bar, e.g. "free Pride merch on $125 USD+". */
+function giftShortClause(giftText, minimum) {
+  const text = giftText && String(giftText).trim();
+  if (!text) return null;
+  const min = Number(minimum) || 0;
+  return min > 0 ? `${text} on $${min} USD+` : text;
+}
+
+/**
+ * Plain sale text from tiers, e.g. "Spend $100+, save 15%! ... Valid now until ...".
+ * When `gift` (a full-sentence clause from giftSentenceClause) is passed, it's woven in:
+ * inline it joins the last discount sentence with a comma ("...cart, plus <gift>!"); with
+ * line breaks it sits on its own line ("Plus <gift>.").
+ */
+function constructSaleText(tiers, endDate, withLineBreaks = false, gift = null) {
   if (!tiers || tiers.length === 0) return '';
   const sorted = [...tiers].sort((a, b) => a.threshold - b.threshold);
   const parts = [];
@@ -250,6 +275,10 @@ function constructSaleText(tiers, endDate, withLineBreaks = false) {
       parts.push(`Spend between $${t.threshold}-$${next.threshold}, save ${t.percentage}%.`);
     }
   }
+  if (gift) {
+    if (withLineBreaks) parts.push(`Plus ${gift}.`);
+    else parts[parts.length - 1] = parts[parts.length - 1].replace(/!$/, `, plus ${gift}!`);
+  }
   if (endDate) parts.push(`Valid through ${formatDateReadable(endDate)} (Eastern Time).`);
   parts.push('Discount applied automatically in the cart, no code needed.');
   return parts.join(withLineBreaks ? '\n' : ' ');
@@ -263,7 +292,7 @@ function convertToRichText(plainText) {
     children: lines.map((line) => {
       const trimmed = line.trim();
       const children = [];
-      const re = /(\d+%)/g;
+      const re = /(\d+%|\$\d+ USD)/g; // bold the percentage and the "$N USD" gift threshold
       let last = 0; let m;
       while ((m = re.exec(trimmed)) !== null) {
         if (m.index > last) children.push({ type: 'text', value: trimmed.slice(last, m.index) });
@@ -277,16 +306,21 @@ function convertToRichText(plainText) {
   });
 }
 
-async function setSaleMetafields({ name, tiers, startDate, endDate }) {
+async function setSaleMetafields({ name, tiers, startDate, endDate, freeGiftText, freeGiftMinimum }) {
   const shopId = await getShopId();
   const highest = Math.max(...tiers.map((t) => t.percentage));
   const flat = tiers.length === 1 && tiers[0].threshold === 0;
+  // Gift clauses (null when no gift) — woven into every customer-facing surface except the modal heading.
+  const longClause = giftSentenceClause(freeGiftText, freeGiftMinimum);
+  const shortClause = giftShortClause(freeGiftText, freeGiftMinimum);
+  const tagBase = flat ? `${highest}% off` : `Up to ${highest}% off`;
+  const annBase = flat ? `${name} - ${highest}% off Sitewide` : `${name} - Up to ${highest}% off Sitewide`;
   const mf = [
-    { key: 'sale_text', type: 'single_line_text_field', value: constructSaleText(tiers, endDate, false) },
-    { key: 'sale_tag_text', type: 'single_line_text_field', value: flat ? `${highest}% off ${name}` : `Up to ${highest}% off ${name}` },
+    { key: 'sale_text', type: 'single_line_text_field', value: constructSaleText(tiers, endDate, false, longClause) },
+    { key: 'sale_tag_text', type: 'single_line_text_field', value: longClause ? `${tagBase} + ${String(freeGiftText).trim()}` : `${tagBase} ${name}` },
     { key: 'sale_heading_modal', type: 'single_line_text_field', value: `${name} Offer!` },
-    { key: 'sale_body_modal', type: 'rich_text_field', value: convertToRichText(constructSaleText(tiers, endDate, true)) },
-    { key: 'sale_announcement_text', type: 'single_line_text_field', value: flat ? `${name} - ${highest}% off Sitewide` : `${name} - Up to ${highest}% off Sitewide` },
+    { key: 'sale_body_modal', type: 'rich_text_field', value: convertToRichText(constructSaleText(tiers, endDate, true, longClause)) },
+    { key: 'sale_announcement_text', type: 'single_line_text_field', value: shortClause ? `${annBase} + ${shortClause}` : annBase },
   ];
   if (startDate) mf.push({ key: 'sale_start_date', type: 'date', value: startDate });
   if (endDate) mf.push({ key: 'sale_end_date', type: 'date', value: endDate });
@@ -392,7 +426,7 @@ async function removeVolumeDiscount(name, log = () => {}) {
 // Sales
 // ---------------------------------------------------------------------------
 
-async function startSale({ name, tiers, collectionHandle, startDate, endDate, freeGiftHandle, freeGiftMinimum }, log = () => {}) {
+async function startSale({ name, tiers, collectionHandle, startDate, endDate, freeGiftHandle, freeGiftMinimum, freeGiftText }, log = () => {}) {
   const parsed = Array.isArray(tiers) ? tiers : parseTiers(tiers);
   if (!parsed) throw new Error(`Could not parse tiers: ${tiers}`);
   const existing = await getRegistryRow(name);
@@ -417,19 +451,22 @@ async function startSale({ name, tiers, collectionHandle, startDate, endDate, fr
     log(`✓ ${t.percentage}% for $${t.threshold}+ spend → node ${id}`);
   }
 
-  await setSaleMetafields({ name, tiers: parsed, startDate, endDate });
+  // Gift copy is only woven in when a gift is actually attached to this sale.
+  const giftText = freeGiftHandle ? (freeGiftText || null) : null;
+  await setSaleMetafields({ name, tiers: parsed, startDate, endDate, freeGiftText: giftText, freeGiftMinimum });
   log('✓ Sale store metafields set (theme banner / modal / tag).');
 
   if (freeGiftHandle) {
     if (freeGiftMinimum == null) throw new Error('freeGiftMinimum is required when attaching a free gift (pass 0 for every order).');
     await createTwin(freeGiftHandle, log);
     await enableOffer({ minimum: String(freeGiftMinimum), start: startDate, end: endDate }, log);
-    log(`✓ Free gift attached (${freeGiftHandle}, min $${freeGiftMinimum}).`);
+    log(`✓ Free gift attached (${freeGiftHandle}, min $${freeGiftMinimum}${giftText ? `, "${giftText}"` : ''}).`);
   }
 
   await upsertRegistryRow({
     kind: 'sale', name, sku_prefixes: [], collection_handle: handle,
     tiers: parsed, shopify_node_ids: nodeIds, free_gift_handle: freeGiftHandle || null,
+    free_gift_text: giftText, free_gift_minimum: freeGiftHandle ? (freeGiftMinimum ?? null) : null,
     status: 'active', starts_at: startsAt, ends_at: endsAt,
   });
   log(`✓ Sale "${name}" started: ${startDate || 'now'} → ${endDate || 'no end'}.`);
@@ -440,16 +477,66 @@ async function extendSale(name, newEndDate, log = () => {}) {
   if (!row || row.kind !== 'sale') throw new Error(`No managed sale named "${name}".`);
   const { endsAt } = resolveDates(null, newEndDate);
   for (const id of row.shopify_node_ids) { await updateNodeEndsAt(id, endsAt); log(`✓ Node ${id} → ends ${newEndDate}`); }
-  await setSaleMetafields({ name, tiers: row.tiers, startDate: row.starts_at ? row.starts_at.slice(0, 10) : null, endDate: newEndDate });
-  if (row.free_gift_handle) {
-    // Preserve the gift's existing minimum (read from the live metafield) — don't reset it to 0.
+  // Resolve the gift minimum whenever we have gift copy OR a tool-managed gift handle
+  // (registry first, fall back to the live offer metafield) — don't reset it to 0.
+  let giftMin = row.free_gift_minimum;
+  if (giftMin == null && (row.free_gift_handle || row.free_gift_text)) {
     const { metafields } = await getStatus();
-    const currentMin = metafields.free_gift_offer_minimum != null ? metafields.free_gift_offer_minimum : '0';
-    const giftStart = row.starts_at ? row.starts_at.slice(0, 10) : newEndDate;
-    await enableOffer({ minimum: currentMin, start: giftStart, end: newEndDate }, log);
+    giftMin = metafields.free_gift_offer_minimum != null ? metafields.free_gift_offer_minimum : 0;
   }
+  // Only re-extend the actual gift OFFER window when the tool manages the gift (has a handle).
+  if (row.free_gift_handle) {
+    const giftStart = row.starts_at ? row.starts_at.slice(0, 10) : newEndDate;
+    await enableOffer({ minimum: String(giftMin), start: giftStart, end: newEndDate }, log);
+  }
+  // Re-render copy from the stored gift TEXT (independent of handle) so the gift mention
+  // survives the extend even when the gift was set up out-of-band.
+  await setSaleMetafields({
+    name, tiers: row.tiers, startDate: row.starts_at ? row.starts_at.slice(0, 10) : null, endDate: newEndDate,
+    freeGiftText: row.free_gift_text, freeGiftMinimum: giftMin,
+  });
   await upsertRegistryRow({ ...row, status: 'active', ends_at: endsAt });
   log(`✓ Sale "${name}" extended to ${newEndDate}.`);
+}
+
+/** Current live sale dates from the store metafields (authoritative YYYY-MM-DD, no ET reconstruction). */
+async function getLiveSaleDates() {
+  const data = await shopifyGraphQL('{ shop { metafields(first: 50, namespace: "custom") { nodes { key value } } } }');
+  const m = Object.fromEntries(data.shop.metafields.nodes.map((n) => [n.key, n.value]));
+  return {
+    startDate: m.sale_start_date || null,
+    endDate: m.sale_end_date || null,
+    giftMinimum: m.free_gift_offer_minimum != null ? Number(m.free_gift_offer_minimum) : null,
+  };
+}
+
+/**
+ * Re-render the live sale's copy to include (or change) a free-gift description, without
+ * tearing down or recreating the discount. Used when a gift was attached out-of-band and the
+ * sale copy doesn't mention it yet, or to tweak the gift wording mid-sale.
+ * Minimum: explicit arg → registry → live free_gift_offer_minimum → 0.
+ */
+async function updateSaleGift(name, { freeGiftText, freeGiftMinimum } = {}, log = () => {}) {
+  const row = await getRegistryRow(name);
+  if (!row || row.kind !== 'sale') throw new Error(`No managed sale named "${name}".`);
+  if (row.status !== 'active') throw new Error(`Sale "${name}" is not active — nothing live to re-render.`);
+  const text = freeGiftText != null ? String(freeGiftText).trim() : (row.free_gift_text || null);
+  if (!text) throw new Error('No free_gift_text provided (and none stored). Pass the gift description to weave in.');
+
+  const live = await getLiveSaleDates();
+  const min = freeGiftMinimum != null ? Number(freeGiftMinimum)
+    : (row.free_gift_minimum != null ? Number(row.free_gift_minimum)
+      : (live.giftMinimum != null ? live.giftMinimum : 0));
+  const startDate = live.startDate || (row.starts_at ? row.starts_at.slice(0, 10) : null);
+  const endDate = live.endDate;
+
+  await setSaleMetafields({ name, tiers: row.tiers, startDate, endDate, freeGiftText: text, freeGiftMinimum: min });
+  await upsertRegistryRow({
+    ...row,
+    free_gift_handle: row.free_gift_handle || null,
+    free_gift_text: text, free_gift_minimum: min,
+  });
+  log(`✓ Re-rendered "${name}" sale copy with free gift "${text}"${min > 0 ? ` ($${min} USD+)` : ' (every order)'}.`);
 }
 
 async function endSale(name, log = () => {}) {
@@ -522,11 +609,11 @@ async function auditAutomatic() {
 module.exports = {
   // engine ops
   addVolumeDiscount, removeVolumeDiscount,
-  startSale, extendSale, endSale,
+  startSale, extendSale, endSale, updateSaleGift,
   listRegistry, auditAutomatic, getRegistryRow,
   // pure helpers (tested)
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText,
-  volumeMetafieldText,
+  volumeMetafieldText, giftSentenceClause, giftShortClause,
   // constants
   SALE_COLLECTION_HANDLE, COMBINES_WITH, SALE_METAFIELD_KEYS, VOLUME_METAFIELD_KEY,
 };
