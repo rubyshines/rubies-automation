@@ -426,6 +426,16 @@ async function removeVolumeDiscount(name, log = () => {}) {
 // Sales
 // ---------------------------------------------------------------------------
 
+/**
+ * Does this sale advertise a free gift it should manage? True when a single gift was
+ * attached via the tool (free_gift_handle) OR the sale copy describes a gift set up
+ * out-of-band as a multi-product pool (free_gift_text). The gift offer is collection-wide,
+ * so this boolean — not the specific handle — is what gates enable/disable on extend/end.
+ */
+function saleHasGift(row) {
+  return Boolean(row.free_gift_handle || row.free_gift_text);
+}
+
 async function startSale({ name, tiers, collectionHandle, startDate, endDate, freeGiftHandle, freeGiftMinimum, freeGiftText }, log = () => {}) {
   const parsed = Array.isArray(tiers) ? tiers : parseTiers(tiers);
   if (!parsed) throw new Error(`Could not parse tiers: ${tiers}`);
@@ -484,8 +494,10 @@ async function extendSale(name, newEndDate, log = () => {}) {
     const { metafields } = await getStatus();
     giftMin = metafields.free_gift_offer_minimum != null ? metafields.free_gift_offer_minimum : 0;
   }
-  // Only re-extend the actual gift OFFER window when the tool manages the gift (has a handle).
-  if (row.free_gift_handle) {
+  // Re-extend the actual gift OFFER window whenever the sale advertises a gift — whether
+  // attached via the tool (handle) or set up out-of-band as a multi-product pool (text only).
+  // enableOffer acts on the whole free-gift-offer collection, so it doesn't need the handle.
+  if (saleHasGift(row)) {
     const giftStart = row.starts_at ? row.starts_at.slice(0, 10) : newEndDate;
     await enableOffer({ minimum: String(giftMin), start: giftStart, end: newEndDate }, log);
   }
@@ -545,7 +557,7 @@ async function endSale(name, log = () => {}) {
   for (const id of row.shopify_node_ids) { await deleteNode(id); log(`✓ Deleted node ${id}`); }
   await clearSaleMetafields();
   log('✓ Cleared sale store metafields.');
-  if (row.free_gift_handle) { await disableOffer(log); log('✓ Disabled attached free gift.'); }
+  if (saleHasGift(row)) { await disableOffer(log); log('✓ Disabled attached free gift.'); }
   await upsertRegistryRow({ ...row, status: 'ended', ends_at: new Date().toISOString() });
   log(`✓ Sale "${name}" ended.`);
 }
@@ -613,7 +625,7 @@ module.exports = {
   listRegistry, auditAutomatic, getRegistryRow,
   // pure helpers (tested)
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText,
-  volumeMetafieldText, giftSentenceClause, giftShortClause,
+  volumeMetafieldText, giftSentenceClause, giftShortClause, saleHasGift,
   // constants
   SALE_COLLECTION_HANDLE, COMBINES_WITH, SALE_METAFIELD_KEYS, VOLUME_METAFIELD_KEY,
 };

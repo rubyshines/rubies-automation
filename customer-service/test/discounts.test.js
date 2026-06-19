@@ -3,7 +3,7 @@ const assert = require('node:assert');
 
 const {
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText, volumeMetafieldText,
-  giftSentenceClause, giftShortClause,
+  giftSentenceClause, giftShortClause, saleHasGift,
 } = require('../../promotions/discounts');
 
 // The manage_discount tool's start_sale guards short-circuit BEFORE any Shopify/DB
@@ -105,6 +105,13 @@ test('giftSentenceClause: threshold vs every-order vs empty', () => {
   assert.equal(giftSentenceClause('free Pride merch', 0), 'free Pride merch with every order');
   assert.equal(giftSentenceClause('', 125), null);
   assert.equal(giftSentenceClause(null, 125), null);
+});
+
+test('saleHasGift: true for a tool-attached handle OR an out-of-band gift described in copy', () => {
+  assert.equal(saleHasGift({ free_gift_handle: 'pride-pins', free_gift_text: null }), true);
+  assert.equal(saleHasGift({ free_gift_handle: null, free_gift_text: 'free Pride merch' }), true);
+  assert.equal(saleHasGift({ free_gift_handle: null, free_gift_text: null }), false);
+  assert.equal(saleHasGift({}), false);
 });
 
 test('giftShortClause: compact form for the announcement bar', () => {
