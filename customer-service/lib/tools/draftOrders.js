@@ -4,7 +4,7 @@
  * Tools: list_draft_orders, delete_draft_order
  */
 
-const { listDraftOrders, deleteDraftOrder, normalizeGid } = require('../shopify');
+const { listDraftOrders, deleteDraftOrder, normalizeGid, getAdminUrl } = require('../shopify');
 
 // ---------------------------------------------------------------------------
 // Tool: list_draft_orders
@@ -39,9 +39,7 @@ async function handleListDraftOrders({ status, limit }) {
 
   md += '\n### Draft Details\n\n';
   for (const d of drafts) {
-    const numericId = d.id.split('/').pop();
-    const storeUrl = process.env.SHOPIFY_STORE_URL;
-    const adminUrl = storeUrl ? `https://${storeUrl}/admin/draft_orders/${numericId}` : '';
+    const adminUrl = getAdminUrl(d.id);
 
     md += `**${d.name}** (${d.status})${adminUrl ? ` — [Admin](${adminUrl})` : ''}\n`;
     if (d.note2) md += `Note: ${d.note2}\n`;

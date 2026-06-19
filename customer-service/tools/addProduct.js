@@ -190,9 +190,8 @@ async function createInShopify(shopifyData) {
     console.log(`  ${created.length} variants created.`);
   }
 
-  const storeName = process.env.SHOPIFY_ADMIN_STORE || (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '');
-  const numericId = product.id.split('/').pop();
-  console.log(`  Admin: https://admin.shopify.com/store/${storeName}/products/${numericId}`);
+  const { getAdminUrl } = require('../lib/shopify');
+  console.log(`  Admin: ${getAdminUrl(product.id)}`);
 
   return product.id;
 }

@@ -1365,14 +1365,31 @@ function isTipLineItem(li) {
   return true;
 }
 
+// The literal placeholder shipped in .env.example. A real deployment must never
+// emit this as a store slug — if SHOPIFY_ADMIN_STORE is left at this value (or
+// blank), we ignore it and derive the slug from SHOPIFY_STORE_URL instead.
+const ADMIN_STORE_PLACEHOLDER = 'your-admin-store-slug';
+
+/**
+ * Resolve the Shopify admin store slug (the bit in
+ * admin.shopify.com/store/<slug>/...). The slug is always the myshopify
+ * subdomain, so SHOPIFY_STORE_URL is the canonical source. SHOPIFY_ADMIN_STORE
+ * is honored only as an explicit override — never when unset or left at the
+ * .env.example placeholder (which previously baked broken links into prod).
+ */
+function getAdminStoreSlug() {
+  const override = (process.env.SHOPIFY_ADMIN_STORE || '').trim();
+  if (override && override !== ADMIN_STORE_PLACEHOLDER) return override;
+  return (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '');
+}
+
 /**
  * Build a Shopify admin URL for an order or draft order GID.
- * Uses SHOPIFY_ADMIN_STORE env var (the admin slug, e.g. "rubies-active-wear"),
- * falling back to SHOPIFY_STORE_URL with .myshopify.com stripped.
+ * Slug resolved via getAdminStoreSlug() (SHOPIFY_STORE_URL-derived, with an
+ * optional SHOPIFY_ADMIN_STORE override).
  */
 function getAdminUrl(gid) {
-  const storeName = process.env.SHOPIFY_ADMIN_STORE
-    || (process.env.SHOPIFY_STORE_URL || '').replace('.myshopify.com', '');
+  const storeName = getAdminStoreSlug();
   const numericId = gid.split('/').pop();
   if (gid.includes('/DraftOrder/')) {
     return `https://admin.shopify.com/store/${storeName}/draft_orders/${numericId}`;
@@ -1912,6 +1929,7 @@ module.exports = {
   calculateRefund,
   createRefund,
   getAdminUrl,
+  getAdminStoreSlug,
   createShopifyProduct,
   createProductVariants,
   updateProductStatus,
