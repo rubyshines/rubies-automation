@@ -12,7 +12,7 @@
  * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold)
  */
 
-const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, getDraftOrderRecap, normalizeGid, getAdminUrl } = require('../shopify');
+const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, getDraftOrderRecap, updateDraftOrderAppliedDiscount, normalizeGid, getAdminUrl } = require('../shopify');
 const { searchProducts } = require('../productCache');
 const { resolveLineItems } = require('../resolveLineItems');
 const { formatAddressBlock } = require('../addressUtils');
@@ -301,6 +301,7 @@ const tools = [
       'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for every non-US destination — pass shipping_speed explicitly to override either default.',
       'Set pre_increase_pricing=true to invoice transitional retailers at pre-Apr-16 2026 retail × wholesale discount (uses price_history.previous_price per variant; SKUs that didn\'t change use current retail). Per-item override: set items[].use_current_pricing=true on individual lines to keep them at current retail × discount even when pre_increase_pricing is on (e.g. items the customer never ordered before so old prices don\'t apply).',
       'When the customer has explicitly asked to ship to a new address (different from what is on file), pass shipping_address with the new address fields — this overrides the customer default.',
+      'To comp units for defects/goodwill (e.g. "give one Brooke and one Ava free"), pass credit_items referencing SKUs in the order — the tool applies their wholesale value as an order-level credit line on the first draft.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -333,6 +334,17 @@ const tools = [
           },
         },
         note: { type: 'string', description: 'Optional note for the draft order' },
+        credit_items: {
+          type: 'array',
+          description: 'Goodwill/defect credit: comp one or more units that are already in the order (e.g. items that arrived defective). Each entry references a SKU present in the order plus a quantity to credit. The tool sums those units\' wholesale unit prices (in the order base currency) into a single order-level discount line applied to the first draft, labelled as a defect credit, and the preview shows the credit in the customer\'s currency. Use this instead of trying to zero out a line — e.g. to give one Brooke bra and one Ava bra free, pass [{sku:"BB-...",quantity:1},{sku:"SB-...",quantity:1}].',
+          items: {
+            type: 'object',
+            properties: {
+              sku: { type: 'string', description: 'Exact SKU of an item in the order to credit (e.g. "BB-BLK-M").' },
+              quantity: { type: 'number', description: 'Number of units of this SKU to comp.' },
+            },
+          },
+        },
         discount_percent: { type: 'number', description: 'Override the default country-based discount percentage (e.g. 50 for 50% off). If omitted, uses 50% for US/AU, 30% for others.' },
         pre_increase_pricing: {
           type: 'boolean',
@@ -356,7 +368,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, shipping_address, pre_increase_pricing }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, shipping_address, pre_increase_pricing, credit_items }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -625,6 +637,36 @@ const tools = [
         return pm ? parseFloat(pm.amount) : parseFloat(draftOrder.totalPrice);
       }
 
+      // Defect/goodwill credit: comp units already in the order by applying their
+      // wholesale value as a single order-level discount on the first draft. The
+      // credit amount is computed in the base (shop) currency so Shopify presents
+      // it correctly in the customer's currency — the same reason line-item
+      // discounts are passed in USD, not the AUD/etc. presentment value.
+      let creditInfo = null;
+      if (credit_items && credit_items.length > 0) {
+        const credit = computeCreditAmount(credit_items, resolvedItems, discountPercent);
+        if (credit.errors.length > 0) {
+          return { content: [{ type: 'text', text: `Error: credit_items must reference SKUs already in the order. Not found: ${credit.errors.join(', ')}.` }] };
+        }
+        if (credit.amount > 0) {
+          const firstDraft = createdOrders[0].draftOrder;
+          const beforeTotal = getPresentmentTotal(firstDraft);
+          const updated = await updateDraftOrderAppliedDiscount(firstDraft.id, {
+            amount: credit.amount,
+            title: 'Defect credit',
+            description: credit.description,
+          });
+          createdOrders[0].draftOrder = updated;
+          creditInfo = {
+            baseAmount: credit.amount,
+            // Presentment value of the credit = drop in the draft's presented total.
+            presentmentAmount: +(beforeTotal - getPresentmentTotal(updated)).toFixed(2),
+            description: credit.description,
+            draftName: updated.name,
+          };
+        }
+      }
+
       // Build preview output (matches exchange order style)
       const draftOrderIds = [];
       const outputLines = [
@@ -655,6 +697,9 @@ const tools = [
         if (noChangeCount > 0) parts.push(`${noChangeCount} at current retail (no Apr 16 change)`);
         if (overrideCount > 0) parts.push(`${overrideCount} at current retail (operator override)`);
         outputLines.push(`**Pricing:** pre-Apr-16 2026 retail (\`pre_increase_pricing=true\`) — ${parts.join(', ')}`);
+      }
+      if (creditInfo) {
+        outputLines.push(`**Defect credit:** -${currency} $${creditInfo.presentmentAmount.toFixed(2)} (${creditInfo.description}) applied to ${creditInfo.draftName}`);
       }
       outputLines.push('');
 
@@ -895,5 +940,37 @@ function splitForDeMinimis(items, threshold) {
   return bins.map(b => b.items).filter(b => b.length > 0);
 }
 
+/**
+ * Compute a defect/goodwill credit from units already in the order. For each
+ * { sku, quantity }, find the matching resolved line and take its wholesale unit
+ * price in the order BASE currency (USD):
+ *   - pre-increase / fixed-amount lines: currentRetail - fixedDiscountAmount
+ *     (== oldRetail × discount)
+ *   - standard percentage lines:         currentRetail × (1 - discount/100)
+ * Returns { amount, description, errors }; `errors` lists any SKU not found in
+ * the order so the caller can refuse rather than silently under-credit.
+ */
+function computeCreditAmount(creditItems, resolvedItems, discountPercent) {
+  const errors = [];
+  const descParts = [];
+  let amount = 0;
+  for (const ci of creditItems || []) {
+    const sku = (ci.sku || '').trim();
+    const qty = ci.quantity || 1;
+    const match = sku
+      ? resolvedItems.find(r => r.sku && r.sku.toLowerCase() === sku.toLowerCase())
+      : null;
+    if (!match) { errors.push(sku || '(missing sku)'); continue; }
+    const currentRetail = parseFloat(match.price || 0);
+    const unit = match.fixedDiscountAmount != null
+      ? currentRetail - match.fixedDiscountAmount
+      : currentRetail * (1 - discountPercent / 100);
+    amount += unit * qty;
+    descParts.push(`${qty}x ${match.productTitle}`);
+  }
+  return { amount: +amount.toFixed(2), description: descParts.join(', '), errors };
+}
+
 module.exports = tools;
 module.exports.computeWholesaleUnitPrice = computeWholesaleUnitPrice;
+module.exports.computeCreditAmount = computeCreditAmount;
