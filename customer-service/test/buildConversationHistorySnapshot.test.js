@@ -15,7 +15,11 @@ process.env.GORGIAS_DOMAIN ||= 'test';
 process.env.GORGIAS_API_KEY ||= 'test';
 process.env.GORGIAS_EMAIL ||= 'test@test.com';
 
-const { buildConversationHistorySnapshot } = require('../intake/processGorgiasTickets');
+const {
+  buildConversationHistorySnapshot,
+  extractInlineImages,
+  buildEffectiveAttachments,
+} = require('../intake/processGorgiasTickets');
 
 const CUSTOMER_BODY_HTML_WITH_QUOTE = `<div dir="auto">Hello the discount code I forgot to apply was <strong>WELCOME10-88ZJ6G1I</strong></div><div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">On Fri, Apr 24, 2026 at 5:11 PM RUBIES Customer Care &lt;<a href="mailto:care@rubyshines.com">care@rubyshines.com</a>&gt; wrote:<br></div><blockquote class="gmail_quote"><div>Please provide us with the discount code you forgot to apply so we can further check into this for you.</div></blockquote></div></div>`;
 
@@ -200,5 +204,75 @@ describe('buildConversationHistorySnapshot', () => {
       stripped_html: '<p>private note</p>',
     }]);
     assert.equal(snapshot.sender, 'note');
+  });
+
+  // Inline images: customer photos embedded in the HTML body (iPhone/Gmail) that
+  // Gorgias renders inline but omits from attachments[]. Without surfacing these
+  // the advisor wrongly tells the customer the photo "didn't come through."
+  it('surfaces inline body images as attachments on the snapshot', () => {
+    const url = 'https://uploads.gorgias.io/ABC/IMG_5223-863a38da.jpeg';
+    const [snapshot] = buildConversationHistorySnapshot([{
+      id: 8,
+      from_agent: false,
+      channel: 'email',
+      via: 'email',
+      created_datetime: '2026-06-19T18:12:13+00:00',
+      body_text: 'here is the tag',
+      body_html: `<div>here is the tag</div><img src="${url}" alt="">`,
+      stripped_text: 'here is the tag',
+    }]);
+    assert.equal(snapshot.attachments.length, 1);
+    assert.equal(snapshot.attachments[0].url, url);
+    assert.equal(snapshot.attachments[0].name, 'IMG_5223-863a38da.jpeg');
+    assert.equal(snapshot.attachments[0].content_type, 'image/jpeg');
+  });
+
+  it('keeps both a real attachment and a distinct inline image on one message', () => {
+    const inlineUrl = 'https://uploads.gorgias.io/X/inline.png';
+    const [snapshot] = buildConversationHistorySnapshot([{
+      id: 9,
+      from_agent: false,
+      channel: 'email',
+      via: 'email',
+      created_datetime: '2026-06-19T18:12:13+00:00',
+      body_text: 'photos',
+      body_html: `<div>photos</div><img src="${inlineUrl}">`,
+      attachments: [{ name: 'real.jpeg', url: 'https://uploads.gorgias.io/X/real.jpeg', content_type: 'image/jpeg' }],
+    }]);
+    assert.deepEqual(snapshot.attachments.map(a => a.name).sort(), ['inline.png', 'real.jpeg']);
+  });
+
+  it('attributes a quoted-back image to the message where it first appears', () => {
+    // Same image URL appears in the customer message and again in the agent's
+    // quoted reply — it should only count once, on the earlier (customer) message.
+    const url = 'https://uploads.gorgias.io/Y/tag.jpeg';
+    const snaps = buildConversationHistorySnapshot([
+      {
+        id: 10, from_agent: false, channel: 'email', via: 'email',
+        created_datetime: '2026-06-19T18:12:13+00:00',
+        body_text: 'the tag', body_html: `<div>the tag</div><img src="${url}">`,
+      },
+      {
+        id: 11, from_agent: true, channel: 'email', via: 'email',
+        created_datetime: '2026-06-19T18:41:38+00:00',
+        body_text: 'thanks', body_html: `<div>thanks</div><blockquote><img src="${url}"></blockquote>`,
+      },
+    ]);
+    assert.equal(snaps[0].attachments.length, 1);
+    assert.equal(snaps[1].attachments.length, 0);
+  });
+
+  it('ignores non-Gorgias-hosted images (tracking pixels, signature logos)', () => {
+    const imgs = extractInlineImages('<img src="https://tracker.example.com/pixel.gif"><img src="https://cdn.shopify.com/logo.png">');
+    assert.equal(imgs.length, 0);
+  });
+
+  it('does not double-count an image present as both attachment and inline', () => {
+    const url = 'https://uploads.gorgias.io/Z/dup.jpeg';
+    const byId = buildEffectiveAttachments([{
+      id: 12, from_agent: false, body_html: `<img src="${url}">`,
+      attachments: [{ name: 'dup.jpeg', url, content_type: 'image/jpeg' }],
+    }]);
+    assert.equal(byId.get(12).length, 1);
   });
 });

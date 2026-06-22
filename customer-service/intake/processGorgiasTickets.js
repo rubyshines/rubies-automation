@@ -415,10 +415,65 @@ Rules:
 }
 
 // ---------------------------------------------------------------------------
+// Inline images
+//
+// Customer photos don't always arrive as Gorgias attachment objects. Phone mail
+// clients (iPhone Mail, Gmail) frequently embed the photo inline in the HTML
+// body as <img src="…"> instead. Gorgias renders these (so they show in the
+// Gorgias UI) and re-hosts them on uploads.gorgias.io, but they're absent from
+// the message's `attachments[]`. Without this, our pipeline drops the image
+// entirely — no dashboard thumbnail and no advisor [ATTACHMENTS] note — so the
+// advisor wrongly tells the customer the photo "didn't come through."
+// ---------------------------------------------------------------------------
+
+const GORGIAS_INLINE_IMG_RE = /<img[^>]+src=["'](https:\/\/uploads\.gorgias\.io\/[^"']+)["']/gi;
+const EXT_CONTENT_TYPES = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+  gif: 'image/gif', webp: 'image/webp', heic: 'image/heic',
+};
+
+// Pull inline images embedded in a message's HTML body. Returns attachment-shaped
+// objects ({ name, url, content_type }).
+function extractInlineImages(html) {
+  if (!html) return [];
+  const out = [];
+  GORGIAS_INLINE_IMG_RE.lastIndex = 0;
+  let m;
+  while ((m = GORGIAS_INLINE_IMG_RE.exec(html)) !== null) {
+    const url = m[1];
+    const file = decodeURIComponent((url.split('/').pop() || 'image').split('?')[0]);
+    const ext = (file.split('.').pop() || '').toLowerCase();
+    out.push({ name: file, url, content_type: EXT_CONTENT_TYPES[ext] || 'image/jpeg' });
+  }
+  return out;
+}
+
+// Merge each message's real attachments with its inline images, deduped across
+// the whole thread by URL (first chronological occurrence wins). Dedup matters
+// because a photo gets quoted back in later replies — we want it attributed to
+// the message where it's genuinely new, not re-imported on every quote.
+// Returns a Map of message id → attachment[].
+function buildEffectiveAttachments(messages) {
+  const seen = new Set();
+  const byId = new Map();
+  for (const m of messages) {
+    const real = (m.attachments || []).map(a => ({
+      name: a.name, url: a.url, content_type: a.content_type,
+    }));
+    for (const a of real) if (a.url) seen.add(a.url);
+    const inline = extractInlineImages(m.body_html).filter(a => !seen.has(a.url));
+    for (const a of inline) seen.add(a.url);
+    byId.set(m.id, [...real, ...inline]);
+  }
+  return byId;
+}
+
+// ---------------------------------------------------------------------------
 // Conversation history snapshot — shared between advisor and auto-close paths
 // ---------------------------------------------------------------------------
 
 function buildConversationHistorySnapshot(messages) {
+  const effectiveAttachments = buildEffectiveAttachments(messages);
   return messages.map(m => {
     const sender = m.from_agent === false ? 'customer' : m.channel === 'internal-note' ? 'note' : 'agent';
     // Prefer Gorgias's stripped_* fields when present. When they're empty
@@ -444,9 +499,7 @@ function buildConversationHistorySnapshot(messages) {
       body: bodyText,
       created_at: m.created_datetime,
       channel: m.channel,
-      attachments: (m.attachments || []).map(a => ({
-        name: a.name, url: a.url, content_type: a.content_type,
-      })),
+      attachments: effectiveAttachments.get(m.id) || [],
     };
   });
 }
@@ -767,8 +820,9 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const contextParts = [];
   if (conversationContext) contextParts.push(`[CONVERSATION HISTORY]\n${conversationContext}`);
   if (previousDraftContext) contextParts.push(`[PREVIOUS AI PROCESSING]\n${previousDraftContext}`);
-  // Surface attachment metadata (filenames + types) so the advisor knows what was attached
-  const attachments = latestCustomerMsg.attachments || [];
+  // Surface attachment metadata (filenames + types) so the advisor knows what was
+  // attached — including inline images embedded in the HTML body (see buildEffectiveAttachments).
+  const attachments = buildEffectiveAttachments(messages).get(latestCustomerMsg.id) || [];
   const attachmentNote = attachments.length
     ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
     : '';
@@ -1147,6 +1201,8 @@ module.exports = {
   checkForDuplicateTicket,
   tryAutoCloseThankYou,
   buildConversationHistorySnapshot,
+  extractInlineImages,
+  buildEffectiveAttachments,
   extractCleanBody,
   autoExecuteAdvisorHold,
   autoExecuteAddressChange,
