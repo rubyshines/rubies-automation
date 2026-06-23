@@ -116,8 +116,14 @@ async function handleOrderProfitability({ order_number }) {
   const lineRows = [];
 
   for (const li of order.lineItems) {
-    const unitPrice = parseFloat(li.originalUnitPriceSet?.shopMoney?.amount || 0);
-    const lineRevenue = unitPrice * li.quantity;
+    // originalUnitPrice is the gross (pre-discount) price. Subtract the line's
+    // total discount to get actual revenue — otherwise discounted orders
+    // (e.g. wholesale) overstate revenue/margin. priceOverride orders carry no
+    // discount, so this is a no-op for them.
+    const grossUnitPrice = parseFloat(li.originalUnitPriceSet?.shopMoney?.amount || 0);
+    const lineDiscount = parseFloat(li.totalDiscountSet?.shopMoney?.amount || 0);
+    const lineRevenue = grossUnitPrice * li.quantity - lineDiscount;
+    const unitPrice = li.quantity > 0 ? lineRevenue / li.quantity : grossUnitPrice;
     totalRevenue += lineRevenue;
 
     const cost = await getCostForSku(li.sku);

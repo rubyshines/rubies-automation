@@ -289,6 +289,11 @@ function rowToOrder(orderRow, lineItems) {
       originalUnitPriceSet: {
         shopMoney: { amount: String(li.unit_price || 0), currencyCode: li.unit_price_currency },
       },
+      // Line-level total discount (store currency, all units) — used to compute
+      // net revenue. unit_price is the gross (pre-discount) price.
+      totalDiscountSet: {
+        shopMoney: { amount: String(li.total_discount || 0), currencyCode: li.unit_price_currency },
+      },
     })),
   };
 }

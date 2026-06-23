@@ -56,21 +56,16 @@ let lastCreateDraftOrderArgs = null;
 function buildDraftResponseFromInput(input) {
   const edges = (input.lineItems || []).map(li => {
     const retail = parseFloat(stubVariantPrices[li.variantId] || '100.00');
-    let discounted = retail;
-    if (li.appliedDiscount) {
-      if (li.appliedDiscount.valueType === 'PERCENTAGE') {
-        discounted = retail * (1 - li.appliedDiscount.value / 100);
-      } else if (li.appliedDiscount.valueType === 'FIXED_AMOUNT') {
-        discounted = Math.max(0, retail - li.appliedDiscount.value);
-      }
-    }
+    // Lines now carry a custom priceOverride (net wholesale); no discount object.
+    const unit = li.priceOverride ? parseFloat(li.priceOverride.amount) : retail;
     return {
       node: {
         title: 'TEST PRODUCT',
         quantity: li.quantity,
-        originalUnitPrice: retail.toFixed(2),
-        discountedUnitPriceSet: { presentmentMoney: { amount: discounted.toFixed(2), currencyCode: 'USD' } },
-        variant: { id: li.variantId, title: 'Black / M' },
+        originalUnitPrice: unit.toFixed(2),
+        originalUnitPriceSet: { presentmentMoney: { amount: unit.toFixed(2), currencyCode: 'USD' } },
+        discountedUnitPriceSet: { presentmentMoney: { amount: unit.toFixed(2), currencyCode: 'USD' } },
+        variant: { id: li.variantId, title: 'Black / M', price: retail.toFixed(2) },
       },
     };
   });
@@ -268,20 +263,21 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
     };
   });
 
-  it('without flag, line items use PERCENTAGE discount (existing behavior unchanged)', async () => {
+  it('without flag, line items get a custom priceOverride = currentRetail*(1-discount)', async () => {
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
       country_code: 'US',
       items: [{ variant_id: 'gid://shopify/ProductVariant/100', quantity: 1 }],
     });
     const li = lastCreateDraftOrderArgs.lineItems[0];
-    assert.equal(li.appliedDiscount.valueType, 'PERCENTAGE');
-    assert.equal(li.appliedDiscount.value, 50);
+    // No discount object — price is locked via priceOverride. 32 * 0.5 = 16.00.
+    assert.equal(li.appliedDiscount, undefined);
+    assert.equal(li.priceOverride.amount, '16.00');
+    assert.equal(li.priceOverride.currencyCode, 'USD');
   });
 
-  it('with flag, snapshot variant gets FIXED_AMOUNT discount = currentRetail - oldRetail*(1-discount)', async () => {
-    // AJ-style: current $32, previous $28. US 50% wholesale → target $14.
-    // FIXED_AMOUNT = 32 - 14 = 18.
+  it('with flag, snapshot variant priceOverride = oldRetail*(1-discount)', async () => {
+    // AJ-style: current $32, previous $28. US 50% wholesale → $14 (off OLD retail).
     stubPriceHistoryRows = [
       { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
     ];
@@ -292,12 +288,11 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const li = lastCreateDraftOrderArgs.lineItems[0];
-    assert.equal(li.appliedDiscount.valueType, 'FIXED_AMOUNT');
-    assert.equal(li.appliedDiscount.value, 18);
-    assert.match(li.appliedDiscount.title, /pre-Apr-16 retail \$28\.00/);
+    assert.equal(li.appliedDiscount, undefined);
+    assert.equal(li.priceOverride.amount, '14.00');
   });
 
-  it('with flag, non-snapshot variant falls back to PERCENTAGE (silent — no Apr 16 change)', async () => {
+  it('with flag, non-snapshot variant prices off current retail (silent — no Apr 16 change)', async () => {
     stubPriceHistoryRows = []; // no rows for this variant
     await runHandler({
       customer_id: 'gid://shopify/Customer/1',
@@ -306,11 +301,11 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const li = lastCreateDraftOrderArgs.lineItems[0];
-    assert.equal(li.appliedDiscount.valueType, 'PERCENTAGE');
-    assert.equal(li.appliedDiscount.value, 50);
+    // 32 * 0.5 = 16.00 (current retail, no pre-increase row)
+    assert.equal(li.priceOverride.amount, '16.00');
   });
 
-  it('with flag, mixed order applies FIXED_AMOUNT to snapshot lines and PERCENTAGE to others', async () => {
+  it('with flag, mixed order prices snapshot lines off old retail and others off current', async () => {
     stubPriceHistoryRows = [
       { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
       // ProductVariant/101 deliberately absent — youth size unchanged
@@ -325,10 +320,9 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const [adult, youth] = lastCreateDraftOrderArgs.lineItems;
-    assert.equal(adult.appliedDiscount.valueType, 'FIXED_AMOUNT');
-    assert.equal(adult.appliedDiscount.value, 18);
-    assert.equal(youth.appliedDiscount.valueType, 'PERCENTAGE');
-    assert.equal(youth.appliedDiscount.value, 50);
+    // adult: off old retail 28 → 14.00; youth: off current retail 24 → 12.00
+    assert.equal(adult.priceOverride.amount, '14.00');
+    assert.equal(youth.priceOverride.amount, '12.00');
   });
 
   it('with flag, multiple Apr-16 rows for one variant uses earliest previous_price', async () => {
@@ -344,12 +338,12 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const li = lastCreateDraftOrderArgs.lineItems[0];
-    // 32 - 28*0.5 = 32 - 14 = 18 (uses 28, not 30)
-    assert.equal(li.appliedDiscount.value, 18);
+    // 28 * 0.5 = 14.00 (uses 28, not 30)
+    assert.equal(li.priceOverride.amount, '14.00');
   });
 
-  it('with flag + non-default discount_percent, FIXED_AMOUNT honors the override', async () => {
-    // 30% discount instead of 50%: target = 28 * 0.7 = 19.60. FIXED = 32 - 19.60 = 12.40.
+  it('with flag + non-default discount_percent, priceOverride honors the override', async () => {
+    // 30% discount instead of 50%: 28 * 0.7 = 19.60.
     stubPriceHistoryRows = [
       { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
     ];
@@ -361,8 +355,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const li = lastCreateDraftOrderArgs.lineItems[0];
-    assert.equal(li.appliedDiscount.valueType, 'FIXED_AMOUNT');
-    assert.equal(li.appliedDiscount.value, 12.4);
+    assert.equal(li.priceOverride.amount, '19.60');
   });
 
   it('with flag, preview output includes pre-Apr-16 annotation per snapshot line', async () => {
@@ -438,9 +431,9 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
     assert.doesNotMatch(result.content[0].text, /Price changes for customer/);
   });
 
-  it('with flag + per-item use_current_pricing override, that line uses PERCENTAGE on current retail', async () => {
-    // Apr 16 row exists for variant 100 (would normally use FIXED_AMOUNT $18 off),
-    // but operator overrides → falls back to standard 50% PERCENTAGE.
+  it('with flag + per-item use_current_pricing override, that line prices off current retail', async () => {
+    // Apr 16 row exists for variant 100 (would normally price off old retail $28),
+    // but operator overrides → uses current retail 32 → 16.00.
     stubPriceHistoryRows = [
       { variant_id: 'gid://shopify/ProductVariant/100', previous_price: 28, changed_at: '2026-04-16T12:00:00Z' },
     ];
@@ -451,8 +444,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const li = lastCreateDraftOrderArgs.lineItems[0];
-    assert.equal(li.appliedDiscount.valueType, 'PERCENTAGE');
-    assert.equal(li.appliedDiscount.value, 50);
+    assert.equal(li.priceOverride.amount, '16.00');
   });
 
   it('with flag, mixing snapshot + per-item override applies each rule independently', async () => {
@@ -474,12 +466,10 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       pre_increase_pricing: true,
     });
     const [aj, pads] = lastCreateDraftOrderArgs.lineItems;
-    // AJ: snapshot path → FIXED $18 off ($32 - $14)
-    assert.equal(aj.appliedDiscount.valueType, 'FIXED_AMOUNT');
-    assert.equal(aj.appliedDiscount.value, 18);
-    // Chest pads: override → standard PERCENTAGE
-    assert.equal(pads.appliedDiscount.valueType, 'PERCENTAGE');
-    assert.equal(pads.appliedDiscount.value, 50);
+    // AJ: snapshot path → off old retail 28 → 14.00
+    assert.equal(aj.priceOverride.amount, '14.00');
+    // Chest pads: override → off current retail 14 → 7.00
+    assert.equal(pads.priceOverride.amount, '7.00');
     // Preview shows operator-override marker for the pads line
     assert.match(result.content[0].text, /current pricing — operator override/);
     // Header reports the override count
@@ -526,7 +516,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
         {
           title: 'AJ',
           quantity: 5,
-          variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+          variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M', price: '32.00' },
           originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
           discountedUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
           appliedDiscount: { value: 18, valueType: 'FIXED_AMOUNT', title: 'Wholesale 50% (pre-Apr-16 retail $28.00)' },
@@ -563,7 +553,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
         {
           title: 'AJ',
           quantity: 1,
-          variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+          variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M', price: '32.00' },
           originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
           discountedUnitPriceSet: { presentmentMoney: { amount: '16.00', currencyCode: 'USD' } },
           appliedDiscount: { value: 50, valueType: 'PERCENTAGE', title: 'Wholesale 50%' },
@@ -590,7 +580,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       lineItems: [{
         title: 'AJ',
         quantity: 3,
-        variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+        variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M', price: '32.00' },
         originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
         discountedUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
         appliedDiscount: { value: 18, valueType: 'FIXED_AMOUNT', title: 'pre' },
@@ -603,7 +593,7 @@ describe('create_wholesale_order — pre_increase_pricing flag', () => {
       lineItems: [{
         title: 'AJ',
         quantity: 2,
-        variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M' },
+        variant: { id: 'gid://shopify/ProductVariant/100', title: 'Black / M', price: '32.00' },
         originalUnitPriceSet: { presentmentMoney: { amount: '32.00', currencyCode: 'USD' } },
         discountedUnitPriceSet: { presentmentMoney: { amount: '14.00', currencyCode: 'USD' } },
         appliedDiscount: { value: 18, valueType: 'FIXED_AMOUNT', title: 'pre' },

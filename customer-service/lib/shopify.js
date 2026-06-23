@@ -204,6 +204,7 @@ async function getOrderByNumber(orderNumber) {
                   currentQuantity
                   sku
                   originalUnitPriceSet { shopMoney { amount currencyCode } }
+                  totalDiscountSet { shopMoney { amount currencyCode } }
                   variant { id }
                   customAttributes { key value }
                 }
@@ -582,7 +583,7 @@ async function getDraftOrderRecap(draftOrderId) {
             node {
               title
               quantity
-              variant { id title }
+              variant { id title price }
               originalUnitPriceSet { presentmentMoney { amount currencyCode } }
               discountedUnitPriceSet { presentmentMoney { amount currencyCode } }
               appliedDiscount { value valueType title }

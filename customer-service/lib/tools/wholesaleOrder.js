@@ -32,6 +32,26 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const PRE_INCREASE_WINDOW_START = '2026-04-16T00:00:00Z';
 const PRE_INCREASE_WINDOW_END = '2026-04-17T00:00:00Z';
 
+// Store (shop) currency. Wholesale line prices are set as a custom priceOverride
+// in store currency; Shopify converts + locks the presentment price at the
+// draft's fixed FX rate (see computeWholesaleUnitPrice note below).
+const STORE_CURRENCY = 'USD';
+
+// Wholesale unit price = retail × (1 - discount). Uses the pre-Apr-16 retail
+// when honoring old pricing (oldRetail set), otherwise current retail.
+//
+// We set this as a custom `priceOverride` on the line rather than attaching a
+// discount. A fixed-amount discount on a foreign-currency draft is NOT locked:
+// Shopify reconverts it at checkout, so the invoice and the amount the customer
+// actually pays can diverge (percentage discounts lock; fixed-amount ones don't).
+// A custom price locks at the draft's fixed rate exactly like a catalog price,
+// keeps the variant link (image/SKU/inventory), and guarantees invoice = checkout
+// in every currency and payment method.
+function computeWholesaleUnitPrice(currentRetail, oldRetail, discountPercent) {
+  const base = oldRetail != null ? oldRetail : currentRetail;
+  return +(base * (1 - discountPercent / 100)).toFixed(2);
+}
+
 async function fetchPreIncreasePrices(variantIds) {
   if (!variantIds || variantIds.length === 0) return new Map();
   const sb = getSupabaseClient();
@@ -371,39 +391,48 @@ const tools = [
         }
 
         // Customer-facing price-change summary: only emit when at least one
-        // recap is tagged pre-apr-16-pricing. Aggregate snapshot lines
-        // across drafts (FIXED_AMOUNT discount = invoiced at pre-increase
-        // price; PERCENTAGE = current pricing, skip).
+        // recap is tagged pre-apr-16-pricing. Lines now carry a custom price
+        // (no discount object), so identify snapshot lines via price_history:
+        // a line whose variant changed in the Apr-16 rollout (previous_price
+        // exists) and whose current retail is higher than the old retail was
+        // invoiced at pre-increase pricing. Next-order wholesale scales with the
+        // retail ratio (currency-agnostic), so this works in any currency.
+        // Known limitation: a per-item current-pricing override on a changed
+        // variant can't be distinguished here and may appear in the notice.
         const isPreIncreaseOrder = recaps.some(r => r.tags.includes('pre-apr-16-pricing'));
         if (isPreIncreaseOrder) {
-          const snapshotLines = [];
+          const candidateLines = [];
           for (const recap of recaps) {
+            if (!recap.tags.includes('pre-apr-16-pricing')) continue;
             for (const li of recap.lineItems) {
               if (!li.variant || !li.variant.id) continue;
-              if (!li.appliedDiscount || li.appliedDiscount.valueType !== 'FIXED_AMOUNT') continue;
-              snapshotLines.push({
+              const netSet = (li.discountedUnitPriceSet || li.originalUnitPriceSet).presentmentMoney;
+              candidateLines.push({
                 variantId: li.variant.id,
                 productTitle: li.title,
-                currentRetail: parseFloat(li.originalUnitPriceSet.presentmentMoney.amount),
-                discountedUnitPrice: parseFloat(li.discountedUnitPriceSet.presentmentMoney.amount),
+                currentRetailUsd: li.variant.price != null ? parseFloat(li.variant.price) : null,
+                thisWholesale: parseFloat(netSet.amount),
+                currency: netSet.currencyCode,
                 quantity: li.quantity,
               });
             }
           }
-          if (snapshotLines.length > 0) {
-            const variantIds = [...new Set(snapshotLines.map(l => l.variantId))];
+          if (candidateLines.length > 0) {
+            const variantIds = [...new Set(candidateLines.map(l => l.variantId))];
             const preMap = await fetchPreIncreasePrices(variantIds);
             const groups = new Map();
-            for (const l of snapshotLines) {
+            for (const l of candidateLines) {
               const oldRetail = preMap.get(l.variantId);
-              if (oldRetail == null) continue;
-              const key = `${l.productTitle}|${oldRetail}|${l.currentRetail}`;
+              // Only flag lines that changed in the rollout (old retail exists
+              // and current retail is higher).
+              if (oldRetail == null || l.currentRetailUsd == null || l.currentRetailUsd <= oldRetail) continue;
+              const key = `${l.productTitle}|${oldRetail}|${l.currentRetailUsd}`;
               if (!groups.has(key)) {
                 groups.set(key, {
                   productTitle: l.productTitle,
                   oldRetail,
-                  newRetail: l.currentRetail,
-                  oldWholesale: l.discountedUnitPrice,
+                  newRetail: l.currentRetailUsd,
+                  thisWholesale: l.thisWholesale,
                   units: 0,
                 });
               }
@@ -412,10 +441,9 @@ const tools = [
             if (groups.size > 0) {
               resultText += `**Customer notice — prices going up next order:**\n`;
               for (const g of groups.values()) {
-                // Derive new wholesale from the same discount ratio used on the snapshot line.
-                const dPct = (g.oldRetail - g.oldWholesale) / g.oldRetail;
-                const newWholesale = g.newRetail * (1 - dPct);
-                resultText += `  ${g.productTitle}: this order $${g.oldWholesale.toFixed(2)} → next order $${newWholesale.toFixed(2)} (retail $${g.oldRetail.toFixed(2)} → $${g.newRetail.toFixed(2)}, ${g.units} unit${g.units === 1 ? '' : 's'})\n`;
+                // Next-order wholesale scales with the retail increase ratio.
+                const nextWholesale = g.thisWholesale * (g.newRetail / g.oldRetail);
+                resultText += `  ${g.productTitle}: this order $${g.thisWholesale.toFixed(2)} → next order $${nextWholesale.toFixed(2)} (retail $${g.oldRetail.toFixed(2)} → $${g.newRetail.toFixed(2)}, ${g.units} unit${g.units === 1 ? '' : 's'})\n`;
               }
               resultText += `\n`;
             }
@@ -458,19 +486,18 @@ const tools = [
         }
       }
 
-      // Annotate each resolved item with the per-line USD discount value to
-      // apply. Snapshot SKUs use FIXED_AMOUNT (currentRetail - oldWholesale);
-      // everything else uses the standard PERCENTAGE discount. Lines with the
-      // per-item override skip the snapshot lookup.
+      // Annotate each resolved item with its net wholesale unit price (store
+      // currency). Snapshot SKUs (variant changed in the Apr-16 rollout, and not
+      // a per-item current-pricing override) price off the pre-increase retail;
+      // everything else off current retail. The price is set as a custom
+      // priceOverride per line, not a discount — see computeWholesaleUnitPrice.
       for (const item of resolvedItems) {
-        if (item.useCurrentPricingOverride) continue;
-        const oldRetail = preIncreasePrices.get(item.variantId);
-        if (oldRetail !== undefined) {
-          const currentRetail = parseFloat(item.price || 0);
-          const targetUnitPrice = oldRetail * (1 - discountPercent / 100);
-          item.preIncreaseRetail = oldRetail;
-          item.fixedDiscountAmount = +(currentRetail - targetUnitPrice).toFixed(2);
-        }
+        const currentRetail = parseFloat(item.price || 0);
+        const oldRetail = item.useCurrentPricingOverride
+          ? undefined
+          : preIncreasePrices.get(item.variantId);
+        if (oldRetail !== undefined) item.preIncreaseRetail = oldRetail;
+        item.unitPrice = computeWholesaleUnitPrice(currentRetail, oldRetail, discountPercent);
       }
 
       // Check currency override
@@ -499,23 +526,11 @@ const tools = [
       const shippingTitle = await getShippingMethodTitle(cc, speed);
 
       function buildDraftInput(itemList, orderNote) {
-        const lineItems = itemList.map(r => {
-          const li = { variantId: r.variantId, quantity: r.quantity };
-          if (r.fixedDiscountAmount != null) {
-            li.appliedDiscount = {
-              title: `Wholesale ${discountPercent}% (pre-Apr-16 retail $${r.preIncreaseRetail.toFixed(2)})`,
-              value: r.fixedDiscountAmount,
-              valueType: 'FIXED_AMOUNT',
-            };
-          } else {
-            li.appliedDiscount = {
-              title: `Wholesale ${discountPercent}%`,
-              value: discountPercent,
-              valueType: 'PERCENTAGE',
-            };
-          }
-          return li;
-        });
+        const lineItems = itemList.map(r => ({
+          variantId: r.variantId,
+          quantity: r.quantity,
+          priceOverride: { amount: r.unitPrice.toFixed(2), currencyCode: STORE_CURRENCY },
+        }));
         const input = {
           customerId: customerGid,
           lineItems,
@@ -578,9 +593,8 @@ const tools = [
             if (audPrice !== undefined) {
               item.lineTotal = audPrice * item.quantity;
             } else {
-              // Fallback: estimate from USD price * probe ratio
-              const price = parseFloat(item.price || 0);
-              item.lineTotal = price * (1 - discountPercent / 100) * item.quantity;
+              // Fallback: estimate from the net wholesale unit price (store currency)
+              item.lineTotal = item.unitPrice * item.quantity;
             }
           }
 
@@ -634,7 +648,7 @@ const tools = [
       outputLines.push('');
       outputLines.push(`**Discount:** ${discountPercent}% (${cc}) | **Currency:** ${currency}${currencyOverride ? ` (override: ${currencyOverride})` : ''}`);
       if (pre_increase_pricing) {
-        const snapshotCount = resolvedItems.filter(r => r.fixedDiscountAmount != null).length;
+        const snapshotCount = resolvedItems.filter(r => r.preIncreaseRetail != null).length;
         const overrideCount = resolvedItems.filter(r => r.useCurrentPricingOverride).length;
         const noChangeCount = resolvedItems.length - snapshotCount - overrideCount;
         const parts = [`${snapshotCount} line(s) at pre-rollout prices`];
@@ -882,3 +896,4 @@ function splitForDeMinimis(items, threshold) {
 }
 
 module.exports = tools;
+module.exports.computeWholesaleUnitPrice = computeWholesaleUnitPrice;
