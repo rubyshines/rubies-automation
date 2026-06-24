@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach', 'swimwear'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -359,10 +359,12 @@ function switchTab(tab) {
   const ticketsPanel = document.getElementById('panel-tickets');
   const adhocPanel = document.getElementById('panel-adhoc');
   const outreachPanel = document.getElementById('panel-outreach');
+  const swimwearPanel = document.getElementById('panel-swimwear');
 
   if (tab === 'outreach') {
     ticketsPanel.style.display = 'none';
     adhocPanel.style.display = 'none';
+    swimwearPanel.style.display = 'none';
     outreachPanel.style.display = 'flex';
     localStorage.setItem('activeTab', tab);
     // Clear any stale ticket hash so a refresh restores Outreach, not the prior ticket
@@ -371,6 +373,17 @@ function switchTab(tab) {
     return;
   }
   outreachPanel.style.display = 'none';
+
+  if (tab === 'swimwear') {
+    ticketsPanel.style.display = 'none';
+    adhocPanel.style.display = 'none';
+    swimwearPanel.style.display = 'flex';
+    localStorage.setItem('activeTab', tab);
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    loadSwimwearQueue();
+    return;
+  }
+  swimwearPanel.style.display = 'none';
 
   if (tab === 'adhoc') {
     ticketsPanel.style.display = 'none';
@@ -5442,3 +5455,142 @@ document.addEventListener('DOMContentLoaded', function initLightbox() {
     if (e.key === 'ArrowRight') nav(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Free Swimwear program
+// ---------------------------------------------------------------------------
+let swimwearStatus = 'new';
+let swimwearQueue = [];
+let swimwearSelectedId = null;
+
+const SWIMWEAR_FILTERS = ['new', 'accepted', 'registered', 'ordered', 'expired', 'rejected'];
+
+async function loadSwimwearQueue() {
+  const container = document.getElementById('swimwear-queue-list');
+  try {
+    swimwearQueue = await api(`/api/swimwear/queue?status=${encodeURIComponent(swimwearStatus)}`);
+  } catch (err) {
+    container.innerHTML = `<div class="swimwear-loading">Failed to load: ${esc(err.message)}</div>`;
+    return;
+  }
+  renderSwimwearFilters();
+  renderSwimwearQueue();
+}
+
+function setSwimwearStatus(s) {
+  swimwearStatus = s;
+  swimwearSelectedId = null;
+  document.getElementById('swimwear-detail').style.display = 'none';
+  document.getElementById('swimwear-placeholder').style.display = 'flex';
+  loadSwimwearQueue();
+}
+
+function renderSwimwearFilters() {
+  document.getElementById('swimwear-filters').innerHTML = `<div class="queue-filter-row">` +
+    SWIMWEAR_FILTERS.map(f => `<button class="filter-chip ${swimwearStatus === f ? 'active' : ''}" onclick="setSwimwearStatus('${f}')">${f}</button>`).join('') +
+    `</div>`;
+}
+
+function renderSwimwearQueue() {
+  const container = document.getElementById('swimwear-queue-list');
+  if (!swimwearQueue.length) {
+    container.innerHTML = `<div class="swimwear-loading">No ${esc(swimwearStatus)} applications.</div>`;
+    return;
+  }
+  container.innerHTML = swimwearQueue.map(swimwearRowHtml).join('');
+}
+
+function swimwearRowHtml(r) {
+  return `
+  <div class="queue-item ${r.id === swimwearSelectedId ? 'active' : ''}" data-id="${r.id}" onclick="selectSwimwear(${r.id})">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="queue-item-name">${esc(r.applicant_name || '(no name)')}</span>
+        <span class="badge badge-muted">age ${esc(r.recipient_age || '?')}</span>
+      </div>
+      <div class="outreach-row-reason">${esc(r.region || '')}</div>
+      ${r.ai_summary ? `<div class="outreach-row-snippet">${esc(r.ai_summary)}</div>` : ''}
+      ${r.discount_code ? `<div class="queue-item-row2"><span class="badge">${esc(r.discount_code)}</span></div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function selectSwimwear(id) {
+  swimwearSelectedId = id;
+  renderSwimwearQueue();
+  const detailEl = document.getElementById('swimwear-detail');
+  document.getElementById('swimwear-placeholder').style.display = 'none';
+  detailEl.style.display = 'block';
+  detailEl.innerHTML = `<div class="swimwear-loading">Loading&hellip;</div>`;
+  try {
+    const r = await api(`/api/swimwear/${id}`);
+    if (swimwearSelectedId !== id) return;
+    renderSwimwearDetail(r);
+  } catch (err) {
+    detailEl.innerHTML = `<div class="swimwear-loading">Failed: ${esc(err.message)}</div>`;
+  }
+}
+
+function swimwearField(label, val) {
+  if (!val) return '';
+  return `<div class="outreach-field-label">${label}</div><div style="margin-bottom:12px;white-space:pre-wrap">${esc(val)}</div>`;
+}
+
+function renderSwimwearDetail(r) {
+  const el = document.getElementById('swimwear-detail');
+  const trans = r.is_trans_nonbinary === true ? 'yes' : r.is_trans_nonbinary === false ? 'no' : 'unknown';
+  const canApprove = r.status === 'new' && !r.discount_code;
+  const canResend = !!r.discount_code && ['accepted', 'registered'].includes(r.status);
+
+  const actions = `<div class="outreach-actions" style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap">
+    ${canApprove ? `<button class="btn btn-primary" onclick="approveSwimwear(${r.id})">Approve &amp; send code</button>` : ''}
+    ${r.status === 'new' ? `<button class="btn" onclick="rejectSwimwear(${r.id})">Reject (silent)</button>` : ''}
+    ${canResend ? `<button class="btn" onclick="resendSwimwear(${r.id})">Resend code</button>` : ''}
+    <button class="btn btn-muted" onclick="summarizeSwimwear(${r.id})">Re-summarize</button>
+  </div>`;
+
+  el.innerHTML = `
+    <div class="outreach-detail-head"><h2>${esc(r.applicant_name || '(no name)')}</h2>
+      <span class="badge ${r.status === 'rejected' ? 'badge-muted' : ''}">${esc(r.status)}</span></div>
+    <div class="outreach-detail-sub">${esc(r.email)} &middot; age ${esc(r.recipient_age || '?')} &middot; trans/non-binary: ${trans} &middot; ${esc(r.region || '?')}</div>
+    ${r.ai_summary ? `<div class="outreach-row-snippet" style="margin:8px 0">${esc(r.ai_summary)}</div>` : ''}
+    ${r.eligibility_reason ? `<div class="outreach-detail-sub">eligibility: ${esc(r.eligibility_reason)}</div>` : ''}
+    ${actions}
+    ${r.discount_code ? `<div class="outreach-detail-sub">code <b>${esc(r.discount_code)}</b>${r.expiry_date ? ` &middot; expires ${esc(new Date(r.expiry_date).toLocaleDateString())}` : ''}${r.order_numbers && r.order_numbers.length ? ` &middot; orders ${esc(r.order_numbers.join(', '))}` : ''}</div>` : ''}
+    <hr style="margin:14px 0;border:none;border-top:1px solid var(--border,#333)">
+    ${swimwearField('Situation', r.situation)}
+    ${swimwearField('Why', r.why)}
+    ${swimwearField('Size', r.size)}
+    ${swimwearField('Product they want', r.product_want)}
+    ${swimwearField('Colour / pattern', r.color_pattern)}
+    ${swimwearField('Where they heard about RUBIES', r.where_heard)}
+    ${swimwearField('First reaction', r.first_reaction)}
+    ${swimwearField('Suggestions', r.suggestions)}
+  `;
+}
+
+async function swimwearAction(id, path, body) {
+  try {
+    const res = await api(`/api/swimwear/${id}/${path}`, { method: 'POST', body: body || {} });
+    if (res && res.error) { alert(res.error); return; }
+    await loadSwimwearQueue();
+    await selectSwimwear(id);
+  } catch (err) {
+    alert(`Failed: ${err.message}`);
+  }
+}
+
+async function approveSwimwear(id) {
+  if (!confirm('Approve this application? This issues a free-swimwear code and emails the family.')) return;
+  await swimwearAction(id, 'approve');
+}
+async function rejectSwimwear(id) {
+  if (!confirm('Reject this application? No email is sent (silent).')) return;
+  await swimwearAction(id, 'reject');
+}
+async function resendSwimwear(id) {
+  await swimwearAction(id, 'resend');
+}
+async function summarizeSwimwear(id) {
+  await swimwearAction(id, 'summary');
+}

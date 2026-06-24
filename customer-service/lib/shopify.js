@@ -1447,6 +1447,39 @@ async function createDiscountCode(input) {
   return data.discountCodeBasicCreate.codeDiscountNode;
 }
 
+/**
+ * Add a single discount code to an EXISTING price rule, via the REST Admin API.
+ *
+ * Used by the Free Swimwear program: the "Free RUBIES Program" price rule
+ * (id 1577372680470 — $X off the rubies-free-donation collection, limit 1)
+ * owns the definition of what's free; each approved family just gets a fresh
+ * unique code under it. This is the same synchronous call the legacy Apps
+ * Script made (POST price_rules/{id}/discount_codes.json) — the GraphQL
+ * bulk-add path is asynchronous, which is worse for issuing one code on demand.
+ *
+ * @param {string|number} priceRuleId - legacy numeric price rule id
+ * @param {string} code - the discount code to create
+ * @returns {{id:number, code:string, price_rule_id:number}} created code
+ * @throws on Shopify error; duplicate codes surface as "code ... taken".
+ */
+async function addCodeToPriceRule(priceRuleId, code) {
+  const { storeUrl, token } = getConfig();
+  const url = `https://${storeUrl}/admin/api/${SHOPIFY_API_VERSION}/price_rules/${priceRuleId}/discount_codes.json`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': token,
+    },
+    body: JSON.stringify({ discount_code: { code } }),
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok || json.errors) {
+    throw new Error(`addCodeToPriceRule (${response.status}): ${JSON.stringify(json.errors || json)}`);
+  }
+  return json.discount_code;
+}
+
 // --- Product creation ---
 
 /**
@@ -1963,6 +1996,7 @@ module.exports = {
   updateCustomer,
   createDiscountCode,
   randomDiscountCode,
+  addCodeToPriceRule,
   normalizeOrderNumber,
   calculateRefund,
   createRefund,

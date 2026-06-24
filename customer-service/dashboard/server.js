@@ -2675,6 +2675,50 @@ async function apiB2bSend(body = {}) {
   });
 }
 
+// --- Free Swimwear panel (delegates to the free_swimwear_* MCP tools so logic
+// lives in one place) ---
+const freeSwimwearTools = require('../lib/tools/freeSwimwear');
+const freeSwimwearToolMap = Object.fromEntries(freeSwimwearTools.map(t => [t.name, t]));
+
+async function callSwimwearTool(name, input) {
+  const tool = freeSwimwearToolMap[name];
+  const res = await tool.handler(input);
+  return res;
+}
+
+async function apiSwimwearQueue(searchParams) {
+  const status = searchParams.get('status') || 'new';
+  const limit = parseInt(searchParams.get('limit') || '100', 10);
+  const res = await callSwimwearTool('free_swimwear_list_requests', { status, limit });
+  return res._structured?.requests || [];
+}
+
+async function apiSwimwearGet(id) {
+  const res = await callSwimwearTool('free_swimwear_get_request', { id });
+  if (res.isError) { const e = new Error(res.content[0].text); e.statusCode = 404; throw e; }
+  return res._structured.request;
+}
+
+async function apiSwimwearApprove(id, body = {}) {
+  const res = await callSwimwearTool('free_swimwear_approve', { id, confirmed: true, operator: body.operator || null });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+}
+
+async function apiSwimwearReject(id, body = {}) {
+  const res = await callSwimwearTool('free_swimwear_reject', { id, reason: body.reason || null, operator: body.operator || null });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+}
+
+async function apiSwimwearResend(id) {
+  const res = await callSwimwearTool('free_swimwear_resend', { id });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+}
+
+async function apiSwimwearSummary(id) {
+  const res = await callSwimwearTool('free_swimwear_summary', { id });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+}
+
 async function apiGetTicket(id) {
   const supabase = getSupabaseClient();
 
@@ -3037,6 +3081,7 @@ const routes = {
   'GET /api/autosend-config': () => apiGetAutosendConfig(),
   'GET /api/autoaction-config': () => apiGetAutoactionConfig(),
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');
     const exclude = new Set(['customer_support', 'spam', 'auto_reply', 'newsletter', 'skip', 'pipeline', 'internal']);
@@ -3066,6 +3111,12 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
+  // Free Swimwear panel
+  { method: 'GET', pattern: /^\/api\/swimwear\/(\d+)$/, handler: (_, id) => apiSwimwearGet(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/approve$/, handler: (body, id) => apiSwimwearApprove(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/reject$/, handler: (body, id) => apiSwimwearReject(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/resend$/, handler: (_, id) => apiSwimwearResend(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/summary$/, handler: (_, id) => apiSwimwearSummary(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
