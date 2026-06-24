@@ -874,4 +874,4 @@ async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, tar
   }
 }
 
-module.exports = { runProjection };
+module.exports = { runProjection, fetchIncomingOrders, PRE_ORDER_SHEET_ID };

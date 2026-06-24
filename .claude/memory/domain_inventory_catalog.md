@@ -8,6 +8,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Product Sync Pipeline:** Fetches from Shopify GraphQL — title, handle, status, product metafields (sizes, colors, fit_description, materials, bundle associations, labels, discount_percent), and variant-level pre-order metafields (`pre_order_incoming`, `pre_order_date` — from Shopify's `custom.pre_order_incoming_us` / `pre_order_date_us`; the `_us` suffix is historical, single-warehouse era). ~500 variants across 25 products synced to Supabase `products` + `product_variants` tables. Shopify GIDs as PKs.
 
+**Pre-Order Web Sync:** `sync_pre_orders` MCP tool + `scripts/syncPreOrders.js` CLI read the incoming-inventory sheet (us-YYYY-MM-DD tabs, reusing `fetchIncomingOrders`) and push pre-order state to the website per variant: `inventory_policy=continue` plus variant metafields `pre_order_incoming_us` (total upcoming qty) and `pre_order_date_us` (earliest upcoming date). Reconciles against the sheet — clears (policy=deny + deletes the `_us` metafields) any variant whose arrivals have all passed. Scopable to a SKU prefix (e.g. "MPAD"); mirrors writes to `product_variants`. Batched per product via `productVariantsBulkUpdate`. CLI defaults to dry-run, `--send` to apply.
+
 **In-Memory Product Cache:** Loads full catalog from Supabase at startup. Reshapes into Shopify-compatible format for fuzzy search. Reload on demand via `reload_products` tool.
 
 **Fuzzy Search:** Three-part scoring — tokenization (splits query into size tokens vs descriptive tokens), fuzzy matching (product title, variant titles, SKU, tags), size filtering (with numeric-to-letter fallback). Example: "Ruby bikini bottom size L in red" → product + size + color matched.
@@ -35,6 +37,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/lib/tools/seoMeta.js` — `seo_meta_draft` + `seo_meta_update` MCP tools.
 - `customer-service/sync/syncCollections.js` — Daily Shopify → Supabase collections sync.
 - `inventory-tracking/daily-inventory-tracking.js` — Daily inventory snapshot pipeline.
+- `customer-service/lib/merchandising/preOrderSync.js` — Sheet → Shopify pre-order write/reconcile (tool `sync_pre_orders`, CLI `scripts/syncPreOrders.js`).
 
 ## Key Decisions
 
@@ -46,6 +49,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **SEO meta drafts anchor on the page's display title, not the product list.** When `seo_meta_draft` generates a title/description, the collection/product display title defines the category — products are supporting evidence for in-category specifics, never used to broaden scope. A "Tops" collection that contains a bikini top stays a Tops page (not Tops + Swimwear), even when individual products span multiple categories. House style for the SEO meta itself (descriptor patterns, sizing range, audience phrasing, no em dashes) lives in the prompt inside `seoMeta.js`, not duplicated here.
 
 ## Key Decisions (continued)
+
+- **Live pre-order source of truth is the variant-level `_us` metafields + `inventory_policy`, NOT the legacy product-level fields.** The storefront reads `custom.pre_order_incoming_us` / `pre_order_date_us` per country via `api.rubyshines.com`; `inventory_policy=continue` is the master switch that keeps an out-of-stock variant buyable and flips the PDP button to "Pre-Order". The 2025-era product-level `custom.pre_order_skus` / `pre_order_date` metafields are abandoned (stale 2025 data still on Shopify) — read/write the variant `_us` pair, never the product-level ones. Pre-order is US-only today, so `sync_pre_orders` writes the `_us` keys directly (hardcoded); add a country param when a second market needs it.
 
 - **Inventory projections output to `inventory_projections` Supabase table.** Queried via `run_inventory_projection` / `get_at_risk_skus` MCP tools (building June 2026 — see `initiative_production_pipeline.md`). OOS-adjusted velocity uses `available_quantity <= 0` in snapshots as the stockout signal. Supplier registry in `suppliers` table; SKU prefix → supplier mapping drives production order generation.
 

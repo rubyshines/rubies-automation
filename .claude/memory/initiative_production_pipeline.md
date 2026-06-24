@@ -3,7 +3,7 @@ name: Production Pipeline
 description: End-to-end manufacturing workflow — inventory projections, production orders, pre-orders, QC, Warehance receiving
 type: project
 domains: [product_design, inventory, logistics]
-last_updated: 2026-06-08
+last_updated: 2026-06-24
 ---
 
 ## Goal
@@ -12,13 +12,13 @@ Connect the various scripts and processes into one cohesive production pipeline:
 ## Phases
 1. Inventory projection engine + supplier registry — **design complete, ready to build** (plan: `.claude/plans/merchandising-projection-engine.md`)
 2. Production order generation — design complete (part of Phase 1 plan above)
-3. Pre-order setup — automate populating `us-YYYY-MM-DD` tabs in pre-order spreadsheet from a confirmed production order
+3. Pre-order setup — **sheet→web push built** (`sync_pre_orders`); remaining: auto-populate `us-YYYY-MM-DD` tabs from a confirmed production order
 4. QC spreadsheet generation for third-party inspector
 5. Warehance receiving upload + received vs ordered reconciliation
 6. Graded spec collection — started (shared with product design initiatives)
 
 ## Current Status
-Phase 1+2 design locked June 2026. Existing `rubies-utilities` projection script identified as the baseline; new version rebuilds against Supabase, adds OOS-adjusted velocity, supplier registry, and `get_at_risk_skus` query tool. Phases 3-6 not yet started.
+Phase 1+2 design locked June 2026. Existing `rubies-utilities` projection script identified as the baseline; new version rebuilds against Supabase, adds OOS-adjusted velocity, supplier registry, and `get_at_risk_skus` query tool. Phase 3 partially delivered 2026-06-24: the sheet→Shopify pre-order push is built (`sync_pre_orders` tool + `scripts/syncPreOrders.js`) and run live across the catalog — it reads the same `us-YYYY-MM-DD` sheet the projection engine uses and reconciles pre-order metafields + inventory policy. Remaining Phase 3 work is auto-populating those tabs from a confirmed production order. Phases 4-6 not yet started.
 
 ## Decisions Made
 - **Supabase as canonical store for projection output.** Results written to `inventory_projections` table (upsert by SKU per run). Google Sheets output is optional view only.
