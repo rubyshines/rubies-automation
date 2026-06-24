@@ -1521,6 +1521,43 @@ async function updateVariantPrices(productId, variantPrices) {
 }
 
 /**
+ * Set pre-order state on variants of a single product in one bulk call.
+ * Each entry: { id, inventoryPolicy: 'CONTINUE'|'DENY', metafields: [{ namespace, key, type, value }] }
+ * - inventoryPolicy CONTINUE is the master switch that makes an out-of-stock
+ *   variant buyable and flips the PDP button to "Pre-Order".
+ * - metafields carry the per-country incoming count + availability date the
+ *   storefront (api.rubyshines.com) reads to render the pre-order message.
+ */
+async function updateVariantPreOrder(productId, variants) {
+  const data = await shopifyGraphQL(`
+    mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        productVariants { id sku inventoryPolicy }
+        userErrors { field message }
+      }
+    }
+  `, { productId, variants });
+  return data.productVariantsBulkUpdate.productVariants;
+}
+
+/**
+ * Delete metafields by owner identifier (no need to know the metafield IDs).
+ * identifiers: [{ ownerId, namespace, key }]
+ */
+async function deleteVariantMetafields(identifiers) {
+  if (!identifiers || identifiers.length === 0) return [];
+  const data = await shopifyGraphQL(`
+    mutation metafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+      metafieldsDelete(metafields: $metafields) {
+        deletedMetafields { ownerId namespace key }
+        userErrors { field message }
+      }
+    }
+  `, { metafields: identifiers });
+  return data.metafieldsDelete.deletedMetafields;
+}
+
+/**
  * Update a product's status (e.g., DRAFT → ACTIVE).
  * @param {string} productId - Shopify product GID
  * @param {string} status - "ACTIVE" or "DRAFT"
@@ -1935,6 +1972,8 @@ module.exports = {
   createProductVariants,
   updateProductStatus,
   updateVariantPrices,
+  updateVariantPreOrder,
+  deleteVariantMetafields,
   // Order Edit API
   getOrderForEdit,
   orderEditBegin,
