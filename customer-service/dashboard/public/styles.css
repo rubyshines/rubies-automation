@@ -1530,6 +1530,9 @@ main { height: calc(100vh - 56px); }
   color: var(--text-tertiary);
 }
 
+.badge-ok { background: var(--green-bg); color: var(--green); }
+.badge-warn { background: var(--red-bg); color: var(--red); }
+
 .ticket-entry-detail {
   margin-top: 6px;
   padding: 8px 10px;
