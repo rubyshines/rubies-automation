@@ -52,6 +52,7 @@ function loadAllOperatorTools() {
     require('./tools/createOutreachTicket'),
     require('./tools/warehouseAllocation'),
     require('./tools/donationPartners'),
+    require('./tools/freeSwimwear'),
     require('./tools/storeLocator'),
     require('./tools/b2bOutreach'),
     require('./tools/emailStudio'),

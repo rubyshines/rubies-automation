@@ -82,6 +82,14 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncDeliveryTimes').run(),
   },
   {
+    name: 'Free Swimwear Apps',
+    run: () => require('./customer-service/sync/syncFreeSwimwearRequests').run({ live: true }),
+  },
+  {
+    name: 'Free Swimwear Lifecycle',
+    run: () => require('./customer-service/sync/freeSwimwearLifecycle').run({ live: true }),
+  },
+  {
     name: 'Gmail Management',
     run: () => require('./gmail-management/sync/syncGmail').run(),
   },
