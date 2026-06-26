@@ -186,20 +186,26 @@ async function readTab(sheets, tab) {
   return out;
 }
 
+const dedupeKey = r => `${(r.email || '').toLowerCase()}|${r.submitted_at || ''}`;
+
 /**
  * Read application rows.
  * @param {Object} opts
  * @param {boolean} opts.legacy - include the legacy "Sheet5" tab (backfill).
  * @returns {Promise<Array>} normalized free_swimwear_requests rows.
+ *
+ * "Sheet5" is a stale snapshot that overlaps Form Responses 1 almost entirely,
+ * so legacy rows that match a current-form row (same email + submission time)
+ * are dropped — only genuinely legacy-only applicants are kept.
  */
 async function readApplications({ legacy = false } = {}) {
   const sheets = await getSheetsClient();
-  const tabs = legacy ? RESPONSE_TABS : ['Form Responses 1'];
-  let all = [];
-  for (const tab of tabs) {
-    all = all.concat(await readTab(sheets, tab));
-  }
-  return all;
+  const form = await readTab(sheets, 'Form Responses 1');
+  if (!legacy) return form;
+
+  const formKeys = new Set(form.map(dedupeKey));
+  const legacyOnly = (await readTab(sheets, 'Sheet5')).filter(r => !formKeys.has(dedupeKey(r)));
+  return form.concat(legacyOnly);
 }
 
 module.exports = {
