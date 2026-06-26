@@ -65,11 +65,44 @@ function clearCache() {
   _cache = null;
 }
 
+// Full vendor list (uncached read), ordered for display.
+async function listSuppliers() {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.from('suppliers').select('*').order('type').order('name');
+  if (error) throw new Error(`listSuppliers: ${error.message}`);
+  return data || [];
+}
+
+// Upsert a vendor by name: UPDATE the matching row, else INSERT. Returns the row.
+// `patch` is any subset of supplier columns; `name` is required.
+async function upsertSupplier(patch) {
+  if (!patch || !patch.name) throw new Error('upsertSupplier: name is required');
+  const supabase = getSupabaseClient();
+  const existing = await getSupplierByName(patch.name);
+  let row;
+  if (existing) {
+    const { data, error } = await supabase
+      .from('suppliers').update(patch).eq('id', existing.id).select('*').single();
+    if (error) throw new Error(`upsertSupplier update: ${error.message}`);
+    row = data;
+  } else {
+    const insert = { sku_prefixes: [], ...patch };
+    const { data, error } = await supabase
+      .from('suppliers').insert(insert).select('*').single();
+    if (error) throw new Error(`upsertSupplier insert: ${error.message}`);
+    row = data;
+  }
+  clearCache();
+  return { row, created: !existing };
+}
+
 module.exports = {
   shouldExcludeSku,
   getSupplierBySku,
   getSupplierByName,
   getAllSupplierNames,
+  listSuppliers,
+  upsertSupplier,
   clearCache,
   EXCLUDED_PREFIXES,
 };
