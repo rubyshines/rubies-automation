@@ -5500,6 +5500,12 @@ function renderSwimwearQueue() {
   container.innerHTML = swimwearQueue.map(swimwearRowHtml).join('');
 }
 
+function swimwearTransBadge(v) {
+  if (v === true) return '<span class="badge badge-ok">trans/NB</span>';
+  if (v === false) return '<span class="badge badge-warn">not trans/NB</span>';
+  return '<span class="badge badge-muted">identity ?</span>';
+}
+
 function swimwearRowHtml(r) {
   return `
   <div class="queue-item ${r.id === swimwearSelectedId ? 'active' : ''}" data-id="${r.id}" onclick="selectSwimwear(${r.id})">
@@ -5507,6 +5513,7 @@ function swimwearRowHtml(r) {
       <div class="queue-item-row1">
         <span class="queue-item-name">${esc(r.applicant_name || '(no name)')}</span>
         <span class="badge badge-muted">age ${esc(r.recipient_age || '?')}</span>
+        ${swimwearTransBadge(r.is_trans_nonbinary)}
       </div>
       <div class="outreach-row-reason">${esc(r.region || '')}</div>
       ${r.ai_summary ? `<div class="outreach-row-snippet">${esc(r.ai_summary)}</div>` : ''}
@@ -5538,7 +5545,6 @@ function swimwearField(label, val) {
 
 function renderSwimwearDetail(r) {
   const el = document.getElementById('swimwear-detail');
-  const trans = r.is_trans_nonbinary === true ? 'yes' : r.is_trans_nonbinary === false ? 'no' : 'unknown';
   const canApprove = r.status === 'new' && !r.discount_code;
   const canResend = !!r.discount_code && ['accepted', 'registered'].includes(r.status);
 
@@ -5552,7 +5558,7 @@ function renderSwimwearDetail(r) {
   el.innerHTML = `
     <div class="outreach-detail-head"><h2>${esc(r.applicant_name || '(no name)')}</h2>
       <span class="badge ${r.status === 'rejected' ? 'badge-muted' : ''}">${esc(r.status)}</span></div>
-    <div class="outreach-detail-sub">${esc(r.email)} &middot; age ${esc(r.recipient_age || '?')} &middot; trans/non-binary: ${trans} &middot; ${esc(r.region || '?')}</div>
+    <div class="outreach-detail-sub">${esc(r.email)} &middot; age ${esc(r.recipient_age || '?')} &middot; ${swimwearTransBadge(r.is_trans_nonbinary)} &middot; ${esc(r.region || '?')}</div>
     ${r.ai_summary ? `<div class="outreach-row-snippet" style="margin:8px 0">${esc(r.ai_summary)}</div>` : ''}
     ${r.eligibility_reason ? `<div class="outreach-detail-sub">eligibility: ${esc(r.eligibility_reason)}</div>` : ''}
     ${actions}
