@@ -5513,7 +5513,6 @@ function swimwearRowHtml(r) {
       <div class="queue-item-row1">
         <span class="queue-item-name">${esc(r.applicant_name || '(no name)')}</span>
         <span class="badge badge-muted">age ${esc(r.recipient_age || '?')}</span>
-        ${swimwearTransBadge(r.is_trans_nonbinary)}
       </div>
       <div class="outreach-row-reason">${esc(r.region || '')}</div>
       ${r.ai_summary ? `<div class="outreach-row-snippet">${esc(r.ai_summary)}</div>` : ''}
