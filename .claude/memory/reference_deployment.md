@@ -31,9 +31,10 @@ All cron times are UTC. Each has a `railway/<name>.toml` with its `cronSchedule`
 | monthly-competitor-pricing | `0 14 1 * *` (1st, 10am ET) | `competitor-pricing/monthly-competitor-pricing.js` |
 | passport-tracking-sync | `37 * * * *` (hourly at :37) | `customer-service/sync/syncPassportDelivery.js --limit 50` |
 | cs-drift-check | `0 * * * *` (hourly) | `customer-service/sync/hourlyDriftCheck.js` — read-only Gorgias↔Advisor drift detector, emails only on drift (distinct from the never-schedule `gorgiasAdvisorResync.js` fixer) |
-| free-swimwear | `0 13 * * *` (9:00am ET) | `syncFreeSwimwearRequests.js --live` then `freeSwimwearLifecycle.js --live` — import new free-swimwear applications, then reconcile register/order/expire/resend |
 
-Some cron start commands run `scripts/write-service-account-key.js` first (writes Google service account JSON from env var to disk at runtime): daily-seo-tracking, daily-sync-all, weekly-seo-digest, monthly-competitor-pricing, free-swimwear.
+Free swimwear (import new applications, then reconcile register/order/expire/resend) runs as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), not a separate cron service.
+
+Some cron start commands run `scripts/write-service-account-key.js` first (writes Google service account JSON from env var to disk at runtime): daily-seo-tracking, daily-sync-all, weekly-seo-digest, monthly-competitor-pricing.
 
 > **`cs-drift-check` — config-path note (2026-06-14).** This service was misconfigured for a long time: with no `railway/cs-drift-check.toml` it fell back to the root `railway.toml` and ran a duplicate `node webhooks/server.js` (its hourly drift email never ran). Fixed by adding `railway/cs-drift-check.toml` + the entry in `copy-railway-vars.js`. **One-time manual step required:** in the Railway dashboard, set this service's config-as-code path to `railway/cs-drift-check.toml` (Settings → Config-as-code) — Railway won't pick up the new file until that pointer is changed off the root `railway.toml`.
 

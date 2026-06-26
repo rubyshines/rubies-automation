@@ -1,9 +1,0 @@
-[build]
-builder = "NIXPACKS"
-nixpacksConfigPath = "nixpacks-no-chromium.toml"
-
-[deploy]
-# Import new form submissions (needs Google service account), then reconcile the
-# lifecycle against Shopify (register/order/expire/resend). 9:00am ET.
-startCommand = "node scripts/write-service-account-key.js && node customer-service/sync/syncFreeSwimwearRequests.js --live && node customer-service/sync/freeSwimwearLifecycle.js --live"
-cronSchedule = "0 13 * * *"

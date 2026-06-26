@@ -25,7 +25,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partner list is 14 active orgs (US/CA/CH/AU/DE/etc.).
-- **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab. Full history backfilled (1765 applications). Daily sync + lifecycle cron (`railway/free-swimwear.toml`, 9am ET) — needs the Railway service created + added to `copy-railway-vars.js`.
+- **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab. Full history backfilled (1765 applications). The daily import + lifecycle reconcile run as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), no separate cron.
 
 ## Key Files
 

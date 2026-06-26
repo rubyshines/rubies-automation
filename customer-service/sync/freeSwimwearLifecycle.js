@@ -6,9 +6,8 @@
  *   accepted/registered → expired (past the 30-day window)
  *   resend the acceptance email on the 7-day / <3-attempt cadence
  *
- * Idempotent; only touches rows needing work. Dry-run by default.
- *
- * Usage:
+ * Idempotent; only touches rows needing work. Runs as a sub-pipeline of
+ * daily-sync-all.js (live); also runnable directly:
  *   node customer-service/sync/freeSwimwearLifecycle.js          # dry-run
  *   node customer-service/sync/freeSwimwearLifecycle.js --live   # apply + send resends
  */
@@ -32,8 +31,12 @@ async function lookupShopify(email) {
   return { customer: { id: customer.id, createdAt: customer.createdAt }, orders };
 }
 
-async function main() {
-  const live = process.argv.slice(2).includes('--live');
+/**
+ * Reconcile open applications. Returns a daily-sync-all pipeline result.
+ * @param {Object} opts
+ * @param {boolean} opts.live - apply DB changes + send resend emails (default false).
+ */
+async function run({ live = false } = {}) {
   const now = new Date();
   const supabase = getSupabaseClient();
 
@@ -66,9 +69,17 @@ async function main() {
 
   console.log('[freeSwimwearLifecycle] actions:', JSON.stringify(counts));
   if (!live) console.log('[freeSwimwearLifecycle] DRY RUN — pass --live to apply + send.');
+
+  const changed = counts.registered + counts.ordered + counts.expired + counts.resend;
+  return { status: 'ok', sources: { lifecycle: { success: true, rowsWritten: live ? changed : 0, note: `${changed} transitions` } } };
 }
 
-main().catch(err => {
-  console.error('[freeSwimwearLifecycle] FAILED:', err.message);
-  process.exit(1);
-});
+module.exports = { run };
+
+if (require.main === module) {
+  run({ live: process.argv.slice(2).includes('--live') })
+    .catch(err => {
+      console.error('[freeSwimwearLifecycle] FAILED:', err.message);
+      process.exit(1);
+    });
+}

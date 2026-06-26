@@ -6,7 +6,8 @@
  * is only the intake feed for NEW submissions. Re-running never clobbers a
  * portal/lifecycle decision, so it's safe to run on a schedule and concurrently.
  *
- * Usage:
+ * Runs as a sub-pipeline of daily-sync-all.js (live, current form only); also
+ * runnable directly:
  *   node customer-service/sync/syncFreeSwimwearRequests.js            # dry-run, current form only
  *   node customer-service/sync/syncFreeSwimwearRequests.js --backfill # dry-run, include legacy tab
  *   node customer-service/sync/syncFreeSwimwearRequests.js --live     # write new rows
@@ -40,11 +41,13 @@ function tally(rows, field) {
   return t;
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  const backfill = args.includes('--backfill');
-  const live = args.includes('--live');
-
+/**
+ * Import new applications. Returns a daily-sync-all pipeline result.
+ * @param {Object} opts
+ * @param {boolean} opts.backfill - include the legacy "Sheet5" tab.
+ * @param {boolean} opts.live - actually insert (default false = dry run).
+ */
+async function run({ backfill = false, live = false } = {}) {
   console.log(`[freeSwimwearSync] reading sheet (${backfill ? 'form + legacy' : 'form only'})...`);
   const rows = await readApplications({ legacy: backfill });
   console.log(`[freeSwimwearSync] read ${rows.length} rows`);
@@ -58,11 +61,7 @@ async function main() {
 
   if (!live) {
     console.log('[freeSwimwearSync] DRY RUN — pass --live to insert. No writes made.');
-    return;
-  }
-  if (newRows.length === 0) {
-    console.log('[freeSwimwearSync] nothing to insert.');
-    return;
+    return { status: 'ok', sources: { applications: { success: true, rowsWritten: 0, note: `${newRows.length} new (dry run)` } } };
   }
 
   let inserted = 0;
@@ -75,9 +74,16 @@ async function main() {
     console.log(`[freeSwimwearSync] inserted ${inserted}/${newRows.length}`);
   }
   console.log(`[freeSwimwearSync] done — inserted ${inserted} rows.`);
+  return { status: 'ok', sources: { applications: { success: true, rowsWritten: inserted } } };
 }
 
-main().catch(err => {
-  console.error('[freeSwimwearSync] FAILED:', err.message);
-  process.exit(1);
-});
+module.exports = { run };
+
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  run({ backfill: args.includes('--backfill'), live: args.includes('--live') })
+    .catch(err => {
+      console.error('[freeSwimwearSync] FAILED:', err.message);
+      process.exit(1);
+    });
+}
