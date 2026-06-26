@@ -8,8 +8,10 @@
 -- ===========================================================================
 -- 1. Manufacturer / vendor registry — extend suppliers
 -- ===========================================================================
+-- manufacturer = overseas/volume factory; studio = Canadian R&D + first-run (Pigeons & Thread);
+-- freight_forwarder = e.g. Harry/CLH Express; qc_inspector = independent pre-ship QC (Joyce/galenfixqc).
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'manufacturer'
-  CHECK (type IN ('manufacturer','freight_forwarder'));
+  CHECK (type IN ('manufacturer','studio','freight_forwarder','qc_inspector'));
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address_line1 TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS address_line2 TEXT;
 ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS city TEXT;
