@@ -1,4 +1,5 @@
-# Node
+# Node — match both real dirs and symlinks (worktrees symlink node_modules)
+node_modules
 node_modules/
 
 # Environment
