@@ -15,21 +15,24 @@
  */
 
 require('dotenv').config();
-const { readApplications } = require('../lib/freeSwimwearSurvey');
+const { readApplications, identityKey } = require('../lib/freeSwimwearSurvey');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
 const TABLE = 'free_swimwear_requests';
 
+// Identity is (email, submitted_at) — NOT sheet position. The sheet re-sorts,
+// so keying on sheet_row would re-insert every applicant as a duplicate whenever
+// the row order changes.
 async function fetchExistingKeys(supabase) {
   const keys = new Set();
   const pageSize = 1000;
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabase
       .from(TABLE)
-      .select('source, sheet_row')
+      .select('email, submitted_at')
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`fetch existing keys: ${error.message}`);
-    for (const r of data) keys.add(`${r.source}:${r.sheet_row}`);
+    for (const r of data) keys.add(identityKey(r));
     if (data.length < pageSize) break;
   }
   return keys;
@@ -54,7 +57,7 @@ async function run({ backfill = false, live = false } = {}) {
 
   const supabase = getSupabaseClient();
   const existing = await fetchExistingKeys(supabase);
-  const newRows = rows.filter(r => !existing.has(`${r.source}:${r.sheet_row}`));
+  const newRows = rows.filter(r => !existing.has(identityKey(r)));
 
   console.log(`[freeSwimwearSync] ${existing.size} already in Supabase, ${newRows.length} new`);
   console.log(`[freeSwimwearSync] new by status:`, JSON.stringify(tally(newRows, 'status')));

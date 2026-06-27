@@ -60,12 +60,16 @@ const tools = [
       const supabase = getSupabaseClient();
       const status = input.status || 'new';
       const limit = input.limit || 50;
-      const { data, error } = await supabase
-        .from(TABLE)
-        .select(LIST_COLS)
-        .eq('status', status)
-        .order('submitted_at', { ascending: true })
-        .limit(limit);
+      // New queue: newest applications first. Decided lists (accepted/registered/
+      // ordered/expired/rejected): most-recently-decided first, so an item jumps
+      // to the top right after you act on it; backfilled rows (no decided_at)
+      // fall below, ordered by submission date.
+      let query = supabase.from(TABLE).select(LIST_COLS).eq('status', status);
+      query = status === 'new'
+        ? query.order('submitted_at', { ascending: false, nullsFirst: false })
+        : query.order('decided_at', { ascending: false, nullsFirst: false })
+               .order('submitted_at', { ascending: false, nullsFirst: false });
+      const { data, error } = await query.limit(limit);
       if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
       const lines = [`**Free Swimwear — ${status}** (${data.length})`, ''];
       for (const r of data) {
