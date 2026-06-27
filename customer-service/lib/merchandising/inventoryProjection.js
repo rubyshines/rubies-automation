@@ -483,7 +483,7 @@ async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDay
   }
 
   // Pre-load all suppliers (caches on first call)
-  const projectionRows = [];
+  let projectionRows = [];
 
   for (const variant of filteredVariants) {
     const { sku, inventory_quantity, product_handle, product_name } = variant;
@@ -566,6 +566,21 @@ async function runProjection({ growthFactor = 1.3, targetWeeks = 78, lookbackDay
       supplier_id: supplier?.id || null,
       updated_at: new Date().toISOString(),
     });
+  }
+
+  // Dedupe by SKU before upserting. A duplicate SKU upstream (e.g. two variants sharing a SKU)
+  // would otherwise make one upsert batch touch the same conflict key twice, which Postgres
+  // rejects ("ON CONFLICT ... cannot affect row a second time"). Keep the first; warn with the
+  // offending SKUs so the source can be fixed.
+  const bySku = new Map();
+  const dupSkus = [];
+  for (const row of projectionRows) {
+    if (bySku.has(row.sku)) dupSkus.push(row.sku);
+    else bySku.set(row.sku, row);
+  }
+  if (dupSkus.length) {
+    console.warn(`[projection] WARNING: ${dupSkus.length} duplicate SKU row(s) collapsed: ${[...new Set(dupSkus)].join(', ')}`);
+    projectionRows = Array.from(bySku.values());
   }
 
   // Upsert all projection rows
