@@ -2701,17 +2701,17 @@ async function apiSwimwearGet(id) {
 
 async function apiSwimwearApprove(id, body = {}) {
   const res = await callSwimwearTool('free_swimwear_approve', { id, confirmed: true, operator: body.operator || null });
-  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text, ...res._structured };
 }
 
 async function apiSwimwearReject(id, body = {}) {
   const res = await callSwimwearTool('free_swimwear_reject', { id, reason: body.reason || null, operator: body.operator || null });
-  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text, ...res._structured };
 }
 
 async function apiSwimwearResend(id) {
   const res = await callSwimwearTool('free_swimwear_resend', { id });
-  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text, ...res._structured };
 }
 
 async function apiSwimwearSummary(id) {
