@@ -56,14 +56,12 @@ CREATE TABLE IF NOT EXISTS free_swimwear_requests (
   updated_at               timestamptz NOT NULL DEFAULT now()
 );
 
--- Natural key = the source sheet row (append-only, so stable forever). The sync
+-- Natural key = (email, submission time). This is STABLE; sheet_row is NOT (the
+-- sheet gets re-sorted), so identity must never depend on row position. The sync
 -- is insert-if-absent on this key: once a row lands in Supabase, Supabase owns
--- its operational state (status/code/dates) and the sheet is only the intake
--- feed for NEW submissions — re-sync never clobbers a portal/lifecycle decision.
--- Plain columns (not an expression) so PostgREST upsert can target it. Manual
--- rows have sheet_row NULL (treated as distinct).
-CREATE UNIQUE INDEX IF NOT EXISTS uq_free_swimwear_source_row
-  ON free_swimwear_requests (source, sheet_row);
+-- its operational state and the sheet is only the intake feed for NEW submissions.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_free_swimwear_identity
+  ON free_swimwear_requests (lower(email), COALESCE(submitted_at, 'epoch'::timestamptz));
 
 CREATE INDEX IF NOT EXISTS idx_free_swimwear_status ON free_swimwear_requests(status);
 CREATE INDEX IF NOT EXISTS idx_free_swimwear_email ON free_swimwear_requests(lower(email));

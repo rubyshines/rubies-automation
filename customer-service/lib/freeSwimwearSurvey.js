@@ -208,11 +208,29 @@ async function readApplications({ legacy = false } = {}) {
   return form.concat(legacyOnly);
 }
 
+// Stable identity of a form submission = (email, submitted_at). The sheet's row
+// position is NOT stable (the sheet gets re-sorted), so never use sheet_row as
+// an identity key — it's informational only.
+//
+// Canonicalize submitted_at through Date so the two representations of the same
+// instant compare equal: PostgREST returns "...+00:00" while the sheet parse
+// yields "...000Z". Without this, every applicant looks "new" every sync.
+const identityKey = (r) => {
+  let ts = '';
+  if (r.submitted_at) {
+    const d = new Date(r.submitted_at);
+    ts = isNaN(d.getTime()) ? r.submitted_at : d.toISOString();
+  }
+  return `${(r.email || '').toLowerCase()}|${ts}`;
+};
+
 module.exports = {
   readApplications,
   computeEligibility,
   buildColumnMap,
   normalizeRow,
+  parseTimestamp,
+  identityKey,
   EXCLUDED_REGIONS,
   SHEET_ID,
   RESPONSE_TABS,
