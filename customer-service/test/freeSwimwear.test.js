@@ -14,6 +14,7 @@ const sgPath = require.resolve('../../shared/sendgridClient');
 
 const addCodeCalls = [];
 const sendCalls = [];
+let sendResult = { ok: true, statusCode: 202 }; // mutable so tests can simulate a failed send
 
 require.cache[shopifyPath] = {
   id: shopifyPath, filename: shopifyPath, loaded: true,
@@ -21,7 +22,7 @@ require.cache[shopifyPath] = {
 };
 require.cache[sgPath] = {
   id: sgPath, filename: sgPath, loaded: true,
-  exports: { sendTemplate: async (args) => { sendCalls.push(args); return true; } },
+  exports: { sendTemplate: async (args) => { sendCalls.push(args); return sendResult; } },
 };
 
 const fs = require('../lib/freeSwimwear');
@@ -56,6 +57,25 @@ describe('issueAcceptance', () => {
     assert.equal(patch.send_attempts, 1);
     assert.equal(patch.discount_code, code);
     assert.equal(patch.expiry_date, new Date('2026-07-24T12:00:00Z').toISOString());
+  });
+
+  it('on a successful send, reports emailSent and stamps the send date', async () => {
+    sendResult = { ok: true, statusCode: 202 };
+    const now = new Date('2026-06-24T12:00:00Z');
+    const { patch, emailSent } = await fs.issueAcceptance({ email: 'fam@example.com', applicant_name: 'Sarah' }, now);
+    assert.equal(emailSent, true);
+    assert.equal(patch.last_acceptance_send_date, now.toISOString());
+  });
+
+  it('on a failed send, still issues the code but flags emailSent=false and leaves the send date unset', async () => {
+    sendResult = { ok: false, statusCode: 401, error: 'bad key' };
+    const now = new Date('2026-06-24T12:00:00Z');
+    const { code, patch, emailSent } = await fs.issueAcceptance({ email: 'fam@example.com', applicant_name: 'Sarah' }, now);
+    assert.match(code, /^SARAH-/);          // code was still created
+    assert.equal(patch.status, 'accepted');
+    assert.equal(emailSent, false);
+    assert.equal(patch.last_acceptance_send_date, undefined); // not stamped → "not delivered"
+    sendResult = { ok: true, statusCode: 202 }; // reset for other tests
   });
 });
 

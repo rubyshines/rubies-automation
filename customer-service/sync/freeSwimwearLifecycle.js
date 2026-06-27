@@ -16,6 +16,7 @@ require('dotenv').config();
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { searchCustomers, getCustomerOrders } = require('../lib/shopify');
 const { decideLifecycle, sendResend } = require('../lib/freeSwimwear');
+const { writeBackToSheet } = require('../lib/freeSwimwearSheet');
 
 const TABLE = 'free_swimwear_requests';
 
@@ -58,12 +59,17 @@ async function run({ live = false } = {}) {
     console.log(`  #${row.id} ${row.email} → ${action}`);
     if (!live) continue;
 
+    let dbPatch;
     if (action === 'resend') {
       const result = await sendResend(row, patch._daysLeft, now);
-      await supabase.from(TABLE).update(result.patch).eq('id', row.id);
+      dbPatch = result.patch;
     } else {
-      const { _daysLeft, ...dbPatch } = patch;
-      if (Object.keys(dbPatch).length) await supabase.from(TABLE).update(dbPatch).eq('id', row.id);
+      const { _daysLeft, ...rest } = patch;
+      dbPatch = rest;
+    }
+    if (Object.keys(dbPatch).length) {
+      await supabase.from(TABLE).update(dbPatch).eq('id', row.id);
+      await writeBackToSheet({ ...row, ...dbPatch });
     }
   }
 

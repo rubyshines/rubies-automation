@@ -12,6 +12,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { callClaude } = require('../../../shared/aiClient');
 const { MODELS } = require('../../../shared/aiPricing');
 const { issueAcceptance, sendResend, firstName } = require('../freeSwimwear');
+const { writeBackToSheet } = require('../freeSwimwearSheet');
 
 const TABLE = 'free_swimwear_requests';
 const LIST_COLS = 'id, submitted_at, email, applicant_name, recipient_age, is_trans_nonbinary, region, status, eligibility_reason, ai_summary, discount_code, expiry_date, send_attempts';
@@ -153,7 +154,11 @@ const tools = [
       const patch = { ...result.patch, decided_by: input.operator || null };
       const { error } = await supabase.from(TABLE).update(patch).eq('id', row.id);
       if (error) return { content: [{ type: 'text', text: `Code issued (${result.code}) but DB update failed: ${error.message}` }], isError: true };
-      return { content: [{ type: 'text', text: `**Approved #${row.id}** — issued \`${result.code}\` and emailed ${row.email}. Expires in 30 days.` }], _structured: { id: row.id, code: result.code } };
+      await writeBackToSheet({ ...row, ...patch });
+      const emailLine = result.emailSent
+        ? `emailed ${row.email} (SendGrid ${result.email.statusCode})`
+        : `⚠️ but the acceptance email FAILED to send (${result.email.error}). The code is valid — use Resend to retry the email`;
+      return { content: [{ type: 'text', text: `**Approved #${row.id}** — issued \`${result.code}\` and ${emailLine}. Expires in 30 days.` }], _structured: { id: row.id, code: result.code, emailSent: result.emailSent } };
     },
   },
   {
@@ -176,6 +181,7 @@ const tools = [
       if (input.reason) patch.eligibility_reason = input.reason;
       const { error } = await supabase.from(TABLE).update(patch).eq('id', row.id);
       if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
+      await writeBackToSheet({ ...row, ...patch });
       return { content: [{ type: 'text', text: `Rejected #${row.id} (silent — no email sent).` }], _structured: { id: row.id } };
     },
   },
@@ -202,7 +208,11 @@ const tools = [
       }
       const { error } = await supabase.from(TABLE).update(result.patch).eq('id', row.id);
       if (error) return { content: [{ type: 'text', text: `Email sent but DB update failed: ${error.message}` }], isError: true };
-      return { content: [{ type: 'text', text: `Resent code ${row.discount_code} to ${row.email} (attempt ${result.patch.send_attempts}, ${daysLeft} days left).` }], _structured: { id: row.id } };
+      await writeBackToSheet({ ...row, ...result.patch });
+      if (!result.emailSent) {
+        return { content: [{ type: 'text', text: `⚠️ Resend FAILED for #${row.id} (${result.email.error}). Code ${row.discount_code} is still valid.` }], _structured: { id: row.id, emailSent: false } };
+      }
+      return { content: [{ type: 'text', text: `Resent code ${row.discount_code} to ${row.email} (SendGrid ${result.email.statusCode}, attempt ${result.patch.send_attempts}, ${daysLeft} days left).` }], _structured: { id: row.id, emailSent: true } };
     },
   },
 ];

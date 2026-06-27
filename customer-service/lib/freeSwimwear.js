@@ -58,48 +58,47 @@ function daysBetween(a, b) {
  *
  * @param {Object} row - a free_swimwear_requests row ({email, applicant_name})
  * @param {Date} [now]
- * @returns {Promise<{patch:Object, code:string}>}
+ * @returns {Promise<{code:string, patch:Object, emailSent:boolean, email:Object}>}
  */
 async function issueAcceptance(row, now = new Date()) {
   const code = generateDiscountCode(row.applicant_name);
   await addCodeToPriceRule(PRICE_RULE_ID, code);
-  await sendTemplate({
+  const email = await sendTemplate({
     to: row.email,
     templateId: TEMPLATES.acceptance,
     data: { firstName: firstName(row.applicant_name), discountCode: code, daysLeft: EXPIRY_DAYS },
   });
-  return {
-    code,
-    patch: {
-      status: 'accepted',
-      discount_code: code,
-      expiry_date: addDays(now, EXPIRY_DAYS).toISOString(),
-      last_acceptance_send_date: now.toISOString(),
-      send_attempts: 1,
-      decided_at: now.toISOString(),
-    },
+  const patch = {
+    status: 'accepted',
+    discount_code: code,
+    expiry_date: addDays(now, EXPIRY_DAYS).toISOString(),
+    send_attempts: 1,
+    decided_at: now.toISOString(),
   };
+  // Only stamp the send date when SendGrid actually accepted the message, so a
+  // null last_acceptance_send_date is a reliable "email not delivered" signal.
+  if (email.ok) patch.last_acceptance_send_date = now.toISOString();
+  return { code, patch, emailSent: email.ok, email };
 }
 
 /**
- * Resend the acceptance email for an unredeemed code. Returns the patch.
+ * Resend the acceptance email for an unredeemed code. Returns the patch + send result.
  * @param {Object} row
  * @param {number} daysLeft
  * @param {Date} [now]
  */
 async function sendResend(row, daysLeft, now = new Date()) {
-  await sendTemplate({
+  const email = await sendTemplate({
     to: row.email,
     templateId: TEMPLATES.resend,
     data: { firstName: firstName(row.applicant_name), discountCode: row.discount_code, daysLeft },
   });
-  return {
-    patch: {
-      send_attempts: (row.send_attempts || 0) + 1,
-      last_acceptance_send_date: now.toISOString(),
-      resend_status: 'recontacted',
-    },
+  const patch = {
+    send_attempts: (row.send_attempts || 0) + 1,
+    resend_status: 'recontacted',
   };
+  if (email.ok) patch.last_acceptance_send_date = now.toISOString();
+  return { patch, emailSent: email.ok, email };
 }
 
 /**
