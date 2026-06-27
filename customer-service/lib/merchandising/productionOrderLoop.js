@@ -20,7 +20,23 @@ const { getSheetsClient } = require('../../../shared/googleSheetsClient');
 const { getSupplierByName } = require('./supplierRegistry');
 const { parseProductionSheet } = require('./productionSheetParser');
 const { nextProductionCode } = require('./productionCode');
+const { runProjection } = require('./inventoryProjection');
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
+
+// Recency guard: reuse a recent projection, else recompute so a draft is never stale.
+async function ensureFreshProjection({ date, maxAgeDays, forceRefresh }) {
+  const sb = getSupabaseClient();
+  const { data } = await sb.from('inventory_projections')
+    .select('run_date').order('run_date', { ascending: false }).limit(1);
+  const runDate = data && data[0] ? data[0].run_date : null;
+  const ageDays = runDate ? Math.round((Date.parse(date) - Date.parse(runDate)) / 86400000) : null;
+  const stale = forceRefresh || runDate == null || ageDays > maxAgeDays;
+  if (stale) {
+    await runProjection();
+    return { run_date: date, refreshed: true, reason: forceRefresh ? 'forced' : runDate == null ? 'none existed' : `was ${ageDays}d old`, previous_run_date: runDate };
+  }
+  return { run_date: runDate, refreshed: false, age_days: ageDays };
+}
 
 const SHEET_ID = process.env.PRODUCTION_SHEET_ID || '1kMZ-thv7pmBEvudlT_Ujw1z1wb-2zwjV5vT_TuNm87w';
 
@@ -75,14 +91,18 @@ async function fetchProjections(supplierId) {
 }
 
 // --- Draft -----------------------------------------------------------------
-async function draftProductionOrder({ supplier, today, spreadsheetId }) {
+async function draftProductionOrder({ supplier, today, spreadsheetId, maxAgeDays = 3, forceRefresh = false }) {
   const sheetId = spreadsheetId || SHEET_ID;
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
-  const rows = await fetchProjections(sup.id);
-  if (!rows.length) return { empty: true, supplier: sup.name };
-
   const date = today || new Date().toISOString().slice(0, 10);
+
+  // Ensure the projection backing this draft is recent enough (auto-refresh if stale).
+  const projection = await ensureFreshProjection({ date, maxAgeDays, forceRefresh });
+
+  const rows = await fetchProjections(sup.id);
+  if (!rows.length) return { empty: true, supplier: sup.name, projection };
+
   const tabName = `DRAFT ${sup.name} ${date}`;
   const { rows: sheetRows, grand } = buildSheetRows(rows);
 
@@ -102,7 +122,7 @@ async function draftProductionOrder({ supplier, today, spreadsheetId }) {
   });
 
   return { supplier: sup.name, tabName, skuCount: rows.length, totalUnits: grand,
-    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit` };
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, projection };
 }
 
 // --- GO: read back + create -------------------------------------------------

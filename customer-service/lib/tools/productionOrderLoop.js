@@ -5,15 +5,23 @@
 
 const { draftProductionOrder, createOrderFromTab } = require('../merchandising/productionOrderLoop');
 
-async function handleDraft({ supplier }) {
+function projectionLine(p) {
+  return p.refreshed
+    ? `📊 Projection **refreshed** (${p.reason}).`
+    : `📊 Projection from **${p.run_date}**${p.age_days != null ? ` (${p.age_days}d old)` : ''}.`;
+}
+
+async function handleDraft({ supplier, force_refresh, max_age_days }) {
   if (!supplier) return { content: [{ type: 'text', text: 'Error: `supplier` is required.' }] };
-  const r = await draftProductionOrder({ supplier });
-  if (r.empty) return { content: [{ type: 'text', text: `No SKUs with qty_to_order > 0 for ${r.supplier}. Run run_inventory_projection first.` }] };
+  const opts = { supplier, forceRefresh: !!force_refresh };
+  if (max_age_days != null) opts.maxAgeDays = max_age_days;
+  const r = await draftProductionOrder(opts);
+  if (r.empty) return { content: [{ type: 'text', text: `${projectionLine(r.projection)}\nNo SKUs with qty_to_order > 0 for ${r.supplier}.` }] };
   const md = [
     `## Draft production order — ${r.supplier}`,
     '',
-    `Wrote tab **"${r.tabName}"** to the 2026 Production Numbers sheet.`,
-    `**${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
+    projectionLine(r.projection),
+    `Wrote tab **"${r.tabName}"** to the 2026 Production Numbers sheet — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
     '',
     `Edit the quantities in that tab, then call **submit_production_order** with \`tab_name: "${r.tabName}"\` to place the order (records to Supabase + emits a supplier .xlsx).`,
     `[Open the sheet](${r.url})`,
@@ -38,10 +46,14 @@ async function handleSubmit({ supplier, tab_name, expected_ship_date, expected_d
 module.exports = [
   {
     name: 'draft_production_order',
-    description: 'Start a production order: write an editable draft tab to the 2026 Production Numbers Google Sheet from the supplier\'s current projections (qty_to_order > 0). Jamie edits the quantities in the sheet, then calls submit_production_order.',
+    description: 'Start a production order: write an editable draft tab to the 2026 Production Numbers Google Sheet from the supplier\'s projections (qty_to_order > 0). Auto-refreshes the projection first if it is stale (older than max_age_days, default 3) so the draft is never based on old numbers. Jamie edits the quantities in the sheet, then calls submit_production_order.',
     inputSchema: {
       type: 'object',
-      properties: { supplier: { type: 'string', description: 'Supplier name (Kali, Queenas, JustMax, Wumes)' } },
+      properties: {
+        supplier: { type: 'string', description: 'Supplier name (Kali, Queenas, JustMax, Wumes)' },
+        force_refresh: { type: 'boolean', description: 'Recompute the inventory projection before drafting, even if a recent one exists.' },
+        max_age_days: { type: 'number', description: 'Max projection age (days) before auto-refresh. Default 3.' },
+      },
       required: ['supplier'],
     },
     handler: handleDraft,
