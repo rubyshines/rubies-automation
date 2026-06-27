@@ -5562,6 +5562,9 @@ function renderSwimwearDetail(r) {
     ${r.eligibility_reason ? `<div class="outreach-detail-sub">eligibility: ${esc(r.eligibility_reason)}</div>` : ''}
     ${actions}
     ${r.discount_code ? `<div class="outreach-detail-sub">code <b>${esc(r.discount_code)}</b>${r.expiry_date ? ` &middot; expires ${esc(new Date(r.expiry_date).toLocaleDateString())}` : ''}${r.order_numbers && r.order_numbers.length ? ` &middot; orders ${esc(r.order_numbers.join(', '))}` : ''}</div>` : ''}
+    ${r.discount_code ? (r.last_acceptance_send_date
+      ? `<div class="outreach-detail-sub">✅ acceptance email sent ${esc(new Date(r.last_acceptance_send_date).toLocaleString())}${r.send_attempts ? ` (${esc(r.send_attempts)}x)` : ''}</div>`
+      : `<div class="outreach-detail-sub" style="color:var(--red)">⚠️ code issued but acceptance email not recorded as sent — use Resend</div>`) : ''}
     <hr style="margin:14px 0;border:none;border-top:1px solid var(--border,#333)">
     ${swimwearField('Situation', r.situation)}
     ${swimwearField('Why', r.why)}
