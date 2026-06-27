@@ -5463,7 +5463,7 @@ let swimwearStatus = 'new';
 let swimwearQueue = [];
 let swimwearSelectedId = null;
 
-const SWIMWEAR_FILTERS = ['new', 'accepted', 'registered', 'ordered', 'expired', 'rejected'];
+const SWIMWEAR_FILTERS = ['new', 'accepted', 'registered', 'ordered', 'expired', 'rejected', 'archived'];
 
 async function loadSwimwearQueue() {
   const container = document.getElementById('swimwear-queue-list');
@@ -5475,6 +5475,7 @@ async function loadSwimwearQueue() {
   }
   renderSwimwearFilters();
   renderSwimwearQueue();
+  renderSwimwearCount();
 }
 
 function setSwimwearStatus(s) {
@@ -5500,13 +5501,27 @@ function renderSwimwearQueue() {
   container.innerHTML = swimwearQueue.map(swimwearRowHtml).join('');
 }
 
+// The tab badge tracks the count of the "new" review queue.
+function renderSwimwearCount() {
+  if (swimwearStatus !== 'new') return;
+  const badge = document.getElementById('tab-count-swimwear');
+  if (badge) badge.textContent = swimwearQueue.length ? String(swimwearQueue.length) : '';
+}
+
 function swimwearTransBadge(v) {
   if (v === true) return '<span class="badge badge-ok">trans/NB</span>';
   if (v === false) return '<span class="badge badge-warn">not trans/NB</span>';
   return '<span class="badge badge-muted">identity ?</span>';
 }
 
+function swimwearDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 function swimwearRowHtml(r) {
+  const applied = swimwearDate(r.submitted_at);
+  const meta = [applied ? `Applied ${applied}` : '', r.region || ''].filter(Boolean).join(' · ');
   return `
   <div class="queue-item ${r.id === swimwearSelectedId ? 'active' : ''}" data-id="${r.id}" onclick="selectSwimwear(${r.id})">
     <div class="queue-item-inner">
@@ -5514,7 +5529,7 @@ function swimwearRowHtml(r) {
         <span class="queue-item-name">${esc(r.applicant_name || '(no name)')}</span>
         <span class="badge badge-muted">age ${esc(r.recipient_age || '?')}</span>
       </div>
-      <div class="outreach-row-reason">${esc(r.region || '')}</div>
+      ${meta ? `<div class="outreach-row-reason">${esc(meta)}</div>` : ''}
       ${r.ai_summary ? `<div class="outreach-row-snippet">${esc(r.ai_summary)}</div>` : ''}
       ${r.discount_code ? `<div class="queue-item-row2"><span class="badge">${esc(r.discount_code)}</span></div>` : ''}
     </div>
@@ -5539,7 +5554,7 @@ async function selectSwimwear(id) {
 
 function swimwearField(label, val) {
   if (!val) return '';
-  return `<div class="outreach-field-label">${label}</div><div style="margin-bottom:12px;white-space:pre-wrap">${esc(val)}</div>`;
+  return `<div class="outreach-field-label">${label}</div><div class="swimwear-field-value">${esc(val)}</div>`;
 }
 
 function renderSwimwearDetail(r) {
@@ -5551,13 +5566,13 @@ function renderSwimwearDetail(r) {
     ${canApprove ? `<button class="btn btn-primary" onclick="approveSwimwear(${r.id})">Approve &amp; send code</button>` : ''}
     ${r.status === 'new' ? `<button class="btn" onclick="rejectSwimwear(${r.id})">Reject (silent)</button>` : ''}
     ${canResend ? `<button class="btn" onclick="resendSwimwear(${r.id})">Resend code</button>` : ''}
-    <button class="btn btn-muted" onclick="summarizeSwimwear(${r.id})">Re-summarize</button>
   </div>`;
 
+  const applied = swimwearDate(r.submitted_at);
   el.innerHTML = `
     <div class="outreach-detail-head"><h2>${esc(r.applicant_name || '(no name)')}</h2>
       <span class="badge ${r.status === 'rejected' ? 'badge-muted' : ''}">${esc(r.status)}</span></div>
-    <div class="outreach-detail-sub">${esc(r.email)} &middot; age ${esc(r.recipient_age || '?')} &middot; ${swimwearTransBadge(r.is_trans_nonbinary)} &middot; ${esc(r.region || '?')}</div>
+    <div class="outreach-detail-sub">${esc(r.email)} &middot; age ${esc(r.recipient_age || '?')} &middot; ${swimwearTransBadge(r.is_trans_nonbinary)} &middot; ${esc(r.region || '?')}${applied ? ` &middot; applied ${esc(applied)}` : ''}</div>
     ${r.ai_summary ? `<div class="outreach-row-snippet" style="margin:8px 0">${esc(r.ai_summary)}</div>` : ''}
     ${r.eligibility_reason ? `<div class="outreach-detail-sub">eligibility: ${esc(r.eligibility_reason)}</div>` : ''}
     ${actions}
@@ -5577,28 +5592,66 @@ function renderSwimwearDetail(r) {
   `;
 }
 
-async function swimwearAction(id, path, body) {
-  try {
-    const res = await api(`/api/swimwear/${id}/${path}`, { method: 'POST', body: body || {} });
-    if (res && res.error) { alert(res.error); return; }
-    await loadSwimwearQueue();
-    await selectSwimwear(id);
-  } catch (err) {
-    alert(`Failed: ${err.message}`);
+// Move selection to the next item in the queue and drop the acted-on row, so
+// you can rip through the queue without waiting. The decision itself runs in
+// the background (toast reports the outcome).
+function swimwearAdvancePast(id) {
+  const idx = swimwearQueue.findIndex(r => r.id === id);
+  const next = swimwearQueue[idx + 1] || swimwearQueue[idx - 1] || null;
+  swimwearQueue = swimwearQueue.filter(r => r.id !== id);
+  renderSwimwearQueue();
+  renderSwimwearCount();
+  if (next) {
+    selectSwimwear(next.id);
+  } else {
+    swimwearSelectedId = null;
+    document.getElementById('swimwear-detail').style.display = 'none';
+    document.getElementById('swimwear-placeholder').style.display = 'flex';
   }
 }
 
-async function approveSwimwear(id) {
-  if (!confirm('Approve this application? This issues a free-swimwear code and emails the family.')) return;
-  await swimwearAction(id, 'approve');
+async function swimwearAct(id, path, verb) {
+  const row = swimwearQueue.find(r => r.id === id);
+  if (!row) return;
+  const name = row.applicant_name || `#${id}`;
+  swimwearAdvancePast(id); // optimistic — advance immediately
+  try {
+    const res = await api(`/api/swimwear/${id}/${path}`, { method: 'POST', body: {} });
+    if (res && res.error) {
+      showToast(`${name}: ${res.error}`, 'error');
+      swimwearRestore(row);
+    } else if (res && res.emailSent === false) {
+      showToast(`${name} ${verb}, but the email FAILED — open and Resend`, 'warn');
+    } else {
+      const codeNote = res && res.code ? ` (${res.code})` : '';
+      showToast(`${name} ${verb}${codeNote}`, 'success');
+    }
+  } catch (err) {
+    showToast(`${name} — ${verb} failed: ${err.message}`, 'error');
+    swimwearRestore(row);
+  }
 }
-async function rejectSwimwear(id) {
-  if (!confirm('Reject this application? No email is sent (silent).')) return;
-  await swimwearAction(id, 'reject');
+
+// On failure, put the row back in the queue so it isn't silently lost.
+function swimwearRestore(row) {
+  if (!swimwearQueue.find(r => r.id === row.id)) {
+    swimwearQueue.unshift(row);
+    renderSwimwearQueue();
+    renderSwimwearCount();
+  }
 }
+
+function approveSwimwear(id) { swimwearAct(id, 'approve', 'approved'); }
+function rejectSwimwear(id) { swimwearAct(id, 'reject', 'rejected'); }
+
 async function resendSwimwear(id) {
-  await swimwearAction(id, 'resend');
-}
-async function summarizeSwimwear(id) {
-  await swimwearAction(id, 'summary');
+  const row = swimwearQueue.find(r => r.id === id) || { id, applicant_name: `#${id}` };
+  const name = row.applicant_name || `#${id}`;
+  try {
+    const res = await api(`/api/swimwear/${id}/resend`, { method: 'POST', body: {} });
+    if (res && res.error) showToast(`${name}: ${res.error}`, 'error');
+    else showToast(`Code resent to ${name}`, 'success');
+  } catch (err) {
+    showToast(`Resend failed: ${err.message}`, 'error');
+  }
 }
