@@ -18,10 +18,10 @@ const XLSX = require('xlsx');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getSheetsClient } = require('../../../shared/googleSheetsClient');
 const { getSupplierByName } = require('./supplierRegistry');
-const { parseProductionSheet } = require('./productionSheetParser');
+const { parseProductionSheet, parseProjectionReviewSheet } = require('./productionSheetParser');
 const { nextProductionCode } = require('./productionCode');
-const { runProjection } = require('./inventoryProjection');
-const { applyOrderRules } = require('./orderSpread');
+const { runProjection, writeSalesDataSheet } = require('./inventoryProjection');
+const { applyOrderRules, PER_SKU_FLOOR, ORDER_STEP } = require('./orderSpread');
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
 
 // Recency guard: reuse a recent projection, else recompute so a draft is never stale.
@@ -40,6 +40,20 @@ async function ensureFreshProjection({ date, maxAgeDays, forceRefresh }) {
 }
 
 const SHEET_ID = process.env.PRODUCTION_SHEET_ID || '1kMZ-thv7pmBEvudlT_Ujw1z1wb-2zwjV5vT_TuNm87w';
+const PLANNING_SHEET_ID = process.env.INVENTORY_PLANNING_SHEET_ID;
+
+// Create a tab at the front (index 0) of a sheet and write values to it.
+async function writeTabAtFront(sheets, spreadsheetId, tabName, values) {
+  try {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ addSheet: { properties: { title: tabName, index: 0 } } }] },
+    });
+  } catch (e) { if (!/already exists/i.test(e.message)) throw e; }
+  await sheets.spreadsheets.values.update({
+    spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'RAW', requestBody: { values },
+  });
+}
 
 function sizeSort(size) {
   const { base, modifier } = parseSizeVariant(String(size || '').toUpperCase());
@@ -82,53 +96,82 @@ function buildSheetRows(rows) {
   return { rows: out, grand };
 }
 
-async function fetchProjections(supplierId) {
+// All projection rows for a supplier, full columns, for the review sheet.
+async function fetchSupplierProjection(supplierId) {
   const sb = getSupabaseClient();
   const { data, error } = await sb.from('inventory_projections')
-    .select('sku, product_name, color, size, qty_to_order, priority')
-    .eq('supplier_id', supplierId).gt('qty_to_order', 0).order('sku');
-  if (error) throw new Error(`fetchProjections: ${error.message}`);
+    .select('*').eq('supplier_id', supplierId).order('sku');
+  if (error) throw new Error(`fetchSupplierProjection: ${error.message}`);
   return data || [];
 }
 
-// --- Draft -----------------------------------------------------------------
-async function draftProductionOrder({ supplier, today, spreadsheetId, maxAgeDays = 3, forceRefresh = false, overrides = {} }) {
+// --- Stage 1: projection review ---------------------------------------------
+// Pull the supplier's projection, apply the order rules (founder overrides + the
+// 20-unit floor + multiples of 10) to the Qty to Order column, and write an
+// editable review tab to the inventory-projections sheet. The founder edits the
+// quantities there, then calls draft_production_order with that tab name.
+async function draftOrderReview({ supplier, today, maxAgeDays = 3, forceRefresh = false, overrides = {} }) {
+  const sup = await getSupplierByName(supplier);
+  if (!sup) throw new Error(`supplier "${supplier}" not found`);
+  if (!PLANNING_SHEET_ID) throw new Error('INVENTORY_PLANNING_SHEET_ID is not set');
+  const date = today || new Date().toISOString().slice(0, 10);
+
+  // Ensure the projection backing this review is recent enough (auto-refresh if stale).
+  const projection = await ensureFreshProjection({ date, maxAgeDays, forceRefresh });
+  const raw = await fetchSupplierProjection(sup.id);
+  if (!raw.length) return { empty: true, supplier: sup.name, projection };
+
+  // Order rules drive the editable Qty to Order column; context columns are untouched.
+  const { rows, warnings } = applyOrderRules(raw, { overrides });
+
+  const growthFactor = raw[0].growth_factor || 1.3;
+  const targetWeeks = raw[0].target_weeks || 78;
+  const runDate = projection.run_date || date;
+  const written = await writeSalesDataSheet(rows, null, runDate, growthFactor, targetWeeks, `${sup.name} ORDER`, false);
+  if (!written || !written.tabName) {
+    throw new Error('failed to write the review tab — is INVENTORY_PLANNING_SHEET_ID set and shared with the service account?');
+  }
+
+  const ordered = rows.filter((r) => r.qty_to_order > 0);
+  return {
+    supplier: sup.name, tabName: written.tabName,
+    skuCount: ordered.length, totalUnits: ordered.reduce((s, r) => s + r.qty_to_order, 0),
+    url: `https://docs.google.com/spreadsheets/d/${written.sheetId}/edit`,
+    projection, overrides: Object.keys(overrides || {}), warnings,
+  };
+}
+
+// --- Stage 2: build the production tab from the edited review tab ------------
+// Read the founder-edited Qty to Order from the inventory-projections review tab
+// and write the supplier-format draft tab to the 2026 Production Numbers sheet.
+async function draftProductionOrder({ supplier, review_tab, today, spreadsheetId, planningSheetId }) {
   const sheetId = spreadsheetId || SHEET_ID;
+  const planId = planningSheetId || PLANNING_SHEET_ID;
+  if (!review_tab) throw new Error('review_tab is required (the tab from draft_order_review you edited)');
+  if (!planId) throw new Error('INVENTORY_PLANNING_SHEET_ID is not set');
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
   const date = today || new Date().toISOString().slice(0, 10);
 
-  // Ensure the projection backing this draft is recent enough (auto-refresh if stale).
-  const projection = await ensureFreshProjection({ date, maxAgeDays, forceRefresh });
+  const sheets = await getSheetsClient();
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: planId, range: `'${review_tab}'!A:Z` });
+  const parsed = parseProjectionReviewSheet(res.data.values || []);
+  if (!parsed.items.length) throw new Error(`no order lines (Qty to Order > 0) in review tab "${review_tab}"`);
 
-  const raw = await fetchProjections(sup.id);
-  if (!raw.length) return { empty: true, supplier: sup.name, projection };
+  // Floor / step sanity-check on the founder's edits (warn, don't block).
+  const warnings = [...parsed.warnings];
+  const belowFloor = parsed.items.filter((it) => it.qty < PER_SKU_FLOOR);
+  if (belowFloor.length) warnings.push(`${belowFloor.length} line(s) below the ${PER_SKU_FLOOR}-unit floor: ${belowFloor.map((i) => `${i.sku}=${i.qty}`).join(', ')}`);
+  const offStep = parsed.items.filter((it) => it.qty % ORDER_STEP !== 0);
+  if (offStep.length) warnings.push(`${offStep.length} line(s) not a multiple of ${ORDER_STEP}: ${offStep.map((i) => `${i.sku}=${i.qty}`).join(', ')}`);
 
-  // Apply the ordering rules: founder unit overrides (rescale a style's spread to
-  // a target total) + the 20-unit per-SKU floor on every committed line.
-  const { rows, warnings } = applyOrderRules(raw, { overrides });
-
+  const rows = parsed.items.map((it) => ({ sku: it.sku, product_name: it.product_name, color: it.color, size: it.size, qty_to_order: it.qty }));
   const tabName = `DRAFT ${sup.name} ${date}`;
   const { rows: sheetRows, grand } = buildSheetRows(rows);
-
-  const sheets = await getSheetsClient();
-  // create the tab (ignore if it already exists)
-  try {
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: sheetId,
-      requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] },
-    });
-  } catch (e) { if (!/already exists/i.test(e.message)) throw e; }
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${tabName}!A1`,
-    valueInputOption: 'RAW',
-    requestBody: { values: sheetRows },
-  });
+  await writeTabAtFront(sheets, sheetId, tabName, sheetRows);
 
   return { supplier: sup.name, tabName, skuCount: rows.length, totalUnits: grand,
-    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, projection,
-    overrides: Object.keys(overrides || {}), warnings };
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, sourceTab: review_tab, warnings };
 }
 
 // --- GO: read back + create -------------------------------------------------
@@ -187,4 +230,4 @@ async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected
     payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath };
 }
 
-module.exports = { buildSheetRows, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };

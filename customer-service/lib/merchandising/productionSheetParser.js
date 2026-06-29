@@ -121,4 +121,56 @@ function parseProductionSheet(rows) {
   return { groups, items, grand_total: computedGrand, declared_grand_total: declaredGrand, warnings };
 }
 
-module.exports = { parseProductionSheet, isSku, parseHeader };
+/**
+ * Parse an edited projections REVIEW tab (the rich inventory-projections sheet) back
+ * into order items. Stage 2 reads the "Qty to Order" column the founder edited and turns
+ * it into the lines for the production tab. Robust to column position: the header row is
+ * located by name, then each data row whose SKU cell is a real SKU is read. Rows with a
+ * non-positive (or blank) Qty to Order are skipped — that's a SKIP / not-ordered line.
+ *
+ * Size is taken from the SKU itself (last segment after the prefix+color), not the display
+ * column, so downstream size sorting uses the canonical code.
+ */
+function parseProjectionReviewSheet(rows) {
+  const items = [];
+  const warnings = [];
+  const all = rows || [];
+
+  // Find the header row (has both an "SKU" and a "Qty to Order" cell).
+  let headerIdx = -1;
+  for (let i = 0; i < all.length; i++) {
+    const cells = (all[i] || []).map((c) => String(c == null ? '' : c).trim().toLowerCase());
+    if (cells.includes('sku') && cells.includes('qty to order')) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) {
+    return { items: [], grand_total: 0, warnings: ['no header row with "SKU" and "Qty to Order" found'] };
+  }
+  const header = (all[headerIdx] || []).map((c) => String(c == null ? '' : c).trim().toLowerCase());
+  const skuCol = header.indexOf('sku');
+  const qtyCol = header.indexOf('qty to order');
+  const prodCol = header.indexOf('product');
+  const colorCol = header.indexOf('color');
+
+  for (let i = headerIdx + 1; i < all.length; i++) {
+    const row = all[i] || [];
+    const sku = cell(row, skuCol);
+    if (!isSku(sku)) continue; // group header, TOTAL, notes, blank
+    const qty = toInt(cell(row, qtyCol));
+    if (qty == null || qty <= 0) continue; // SKIP / not ordered
+    const segs = sku.split('-');
+    const size = segs.length > 2 ? segs.slice(2).join('-') : '';
+    items.push({
+      sku,
+      qty,
+      size,
+      product_name: prodCol >= 0 ? cell(row, prodCol) : '',
+      color: colorCol >= 0 ? cell(row, colorCol) : (segs[1] || ''),
+    });
+  }
+
+  const grand_total = items.reduce((s, it) => s + it.qty, 0);
+  if (!items.length) warnings.push('no order lines (Qty to Order > 0) found in the review tab');
+  return { items, grand_total, warnings };
+}
+
+module.exports = { parseProductionSheet, parseProjectionReviewSheet, isSku, parseHeader };

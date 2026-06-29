@@ -1,9 +1,11 @@
 /**
- * MCP tools: draft_production_order, submit_production_order
- * The draft -> edit-in-sheet -> GO loop for placing a production order.
+ * MCP tools for the production-order loop:
+ *   draft_order_review     — stage 1: write the editable projection review tab (overrides applied)
+ *   draft_production_order  — stage 2: build the supplier tab from the edited review tab
+ *   submit_production_order — stage 3: record to Supabase + emit the supplier .xlsx
  */
 
-const { draftProductionOrder, createOrderFromTab } = require('../merchandising/productionOrderLoop');
+const { draftOrderReview, draftProductionOrder, createOrderFromTab } = require('../merchandising/productionOrderLoop');
 
 function projectionLine(p) {
   return p.refreshed
@@ -11,27 +13,49 @@ function projectionLine(p) {
     : `📊 Projection from **${p.run_date}**${p.age_days != null ? ` (${p.age_days}d old)` : ''}.`;
 }
 
-async function handleDraft({ supplier, force_refresh, max_age_days, overrides }) {
+function warnBlock(warnings) {
+  return warnings && warnings.length ? '\n⚠️ ' + warnings.join('\n⚠️ ') : '';
+}
+
+// --- Stage 1 ---------------------------------------------------------------
+async function handleReview({ supplier, force_refresh, max_age_days, overrides }) {
   if (!supplier) return { content: [{ type: 'text', text: 'Error: `supplier` is required.' }] };
   const opts = { supplier, forceRefresh: !!force_refresh };
   if (max_age_days != null) opts.maxAgeDays = max_age_days;
   if (overrides && typeof overrides === 'object') opts.overrides = overrides;
-  const r = await draftProductionOrder(opts);
-  if (r.empty) return { content: [{ type: 'text', text: `${projectionLine(r.projection)}\nNo SKUs with qty_to_order > 0 for ${r.supplier}.` }] };
+  const r = await draftOrderReview(opts);
+  if (r.empty) return { content: [{ type: 'text', text: `${projectionLine(r.projection)}\nNo projection rows for ${r.supplier}.` }] };
+  const md = [
+    `## Order review — ${r.supplier}`,
+    '',
+    projectionLine(r.projection),
+    r.overrides && r.overrides.length ? `🎚️ Unit override applied to: **${r.overrides.join(', ')}** (spread rescaled to your total, multiples of 10).` : '',
+    `Wrote review tab **"${r.tabName}"** to the inventory-projections sheet — **${r.skuCount}** SKUs to order · **${r.totalUnits.toLocaleString()}** units. Every ordered size respects the 20-unit floor.`,
+    warnBlock(r.warnings),
+    '',
+    `Review and edit the **Qty to Order** column in that tab, then call **draft_production_order** with \`review_tab: "${r.tabName}"\` to build the supplier tab.`,
+    `[Open the projections sheet](${r.url})`,
+  ].filter(Boolean).join('\n');
+  return { content: [{ type: 'text', text: md }] };
+}
+
+// --- Stage 2 ---------------------------------------------------------------
+async function handleDraft({ supplier, review_tab }) {
+  if (!supplier || !review_tab) return { content: [{ type: 'text', text: 'Error: `supplier` and `review_tab` are required.' }] };
+  const r = await draftProductionOrder({ supplier, review_tab });
   const md = [
     `## Draft production order — ${r.supplier}`,
     '',
-    projectionLine(r.projection),
-    r.overrides && r.overrides.length ? `🎚️ Unit override applied to: **${r.overrides.join(', ')}** (spread rescaled to your total).` : '',
-    `Wrote tab **"${r.tabName}"** to the 2026 Production Numbers sheet — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units. Every size respects the 20-unit floor.`,
-    r.warnings && r.warnings.length ? '\n⚠️ ' + r.warnings.join('\n⚠️ ') : '',
+    `Built tab **"${r.tabName}"** in the 2026 Production Numbers sheet from **"${r.sourceTab}"** — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
+    warnBlock(r.warnings),
     '',
-    `Edit the quantities in that tab, then call **submit_production_order** with \`tab_name: "${r.tabName}"\` to place the order (records to Supabase + emits a supplier .xlsx).`,
+    `Eyeball it, then call **submit_production_order** with \`tab_name: "${r.tabName}"\` to place the order (records to Supabase + emits a supplier .xlsx).`,
     `[Open the sheet](${r.url})`,
   ].filter(Boolean).join('\n');
   return { content: [{ type: 'text', text: md }] };
 }
 
+// --- Stage 3 ---------------------------------------------------------------
 async function handleSubmit({ supplier, tab_name, expected_ship_date, expected_delivery_date, notes }) {
   if (!supplier || !tab_name) return { content: [{ type: 'text', text: 'Error: `supplier` and `tab_name` are required.' }] };
   const r = await createOrderFromTab({ supplier, tab_name, expected_ship_date, expected_delivery_date, notes });
@@ -41,34 +65,47 @@ async function handleSubmit({ supplier, tab_name, expected_ship_date, expected_d
     `**Code:** ${r.production_code} · **Order ID:** ${r.order_id}`,
     `**${r.sku_count}** SKUs · **${r.total_units.toLocaleString()}** units · **${r.payments}** payment installment(s) created`,
     `**Supplier file:** \`${r.xlsx_path}\` (send this to the supplier)`,
-    r.warnings.length ? `\n⚠️ ${r.warnings.length} warning(s):\n` + r.warnings.map(w => `- ${w}`).join('\n') : '',
+    r.warnings.length ? `\n⚠️ ${r.warnings.length} warning(s):\n` + r.warnings.map((w) => `- ${w}`).join('\n') : '',
   ].filter(Boolean).join('\n');
   return { content: [{ type: 'text', text: md }] };
 }
 
 module.exports = [
   {
-    name: 'draft_production_order',
-    description: 'Start a production order: write an editable draft tab to the 2026 Production Numbers Google Sheet from the supplier\'s projections (qty_to_order > 0). Auto-refreshes the projection first if it is stale (older than max_age_days, default 3) so the draft is never based on old numbers. Every committed size respects the 20-unit per-SKU floor (thin sizes round up). Use `overrides` to force a total for a style and have its size/color spread rescaled to that total. Jamie edits the quantities in the sheet, then calls submit_production_order.',
+    name: 'draft_order_review',
+    description: 'Stage 1 of placing a production order: write an editable REVIEW tab to the inventory-projections Google Sheet for a supplier, with full context columns (on-hand, incoming, weeks cover, sales/week, priority) and a Qty to Order column. Auto-refreshes the projection if stale (older than max_age_days, default 3). Order rules are pre-applied to Qty to Order: every ordered size respects the 20-unit floor (thin sizes round up). Use `overrides` to force a total for a style and have its spread rescaled (multiples of 10). Jamie reviews/edits the Qty to Order column, then calls draft_production_order with this tab name.',
     inputSchema: {
       type: 'object',
       properties: {
         supplier: { type: 'string', description: 'Supplier name (Kali, Queenas, JustMax, Wumes)' },
-        force_refresh: { type: 'boolean', description: 'Recompute the inventory projection before drafting, even if a recent one exists.' },
+        force_refresh: { type: 'boolean', description: 'Recompute the inventory projection first, even if a recent one exists.' },
         max_age_days: { type: 'number', description: 'Max projection age (days) before auto-refresh. Default 3.' },
         overrides: {
           type: 'object',
-          description: 'Founder unit overrides: per-style TOTAL units to order, keyed by style name or SKU prefix, e.g. {"naomi": 3000} or {"GAF": 3000}. Add a "/COLOR" suffix to override a single color, e.g. {"AJ/BLK": 2000, "AJ/SND": 800}. The matched rows\' projected size spread is rescaled to that total instead of the projected need, honoring the 20-unit floor and keeping every size a multiple of 10. Other styles are unaffected.',
+          description: 'Founder unit overrides: per-style TOTAL units to order, keyed by style name or SKU prefix, e.g. {"naomi": 3000} or {"GAF": 3000}. Add a "/COLOR" suffix to override a single color, e.g. {"AJ/BLK": 2000, "AJ/SND": 800}. The matched rows\' projected size spread is rescaled to that total, honoring the 20-unit floor and keeping every size a multiple of 10.',
           additionalProperties: { type: 'number' },
         },
       },
       required: ['supplier'],
     },
+    handler: handleReview,
+  },
+  {
+    name: 'draft_production_order',
+    description: 'Stage 2: read the founder-edited Qty to Order from a projections review tab (from draft_order_review) and write the supplier-format draft tab to the 2026 Production Numbers Google Sheet. Warns if any edited line is below the 20-unit floor or not a multiple of 10. Jamie eyeballs it, then calls submit_production_order.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        supplier: { type: 'string', description: 'Supplier name' },
+        review_tab: { type: 'string', description: 'The review tab name returned by draft_order_review (after you edited the Qty to Order column).' },
+      },
+      required: ['supplier', 'review_tab'],
+    },
     handler: handleDraft,
   },
   {
     name: 'submit_production_order',
-    description: 'Place the order (the "GO" step): read the edited draft tab back as canonical, record production_orders + items + payments (from the supplier\'s payment terms), mint a production code, and write a supplier-ready .xlsx to ~/Downloads. Record-only — does not email the supplier.',
+    description: 'Stage 3, the "GO" step: read the edited draft tab back as canonical, record production_orders + items + payments (from the supplier\'s payment terms), mint a production code, and write a supplier-ready .xlsx to ~/Downloads. Record-only — does not email the supplier.',
     inputSchema: {
       type: 'object',
       properties: {

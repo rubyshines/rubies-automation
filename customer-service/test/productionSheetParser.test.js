@@ -1,6 +1,40 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseProductionSheet, isSku, parseHeader } = require('../lib/merchandising/productionSheetParser');
+const { parseProductionSheet, parseProjectionReviewSheet, isSku, parseHeader } = require('../lib/merchandising/productionSheetParser');
+
+const REVIEW_HEADERS = ['SKU', 'Product', 'Color', 'Size', 'Age Range', 'Current Inventory',
+  'Total Incoming', 'Total Inventory', 'Units Sold (Year)', 'Sales/Week', 'Weeks Until Stockout',
+  'Weeks (on hand only)', 'Qty to Order', 'Priority', 'Weeks Unavailable', 'Supplier'];
+
+test('parseProjectionReviewSheet reads Qty to Order, skips headers/totals/notes and qty<=0', () => {
+  const rows = [
+    REVIEW_HEADERS,
+    ['NAOMI GAFF - BLK'],
+    ['GAF-BLK-M', 'NAOMI GAFF', 'BLK', 'M', 'adult', 100, 0, 100, 500, 9.6, 10, 8, 980, 'URGENT', 0, 'Kali'],
+    ['GAF-BLK-XS', 'NAOMI GAFF', 'BLK', 'XS', 'adult', 50, 0, 50, 100, 1.9, 26, 20, 180, 'WATCH', 0, 'Kali'],
+    ['TOTAL', '', '', '', '', '', '', '', '', '', '', '', 1160, '', '', ''],
+    [],
+    ['THE AJ - BLK'],
+    ['AJ-BLK-S', 'THE AJ', 'BLK', 'S', 'adult', 5, 0, 5, 200, 3.8, 1, 1, 0, 'URGENT', 0, 'Kali'], // qty 0 -> skipped
+    [],
+    ['Inventory Projection — 2026-06-27 — Kali'],
+  ];
+  const { items, grand_total, warnings } = parseProjectionReviewSheet(rows);
+  assert.strictEqual(items.length, 2);
+  assert.strictEqual(grand_total, 1160);
+  assert.strictEqual(warnings.length, 0);
+  const m = items.find((i) => i.sku === 'GAF-BLK-M');
+  assert.strictEqual(m.qty, 980);
+  assert.strictEqual(m.size, 'M');       // derived from the SKU
+  assert.strictEqual(m.color, 'BLK');
+  assert.strictEqual(m.product_name, 'NAOMI GAFF');
+});
+
+test('parseProjectionReviewSheet warns when there is no recognizable header', () => {
+  const { items, warnings } = parseProjectionReviewSheet([['foo', 'bar'], ['x', 1]]);
+  assert.strictEqual(items.length, 0);
+  assert.match(warnings[0], /no header row/);
+});
 
 test('isSku distinguishes SKUs from headers and numbers', () => {
   assert.ok(isSku('AJ-BLK-8'));

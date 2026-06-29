@@ -721,7 +721,8 @@ async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, tar
   try {
     const res = await sheets.spreadsheets.batchUpdate({
       spreadsheetId: SALES_SHEET_ID,
-      requestBody: { requests: [{ addSheet: { properties: { title: tabName } } }] },
+      // index 0 -> new tab lands at the front so the latest run is not buried far right.
+      requestBody: { requests: [{ addSheet: { properties: { title: tabName, index: 0 } } }] },
     });
     tabSheetId = res.data.replies[0].addSheet.properties.sheetId;
     console.log(`[projection] created tab "${tabName}" (sheetId ${tabSheetId})`);
@@ -887,6 +888,8 @@ async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, tar
   } catch (err) {
     console.warn(`writeSalesDataSheet: formatting failed — ${err.message}`);
   }
+
+  return { tabName, skuCount, sheetId: SALES_SHEET_ID };
 }
 
-module.exports = { runProjection, fetchIncomingOrders, PRE_ORDER_SHEET_ID };
+module.exports = { runProjection, writeSalesDataSheet, fetchIncomingOrders, PRE_ORDER_SHEET_ID };
