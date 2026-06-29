@@ -53,6 +53,12 @@ function note(orderNumber, text, { author = 'operator', resolved = false, create
   return { order_number: orderNumber, note: text, author, resolved, created_at };
 }
 
+// Fake Warehance fetcher: map of orderNumber → { has_hold }. Omitted orders
+// resolve to null (mirrors fetchOrderByNumber's "not found").
+function whFetcher(map = {}) {
+  return async (orderNumber) => (orderNumber in map ? map[orderNumber] : null);
+}
+
 // Notes are returned newest-first by the real query; the stub doesn't sort,
 // so list newest first in fixtures.
 
@@ -205,13 +211,70 @@ test('reconcileNotes R1c: hold note + shipped order → resolved (regression for
   assert.equal(sb._inserts[0].row.author, 'auto');
 });
 
-test('reconcileNotes R1c: hold note + still-unfulfilled order stays open', async () => {
-  // A live hold (order not yet shipped) is a real, active state — never resolve it.
+test('reconcileNotes R1c: hold note + still-unfulfilled order (no tickets) stays open', async () => {
+  // A live hold (order not yet shipped, no settled conversation) is a real,
+  // active state — never resolve it.
   const sb = makeStub({
     notes: [note(31900, 'Warehouse hold placed: Customer requested address change')],
     orders: [{ order_number: 31900, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
   });
-  const { resolved } = await reconcileNotes({ supabase: sb });
+  const { resolved } = await reconcileNotes({ supabase: sb, fetchWhOrder: whFetcher({ 31900: { has_hold: false } }) });
+  assert.equal(resolved.length, 0);
+});
+
+test('reconcileNotes R1c: hold released in Warehance + tickets closed → resolved (#31992/#31997)', async () => {
+  // Order not yet shipped, but the operator finished the modification, released
+  // the warehouse hold, and closed the ticket. The hold note is moot — resolve
+  // without waiting for the order to physically ship.
+  const sb = makeStub({
+    notes: [note(31992, 'Warehouse hold placed: Auto-hold: customer wants to modify the order')],
+    orders: [{ order_number: 31992, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2001, order_number: '31992', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb, fetchWhOrder: whFetcher({ 31992: { has_hold: false } }) });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'hold_cleared');
+  assert.match(resolved[0].reason, /released and conversation closed/i);
+  assert.equal(sb._inserts[0].row.resolved, true);
+  assert.equal(sb._inserts[0].row.author, 'auto');
+});
+
+test('reconcileNotes R1c: ticket closed but hold STILL active in Warehance → stays open (#32014)', async () => {
+  // Operator closed the ticket but the hold is still on — the order genuinely
+  // won't ship, so keep the note visible (it resurfaces as a held order).
+  const sb = makeStub({
+    notes: [note(32014, 'Warehouse hold placed: Auto-hold: address change needs operator review')],
+    orders: [{ order_number: 32014, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2002, order_number: '32014', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb, fetchWhOrder: whFetcher({ 32014: { has_hold: true } }) });
+  assert.equal(resolved.length, 0);
+});
+
+test('reconcileNotes R1c: hold note + a ticket still OPEN → stays open, Warehance not queried', async () => {
+  // Conversation not settled (e.g. awaiting the customer's new address). Never
+  // resolve while a ticket is open — this also guards the fresh-order race where
+  // the backstop hold has not been placed yet (has_hold would read false).
+  const sb = makeStub({
+    notes: [note(32020, 'Warehouse hold placed: Auto-hold: customer wants to modify the order')],
+    orders: [{ order_number: 32020, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2003, order_number: '32020', status: 'snoozed' }],
+  });
+  let queried = false;
+  const fetcher = async () => { queried = true; return { has_hold: false }; };
+  const { resolved } = await reconcileNotes({ supabase: sb, fetchWhOrder: fetcher });
+  assert.equal(resolved.length, 0);
+  assert.equal(queried, false, 'Warehance must not be queried while a ticket is still open');
+});
+
+test('reconcileNotes R1c: tickets closed but order not found in Warehance → stays open (conservative)', async () => {
+  // Unknown hold state is treated as still-held — never resolve on a guess.
+  const sb = makeStub({
+    notes: [note(32030, 'Warehouse hold placed: Auto-hold: customer wants to modify the order')],
+    orders: [{ order_number: 32030, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2004, order_number: '32030', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb, fetchWhOrder: whFetcher({}) });
   assert.equal(resolved.length, 0);
 });
 

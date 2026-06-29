@@ -72,6 +72,17 @@ function getAdvisorHandler() {
 // — otherwise the operator sees a draft that lies. Returns an `actions` entry
 // to append to the draft on success, or null on skip/failure (failure is
 // logged so the operator agent can still attempt the hold itself).
+// Auto-hold note text, keyed off the advisor's inquiry classification. An
+// address change with no new address yet is proposed as a bare warehouse_hold
+// (the address auto-apply path needs an extracted address), so it lands here
+// rather than in fallbackToHold — message_type 'shipping' is that case and must
+// read as an address change, not a generic item modification.
+function autoHoldReason(messageType) {
+  if (messageType === 'cancellation') return 'Auto-hold: customer asked to cancel, holding before we cancel';
+  if (messageType === 'shipping') return 'Auto-hold: address change needs operator review';
+  return 'Auto-hold: customer wants to modify the order';
+}
+
 async function autoExecuteAdvisorHold(structured) {
   if (structured?.action_type !== 'warehouse_hold') return null;
   const orderName = structured?.order?.name || '';
@@ -91,9 +102,7 @@ async function autoExecuteAdvisorHold(structured) {
   }
 
   const { handleWarehouseHold } = require('../lib/tools/orderNotes');
-  const reason = structured?.intake?.message_type === 'cancellation'
-    ? 'Auto-hold: customer asked to cancel, holding before we cancel'
-    : 'Auto-hold: customer wants to modify the order';
+  const reason = autoHoldReason(structured?.intake?.message_type);
 
   try {
     const result = await handleWarehouseHold({ order_number: orderNumber, reason });
@@ -1206,4 +1215,5 @@ module.exports = {
   extractCleanBody,
   autoExecuteAdvisorHold,
   autoExecuteAddressChange,
+  autoHoldReason,
 };
