@@ -17,8 +17,9 @@ test('buildSheetRows groups by product/color, sorts sizes, totals, and ends with
   assert.ok(blkHeader >= 0);
   assert.deepStrictEqual(rows[blkHeader + 1], ['AJ-BLK-8', 200]);
   assert.deepStrictEqual(rows[blkHeader + 2], ['AJ-BLK-M', 670]);
-  assert.deepStrictEqual(rows[blkHeader + 3], ['', 870]); // BLK subtotal
-  assert.deepStrictEqual(rows[rows.length - 1], ['TOTAL', 1170]);
+  assert.deepStrictEqual(rows[blkHeader + 3], ['', '=SUM(B2:B3)']); // BLK subtotal — live formula
+  assert.deepStrictEqual(rows[rows.length - 1], ['TOTAL', '=SUM(B4,B8)']); // grand = sum of subtotals
+  assert.strictEqual(grand, 1170); // numeric grand still returned for display
 });
 
 test('buildSheetRows output parses back to the same items + total (GO round-trip)', () => {

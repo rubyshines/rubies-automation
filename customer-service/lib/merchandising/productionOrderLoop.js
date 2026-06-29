@@ -51,7 +51,7 @@ async function writeTabAtFront(sheets, spreadsheetId, tabName, values) {
     });
   } catch (e) { if (!/already exists/i.test(e.message)) throw e; }
   await sheets.spreadsheets.values.update({
-    spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'RAW', requestBody: { values },
+    spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values },
   });
 }
 
@@ -79,20 +79,27 @@ function buildSheetRows(rows) {
     return pa !== pb ? pa.localeCompare(pb) : (a.color || '').localeCompare(b.color || '');
   });
 
+  // Totals are live formulas, not hardcoded sums (sheet has no header row, so
+  // outputRows[j] is sheet row j+1). Qty lives in column B.
   const out = [];
   let grand = 0;
+  const subtotalRows = []; // sheet row numbers of each group's subtotal cell
   for (const g of sorted) {
     out.push([g.color ? `${g.product_name} - ${g.color}` : g.product_name]);
+    const firstDataRow = out.length + 1;
     let sub = 0;
     for (const it of g.items.sort((a, b) => sizeSort(a.size) - sizeSort(b.size))) {
       out.push([it.sku, it.qty_to_order]);
       sub += it.qty_to_order;
     }
-    out.push(['', sub]);
+    const lastDataRow = firstDataRow + g.items.length - 1;
+    out.push(['', `=SUM(B${firstDataRow}:B${lastDataRow})`]);
+    subtotalRows.push(out.length); // subtotal sheet row = its 1-based position
     out.push([]);
     grand += sub;
   }
-  out.push(['TOTAL', grand]);
+  const grandFormula = subtotalRows.length ? `=SUM(${subtotalRows.map((r) => `B${r}`).join(',')})` : 0;
+  out.push(['TOTAL', grandFormula]);
   return { rows: out, grand };
 }
 
