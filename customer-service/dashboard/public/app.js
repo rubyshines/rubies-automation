@@ -5526,9 +5526,10 @@ function swimwearRowHtml(r) {
   <div class="queue-item ${r.id === swimwearSelectedId ? 'active' : ''}" data-id="${r.id}" onclick="selectSwimwear(${r.id})">
     <div class="queue-item-inner">
       <div class="queue-item-row1">
-        <span class="queue-item-name">${esc(r.applicant_name || '(no name)')}</span>
+        <span class="queue-item-name">${esc(r.email || '(no email)')}</span>
         <span class="badge badge-muted">age ${esc(r.recipient_age || '?')}</span>
       </div>
+      <div class="swimwear-row-name">${esc(r.applicant_name || '(no name)')}</div>
       ${meta ? `<div class="outreach-row-reason">${esc(meta)}</div>` : ''}
       ${r.ai_summary ? `<div class="outreach-row-snippet">${esc(r.ai_summary)}</div>` : ''}
       ${r.discount_code ? `<div class="queue-item-row2"><span class="badge">${esc(r.discount_code)}</span></div>` : ''}

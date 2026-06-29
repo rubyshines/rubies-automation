@@ -5373,7 +5373,8 @@ main { height: calc(100vh - 56px); }
 }
 
 /* Free Swimwear panel — larger, more readable text than the dense Outreach panel */
-#panel-swimwear .queue-item-name { font-size: 15px; font-weight: 600; }
+#panel-swimwear .queue-item-name { font-size: 15px; font-weight: 700; }
+#panel-swimwear .swimwear-row-name { font-size: 13px; color: var(--text-secondary); margin-top: 1px; }
 #panel-swimwear .outreach-row-reason { font-size: 13px; }
 #panel-swimwear .outreach-row-snippet { font-size: 13px; line-height: 1.4; }
 #panel-swimwear .outreach-detail-head h2 { font-size: 24px; font-weight: 700; }
