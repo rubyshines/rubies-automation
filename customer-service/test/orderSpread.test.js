@@ -52,6 +52,37 @@ test('matchesStyle matches by product-name substring or SKU prefix, case-insensi
   assert.ok(!matchesStyle(row, ''));
 });
 
+test('matchesStyle honors a /COLOR qualifier', () => {
+  const blk = { sku: 'AJ-BLK-M', product_name: 'THE AJ', color: 'BLK' };
+  const snd = { sku: 'AJ-SND-M', product_name: 'THE AJ', color: 'SND' };
+  assert.ok(matchesStyle(blk, 'AJ/BLK'));
+  assert.ok(!matchesStyle(snd, 'AJ/BLK'));
+  assert.ok(matchesStyle(snd, 'aj/snd')); // case-insensitive both parts
+});
+
+test('applyOrderRules rescales each color independently with /COLOR overrides', () => {
+  const rows = [
+    { sku: 'AJ-BLK-M', product_name: 'THE AJ', color: 'BLK', size: 'M', qty_to_order: 600 },
+    { sku: 'AJ-BLK-S', product_name: 'THE AJ', color: 'BLK', size: 'S', qty_to_order: 200 },
+    { sku: 'AJ-SND-M', product_name: 'THE AJ', color: 'SND', size: 'M', qty_to_order: 300 },
+    { sku: 'AJ-SND-S', product_name: 'THE AJ', color: 'SND', size: 'S', qty_to_order: 100 },
+  ];
+  const { rows: out, warnings } = applyOrderRules(rows, { overrides: { 'AJ/BLK': 2000, 'AJ/SND': 800 } });
+  assert.strictEqual(sum(out.filter((r) => r.color === 'BLK').map((r) => r.qty_to_order)), 2000);
+  assert.strictEqual(sum(out.filter((r) => r.color === 'SND').map((r) => r.qty_to_order)), 800);
+  assert.strictEqual(warnings.length, 0);
+});
+
+test('applyOrderRules prefers a /COLOR override over a whole-style one', () => {
+  const rows = [
+    { sku: 'AJ-BLK-M', product_name: 'THE AJ', color: 'BLK', size: 'M', qty_to_order: 600 },
+    { sku: 'AJ-SND-M', product_name: 'THE AJ', color: 'SND', size: 'M', qty_to_order: 300 },
+  ];
+  const { rows: out } = applyOrderRules(rows, { overrides: { aj: 5000, 'AJ/BLK': 1000 } });
+  assert.strictEqual(out.find((r) => r.color === 'BLK').qty_to_order, 1000); // specific wins
+  assert.strictEqual(out.find((r) => r.color === 'SND').qty_to_order, 5000); // remainder to broad key
+});
+
 test('applyOrderRules overrides one style and floors the rest', () => {
   const rows = [
     { sku: 'GAF-BLK-M', product_name: 'NAOMI GAFF', color: 'BLK', size: 'M', qty_to_order: 710 },

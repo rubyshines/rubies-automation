@@ -83,16 +83,32 @@ function distributeWithFloor(weights, target, floor = PER_SKU_FLOOR) {
 }
 
 /**
- * Does a projection row belong to the style named by `key`? Matches either the
- * SKU prefix exactly (e.g. "GAF") or a substring of the product name (e.g.
- * "naomi"), case-insensitive — so the founder can name a style either way.
+ * Split an override key into its style and optional color parts. A "/" qualifies
+ * the style with a color code, so the founder can override a whole style ("naomi")
+ * or a single color within it ("naomi/BLK", "AJ/SND").
+ */
+function parseStyleKey(key) {
+  const raw = String(key || '').trim();
+  const slash = raw.indexOf('/');
+  if (slash === -1) return { style: raw, color: null };
+  return { style: raw.slice(0, slash).trim(), color: raw.slice(slash + 1).trim() || null };
+}
+
+/**
+ * Does a projection row belong to the style (and optional color) named by `key`?
+ * The style matches either the SKU prefix exactly (e.g. "GAF") or a substring of
+ * the product name (e.g. "naomi"); a "/COLOR" suffix further restricts to rows of
+ * that color code (e.g. "naomi/BLK"). All matching is case-insensitive.
  */
 function matchesStyle(row, key) {
-  const k = String(key || '').trim().toLowerCase();
-  if (!k) return false;
+  const { style, color } = parseStyleKey(key);
+  const s = style.toLowerCase();
+  if (!s) return false;
   const prefix = String(row.sku || '').split('-')[0].toLowerCase();
-  if (prefix === k) return true;
-  return String(row.product_name || '').toLowerCase().includes(k);
+  const styleMatch = prefix === s || String(row.product_name || '').toLowerCase().includes(s);
+  if (!styleMatch) return false;
+  if (color) return String(row.color || '').toLowerCase() === color.toLowerCase();
+  return true;
 }
 
 /**
@@ -111,10 +127,16 @@ function applyOrderRules(rows, { overrides = {}, floor = PER_SKU_FLOOR } = {}) {
   const matched = new Set();
   const out = rows.map((r) => ({ ...r }));
 
+  // Check color-qualified keys first so a row prefers its specific color override
+  // ("naomi/BLK") over a whole-style one ("naomi") when both are supplied.
+  const orderedKeys = [...overrideKeys].sort(
+    (a, b) => (parseStyleKey(b).color ? 1 : 0) - (parseStyleKey(a).color ? 1 : 0),
+  );
+
   // Partition: overridden style groups vs. everything else (floored in place).
   const groups = new Map(); // key -> [row refs in `out`]
   for (const r of out) {
-    const key = overrideKeys.find((k) => matchesStyle(r, k));
+    const key = orderedKeys.find((k) => matchesStyle(r, k));
     if (key) {
       matched.add(key);
       if (!groups.has(key)) groups.set(key, []);
@@ -151,4 +173,4 @@ function applyOrderRules(rows, { overrides = {}, floor = PER_SKU_FLOOR } = {}) {
   return { rows: out, warnings };
 }
 
-module.exports = { PER_SKU_FLOOR, distributeWithFloor, matchesStyle, applyOrderRules };
+module.exports = { PER_SKU_FLOOR, distributeWithFloor, matchesStyle, parseStyleKey, applyOrderRules };
