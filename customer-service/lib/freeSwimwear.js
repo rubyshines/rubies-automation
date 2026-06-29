@@ -8,7 +8,7 @@
  */
 
 const { addCodeToPriceRule } = require('./shopify');
-const { sendTemplate } = require('../../shared/sendgridClient');
+const { sendTemplate, sendEmail } = require('../../shared/sendgridClient');
 
 // The "Free RUBIES Program" price rule (a $X-off code on the rubies-free-donation
 // collection, usage limit 1) — owns the definition of what's free. Approved
@@ -101,6 +101,50 @@ async function sendResend(row, daysLeft, now = new Date()) {
   return { patch, emailSent: email.ok, email };
 }
 
+/** Format a reapply date for the family, in the program's timezone, no em dashes. */
+function formatReapplyDate(d) {
+  return new Date(d).toLocaleDateString('en-US', {
+    year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Toronto',
+  });
+}
+
+/**
+ * Email a "you've already applied — reapply after <date>" notice for a too-soon
+ * repeat. Plain (non-template) email from care@, authored in code (brand voice,
+ * no em dashes). Side effect only; the caller persists the patch.
+ *
+ * @param {Object} row - request row ({email, applicant_name})
+ * @param {string|Date} reapplyAfter - instant the family may reapply after
+ * @param {Date} [now]
+ * @returns {Promise<{patch:Object, emailSent:boolean, email:Object}>}
+ */
+async function sendRepeatNotice(row, reapplyAfter, now = new Date()) {
+  const name = firstName(row.applicant_name);
+  const dateStr = formatReapplyDate(reapplyAfter);
+  const greeting = name ? `Hi ${name},` : 'Hi there,';
+  const paragraphs = [
+    greeting,
+    `Thank you so much for reaching out to RUBIES again. It looks like you have already applied to our free swimwear program within the past year. We want these gifts to reach as many families as we can, so we offer one per family each year.`,
+    `You are very welcome to apply again after ${dateStr}, and we would genuinely love to hear from you then.`,
+    `Sending you so much love. Remember, every girl deserves to shine.`,
+    `The RUBIES Team`,
+  ];
+  const text = paragraphs.join('\n\n');
+  const html = paragraphs.map(p => `<p>${p}</p>`).join('\n');
+
+  const email = await sendEmail({
+    to: row.email,
+    subject: 'About your RUBIES free swimwear application',
+    text,
+    html,
+  });
+  const patch = {};
+  // Mirror the acceptance pattern: stamp the send date only on a real 2xx, so a
+  // null repeat_notice_sent_at is a reliable "notice not delivered" signal.
+  if (email.ok) patch.repeat_notice_sent_at = now.toISOString();
+  return { patch, emailSent: email.ok, email };
+}
+
 /**
  * Pure lifecycle decision for one row, given Shopify lookups + clock.
  * Mirrors the Apps Script: register when a Shopify customer exists for the
@@ -167,5 +211,7 @@ module.exports = {
   generateDiscountCode,
   issueAcceptance,
   sendResend,
+  sendRepeatNotice,
+  formatReapplyDate,
   decideLifecycle,
 };

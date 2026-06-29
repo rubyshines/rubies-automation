@@ -15,7 +15,7 @@ const { issueAcceptance, sendResend, firstName } = require('../freeSwimwear');
 const { writeBackToSheet } = require('../freeSwimwearSheet');
 
 const TABLE = 'free_swimwear_requests';
-const LIST_COLS = 'id, submitted_at, email, applicant_name, recipient_age, is_trans_nonbinary, region, status, eligibility_reason, ai_summary, discount_code, expiry_date, send_attempts';
+const LIST_COLS = 'id, submitted_at, email, applicant_name, recipient_age, is_trans_nonbinary, region, status, eligibility_reason, ai_summary, discount_code, expiry_date, send_attempts, possible_second_child, prior_application_at, prior_status, reapply_after, repeat_notice_sent_at';
 
 async function getRow(supabase, id) {
   const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
@@ -48,7 +48,7 @@ Why: ${row.why || '(none provided)'}`;
 const tools = [
   {
     name: 'free_swimwear_list_requests',
-    description: 'List Free Swimwear program applications from the review queue. Default shows status "new" (eligible, awaiting decision). Filter by status (new/accepted/registered/ordered/expired/expired-final/rejected/brazil-rejected) and limit. Returns applicant, region, status, AI summary, and discount code when issued.',
+    description: 'List Free Swimwear program applications from the review queue. Default shows status "new" (eligible, awaiting decision). Filter by status (new/accepted/registered/ordered/expired/expired-final/rejected/brazil-rejected/repeat/duplicate) and limit. "repeat" = too-soon repeats (within a year; emailed a reapply notice); "duplicate" = same-day resubmits collapsed silently. Returns applicant, region, status, AI summary, repeat/second-child flags, and discount code when issued.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,15 +60,14 @@ const tools = [
       const supabase = getSupabaseClient();
       const status = input.status || 'new';
       const limit = input.limit || 50;
-      // New queue: newest applications first. Decided lists (accepted/registered/
-      // ordered/expired/rejected): most-recently-decided first, so an item jumps
-      // to the top right after you act on it; backfilled rows (no decided_at)
-      // fall below, ordered by submission date.
+      // New queue: newest applications first (triage order). Every other status
+      // is a browse/lookup list (accepted/registered/ordered/expired/rejected/
+      // repeat/duplicate/…) — order those alphabetically by email so a specific
+      // applicant is easy to find.
       let query = supabase.from(TABLE).select(LIST_COLS).eq('status', status);
       query = status === 'new'
         ? query.order('submitted_at', { ascending: false, nullsFirst: false })
-        : query.order('decided_at', { ascending: false, nullsFirst: false })
-               .order('submitted_at', { ascending: false, nullsFirst: false });
+        : query.order('email', { ascending: true });
       const { data, error } = await query.limit(limit);
       if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
       const lines = [`**Free Swimwear — ${status}** (${data.length})`, ''];

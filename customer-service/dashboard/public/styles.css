@@ -2858,6 +2858,7 @@ main { height: calc(100vh - 56px); }
 .queue-filter-row {
   padding: 8px 12px 4px;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 .filter-chip {
@@ -5164,7 +5165,8 @@ main { height: calc(100vh - 56px); }
 
 /* ─── Outreach Panel (B2B queue) ────────────────────────── */
 
-.outreach-loading {
+.outreach-loading,
+.swimwear-loading {
   padding: 20px;
   text-align: center;
   color: var(--text-tertiary);

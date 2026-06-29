@@ -56,8 +56,40 @@ async function sendTemplate({ to, templateId, data = {}, fromName = 'RUBIES', fr
   }
 }
 
+/**
+ * Send a plain (non-template) email from RUBIES. For one-off transactional copy
+ * we author in code rather than a SendGrid dynamic template (e.g. the
+ * free-swimwear reapply notice). Same from/reply envelope and fail-soft contract
+ * as sendTemplate.
+ *
+ * @param {Object} opts
+ * @param {string} opts.to
+ * @param {string} opts.subject
+ * @param {string} [opts.html]
+ * @param {string} [opts.text]
+ * @param {string} [opts.fromName='RUBIES']
+ * @param {string} [opts.fromEmail='care@rubyshines.com']
+ * @returns {Promise<{ok:boolean, statusCode:?number, error?:string}>}
+ */
+async function sendEmail({ to, subject, html, text, fromName = 'RUBIES', fromEmail = 'care@rubyshines.com' }) {
+  const sgMail = getSendgridClient();
+  if (!sgMail) return { ok: false, statusCode: null, error: 'SendGrid not configured (SENDGRID_API_KEY missing)' };
+  try {
+    const msg = { to, from: { email: fromEmail, name: fromName }, subject };
+    if (html) msg.html = html;
+    if (text) msg.text = text;
+    const [resp] = await sgMail.send(msg);
+    const statusCode = resp?.statusCode ?? null;
+    return { ok: statusCode >= 200 && statusCode < 300, statusCode };
+  } catch (err) {
+    const detail = err?.response?.body ? JSON.stringify(err.response.body).slice(0, 300) : err.message;
+    return { ok: false, statusCode: err?.code ?? null, error: detail };
+  }
+}
+
 module.exports = {
   getSendgridClient,
   sendTemplate,
+  sendEmail,
 };
 
