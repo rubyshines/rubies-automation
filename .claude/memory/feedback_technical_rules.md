@@ -220,3 +220,11 @@ Store the AI-generated content and the final sent content separately. A boolean 
 **Why:** Edit patterns are the most reliable signal for where AI judgment is weak. "Jamie rewrites org intros but rarely touches retailer nudges" tells you where to invest in prompt improvement and eventually where a supervisor should escalate vs. handle autonomously. Without the before/after, there is no data to calibrate on.
 
 **How to apply:** Every draft table should store both `ai_body` (what the advisor generated) and `sent_body` (what actually went out). Log at send time — no separate edit-tracking step needed.
+
+## Spreadsheet totals are always live formulas, never hardcoded
+
+When writing any sheet (Google Sheets, exported xlsx) that has subtotals or grand totals, emit them as formulas (`=SUM(...)`, `=ROUND(SUM(...),1)`) over the data rows, written with `valueInputOption: 'USER_ENTERED'` so they evaluate. Never write a precomputed number into a total cell.
+
+**Why:** The founder edits quantities directly in these sheets (e.g. the inventory-projections review tab, the production-order draft tab). A hardcoded total goes stale the instant a cell is edited and silently misleads. A formula recalculates and stays trustworthy. Read-back is unaffected — `values.get` returns the computed value by default, so parsers still see numbers.
+
+**How to apply:** Track each group's data-row range as you build the rows, write `=SUM(<col><first>:<col><last>)` in the total cell, and sum subtotal cells (not a range that would double-count them) for the grand total. Use `USER_ENTERED`, not `RAW`. Applies to every sheet a human will edit.

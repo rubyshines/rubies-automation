@@ -7,6 +7,12 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 # Parked Items
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
+## New-product / new-colourway tool (guided dev → first-order workflow)
+- Parked: 2026-06-27
+- Domains: product_design, inventory, logistics
+- Type: idea (planned)
+- Notes: Surfaced during the production-pipeline algo work (see initiative_production_pipeline.md June 2026 update). Two cases: **(1) New colourway** — existing product, new color: no development, grading known, analog = a sibling color of the same product (auto). For ordering, founder gives a launch quantity and the tool applies the sibling color's **size spread** (size % distribution from the backfilled 2023-2026 orders in `production_orders`). **(2) New product** — whole new style: needs the full dev run-up (define → tech pack → grading → sample rounds via P&T studio → first run → scale to Kali), then first order uses a founder-chosen **analog** for the spread. Building blocks exist (`tech_packs`, `tech_pack_specs`, suppliers, R&D flow in `temp-analysis-data/production-rnd-process.md`); gap is the guided workflow. Implements **Rule 5** of the ordering algorithm (new items bypass the velocity formula). Worth its own focused session.
+
 ## Use AI (not heuristics) to separate customer text from boilerplate/quoted chains
 - Parked: 2026-06-14
 - Last touched: 2026-06-14
@@ -21,7 +27,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: community, b2b_sales, marketing
 - Priority: medium
 - Notes: After an event donation ships and the event happens, send a follow-up asking for photos. Photos received → operator routes to content pipeline → added to rubyshines.com/pages/collaborations and queued for Instagram. Over time builds a public record of community work (see collaborations page as the target format). Touches three systems: B2B outreach (follow-up message type), community (org relationship), marketing (site content + Instagram). Not part of V1 message type catalog — design after the core outreach system is running.
-
 
 ## Unified B2B Outreach & Prospect System — design in progress
 - Parked: 2026-05-28
@@ -91,15 +96,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: cs
 - Notes: Add Web Speech API voice input to the standalone operator console — would make ad-hoc CS commands much faster on the phone (e.g. dictate "refund order 12345 for $20" while away from desk). Surfaced when designing the standalone operator advisor; deferred to keep v1 scope tight.
 
-## ~~GA4 e-commerce data quality~~ — RESOLVED 2026-04-28
-- Parked: 2026-04-28
-- Last touched: 2026-04-28
-- Type: bug (resolved)
-- Domains: marketing, tech
-- Resolution: GA4 capture rate ≈ 70% of web orders is **by design**. Structural sources of the gap: ~13% non-web orders (Shop App / POS / draft orders / partner APIs) can't fire web pixels; 5-10% iOS ITP / ad-blocker baseline. Apr 2026 Shop Pay test order verified — purchase event fires correctly with well-formed payload.
-- itemId format: `shopify_<COUNTRY>_<PRODUCT_ID>_<VARIANT_ID>` (Merchant Center offer ID). Regex: `/^shopify_([A-Z]{2})_(\d+)_(\d+)$/`. Earlier "shopify_US placeholder" diagnosis was wrong — it's a structured ID with a country prefix.
-- Implication: GA4 funnel pipeline is **no longer gated**. Item-level joins to Shopify catalog work via the regex parse. Earlier session's caveated item-level findings (Brooke view→ATC halved, bundle ATC +69%) are more trustworthy than caveated.
-
 ## GA4 funnel pipeline build (3 layers)
 - Parked: 2026-04-28
 - Last touched: 2026-04-28
@@ -113,21 +109,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: bug
 - Domains: marketing
 - Notes: [klaviyo-tracking/supabase-schema.sql](../../klaviyo-tracking/supabase-schema.sql) defines klaviyo_flows but the table was never created and no sync writes to it. Klaviyo flows (welcome series, abandoned cart, post-purchase) are typically 30-50% of email-attributed revenue. Big visibility gap. Build similar to campaigns: extend klaviyoClient.js + daily-email-tracking.js, backfill historical. Supersedes the older "Add flow-level granularity to email tracking" parked item below.
-
-## ~~shipping_zones has no history~~ — RESOLVED 2026-04-28
-- Parked: 2026-04-28
-- Last touched: 2026-04-28
-- Type: bug (resolved)
-- Domains: logistics, tech
-- Resolution: Added `shipping_zones_history` table + diff-detection in [syncShippingZones.js](../../customer-service/sync/syncShippingZones.js). Daily sync inserts a history row only when zone/rate/threshold/currency changes. **474 rows seeded** for the Apr 2026 transition: 237 'initial' baselines dated 2025-04-28 + 237 change rows dated 2026-04-18. Prior rates (US $9, CA $10 USD, DDP $12.72 USD median, DDU $12.67 USD median) were derived from order data Jan-Apr 2026 since pre-April carrier rates were calculated/dynamic (variance ±$1). Canada also switched currency USD → CAD on Apr 18 (`multi_change`). Future shipping rate changes will be captured automatically.
-
-## ~~order_fulfillment_costs sync stopped~~ — NOT A BUG (monthly batch flow)
-- Parked: 2026-04-28
-- Last touched: 2026-04-28
-- Type: bug (resolved — was not actually a bug)
-- Domains: finance, logistics
-- Resolution: Fulfillment costs aren't a daily sync — they arrive in monthly batches from the 3PL invoice. The "stale" 2026-03-31 high-water mark just means April's batch hasn't been received/imported yet. Will be updated when the next 3PL bill comes in.
-- Operational reminder for future Claudes: if a margin analysis is blocked by stale fulfillment costs, prompt Jamie to update them ("looks like the latest fulfillment cost row is from <date> — has the next 3PL invoice come in yet?") before falling back to historical zone averages.
 
 ## cs_conversations.category is null on all recent records
 - Parked: 2026-04-28
@@ -143,13 +124,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: marketing
 - Notes: [seo-tracking/daily-seo-tracking.js:387-392](../../seo-tracking/daily-seo-tracking.js#L387-L392) hard-filters sessions to sessionDefaultChannelGroup='Organic Search'. Latest row 122 sessions vs ~580 full property. Either rename table to ga4_organic_daily, or remove filter and add channel column. Affects any future analysis assuming ga4_daily = full traffic.
 
-## ~~competitor_prices stale + sparse~~ — ACCEPTED (current cadence is fine)
-- Parked: 2026-04-28
-- Last touched: 2026-04-28
-- Type: idea (closed — not pursuing)
-- Domains: marketing
-- Resolution: Confirmed 2026-04-28 — current cadence + sparseness is acceptable. Not investigating further unless competitor-pricing decisions need richer data later.
-
 ## klaviyo_daily_metrics has only 49 days of history
 - Parked: 2026-04-28
 - Last touched: 2026-04-28
@@ -163,13 +137,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: bug
 - Domains: marketing, product_design
 - Notes: GA4 view→ATC for THE BROOKE SHAPING BRA went 13.46% → 6.61% PRE→POST. Only product showing real PDP-level friction (most products' ATC rate IMPROVED post-pricing). Worth investigating: price display ($42 new vs $39 old), hero image, copy, stock-out variants. Single-product issue — not part of the broader pricing analysis.
-
-## ~~price_history started 2026-04-15 only~~ — NOT A GAP (previous_price covers pre-rollout)
-- Parked: 2026-04-28
-- Last touched: 2026-05-03
-- Type: idea (resolved — was not actually a gap for the rollout case)
-- Domains: inventory
-- Resolution: Earliest row is 2026-04-15, but each `price_history` row also carries `previous_price`, so the Apr 16 rollout's old retail values ARE captured (542 rows, matches the initiative's variant-change count). Used by `pre_increase_pricing` flag in `create_wholesale_order`. Pre-2026-04-15 price moves still aren't captured — only matters if we want to analyze older changes, low priority.
 
 ## Watch: customer signature/address missing from advisor view (Gorgias stripped_html)
 - Parked: 2026-04-27
@@ -192,13 +159,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
   2026-04-27 conversation: lazy raw-fetch in the specific tool (refund_order,
   create_exchange_order) when an address is needed but the stripped body
   doesn't contain one.
-
-## ~~Delete orphan execute handlers in dashboard server~~ — RESOLVED 2026-06-10
-- Parked: 2026-04-26
-- Last touched: 2026-06-10
-- Type: refactor (resolved)
-- Domains: cs
-- Resolution: Removed in the operator-agent staleness sprint (branch `sprint/operator-agent`): `apiExecuteExchange`/`apiExecuteRefund`/`apiExecuteEdit`, `buildLegacyActionEntry`, all 6 route registrations, plus the client-side legacy stubs and no-op `updateDraftFromActionResults`. ~300 lines total. The "dead code that looks live" trap bit again during the 2026-06-10 review (ticket-level wrappers read as a live path) — it's gone now.
 
 ## Advisor classification overridden by closing-message tone
 - Parked: 2026-04-15
@@ -256,40 +216,12 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: inventory
 - Notes: Legacy cache path from pre-Supabase architecture.
 
-## ~~Fix legacy SKU inconsistencies~~ — RESOLVED 2026-04-29 (was not actually present in production data)
-- Parked: 2026-04-15
-- Last touched: 2026-04-29
-- Type: bug (resolved — no actual issue)
-- Domains: inventory
-- Resolution: Empirical check on 2026-04-29 — every SKU prefix in the catalog maps to exactly one product (no `getVariantBySku` ambiguity), and there are zero exact-SKU collisions across products. The HLA-shared-by-Sassy-and-Flo concern that motivated this entry is not present today: every HLA-* SKU in order history (hundreds across 25 distinct variants) resolves to Sassy with adult sizes only — no HLA-*-<youth-size> orders ever existed, and Flo has its own FLO-* prefix. The real recurring trap that bit us during the Naomi outreach was orthogonal: Shopify's `selectedOptions` are sometimes named "Option 1" / "Option 2" generically rather than "Color" / "Size". Captured in `domain_inventory_catalog.md` Key Decision pointing to `productCache.renderVariantForCustomer()` as the canonical helper.
-
-## ~~Wire up USPS Web Tools API~~ — RESOLVED 2026-05-05 (no longer needed)
-- Parked: 2026-04-15
-- Last touched: 2026-05-05
-- Type: idea (resolved — not pursuing)
-- Domains: logistics
-- Resolution: Shopify's `fulfillment.events` GraphQL connection already aggregates USPS scans (and every other Shopify-supported carrier) and is now synced into `orders.fulfillments[].events` nightly. No need for a separate USPS API integration. USPS/OnTrac scraper code retired.
-
 ## Automate shipping zone sync from Shopify DeliveryProfile API
 - Parked: 2026-04-15
 - Last touched: 2026-04-15
 - Type: refactor
 - Domains: logistics
 - Notes: Replace manual table seeding. Code exists but currently unused.
-
-## ~~Wire up fulfillment checker stub~~ — RESOLVED 2026-05-05 (already done)
-- Parked: 2026-04-15
-- Last touched: 2026-05-05
-- Type: refactor (resolved)
-- Domains: logistics
-- Resolution: `customer-service/lib/tracking/fulfillmentChecker.js` is fully implemented (307 lines, exports `analyzeUnfulfilledOrder` + `draftUnfulfilledResponse`) and wired into the advisor's `check_unfulfilled_order` tool and `shippingLookup`'s UNFULFILLED branch. Stub is long gone; entry was stale.
-
-## ~~Build partner onboarding/management UI~~ — RESOLVED 2026-05-28
-- Parked: 2026-04-15
-- Last touched: 2026-05-28
-- Type: idea (resolved)
-- Domains: community
-- Resolution: Superseded by the MCP CRUD tools (`donation_partner_list_submissions`, `_create_from_survey`, `_create`, `_update`, `_delete`, `_mark_out`, `_publish`) on the ad-hoc operator console. Operator drives the full flow from natural-language commands — survey ingest with geocoding + Haiku logo + Shopify CDN re-host + auto-deploy. No standalone UI needed.
 
 ## Expand international donation partner coverage
 - Parked: 2026-04-15

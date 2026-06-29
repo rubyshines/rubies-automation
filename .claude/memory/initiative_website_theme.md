@@ -1,7 +1,7 @@
 ---
 name: Website Theme
 description: Build out the new Shopify theme launched Nov 2025, Natta (creative director/designer) supports
-type: project
+type: initiative
 domains: [tech]
 last_updated: 2026-04-14
 ---
