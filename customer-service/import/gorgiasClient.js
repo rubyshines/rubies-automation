@@ -163,6 +163,38 @@ async function findOpenTicketsByEmail(email, { withinMinutes = 10, limit = 10 } 
 }
 
 /**
+ * Find an existing Gorgias customer by email, or create one. Returns the customer object.
+ */
+async function findOrCreateCustomer({ email, name }) {
+  if (!email) throw new Error('findOrCreateCustomer requires an email');
+  const existing = await apiFetch(`/customers?email=${encodeURIComponent(email)}`);
+  if (existing.data?.[0]?.id) return existing.data[0];
+  return apiFetch('/customers', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: name || email,
+      channels: [{ type: 'email', address: email }],
+    }),
+  });
+}
+
+/**
+ * Re-point a ticket's customer (requester) to a different person. Used when a ticket
+ * was created from a customer email forwarded to us by internal RUBIES staff — Gorgias
+ * sets the requester to the forwarder, so replies (and the ticket's identity) would
+ * otherwise go back to staff instead of the original sender. Finds/creates the target
+ * customer and PUTs the ticket. Returns the updated ticket.
+ */
+async function setTicketCustomer(ticketId, { email, name }) {
+  const customer = await findOrCreateCustomer({ email, name });
+  if (!customer?.id) throw new Error(`Could not resolve Gorgias customer for ${email}`);
+  return apiFetch(`/tickets/${ticketId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ customer: { id: customer.id } }),
+  });
+}
+
+/**
  * Create a new ticket from an external email (e.g., Gmail import).
  * Returns the created ticket object.
  */
@@ -539,6 +571,8 @@ module.exports = {
   getUsers,
   findUser,
   // Write
+  findOrCreateCustomer,
+  setTicketCustomer,
   createTicket,
   createOutboundTicket,
   createTicketReply,

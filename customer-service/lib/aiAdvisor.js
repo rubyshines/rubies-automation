@@ -738,6 +738,7 @@ CRITICAL: You are Jamie. Every reply is signed by Jamie and goes to a customer w
 - **Customer not found:** If no customer record could be resolved by email OR by name fallback, ask for the order number or the email they placed the order with.
 - **No fulfilled orders:** If the customer has orders but none are fulfilled yet, explain that we need to wait for delivery before we can do an exchange. Offer to help with anything else in the meantime.
 - **"Product not working" + self-identified direction:** If the customer says "it's not working" but also mentions it feels tight or loose, treat it as a sizing issue in that direction. Don't ask "what didn't work" — they already told you.
+- **Forwarded to us by RUBIES staff:** If the conversation's sender/customer email is an internal RUBIES address (any @rubyshines.com address, e.g. support@, care@, jamie@) AND the message body is a customer email that was forwarded to us (a "Forwarded message" block containing an original "From:" line), the REAL customer is the original external sender shown in that forwarded header — NOT the staff member who forwarded it. Write your reply to that original sender (greet and address THEM), set customer_name to their name if the forwarded header shows one, and set forwarded_sender_email to their email address. Never write the reply to the staff member, and never greet the internal address.
 
 ## ANTI-HALLUCINATION RULES (ABSOLUTE, NEVER VIOLATE)
 These rules override everything else. Violations cause real harm to customers.
@@ -1488,16 +1489,27 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     audit.push(`Prior ticket injected: #${priorTicket.gorgias_ticket_id} (${priorTicket.message_type}, closed ${closedDate})`);
   }
 
+  // Forwarded-from-internal directive: when the conversation reached us via an internal
+  // RUBIES address, a staff member forwarded a customer's email to us. Flag that trigger
+  // explicitly so the advisor reliably resolves the ORIGINAL external sender — the domain
+  // check is a mechanical lookup; the AI still extracts who the real customer is from the
+  // forwarded header. Without this signal the model writes the right prose ("Hi Christian")
+  // but drifts on emitting forwarded_sender_email, which is what re-points the reply.
+  let forwardedBlock = '';
+  if (/@rubyshines\.com$/i.test(String(customer_email || '').trim())) {
+    forwardedBlock = `\n\n[FORWARDED EMAIL — ACTION REQUIRED] This conversation reached us from the internal RUBIES address ${customer_email}, which means a staff member forwarded a customer's email to us. The real customer is the ORIGINAL external sender shown in the forwarded "From:" line in the message body. You MUST: (1) set forwarded_sender_email to that original sender's email address, exactly as written; (2) set customer_name to their name if the forwarded header shows one; (3) write your reply to that customer. Never address ${customer_email}.`;
+  }
+
   // If there's existing intake (multi-turn), include previous context
   if (existingIntake) {
     messages.push({
       role: 'user',
-      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}${priorTicketBlock}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${steerBlock}`,
+      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}${priorTicketBlock}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${forwardedBlock}${steerBlock}`,
     });
   } else {
     messages.push({
       role: 'user',
-      content: (issue_description || '(no message provided)') + priorTicketBlock + steerBlock,
+      content: (issue_description || '(no message provided)') + forwardedBlock + priorTicketBlock + steerBlock,
     });
   }
 
@@ -1922,8 +1934,12 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
       still_needed: [],
       flags: [],
     },
+    // forwarded_sender_email is set only when the advisor detected a customer email
+    // forwarded to us from an internal RUBIES address — the real customer is the
+    // original external sender, so it overrides the conversation (forwarder) email.
+    forwarded_sender_email: parsed.forwarded_sender_email || null,
     customer: {
-      email: customer_email,
+      email: parsed.forwarded_sender_email || customer_email,
       name: parsed.customer_name || null,
       pronouns: parsed.customer_pronouns || 'they/them',
       buying_for: parsed.buying_for || 'self',
