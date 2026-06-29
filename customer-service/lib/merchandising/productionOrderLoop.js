@@ -326,8 +326,12 @@ function buildPricingRows(pricing) {
 }
 
 // Write a PRICING tab for the given order items (one per supplier+date).
-async function writePricingTab({ sheets, spreadsheetId, supplier, date, items }) {
+// `costOverrides` (prefix -> cost row) lets an estimate stand in for a stale/missing
+// product_costs row without touching the canonical table (e.g. a new product whose
+// real supplier cost isn't locked yet).
+async function writePricingTab({ sheets, spreadsheetId, supplier, date, items, costOverrides = {} }) {
   const costMap = await fetchCurrentCosts();
+  for (const [prefix, cost] of Object.entries(costOverrides)) costMap.set(String(prefix).toUpperCase(), cost);
   const pricing = computePricing(items, costMap);
   const { rows, boldRows } = buildPricingRows(pricing);
   const tabName = `PRICING ${supplier} ${date}`;
