@@ -143,16 +143,37 @@ async function resolveOnTicketClose({ supabase = getSupabaseClient(), orderNumbe
 }
 
 /**
+ * Look up a single Warehance order, returning null on any failure (the caller
+ * treats "unknown" conservatively as still-held). The client is required lazily
+ * so unit tests that never reach the hold-release branch don't load it, and so
+ * tests can inject a stub via reconcileNotes({ fetchWhOrder }).
+ */
+async function getWhOrder(fetchWhOrder, orderNumber) {
+  const fn = fetchWhOrder || require('../../reports/lib/warehanceClient').fetchOrderByNumber;
+  try {
+    return await fn(orderNumber);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Daily sweep. For every order whose latest note is unresolved:
  *   R1a — order cancelled (terminal) → resolve, regardless of note author.
  *   R1b — auto-author note + order shipped → resolve.
- *   R1c — hold note + order shipped → resolve (hold was released to ship), any author.
+ *   R1c — hold note + EITHER order shipped, OR the warehouse hold is released in
+ *         Warehance AND all linked CS tickets are closed → resolve, any author.
+ *         A "hold placed" note is moot once the hold is gone and the conversation
+ *         that motivated it has ended. Warehance exposes no hold history, so we
+ *         read current state (has_hold); a not-yet-placed hold can't false-positive
+ *         because that order's ticket would still be open. A still-active hold keeps
+ *         the note visible — the order genuinely won't ship.
  *   R2  — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
  * Operator judgment notes on still-live orders fall through all rules and stay open.
  *
  * @returns {Promise<{checked: number, resolved: Array<{order_number, rule, reason}>}>}
  */
-async function reconcileNotes({ supabase = getSupabaseClient() } = {}) {
+async function reconcileNotes({ supabase = getSupabaseClient(), fetchWhOrder } = {}) {
   const latestByOrder = await fetchLatestNotes(supabase);
   const open = [...latestByOrder.values()].filter(n => !n.resolved);
   if (!open.length) return { checked: 0, resolved: [] };
@@ -185,6 +206,8 @@ async function reconcileNotes({ supabase = getSupabaseClient() } = {}) {
     const order = orderByNum.get(note.order_number);
     const orderCancelled = !!(order && order.cancelled_at);
     const orderShipped = !!(order && order.fulfillment_status === 'FULFILLED');
+    const orderTickets = ticketsByOrder.get(note.order_number) || [];
+    const allTicketsClosed = orderTickets.length > 0 && orderTickets.every(t => t.status === 'closed');
 
     let rule = null;
     let reason = null;
@@ -202,17 +225,28 @@ async function reconcileNotes({ supabase = getSupabaseClient() } = {}) {
     } else if (note.author === 'auto' && orderShipped) {
       rule = 'order_done';
       reason = 'Order shipped — outreach no longer pending (reconciler)';
-    } else if (orderShipped && HOLD_NOTE_RE.test(note.note || '')) {
-      // A "hold placed" note is moot once the order ships: shipping required
-      // the hold to be released. Resolve regardless of author (these notes are
-      // written author='operator' even when auto-placed). Genuine operator
-      // follow-up notes (e.g. a Passport reship decision) don't match
-      // HOLD_NOTE_RE, so they still age visibly on a shipped order.
-      rule = 'hold_cleared';
-      reason = 'Order shipped — warehouse hold released; hold note moot (reconciler)';
+    } else if (HOLD_NOTE_RE.test(note.note || '')) {
+      // A "hold placed" note (written author='operator' even when auto-placed,
+      // so the auto-only rules above miss it) is moot once the hold is gone.
+      // Genuine operator follow-up notes (e.g. a Passport reship decision) don't
+      // match HOLD_NOTE_RE, so they still age visibly.
+      if (orderShipped) {
+        // Shipping required the hold to be released — definitively moot.
+        rule = 'hold_cleared';
+        reason = 'Order shipped — warehouse hold released; hold note moot (reconciler)';
+      } else if (allTicketsClosed) {
+        // Conversation settled. The hold is only truly cleared if Warehance
+        // confirms it's released — a still-active hold means the order won't
+        // ship, so keep the note visible. (Unknown/unreachable → treat as held.)
+        const whOrder = await getWhOrder(fetchWhOrder, note.order_number);
+        const holdActive = whOrder ? !!whOrder.has_hold : true;
+        if (!holdActive) {
+          rule = 'hold_cleared';
+          reason = 'Warehouse hold released and conversation closed — hold note moot (reconciler)';
+        }
+      }
     } else if (isOutreachNote(note)) {
-      const orderTickets = ticketsByOrder.get(note.order_number) || [];
-      if (orderTickets.length > 0 && orderTickets.every(t => t.status === 'closed')) {
+      if (allTicketsClosed) {
         rule = 'tickets_closed';
         reason = 'Linked conversation closed — note auto-resolved (reconciler)';
       }
