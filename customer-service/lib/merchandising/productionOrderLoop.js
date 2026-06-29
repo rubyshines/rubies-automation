@@ -21,6 +21,7 @@ const { getSupplierByName } = require('./supplierRegistry');
 const { parseProductionSheet } = require('./productionSheetParser');
 const { nextProductionCode } = require('./productionCode');
 const { runProjection } = require('./inventoryProjection');
+const { applyOrderRules } = require('./orderSpread');
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
 
 // Recency guard: reuse a recent projection, else recompute so a draft is never stale.
@@ -91,7 +92,7 @@ async function fetchProjections(supplierId) {
 }
 
 // --- Draft -----------------------------------------------------------------
-async function draftProductionOrder({ supplier, today, spreadsheetId, maxAgeDays = 3, forceRefresh = false }) {
+async function draftProductionOrder({ supplier, today, spreadsheetId, maxAgeDays = 3, forceRefresh = false, overrides = {} }) {
   const sheetId = spreadsheetId || SHEET_ID;
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
@@ -100,8 +101,12 @@ async function draftProductionOrder({ supplier, today, spreadsheetId, maxAgeDays
   // Ensure the projection backing this draft is recent enough (auto-refresh if stale).
   const projection = await ensureFreshProjection({ date, maxAgeDays, forceRefresh });
 
-  const rows = await fetchProjections(sup.id);
-  if (!rows.length) return { empty: true, supplier: sup.name, projection };
+  const raw = await fetchProjections(sup.id);
+  if (!raw.length) return { empty: true, supplier: sup.name, projection };
+
+  // Apply the ordering rules: founder unit overrides (rescale a style's spread to
+  // a target total) + the 20-unit per-SKU floor on every committed line.
+  const { rows, warnings } = applyOrderRules(raw, { overrides });
 
   const tabName = `DRAFT ${sup.name} ${date}`;
   const { rows: sheetRows, grand } = buildSheetRows(rows);
@@ -122,7 +127,8 @@ async function draftProductionOrder({ supplier, today, spreadsheetId, maxAgeDays
   });
 
   return { supplier: sup.name, tabName, skuCount: rows.length, totalUnits: grand,
-    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, projection };
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, projection,
+    overrides: Object.keys(overrides || {}), warnings };
 }
 
 // --- GO: read back + create -------------------------------------------------

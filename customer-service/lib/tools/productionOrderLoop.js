@@ -11,21 +11,24 @@ function projectionLine(p) {
     : `📊 Projection from **${p.run_date}**${p.age_days != null ? ` (${p.age_days}d old)` : ''}.`;
 }
 
-async function handleDraft({ supplier, force_refresh, max_age_days }) {
+async function handleDraft({ supplier, force_refresh, max_age_days, overrides }) {
   if (!supplier) return { content: [{ type: 'text', text: 'Error: `supplier` is required.' }] };
   const opts = { supplier, forceRefresh: !!force_refresh };
   if (max_age_days != null) opts.maxAgeDays = max_age_days;
+  if (overrides && typeof overrides === 'object') opts.overrides = overrides;
   const r = await draftProductionOrder(opts);
   if (r.empty) return { content: [{ type: 'text', text: `${projectionLine(r.projection)}\nNo SKUs with qty_to_order > 0 for ${r.supplier}.` }] };
   const md = [
     `## Draft production order — ${r.supplier}`,
     '',
     projectionLine(r.projection),
-    `Wrote tab **"${r.tabName}"** to the 2026 Production Numbers sheet — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
+    r.overrides && r.overrides.length ? `🎚️ Unit override applied to: **${r.overrides.join(', ')}** (spread rescaled to your total).` : '',
+    `Wrote tab **"${r.tabName}"** to the 2026 Production Numbers sheet — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units. Every size respects the 20-unit floor.`,
+    r.warnings && r.warnings.length ? '\n⚠️ ' + r.warnings.join('\n⚠️ ') : '',
     '',
     `Edit the quantities in that tab, then call **submit_production_order** with \`tab_name: "${r.tabName}"\` to place the order (records to Supabase + emits a supplier .xlsx).`,
     `[Open the sheet](${r.url})`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
   return { content: [{ type: 'text', text: md }] };
 }
 
@@ -46,13 +49,18 @@ async function handleSubmit({ supplier, tab_name, expected_ship_date, expected_d
 module.exports = [
   {
     name: 'draft_production_order',
-    description: 'Start a production order: write an editable draft tab to the 2026 Production Numbers Google Sheet from the supplier\'s projections (qty_to_order > 0). Auto-refreshes the projection first if it is stale (older than max_age_days, default 3) so the draft is never based on old numbers. Jamie edits the quantities in the sheet, then calls submit_production_order.',
+    description: 'Start a production order: write an editable draft tab to the 2026 Production Numbers Google Sheet from the supplier\'s projections (qty_to_order > 0). Auto-refreshes the projection first if it is stale (older than max_age_days, default 3) so the draft is never based on old numbers. Every committed size respects the 20-unit per-SKU floor (thin sizes round up). Use `overrides` to force a total for a style and have its size/color spread rescaled to that total. Jamie edits the quantities in the sheet, then calls submit_production_order.',
     inputSchema: {
       type: 'object',
       properties: {
         supplier: { type: 'string', description: 'Supplier name (Kali, Queenas, JustMax, Wumes)' },
         force_refresh: { type: 'boolean', description: 'Recompute the inventory projection before drafting, even if a recent one exists.' },
         max_age_days: { type: 'number', description: 'Max projection age (days) before auto-refresh. Default 3.' },
+        overrides: {
+          type: 'object',
+          description: 'Founder unit overrides: per-style TOTAL units to order, keyed by style name or SKU prefix, e.g. {"naomi": 3000} or {"GAF": 3000}. The style\'s projected size/color spread is rescaled to that total instead of the projected need, still honoring the 20-unit floor. Other styles are unaffected.',
+          additionalProperties: { type: 'number' },
+        },
       },
       required: ['supplier'],
     },
