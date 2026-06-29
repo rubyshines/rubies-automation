@@ -23,6 +23,12 @@ describe('findSheetRow', () => {
     assert.deepEqual(findSheetRow(ab, { email: 'mary@x.com', submitted_at: '2026-06-26T21:13:08.032Z' }), { row: 4 });
   });
 
+  it('matches when the DB submitted_at uses +00:00 instead of Z (same instant)', () => {
+    const ab = [HEADER, ['6/28/2026 22:00:56', 'jamie@bridgecard.app']];
+    // parseTimestamp(cell) → "2026-06-29T02:00:56.000Z"; DB returns "+00:00" form
+    assert.deepEqual(findSheetRow(ab, { email: 'jamie@bridgecard.app', submitted_at: '2026-06-29T02:00:56+00:00' }), { row: 2 });
+  });
+
   it('is robust to re-sorting (finds by identity, not position)', () => {
     const reordered = [
       HEADER,

@@ -40,11 +40,15 @@ function list(a) {
  */
 function findSheetRow(abRows, target) {
   const email = (target.email || '').toLowerCase();
+  // Compare by instant, not string: parseTimestamp emits "…000Z" while the DB's
+  // submitted_at comes back as "…+00:00" — same moment, different text.
+  const targetMs = target.submitted_at ? new Date(target.submitted_at).getTime() : NaN;
   const matches = [];
   for (let i = 1; i < abRows.length; i++) { // i=0 is the header row
     const r = abRows[i] || [];
     if ((r[1] || '').toLowerCase() !== email) continue;
-    if (parseTimestamp(r[0]) !== target.submitted_at) continue;
+    const cell = parseTimestamp(r[0]);
+    if (!cell || new Date(cell).getTime() !== targetMs) continue;
     matches.push(i + 1); // 1-indexed sheet row
   }
   if (matches.length === 1) return { row: matches[0] };
