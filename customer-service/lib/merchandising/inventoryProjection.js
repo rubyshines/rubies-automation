@@ -775,8 +775,12 @@ async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, tar
   for (const group of groups.values()) {
     const groupLabel = group.color ? `${group.product_name} - ${group.color}` : group.product_name;
 
-    // Group header row
-    boldRowIndices.push(1 + outputRows.length); // +1 for column header row
+    // Group header row. Sheet rows: column headers occupy row 1, so outputRows[j]
+    // is sheet row j + 2. The group's data lines therefore start two rows below
+    // the group header.
+    const groupHeaderIdx = outputRows.length;
+    const firstDataRow = groupHeaderIdx + 3;
+    boldRowIndices.push(1 + groupHeaderIdx); // +1 for column header row
     outputRows.push([groupLabel]);
 
     // Data rows
@@ -804,18 +808,16 @@ async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, tar
       skuCount++;
     }
 
-    // Total row — sum numeric columns, label in col 0
+    // Total row — live SUM formulas over the group's data rows (never hardcoded,
+    // so totals follow any edit to Qty to Order). Velocity (col 9) is rounded 1dp.
+    const lastDataRow = firstDataRow + group.items.length - 1;
     const totalRow = new Array(headers.length).fill('');
     totalRow[0] = 'TOTAL';
     for (const ci of TOTAL_COLS) {
-      totalRow[ci] = group.items.reduce((s, r) => {
-        const v = [r.current_inventory, r.total_incoming, r.total_inventory,
-                   r.units_sold_year, r.sales_per_week, r.qty_to_order][TOTAL_COLS.indexOf(ci)];
-        return s + (Number(v) || 0);
-      }, 0);
+      const col = String.fromCharCode(65 + ci);
+      const ref = `${col}${firstDataRow}:${col}${lastDataRow}`;
+      totalRow[ci] = ci === 9 ? `=ROUND(SUM(${ref}),1)` : `=SUM(${ref})`;
     }
-    // Round velocity sum to 1dp
-    totalRow[9] = Math.round(totalRow[9] * 10) / 10;
     boldRowIndices.push(1 + outputRows.length);
     outputRows.push(totalRow);
 
@@ -835,7 +837,7 @@ async function writeSalesDataSheet(rows, skuPrefixes, runDate, growthFactor, tar
     await sheets.spreadsheets.values.update({
       spreadsheetId: SALES_SHEET_ID,
       range: `'${tabName}'!A1`,
-      valueInputOption: 'RAW',
+      valueInputOption: 'USER_ENTERED', // so the TOTAL =SUM() formulas evaluate
       requestBody: { values: [headers, ...outputRows, ...notes] },
     });
     console.log(`[projection] wrote ${skuCount} SKUs (${groups.size} groups) to tab "${tabName}"`);
