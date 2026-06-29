@@ -22,6 +22,7 @@ const { parseProductionSheet, parseProjectionReviewSheet } = require('./producti
 const { nextProductionCode } = require('./productionCode');
 const { runProjection, writeSalesDataSheet } = require('./inventoryProjection');
 const { applyOrderRules, PER_SKU_FLOOR, ORDER_STEP } = require('./orderSpread');
+const { fetchCurrentCosts, computePricing } = require('./pricingEstimate');
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
 
 // Recency guard: reuse a recent projection, else recompute so a draft is never stale.
@@ -45,7 +46,7 @@ const PLANNING_SHEET_ID = process.env.INVENTORY_PLANNING_SHEET_ID;
 // Create a tab at the front (index 0) of a sheet, write values, and bold the
 // given rows (0-based). Clears the tab first if it already exists so stale rows
 // from a previous run don't linger.
-async function writeTabAtFront(sheets, spreadsheetId, tabName, values, boldRows = []) {
+async function writeTabAtFront(sheets, spreadsheetId, tabName, values, boldRows = [], numCols = 2) {
   let sheetId = null;
   try {
     const res = await sheets.spreadsheets.batchUpdate({
@@ -69,7 +70,7 @@ async function writeTabAtFront(sheets, spreadsheetId, tabName, values, boldRows 
       requestBody: {
         requests: boldRows.map((ri) => ({
           repeatCell: {
-            range: { sheetId, startRowIndex: ri, endRowIndex: ri + 1, startColumnIndex: 0, endColumnIndex: 2 },
+            range: { sheetId, startRowIndex: ri, endRowIndex: ri + 1, startColumnIndex: 0, endColumnIndex: numCols },
             cell: { userEnteredFormat: { textFormat: { bold: true } } },
             fields: 'userEnteredFormat.textFormat.bold',
           },
@@ -219,8 +220,12 @@ async function draftProductionOrder({ supplier, review_tab, today, spreadsheetId
   const { rows: sheetRows, grand, boldRows } = buildSheetRows(rows);
   await writeTabAtFront(sheets, sheetId, tabName, sheetRows, boldRows);
 
+  // Pricing estimate alongside the order (separate tab).
+  const pricing = await writePricingTab({ sheets, spreadsheetId: sheetId, supplier: sup.name, date, items: parsed.items });
+
   return { supplier: sup.name, tabName, skuCount: rows.length, totalUnits: grand,
-    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, sourceTab: review_tab, warnings };
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, sourceTab: review_tab, warnings,
+    pricing: { tabName: pricing.tabName, ...pricing.grand, missing: pricing.missing } };
 }
 
 // --- GO: read back + create -------------------------------------------------
@@ -279,4 +284,55 @@ async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected
     payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath };
 }
 
-module.exports = { buildSheetRows, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+// --- Pricing estimate -------------------------------------------------------
+// Lay out the pricing tab: per product group, extended COGS / shipping / taxes /
+// landed, with formula subtotals + a resilient grand total (same pattern as the
+// order tab). boldRows = column header, each product header, each subtotal, grand.
+function buildPricingRows(pricing) {
+  const out = [];
+  const boldRows = [];
+  boldRows.push(out.length);
+  out.push(['Product / SKU', 'Qty', 'COGS $', 'Shipping $', 'Taxes $', 'Landed $']);
+
+  for (const g of pricing.groups) {
+    const name = titleCase(g.product_name);
+    boldRows.push(out.length);
+    out.push([g.color ? `${name} - ${g.color}` : name]);
+    const first = out.length + 1;
+    for (const l of g.lines) out.push([l.sku, l.qty, l.cogs, l.freight, l.duty, l.landed]);
+    const last = first + g.lines.length - 1;
+    boldRows.push(out.length);
+    out.push(['', `=SUM(B${first}:B${last})`, `=SUM(C${first}:C${last})`, `=SUM(D${first}:D${last})`, `=SUM(E${first}:E${last})`, `=SUM(F${first}:F${last})`]);
+    out.push([]);
+  }
+
+  // Resilient grand total — sum SKU rows only (col A non-blank, not "TOTAL").
+  boldRows.push(out.length);
+  out.push([
+    'TOTAL',
+    '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")',
+    '=SUMIFS(C:C,A:A,"<>",A:A,"<>TOTAL")',
+    '=SUMIFS(D:D,A:A,"<>",A:A,"<>TOTAL")',
+    '=SUMIFS(E:E,A:A,"<>",A:A,"<>TOTAL")',
+    '=SUMIFS(F:F,A:A,"<>",A:A,"<>TOTAL")',
+  ]);
+
+  out.push([]);
+  out.push(['Estimate uses current product_costs per SKU prefix: COGS (goods) + Shipping (freight) + Taxes (duties) = Landed.']);
+  if (pricing.missing.length) {
+    out.push([`No cost on file for: ${pricing.missing.join(', ')} — shown as 0, exclude from totals manually.`]);
+  }
+  return { rows: out, boldRows };
+}
+
+// Write a PRICING tab for the given order items (one per supplier+date).
+async function writePricingTab({ sheets, spreadsheetId, supplier, date, items }) {
+  const costMap = await fetchCurrentCosts();
+  const pricing = computePricing(items, costMap);
+  const { rows, boldRows } = buildPricingRows(pricing);
+  const tabName = `PRICING ${supplier} ${date}`;
+  await writeTabAtFront(sheets, spreadsheetId, tabName, rows, boldRows, 6);
+  return { tabName, grand: pricing.grand, missing: pricing.missing };
+}
+
+module.exports = { buildSheetRows, buildPricingRows, draftOrderReview, draftProductionOrder, writePricingTab, createOrderFromTab, createOrderFromParsed, SHEET_ID };

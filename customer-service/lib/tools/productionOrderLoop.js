@@ -47,6 +47,7 @@ async function handleDraft({ supplier, review_tab }) {
     `## Draft production order — ${r.supplier}`,
     '',
     `Built tab **"${r.tabName}"** in the 2026 Production Numbers sheet from **"${r.sourceTab}"** — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
+    r.pricing ? `💰 Pricing tab **"${r.pricing.tabName}"** — landed **$${Math.round(r.pricing.landed).toLocaleString()}** (COGS $${Math.round(r.pricing.cogs).toLocaleString()} · shipping $${Math.round(r.pricing.freight).toLocaleString()} · taxes $${Math.round(r.pricing.duty).toLocaleString()})${r.pricing.missing && r.pricing.missing.length ? ` · ⚠️ no cost on file for: ${r.pricing.missing.join(', ')}` : ''}.` : '',
     warnBlock(r.warnings),
     '',
     `Eyeball it, then call **submit_production_order** with \`tab_name: "${r.tabName}"\` to place the order (records to Supabase + emits a supplier .xlsx).`,
