@@ -38,6 +38,13 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 //  - the send-hook's own superseding notes ("Outreach sent ...")
 const OUTREACH_NOTE_RE = /\[auto-draft\]|outreach drafted|outreach sent|pending operator review/i;
 
+// Warehouse/address hold notes ("Warehouse hold placed: ..."). Written
+// author='operator' even when the hold is auto-placed, so the auto-only shipped
+// rule misses them. A hold note is moot the moment the order ships — shipping
+// requires the hold to have been released — so it's resolved regardless of
+// author once the order is FULFILLED.
+const HOLD_NOTE_RE = /hold placed/i;
+
 function isOutreachNote(note) {
   if (!note) return false;
   if (note.author === 'auto') return true;
@@ -139,6 +146,7 @@ async function resolveOnTicketClose({ supabase = getSupabaseClient(), orderNumbe
  * Daily sweep. For every order whose latest note is unresolved:
  *   R1a — order cancelled (terminal) → resolve, regardless of note author.
  *   R1b — auto-author note + order shipped → resolve.
+ *   R1c — hold note + order shipped → resolve (hold was released to ship), any author.
  *   R2  — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
  * Operator judgment notes on still-live orders fall through all rules and stay open.
  *
@@ -194,6 +202,14 @@ async function reconcileNotes({ supabase = getSupabaseClient() } = {}) {
     } else if (note.author === 'auto' && orderShipped) {
       rule = 'order_done';
       reason = 'Order shipped — outreach no longer pending (reconciler)';
+    } else if (orderShipped && HOLD_NOTE_RE.test(note.note || '')) {
+      // A "hold placed" note is moot once the order ships: shipping required
+      // the hold to be released. Resolve regardless of author (these notes are
+      // written author='operator' even when auto-placed). Genuine operator
+      // follow-up notes (e.g. a Passport reship decision) don't match
+      // HOLD_NOTE_RE, so they still age visibly on a shipped order.
+      rule = 'hold_cleared';
+      reason = 'Order shipped — warehouse hold released; hold note moot (reconciler)';
     } else if (isOutreachNote(note)) {
       const orderTickets = ticketsByOrder.get(note.order_number) || [];
       if (orderTickets.length > 0 && orderTickets.every(t => t.status === 'closed')) {

@@ -188,12 +188,28 @@ test('reconcileNotes R1: OPERATOR note + cancelled order → resolved (regressio
   assert.equal(sb._inserts[0].row.author, 'auto');
 });
 
-test('reconcileNotes R1: OPERATOR note + shipped (not cancelled) order stays open', async () => {
-  // The cancelled exception must NOT widen to shipped orders — an operator note
-  // on a shipped order may still track a real follow-up and should age visibly.
+test('reconcileNotes R1c: hold note + shipped order → resolved (regression for #31708/#31781)', async () => {
+  // A "Warehouse hold placed" note is moot once the order ships — shipping
+  // required the hold to be released. These notes are author='operator' even
+  // when auto-placed, so the auto-only shipped rule missed them and they stuck
+  // in the daily report indefinitely. A non-hold operator follow-up note on a
+  // shipped order still stays open (see the Passport-note test below).
   const sb = makeStub({
-    notes: [note(31600, 'Warehouse hold placed: Customer requested address change')],
-    orders: [{ order_number: 31600, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    notes: [note(31708, 'Warehouse hold placed: Auto-hold: customer wants to modify the order')],
+    orders: [{ order_number: 31708, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'hold_cleared');
+  assert.equal(sb._inserts[0].row.resolved, true);
+  assert.equal(sb._inserts[0].row.author, 'auto');
+});
+
+test('reconcileNotes R1c: hold note + still-unfulfilled order stays open', async () => {
+  // A live hold (order not yet shipped) is a real, active state — never resolve it.
+  const sb = makeStub({
+    notes: [note(31900, 'Warehouse hold placed: Customer requested address change')],
+    orders: [{ order_number: 31900, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
   });
   const { resolved } = await reconcileNotes({ supabase: sb });
   assert.equal(resolved.length, 0);
