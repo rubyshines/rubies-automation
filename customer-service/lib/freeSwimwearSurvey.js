@@ -89,9 +89,49 @@ function parseYesNo(v) {
   return null;
 }
 
+// The Google Form Timestamp column is a naive wall-clock string ("M/D/YYYY
+// H:MM:SS") in the sheet's timezone — it carries NO offset. `new Date(str)`
+// therefore interprets it in the HOST's timezone, so the same cell parses to a
+// different instant on a Mac (Eastern) vs Railway (UTC). That made identities
+// (email, submitted_at) mismatch across machines — duplicating every applicant
+// on the cron run and breaking the sheet write-back lookup. Parse it explicitly
+// in the sheet's timezone instead, so every host agrees.
+const SHEET_TZ = 'America/Toronto';
+
+// Minutes east of UTC for a timezone at a given UTC instant (DST-aware, and
+// host-timezone-independent because Intl does the conversion).
+function tzOffsetMinutes(utcMs, timeZone) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const p = {};
+  for (const part of dtf.formatToParts(new Date(utcMs))) p[part.type] = part.value;
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +(p.hour % 24), +p.minute, +p.second);
+  return (asUTC - utcMs) / 60000;
+}
+
+// Interpret naive wall-clock components as SHEET_TZ → UTC ISO. Two iterations
+// settle the offset around DST boundaries.
+function wallTimeToISO(y, mo, d, h, mi, s) {
+  let utc = Date.UTC(y, mo - 1, d, h, mi, s);
+  for (let i = 0; i < 2; i++) {
+    const next = Date.UTC(y, mo - 1, d, h, mi, s) - tzOffsetMinutes(utc, SHEET_TZ) * 60000;
+    if (next === utc) break;
+    utc = next;
+  }
+  return new Date(utc).toISOString();
+}
+
 function parseTimestamp(v) {
   if (!v) return null;
-  const d = new Date(v);
+  const str = String(v).trim();
+  // Form Timestamp: "M/D/YYYY H:MM[:SS]" with no offset → interpret in SHEET_TZ.
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (m) return wallTimeToISO(+m[3], +m[1], +m[2], +m[4], +m[5], +(m[6] || 0));
+  // Already-offset values (ISO from the operational columns) parse unambiguously.
+  const d = new Date(str);
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
