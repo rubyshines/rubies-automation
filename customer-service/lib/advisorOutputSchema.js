@@ -109,6 +109,10 @@ const ADVISOR_OUTPUT_SCHEMA = {
     },
     donation_needed: { type: 'boolean' },
     customer_name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+    forwarded_sender_email: {
+      anyOf: [{ type: 'string' }, { type: 'null' }],
+      description: "ONLY set this when the conversation reached us as a customer email FORWARDED to us from an internal RUBIES staff address (e.g. the sender is @rubyshines.com and the body contains a forwarded-message header with an original 'From:'). Put the ORIGINAL external sender's email address here — the real customer, not the staff member who forwarded it. Null in every normal case where the customer emailed us directly.",
+    },
     customer_pronouns: { type: 'string', enum: ['they/them', 'she/her', 'he/him'] },
     buying_for: { type: 'string', enum: ['self', 'third_party'] },
     third_party_label: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'daughter | son | child | null' },
@@ -132,7 +136,7 @@ const ADVISOR_OUTPUT_SCHEMA = {
   required: [
     'customer_reply', 'status', 'message_type', 'customer_intent', 'action_type',
     'new_address', 'customer_profile_update', 'discount_code', 'items',
-    'donation_needed', 'customer_name', 'customer_pronouns', 'buying_for',
+    'donation_needed', 'customer_name', 'forwarded_sender_email', 'customer_pronouns', 'buying_for',
     'third_party_label', 'duties_refund_amount', 'confidence', 'summary',
     'history_summary', 'customer_sentiment', 'operator_action_summary', 'audit',
   ],

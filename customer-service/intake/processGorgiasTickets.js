@@ -345,6 +345,35 @@ function cleanHelpCenterBody(body) {
  *
  * @returns {string|object} 'close_new' | { action: 'close_existing', ticketsToClose } | 'keep_both' | null
  */
+/**
+ * True when an email belongs to an internal RUBIES staff address (@rubyshines.com).
+ * Internal addresses are never the real customer — when one is the ticket requester it
+ * means a staff member forwarded a customer email to us.
+ */
+function isInternalRubiesAddress(email) {
+  return !!email && /@rubyshines\.com$/i.test(String(email).trim());
+}
+
+/**
+ * Decide whether a ticket's customer (requester) should be re-pointed to the original
+ * external sender of a forwarded email. Pure/deterministic — the AI advisor supplies the
+ * detected originator (forwardedSenderEmail); this just gates the mechanical redirect.
+ *
+ * Redirect only when the requester is an internal RUBIES address AND the advisor resolved
+ * a syntactically-valid, external, different originator email.
+ *
+ * @returns {{ redirect: boolean, email?: string, name?: string|null }}
+ */
+function resolveForwardedCustomer({ ticketCustomerEmail, forwardedSenderEmail, forwardedSenderName }) {
+  if (!isInternalRubiesAddress(ticketCustomerEmail)) return { redirect: false };
+  const email = String(forwardedSenderEmail || '').trim();
+  if (!email) return { redirect: false };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { redirect: false };
+  if (isInternalRubiesAddress(email)) return { redirect: false };
+  if (email.toLowerCase() === String(ticketCustomerEmail).trim().toLowerCase()) return { redirect: false };
+  return { redirect: true, email, name: forwardedSenderName || null };
+}
+
 async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, newMessages) {
   const customerMsgCount = newMessages.filter(m => !m.from_agent).length;
   if (customerMsgCount > 1) return null; // established conversation, not a new ticket
@@ -747,8 +776,12 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     .join(' ')
     .trim() || ticket.customer?.name || null;
 
-  // Check for duplicate tickets from the same customer
-  if (customerEmail) {
+  // Check for duplicate tickets from the same customer.
+  // Skip when the requester is an internal RUBIES address: that signals a forwarded
+  // customer email (resolved to the real sender after the advisor runs). Deduping on
+  // the internal address would falsely collapse distinct forwarded tickets that all
+  // share the same staff requester.
+  if (customerEmail && !isInternalRubiesAddress(customerEmail)) {
     const dupAction = await checkForDuplicateTicket(supabase, customerEmail, ticketId, messages);
     if (dupAction === 'close_new') {
       console.log(`[intake] Skip ${ticketId}: duplicate of existing ticket`);
@@ -876,6 +909,27 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     return { skipped: true };
   }
 
+  // Forwarded-from-internal redirect: when staff forward a customer email to us,
+  // Gorgias makes the forwarder the ticket requester, so the reply would go back to
+  // staff. The advisor detects the original external sender (forwarded_sender_email);
+  // re-point the Gorgias ticket's customer to them so the reply — and the ticket
+  // identity — go to the real customer. Best-effort: a failure here must not block
+  // the draft, but we still write the resolved customer to our own row below.
+  const forwardRedirect = resolveForwardedCustomer({
+    ticketCustomerEmail: customerEmail,
+    forwardedSenderEmail: structured.forwarded_sender_email,
+    forwardedSenderName: structured.customer?.name,
+  });
+  if (forwardRedirect.redirect) {
+    console.log(`[intake] Ticket ${ticketId}: forwarded by internal ${customerEmail} — re-pointing customer to ${forwardRedirect.email}`);
+    try {
+      await gorgias.setTicketCustomer(ticketId, { email: forwardRedirect.email, name: forwardRedirect.name });
+      try { await gorgias.addTicketTag(ticketId, 'forwarded-resolved'); } catch { /* tag is best-effort */ }
+    } catch (err) {
+      console.warn(`[intake] Could not re-point Gorgias customer for ticket ${ticketId}: ${err.message}`);
+    }
+  }
+
   // Draft response comes from advisor (composed inside the tool)
   const routeToHuman = structured.status === 'route_to_human' || (structured.error && !structured.intake);
   let draftResponse;
@@ -912,16 +966,20 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const messageType = canonicalMessageType(structured.message_type, `ticket ${ticketId}`);
   const confidence = structured.confidence || 'low';
 
+  // Effective customer email — the forwarded originator when we re-pointed, else the
+  // Gorgias requester. Everything customer-facing keys off this, not the forwarder.
+  const effectiveCustomerEmail = forwardRedirect.redirect ? forwardRedirect.email : customerEmail;
+
   // Get customer name — AI extraction, then preContext, then Supabase fallback
   let customerName = structured.customer?.name || null;
-  if (!customerName && preContext?.customer) {
+  if (!customerName && !forwardRedirect.redirect && preContext?.customer) {
     customerName = [preContext.customer.firstName, preContext.customer.lastName].filter(Boolean).join(' ') || null;
   }
-  if (!customerName && customerEmail) {
+  if (!customerName && effectiveCustomerEmail) {
     const { data: custRow } = await supabase
       .from('customers')
       .select('first_name, last_name')
-      .eq('email', customerEmail.toLowerCase())
+      .eq('email', effectiveCustomerEmail.toLowerCase())
       .maybeSingle();
     if (custRow) customerName = [custRow.first_name, custRow.last_name].filter(Boolean).join(' ') || null;
   }
@@ -936,8 +994,9 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
   // Build upsert payload — only include fields with non-null values to avoid
   // clobbering good data from a previous turn when the AI parse fails
-  // Use resolved email from name fallback if Gorgias has no email (e.g. Facebook Messenger)
-  const resolvedEmail = customerEmail || preContext?.customer?.email || null;
+  // Use resolved email from name fallback if Gorgias has no email (e.g. Facebook Messenger).
+  // effectiveCustomerEmail already prefers the forwarded originator when we re-pointed.
+  const resolvedEmail = effectiveCustomerEmail || preContext?.customer?.email || null;
 
   const ticketUpsert = {
     gorgias_ticket_id: ticketId,
@@ -1208,6 +1267,8 @@ module.exports = {
   buildConversationContext,
   buildPreviousDraftContext,
   checkForDuplicateTicket,
+  isInternalRubiesAddress,
+  resolveForwardedCustomer,
   tryAutoCloseThankYou,
   buildConversationHistorySnapshot,
   extractInlineImages,
