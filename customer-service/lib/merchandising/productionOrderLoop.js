@@ -42,17 +42,41 @@ async function ensureFreshProjection({ date, maxAgeDays, forceRefresh }) {
 const SHEET_ID = process.env.PRODUCTION_SHEET_ID || '1kMZ-thv7pmBEvudlT_Ujw1z1wb-2zwjV5vT_TuNm87w';
 const PLANNING_SHEET_ID = process.env.INVENTORY_PLANNING_SHEET_ID;
 
-// Create a tab at the front (index 0) of a sheet and write values to it.
-async function writeTabAtFront(sheets, spreadsheetId, tabName, values) {
+// Create a tab at the front (index 0) of a sheet, write values, and bold the
+// given rows (0-based). Clears the tab first if it already exists so stale rows
+// from a previous run don't linger.
+async function writeTabAtFront(sheets, spreadsheetId, tabName, values, boldRows = []) {
+  let sheetId = null;
   try {
-    await sheets.spreadsheets.batchUpdate({
+    const res = await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: { requests: [{ addSheet: { properties: { title: tabName, index: 0 } } }] },
     });
-  } catch (e) { if (!/already exists/i.test(e.message)) throw e; }
+    sheetId = res.data.replies[0].addSheet.properties.sheetId;
+  } catch (e) {
+    if (!/already exists/i.test(e.message)) throw e;
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties(sheetId,title)' });
+    const existing = (meta.data.sheets || []).find((s) => s.properties.title === tabName);
+    sheetId = existing ? existing.properties.sheetId : null;
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${tabName}'` });
+  }
   await sheets.spreadsheets.values.update({
     spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values },
   });
+  if (sheetId != null && boldRows.length) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: boldRows.map((ri) => ({
+          repeatCell: {
+            range: { sheetId, startRowIndex: ri, endRowIndex: ri + 1, startColumnIndex: 0, endColumnIndex: 2 },
+            cell: { userEnteredFormat: { textFormat: { bold: true } } },
+            fields: 'userEnteredFormat.textFormat.bold',
+          },
+        })),
+      },
+    });
+  }
 }
 
 function sizeSort(size) {
@@ -64,6 +88,16 @@ function sizeSort(size) {
   const li = LETTER_SIZES.indexOf(canonical);
   if (li !== -1) return isTall ? 200 + li : 100 + li;
   return 999;
+}
+
+// Product titles are stored ALL CAPS; render them mixed (title) case for the order
+// sheet. Brand acronyms in KEEP_UPPER stay uppercase (e.g. "AJ", not "Aj").
+const KEEP_UPPER = new Set(['AJ', 'BB']);
+function titleCase(name) {
+  return String(name || '')
+    .split(/\s+/)
+    .map((w) => (KEEP_UPPER.has(w.toUpperCase()) ? w.toUpperCase() : w.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase())))
+    .join(' ');
 }
 
 // Group projection rows into the production-sheet layout: header, sku/qty rows, subtotal, blank.
@@ -80,12 +114,16 @@ function buildSheetRows(rows) {
   });
 
   // Totals are live formulas, not hardcoded sums (sheet has no header row, so
-  // outputRows[j] is sheet row j+1). Qty lives in column B.
+  // outputRows[j] is sheet row j+1). Qty lives in column B. `boldRows` collects the
+  // 0-based indices of the rows to bold: each product-name header, each subtotal,
+  // and the grand total.
   const out = [];
   let grand = 0;
-  const subtotalRows = []; // sheet row numbers of each group's subtotal cell
+  const boldRows = [];
   for (const g of sorted) {
-    out.push([g.color ? `${g.product_name} - ${g.color}` : g.product_name]);
+    const name = titleCase(g.product_name);
+    boldRows.push(out.length);
+    out.push([g.color ? `${name} - ${g.color}` : name]);
     const firstDataRow = out.length + 1;
     let sub = 0;
     for (const it of g.items.sort((a, b) => sizeSort(a.size) - sizeSort(b.size))) {
@@ -93,14 +131,18 @@ function buildSheetRows(rows) {
       sub += it.qty_to_order;
     }
     const lastDataRow = firstDataRow + g.items.length - 1;
+    boldRows.push(out.length);
     out.push(['', `=SUM(B${firstDataRow}:B${lastDataRow})`]);
-    subtotalRows.push(out.length); // subtotal sheet row = its 1-based position
     out.push([]);
     grand += sub;
   }
-  const grandFormula = subtotalRows.length ? `=SUM(${subtotalRows.map((r) => `B${r}`).join(',')})` : 0;
-  out.push(['TOTAL', grandFormula]);
-  return { rows: out, grand };
+  // Resilient grand total: sum every SKU-row qty — a SKU row has a non-blank,
+  // non-"TOTAL" label in col A and the qty in col B. Subtotal rows (blank col A)
+  // and this row itself ("TOTAL") are excluded, so it never double-counts, and
+  // adding or removing product rows never breaks it (no hardcoded cell list).
+  boldRows.push(out.length);
+  out.push(['TOTAL', '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")']);
+  return { rows: out, grand, boldRows };
 }
 
 // All projection rows for a supplier, full columns, for the review sheet.
@@ -174,8 +216,8 @@ async function draftProductionOrder({ supplier, review_tab, today, spreadsheetId
 
   const rows = parsed.items.map((it) => ({ sku: it.sku, product_name: it.product_name, color: it.color, size: it.size, qty_to_order: it.qty }));
   const tabName = `DRAFT ${sup.name} ${date}`;
-  const { rows: sheetRows, grand } = buildSheetRows(rows);
-  await writeTabAtFront(sheets, sheetId, tabName, sheetRows);
+  const { rows: sheetRows, grand, boldRows } = buildSheetRows(rows);
+  await writeTabAtFront(sheets, sheetId, tabName, sheetRows, boldRows);
 
   return { supplier: sup.name, tabName, skuCount: rows.length, totalUnits: grand,
     url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, sourceTab: review_tab, warnings };
