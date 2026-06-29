@@ -2,7 +2,9 @@
  * Supplier registry for inventory projections and production orders.
  * Loads from the `suppliers` Supabase table and caches in memory.
  *
- * Catch-all rule: any SKU prefix not explicitly in Queenas/JustMax/Wumes → Kali.
+ * Mapping rule: a SKU goes to whichever supplier lists its prefix in
+ * `sku_prefixes` (data-driven — e.g. RHW → Pigeons and Thread, SB → Queenas).
+ * Anything no specific supplier claims falls to the Kali catch-all.
  * Exclusions: TADLT (tee, not ordering), RJL (old stock, never reordering).
  */
 
@@ -10,9 +12,6 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 
 const EXCLUDED_PREFIXES = ['TADLT', 'RJL'];
 const CATCHALL_SUPPLIER = 'Kali';
-
-// Specific-match suppliers (anything else falls to Kali catch-all)
-const SPECIFIC_SUPPLIERS = ['Queenas', 'JustMax', 'Wumes'];
 
 let _cache = null;
 
@@ -33,20 +32,23 @@ function shouldExcludeSku(sku) {
   return EXCLUDED_PREFIXES.includes(skuPrefix(sku));
 }
 
-async function getSupplierBySku(sku) {
+// Pure matcher: a supplier (other than the catch-all) that lists this SKU's
+// prefix wins; otherwise the catch-all. Data-driven — adding a prefix to a
+// supplier's `sku_prefixes` is all it takes for a new mapping to work.
+function matchSupplier(suppliers, sku) {
   if (!sku) return null;
   const prefix = skuPrefix(sku);
+  const specific = (suppliers || []).find(
+    s => s.name !== CATCHALL_SUPPLIER && Array.isArray(s.sku_prefixes) && s.sku_prefixes.includes(prefix),
+  );
+  if (specific) return specific;
+  return (suppliers || []).find(s => s.name === CATCHALL_SUPPLIER) || null;
+}
+
+async function getSupplierBySku(sku) {
+  if (!sku) return null;
   const suppliers = await loadSuppliers();
-
-  // Check specific-match suppliers first (Queenas, JustMax, Wumes)
-  for (const supplier of suppliers) {
-    if (SPECIFIC_SUPPLIERS.includes(supplier.name) && supplier.sku_prefixes.includes(prefix)) {
-      return supplier;
-    }
-  }
-
-  // Catch-all: Kali
-  return suppliers.find(s => s.name === CATCHALL_SUPPLIER) || null;
+  return matchSupplier(suppliers, sku);
 }
 
 async function getSupplierByName(name) {
@@ -98,6 +100,7 @@ async function upsertSupplier(patch) {
 
 module.exports = {
   shouldExcludeSku,
+  matchSupplier,
   getSupplierBySku,
   getSupplierByName,
   getAllSupplierNames,
