@@ -115,6 +115,13 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/gorgiasAdvisorResync').runPipeline(),
   },
   {
+    name: 'Dead-letter Replay',
+    // Retry recent Gorgias intake webhooks that failed and were parked in
+    // webhook_dead_letter, so a customer message that errored mid-intake is
+    // recovered instead of silently lost. See lib/replayDeadLetters.js.
+    run: () => require('./lib/replayDeadLetters').run(),
+  },
+  {
     name: 'AI Cost Rollup',
     run: () => require('./lib/rollupAiCosts').run(),
   },
@@ -296,12 +303,14 @@ function buildTicketDriftHtml(results) {
   if (!src) return '';
 
   const driftIssues = src.driftIssues || [];
+  const autoResolved = src.autoResolved || [];
   const undelivered = src.undelivered || [];
   const followUps = src.followUps || [];
-  if (!driftIssues.length && !undelivered.length && !followUps.length) return '';
+  if (!driftIssues.length && !autoResolved.length && !undelivered.length && !followUps.length) return '';
 
   let html = '';
 
+  // Real misses — genuine customer tickets with no draft. The only part that alarms.
   if (driftIssues.length) {
     const cards = driftIssues.map(d => `
       <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
@@ -312,9 +321,28 @@ function buildTicketDriftHtml(results) {
     html += `
       <div style="margin:20px 0 0;">
         <div style="background:#fef2f2;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #fecaca;border-bottom:2px solid #fecaca;">
-          <strong style="color:#dc2626;">Ticket Drift (${driftIssues.length})</strong>
+          <strong style="color:#dc2626;">Real Misses — needs attention (${driftIssues.length})</strong>
         </div>
         <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
+      </div>`;
+  }
+
+  // Auto-resolved drift noise (vendor spam, emoji reopens, duplicates) — quiet,
+  // informational. These were closed automatically; no action needed.
+  if (autoResolved.length) {
+    const counts = autoResolved.reduce((acc, a) => { acc[a.disposition] = (acc[a.disposition] || 0) + 1; return acc; }, {});
+    const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
+    const rows = autoResolved.map(a => `
+      <div style="padding:6px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:12px;">
+        #${esc(String(a.ticketId))} ${esc(a.email)} — <em>${esc(a.disposition)}</em>: ${esc(a.reason)}
+      </div>`).join('');
+
+    html += `
+      <div style="margin:16px 0 0;">
+        <div style="background:#f9fafb;padding:6px 12px;border-radius:6px 6px 0 0;border:1px solid #e5e7eb;">
+          <span style="color:#6b7280;font-size:13px;">Auto-resolved drift noise (${autoResolved.length}) &middot; ${esc(summary)}</span>
+        </div>
+        <div style="border:1px solid #e5e7eb;border-top:0;border-radius:0 0 6px 6px;">${rows}</div>
       </div>`;
   }
 
@@ -366,6 +394,49 @@ function buildTicketDriftHtml(results) {
           <strong style="color:#16a34a;">Auto Follow-ups (${okFollowUps.length})</strong>
         </div>
         <div style="border:1px solid #bbf7d0;border-top:0;border-radius:0 0 6px 6px;">${cards}</div>
+      </div>`;
+  }
+
+  return html;
+}
+
+// Dead-letter replay — recovered failed-intake tickets + any still stuck.
+function buildDeadLetterReplayHtml(results) {
+  const task = results.find(r => r.name === 'Dead-letter Replay');
+  const src = task?.result?.sources?.deadletter_replay;
+  if (!src) return '';
+  const recovered = src.recovered || [];
+  const stillFailing = src.stillFailing || [];
+  if (!recovered.length && !stillFailing.length) return '';
+
+  let html = '';
+
+  if (recovered.length) {
+    const rows = recovered.map(r => `
+      <div style="padding:6px 12px;border-bottom:1px solid #bbf7d0;color:#16a34a;font-size:12px;">
+        #${esc(String(r.ticketId || '—'))} — re-processed through intake
+      </div>`).join('');
+    html += `
+      <div style="margin:16px 0 0;">
+        <div style="background:#f0fdf4;padding:6px 12px;border-radius:6px 6px 0 0;border:1px solid #bbf7d0;">
+          <span style="color:#16a34a;font-size:13px;">Recovered failed-intake tickets (${recovered.length})</span>
+        </div>
+        <div style="border:1px solid #bbf7d0;border-top:0;border-radius:0 0 6px 6px;">${rows}</div>
+      </div>`;
+  }
+
+  if (stillFailing.length) {
+    const rows = stillFailing.map(r => `
+      <div style="padding:10px 12px;border-bottom:1px solid #fecaca;">
+        <div style="font-weight:bold;font-size:14px;">#${esc(String(r.ticketId || '—'))}</div>
+        <div style="color:#dc2626;font-size:13px;margin-top:2px;">retry failed: ${esc(r.error || 'unknown')}</div>
+      </div>`).join('');
+    html += `
+      <div style="margin:16px 0 0;">
+        <div style="background:#fef2f2;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #fecaca;border-bottom:2px solid #fecaca;">
+          <strong style="color:#dc2626;">Intake dead-letters still failing (${stillFailing.length})</strong>
+        </div>
+        <div style="border:1px solid #fecaca;border-top:0;border-radius:0 0 6px 6px;">${rows}</div>
       </div>`;
   }
 
@@ -575,6 +646,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- Drift / undelivered section ---
   const driftHtml = buildTicketDriftHtml(results);
 
+  // --- Dead-letter replay (recovered / still-failing intake) ---
+  const deadLetterHtml = buildDeadLetterReplayHtml(results);
+
   // --- AI cost section ---
   const aiCostHtml = buildAiCostHtml(results);
 
@@ -599,6 +673,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       <p style="color:#6b7280;margin-top:0;font-size:13px;">${results.length} pipelines &middot; ${totalRows} rows &middot; ${formatDuration(overallDuration)}${gorgiasRetries ? ` &middot; ${gorgiasRetries} Gorgias retr${gorgiasRetries === 1 ? 'y' : 'ies'}` : ''}</p>
 
       ${driftHtml}
+      ${deadLetterHtml}
       ${errorsHtml}
       ${aiCostHtml}
       ${advisorEditHtml}
