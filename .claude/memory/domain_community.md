@@ -25,7 +25,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partner list is 14 active orgs (US/CA/CH/AU/DE/etc.).
-- **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab. Full history backfilled (1765 applications). The daily import + lifecycle reconcile run as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), no separate cron.
+- **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab (~1,436 applications after de-duplication). Daily import + lifecycle reconcile run as two `daily-sync-all` sub-pipelines (`Free Swimwear Apps` + `Free Swimwear Lifecycle`). End-to-end verified 2026-06: form → sync → approve → code + acceptance email + sheet row updated.
 
 ## Key Files
 
@@ -41,6 +41,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/lib/freeSwimwearSurvey.js` — Google Form reader + deterministic eligibility gate.
 - `customer-service/lib/tools/freeSwimwear.js` — Free Swimwear MCP tools (list/get/summary/approve/reject/resend).
 - `customer-service/sync/freeSwimwearLifecycle.js` — daily register/order/expire/resend reconcile; `syncFreeSwimwearRequests.js` imports new applications.
+- `customer-service/lib/freeSwimwearSheet.js` — temporary sheet write-back bridge (live row lookup by email+timestamp).
 
 ## Key Decisions
 
@@ -53,10 +54,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **Auto-deploy on publish:** Publish opens + merges a PR to the theme repo's main, Shopify auto-pulls within ~30s. Worktree-based so any in-progress theme branch is untouched. `dry_run` and `merge: false` are escape hatches.
 - **Free swimwear replicates the legacy Apps Script exactly, just better-wired:** codes are issued under the existing Shopify price rule `1577372680470` ("Free RUBIES Program", $56 off the `rubies-free-donation` collection) — never redefined — and the SendGrid dynamic templates (acceptance `d-397594792d9340da976c6eefbe94ab9e`, resend `d-14e6618cbe9d4a9ab092426b42545988`; legacy brazil-rejection `d-e0e919a0d8014243a9d9b9459efde470` retired) are reused verbatim. Cadence preserved: 30-day expiry, 7-day resend, max 3 attempts.
 - **Free-swimwear eligibility is deterministic, not AI:** Brazil/excluded-region or not-trans/non-binary → silently rejected (no email is ever sent on rejection), still shown in the list for audit. AI is used only for a one-line scannable summary (Opus, same wrapper as ticket summaries). The accept/reject decision stays human.
-- **Supabase is the free-swimwear SSOT; the sheet is intake-only:** sync is insert-if-absent on `(source, sheet_row)`, so the portal/lifecycle own a row's operational state once imported and re-sync never clobbers a decision.
+- **Supabase is the free-swimwear SSOT; the sheet is intake-only:** sync is insert-if-absent so the portal/lifecycle own a row's operational state once imported and re-sync never clobbers a decision.
+- **Application identity is `(email, submitted_at)` — NEVER sheet position.** The Form Responses tab gets re-sorted, so `sheet_row` is unstable; keying on it duplicated every applicant when the sheet reordered. Critically, the Timestamp column is a naive wall-clock string with no offset, so it MUST be parsed in a fixed timezone (`America/Toronto`, via `parseTimestamp` in `freeSwimwearSurvey.js`) — `new Date(str)` uses the host TZ, which made a Mac (Eastern) and Railway (UTC) disagree and the daily-sync cron re-imported the whole sheet as 1,400+ duplicates. Compare timestamps by instant, not string (`+00:00` vs `…000Z` are the same moment).
+- **Sheet write-back is a temporary bridge** (`freeSwimwearSheet.js`, env `FSW_SHEET_WRITEBACK`, default on; `done_when` Jamie trusts the dashboard): every approve/reject/resend + lifecycle change mirrors the operational columns (F:O) back to Form Responses 1. It locates the row by a LIVE `(email, submitted_at)` lookup (rows re-sort, so the stored position is never trusted) and is fail-soft (skips, never guesses, on 0/many matches). Acceptance/resend emails send from **care@rubyshines.com** (domain-authenticated; replies route there), and `last_acceptance_send_date` is stamped only on a real SendGrid 2xx so a failed send is visible, not silent.
 
 ## What's Next
 
+- **Double-submission / repeat-applicant handling** — designed, not built. See `project_free_swimwear_repeats.md`.
 - Donation impact reporting/dashboard
 - Partner feedback loop (items received, condition)
 - Expand international donation partner coverage (only US/CA/CH/AU/DE today; intl exchanges still fall back to "donate locally")

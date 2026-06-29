@@ -34,6 +34,7 @@
 
 ## Active Projects
 - [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, Sonnet+thinking shadow eval pulled 2026-04-30 (not viable)
+- [Free Swimwear Repeats](project_free_swimwear_repeats.md) — duplicate / repeat-applicant handling for the free swimwear program (designed, not built)
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system
