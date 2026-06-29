@@ -18,6 +18,7 @@ if (!process.env.SUPABASE_URL) {
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { fetchOrdersForSync, getCustomerProfile } = require('../lib/shopify');
+const { normalizeFulfillments } = require('../lib/tracking/refreshDelivery');
 
 // ---------------------------------------------------------------------------
 // CLI args (used in standalone mode)
@@ -162,44 +163,9 @@ async function syncOrders({ since, full } = {}) {
         .maybeSingle();
       const existingFulfillments = existingRow?.fulfillments || [];
 
-      const fulfillments = (o.fulfillments || []).map(f => {
-        const trackingNumber = f.trackingInfo?.[0]?.number || null;
-        const shopifyEvents = (f.events?.edges || []).map(e => ({
-          happenedAt: e.node.happenedAt,
-          status: e.node.status,
-          message: e.node.message,
-        }));
-        const existing = existingFulfillments.find(e => e.trackingNumber && e.trackingNumber === trackingNumber);
-        // Merge: Shopify is the base (includes carrier events like DELIVERED).
-        // Append stored events whose happenedAt isn't in Shopify's set — those
-        // are Passport scraper extras (local carrier scans) Shopify never sees.
-        // Pure count comparison caused a race: DELIVERED arrived in Shopify at
-        // the same sync run that advanced the high-water mark past these orders,
-        // so stored.length >= shopify.length kept stale events indefinitely.
-        const shopifyTimestamps = new Set(shopifyEvents.map(e => e.happenedAt));
-        const scraperExtras = (existing?.events || []).filter(e => e.happenedAt && !shopifyTimestamps.has(e.happenedAt));
-        const events = shopifyEvents.length > 0
-          ? [...shopifyEvents, ...scraperExtras]
-          : (existing?.events || []);
-        return {
-          status: f.status,
-          displayStatus: f.displayStatus || existing?.displayStatus || null,
-          createdAt: f.createdAt,
-          deliveredAt: f.deliveredAt || existing?.deliveredAt || null,
-          inTransitAt: f.inTransitAt || existing?.inTransitAt || null,
-          estimatedDeliveryAt: f.estimatedDeliveryAt || existing?.estimatedDeliveryAt || null,
-          trackingNumber,
-          trackingUrl: f.trackingInfo?.[0]?.url || null,
-          trackingCompany: f.trackingInfo?.[0]?.company || null,
-          locationId: f.location?.legacyResourceId || null,
-          // Passport-only extras (set by syncPassportDelivery; preserve here)
-          lastLocation: existing?.lastLocation || null,
-          localCarrier: existing?.localCarrier || null,
-          localTrackingNumber: existing?.localTrackingNumber || null,
-          customsCleared: typeof existing?.customsCleared === 'boolean' ? existing.customsCleared : null,
-          events,
-        };
-      });
+      // Shared with the report's delivery-refresh pass (lib/tracking/refreshDelivery.js)
+      // so the two paths can never produce a different stored shape.
+      const fulfillments = normalizeFulfillments(o.fulfillments, existingFulfillments);
 
       // --- Upsert order ---
       const orderRow = {

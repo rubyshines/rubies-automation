@@ -11,6 +11,7 @@
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
 const { businessDaysSince: sharedBusinessDaysSince } = require('../../shared/businessDays');
+const { refreshOrderDelivery } = require('../../customer-service/lib/tracking/refreshDelivery');
 
 const SHOPIFY_STORE = 'rubies-active-wear';
 
@@ -323,16 +324,14 @@ async function checkShippingDelays({ showResolved = false } = {}) {
     LABEL_PURCHASED: 'pre_transit',
   };
 
-  const trackingMap = {};
-  const noDataCount = { hasData: 0, noData: 0 };
-  for (const n of orderNums) {
-    const order = allOrders.find(o => o.order_number === n);
+  // Build the per-order tracking state from orders.fulfillments[]. Extracted so
+  // the refresh pass below can recompute an order's state after re-fetching it.
+  // Returns null when the order has no usable tracking data.
+  const computeTrackingEntry = (order) => {
     const f = (order?.fulfillments || []).find(fl => fl.trackingUrl || fl.trackingNumber);
-    if (!f) { noDataCount.noData++; continue; }
-
+    if (!f) return null;
     const events = Array.isArray(f.events) ? f.events : [];
-    if (events.length === 0) { noDataCount.noData++; continue; }
-    noDataCount.hasData++;
+    if (events.length === 0) return null;
 
     const latest = events[0]; // events are stored most-recent-first
     let currentStatus = SHOPIFY_EVENT_STATUS_MAP[latest.status] || 'unknown';
@@ -362,7 +361,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       if (ACTION_REQUIRED_PATTERNS.some(p => p.test(desc))) { actionRequired = desc; break; }
     }
 
-    trackingMap[n] = {
+    return {
       carrier: f.trackingCompany || '?',
       currentStatus,
       events,
@@ -377,7 +376,52 @@ async function checkShippingDelays({ showResolved = false } = {}) {
         ? `${latest.happenedAt.split('T')[0]}: ${latest.message || latest.status}`
         : null,
     };
+  };
+
+  const trackingMap = {};
+  const noDataCount = { hasData: 0, noData: 0 };
+  for (const order of allOrders) {
+    const entry = computeTrackingEntry(order);
+    if (entry) { trackingMap[order.order_number] = entry; noDataCount.hasData++; }
+    else noDataCount.noData++;
   }
+
+  // Self-heal stale rows. A fulfilled order whose latest synced tracking event is
+  // several days old (and not yet delivered) is exactly the case syncAll's
+  // updated_at high-water mark misses a later DELIVERED event for — the row stays
+  // frozen mid-transit and ages into a false "likely lost" alert. Re-fetch those
+  // live from Shopify before classifying, so delivered orders drop off (and the
+  // corrected row also fixes what the CS advisor tells the customer). Bounded to
+  // stale, non-delivered candidates; fail-soft per order.
+  const REFRESH_STALE_DAYS = 5;
+  const refreshCandidates = allOrders.filter(o => {
+    const t = trackingMap[o.order_number];
+    if (!t || ['delivered', 'returned'].includes(t.currentStatus)) return false;
+    if (t.lastEventDays === null || t.lastEventDays < REFRESH_STALE_DAYS) return false;
+    // Passport doesn't push delivery events back to Shopify, so a Shopify
+    // re-fetch can't resolve them — syncPassportDelivery owns those. Skip to
+    // avoid ~dozens of wasted API calls every run.
+    const f = (o.fulfillments || []).find(fl => fl.trackingUrl);
+    if ((f?.trackingUrl || '').includes('passport')) return false;
+    return true;
+  });
+  if (refreshCandidates.length) {
+    console.log(`  [Shipping] Re-checking ${refreshCandidates.length} stale order(s) live against Shopify...`);
+    let healed = 0;
+    for (let i = 0; i < refreshCandidates.length; i += 5) {
+      const batch = refreshCandidates.slice(i, i + 5);
+      await Promise.all(batch.map(async (order) => {
+        const res = await refreshOrderDelivery(order, { supabase });
+        if (!res.refreshed) return;
+        order.fulfillments = res.fulfillments;
+        const entry = computeTrackingEntry(order);
+        if (entry) trackingMap[order.order_number] = entry;
+        if (entry?.currentStatus === 'delivered') healed++;
+      }));
+    }
+    console.log(`  [Shipping] Live re-check resolved ${healed} order(s) as delivered`);
+  }
+
   console.log(`  [Shipping] ${orderNums.length} orders, ${noDataCount.hasData} with fulfillment events, ${noDataCount.noData} without`);
 
   // Load line items

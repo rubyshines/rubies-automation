@@ -376,10 +376,23 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       .filter(Boolean),
   );
   const notOnMe = r => !onMeOrders.has(Number(r.order.order_number));
+  // An order can be surfaced by more than one detector — e.g. a fulfilled,
+  // in-transit order with an unresolved note is caught by BOTH orphanWaiting
+  // (fulfilled orders with notes) and shWaiting (shipping alerts with notes).
+  // Dedup by order number, first occurrence wins, so it renders once. The
+  // unfulfilled/orphan row (which shows the operator note) takes precedence over
+  // the shipping-alert duplicate because it's listed first.
+  const seenWaiting = new Set();
+  const takeWaiting = (orderNumber) => {
+    const n = Number(String(orderNumber ?? '').replace(/^#/, ''));
+    if (!n || seenWaiting.has(n)) return false;
+    seenWaiting.add(n);
+    return true;
+  };
   const waitingRows = [
-    ...ufWaiting.filter(notOnMe).map(r => unfulfilledRow(r)),
-    ...(extra.orphanWaiting || []).filter(notOnMe).map(r => unfulfilledRow(r)),
-    ...shWaiting.map(a => shippingRow(a, '#f97316', 'waiting on response')),
+    ...ufWaiting.filter(notOnMe).filter(r => takeWaiting(r.order.order_number)).map(r => unfulfilledRow(r)),
+    ...(extra.orphanWaiting || []).filter(notOnMe).filter(r => takeWaiting(r.order.order_number)).map(r => unfulfilledRow(r)),
+    ...shWaiting.filter(a => takeWaiting(a.order_number)).map(a => shippingRow(a, '#f97316', 'waiting on response')),
   ];
 
   // 8. Pre-Orders
