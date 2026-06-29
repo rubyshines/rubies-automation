@@ -170,6 +170,9 @@ function unfulfilledRow(r) {
   if (r.warehanceUrl) {
     links += ` &middot; <a href="${esc(r.warehanceUrl)}" style="color:#2563eb;text-decoration:none;">Warehance</a>`;
   }
+  if (r.ticketUrl) {
+    links += ` &middot; <a href="${esc(r.ticketUrl)}" style="color:#7c3aed;text-decoration:none;font-weight:bold;">Ticket #${r.ticketId}</a>`;
+  }
 
   let noteHtml = '';
   if (r.note) {
@@ -208,6 +211,10 @@ function shippingRow(a, overrideColor, overrideLabel) {
   if (a.tracking_url) {
     if (links) links += ' &middot; ';
     links += `<a href="${esc(a.tracking_url)}" style="color:#2563eb;text-decoration:none;">Track</a>`;
+  }
+  if (a.ticketUrl) {
+    if (links) links += ' &middot; ';
+    links += `<a href="${esc(a.ticketUrl)}" style="color:#7c3aed;text-decoration:none;font-weight:bold;">Ticket #${a.ticketId}</a>`;
   }
 
   const carrierText = [a.carrier, a.local_carrier].filter(Boolean).join(' \u2192 ');
@@ -278,6 +285,20 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   const today = new Date().toISOString().split('T')[0];
   const uf = unfulfilled;
   const sh = shipping;
+
+  // Attach a related-ticket deep link (dashboard #ticket-<id>) to every row that
+  // has one, so the email jumps straight to the conversation. extra.ticketsByOrder
+  // maps order_number → the most-recently-updated cs_tickets row.
+  const ticketsByOrder = extra.ticketsByOrder instanceof Map ? extra.ticketsByOrder : new Map();
+  const dashBase = process.env.DASHBOARD_URL || 'https://ops.rubyshines.com';
+  const enrichTicket = (obj, orderNumber) => {
+    const t = ticketsByOrder.get(Number(String(orderNumber ?? '').replace(/^#/, '')));
+    obj.ticketId = t ? t.id : null;
+    obj.ticketUrl = t ? `${dashBase}/#ticket-${t.id}` : null;
+  };
+  (unfulfilled.results || []).forEach(r => enrichTicket(r, r.order?.order_number));
+  (extra.orphanWaiting || []).forEach(r => enrichTicket(r, r.order?.order_number));
+  (shipping.urgentNonPassport || []).forEach(a => enrichTicket(a, a.order_number));
 
   // --- Unfulfilled buckets ---
   // Pre-order classification is auto-derived from line item attributes/tags. An
@@ -747,8 +768,33 @@ async function run() {
     console.warn(`[alerts] Could not fetch active sales: ${err.message}`);
   }
 
+  // Related CS ticket per order — lets each email row deep-link to the dashboard
+  // conversation. Most-recently-updated ticket wins (the active thread). Matches
+  // order_number stored both with and without a leading '#'. Fail-soft.
+  let ticketsByOrder = new Map();
+  try {
+    const orderNums = new Set();
+    unfulfilled.results.forEach(r => { const n = Number(r.order?.order_number); if (n) orderNums.add(n); });
+    orphanWaiting.forEach(r => { const n = Number(r.order?.order_number); if (n) orderNums.add(n); });
+    (shipping.urgentNonPassport || []).forEach(a => { const n = Number(String(a.order_number || '').replace(/^#/, '')); if (n) orderNums.add(n); });
+    const nums = [...orderNums];
+    if (nums.length) {
+      const { data } = await supabase
+        .from('cs_tickets')
+        .select('id, order_number, updated_at')
+        .in('order_number', nums.flatMap(n => [String(n), `#${n}`]))
+        .order('updated_at', { ascending: false });
+      for (const t of (data || [])) {
+        const k = Number(String(t.order_number).replace(/^#/, ''));
+        if (k && !ticketsByOrder.has(k)) ticketsByOrder.set(k, t); // desc order → first seen is newest
+      }
+    }
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch related tickets: ${err.message}`);
+  }
+
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled, activeSales });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled, activeSales, ticketsByOrder });
 
   const sgMail = opts.noEmail ? null : getSendgridClient();
   if (opts.noEmail) console.log('Email skipped (--no-email)');
