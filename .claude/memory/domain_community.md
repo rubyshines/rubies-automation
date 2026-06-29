@@ -25,7 +25,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partner list is 14 active orgs (US/CA/CH/AU/DE/etc.).
-- **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab (~1,436 applications after de-duplication). Daily import + lifecycle reconcile run as two `daily-sync-all` sub-pipelines (`Free Swimwear Apps` + `Free Swimwear Lifecycle`). End-to-end verified 2026-06: form → sync → approve → code + acceptance email + sheet row updated.
+- **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab (~1,436 applications after de-duplication). Daily import + lifecycle reconcile run as two `daily-sync-all` sub-pipelines (`Free Swimwear Apps` + `Free Swimwear Lifecycle`). End-to-end verified 2026-06: form → sync → approve → code + acceptance email + sheet row updated. Repeat/duplicate handling runs at intake (see Key Decisions); the queue surfaces returning / possible-2nd-child / repeat badges and filters.
 
 ## Key Files
 
@@ -39,6 +39,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/lib/logoExtractor.js` — Haiku-based logo URL extraction from org websites.
 - `customer-service/lib/freeSwimwear.js` — Free Swimwear core logic (issue code + acceptance email, resend, lifecycle decision).
 - `customer-service/lib/freeSwimwearSurvey.js` — Google Form reader + deterministic eligibility gate.
+- `customer-service/lib/freeSwimwearRepeats.js` — intake repeat-check: Opus recipient-match + pure repeat/duplicate decision.
 - `customer-service/lib/tools/freeSwimwear.js` — Free Swimwear MCP tools (list/get/summary/approve/reject/resend).
 - `customer-service/sync/freeSwimwearLifecycle.js` — daily register/order/expire/resend reconcile; `syncFreeSwimwearRequests.js` imports new applications.
 - `customer-service/lib/freeSwimwearSheet.js` — temporary sheet write-back bridge (live row lookup by email+timestamp).
@@ -57,10 +58,10 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **Supabase is the free-swimwear SSOT; the sheet is intake-only:** sync is insert-if-absent so the portal/lifecycle own a row's operational state once imported and re-sync never clobbers a decision.
 - **Application identity is `(email, submitted_at)` — NEVER sheet position.** The Form Responses tab gets re-sorted, so `sheet_row` is unstable; keying on it duplicated every applicant when the sheet reordered. Critically, the Timestamp column is a naive wall-clock string with no offset, so it MUST be parsed in a fixed timezone (`America/Toronto`, via `parseTimestamp` in `freeSwimwearSurvey.js`) — `new Date(str)` uses the host TZ, which made a Mac (Eastern) and Railway (UTC) disagree and the daily-sync cron re-imported the whole sheet as 1,400+ duplicates. Compare timestamps by instant, not string (`+00:00` vs `…000Z` are the same moment).
 - **Sheet write-back is a temporary bridge** (`freeSwimwearSheet.js`, env `FSW_SHEET_WRITEBACK`, default on; `done_when` Jamie trusts the dashboard): every approve/reject/resend + lifecycle change mirrors the operational columns (F:O) back to Form Responses 1. It locates the row by a LIVE `(email, submitted_at)` lookup (rows re-sort, so the stored position is never trusted) and is fail-soft (skips, never guesses, on 0/many matches). Acceptance/resend emails send from **care@rubyshines.com** (domain-authenticated; replies route there), and `last_acceptance_send_date` is stamped only on a real SendGrid 2xx so a failed send is visible, not silent.
+- **Repeat/duplicate handling is an intake-time AI + pure-rule split:** a new eligible submission whose email already has prior applications gets an Opus recipient-match (the form's name field is sometimes the parent and ages drift, so recipient identity is fuzzy → AI decides same-vs-different; it fails conservative so two real siblings are never merged), then a pure rule (`freeSwimwearRepeats.js`) routes by the gap to the recipient's last application: same-day resubmit → silent `duplicate` collapse; within a year → closed `repeat` + a friendly reapply-after email (plain email from care@, NOT silent — distinct from the silent ineligible `rejected` path); over a year → active `new` badged returning; different recipient same email → active `new` + possible-2nd-child flag. The window counts from the last application regardless of outcome. Side effects (reapply email, collapsing a prior row) run AFTER the insert keyed by row id, so a retry never double-fires; backfill skips the check.
 
 ## What's Next
 
-- **Double-submission / repeat-applicant handling** — designed, not built. See `project_free_swimwear_repeats.md`.
 - Donation impact reporting/dashboard
 - Partner feedback loop (items received, condition)
 - Expand international donation partner coverage (only US/CA/CH/AU/DE today; intl exchanges still fall back to "donate locally")
