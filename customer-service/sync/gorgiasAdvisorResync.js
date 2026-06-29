@@ -149,6 +149,40 @@ async function run({ execute = false } = {}) {
     }
   }
 
+  // ── Step 4a: Triage drift — auto-resolve noise, keep only real misses ──
+  //    The reconciler flags any open-in-Gorgias ticket with no advisor draft (or
+  //    a diverging status). Most are junk: vendor sales pitches, emoji-reaction
+  //    reopens, duplicates. Left alone they recur in the digest every day. We
+  //    close the junk here and report only genuine customer misses. Real misses
+  //    are NOT auto-drafted — that keeps webhook/intake bugs visible.
+  //    Only runs when executing (daily sync); dry runs stay pure detection.
+
+  const autoResolved = [];
+  let realMisses = toProcess;
+  if (!dryRun && toProcess.length) {
+    const { triageDriftTicket } = require('../lib/driftTriage');
+    realMisses = [];
+    for (const item of toProcess) {
+      const gid = item.ticket.id;
+      try {
+        const messages = await gorgias.getTicketMessages(gid);
+        const { disposition, reason } = await triageDriftTicket({
+          supabase, gorgias, ticket: item.ticket, messages,
+        });
+        if (disposition === 'real_miss') {
+          realMisses.push(item);
+        } else {
+          autoResolved.push({ ticketId: gid, email: item.ticket.customer?.email || '?', disposition, reason });
+          console.log(`  [triage] #${gid}: auto-resolved (${disposition}) — ${reason}`);
+        }
+      } catch (e) {
+        console.warn(`  [triage] #${gid}: triage failed (${e.message}) — keeping as real miss`);
+        realMisses.push(item);
+      }
+      await gorgias.delay(300);
+    }
+  }
+
   // ── Step 4b: Check for undelivered agent messages ──
   //    If not a dry run, auto-close bounced tickets so they never reach the follow-up queue.
 
@@ -392,28 +426,34 @@ Example: NO | exchange confirmed and created, no reply needed`;
     }
   }
 
+  if (autoResolved.length) {
+    console.log(`\n  ${autoResolved.length} drift ticket(s) auto-resolved as noise:`);
+    for (const a of autoResolved) console.log(`    #${a.ticketId}  ${a.email}  → ${a.disposition}: ${a.reason}`);
+  }
+
   console.log(`\n${'═'.repeat(65)}`);
-  console.log(`  ${toProcess.length} ticket(s) need reprocessing`);
+  console.log(`  ${realMisses.length} real miss(es) need attention${dryRun ? '' : ` (${autoResolved.length} auto-resolved)`}`);
   console.log(`${'═'.repeat(65)}\n`);
 
-  for (const { ticket, reason } of toProcess) {
+  for (const { ticket, reason } of realMisses) {
     const name = ticket.customer?.name || '';
     const email = ticket.customer?.email || '';
     console.log(`  #${ticket.id}  ${name} (${email})`);
     console.log(`    → ${reason}`);
   }
 
-  if (!toProcess.length && !undelivered.length) {
+  if (!realMisses.length && !undelivered.length && !autoResolved.length) {
     console.log('  ✓ Everything in sync — nothing to do.\n');
   }
 
   return {
     openTickets: gorgiasTickets.length,
-    driftIssues: toProcess.map(({ ticket, reason }) => ({
+    driftIssues: realMisses.map(({ ticket, reason }) => ({
       ticketId: ticket.id,
       email: ticket.customer?.email || '?',
       reason,
     })),
+    autoResolved,
     undelivered: undelivered.map(({ ticket, failedMessages }) => ({
       ticketId: ticket.id,
       email: ticket.customer?.email || '?',
@@ -515,32 +555,36 @@ async function runPipeline() {
   try {
     const detection = await run({ execute: true });
     const driftCount = detection.driftIssues.length;
+    const autoResolvedCount = (detection.autoResolved || []).length;
     const undeliveredCount = detection.undelivered.length;
     const followUpCount = detection.followUps.length;
     const followUpErrorCount = detection.followUps.filter(f => typeof f.action === 'string' && f.action.startsWith('error:')).length;
+    // Real misses are the only thing that ALARMS — auto-resolved noise is just informational.
     const hasIssues = driftCount > 0 || undeliveredCount > 0 || followUpErrorCount > 0;
     const detailParts = [`${detection.openTickets} open`];
-    if (driftCount) detailParts.push(`${driftCount} drift`);
+    if (driftCount) detailParts.push(`${driftCount} real miss${driftCount === 1 ? '' : 'es'}`);
+    if (autoResolvedCount) detailParts.push(`${autoResolvedCount} auto-resolved`);
     if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
     if (followUpCount) {
       detailParts.push(followUpErrorCount
         ? `${followUpCount} follow-ups (${followUpErrorCount} errored)`
         : `${followUpCount} follow-ups`);
     }
-    if (!hasIssues && !followUpCount) detailParts.push('all in sync');
+    if (!hasIssues && !followUpCount && !autoResolvedCount) detailParts.push('all in sync');
 
     return {
       sources: {
         ticket_reconciliation: {
           success: true,
-          rowsWritten: driftCount + undeliveredCount + followUpCount,
+          rowsWritten: driftCount + autoResolvedCount + undeliveredCount + followUpCount,
           detail: detailParts.join(', '),
           driftIssues: detection.driftIssues,
+          autoResolved: detection.autoResolved || [],
           undelivered: detection.undelivered,
           followUps: detection.followUps,
         },
       },
-      status: hasIssues ? 'warning' : followUpCount ? 'success' : 'ok',
+      status: hasIssues ? 'warning' : (followUpCount || autoResolvedCount) ? 'success' : 'ok',
     };
   } catch (e) {
     console.error('Ticket reconciliation error:', e.message);
