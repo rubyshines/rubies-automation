@@ -6,7 +6,7 @@ metadata:
   type: project
   domains: 
     - community
-  last_updated: 2026-06-24
+  last_updated: 2026-06-29
   originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -27,3 +27,4 @@ Active programs running. As of 2026-05-28, rubies-automations is the SSOT for do
 - 2026-05-28 — New submissions ingest via MCP with preview/confirm. Auto-geocode (Google Maps), auto-extract logo (Haiku from org website), re-host logo on Shopify CDN, then auto-merge to theme main on publish (Shopify auto-deploys ~30s).
 - 2026-05-28 — Submissions match to existing partners by website domain (org names drift; domains stay stable).
 - 2026-06-24 — Free swimwear program (free bikini bottom for trans/non-binary kids in need) moved off the legacy Google Apps Script + manual sheet into rubies-automations: Supabase `free_swimwear_requests` SSOT, deterministic eligibility (Brazil/non-trans silently rejected), one-line Opus summary, one-click approve (issues a code under the existing Shopify price rule + SendGrid acceptance email), daily lifecycle reconcile. 1765 applications backfilled. See domain_community.md.
+- 2026-06-29 — Free swimwear repeat/duplicate handling shipped (PR #24): intake-time Opus recipient-match (fuzzy identity, fails conservative so siblings aren't merged) + pure rule — collapse same-day resubmits, close within-year repeats with a friendly reapply-after email, badge returning families and possible second children. See domain_community.md.
