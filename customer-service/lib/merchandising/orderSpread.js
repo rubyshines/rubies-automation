@@ -15,42 +15,54 @@
  */
 
 const PER_SKU_FLOOR = 20;
+// Overridden spreads are rounded to clean multiples of this many units per size.
+const ORDER_STEP = 10;
 
 /**
  * Distribute `target` units across items in proportion to `weights`, returning
- * integers that sum to `target` (largest-remainder apportionment), with every
- * line that has a positive weight >= `floor`. Items with weight 0 stay 0.
+ * integers that sum to the (step-rounded) target via largest-remainder
+ * apportionment, with every line that has a positive weight >= `floor`. Items
+ * with weight 0 stay 0. Every allocation is a multiple of `step` — the math runs
+ * in whole `step` units and scales back, so the target is first rounded to the
+ * nearest multiple of `step` (returned as `target` so the caller can flag it).
  *
  * Thin lines round up to the floor; the units needed to do so are reclaimed from
- * the largest lines (never dropping a donor below the floor). If even one unit
- * per active line at the floor already meets/exceeds the target, the floor wins:
- * every active line is set to the floor and `infeasible` is returned true so the
- * caller can surface that the requested total was too small to spread.
+ * the largest lines (never dropping a donor below the floor). If even one step
+ * unit per active line already meets/exceeds the target, the floor wins: every
+ * active line is set to the floor and `infeasible` is true.
  *
  * @param {number[]} weights  proportional weight per line (e.g. projected qty)
  * @param {number}   target   desired total units
  * @param {number}   floor    minimum units for any nonzero line
- * @returns {{ alloc: number[], infeasible: boolean }}
+ * @param {number}   step     allocations are rounded to multiples of this (default 1)
+ * @returns {{ alloc: number[], infeasible: boolean, target: number }}
  */
-function distributeWithFloor(weights, target, floor = PER_SKU_FLOOR) {
+function distributeWithFloor(weights, target, floor = PER_SKU_FLOOR, step = 1) {
   const n = weights.length;
   const active = weights.map((w) => w > 0);
   const activeCount = active.filter(Boolean).length;
   const W = weights.reduce((s, w) => s + (w > 0 ? w : 0), 0);
 
   if (activeCount === 0 || target <= 0) {
-    return { alloc: weights.map(() => 0), infeasible: target > 0 && activeCount > 0 };
+    return { alloc: weights.map(() => 0), infeasible: target > 0 && activeCount > 0, target: 0 };
   }
+
+  // Work in whole `step` units so every allocation is a multiple of step, then
+  // scale back at the end. T = target in steps; F = floor rounded up to a step.
+  const unit = Math.max(1, Math.round(step));
+  const T = Math.round(target / unit);
+  const F = Math.max(1, Math.ceil(floor / unit));
+  const roundedTarget = T * unit;
 
   // Floor alone meets or exceeds the target — can't spread below it. Floor wins.
-  if (activeCount * floor >= target) {
-    return { alloc: weights.map((w) => (w > 0 ? floor : 0)), infeasible: true };
+  if (activeCount * F >= T) {
+    return { alloc: weights.map((w) => (w > 0 ? F * unit : 0)), infeasible: true, target: roundedTarget };
   }
 
-  // Largest-remainder proportional allocation that sums exactly to `target`.
-  const ideal = weights.map((w) => (w > 0 ? (w / W) * target : 0));
+  // Largest-remainder proportional allocation that sums exactly to T (in steps).
+  const ideal = weights.map((w) => (w > 0 ? (w / W) * T : 0));
   const alloc = ideal.map(Math.floor);
-  const remainder = target - alloc.reduce((s, x) => s + x, 0);
+  const remainder = T - alloc.reduce((s, x) => s + x, 0);
   const byFrac = ideal
     .map((v, i) => ({ frac: v - Math.floor(v), w: weights[i], i }))
     .filter((o) => o.w > 0)
@@ -58,15 +70,15 @@ function distributeWithFloor(weights, target, floor = PER_SKU_FLOOR) {
   for (let k = 0; k < remainder; k++) alloc[byFrac[k % byFrac.length].i] += 1;
 
   // Enforce the floor: bump each sub-floor active line up to the floor and
-  // reclaim the deficit from the largest above-floor lines, one unit at a time.
+  // reclaim the deficit from the largest above-floor lines, one step at a time.
   for (;;) {
-    const bump = alloc.findIndex((q, i) => active[i] && q < floor);
+    const bump = alloc.findIndex((q, i) => active[i] && q < F);
     if (bump === -1) break;
-    let deficit = floor - alloc[bump];
-    alloc[bump] = floor;
+    let deficit = F - alloc[bump];
+    alloc[bump] = F;
     while (deficit > 0) {
       let idx = -1;
-      let max = floor;
+      let max = F;
       for (let i = 0; i < n; i++) {
         if (i !== bump && alloc[i] > max) {
           max = alloc[i];
@@ -79,7 +91,7 @@ function distributeWithFloor(weights, target, floor = PER_SKU_FLOOR) {
     }
   }
 
-  return { alloc, infeasible: false };
+  return { alloc: alloc.map((x) => x * unit), infeasible: false, target: roundedTarget };
 }
 
 /**
@@ -154,12 +166,14 @@ function applyOrderRules(rows, { overrides = {}, floor = PER_SKU_FLOOR } = {}) {
       group.forEach((r) => { r.qty_to_order = r.qty_to_order > 0 ? Math.max(r.qty_to_order, floor) : 0; });
       continue;
     }
-    const { alloc, infeasible } = distributeWithFloor(group.map((r) => r.qty_to_order), target, floor);
+    const { alloc, infeasible, target: usedTarget } = distributeWithFloor(group.map((r) => r.qty_to_order), target, floor, ORDER_STEP);
     group.forEach((r, i) => { r.qty_to_order = alloc[i]; });
     const got = alloc.reduce((s, x) => s + x, 0);
     if (infeasible) {
       warnings.push(`Override "${key}": target ${target} is below the ${floor}-unit floor across ${group.length} sizes — ordered ${got} (every size at the ${floor} floor).`);
-    } else if (got !== target) {
+    } else if (usedTarget !== target) {
+      warnings.push(`Override "${key}": rounded ${target} to ${usedTarget} (sizes kept in multiples of ${ORDER_STEP}); distributed ${got}.`);
+    } else if (got !== usedTarget) {
       warnings.push(`Override "${key}": distributed ${got} units vs requested ${target}.`);
     }
   }
@@ -173,4 +187,4 @@ function applyOrderRules(rows, { overrides = {}, floor = PER_SKU_FLOOR } = {}) {
   return { rows: out, warnings };
 }
 
-module.exports = { PER_SKU_FLOOR, distributeWithFloor, matchesStyle, parseStyleKey, applyOrderRules };
+module.exports = { PER_SKU_FLOOR, ORDER_STEP, distributeWithFloor, matchesStyle, parseStyleKey, applyOrderRules };

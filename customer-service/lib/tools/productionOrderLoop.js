@@ -58,7 +58,7 @@ module.exports = [
         max_age_days: { type: 'number', description: 'Max projection age (days) before auto-refresh. Default 3.' },
         overrides: {
           type: 'object',
-          description: 'Founder unit overrides: per-style TOTAL units to order, keyed by style name or SKU prefix, e.g. {"naomi": 3000} or {"GAF": 3000}. Add a "/COLOR" suffix to override a single color, e.g. {"AJ/BLK": 2000, "AJ/SND": 800}. The matched rows\' projected size spread is rescaled to that total instead of the projected need, still honoring the 20-unit floor. Other styles are unaffected.',
+          description: 'Founder unit overrides: per-style TOTAL units to order, keyed by style name or SKU prefix, e.g. {"naomi": 3000} or {"GAF": 3000}. Add a "/COLOR" suffix to override a single color, e.g. {"AJ/BLK": 2000, "AJ/SND": 800}. The matched rows\' projected size spread is rescaled to that total instead of the projected need, honoring the 20-unit floor and keeping every size a multiple of 10. Other styles are unaffected.',
           additionalProperties: { type: 'number' },
         },
       },

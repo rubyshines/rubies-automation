@@ -17,6 +17,24 @@ test('distributeWithFloor rescales a spread to the target and sums exactly', () 
   assert.ok(alloc.every((q) => q >= PER_SKU_FLOOR));
 });
 
+test('distributeWithFloor with step=10 keeps every size a multiple of 10', () => {
+  const weights = [710, 480, 420, 270, 160, 130]; // Naomi spread, override to 3000
+  const { alloc, infeasible, target } = distributeWithFloor(weights, 3000, 20, 10);
+  assert.strictEqual(infeasible, false);
+  assert.strictEqual(target, 3000);
+  assert.strictEqual(sum(alloc), 3000);
+  assert.ok(alloc.every((q) => q % 10 === 0), 'every line is a multiple of 10');
+  assert.strictEqual(Math.max(...alloc), alloc[0]); // M still largest
+});
+
+test('distributeWithFloor rounds a non-multiple target to the nearest 10 (sum need not equal request)', () => {
+  const weights = [100, 100, 100];
+  const { alloc, target } = distributeWithFloor(weights, 2995, 20, 10);
+  assert.strictEqual(target, 3000); // 2995 -> nearest 10
+  assert.strictEqual(sum(alloc), 3000);
+  assert.ok(alloc.every((q) => q % 10 === 0));
+});
+
 test('distributeWithFloor rounds thin sizes up to the floor, reclaiming from the largest', () => {
   // One tiny size that would proportionally get ~3 units must become 20.
   const weights = [1000, 1000, 3];
@@ -93,6 +111,7 @@ test('applyOrderRules overrides one style and floors the rest', () => {
   const { rows: out, warnings } = applyOrderRules(rows, { overrides: { naomi: 3000 } });
   const gaf = out.filter((r) => r.sku.startsWith('GAF'));
   assert.strictEqual(sum(gaf.map((r) => r.qty_to_order)), 3000);
+  assert.ok(gaf.every((r) => r.qty_to_order % 10 === 0), 'overridden sizes are multiples of 10');
   const aj = out.find((r) => r.sku === 'AJ-BLK-M');
   assert.strictEqual(aj.qty_to_order, 20); // non-override thin line floored up
   assert.strictEqual(warnings.length, 0);
