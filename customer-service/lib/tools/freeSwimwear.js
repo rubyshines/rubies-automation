@@ -15,7 +15,7 @@ const { issueAcceptance, sendResend, firstName } = require('../freeSwimwear');
 const { writeBackToSheet } = require('../freeSwimwearSheet');
 
 const TABLE = 'free_swimwear_requests';
-const LIST_COLS = 'id, submitted_at, email, applicant_name, recipient_age, is_trans_nonbinary, region, status, eligibility_reason, ai_summary, discount_code, expiry_date, send_attempts';
+const LIST_COLS = 'id, submitted_at, email, applicant_name, recipient_age, is_trans_nonbinary, region, status, eligibility_reason, ai_summary, discount_code, expiry_date, send_attempts, possible_second_child, prior_application_at, prior_status, reapply_after, repeat_notice_sent_at';
 
 async function getRow(supabase, id) {
   const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
@@ -48,7 +48,7 @@ Why: ${row.why || '(none provided)'}`;
 const tools = [
   {
     name: 'free_swimwear_list_requests',
-    description: 'List Free Swimwear program applications from the review queue. Default shows status "new" (eligible, awaiting decision). Filter by status (new/accepted/registered/ordered/expired/expired-final/rejected/brazil-rejected) and limit. Returns applicant, region, status, AI summary, and discount code when issued.',
+    description: 'List Free Swimwear program applications from the review queue. Default shows status "new" (eligible, awaiting decision). Filter by status (new/accepted/registered/ordered/expired/expired-final/rejected/brazil-rejected/repeat/duplicate) and limit. "repeat" = too-soon repeats (within a year; emailed a reapply notice); "duplicate" = same-day resubmits collapsed silently. Returns applicant, region, status, AI summary, repeat/second-child flags, and discount code when issued.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -14,6 +14,7 @@ const sgPath = require.resolve('../../shared/sendgridClient');
 
 const addCodeCalls = [];
 const sendCalls = [];
+const plainSendCalls = [];
 let sendResult = { ok: true, statusCode: 202 }; // mutable so tests can simulate a failed send
 
 require.cache[shopifyPath] = {
@@ -22,7 +23,10 @@ require.cache[shopifyPath] = {
 };
 require.cache[sgPath] = {
   id: sgPath, filename: sgPath, loaded: true,
-  exports: { sendTemplate: async (args) => { sendCalls.push(args); return sendResult; } },
+  exports: {
+    sendTemplate: async (args) => { sendCalls.push(args); return sendResult; },
+    sendEmail: async (args) => { plainSendCalls.push(args); return sendResult; },
+  },
 };
 
 const fs = require('../lib/freeSwimwear');
@@ -88,6 +92,35 @@ describe('sendResend', () => {
     assert.equal(sendCalls[0].data.daysLeft, 12);
     assert.equal(patch.send_attempts, 2);
     assert.equal(patch.resend_status, 'recontacted');
+  });
+});
+
+describe('sendRepeatNotice', () => {
+  it('sends a plain reapply email with the reapply date and stamps the send', async () => {
+    plainSendCalls.length = 0;
+    sendResult = { ok: true, statusCode: 202 };
+    const now = new Date('2026-06-28T12:00:00Z');
+    const reapplyAfter = '2027-03-01T12:00:00.000Z';
+    const { patch, emailSent } = await fs.sendRepeatNotice(
+      { email: 'fam@example.com', applicant_name: 'Sarah Everly' }, reapplyAfter, now);
+
+    assert.equal(plainSendCalls.length, 1);
+    const sent = plainSendCalls[0];
+    assert.equal(sent.to, 'fam@example.com');
+    assert.match(sent.text, /Hi Sarah,/);
+    assert.match(sent.text, /March 1, 2027/);   // reapply date, program timezone
+    assert.doesNotMatch(sent.text, /—/);         // no em dashes in customer copy
+    assert.equal(emailSent, true);
+    assert.equal(patch.repeat_notice_sent_at, now.toISOString());
+  });
+
+  it('does not stamp the send date when SendGrid fails (visible, retryable)', async () => {
+    sendResult = { ok: false, statusCode: 500, error: 'boom' };
+    const { patch, emailSent } = await fs.sendRepeatNotice(
+      { email: 'fam@example.com', applicant_name: 'Sarah' }, '2027-03-01T12:00:00.000Z');
+    assert.equal(emailSent, false);
+    assert.equal(patch.repeat_notice_sent_at, undefined);
+    sendResult = { ok: true, statusCode: 202 }; // reset for other tests
   });
 });
 

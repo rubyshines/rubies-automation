@@ -5463,7 +5463,7 @@ let swimwearStatus = 'new';
 let swimwearQueue = [];
 let swimwearSelectedId = null;
 
-const SWIMWEAR_FILTERS = ['new', 'accepted', 'registered', 'ordered', 'expired', 'rejected', 'archived'];
+const SWIMWEAR_FILTERS = ['new', 'accepted', 'registered', 'ordered', 'expired', 'repeat', 'duplicate', 'rejected', 'archived'];
 
 async function loadSwimwearQueue() {
   const container = document.getElementById('swimwear-queue-list');
@@ -5519,6 +5519,24 @@ function swimwearDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// Repeat / duplicate badges (set at intake by the repeat-check). A returning
+// family is shown with when they last applied; if that prior reached "ordered"
+// they already received a set; a possible second child on the same email is
+// flagged for human review.
+function swimwearRepeatBadges(r) {
+  const out = [];
+  if (r.possible_second_child) out.push('<span class="badge badge-warn">⚠️ possible 2nd child</span>');
+  if (r.prior_status === 'ordered') out.push('<span class="badge badge-muted">already received</span>');
+  else if (r.prior_application_at) out.push(`<span class="badge badge-muted">applied before ${swimwearDate(r.prior_application_at)}</span>`);
+  if (r.status === 'repeat') {
+    out.push(r.repeat_notice_sent_at
+      ? `<span class="badge badge-muted">repeat &middot; emailed${r.reapply_after ? `, reapply after ${swimwearDate(r.reapply_after)}` : ''}</span>`
+      : '<span class="badge badge-warn">repeat &middot; email not sent</span>');
+  }
+  if (r.status === 'duplicate') out.push('<span class="badge badge-muted">same-day duplicate</span>');
+  return out.join(' ');
+}
+
 function swimwearRowHtml(r) {
   const applied = swimwearDate(r.submitted_at);
   const meta = [applied ? `Applied ${applied}` : '', r.region || ''].filter(Boolean).join(' · ');
@@ -5531,6 +5549,7 @@ function swimwearRowHtml(r) {
       </div>
       <div class="swimwear-row-name">${esc(r.applicant_name || '(no name)')}</div>
       ${meta ? `<div class="outreach-row-reason">${esc(meta)}</div>` : ''}
+      ${swimwearRepeatBadges(r) ? `<div class="queue-item-row2">${swimwearRepeatBadges(r)}</div>` : ''}
       ${r.ai_summary ? `<div class="outreach-row-snippet">${esc(r.ai_summary)}</div>` : ''}
       ${r.discount_code ? `<div class="queue-item-row2"><span class="badge">${esc(r.discount_code)}</span></div>` : ''}
     </div>
@@ -5574,6 +5593,7 @@ function renderSwimwearDetail(r) {
     <div class="outreach-detail-head"><h2>${esc(r.applicant_name || '(no name)')}</h2>
       <span class="badge ${r.status === 'rejected' ? 'badge-muted' : ''}">${esc(r.status)}</span></div>
     <div class="outreach-detail-sub">${esc(r.email)} &middot; age ${esc(r.recipient_age || '?')} &middot; ${swimwearTransBadge(r.is_trans_nonbinary)} &middot; ${esc(r.region || '?')}${applied ? ` &middot; applied ${esc(applied)}` : ''}</div>
+    ${swimwearRepeatBadges(r) ? `<div style="margin:8px 0">${swimwearRepeatBadges(r)}</div>` : ''}
     ${r.ai_summary ? `<div class="outreach-row-snippet" style="margin:8px 0">${esc(r.ai_summary)}</div>` : ''}
     ${r.eligibility_reason ? `<div class="outreach-detail-sub">eligibility: ${esc(r.eligibility_reason)}</div>` : ''}
     ${actions}

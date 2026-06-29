@@ -35,11 +35,20 @@ CREATE TABLE IF NOT EXISTS free_swimwear_requests (
   status                   text NOT NULL DEFAULT 'new',
     -- new | approved | accepted | registered | ordered | expired | expired-final
     -- | rejected | brazil-rejected (legacy, retained for backfill fidelity)
+    -- | repeat (too-soon within a year; emailed) | duplicate (same-day resubmit; silent)
   eligibility_reason       text,   -- 'eligible' | 'excluded region: <X>' | 'not trans/non-binary'
   ai_summary               text,   -- one-line scannable summary (helper only, never a decision)
   ai_summary_at            timestamptz,
   decided_by               text,
   decided_at               timestamptz,
+
+  -- Repeat / duplicate handling (written at intake by the repeat-check; see
+  -- migrations-2026-06-28-free-swimwear-repeats.sql and lib/freeSwimwearRepeats.js)
+  possible_second_child    boolean NOT NULL DEFAULT false, -- different recipient, same email → flag for review
+  prior_application_at      timestamptz,                   -- this recipient's last application (badge)
+  prior_status              text,                          -- that prior's outcome ('ordered' ⇒ already received)
+  reapply_after             timestamptz,                   -- for 'repeat' rows: when the family may reapply
+  repeat_notice_sent_at     timestamptz,                   -- when the reapply email sent (null ⇒ not delivered)
 
   -- Fulfillment (mirrors the legacy sheet)
   discount_code            text,
