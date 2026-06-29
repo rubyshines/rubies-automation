@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { computePricing } = require('../lib/merchandising/pricingEstimate');
-const { buildPricingRows } = require('../lib/merchandising/productionOrderLoop');
+const { buildOrderRows } = require('../lib/merchandising/productionOrderLoop');
 
 const COSTS = new Map([
   ['AJ', { unit_cost: 2.71, freight: 0.15, duties_amount: 0.61, total_landed_cost: 3.47 }],
@@ -35,9 +35,9 @@ test('computePricing flags prefixes with no cost on file (and treats them as 0)'
   assert.strictEqual(grand.landed, 0);
 });
 
-test('buildPricingRows: column header, formula subtotals, resilient grand, bold rows', () => {
+test('buildOrderRows: column header, formula subtotals, resilient grand, bold rows', () => {
   const pricing = computePricing(ITEMS, COSTS);
-  const { rows, boldRows } = buildPricingRows(pricing);
+  const { rows, boldRows } = buildOrderRows(pricing);
   assert.deepStrictEqual(rows[0], ['Product / SKU', 'Qty', 'COGS $', 'Shipping $', 'Taxes $', 'Landed $']);
   assert.ok(boldRows.includes(0)); // column header bold
   const grandRow = rows.find((r) => r[0] === 'TOTAL');

@@ -1,38 +1,57 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildSheetRows } = require('../lib/merchandising/productionOrderLoop');
+const { buildOrderRows, orderDescriptor } = require('../lib/merchandising/productionOrderLoop');
+const { computePricing } = require('../lib/merchandising/pricingEstimate');
 const { parseProductionSheet } = require('../lib/merchandising/productionSheetParser');
 
-const PROJ = [
-  { sku: 'AJ-BLK-M', product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR', color: 'BLK', size: 'M', qty_to_order: 670 },
-  { sku: 'AJ-BLK-8', product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR', color: 'BLK', size: '8', qty_to_order: 200 },
-  { sku: 'AJ-SND-S', product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR', color: 'SND', size: 'S', qty_to_order: 300 },
+const round = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+const COSTS = new Map([['AJ', { unit_cost: 2.71, freight: 0.15, duties_amount: 0.61, total_landed_cost: 3.47 }]]);
+const ITEMS = [
+  { sku: 'AJ-BLK-M', product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR', color: 'BLK', qty: 670 },
+  { sku: 'AJ-BLK-8', product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR', color: 'BLK', qty: 200 },
+  { sku: 'AJ-SND-S', product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR', color: 'SND', qty: 300 },
 ];
 
-test('buildSheetRows: mixed-case names, bold rows, live subtotals, resilient grand total', () => {
-  const { rows, grand, boldRows } = buildSheetRows(PROJ);
-  assert.strictEqual(grand, 1170); // numeric grand still returned for display
-  // Product names are title-cased; BLK group before SND; size 8 before M within BLK
-  const blkHeader = rows.findIndex(r => r[0] === 'The AJ No-Tuck Shaping Underwear - BLK');
+test('buildOrderRows: combined qty+cost, mixed-case names, size-sorted, bold, resilient grand', () => {
+  const { rows, boldRows } = buildOrderRows(computePricing(ITEMS, COSTS));
+  assert.deepStrictEqual(rows[0], ['Product / SKU', 'Qty', 'COGS $', 'Shipping $', 'Taxes $', 'Landed $']);
+  const blkHeader = rows.findIndex((r) => r[0] === 'The AJ No-Tuck Shaping Underwear - BLK');
   assert.ok(blkHeader >= 0);
-  assert.deepStrictEqual(rows[blkHeader + 1], ['AJ-BLK-8', 200]);
-  assert.deepStrictEqual(rows[blkHeader + 2], ['AJ-BLK-M', 670]);
-  assert.deepStrictEqual(rows[blkHeader + 3], ['', '=SUM(B2:B3)']); // subtotal — live formula
-  // Grand total survives row add/remove (no hardcoded cell list, no self-reference)
-  assert.deepStrictEqual(rows[rows.length - 1], ['TOTAL', '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")']);
-  // Bold: every product header, every subtotal, and the grand total
-  assert.ok(boldRows.includes(blkHeader));        // header
-  assert.ok(boldRows.includes(blkHeader + 3));    // subtotal
-  assert.ok(boldRows.includes(rows.length - 1));  // grand total
+  // size 8 sorts before M within BLK; lines carry qty + extended cost columns
+  assert.strictEqual(rows[blkHeader + 1][0], 'AJ-BLK-8');
+  assert.strictEqual(rows[blkHeader + 1][1], 200);
+  assert.strictEqual(rows[blkHeader + 1][2], round(200 * 2.71)); // ext COGS
+  assert.strictEqual(rows[blkHeader + 2][0], 'AJ-BLK-M');
+  // resilient grand total formula on the landed column
+  const grand = rows.find((r) => r[0] === 'TOTAL');
+  assert.strictEqual(grand[5], '=SUMIFS(F:F,A:A,"<>",A:A,"<>TOTAL")');
+  // bold: column header + product header
+  assert.ok(boldRows.includes(0));
+  assert.ok(boldRows.includes(blkHeader));
 });
 
-test('buildSheetRows output parses back to the same items + total (GO round-trip)', () => {
-  const { rows, grand } = buildSheetRows(PROJ);
-  const parsed = parseProductionSheet(rows);
+test('orderDescriptor: single product → its name; multiple → recognized categories (no "Other")', () => {
+  assert.strictEqual(
+    orderDescriptor([{ product_name: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR' }]),
+    'Naomi Gaff Extra Strength Shaping Underwear',
+  );
+  const mixed = orderDescriptor([
+    { product_name: 'RUBY NO-TUCK SHAPING BIKINI BOTTOM' },
+    { product_name: 'THE AJ NO-TUCK SHAPING UNDERWEAR' },
+    { product_name: 'THE BROOKE SHAPING BRA' },
+    { product_name: 'MAGICAL SHAPING GEL CHEST PADS' },
+    { product_name: 'SOME RANDOM THING' }, // "Other" — must not appear
+  ]);
+  assert.strictEqual(mixed, 'Swim, Underwear, Bras and Accessories');
+});
+
+test('order tab A:B round-trips back to the same items (submit reads only A:B)', () => {
+  const { rows } = buildOrderRows(computePricing(ITEMS, COSTS));
+  const ab = rows.map((r) => [r[0], r[1]]); // submit_production_order reads A:B only
+  const parsed = parseProductionSheet(ab);
   assert.strictEqual(parsed.items.length, 3);
-  assert.strictEqual(parsed.grand_total, grand);
-  assert.strictEqual(parsed.warnings.length, 0);
-  const byNumber = Object.fromEntries(parsed.items.map(i => [i.sku, i.qty]));
+  const byNumber = Object.fromEntries(parsed.items.map((i) => [i.sku, i.qty]));
   assert.strictEqual(byNumber['AJ-BLK-M'], 670);
+  assert.strictEqual(byNumber['AJ-BLK-8'], 200);
   assert.strictEqual(byNumber['AJ-SND-S'], 300);
 });

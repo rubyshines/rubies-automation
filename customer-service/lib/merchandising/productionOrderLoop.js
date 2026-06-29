@@ -78,6 +78,7 @@ async function writeTabAtFront(sheets, spreadsheetId, tabName, values, boldRows 
       },
     });
   }
+  return sheetId;
 }
 
 function sizeSort(size) {
@@ -101,49 +102,31 @@ function titleCase(name) {
     .join(' ');
 }
 
-// Group projection rows into the production-sheet layout: header, sku/qty rows, subtotal, blank.
-function buildSheetRows(rows) {
-  const groups = new Map();
-  for (const r of rows) {
-    const key = `${r.product_name}|||${r.color || ''}`;
-    if (!groups.has(key)) groups.set(key, { product_name: r.product_name, color: r.color || '', items: [] });
-    groups.get(key).items.push(r);
-  }
-  const sorted = Array.from(groups.values()).sort((a, b) => {
-    const pa = (a.items[0]?.sku || '').split('-')[0], pb = (b.items[0]?.sku || '').split('-')[0];
-    return pa !== pb ? pa.localeCompare(pb) : (a.color || '').localeCompare(b.color || '');
-  });
+const sizeFromSku = (sku) => String(sku || '').split('-').slice(2).join('-');
 
-  // Totals are live formulas, not hardcoded sums (sheet has no header row, so
-  // outputRows[j] is sheet row j+1). Qty lives in column B. `boldRows` collects the
-  // 0-based indices of the rows to bold: each product-name header, each subtotal,
-  // and the grand total.
-  const out = [];
-  let grand = 0;
-  const boldRows = [];
-  for (const g of sorted) {
-    const name = titleCase(g.product_name);
-    boldRows.push(out.length);
-    out.push([g.color ? `${name} - ${g.color}` : name]);
-    const firstDataRow = out.length + 1;
-    let sub = 0;
-    for (const it of g.items.sort((a, b) => sizeSort(a.size) - sizeSort(b.size))) {
-      out.push([it.sku, it.qty_to_order]);
-      sub += it.qty_to_order;
-    }
-    const lastDataRow = firstDataRow + g.items.length - 1;
-    boldRows.push(out.length);
-    out.push(['', `=SUM(B${firstDataRow}:B${lastDataRow})`]);
-    out.push([]);
-    grand += sub;
-  }
-  // Resilient grand total: sum every SKU-row qty — a SKU row has a non-blank,
-  // non-"TOTAL" label in col A and the qty in col B. Subtotal rows (blank col A)
-  // and this row itself ("TOTAL") are excluded, so it never double-counts, and
-  // adding or removing product rows never breaks it (no hardcoded cell list).
-  boldRows.push(out.length);
-  out.push(['TOTAL', '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")']);
-  return { rows: out, grand, boldRows };
+// Coarse product category for the tab descriptor.
+const CATEGORY_ORDER = ['Swim', 'Underwear', 'Bras', 'Accessories'];
+function categoryOf(productName) {
+  const n = String(productName || '').toLowerCase();
+  if (/bikini|tankini|swim/.test(n)) return 'Swim';
+  if (/bra\b|bralette/.test(n)) return 'Bras';
+  if (/underwear|boxer|shorty|gaff|brief/.test(n)) return 'Underwear';
+  if (/pad|earring|flag|pin\b|sticker|gel/.test(n)) return 'Accessories';
+  return 'Other';
+}
+
+function joinAnd(arr) {
+  if (arr.length <= 1) return arr[0] || '';
+  return `${arr.slice(0, -1).join(', ')} and ${arr[arr.length - 1]}`;
+}
+
+// Short descriptor of what's in an order: a single product → its (title-cased) name;
+// multiple → the distinct recognized categories present, e.g. "Swim and Underwear".
+// Unrecognized ("Other") products are omitted rather than shown as a noisy bucket.
+function orderDescriptor(items) {
+  const names = [...new Set((items || []).map((i) => i.product_name).filter(Boolean))];
+  if (names.length === 1) return titleCase(names[0].replace(/^the\s+/i, ''));
+  return joinAnd(CATEGORY_ORDER.filter((c) => names.some((n) => categoryOf(n) === c)));
 }
 
 // All projection rows for a supplier, full columns, for the review sheet.
@@ -194,7 +177,7 @@ async function draftOrderReview({ supplier, today, maxAgeDays = 3, forceRefresh 
 // --- Stage 2: build the production tab from the edited review tab ------------
 // Read the founder-edited Qty to Order from the inventory-projections review tab
 // and write the supplier-format draft tab to the 2026 Production Numbers sheet.
-async function draftProductionOrder({ supplier, review_tab, today, spreadsheetId, planningSheetId }) {
+async function draftProductionOrder({ supplier, review_tab, today, spreadsheetId, planningSheetId, costOverrides = {} }) {
   const sheetId = spreadsheetId || SHEET_ID;
   const planId = planningSheetId || PLANNING_SHEET_ID;
   if (!review_tab) throw new Error('review_tab is required (the tab from draft_order_review you edited)');
@@ -215,17 +198,12 @@ async function draftProductionOrder({ supplier, review_tab, today, spreadsheetId
   const offStep = parsed.items.filter((it) => it.qty % ORDER_STEP !== 0);
   if (offStep.length) warnings.push(`${offStep.length} line(s) not a multiple of ${ORDER_STEP}: ${offStep.map((i) => `${i.sku}=${i.qty}`).join(', ')}`);
 
-  const rows = parsed.items.map((it) => ({ sku: it.sku, product_name: it.product_name, color: it.color, size: it.size, qty_to_order: it.qty }));
-  const tabName = `DRAFT ${sup.name} ${date}`;
-  const { rows: sheetRows, grand, boldRows } = buildSheetRows(rows);
-  await writeTabAtFront(sheets, sheetId, tabName, sheetRows, boldRows);
+  // One combined tab: order quantities + cost estimate (COGS / shipping / taxes / landed).
+  const r = await writeOrderTab({ sheets, spreadsheetId: sheetId, supplier: sup.name, date, items: parsed.items, costOverrides });
 
-  // Pricing estimate alongside the order (separate tab).
-  const pricing = await writePricingTab({ sheets, spreadsheetId: sheetId, supplier: sup.name, date, items: parsed.items });
-
-  return { supplier: sup.name, tabName, skuCount: rows.length, totalUnits: grand,
+  return { supplier: sup.name, tabName: r.tabName, skuCount: parsed.items.length, totalUnits: r.grand.qty,
     url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, sourceTab: review_tab, warnings,
-    pricing: { tabName: pricing.tabName, ...pricing.grand, missing: pricing.missing } };
+    pricing: { ...r.grand, missing: r.missing } };
 }
 
 // --- GO: read back + create -------------------------------------------------
@@ -234,7 +212,7 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
   const sheets = await getSheetsClient();
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tab_name}!A:B` });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B` });
   const parsed = parseProductionSheet(res.data.values || []);
   if (!parsed.items.length) throw new Error(`no SKU rows parsed from tab "${tab_name}"`);
   return createOrderFromParsed({ sup, parsed, ...opts });
@@ -284,11 +262,12 @@ async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected
     payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath };
 }
 
-// --- Pricing estimate -------------------------------------------------------
-// Lay out the pricing tab: per product group, extended COGS / shipping / taxes /
-// landed, with formula subtotals + a resilient grand total (same pattern as the
-// order tab). boldRows = column header, each product header, each subtotal, grand.
-function buildPricingRows(pricing) {
+// --- Combined order tab -----------------------------------------------------
+// One tab IS the order: per product group, the SKU/qty lines plus the cost
+// estimate (extended COGS / shipping / taxes / landed), with formula subtotals
+// and a resilient grand total. boldRows = column header, each product header,
+// each subtotal, and the grand total. Lines are sorted by size within a group.
+function buildOrderRows(pricing) {
   const out = [];
   const boldRows = [];
   boldRows.push(out.length);
@@ -299,8 +278,9 @@ function buildPricingRows(pricing) {
     boldRows.push(out.length);
     out.push([g.color ? `${name} - ${g.color}` : name]);
     const first = out.length + 1;
-    for (const l of g.lines) out.push([l.sku, l.qty, l.cogs, l.freight, l.duty, l.landed]);
-    const last = first + g.lines.length - 1;
+    const lines = [...g.lines].sort((a, b) => sizeSort(sizeFromSku(a.sku)) - sizeSort(sizeFromSku(b.sku)));
+    for (const l of lines) out.push([l.sku, l.qty, l.cogs, l.freight, l.duty, l.landed]);
+    const last = first + lines.length - 1;
     boldRows.push(out.length);
     out.push(['', `=SUM(B${first}:B${last})`, `=SUM(C${first}:C${last})`, `=SUM(D${first}:D${last})`, `=SUM(E${first}:E${last})`, `=SUM(F${first}:F${last})`]);
     out.push([]);
@@ -318,25 +298,40 @@ function buildPricingRows(pricing) {
   ]);
 
   out.push([]);
-  out.push(['Estimate uses current product_costs per SKU prefix: COGS (goods) + Shipping (freight) + Taxes (duties) = Landed.']);
+  out.push(['Cost columns are estimates from current product_costs per SKU prefix: COGS (goods) + Shipping (freight) + Taxes (duties) = Landed.']);
   if (pricing.missing.length) {
     out.push([`No cost on file for: ${pricing.missing.join(', ')} — shown as 0, exclude from totals manually.`]);
   }
   return { rows: out, boldRows };
 }
 
-// Write a PRICING tab for the given order items (one per supplier+date).
-// `costOverrides` (prefix -> cost row) lets an estimate stand in for a stale/missing
-// product_costs row without touching the canonical table (e.g. a new product whose
-// real supplier cost isn't locked yet).
-async function writePricingTab({ sheets, spreadsheetId, supplier, date, items, costOverrides = {} }) {
+// Write the combined order tab. Tab name: "<date> - <supplier> <descriptor>"
+// (e.g. "2026-06-29 - Kali Swim and Underwear"). `costOverrides` (prefix -> cost
+// row) lets an estimate stand in for a stale/missing product_costs row without
+// touching the canonical table (e.g. a new product whose supplier cost isn't locked).
+async function writeOrderTab({ sheets, spreadsheetId, supplier, date, items, costOverrides = {} }) {
   const costMap = await fetchCurrentCosts();
   for (const [prefix, cost] of Object.entries(costOverrides)) costMap.set(String(prefix).toUpperCase(), cost);
   const pricing = computePricing(items, costMap);
-  const { rows, boldRows } = buildPricingRows(pricing);
-  const tabName = `PRICING ${supplier} ${date}`;
-  await writeTabAtFront(sheets, spreadsheetId, tabName, rows, boldRows, 6);
+  const { rows, boldRows } = buildOrderRows(pricing);
+
+  const descriptor = orderDescriptor(items);
+  const tabName = `${date} - ${supplier}${descriptor ? ` ${descriptor}` : ''}`;
+  const sheetId = await writeTabAtFront(sheets, spreadsheetId, tabName, rows, boldRows, 6);
+
+  // Tab formatting: freeze the column header, currency-format the cost columns C:F.
+  if (sheetId != null) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+          { repeatCell: { range: { sheetId, startRowIndex: 1, startColumnIndex: 2, endColumnIndex: 6 }, cell: { userEnteredFormat: { numberFormat: { type: 'CURRENCY', pattern: '$#,##0.00' } } }, fields: 'userEnteredFormat.numberFormat' } },
+        ],
+      },
+    });
+  }
   return { tabName, grand: pricing.grand, missing: pricing.missing };
 }
 
-module.exports = { buildSheetRows, buildPricingRows, draftOrderReview, draftProductionOrder, writePricingTab, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildOrderRows, writeOrderTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };

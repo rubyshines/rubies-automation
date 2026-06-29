@@ -46,8 +46,8 @@ async function handleDraft({ supplier, review_tab }) {
   const md = [
     `## Draft production order — ${r.supplier}`,
     '',
-    `Built tab **"${r.tabName}"** in the 2026 Production Numbers sheet from **"${r.sourceTab}"** — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
-    r.pricing ? `💰 Pricing tab **"${r.pricing.tabName}"** — landed **$${Math.round(r.pricing.landed).toLocaleString()}** (COGS $${Math.round(r.pricing.cogs).toLocaleString()} · shipping $${Math.round(r.pricing.freight).toLocaleString()} · taxes $${Math.round(r.pricing.duty).toLocaleString()})${r.pricing.missing && r.pricing.missing.length ? ` · ⚠️ no cost on file for: ${r.pricing.missing.join(', ')}` : ''}.` : '',
+    `Built order tab **"${r.tabName}"** in the 2026 Production Numbers sheet from **"${r.sourceTab}"** — **${r.skuCount}** SKUs · **${r.totalUnits.toLocaleString()}** units.`,
+    r.pricing ? `💰 Cost estimate (in the same tab): landed **$${Math.round(r.pricing.landed).toLocaleString()}** (COGS $${Math.round(r.pricing.cogs).toLocaleString()} · shipping $${Math.round(r.pricing.freight).toLocaleString()} · taxes $${Math.round(r.pricing.duty).toLocaleString()})${r.pricing.missing && r.pricing.missing.length ? ` · ⚠️ no cost on file for: ${r.pricing.missing.join(', ')}` : ''}.` : '',
     warnBlock(r.warnings),
     '',
     `Eyeball it, then call **submit_production_order** with \`tab_name: "${r.tabName}"\` to place the order (records to Supabase + emits a supplier .xlsx).`,
@@ -93,7 +93,7 @@ module.exports = [
   },
   {
     name: 'draft_production_order',
-    description: 'Stage 2: read the founder-edited Qty to Order from a projections review tab (from draft_order_review) and write the supplier-format draft tab to the 2026 Production Numbers Google Sheet. Warns if any edited line is below the 20-unit floor or not a multiple of 10. Jamie eyeballs it, then calls submit_production_order.',
+    description: 'Stage 2: read the founder-edited Qty to Order from a projections review tab (from draft_order_review) and write the combined order tab to the 2026 Production Numbers Google Sheet — quantities plus a cost estimate (COGS / shipping / taxes / landed, from current product_costs). The tab is named "<date> - <supplier> <descriptor>" (e.g. "2026-06-29 - Kali Swim and Underwear"). Warns if any edited line is below the 20-unit floor or not a multiple of 10. Jamie eyeballs it, then calls submit_production_order with that tab name.',
     inputSchema: {
       type: 'object',
       properties: {
