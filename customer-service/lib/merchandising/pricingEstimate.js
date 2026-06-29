@@ -47,6 +47,12 @@ function computePricing(items, costMap) {
     const line = {
       sku: it.sku,
       qty,
+      // per-unit cost components (what's used in the calc)
+      unit_cogs: u.unit_cost || 0,
+      unit_freight: u.freight || 0,
+      unit_duty: u.duties_amount || 0,
+      unit_landed: u.total_landed_cost || 0,
+      // extended (qty x unit)
       cogs: round2(qty * (u.unit_cost || 0)),
       freight: round2(qty * (u.freight || 0)),
       duty: round2(qty * (u.duties_amount || 0)),

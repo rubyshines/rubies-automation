@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { computePricing } = require('../lib/merchandising/pricingEstimate');
-const { buildOrderRows } = require('../lib/merchandising/productionOrderLoop');
+const { buildPricingRows } = require('../lib/merchandising/productionOrderLoop');
 
 const COSTS = new Map([
   ['AJ', { unit_cost: 2.71, freight: 0.15, duties_amount: 0.61, total_landed_cost: 3.47 }],
@@ -14,10 +14,12 @@ const ITEMS = [
   { sku: 'GAF-BLK-M', qty: 10, product_name: 'NAOMI GAFF', color: 'BLK' },
 ];
 
-test('computePricing extends each line by current per-prefix cost', () => {
+test('computePricing extends each line by current per-prefix cost (unit + extended)', () => {
   const { groups, grand } = computePricing(ITEMS, COSTS);
   const aj = groups.find((g) => g.lines[0].sku.startsWith('AJ'));
   const m = aj.lines.find((l) => l.sku === 'AJ-BLK-M');
+  assert.strictEqual(m.unit_cogs, 2.71); // per-unit components carried through
+  assert.strictEqual(m.unit_landed, 3.47);
   assert.strictEqual(m.cogs, 271);   // 100 * 2.71
   assert.strictEqual(m.freight, 15); // 100 * 0.15
   assert.strictEqual(m.duty, 61);    // 100 * 0.61
@@ -35,16 +37,19 @@ test('computePricing flags prefixes with no cost on file (and treats them as 0)'
   assert.strictEqual(grand.landed, 0);
 });
 
-test('buildOrderRows: column header, formula subtotals, resilient grand, bold rows', () => {
+test('buildPricingRows: unit + extended columns, formula subtotals, resilient landed grand', () => {
   const pricing = computePricing(ITEMS, COSTS);
-  const { rows, boldRows } = buildOrderRows(pricing);
-  assert.deepStrictEqual(rows[0], ['Product / SKU', 'Qty', 'COGS $', 'Shipping $', 'Taxes $', 'Landed $']);
-  assert.ok(boldRows.includes(0)); // column header bold
+  const { rows, boldRows } = buildPricingRows(pricing);
+  assert.deepStrictEqual(rows[0], ['Product / SKU', 'Qty', 'Unit COGS', 'Unit Ship', 'Unit Tax', 'Unit Landed', 'COGS $', 'Shipping $', 'Taxes $', 'Landed $']);
+  assert.ok(boldRows.includes(0));
+  // a data line carries per-unit costs (cols C-F) and extended (G-J)
+  const m = rows.find((r) => r[0] === 'AJ-BLK-M');
+  assert.strictEqual(m[2], 2.71);  // unit COGS
+  assert.strictEqual(m[9], 347);   // ext landed (100 * 3.47)
+  // grand total: landed lives in column J, summed resiliently; unit cols blank
   const grandRow = rows.find((r) => r[0] === 'TOTAL');
-  assert.strictEqual(grandRow[5], '=SUMIFS(F:F,A:A,"<>",A:A,"<>TOTAL")'); // resilient landed total
-  // every group subtotal is a SUM formula across its column
-  const subtotal = rows.find((r) => r[0] === '' && typeof r[2] === 'string' && r[2].startsWith('=SUM('));
-  assert.ok(subtotal, 'has a formula subtotal row');
+  assert.strictEqual(grandRow[9], '=SUMIFS(J:J,A:A,"<>",A:A,"<>TOTAL")');
+  assert.strictEqual(grandRow[2], ''); // unit column not summed
 });
 
 function round(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
