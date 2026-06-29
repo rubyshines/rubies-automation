@@ -1,7 +1,7 @@
 ---
 name: Naomi Gaff Launch
 description: Bring the Naomi gaff to market — fit testing, production, customer feedback
-type: project
+type: initiative
 domains: [product_design, logistics]
 last_updated: 2026-04-14
 ---

@@ -14,7 +14,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - Gmail: Cloud Pub/Sub push delivery → triggers email intelligence sync.
 - Design: immediate 200 response before processing (critical for 10s Gorgias timeout, Shopify retry). Dead-letter logging to Supabase. Health check at /health.
 
-**Daily Sync Runner (daily-sync-all.js):** 19 sub-pipelines run sequentially: SEO, Email, Reviews, Products, Inventory, Orders, Customers, Conversations, Finance, Shipping Zones, Fulfillment Costs, Delivery Times, Gmail Intelligence, Gmail CS Intake, Gmail Watch Renewal, Ticket Reconciliation, AI Cost Rollup, Advisor Edit Rate, AI Pricing Check (monthly, 1st only). Sends the consolidated **daily ops digest** email (subject "RUBIES Daily Sync") with results.
+**Daily Sync Runner (daily-sync-all.js):** runs its sub-pipelines sequentially — SEO, Email, Reviews, Products, Inventory, Orders, Customers, Conversations, Finance, Shipping Zones, Fulfillment Costs, Delivery Times, Gmail Intelligence, Gmail CS Intake, Gmail Inbox Cleanup, Gmail Watch Renewal, Ticket Reconciliation, Dead-letter Replay, AI Cost Rollup, Advisor Edit Rate, Closeness Judge, Auto-send Shadow, plus monthly (1st-only) AI Pricing Check + Bill Reconciliation (see `daily-sync-all.js` for the authoritative set). Sends the consolidated **daily ops digest** email (subject "RUBIES Daily Sync") with results.
 
 **Email Intelligence (Gmail):** 3-tier classifier: rule-based (skip patterns, internal domain, known B2B) → Claude Sonnet batch for unknowns. Labels: internal, skip, b2b_wholesale, lgbtq_org, press, other. Incremental fetch with 6-hour overlap for safety. Thread builder with AI summaries. Routes classified emails to CS intake.
 
@@ -26,13 +26,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 ## Current Status
 
-- **Production:** Webhook server running on Railway (real-time Shopify, Gorgias, Gmail). Daily sync pipeline runs scheduled (18 sub-pipelines). Gmail webhook via Cloud Pub/Sub. All shared clients stable.
-- **Partial:** Webhook dead-letter queue stores failures but no automatic reprocessing. Gmail Watch renewal daily but token expiry handling manual.
+- **Production:** Webhook server running on Railway (real-time Shopify, Gorgias, Gmail). Daily sync pipeline runs scheduled. Gmail webhook via Cloud Pub/Sub. All shared clients stable.
+- **Partial:** Gorgias intake dead-letters are retried daily (`lib/replayDeadLetters.js`, 7-day window); Shopify dead-letters are still stored without auto-reprocessing. Gmail Watch renewal daily but token expiry handling manual.
 
 ## Key Files
 
 - `webhooks/server.js` — Express webhook server (Shopify, Gorgias, Gmail).
-- `daily-sync-all.js` — Daily sync runner (18 sub-pipelines).
+- `daily-sync-all.js` — Daily sync runner (authoritative list of sub-pipelines).
 - `shared/supabaseClient.js` — Singleton Supabase client. Import: `const { getSupabaseClient } = require('../../shared/supabaseClient')`.
 - `shared/aiClient.js` — universal AI-call wrapper (`callClaude`/`embedTexts`); every AI call routes through it into `ai_calls`. Pricing in `shared/aiPricing.js`.
 - `shared/shopifyClient.js` — Singleton Shopify client (GraphQL + REST + ShopifyQL).
