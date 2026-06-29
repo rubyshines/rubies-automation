@@ -197,6 +197,30 @@ Both are project-scoped, so every checkout carries them. The hooks stop the *cur
 they can't stop a concurrent session that lacks them. Hook/settings changes need a Claude Code
 restart to arm.
 
+## Memory commits never leave the main checkout — two tracks, branch-from-latest
+
+Memory (`.claude/memory/`) is committed to the repo, but `.claude/*` is *exempt* from the
+edit-blocking hook while `block-main-checkout-git` *blocks committing* from the main checkout.
+So memory edited on the main checkout can never be committed there — it silently piles up as
+uncommitted state. Memory is also *shared mutable state*: a worktree is a point-in-time snapshot,
+so a stale worktree that edits a memory file and merges later **reverts any memory change that
+landed in between**. (Observed: `origin/main` advanced 10 commits mid-session.)
+
+**Two tracks for getting memory committed:**
+- **Memory that documents a code change** → edit it *in that change's worktree*, ship it in the
+  same PR. (Same rule as "memory updates go in the same commit as the code they document.")
+- **Standalone memory** (audits, cleanup, design notes, rescuing orphaned updates) → a worktree
+  branched from **current `origin/main` immediately before editing**, its own small PR. Memory PRs
+  need no code review. If the file you're touching is already modified on an open memory branch,
+  *stack onto that branch* instead of branching fresh — that's how you avoid clobbering it.
+
+**The invariant that makes it safe is "branch from the latest `origin/main` right before
+editing"** — not "any worktree." Before applying memory edits into a worktree, confirm the target
+files didn't change upstream since the branch point (`git diff <base> origin/main -- .claude/memory/`).
+
+**Forcing function:** never end a session with uncommitted memory. It goes into a code PR (track 1)
+or a memory PR (track 2) before close — otherwise it's invisible incomplete state.
+
 ## MCP tools must be agent-agnostic
 
 Don't wire a tool to a specific advisor or agent. Any advisor should be able to call any tool. Tools own operations; agents own the judgment about when to call them.
