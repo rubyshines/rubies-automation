@@ -271,6 +271,22 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   return { ...result, draft, pricingRemoved };
 }
 
+// Shift every cell row-reference in a formula by `off` rows (e.g. "SUM(B2:B9)" ->
+// "SUM(B4:B11)"). Whole-column refs like "B:B" have no row number and are untouched.
+function shiftFormula(formula, off) {
+  return String(formula).replace(/(\$?[A-Z]{1,3}\$?)(\d+)/g, (_, col, n) => `${col}${parseInt(n, 10) + off}`);
+}
+
+// Prepend a title line (+ a blank row) to the order rows, shifting all formula
+// row-references down by 2 so the live subtotals/grand still point at the right cells.
+function prependTitle(rows, title) {
+  const OFFSET = 2;
+  const shifted = (rows || []).map((row) => (row || []).map((cell) => (
+    typeof cell === 'string' && cell.startsWith('=') ? `=${shiftFormula(cell.slice(1), OFFSET)}` : cell
+  )));
+  return [[title], [], ...shifted];
+}
+
 // A row is bold in the supplier .xlsx if it's a product header (label in A, no qty),
 // a subtotal (no label, value/formula in B), or the grand total ("TOTAL").
 function isBoldRow(row) {
@@ -336,16 +352,9 @@ async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_dat
   // sheet's own rows (FORMULA-rendered, so "=SUM(...)" cells carry through and, since
   // we keep the same row positions, still reference the right cells); fall back to
   // rebuilding the layout from items.
-  let xlsxRows;
-  let boldSet = null;
-  if (sheetRows && sheetRows.length) {
-    xlsxRows = sheetRows;
-  } else {
-    const built = buildSheetRows(parsed.items, { formulas: true });
-    xlsxRows = built.rows;
-    boldSet = new Set(built.boldRows);
-  }
-  const wb = await buildOrderWorkbook(xlsxRows, boldSet);
+  const baseRows = (sheetRows && sheetRows.length) ? sheetRows : buildSheetRows(parsed.items, { formulas: true }).rows;
+  const titledRows = prependTitle(baseRows, `Production Order: ${sup.name} (${code}) ${date}`);
+  const wb = await buildOrderWorkbook(titledRows, null);
   const xlsxFilename = `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`;
   const xlsxPath = path.join(os.homedir(), 'Downloads', xlsxFilename);
   await wb.xlsx.writeFile(xlsxPath);
@@ -478,4 +487,4 @@ async function removePricingTab(sheets, spreadsheetId, orderTabName) {
   return !!p;
 }
 
-module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, prependTitle, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };

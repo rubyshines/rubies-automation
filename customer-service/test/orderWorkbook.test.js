@@ -1,7 +1,20 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const ExcelJS = require('exceljs');
-const { buildOrderWorkbook } = require('../lib/merchandising/productionOrderLoop');
+const { buildOrderWorkbook, prependTitle } = require('../lib/merchandising/productionOrderLoop');
+
+test('prependTitle: adds title + blank and shifts formula row refs by 2', () => {
+  const out = prependTitle([
+    ['GAF-BLK-XS', 230],
+    ['GAF-BLK-S', 620],
+    ['', '=SUM(B1:B2)'],
+    ['TOTAL', '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")'],
+  ], 'Production Order: Kali (KALI-2606)');
+  assert.deepStrictEqual(out[0], ['Production Order: Kali (KALI-2606)']);
+  assert.deepStrictEqual(out[1], []);
+  assert.deepStrictEqual(out[4], ['', '=SUM(B3:B4)']);          // shifted +2
+  assert.strictEqual(out[5][1], '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")'); // whole-col untouched
+});
 
 // Rows as a FORMULA-rendered order tab would return them: header, data, formula subtotal, grand.
 const ROWS = [
