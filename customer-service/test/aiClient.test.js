@@ -238,6 +238,106 @@ describe('callClaude — streaming', () => {
     assert.equal(insertedRows.length, 1);
     assert.equal(insertedRows[0].cost_usd > 0, true);
   });
+
+  // --- stall guard (streamStallMs) ------------------------------------------
+
+  // A fake SDK stream: EventEmitter-ish with on()/emit(), finalMessage() that
+  // resolves only when `settle()` is called, and an abort() that rejects it.
+  function makeControllableStream(finalMsg) {
+    const handlers = {};
+    let resolveFinal, rejectFinal;
+    let aborted = false;
+    const finalPromise = new Promise((res, rej) => { resolveFinal = res; rejectFinal = rej; });
+    return {
+      aborted: () => aborted,
+      on(event, cb) { (handlers[event] ||= []).push(cb); return this; },
+      emit(event, ...args) { (handlers[event] || []).forEach(cb => cb(...args)); },
+      abort() { aborted = true; rejectFinal(Object.assign(new Error('aborted'), { name: 'AbortError' })); },
+      settle() { resolveFinal(finalMsg); },
+      finalMessage() { return finalPromise; },
+    };
+  }
+
+  it('rejects with err.stalled and aborts when the stream goes idle past streamStallMs', async () => {
+    let theStream;
+    mockStream = () => {
+      theStream = makeControllableStream({
+        content: [{ type: 'text', text: 'partial' }],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+      return theStream;
+    };
+
+    await assert.rejects(
+      callClaude({
+        component: 'cs_advisor',
+        model: MODELS.OPUS,
+        messages: [],
+        max_tokens: 100,
+        stream: true,
+        streamStallMs: 20, // trips quickly: no streamEvent is ever emitted
+      }),
+      (err) => err.stalled === true,
+    );
+
+    assert.equal(theStream.aborted(), true, 'stalled stream should be aborted');
+    // Error path still records a row (cost 0).
+    assert.equal(insertedRows.length, 1);
+    assert.equal(insertedRows[0].cost_usd, 0);
+  });
+
+  it('does NOT trip the stall guard while streamEvent activity keeps arriving', async () => {
+    const finalMsg = {
+      content: [{ type: 'text', text: 'done' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 2, output_tokens: 3 },
+    };
+    let theStream;
+    mockStream = () => { theStream = makeControllableStream(finalMsg); return theStream; };
+
+    const callP = callClaude({
+      component: 'cs_advisor',
+      model: MODELS.OPUS,
+      messages: [],
+      max_tokens: 100,
+      stream: true,
+      streamStallMs: 40,
+    });
+
+    // Heartbeat well inside the 40ms window a few times, then settle — should
+    // resolve normally and never abort.
+    for (let i = 0; i < 4; i++) {
+      await new Promise(r => setTimeout(r, 15));
+      theStream.emit('streamEvent', {}, {});
+    }
+    theStream.settle();
+
+    const res = await callP;
+    assert.equal(res.text, 'done');
+    assert.equal(theStream.aborted(), false, 'a live stream must not be aborted');
+    assert.equal(insertedRows.length, 1);
+    assert.equal(insertedRows[0].cost_usd > 0, true);
+  });
+
+  it('resolves normally when streamStallMs is set but the stream settles promptly', async () => {
+    const finalMsg = {
+      content: [{ type: 'text', text: 'quick' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    };
+    let theStream;
+    mockStream = () => { theStream = makeControllableStream(finalMsg); return theStream; };
+
+    const callP = callClaude({
+      component: 'cs_advisor', model: MODELS.OPUS, messages: [], max_tokens: 10,
+      stream: true, streamStallMs: 1000,
+    });
+    theStream.settle();
+    const res = await callP;
+    assert.equal(res.text, 'quick');
+    assert.equal(theStream.aborted(), false);
+  });
 });
 
 // ---------------------------------------------------------------------------

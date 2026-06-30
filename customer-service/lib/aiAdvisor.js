@@ -47,6 +47,14 @@ const schemaLoadShedBreaker = createLoadShedBreaker();
 // with ADVISOR_SCHEMA_OUTPUT=1 once Anthropic's grammar scheduling stabilises.
 const SCHEMA_OUTPUT_ENABLED = process.env.ADVISOR_SCHEMA_OUTPUT === '1';
 
+// Abort a streaming advisor call if it goes silent for this long. A load-shed
+// schema-grammar request can leave the stream open-but-idle after the first
+// field (customer_reply), hanging before the action fields arrive — so the
+// draft freezes on "finalizing structured output" and the staged action is
+// lost. 30s with zero SSE events is unambiguously a stall (a healthy stream
+// emits events every few hundred ms); on trip we fall back to legacy mode.
+const STREAM_STALL_MS = 30_000;
+
 let _client = null;
 function getClient() {
   if (!_client) _client = new Anthropic();
@@ -1593,6 +1601,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
           ...schemaRequestOptions,
           stream: true,
           onText,
+          streamStallMs: STREAM_STALL_MS,
           ticket_id, draft_id, parent_call_id: parentCallId,
           metadata: { customer_email },
         });
@@ -1615,6 +1624,17 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
         schemaLoadShedBreaker.trip(); // subsequent drafts skip schema for the cooldown window
         audit.push('529 on schema-enforced call — falling back to legacy <structured> output mode for this draft');
         console.warn('[advisor] 529 on schema call — retrying in legacy output mode (breaker tripped: next drafts start legacy)');
+        continue;
+      }
+      // Stream stalled mid-response: the schema-grammar request went idle after
+      // customer_reply, before the action fields. Recover THIS draft by flipping
+      // to legacy output mode. Unlike a 529 (an explicit server signal) a stall
+      // is inferred from silence, so we deliberately do NOT trip the global
+      // breaker — one hiccup shouldn't degrade every other draft to legacy.
+      if (!legacyMode && err?.stalled) {
+        legacyMode = true;
+        audit.push('Schema stream stalled — falling back to legacy <structured> output mode for this draft');
+        console.warn('[advisor] schema stream stalled — retrying in legacy output mode (breaker NOT tripped)');
         continue;
       }
       throw err;

@@ -134,12 +134,61 @@ function extractTextAndTools(response) {
  *   ticket_id, draft_id, parent_call_id, metadata — optional tracking fields
  *   requestOptions — optional per-request SDK options (timeout, maxRetries)
  */
+/**
+ * Resolve a streaming response, but reject if the stream goes silent for
+ * `stallMs` with no SSE activity.
+ *
+ * Why: a very large schema-grammar request that gets load-shed can leave the
+ * HTTP stream open but idle — the model emits the first schema field
+ * (customer_reply) and then the stream hangs before the remaining fields
+ * (including the staged operator action) arrive, so finalMessage() never
+ * settles. Without this guard the draft spins on "finalizing structured
+ * output" forever and the operator loses the action. On stall we abort the
+ * socket and reject with `err.stalled = true` so the caller can fall back
+ * (e.g. flip to legacy output mode) instead of hanging.
+ *
+ * Liveness is measured off the SDK's `streamEvent` (fires on every SSE event —
+ * text deltas, tool-input JSON deltas, content-block boundaries), so a healthy
+ * generation continuously resets the clock and only a true stall trips it. We
+ * intentionally do NOT listen on `text` here so we never interfere with the
+ * caller's onText listener.
+ */
+function finalMessageWithStallGuard(stream, stallMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn(arg);
+    };
+    const arm = () => {
+      if (settled) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const err = new Error(`Stream stalled: no activity for ${stallMs}ms`);
+        err.stalled = true;
+        try { stream.abort(); } catch { /* best effort — already settling */ }
+        finish(reject, err);
+      }, stallMs);
+    };
+    stream.on('streamEvent', arm);
+    arm(); // start the watchdog before the first byte arrives
+    stream.finalMessage().then(
+      (msg) => finish(resolve, msg),
+      (e) => finish(reject, e),
+    );
+  });
+}
+
 async function callClaude(params) {
   const {
     component,
     model,
     stream = false,
     onText,
+    streamStallMs = 0, // when >0 (stream mode), abort if no SSE activity for this long
     ticket_id = null,
     draft_id = null,
     parent_call_id = null,
@@ -163,7 +212,9 @@ async function callClaude(params) {
       if (typeof onText === 'function') {
         s.on('text', (text) => onText(text));
       }
-      response = await s.finalMessage();
+      response = streamStallMs > 0
+        ? await finalMessageWithStallGuard(s, streamStallMs)
+        : await s.finalMessage();
     } else {
       response = requestOptions
         ? await getAnthropic().messages.create(apiParams, requestOptions)
