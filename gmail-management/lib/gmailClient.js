@@ -174,4 +174,51 @@ async function downloadAttachment(gmail, messageId, attachmentId, filename, mime
   return { data, filename, mimeType };
 }
 
-module.exports = { getGmail, getOrCreateLabel, labelMessage, removeLabelFromMessage, labelAndArchive, markAsSpam, trashMessage, downloadAttachment };
+// ---------------------------------------------------------------------------
+// Draft creation (gmail.modify scope covers drafts.create)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a raw RFC-2822 message (base64url-ready) with an optional file attachment.
+ * Pure + testable. `attachment` = { filename, mimeType, content: Buffer }.
+ */
+function buildRawMessage({ to, from, subject, bodyText, attachment }) {
+  const boundary = `rubies_${Buffer.from(String(to) + String(subject)).toString('hex').slice(0, 16)}`;
+  const L = [];
+  if (from) L.push(`From: ${from}`);
+  L.push(`To: ${to}`);
+  L.push(`Subject: ${subject}`);
+  L.push('MIME-Version: 1.0');
+  L.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+  L.push('');
+  L.push(`--${boundary}`);
+  L.push('Content-Type: text/plain; charset="UTF-8"');
+  L.push('Content-Transfer-Encoding: 7bit');
+  L.push('');
+  L.push(bodyText || '');
+  L.push('');
+  if (attachment && attachment.content) {
+    const b64 = attachment.content.toString('base64').replace(/(.{76})/g, '$1\r\n');
+    L.push(`--${boundary}`);
+    L.push(`Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`);
+    L.push(`Content-Disposition: attachment; filename="${attachment.filename}"`);
+    L.push('Content-Transfer-Encoding: base64');
+    L.push('');
+    L.push(b64);
+    L.push('');
+  }
+  L.push(`--${boundary}--`);
+  return L.join('\r\n');
+}
+
+/**
+ * Create a Gmail DRAFT (not sent) addressed to `to`, with an optional attachment.
+ * Returns { draftId, messageId }.
+ */
+async function createDraftWithAttachment(gmail, { to, from, subject, bodyText, attachment }) {
+  const raw = Buffer.from(buildRawMessage({ to, from, subject, bodyText, attachment })).toString('base64url');
+  const res = await gmail.users.drafts.create({ userId: 'me', requestBody: { message: { raw } } });
+  return { draftId: res.data.id, messageId: res.data.message && res.data.message.id };
+}
+
+module.exports = { getGmail, getOrCreateLabel, labelMessage, removeLabelFromMessage, labelAndArchive, markAsSpam, trashMessage, downloadAttachment, buildRawMessage, createDraftWithAttachment };

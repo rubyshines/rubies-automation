@@ -23,7 +23,10 @@ const { nextProductionCode } = require('./productionCode');
 const { runProjection, writeSalesDataSheet } = require('./inventoryProjection');
 const { applyOrderRules, PER_SKU_FLOOR, ORDER_STEP } = require('./orderSpread');
 const { fetchCurrentCosts, computePricing } = require('./pricingEstimate');
+const { getGmail, createDraftWithAttachment } = require('../../../gmail-management/lib/gmailClient');
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 // Recency guard: reuse a recent projection, else recompute so a draft is never stale.
 async function ensureFreshProjection({ date, maxAgeDays, forceRefresh }) {
@@ -234,12 +237,34 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   if (!parsed.items.length) throw new Error(`no SKU rows parsed from tab "${tab_name}"`);
   const result = await createOrderFromParsed({ sup, parsed, ...opts });
 
+  // Create a Gmail DRAFT to the supplier with the order .xlsx attached (not sent —
+  // Jamie reviews + sends). Fail-soft: the order is already recorded; the draft is
+  // a convenience, so a Gmail hiccup or a missing supplier email never fails the GO.
+  const subject = `New Production Order - ${sup.name}`;
+  let draft = { created: false };
+  try {
+    if (!sup.email) {
+      draft = { created: false, reason: 'no email on file for supplier' };
+    } else {
+      const gmail = await getGmail();
+      const d = await createDraftWithAttachment(gmail, {
+        to: sup.email,
+        subject,
+        bodyText: `Hi ${sup.name},\n\nPlease find attached our new production order (${result.production_code}). Let me know if you have any questions.\n\nThank you`,
+        attachment: { filename: result.xlsx_filename, mimeType: XLSX_MIME, content: result.xlsx_buffer },
+      });
+      draft = { created: true, to: sup.email, subject, draftId: d.draftId };
+    }
+  } catch (e) {
+    draft = { created: false, error: e.message };
+  }
+
   // GO is committed — the planning pricing tab is no longer needed.
   let pricingRemoved = false;
   try {
     pricingRemoved = await removePricingTab(sheets, sheetId, tab_name);
   } catch (e) { /* non-fatal: leave the pricing tab if cleanup fails */ }
-  return { ...result, pricingRemoved };
+  return { ...result, draft, pricingRemoved };
 }
 
 // Business logic: turn parsed items into a persisted order + payments + supplier .xlsx.
@@ -278,12 +303,15 @@ async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected
   aoa.push([], ['TOTAL', '', '', parsed.grand_total]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Order');
-  const xlsxPath = path.join(os.homedir(), 'Downloads', `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`);
+  const xlsxFilename = `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`;
+  const xlsxPath = path.join(os.homedir(), 'Downloads', xlsxFilename);
   XLSX.writeFile(wb, xlsxPath);
+  const xlsxBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
   return { order_id: order.id, production_code: code, supplier: sup.name,
     sku_count: parsed.items.length, total_units: parsed.grand_total,
-    payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath };
+    payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath,
+    xlsx_filename: xlsxFilename, xlsx_buffer: xlsxBuffer };
 }
 
 // Group items by product+color; sort groups by SKU prefix then color, and lines
