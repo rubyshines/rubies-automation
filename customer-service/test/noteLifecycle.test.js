@@ -332,6 +332,37 @@ test('reconcileNotes: operator judgment note with no tickets is never touched', 
   assert.equal(resolved.length, 0);
 });
 
+test('reconcileNotes R3: free-form operator note + shipped + all tickets closed → resolved (regression for #31765)', async () => {
+  const sb = makeStub({
+    notes: [note(31765, 'Shipping updated to US Expedited Shipping: In-stock items shipping now after pre-order split; expediting at no charge per customer outreach.')],
+    orders: [{ order_number: 31765, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2196, order_number: '#31765', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'order_done_tickets_closed');
+});
+
+test('reconcileNotes R3: operator note + shipped but a ticket still open → stays open', async () => {
+  const sb = makeStub({
+    notes: [note(31766, 'Expedited after split — watching for reply')],
+    orders: [{ order_number: 31766, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2200, order_number: '31766', status: 'open' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
+test('reconcileNotes R3: operator note + tickets closed but order NOT shipped → stays open', async () => {
+  const sb = makeStub({
+    notes: [note(31767, 'Customer asked to hold for a size swap — deciding')],
+    orders: [{ order_number: 31767, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2201, order_number: '31767', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
 test('reconcileNotes: latest-note-wins — already resolved orders are skipped', async () => {
   const sb = makeStub({
     notes: [
