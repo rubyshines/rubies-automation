@@ -7,7 +7,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { formatAddressBlock, formatAddressLine } = require('../lib/addressUtils');
+const { formatAddressBlock, formatAddressLine, toCountryCode } = require('../lib/addressUtils');
 
 // ---------------------------------------------------------------------------
 // formatAddressBlock
@@ -142,5 +142,57 @@ describe('formatAddressLine', () => {
 
   it('accepts a custom fallback', () => {
     assert.equal(formatAddressLine(undefined, 'n/a'), 'n/a');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toCountryCode
+// ---------------------------------------------------------------------------
+
+describe('toCountryCode', () => {
+  it('maps the full canonical name to its ISO code (the bug that broke #32014)', () => {
+    // Shopify rejected "United States" on the countryCode enum — must become "US".
+    assert.equal(toCountryCode('United States'), 'US');
+  });
+
+  it('maps canonical names for the markets we ship to', () => {
+    assert.equal(toCountryCode('Canada'), 'CA');
+    assert.equal(toCountryCode('Australia'), 'AU');
+    assert.equal(toCountryCode('New Zealand'), 'NZ');
+    assert.equal(toCountryCode('United Kingdom'), 'GB');
+    assert.equal(toCountryCode('Germany'), 'DE');
+    assert.equal(toCountryCode('Ireland'), 'IE');
+  });
+
+  it('handles common non-canonical aliases', () => {
+    assert.equal(toCountryCode('USA'), 'US');
+    assert.equal(toCountryCode('United States of America'), 'US');
+    assert.equal(toCountryCode('UK'), 'GB');
+    assert.equal(toCountryCode('Great Britain'), 'GB');
+    assert.equal(toCountryCode('England'), 'GB');
+    assert.equal(toCountryCode('Holland'), 'NL');
+  });
+
+  it('passes a valid ISO code through, upper-cased', () => {
+    assert.equal(toCountryCode('US'), 'US');
+    assert.equal(toCountryCode('ca'), 'CA');
+    assert.equal(toCountryCode('Au'), 'AU');
+  });
+
+  it('is case- and punctuation-insensitive on names', () => {
+    assert.equal(toCountryCode('  united states '), 'US');
+    assert.equal(toCountryCode('U.S.A.'), 'US');
+    assert.equal(toCountryCode('the netherlands'), 'NL');
+  });
+
+  it('returns unknown values unchanged so Shopify rejects them loudly', () => {
+    assert.equal(toCountryCode('Atlantis'), 'Atlantis');
+  });
+
+  it('passes null/undefined/empty through untouched', () => {
+    assert.equal(toCountryCode(null), null);
+    assert.equal(toCountryCode(undefined), undefined);
+    assert.equal(toCountryCode(''), '');
+    assert.equal(toCountryCode('   '), '');
   });
 });
