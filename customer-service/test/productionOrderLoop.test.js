@@ -21,6 +21,13 @@ test('buildSheetRows: clean SKU+Qty order tab, mixed-case names, size-sorted, re
   assert.ok(boldRows.includes(blkHeader) && boldRows.includes(rows.length - 1));
 });
 
+test('buildSheetRows formulas:false uses numeric totals (supplier .xlsx layout)', () => {
+  const { rows } = buildSheetRows(ITEMS, { formulas: false });
+  const blkHeader = rows.findIndex((r) => r[0] === 'The AJ No-Tuck Shaping Underwear - BLK');
+  assert.deepStrictEqual(rows[blkHeader + 3], ['', 870]); // numeric subtotal (200 + 670)
+  assert.deepStrictEqual(rows[rows.length - 1], ['TOTAL', 1170]); // numeric grand
+});
+
 test('order tab parses back to the same items (GO read-back)', () => {
   const { rows } = buildSheetRows(ITEMS);
   const parsed = parseProductionSheet(rows);

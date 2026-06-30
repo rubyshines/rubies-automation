@@ -65,7 +65,10 @@ async function handleSubmit({ supplier, tab_name, expected_ship_date, expected_d
     '',
     `**Code:** ${r.production_code} · **Order ID:** ${r.order_id}`,
     `**${r.sku_count}** SKUs · **${r.total_units.toLocaleString()}** units · **${r.payments}** payment installment(s) created`,
-    `**Supplier file:** \`${r.xlsx_path}\` (send this to the supplier)`,
+    `**Supplier file:** \`${r.xlsx_path}\``,
+    r.draft && r.draft.created
+      ? `📧 Gmail draft created to **${r.draft.to}** (subject "${r.draft.subject}") with the .xlsx attached — review and send it.`
+      : `📧 Gmail draft not created${r.draft && (r.draft.reason || r.draft.error) ? `: ${r.draft.reason || r.draft.error}` : ''} — send the .xlsx manually.`,
     r.pricingRemoved ? '🧹 Pricing companion tab removed.' : '',
     r.warnings.length ? `\n⚠️ ${r.warnings.length} warning(s):\n` + r.warnings.map((w) => `- ${w}`).join('\n') : '',
   ].filter(Boolean).join('\n');
@@ -107,7 +110,7 @@ module.exports = [
   },
   {
     name: 'submit_production_order',
-    description: 'Stage 3, the "GO" step: read the edited draft tab back as canonical, record production_orders + items + payments (from the supplier\'s payment terms), mint a production code, and write a supplier-ready .xlsx to ~/Downloads. Record-only — does not email the supplier.',
+    description: 'Stage 3, the "GO" step: read the edited order tab back as canonical, record production_orders + items + payments (from the supplier\'s payment terms), mint a production code, write a supplier-ready .xlsx to ~/Downloads, and create a Gmail DRAFT to the supplier (subject "New Production Order - <supplier>") with the .xlsx attached. The draft is NOT sent — Jamie reviews and sends it. Also removes the pricing companion tab.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -14,16 +14,19 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getSheetsClient } = require('../../../shared/googleSheetsClient');
 const { getSupplierByName } = require('./supplierRegistry');
-const { parseProductionSheet, parseProjectionReviewSheet } = require('./productionSheetParser');
+const { parseProductionSheet, parseProjectionReviewSheet, isSku } = require('./productionSheetParser');
 const { nextProductionCode } = require('./productionCode');
 const { runProjection, writeSalesDataSheet } = require('./inventoryProjection');
 const { applyOrderRules, PER_SKU_FLOOR, ORDER_STEP } = require('./orderSpread');
 const { fetchCurrentCosts, computePricing } = require('./pricingEstimate');
+const { getGmail, createDraftWithAttachment } = require('../../../gmail-management/lib/gmailClient');
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 // Recency guard: reuse a recent projection, else recompute so a draft is never stale.
 async function ensureFreshProjection({ date, maxAgeDays, forceRefresh }) {
@@ -229,22 +232,94 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
   const sheets = await getSheetsClient();
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B` });
-  const parsed = parseProductionSheet(res.data.values || []);
+  // FORMULA render so the subtotal/grand cells carry through as live "=SUM(...)"
+  // formulas into the supplier .xlsx (same row positions = refs stay valid). Data
+  // cells come back as plain numbers, so parseProductionSheet still reads qtys.
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B`, valueRenderOption: 'FORMULA' });
+  const sheetRows = res.data.values || [];
+  const parsed = parseProductionSheet(sheetRows);
   if (!parsed.items.length) throw new Error(`no SKU rows parsed from tab "${tab_name}"`);
-  const result = await createOrderFromParsed({ sup, parsed, ...opts });
+  const result = await createOrderFromParsed({ sup, parsed, sheetRows, ...opts });
+
+  // Create a Gmail DRAFT to the supplier with the order .xlsx attached (not sent —
+  // Jamie reviews + sends). Fail-soft: the order is already recorded; the draft is
+  // a convenience, so a Gmail hiccup or a missing supplier email never fails the GO.
+  const subject = `New Production Order - ${sup.name}`;
+  let draft = { created: false };
+  try {
+    if (!sup.email) {
+      draft = { created: false, reason: 'no email on file for supplier' };
+    } else {
+      const gmail = await getGmail();
+      const d = await createDraftWithAttachment(gmail, {
+        to: sup.email,
+        subject,
+        bodyText: `Hi ${sup.name},\n\nPlease find attached our new production order (${result.production_code}). Let me know if you have any questions.\n\nThank you`,
+        attachment: { filename: result.xlsx_filename, mimeType: XLSX_MIME, content: result.xlsx_buffer },
+      });
+      draft = { created: true, to: sup.email, subject, draftId: d.draftId };
+    }
+  } catch (e) {
+    draft = { created: false, error: e.message };
+  }
 
   // GO is committed — the planning pricing tab is no longer needed.
   let pricingRemoved = false;
   try {
     pricingRemoved = await removePricingTab(sheets, sheetId, tab_name);
   } catch (e) { /* non-fatal: leave the pricing tab if cleanup fails */ }
-  return { ...result, pricingRemoved };
+  return { ...result, draft, pricingRemoved };
+}
+
+// Shift every cell row-reference in a formula by `off` rows (e.g. "SUM(B2:B9)" ->
+// "SUM(B4:B11)"). Whole-column refs like "B:B" have no row number and are untouched.
+function shiftFormula(formula, off) {
+  return String(formula).replace(/(\$?[A-Z]{1,3}\$?)(\d+)/g, (_, col, n) => `${col}${parseInt(n, 10) + off}`);
+}
+
+// Prepend a title line (+ a blank row) to the order rows, shifting all formula
+// row-references down by 2 so the live subtotals/grand still point at the right cells.
+function prependTitle(rows, title) {
+  const OFFSET = 2;
+  const shifted = (rows || []).map((row) => (row || []).map((cell) => (
+    typeof cell === 'string' && cell.startsWith('=') ? `=${shiftFormula(cell.slice(1), OFFSET)}` : cell
+  )));
+  return [[title], [], ...shifted];
+}
+
+// A row is bold in the supplier .xlsx if it's a product header (label in A, no qty),
+// a subtotal (no label, value/formula in B), or the grand total ("TOTAL").
+function isBoldRow(row) {
+  const a = String((row && row[0]) != null ? row[0] : '').trim();
+  const hasB = !!(row && row[1] != null && row[1] !== '');
+  if (a && !isSku(a)) return true;
+  if (!a && hasB) return true;
+  return false;
+}
+
+// Build an exceljs workbook from [colA, colB] rows. "=..." strings become live
+// formulas; rows in boldSet (or detected via isBoldRow when boldSet is null) are
+// bolded. Reproduces the production order sheet (layout + bold + formulas).
+async function buildOrderWorkbook(rows, boldSet) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Order');
+  rows.forEach((row, i) => {
+    const wsRow = ws.getRow(i + 1);
+    (row || []).forEach((cell, ci) => {
+      const c = wsRow.getCell(ci + 1);
+      if (typeof cell === 'string' && cell.startsWith('=')) c.value = { formula: cell.slice(1) };
+      else if (cell !== '' && cell != null) c.value = cell;
+    });
+    if (boldSet ? boldSet.has(i) : isBoldRow(row)) wsRow.font = { bold: true };
+  });
+  ws.getColumn(1).width = 46;
+  ws.getColumn(2).width = 10;
+  return wb;
 }
 
 // Business logic: turn parsed items into a persisted order + payments + supplier .xlsx.
 // Sheet-free so it's testable without Google Sheets access.
-async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected_delivery_date, notes, today }) {
+async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_date, expected_delivery_date, notes, today }) {
   const sb = getSupabaseClient();
   const date = today || new Date().toISOString().slice(0, 10);
   const { data: existing } = await sb.from('production_orders').select('production_code').not('production_code', 'is', null);
@@ -272,18 +347,23 @@ async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected
     if (pErr) throw new Error(`insert payments: ${pErr.message}`);
   }
 
-  // supplier-ready .xlsx
-  const aoa = [[`Production Order — ${sup.name} — ${code} — ${date}`], []];
-  for (const it of parsed.items) aoa.push([it.product_name, it.color, it.sku, it.qty]);
-  aoa.push([], ['TOTAL', '', '', parsed.grand_total]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Order');
-  const xlsxPath = path.join(os.homedir(), 'Downloads', `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`);
-  XLSX.writeFile(wb, xlsxPath);
+  // supplier-ready .xlsx — an EXACT mirror of the production order sheet: same row
+  // order + groupings, bold headers/subtotals/grand, and LIVE formulas. Prefer the
+  // sheet's own rows (FORMULA-rendered, so "=SUM(...)" cells carry through and, since
+  // we keep the same row positions, still reference the right cells); fall back to
+  // rebuilding the layout from items.
+  const baseRows = (sheetRows && sheetRows.length) ? sheetRows : buildSheetRows(parsed.items, { formulas: true }).rows;
+  const titledRows = prependTitle(baseRows, `Production Order: ${sup.name} (${code}) ${date}`);
+  const wb = await buildOrderWorkbook(titledRows, null);
+  const xlsxFilename = `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`;
+  const xlsxPath = path.join(os.homedir(), 'Downloads', xlsxFilename);
+  await wb.xlsx.writeFile(xlsxPath);
+  const xlsxBuffer = await wb.xlsx.writeBuffer();
 
   return { order_id: order.id, production_code: code, supplier: sup.name,
     sku_count: parsed.items.length, total_units: parsed.grand_total,
-    payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath };
+    payments: payments.length, warnings: parsed.warnings, xlsx_path: xlsxPath,
+    xlsx_filename: xlsxFilename, xlsx_buffer: xlsxBuffer };
 }
 
 // Group items by product+color; sort groups by SKU prefix then color, and lines
@@ -304,9 +384,11 @@ function groupItems(items) {
   return arr;
 }
 
-// Clean ORDER tab (supplier-facing): just SKU + Qty, with product headers,
-// formula subtotals, and a resilient grand total. boldRows = headers/subtotals/grand.
-function buildSheetRows(items) {
+// Clean ORDER layout (supplier-facing): just SKU + Qty, with product headers,
+// subtotals, and a grand total. boldRows = headers/subtotals/grand. Totals are
+// live formulas for the editable Google Sheet (formulas:true, default); the
+// supplier .xlsx uses computed numbers (formulas:false) — same layout either way.
+function buildSheetRows(items, { formulas = true } = {}) {
   const out = [];
   const boldRows = [];
   let grand = 0;
@@ -315,14 +397,15 @@ function buildSheetRows(items) {
     boldRows.push(out.length);
     out.push([g.color ? `${name} - ${g.color}` : name]);
     const first = out.length + 1;
-    for (const l of g.lines) { out.push([l.sku, l.qty]); grand += Number(l.qty) || 0; }
+    let sub = 0;
+    for (const l of g.lines) { out.push([l.sku, l.qty]); sub += Number(l.qty) || 0; grand += Number(l.qty) || 0; }
     const last = first + g.lines.length - 1;
     boldRows.push(out.length);
-    out.push(['', `=SUM(B${first}:B${last})`]);
+    out.push(['', formulas ? `=SUM(B${first}:B${last})` : sub]);
     out.push([]);
   }
   boldRows.push(out.length);
-  out.push(['TOTAL', '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")']);
+  out.push(['TOTAL', formulas ? '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")' : grand]);
   return { rows: out, grand, boldRows };
 }
 
@@ -404,4 +487,4 @@ async function removePricingTab(sheets, spreadsheetId, orderTabName) {
   return !!p;
 }
 
-module.exports = { buildSheetRows, buildPricingRows, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, prependTitle, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
