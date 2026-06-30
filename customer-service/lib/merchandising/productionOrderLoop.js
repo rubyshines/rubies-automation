@@ -14,11 +14,11 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getSheetsClient } = require('../../../shared/googleSheetsClient');
 const { getSupplierByName } = require('./supplierRegistry');
-const { parseProductionSheet, parseProjectionReviewSheet } = require('./productionSheetParser');
+const { parseProductionSheet, parseProjectionReviewSheet, isSku } = require('./productionSheetParser');
 const { nextProductionCode } = require('./productionCode');
 const { runProjection, writeSalesDataSheet } = require('./inventoryProjection');
 const { applyOrderRules, PER_SKU_FLOOR, ORDER_STEP } = require('./orderSpread');
@@ -232,9 +232,10 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
   const sheets = await getSheetsClient();
-  // UNFORMATTED_VALUE so subtotal/grand formulas come back as numbers (not "=SUM…"
-  // strings) — the raw rows become the supplier .xlsx, an exact mirror of the tab.
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B`, valueRenderOption: 'UNFORMATTED_VALUE' });
+  // FORMULA render so the subtotal/grand cells carry through as live "=SUM(...)"
+  // formulas into the supplier .xlsx (same row positions = refs stay valid). Data
+  // cells come back as plain numbers, so parseProductionSheet still reads qtys.
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B`, valueRenderOption: 'FORMULA' });
   const sheetRows = res.data.values || [];
   const parsed = parseProductionSheet(sheetRows);
   if (!parsed.items.length) throw new Error(`no SKU rows parsed from tab "${tab_name}"`);
@@ -270,6 +271,36 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   return { ...result, draft, pricingRemoved };
 }
 
+// A row is bold in the supplier .xlsx if it's a product header (label in A, no qty),
+// a subtotal (no label, value/formula in B), or the grand total ("TOTAL").
+function isBoldRow(row) {
+  const a = String((row && row[0]) != null ? row[0] : '').trim();
+  const hasB = !!(row && row[1] != null && row[1] !== '');
+  if (a && !isSku(a)) return true;
+  if (!a && hasB) return true;
+  return false;
+}
+
+// Build an exceljs workbook from [colA, colB] rows. "=..." strings become live
+// formulas; rows in boldSet (or detected via isBoldRow when boldSet is null) are
+// bolded. Reproduces the production order sheet (layout + bold + formulas).
+async function buildOrderWorkbook(rows, boldSet) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Order');
+  rows.forEach((row, i) => {
+    const wsRow = ws.getRow(i + 1);
+    (row || []).forEach((cell, ci) => {
+      const c = wsRow.getCell(ci + 1);
+      if (typeof cell === 'string' && cell.startsWith('=')) c.value = { formula: cell.slice(1) };
+      else if (cell !== '' && cell != null) c.value = cell;
+    });
+    if (boldSet ? boldSet.has(i) : isBoldRow(row)) wsRow.font = { bold: true };
+  });
+  ws.getColumn(1).width = 46;
+  ws.getColumn(2).width = 10;
+  return wb;
+}
+
 // Business logic: turn parsed items into a persisted order + payments + supplier .xlsx.
 // Sheet-free so it's testable without Google Sheets access.
 async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_date, expected_delivery_date, notes, today }) {
@@ -300,17 +331,25 @@ async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_dat
     if (pErr) throw new Error(`insert payments: ${pErr.message}`);
   }
 
-  // supplier-ready .xlsx — an exact mirror of the production order sheet. Prefer the
-  // sheet's own rows (preserves the founder's row order + groupings; numbers already
-  // computed via UNFORMATTED_VALUE); fall back to rebuilding the layout from items.
-  const orderRows = (sheetRows && sheetRows.length) ? sheetRows : buildSheetRows(parsed.items, { formulas: false }).rows;
-  const aoa = [[`Production Order: ${sup.name} (${code}) ${date}`], [], ...orderRows];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Order');
+  // supplier-ready .xlsx — an EXACT mirror of the production order sheet: same row
+  // order + groupings, bold headers/subtotals/grand, and LIVE formulas. Prefer the
+  // sheet's own rows (FORMULA-rendered, so "=SUM(...)" cells carry through and, since
+  // we keep the same row positions, still reference the right cells); fall back to
+  // rebuilding the layout from items.
+  let xlsxRows;
+  let boldSet = null;
+  if (sheetRows && sheetRows.length) {
+    xlsxRows = sheetRows;
+  } else {
+    const built = buildSheetRows(parsed.items, { formulas: true });
+    xlsxRows = built.rows;
+    boldSet = new Set(built.boldRows);
+  }
+  const wb = await buildOrderWorkbook(xlsxRows, boldSet);
   const xlsxFilename = `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`;
   const xlsxPath = path.join(os.homedir(), 'Downloads', xlsxFilename);
-  XLSX.writeFile(wb, xlsxPath);
-  const xlsxBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  await wb.xlsx.writeFile(xlsxPath);
+  const xlsxBuffer = await wb.xlsx.writeBuffer();
 
   return { order_id: order.id, production_code: code, supplier: sup.name,
     sku_count: parsed.items.length, total_units: parsed.grand_total,
@@ -439,4 +478,4 @@ async function removePricingTab(sheets, spreadsheetId, orderTabName) {
   return !!p;
 }
 
-module.exports = { buildSheetRows, buildPricingRows, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };

@@ -76,6 +76,7 @@
     "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.0.0",
     "email-reply-parser": "^2.3.5",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "googleapis": "^131.0.0",
