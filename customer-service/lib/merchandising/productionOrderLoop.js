@@ -232,10 +232,13 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
   const sup = await getSupplierByName(supplier);
   if (!sup) throw new Error(`supplier "${supplier}" not found`);
   const sheets = await getSheetsClient();
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B` });
-  const parsed = parseProductionSheet(res.data.values || []);
+  // UNFORMATTED_VALUE so subtotal/grand formulas come back as numbers (not "=SUM…"
+  // strings) — the raw rows become the supplier .xlsx, an exact mirror of the tab.
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${tab_name}'!A:B`, valueRenderOption: 'UNFORMATTED_VALUE' });
+  const sheetRows = res.data.values || [];
+  const parsed = parseProductionSheet(sheetRows);
   if (!parsed.items.length) throw new Error(`no SKU rows parsed from tab "${tab_name}"`);
-  const result = await createOrderFromParsed({ sup, parsed, ...opts });
+  const result = await createOrderFromParsed({ sup, parsed, sheetRows, ...opts });
 
   // Create a Gmail DRAFT to the supplier with the order .xlsx attached (not sent —
   // Jamie reviews + sends). Fail-soft: the order is already recorded; the draft is
@@ -269,7 +272,7 @@ async function createOrderFromTab({ supplier, tab_name, spreadsheetId, ...opts }
 
 // Business logic: turn parsed items into a persisted order + payments + supplier .xlsx.
 // Sheet-free so it's testable without Google Sheets access.
-async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected_delivery_date, notes, today }) {
+async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_date, expected_delivery_date, notes, today }) {
   const sb = getSupabaseClient();
   const date = today || new Date().toISOString().slice(0, 10);
   const { data: existing } = await sb.from('production_orders').select('production_code').not('production_code', 'is', null);
@@ -297,10 +300,11 @@ async function createOrderFromParsed({ sup, parsed, expected_ship_date, expected
     if (pErr) throw new Error(`insert payments: ${pErr.message}`);
   }
 
-  // supplier-ready .xlsx
-  const aoa = [[`Production Order — ${sup.name} — ${code} — ${date}`], []];
-  for (const it of parsed.items) aoa.push([it.product_name, it.color, it.sku, it.qty]);
-  aoa.push([], ['TOTAL', '', '', parsed.grand_total]);
+  // supplier-ready .xlsx — an exact mirror of the production order sheet. Prefer the
+  // sheet's own rows (preserves the founder's row order + groupings; numbers already
+  // computed via UNFORMATTED_VALUE); fall back to rebuilding the layout from items.
+  const orderRows = (sheetRows && sheetRows.length) ? sheetRows : buildSheetRows(parsed.items, { formulas: false }).rows;
+  const aoa = [[`Production Order: ${sup.name} (${code}) ${date}`], [], ...orderRows];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Order');
   const xlsxFilename = `production-order-${sup.name.toLowerCase().replace(/\W+/g, '-')}-${code}.xlsx`;
@@ -332,9 +336,11 @@ function groupItems(items) {
   return arr;
 }
 
-// Clean ORDER tab (supplier-facing): just SKU + Qty, with product headers,
-// formula subtotals, and a resilient grand total. boldRows = headers/subtotals/grand.
-function buildSheetRows(items) {
+// Clean ORDER layout (supplier-facing): just SKU + Qty, with product headers,
+// subtotals, and a grand total. boldRows = headers/subtotals/grand. Totals are
+// live formulas for the editable Google Sheet (formulas:true, default); the
+// supplier .xlsx uses computed numbers (formulas:false) — same layout either way.
+function buildSheetRows(items, { formulas = true } = {}) {
   const out = [];
   const boldRows = [];
   let grand = 0;
@@ -343,14 +349,15 @@ function buildSheetRows(items) {
     boldRows.push(out.length);
     out.push([g.color ? `${name} - ${g.color}` : name]);
     const first = out.length + 1;
-    for (const l of g.lines) { out.push([l.sku, l.qty]); grand += Number(l.qty) || 0; }
+    let sub = 0;
+    for (const l of g.lines) { out.push([l.sku, l.qty]); sub += Number(l.qty) || 0; grand += Number(l.qty) || 0; }
     const last = first + g.lines.length - 1;
     boldRows.push(out.length);
-    out.push(['', `=SUM(B${first}:B${last})`]);
+    out.push(['', formulas ? `=SUM(B${first}:B${last})` : sub]);
     out.push([]);
   }
   boldRows.push(out.length);
-  out.push(['TOTAL', '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")']);
+  out.push(['TOTAL', formulas ? '=SUMIFS(B:B,A:A,"<>",A:A,"<>TOTAL")' : grand]);
   return { rows: out, grand, boldRows };
 }
 
