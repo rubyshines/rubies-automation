@@ -101,7 +101,11 @@ function applyMinBusinessDays(buckets, minBusinessDays) {
 // order FIRST, then applies skip rules to that latest note only — an order
 // whose latest note is resolved (or auto-authored) must not resurface on the
 // strength of an older unresolved note (latest-note-wins).
-function buildOrphanRows(notes, knownOrderNumbers) {
+// `ordersByNum` maps order_number → { shopify_order_id, customer_email } so the
+// synthetic row carries a real Shopify deep link and customer email. The note
+// table has neither, so without this the report renders a dead Shopify link
+// (empty href) and a "?" email. Orders missing from the map fall back to nulls.
+function buildOrphanRows(notes, knownOrderNumbers, ordersByNum = new Map()) {
   const seen = new Set();
   const rows = [];
   for (const n of notes) {
@@ -110,10 +114,11 @@ function buildOrphanRows(notes, knownOrderNumbers) {
     if (knownOrderNumbers.has(Number(n.order_number))) continue;
     if (n.author === 'auto') continue;
     if (n.resolved) continue;
+    const order = ordersByNum.get(Number(n.order_number));
     rows.push({
       order: {
         order_number: n.order_number,
-        customer_email: null,
+        customer_email: order?.customer_email || null,
         created_at: n.created_at,
         order_line_items: [],
       },
@@ -121,6 +126,7 @@ function buildOrphanRows(notes, knownOrderNumbers) {
       note: n,
       classification: { severity: 'normal', reason: 'waiting', detail: null },
       businessDays: businessDaysSince(n.created_at) || 0,
+      shopifyUrl: order?.shopify_order_id ? getAdminUrl(String(order.shopify_order_id)) : null,
     });
   }
   return rows;
@@ -135,7 +141,23 @@ function buildOrphanRows(notes, knownOrderNumbers) {
 async function fetchFulfilledOrphanNotes(supabase, knownOrderNumbers) {
   const { fetchLatestNotes } = require('../noteLifecycle');
   const latestByOrder = await fetchLatestNotes(supabase);
-  return buildOrphanRows([...latestByOrder.values()], knownOrderNumbers);
+  const orphanNums = [...latestByOrder.values()]
+    .map(n => Number(n.order_number))
+    .filter(num => !knownOrderNumbers.has(num));
+
+  // Enrich with shopify_order_id + customer_email so each orphan row gets a
+  // clickable Shopify link and the real email (the note table has neither).
+  const ordersByNum = new Map();
+  if (orphanNums.length) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('order_number, shopify_order_id, customer_email')
+      .in('order_number', orphanNums);
+    if (error) throw new Error(`orders fetch: ${error.message}`);
+    for (const o of data || []) ordersByNum.set(Number(o.order_number), o);
+  }
+
+  return buildOrphanRows([...latestByOrder.values()], knownOrderNumbers, ordersByNum);
 }
 
 async function handleListPendingOrders({ bucket, min_business_days }) {

@@ -169,6 +169,11 @@ async function getWhOrder(fetchWhOrder, orderNumber) {
  *         because that order's ticket would still be open. A still-active hold keeps
  *         the note visible — the order genuinely won't ship.
  *   R2  — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
+ *   R3  — any-author note + order shipped + the order has ≥1 CS ticket and ALL are
+ *         closed → resolve. Catches free-form operator notes R2 misses (their text
+ *         doesn't match the outreach regex) once the order has shipped and no
+ *         conversation remains open. The ≥1-closed-ticket guard keeps a shipped
+ *         order whose operator note has no/open ticket aging visibly.
  * Operator judgment notes on still-live orders fall through all rules and stay open.
  *
  * @returns {Promise<{checked: number, resolved: Array<{order_number, rule, reason}>}>}
@@ -250,6 +255,18 @@ async function reconcileNotes({ supabase = getSupabaseClient(), fetchWhOrder } =
         rule = 'tickets_closed';
         reason = 'Linked conversation closed — note auto-resolved (reconciler)';
       }
+    } else if (orderShipped && allTicketsClosed) {
+      // R3 — operator judgment note, order shipped, AND every linked ticket
+      // closed. The shipped-order author='auto' gate (R1b) deliberately keeps
+      // operator notes alive because one may track a real follow-up — but once
+      // the order has shipped and no conversation remains open, there's no
+      // follow-up surface and the note is moot. The allTicketsClosed guard
+      // (needs ≥1 linked ticket) means a shipped order with an operator note but
+      // no/open ticket still ages visibly. Catches free-form operator notes R2
+      // misses because their text doesn't match the outreach regex (e.g. a
+      // pre-order-split + expedite note).
+      rule = 'order_done_tickets_closed';
+      reason = 'Order shipped and linked conversation closed — note auto-resolved (reconciler)';
     }
 
     if (!rule) continue;

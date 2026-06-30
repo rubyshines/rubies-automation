@@ -236,4 +236,20 @@ describe('buildOrphanRows — fulfilled orders with unresolved operator notes', 
     assert.equal(r.isPreOrder, false);
     assert.equal(r.classification.reason, 'waiting');
   });
+
+  it('enriches the row with a Shopify deep link and customer email when order data is supplied', () => {
+    const ordersByNum = new Map([
+      [29270, { order_number: 29270, shopify_order_id: 'gid://shopify/Order/5544332211', customer_email: 'buyer@example.com' }],
+    ]);
+    const rows = buildOrphanRows([note(29270)], new Set(), ordersByNum);
+    assert.equal(rows.length, 1);
+    assert.match(rows[0].shopifyUrl, /\/orders\/5544332211$/);
+    assert.equal(rows[0].order.customer_email, 'buyer@example.com');
+  });
+
+  it('falls back to null link/email when the order is absent from the map', () => {
+    const rows = buildOrphanRows([note(29270)], new Set(), new Map());
+    assert.equal(rows[0].shopifyUrl, null);
+    assert.equal(rows[0].order.customer_email, null);
+  });
 });
