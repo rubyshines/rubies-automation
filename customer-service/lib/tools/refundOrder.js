@@ -188,49 +188,16 @@ const tools = [
         return { content: [{ type: 'text', text: `Error: Order ${order.name} is already fully refunded.` }] };
       }
 
-      // Match requested items to order line items
-      const refundLineItems = [];
-      const matchedItems = [];
-
-      for (const item of items) {
-        const qty = item.quantity || 1;
-
-        if (item.line_item_id) {
-          refundLineItems.push({
-            lineItemId: normalizeGid(item.line_item_id, 'LineItem'),
-            quantity: qty,
-          });
-          matchedItems.push({ id: item.line_item_id, title: '(by ID)', quantity: qty });
-        } else if (item.sku) {
-          // Find matching line item in the order
-          const match = order.lineItems.find(li => li.sku === item.sku);
-          if (!match) {
-            return { content: [{ type: 'text', text: `Error: SKU "${item.sku}" not found in order ${order.name}. Available SKUs: ${order.lineItems.map(li => li.sku).filter(Boolean).join(', ')}` }] };
-          }
-          if (!match.variant?.id) {
-            return { content: [{ type: 'text', text: `Error: Line item for SKU "${item.sku}" has no variant ID — cannot refund.` }] };
-          }
-          // We need the line item ID, not variant ID. Get it from the order query.
-          // The getOrderByNumber query doesn't return line item IDs, so we need to fetch them.
-          const orderWithLineItemIds = await getOrderLineItemIds(order.id);
-          const lineItemMatch = orderWithLineItemIds.find(li => li.sku === item.sku);
-          if (!lineItemMatch) {
-            return { content: [{ type: 'text', text: `Error: Could not resolve line item ID for SKU "${item.sku}".` }] };
-          }
-          refundLineItems.push({
-            lineItemId: lineItemMatch.id,
-            quantity: qty,
-          });
-          matchedItems.push({
-            id: lineItemMatch.id,
-            title: `${match.title}${match.variantTitle ? ` - ${match.variantTitle}` : ''}`,
-            sku: item.sku,
-            quantity: qty,
-          });
-        } else {
-          return { content: [{ type: 'text', text: 'Error: Each item must have either sku or line_item_id.' }] };
-        }
+      // Match requested items to order line items. The order query already carries
+      // line-item ids + remaining quantities, so no extra round-trip is needed.
+      // A SKU can map to MULTIPLE separate line items (Simple Bundles unbundles a
+      // bundle into one line item per component), so allocate the requested quantity
+      // across every matching line, tracking consumed capacity to avoid over-refunding.
+      const allocation = allocateRefundLineItems(order.lineItems, items);
+      if (allocation.error) {
+        return { content: [{ type: 'text', text: `Error: ${allocation.error}` }] };
       }
+      const { refundLineItems } = allocation;
 
       // Calculate the refund via Shopify
       const calculation = await calculateRefund(order.id, refundLineItems);
@@ -324,28 +291,107 @@ async function getOrderParentTransaction(orderId) {
 }
 
 /**
- * Fetch line item IDs for an order (needed for refund API).
+ * Resolve requested refund items to Shopify refundLineItems, allocating each
+ * requested SKU across every matching line item on the order.
+ *
+ * Why allocation (not a simple `.find`): a single SKU can appear as multiple
+ * separate line items on one order — Simple Bundles unbundles a bundle into one
+ * line item per component, so `UNW-BLK-3XL` can show up twice, each quantity 1.
+ * A `.find()` resolver targets only the first line item, so refunding 2 units of
+ * that SKU asks Shopify to refund 2 against a line whose quantity is 1, which it
+ * rejects ("cannot refund more items than were purchased"). Here we spread the
+ * requested quantity across the matching lines and track consumed capacity so
+ * repeated requests for the same SKU don't double-count the same line item.
+ *
+ * Pure + deterministic (no I/O) so it's unit-testable. `orderLineItems` is the
+ * array returned by getOrderByNumber (each node has id, sku, title, variantTitle,
+ * quantity, currentQuantity). `currentQuantity` already nets out prior refunds.
+ *
+ * Returns { refundLineItems: [{ lineItemId, quantity }], matchedItems: [...] }
+ * or { error: string }.
  */
-async function getOrderLineItemIds(orderId) {
-  const data = await shopifyGraphQL(`
-    query getOrderLineItems($id: ID!) {
-      order(id: $id) {
-        lineItems(first: 100) {
-          edges {
-            node {
-              id
-              title
-              variantTitle
-              sku
-              quantity
-            }
-          }
-        }
+function allocateRefundLineItems(orderLineItems, requestedItems) {
+  // Remaining refundable capacity per line-item id (currentQuantity nets prior refunds).
+  const remaining = new Map();
+  for (const li of orderLineItems) {
+    const cap = li.currentQuantity != null ? li.currentQuantity : li.quantity;
+    remaining.set(li.id, cap);
+  }
+
+  const refundLineItems = [];
+  const matchedItems = [];
+
+  const pushAllocation = (lineItem, qty, sku) => {
+    refundLineItems.push({ lineItemId: lineItem.id, quantity: qty });
+    matchedItems.push({
+      id: lineItem.id,
+      title: `${lineItem.title || '(unknown)'}${lineItem.variantTitle ? ` - ${lineItem.variantTitle}` : ''}`,
+      sku: sku || lineItem.sku || undefined,
+      quantity: qty,
+    });
+  };
+
+  for (const item of requestedItems) {
+    const qty = item.quantity || 1;
+
+    if (item.line_item_id) {
+      const lineItemId = normalizeGid(item.line_item_id, 'LineItem');
+      const lineItem = orderLineItems.find(li => li.id === lineItemId);
+      // If the id isn't in the order (caller passed an id we can't validate), pass it
+      // through unchanged rather than blocking — Shopify is the final authority.
+      if (!lineItem) {
+        refundLineItems.push({ lineItemId, quantity: qty });
+        matchedItems.push({ id: lineItemId, title: '(by ID)', quantity: qty });
+        continue;
       }
+      const avail = remaining.get(lineItemId);
+      if (qty > avail) {
+        return { error: `Requested ${qty}x line item ${lineItemId} but only ${avail} refundable.` };
+      }
+      remaining.set(lineItemId, avail - qty);
+      pushAllocation(lineItem, qty, item.sku);
+    } else if (item.sku) {
+      const matches = orderLineItems.filter(li => li.sku === item.sku);
+      if (matches.length === 0) {
+        const available = orderLineItems.map(li => li.sku).filter(Boolean).join(', ');
+        return { error: `SKU "${item.sku}" not found on order. Available SKUs: ${available}` };
+      }
+      let need = qty;
+      for (const li of matches) {
+        if (need <= 0) break;
+        const avail = remaining.get(li.id);
+        if (avail <= 0) continue;
+        const take = Math.min(avail, need);
+        remaining.set(li.id, avail - take);
+        pushAllocation(li, take, item.sku);
+        need -= take;
+      }
+      if (need > 0) {
+        const totalAvail = matches.reduce((s, li) => s + (li.currentQuantity != null ? li.currentQuantity : li.quantity), 0);
+        return { error: `Requested ${qty}x SKU "${item.sku}" but only ${totalAvail} refundable across ${matches.length} line item(s) on the order.` };
+      }
+    } else {
+      return { error: 'Each item must have either sku or line_item_id.' };
     }
-  `, { id: orderId });
-  return data.order.lineItems.edges.map(e => e.node);
+  }
+
+  // Merge entries that landed on the same line item (e.g. the same SKU requested
+  // across two separate input items) — Shopify expects one entry per line item id.
+  const mergedRefund = [];
+  const byId = new Map();
+  for (const rli of refundLineItems) {
+    if (byId.has(rli.lineItemId)) {
+      byId.get(rli.lineItemId).quantity += rli.quantity;
+    } else {
+      const entry = { ...rli };
+      byId.set(rli.lineItemId, entry);
+      mergedRefund.push(entry);
+    }
+  }
+
+  return { refundLineItems: mergedRefund, matchedItems };
 }
 
 module.exports = tools;
 module.exports.getOrderParentTransaction = getOrderParentTransaction;
+module.exports.allocateRefundLineItems = allocateRefundLineItems;
