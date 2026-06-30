@@ -25,6 +25,7 @@ const { searchProducts } = require('../productCache');
 const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl, fetchShippingMethods, updateShippingMethod } = require('../../../reports/lib/warehanceClient');
 const { getShippingZone } = require('./shippingLookup');
 const { writeAuditEntry } = require('./adminTools');
+const { toCountryCode } = require('../addressUtils');
 
 /**
  * Given a list of Warehance shipping methods and a destination zone + speed,
@@ -188,7 +189,7 @@ const tools = [
           if (shipping_address.address2 !== undefined) addrInput.address2 = shipping_address.address2 || '';
           if (shipping_address.city) addrInput.city = shipping_address.city;
           if (shipping_address.province) addrInput.province = shipping_address.province;
-          if (shipping_address.country) addrInput.countryCode = shipping_address.country;
+          if (shipping_address.country) addrInput.countryCode = toCountryCode(shipping_address.country);
           if (shipping_address.zip) addrInput.zip = shipping_address.zip;
           await updateOrderShippingAddress(committedOrder.id, addrInput);
         }
@@ -314,7 +315,9 @@ const tools = [
         }
 
         const oldCountry = (order.shippingAddress?.countryCodeV2 || '').toUpperCase();
-        const newCountry = (shipping_address.country || '').toUpperCase();
+        // Normalize to ISO so a full country name ("United States") isn't mistaken
+        // for a cross-border change against the ISO countryCodeV2.
+        const newCountry = (toCountryCode(shipping_address.country) || '').toUpperCase();
         const countryChanged = newCountry && oldCountry && newCountry !== oldCountry;
 
         const addrInput = {};

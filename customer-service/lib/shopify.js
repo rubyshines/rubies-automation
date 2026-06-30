@@ -1849,6 +1849,12 @@ async function cancelOrder(orderId, { reason = 'CUSTOMER', refund = true, restoc
 }
 
 async function updateOrderShippingAddress(orderId, shippingAddress) {
+  // OrderInput.shippingAddress.countryCode is a CountryCode enum — only ISO
+  // alpha-2 codes are accepted. Normalize here so every caller is safe even if
+  // it passes a full country name ("United States").
+  const { toCountryCode } = require('./addressUtils');
+  const addr = { ...shippingAddress };
+  if (addr.countryCode) addr.countryCode = toCountryCode(addr.countryCode);
   const data = await shopifyGraphQL(`
     mutation orderUpdate($input: OrderInput!) {
       orderUpdate(input: $input) {
@@ -1859,7 +1865,7 @@ async function updateOrderShippingAddress(orderId, shippingAddress) {
         userErrors { field message }
       }
     }
-  `, { input: { id: orderId, shippingAddress } });
+  `, { input: { id: orderId, shippingAddress: addr } });
   return data.orderUpdate.order;
 }
 
