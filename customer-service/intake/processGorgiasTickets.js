@@ -55,6 +55,26 @@ function extractCleanBody(m) {
   return { text: cleaned, libraryStripped: cleaned.length < raw.length };
 }
 
+// Recover quoted/forwarded content for a customer's FIRST message on a ticket.
+// Gorgias's stripper drops the quoted block — correct for a normal reply (those
+// turns already live in conversation_history) but wrong when the customer forwards
+// or quotes a prior message on first contact ("following up on the below message").
+// In that case the substance IS the stripped block, so the advisor sees only the
+// one-liner and answers "I don't have the original message." Returns the raw body
+// (which includes the forwarded original) when first contact stripped something
+// substantial, else '' . Help-center/flow messages have their own parsers and are
+// excluded. The advisor extracts the pertinent points — no heuristic does that here.
+const FORWARDED_CONTEXT_MIN_EXTRA = 200; // chars stripped beyond the clean text
+const FORWARDED_CONTEXT_MAX = 6000;       // cap so a long quoted chain can't blow tokens
+function extractForwardedContext(m, isFirstCustomerMessage) {
+  if (!isFirstCustomerMessage) return '';
+  if (m.meta?.origin === 'flow' || m.channel === 'help-center') return '';
+  const raw = ((m.body_text || '').trim() || gorgias.stripHtml(m.body_html || '').trim());
+  const clean = extractCleanBody(m).text.trim();
+  if (!raw || raw.length <= clean.length + FORWARDED_CONTEXT_MIN_EXTRA) return '';
+  return raw.length > FORWARDED_CONTEXT_MAX ? raw.slice(0, FORWARDED_CONTEXT_MAX) + '\n[...truncated]' : raw;
+}
+
 // Lazy-load AI advisor
 let _advisorHandler = null;
 
@@ -869,6 +889,15 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
     : '';
   contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
+  // First-contact forward: recover the quoted/forwarded block Gorgias stripped so
+  // the advisor has the substance the customer is referencing. Opus pulls only the
+  // pertinent points from it.
+  const customerMsgs = messages.filter(m => m.from_agent === false);
+  const isFirstCustomerMessage = customerMsgs.length > 0 && customerMsgs[0].id === latestCustomerMsg.id;
+  const forwardedContext = extractForwardedContext(latestCustomerMsg, isFirstCustomerMessage);
+  if (forwardedContext) {
+    contextParts.push(`[FORWARDED / QUOTED CONTENT — the customer forwarded or quoted this earlier message below their note. Use it as background context and pull only the pertinent points; do not quote it back verbatim.]\n${forwardedContext}`);
+  }
   const issueDescription = contextParts.join('\n\n');
 
   // Deterministic context fetch — always have order/customer data regardless of AI parse outcome
@@ -1274,6 +1303,7 @@ module.exports = {
   extractInlineImages,
   buildEffectiveAttachments,
   extractCleanBody,
+  extractForwardedContext,
   autoExecuteAdvisorHold,
   autoExecuteAddressChange,
   autoHoldReason,
