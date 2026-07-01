@@ -66,8 +66,6 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 ## What's Next
 
-- Attribution: connect SEO keywords to actual sales
-- Conversion funnel tracking
 - Holdout test for true incremental email lift (attributed ≠ caused — the headline open question)
-- Revenue by channel (Shopify sales-by-channel: email vs direct vs organic vs social vs paid)
 - Single-file shareable report (inline the explainer so it's one self-contained HTML)
+- Behavioral analysis, conversion funnel tracking, and channel/SEO→sales attribution are now tracked under the [Traffic & Conversion Intelligence](initiative_traffic_conversion_intelligence.md) initiative (GA4 BigQuery export)
