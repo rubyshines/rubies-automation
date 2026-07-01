@@ -410,6 +410,30 @@ async function apiSendDraft(id, body) {
   await supabase.from('cs_ai_feedback_log').insert(
     buildSendFeedbackRow(draft, finalResponse, { originalResponse, afterAction, notes })
   );
+
+  // One-time advocacy P.S. dedup: record this customer if a "spread the word"
+  // P.S. actually went out. We match the exact P.S. constants against the SENT
+  // body (not the advisor's closing_ask field) so it reflects what the customer
+  // truly received — robust to the model's field drift and to operator edits
+  // (P.S. trimmed → not recorded; P.S. kept → recorded). Idempotent (PK on
+  // email) and fail-soft (must not break a send).
+  try {
+    const { ADVOCACY_PS } = require('../lib/signatures');
+    const askType = finalResponse.includes(ADVOCACY_PS.peer_parent) ? 'peer_parent'
+      : finalResponse.includes(ADVOCACY_PS.peer_self) ? 'peer_self'
+      : null;
+    if (askType) {
+      const { normalizeEmail } = require('../lib/contextBuilder');
+      await supabase.from('advocacy_asks_sent').upsert({
+        customer_email: normalizeEmail(draft.customer_email),
+        closing_ask: askType,
+        gorgias_ticket_id: draft.gorgias_ticket_id || null,
+        draft_id: id,
+      }, { onConflict: 'customer_email', ignoreDuplicates: true });
+    }
+  } catch (e) {
+    console.warn(`[advocacy] failed to record ask for draft ${id}: ${e.message}`);
+  }
   // Append reply to conversation history BEFORE Gorgias snooze/close
   // (the snooze triggers a webhook that can race and overwrite history)
   const { data: ticketRow } = await supabase

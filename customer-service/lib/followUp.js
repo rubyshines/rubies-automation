@@ -10,6 +10,7 @@
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getAiBotUserId } = require('../intake/processGorgiasTickets');
+const { signOff, signOffHtml } = require('./signatures');
 
 const DEFAULT_SNOOZE_DAYS = 3;
 
@@ -25,9 +26,7 @@ I wanted to follow up on your inquiry in case my initial response and follow up 
 
 ${originalResponse}
 
-Talk soon,
-Jamie Alexander
-RUBIES Founder`;
+${signOff('Talk soon,')}`;
 
   const escapedResponse = (originalResponse || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -38,7 +37,7 @@ RUBIES Founder`;
 <blockquote style="border-left: 3px solid #ccc; padding-left: 12px; margin: 16px 0; color: #555;">
 ${escapedResponse}
 </blockquote>
-<p>Talk soon,<br>Jamie Alexander<br>RUBIES Founder</p>`;
+${signOffHtml('Talk soon,')}`;
 
   return { subject: 'Follow up from your RUBIES inquiry', text, html };
 }
@@ -75,8 +74,8 @@ async function executeStage1(gorgias, ticket, { snoozeDays, gorgiasTicket } = {}
   // Use customer_name from draft (dead-name-safe, inferred by advisor)
   const name = draft.customer_name;
   const greeting = name ? `Hi ${name},` : 'Hi,';
-  const followUpText = `${greeting}\n\nI am following up on this.\n\nTalk soon,\nJamie`;
-  const followUpHtml = `<p>${greeting}</p><p>I am following up on this.</p><p>Talk soon,<br>Jamie</p>`;
+  const followUpText = `${greeting}\n\nI am following up on this.\n\n${signOff('Talk soon,')}`;
+  const followUpHtml = `<p>${greeting}</p><p>I am following up on this.</p>${signOffHtml('Talk soon,')}`;
 
   // Send via Gorgias using AI bot user ID (so intake ignores it)
   const aiBotId = await getAiBotUserId();

@@ -17,6 +17,10 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
+const { SIGNATURE_NAME_BLOCK } = require('./signatures');
+
+// Signature block indented to match the 2-space prompt indentation.
+const SIG_INDENTED = SIGNATURE_NAME_BLOCK.split('\n').map(l => `  ${l}`).join('\n');
 
 let _client = null;
 function getClient() {
@@ -40,12 +44,10 @@ const SYSTEM_PROMPT = `You are RUBIES's CS advisor composing a proactive outboun
 - If the steer says to offer options, lay them out as a short bullet list ("- Option A", "- Option B"). Otherwise no bullets.
 - Sign off as Jamie. When the email asks the customer to reply (a question, a confirmation, a choice), use exactly:
   Talk soon,
-  Jamie Alexander
-  RUBIES Founder
+${SIG_INDENTED}
   When no reply is expected (a pure heads-up or thank-you), use exactly:
   Take care,
-  Jamie Alexander
-  RUBIES Founder
+${SIG_INDENTED}
 
 ## Output format
 Return ONLY a JSON object — no commentary, no markdown fences. Schema:

@@ -15,7 +15,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
-const { buildContext } = require('./contextBuilder');
+const { buildContext, normalizeEmail } = require('./contextBuilder');
+const { SIGNATURE_NAME_BLOCK, ADVOCACY_PS } = require('./signatures');
 const {
   normalizeSize,
   getSizeList,
@@ -657,7 +658,7 @@ async function executeToolCall(toolName, toolInput) {
 // System prompt builder
 // ---------------------------------------------------------------------------
 
-function buildSystemPrompt(toneSamples, orderContext) {
+function buildSystemPrompt(toneSamples, orderContext, opts = {}) {
   let orderSection = '';
   if (orderContext) {
     const t = orderContext.target_order;
@@ -1194,8 +1195,17 @@ When a customer says they were charged customs duties or import taxes on deliver
 - Match the customer's energy. Short customer message = short response. Don't expand "it's too big" into a paragraph.
 - **Get to the point — never recap what the customer wrote, and never repeat what you already said.** Your first sentence after the greeting must be your action, direct answer, or question. Do not open by restating or paraphrasing the customer's situation — they already know what they wrote. "I understand you paid for expedited shipping expecting delivery by Friday..." is wasted words; open instead with what you are doing or asking. Equally, never repeat information you already gave in an earlier turn: if you told them the next size adds 2 inches, don't say it again when confirming the exchange. State only what is new.
 - **The body contains only what moves things forward:** the new information, the action you took or will take, and the question you need answered — plus at most one short warm sentence when the customer shared something personal. Don't list back the contents of their order (they know what they bought), don't lecture about a policy window you're already making work, and don't explain product details they didn't ask about. When you're tempted to add context "to be helpful", leave it out: the next email can cover it if the customer asks.
-- **Post-action closing:** When the customer's last message is a simple thank-you or confirmation AFTER an action has already been taken (exchange created, refund processed), keep your reply under 20 words. Don't repeat anything already said in the conversation (donation info, vacation wishes, product details). Just acknowledge warmly and close. Example: "You're welcome! Take care, Jamie Alexander, RUBIES Founder"
-- Signature: "Talk soon," (57%) if you're expecting a reply, "Take care," (43%) if the conversation is resolved or you just created an order. Always end with "Jamie Alexander, RUBIES Founder".
+- **Post-action closing:** When the customer's last message is a simple thank-you or confirmation AFTER an action has already been taken (exchange created, refund processed), keep the body under 20 words (the signature and any P.S. do not count toward that). Don't repeat anything already said in the conversation (donation info, vacation wishes, product details). Just acknowledge warmly and close.
+- Signature: close the body with "Talk soon," (57%) if you're expecting a reply, "Take care," (43%) if the conversation is resolved or you just created an order, then on the following lines end EVERY reply with exactly this block, verbatim, each line on its own line:
+${SIGNATURE_NAME_BLOCK}
+- **Advocacy P.S. (spread-the-word, one-time):** After the signature, when the interaction is genuinely positive, add ONE short P.S. inviting the customer to spread the word. In every other case add no P.S.
+  - Include it ONLY when \`customer_sentiment\` is "positive" (they expressed real gratitude/satisfaction, or the issue resolved happily). Never on a neutral, negative, unresolved, or still-in-progress ticket, and never on a defect, refund-in-progress, or complaint even when the customer is polite.
+  - NEVER include it if the "Advocacy P.S." context line (below the order section) says this customer was already asked.
+  - Choose the framing by who they are buying for. If \`buying_for\` is "third_party" (a child or family member), the P.S. is exactly:
+  ${ADVOCACY_PS.peer_parent}
+  If \`buying_for\` is "self", the P.S. is exactly:
+  ${ADVOCACY_PS.peer_self}
+  - Put the P.S. on its own line after the signature block. Copy the chosen P.S. text verbatim, with no link and no additions.
 - When the customer says they emailed before or are following up, acknowledge: "Sorry I must have missed your previous email." If it's clear YOU dropped the ball (e.g., exchange was never created), take full ownership: "I am so sorry. It looks like I never ended up creating your order."
 - When asking what didn't work, always add: "in case I can help you with another size or recommend another product"
 - For measurements on bottoms, use exactly this phrase: "around the belly and just under the belly button". For tops, use exactly this phrase: "the measurement around the chest where a bikini band sits".
@@ -1227,7 +1237,13 @@ Link when:
 
 ${STRUCTURED_OUTPUT_PROMPT_NOTE}`;
 
-  const dynamicPart = orderSection;
+  // Advocacy P.S. dedup fact — always present (even with no order) so the
+  // one-time advocacy rule can gate on it. Deterministic lookup, injected here.
+  const advocacySection = `
+## Advocacy P.S.
+- Already sent this customer the one-time advocacy P.S.: ${opts.alreadyAskedAdvocacy ? 'YES — do NOT include any advocacy P.S., set closing_ask=none' : 'no'}`;
+
+  const dynamicPart = orderSection + advocacySection;
 
   return { staticPart, dynamicPart };
 }
@@ -1452,7 +1468,23 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   }
   _t.steps.context_build_ms = Date.now() - _tCtx;
 
-  const { staticPart, dynamicPart } = buildSystemPrompt(toneSamples, orderContext);
+  // Advocacy P.S. is once-per-customer-ever. Look up whether we already asked
+  // (mechanical, cross-ticket — the model can't know this). Fail-soft: a missing
+  // table or read error treats the customer as not-yet-asked.
+  let alreadyAskedAdvocacy = false;
+  const advocacyEmail = normalizeEmail(customer_email);
+  if (advocacyEmail) {
+    try {
+      const { data: askedRow } = await getSupabaseClient()
+        .from('advocacy_asks_sent')
+        .select('customer_email')
+        .eq('customer_email', advocacyEmail)
+        .maybeSingle();
+      alreadyAskedAdvocacy = !!askedRow;
+    } catch (e) { /* table may not exist yet — treat as not asked */ }
+  }
+
+  const { staticPart, dynamicPart } = buildSystemPrompt(toneSamples, orderContext, { alreadyAskedAdvocacy });
 
   // Build system prompt with cache_control — static part is cacheable, dynamic part changes per ticket
   const systemBlocks = [
