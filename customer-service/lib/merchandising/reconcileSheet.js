@@ -77,14 +77,13 @@ function anomalyLines(a) {
   return out;
 }
 
-// Per-line note describing the lot split (marker, quality, held/remake counts).
+// Per-line note describing the lot split (marker, quality, held count).
 function lotNote(l) {
   const parts = [];
   if (l.marker) parts.push(l.marker);
   if (l.quality && l.quality !== 'standard') parts.push(l.quality);
   const held = (l.produced || 0) - (l.shipped || 0);
   if (held > 0) parts.push(`${held} held`);
-  if (l.remake > 0) parts.push(`${l.remake} remake`);
   return parts.join(' · ');
 }
 
@@ -92,12 +91,11 @@ function lotNote(l) {
 function summarizeLots(reconcile) {
   const flagged = reconcile.lines.filter((l) => l.flagged);
   const held = reconcile.lines.filter((l) => ((l.produced || 0) - (l.shipped || 0)) > 0);
-  const remake = reconcile.lines.filter((l) => l.remake > 0);
-  return { flagged, held, remake };
+  return { flagged, held };
 }
 
 function qualityLines(reconcile) {
-  const { flagged, held, remake } = summarizeLots(reconcile);
+  const { flagged, held } = summarizeLots(reconcile);
   const out = [];
   if (flagged.length) {
     const q = flagged[0].quality;
@@ -106,7 +104,6 @@ function qualityLines(reconcile) {
     out.push([`Flagged test batch — ${m ? `${m} · ` : ''}${q} (${flagged.length} SKUs, ${units} units shipped): ${flagged.map((l) => `${l.sku}(${l.shipped})`).join(', ')}`]);
   }
   if (held.length) out.push([`Held in storage, not shipped (${held.length}): ${held.map((l) => `${l.sku}(${(l.produced || 0) - (l.shipped || 0)})`).join(', ')}`]);
-  if (remake.length) out.push([`To remake next run (${remake.length}): ${remake.map((l) => `${l.sku}(${l.remake})`).join(', ')}`]);
   return out;
 }
 

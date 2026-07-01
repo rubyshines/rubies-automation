@@ -1,11 +1,12 @@
 -- Merchandising v3 — production lots (split a produced order line by quality + disposition).
 --
 -- A production issue (e.g. the June 2026 thin-black-swimwear-fabric mistake) means a
--- single ordered SKU splits into lots that are handled differently: some ship now with a
--- physical marker (pink-dot sticker) as a test batch, some pass QC but are held in storage,
--- some unfinished units get remade next run. `production_lots` is the canonical record of
--- that partition. Standard (no-issue) lines are simply one lot (quality='standard',
--- disposition='ship'); nothing changes for them.
+-- single ordered SKU splits into lots handled differently: some ship now with a physical
+-- marker (pink-dot sticker) as a test batch, the rest are held in storage. `production_lots`
+-- is the canonical record of that partition. Standard (no-issue) lines are simply one lot
+-- (quality='standard', disposition='ship'); nothing changes for them.
+-- (We deliberately track only ship vs held — suppliers rarely tell us which held units are
+-- finished vs to-be-remade, so a finer "remake" split isn't worth the complexity.)
 --
 -- Run in the Supabase SQL editor. Idempotent.
 
@@ -20,7 +21,7 @@ CREATE TABLE IF NOT EXISTS production_lots (
   marker TEXT,
   -- what happens to this lot
   disposition TEXT NOT NULL DEFAULT 'ship'
-    CHECK (disposition IN ('ship', 'hold_storage', 'remake_next_run')),
+    CHECK (disposition IN ('ship', 'hold_storage')),
   -- set when the lot physically ships in (ties the lot to its inbound shipment)
   inbound_shipment_id INTEGER REFERENCES inbound_shipments(id) ON DELETE SET NULL,
   notes TEXT,

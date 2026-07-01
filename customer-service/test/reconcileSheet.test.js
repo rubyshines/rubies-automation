@@ -44,23 +44,26 @@ test('buildReconcileRows: header, Δ formula, live SUM total, flag colouring', (
   assert.ok(boldRows.length > 0);
 });
 
-test('lots: flagged line shows a Note; a FABRIC/QUALITY section is appended', () => {
+test('lots: flagged line shows a Note (marker + held); a FABRIC/QUALITY section is appended', () => {
   const recon = {
     order: { id: 36, production_code: 'KALI-2601', status: 'in_production' },
-    totals: { ordered: 30, produced: 39, shipped: 29, received: 0, remake: 5, sku_count: 1 },
+    totals: { ordered: 30, produced: 39, shipped: 29, received: 0, sku_count: 1 },
     lines: [{
       sku: 'RUBY-BLK-16', ordered: 30, produced: 39, shipped: 29, received: 0, delta: 9, flag: 'over',
-      remake: 5, flagged: true, quality: 'thin_black_fabric', marker: 'pink_sticker',
-      lots: [{ qty: 29, quality: 'thin_black_fabric', marker: 'pink_sticker', disposition: 'ship' }],
+      flagged: true, quality: 'thin_black_fabric', marker: 'pink_sticker',
+      lots: [
+        { qty: 29, quality: 'thin_black_fabric', marker: 'pink_sticker', disposition: 'ship' },
+        { qty: 10, quality: 'thin_black_fabric', marker: 'pink_sticker', disposition: 'hold_storage' },
+      ],
     }],
   };
   const { values } = buildReconcileRows(recon, () => ({ product: 'RUBY BIKINI', color: 'BLK' }), '2026-06-30', {});
   const dataRow = values.find((r) => r[0] === 'RUBY-BLK-16');
   assert.match(String(dataRow[7]), /pink_sticker/);       // Note column carries the marker
   assert.match(String(dataRow[7]), /10 held/);            // produced 39 - shipped 29
-  assert.match(String(dataRow[7]), /5 remake/);
   assert.ok(values.some((r) => String(r[0]).includes('FABRIC / QUALITY')));
   assert.ok(values.some((r) => String(r[0]).includes('Flagged test batch')));
+  assert.ok(values.some((r) => /Held in storage/.test(String(r[0]))));
 });
 
 test('groupLines groups by product+color and size-sorts within a group', () => {

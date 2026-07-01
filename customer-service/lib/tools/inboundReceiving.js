@@ -232,22 +232,22 @@ module.exports = [
   },
   {
     name: 'record_production_lots',
-    description: "Record produced-but-not-shipped lots for a production order — the other side of a split caused by a production issue: units held in storage (passed QC, not shipped) or units to remake next run (unfinished). Pass `order_ref` and `lots`: [{sku, qty, disposition:'hold_storage'|'remake_next_run', quality?, marker?, notes?}]. Idempotent per (order, sku, disposition). Shipped flagged lots are recorded by receive_shipment's `flag`; this is for the held/remake remainder.",
+    description: "Record produced-but-not-shipped units for a production order as HELD in storage — the other side of a split caused by a production issue (e.g. the thin-fabric swimwear Kali held back). Pass `order_ref` and `lots`: [{sku, qty, quality?, marker?, notes?}]. Held units count as produced but not shipped, and roll up under FABRIC/QUALITY on the reconcile tab. Idempotent per (order, sku). Shipped flagged units are recorded by receive_shipment's `flag`; this is for the held remainder.",
     inputSchema: {
       type: 'object',
       properties: {
         order_ref: { type: 'string', description: 'production_code or order id' },
         lots: {
           type: 'array',
-          items: { type: 'object', properties: { sku: { type: 'string' }, qty: { type: 'number' }, disposition: { type: 'string', enum: ['hold_storage', 'remake_next_run'] }, quality: { type: 'string' }, marker: { type: 'string' }, notes: { type: 'string' } }, required: ['sku', 'qty', 'disposition'] },
+          items: { type: 'object', properties: { sku: { type: 'string' }, qty: { type: 'number' }, quality: { type: 'string' }, marker: { type: 'string' }, notes: { type: 'string' } }, required: ['sku', 'qty'] },
         },
       },
       required: ['order_ref', 'lots'],
     },
     handler: async ({ order_ref, lots }) => {
       if (!order_ref || !Array.isArray(lots) || !lots.length) return err('`order_ref` and non-empty `lots` are required.');
-      const r = await recordProductionLots({ orderRef: order_ref, lots });
-      return ok(`Recorded **${r.recorded}** hold/remake lot(s) for ${r.production_code} (#${r.order_id}). Re-run \`write_reconciliation\` to refresh the sheet.`);
+      const r = await recordProductionLots({ orderRef: order_ref, lots: lots.map((l) => ({ ...l, disposition: 'hold_storage' })) });
+      return ok(`Recorded **${r.recorded}** held lot(s) for ${r.production_code} (#${r.order_id}). Re-run \`write_reconciliation\` to refresh the sheet.`);
     },
   },
   {

@@ -298,21 +298,20 @@ async function reconcileProductionOrder(orderRef) {
   for (const r of inbound) if (r.qty_received != null) received.set(r.sku, (received.get(r.sku) || 0) + r.qty_received);
 
   // produced (finished = ship + hold) and shipped, per SKU — from lots when present.
-  const produced = new Map(); const shipped = new Map(); const remake = new Map();
+  const produced = new Map(); const shipped = new Map();
   const lotsBySku = new Map();
   if (haveLots) {
     for (const l of lotRows) {
       if (!lotsBySku.has(l.sku)) lotsBySku.set(l.sku, []);
       lotsBySku.get(l.sku).push(l);
-      if (l.disposition === 'ship' || l.disposition === 'hold_storage') produced.set(l.sku, (produced.get(l.sku) || 0) + l.qty);
+      produced.set(l.sku, (produced.get(l.sku) || 0) + l.qty); // ship + hold both count as produced
       if (l.disposition === 'ship') shipped.set(l.sku, (shipped.get(l.sku) || 0) + l.qty);
-      if (l.disposition === 'remake_next_run') remake.set(l.sku, (remake.get(l.sku) || 0) + l.qty);
     }
   } else {
     for (const r of inbound) { produced.set(r.sku, (produced.get(r.sku) || 0) + (r.qty || 0)); shipped.set(r.sku, (shipped.get(r.sku) || 0) + (r.qty || 0)); }
   }
 
-  const skus = [...new Set([...ordered.keys(), ...produced.keys(), ...remake.keys()])].sort();
+  const skus = [...new Set([...ordered.keys(), ...produced.keys()])].sort();
   const lines = skus.map((sku) => {
     const o = ordered.get(sku) || 0;
     const p = produced.get(sku) || 0;
@@ -327,7 +326,6 @@ async function reconcileProductionOrder(orderRef) {
     else if (p > o) flag = 'over';
     return {
       sku, ordered: o, produced: p, shipped: sh, received: rec, delta: p - o, flag,
-      remake: remake.get(sku) || 0,
       lots: skuLots.map((l) => ({ qty: l.qty, quality: l.quality, marker: l.marker, disposition: l.disposition })),
       flagged: flagged.length > 0,
       quality: flagged.length ? flagged[0].quality : null,
@@ -339,10 +337,7 @@ async function reconcileProductionOrder(orderRef) {
   const counts = lines.reduce((acc, l) => { acc[l.flag] = (acc[l.flag] || 0) + 1; return acc; }, {});
   return {
     order: { id: order.id, production_code: order.production_code, status: order.status },
-    totals: {
-      ordered: sum(ordered), produced: sum(produced), shipped: sum(shipped),
-      received: sum(received), remake: sum(remake), sku_count: lines.length,
-    },
+    totals: { ordered: sum(ordered), produced: sum(produced), shipped: sum(shipped), received: sum(received), sku_count: lines.length },
     flag_counts: counts,
     has_lots: haveLots,
     lines,
