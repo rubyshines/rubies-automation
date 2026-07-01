@@ -1626,13 +1626,29 @@ function renderActionPanel(draft) {
   const hasExecutedAction = (Array.isArray(draft.actions) && draft.actions.length > 0)
     || draft.action_executed_at;
 
-  // Header badge — the advisor's PROPOSAL. Once any action has executed, the
-  // proposal is history (and possibly contradicted by what was actually run),
-  // so drop it rather than pinning a stale pill over an idle panel.
-  if (actionType && !hasExecutedAction) {
-    const badgeClass = actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'free_order' ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'split_shipment' ? 'edit' : actionType === 'order_consolidation' ? 'edit' : actionType === 'invoice_kept_items' ? 'edit' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
+  // ...but the auto-hold placed at intake is only STEP 1 of a modify request
+  // (add/swap/remove item, cross-border address, cancel). The order is frozen,
+  // yet the real change — and releasing the hold — still falls to the operator,
+  // and the advisor staged the exact instructions in operator_action_summary.
+  // So when the only executed action(s) so far are warehouse holds AND there's a
+  // staged summary, the panel is NOT done: keep the prefill live instead of going
+  // idle. Any terminal action (exchange/refund/edit/cancel/invoice) in actions[]
+  // means the work is genuinely finished → idle.
+  const executedActions = Array.isArray(draft.actions) ? draft.actions : [];
+  const onlyHoldsExecuted = executedActions.length > 0
+    && executedActions.every((a) => a.action_type === 'warehouse_hold');
+  const stagedWorkRemains = onlyHoldsExecuted
+    && !!(draft.structured_output?.operator_action_summary || '').trim();
+
+  // Header badge — the advisor's PROPOSAL. Once the terminal action has executed,
+  // the proposal is history (and possibly contradicted by what was actually run),
+  // so drop it rather than pinning a stale pill over an idle panel. Exception:
+  // when only the preliminary auto-hold ran and staged work remains, badge it
+  // "Action Needed" so the still-pending operator step reads clearly.
+  if (actionType && (!hasExecutedAction || stagedWorkRemains)) {
+    const badgeClass = stagedWorkRemains ? 'edit' : actionType.includes('refund') ? 'refund' : actionType.includes('exchange') ? 'exchange' : actionType === 'free_order' ? 'exchange' : actionType === 'warehouse_hold' ? 'hold' : actionType === 'cancellation' ? 'refund' : actionType === 'split_shipment' ? 'edit' : actionType === 'order_consolidation' ? 'edit' : actionType === 'invoice_kept_items' ? 'edit' : actionType === 'customer_profile_update' ? 'edit' : actionType === 'discount_code' ? 'edit' : 'edit';
     const badgeLabels = { 'exchange+refund': 'Exchange + Refund', exchange: 'Exchange', free_order: 'Free Order', refund: 'Refund', order_modification: 'Order Edit', warehouse_hold: 'Hold Order', cancellation: 'Cancel', split_shipment: 'Split Shipment', order_consolidation: 'Consolidate Orders', invoice_kept_items: 'Invoice Kept Items', customer_profile_update: 'Profile Update', discount_code: 'Discount Code' };
-    const badgeLabel = badgeLabels[actionType] || actionType;
+    const badgeLabel = stagedWorkRemains ? 'Action Needed' : (badgeLabels[actionType] || actionType);
     headerEl.innerHTML = `
       <span class="action-type-badge ${badgeClass}">${badgeLabel}</span>
       ${orderNum ? `<span class="action-order-ref">Order #${orderNum}</span>` : ''}
@@ -1698,10 +1714,13 @@ function renderActionPanel(draft) {
     return;
   }
 
-  // Build prefill command from structured output. Only prefill on a fresh draft
-  // that hasn't executed any action yet — once an action lands in the timeline,
-  // the panel goes idle and waits for the operator to type a follow-up.
-  const prefill = hasExecutedAction ? '' : buildActionPrefill(draft);
+  // Build prefill command from structured output. Prefill on a fresh draft that
+  // hasn't executed a terminal action yet — once the real action lands in the
+  // timeline, the panel goes idle and waits for the operator to type a follow-up.
+  // The preliminary auto-hold does NOT count as done: when it's the only thing
+  // that ran and the advisor staged remaining work, keep the prefill live so the
+  // operator can run the actual modify + release the hold.
+  const prefill = (hasExecutedAction && !stagedWorkRemains) ? '' : buildActionPrefill(draft);
 
   if (prefill) {
     input.value = prefill;
