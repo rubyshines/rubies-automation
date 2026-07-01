@@ -2408,10 +2408,18 @@ async function apiGetTickets(query) {
   const limit = parseInt(query.get('limit') || '50', 10);
   const autoOnly = tab === 'closed' && query.get('auto') === '1';
 
+  // Ordering: the active work queues (new/followup/onme/snoozed) sort
+  // oldest-first so the longest-waiting item sits at the top and normal
+  // top-down cycling clears them FIFO. Parked keeps its parked_at oldest-first
+  // ordering. Closed is a history log, so it stays newest-first — oldest-first
+  // there would bury today's closures under years-old ones.
+  const orderCol = tab === 'parked' ? 'parked_at' : 'updated_at';
+  const orderAsc = tab !== 'closed';
+
   let q = supabase
     .from('cs_tickets')
     .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at, last_customer_message_at, auto_close_path')
-    .order(tab === 'parked' ? 'parked_at' : 'updated_at', { ascending: tab === 'parked' })
+    .order(orderCol, { ascending: orderAsc })
     .limit(limit);
 
   switch (tab) {
