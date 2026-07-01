@@ -156,6 +156,23 @@ const _actionsInFlight = new Set(); // ticket IDs with pending background action
 let _lastStatsJson = '';
 let _visibilityDebounce = null;
 
+// Tickets optimistically removed from the queue (actioned locally) that the
+// server snapshot may still return until its status flip lands in Gorgias +
+// Supabase. Without this, the 30s poll rebuilds currentQueueTicketIds wholesale
+// from the lagging snapshot and a just-actioned ticket resurrects — so cycling
+// (j/k, nav arrows) lands you back on one you already finished. Each entry is
+// ticketId -> expiry timestamp; the TTL is a backstop in case the flip never
+// lands (a genuinely-stuck ticket should reappear rather than hide forever).
+const _suppressedTicketIds = new Map();
+const SUPPRESS_TTL_MS = 90 * 1000;
+
+function suppressTicket(id) { _suppressedTicketIds.set(id, Date.now() + SUPPRESS_TTL_MS); }
+function unsuppressTicket(id) { _suppressedTicketIds.delete(id); }
+function pruneSuppressed() {
+  const now = Date.now();
+  for (const [id, exp] of _suppressedTicketIds) if (exp <= now) _suppressedTicketIds.delete(id);
+}
+
 function startAutoRefresh() {
   // Poll every 30s when visible
   _autoRefreshInterval = setInterval(autoRefreshTick, 30000);
@@ -475,13 +492,27 @@ async function loadTicketQueue() {
       knownTicketIds = new Set(tickets.map(t => t.id));
     }
 
-    currentQueueTicketIds = tickets.map(t => t.id);
+    // Reconcile tombstones against the raw snapshot: if the server no longer
+    // returns a suppressed ticket, its status flip landed — stop suppressing.
+    // Otherwise keep filtering it out (the flip hasn't caught up yet) until the
+    // TTL backstop expires. This is what stops a just-actioned ticket from
+    // resurrecting into the cycle order on the next poll.
+    pruneSuppressed();
+    const serverIds = new Set(tickets.map(t => t.id));
+    for (const id of [..._suppressedTicketIds.keys()]) {
+      if (!serverIds.has(id)) unsuppressTicket(id);
+    }
+    const visibleTickets = _suppressedTicketIds.size
+      ? tickets.filter(t => !_suppressedTicketIds.has(t.id))
+      : tickets;
+
+    currentQueueTicketIds = visibleTickets.map(t => t.id);
 
     const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
     const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
     // Closed tab gets a filter row (the "AUTO only" chip) above the cards
     const filterHtml = currentTab === 'closed' ? closedAutoFilterHtml() : '';
-    if (!tickets.length) {
+    if (!visibleTickets.length) {
       const emptyLabel = currentTab === 'closed' && closedAutoOnly ? 'No auto-sent tickets' : (emptyLabels[currentTab] || 'No tickets');
       container.innerHTML = filterHtml + `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabel}</div>`;
       // Update detail placeholder when queue is empty
@@ -495,7 +526,7 @@ async function loadTicketQueue() {
       document.getElementById('detail-placeholder').textContent = 'Select a ticket to review';
     }
 
-    container.innerHTML = filterHtml + tickets.map(ticketCardHtml).join('');
+    container.innerHTML = filterHtml + visibleTickets.map(ticketCardHtml).join('');
   } catch (err) {
     console.error('Failed to load ticket queue:', err);
   }
@@ -529,8 +560,15 @@ function ticketCardHtml(t) {
     && (!t.viewed_at || new Date(t.viewed_at) < new Date(t.last_customer_message_at));
   const readClass = isUnread ? 'unread' : 'read';
 
+  // In progress: an action you fired is mid-flight, OR the advisor is still
+  // drafting server-side (an open ticket with no active draft = fresh intake
+  // generating the first draft, or a reopened ticket awaiting regen). Flag it so
+  // you don't open a half-baked ticket without realizing it's still cooking.
+  const isGenerating = _actionsInFlight.has(t.id) || (t.status === 'open' && !t.active_draft_id);
+
   // Row 2: secondary badges (only shown when there's content)
   const row2Parts = [];
+  if (isGenerating) row2Parts.push('<span class="badge badge-generating"><span class="badge-spinner"></span>working</span>');
   if (ticketChannel === 'facebook-messenger') row2Parts.push('<span class="badge badge-facebook">via Facebook</span>');
   else if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
   if (!isSpam && !isCommunity && t.confidence) row2Parts.push(`<span class="badge badge-${t.confidence}">${t.confidence}</span>`);
@@ -553,7 +591,7 @@ function ticketCardHtml(t) {
   }
 
   return `
-  <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${readClass} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
+  <div class="queue-item ${t.id === currentTicketId ? 'active' : ''} ${readClass} ${isSpam ? 'queue-item-spam' : ''} ${isCommunity ? 'queue-item-community' : ''} ${parkedBorderClass} ${isGenerating ? 'queue-item-generating' : ''}" data-ticket-id="${t.id}" onclick="selectTicket(${t.id})">
     ${isSpam ? '<div class="queue-item-spam-stripe"></div>' : ''}
     <div class="queue-item-inner">
       <div class="queue-item-row1">
@@ -2836,6 +2874,9 @@ function clearTicketSelection() {
 function advanceToNextTicket(removedTicketId) {
   const idx = currentQueueTicketIds.indexOf(removedTicketId);
   currentQueueTicketIds = currentQueueTicketIds.filter(id => id !== removedTicketId);
+  // Tombstone it so the next queue poll doesn't resurrect it before the
+  // server-side status flip lands. reinsertTicket() lifts this on failure.
+  suppressTicket(removedTicketId);
 
   // Animate removal from sidebar queue
   const queueEl = document.querySelector(`.queue-item[data-ticket-id="${removedTicketId}"]`);
@@ -3667,6 +3708,9 @@ function executeBackgroundAction(ticketId, label, apiCall, onError, options = {}
 }
 
 function reinsertTicket(ticketId) {
+  // The action bounced back (hold/half/error) — undo the tombstone so the
+  // ticket is allowed to render again, then rebuild.
+  unsuppressTicket(ticketId);
   if (!currentQueueTicketIds.includes(ticketId)) {
     currentQueueTicketIds.unshift(ticketId);
   }
