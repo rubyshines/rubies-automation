@@ -30,11 +30,11 @@ test('buildReconcileRows: header, Δ formula, live SUM total, flag colouring', (
   const resolve = (sku) => ({ product: sku.startsWith('SPB') ? 'EVEY SPORTS BRA' : 'AJ UNDERWEAR', color: sku.split('-')[1] });
   const { values, boldRows, flagCells, flagColors } = buildReconcileRows(RECON, resolve, '2026-06-30', { catalog: CATALOG });
   assert.ok(values[0][0].includes('Reconcile — KALI-2601'));
-  assert.deepEqual(values[2], ['SKU', 'Ordered', 'Produced', 'Received', 'Δ', 'Flag']);
-  // a data row's Δ is a formula referencing its own row
+  assert.deepEqual(values[2], ['SKU', 'Ordered', 'Produced', 'Shipped', 'Received', 'Δ', 'Flag', 'Note']);
+  // a data row's Δ is a formula referencing its own row (column F now)
   const dataRow = values.find((r) => r[0] === 'AJ-BLK-S');
-  assert.match(String(dataRow[4]), /^=C\d+-B\d+$/);
-  assert.equal(dataRow[5], 'SHORT');
+  assert.match(String(dataRow[5]), /^=C\d+-B\d+$/);
+  assert.equal(dataRow[6], 'SHORT');
   // grand total uses SUMIFS (live), never a hardcoded number
   const totalRow = values.find((r) => r[0] === 'TOTAL');
   assert.match(String(totalRow[1]), /^=SUMIFS/);
@@ -42,6 +42,25 @@ test('buildReconcileRows: header, Δ formula, live SUM total, flag colouring', (
   assert.ok(flagCells.length >= 6);
   assert.ok(flagCells.every((fc) => flagColors[fc.flag]));
   assert.ok(boldRows.length > 0);
+});
+
+test('lots: flagged line shows a Note; a FABRIC/QUALITY section is appended', () => {
+  const recon = {
+    order: { id: 36, production_code: 'KALI-2601', status: 'in_production' },
+    totals: { ordered: 30, produced: 39, shipped: 29, received: 0, remake: 5, sku_count: 1 },
+    lines: [{
+      sku: 'RUBY-BLK-16', ordered: 30, produced: 39, shipped: 29, received: 0, delta: 9, flag: 'over',
+      remake: 5, flagged: true, quality: 'thin_black_fabric', marker: 'pink_sticker',
+      lots: [{ qty: 29, quality: 'thin_black_fabric', marker: 'pink_sticker', disposition: 'ship' }],
+    }],
+  };
+  const { values } = buildReconcileRows(recon, () => ({ product: 'RUBY BIKINI', color: 'BLK' }), '2026-06-30', {});
+  const dataRow = values.find((r) => r[0] === 'RUBY-BLK-16');
+  assert.match(String(dataRow[7]), /pink_sticker/);       // Note column carries the marker
+  assert.match(String(dataRow[7]), /10 held/);            // produced 39 - shipped 29
+  assert.match(String(dataRow[7]), /5 remake/);
+  assert.ok(values.some((r) => String(r[0]).includes('FABRIC / QUALITY')));
+  assert.ok(values.some((r) => String(r[0]).includes('Flagged test batch')));
 });
 
 test('groupLines groups by product+color and size-sorts within a group', () => {

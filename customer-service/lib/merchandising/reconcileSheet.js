@@ -3,10 +3,13 @@
  * Google Sheet — the founder's review surface for a production order. Supabase stays
  * the source of truth; this is a rewritten-on-demand view.
  *
- * Columns: SKU | Ordered | Produced (shipping list) | Received (Warehance) | Δ | Flag.
- * Grouped by product/color like the order tab, with live =SUM subtotals + grand total
- * (never hardcoded), colour-coded flags, and an ⚠ ANOMALIES block calling out the lines
- * worth the founder's eye. Pure — takes reconcile data + a sku->{product,color} resolver.
+ * Columns: SKU | Ordered | Produced | Shipped | Received | Δ | Flag | Note.
+ * Produced = finished (ship + hold_storage lots); Shipped = in this shipment. They differ
+ * only when a production issue splits a line (some units held/remade). The Note column
+ * carries the lot disposition (e.g. "pink_sticker · thin_black_fabric"). Grouped by
+ * product/color like the order tab, with live =SUM subtotals + grand total (never
+ * hardcoded), colour-coded flags, and an assessment block (⚠ ANOMALIES + 🎨 FABRIC/QUALITY).
+ * Pure — takes reconcile data + a sku->{product,color} resolver.
  */
 
 const { NUMERIC_SIZES, LETTER_SIZES, SIZE_ALIASES, parseSizeVariant } = require('../sizeUtils');
@@ -74,6 +77,39 @@ function anomalyLines(a) {
   return out;
 }
 
+// Per-line note describing the lot split (marker, quality, held/remake counts).
+function lotNote(l) {
+  const parts = [];
+  if (l.marker) parts.push(l.marker);
+  if (l.quality && l.quality !== 'standard') parts.push(l.quality);
+  const held = (l.produced || 0) - (l.shipped || 0);
+  if (held > 0) parts.push(`${held} held`);
+  if (l.remake > 0) parts.push(`${l.remake} remake`);
+  return parts.join(' · ');
+}
+
+// The fabric/quality (production-issue) view for the assessment block.
+function summarizeLots(reconcile) {
+  const flagged = reconcile.lines.filter((l) => l.flagged);
+  const held = reconcile.lines.filter((l) => ((l.produced || 0) - (l.shipped || 0)) > 0);
+  const remake = reconcile.lines.filter((l) => l.remake > 0);
+  return { flagged, held, remake };
+}
+
+function qualityLines(reconcile) {
+  const { flagged, held, remake } = summarizeLots(reconcile);
+  const out = [];
+  if (flagged.length) {
+    const q = flagged[0].quality;
+    const m = flagged[0].marker;
+    const units = flagged.reduce((s, l) => s + (l.shipped || 0), 0);
+    out.push([`Flagged test batch — ${m ? `${m} · ` : ''}${q} (${flagged.length} SKUs, ${units} units shipped): ${flagged.map((l) => `${l.sku}(${l.shipped})`).join(', ')}`]);
+  }
+  if (held.length) out.push([`Held in storage, not shipped (${held.length}): ${held.map((l) => `${l.sku}(${(l.produced || 0) - (l.shipped || 0)})`).join(', ')}`]);
+  if (remake.length) out.push([`To remake next run (${remake.length}): ${remake.map((l) => `${l.sku}(${l.remake})`).join(', ')}`]);
+  return out;
+}
+
 const FLAG_COLORS = {
   missing: { red: 0.96, green: 0.80, blue: 0.80 },
   short: { red: 0.98, green: 0.85, blue: 0.85 },
@@ -92,13 +128,14 @@ function buildReconcileRows(reconcile, resolve, dateStr, opts = {}) {
   const boldRows = [];
   const flagCells = [];
   const t = reconcile.totals;
-  const FLAG_COL = 5; // column F (0-based)
+  const NCOL = 8;
+  const FLAG_COL = 6; // column G (0-based): SKU,Ord,Prod,Ship,Recv,Δ,Flag,Note
 
   boldRows.push(rows.length);
-  rows.push([`Reconcile — ${reconcile.order.production_code} (as of ${dateStr}) · ordered ${t.ordered.toLocaleString()} / produced ${t.produced.toLocaleString()} / received ${t.received.toLocaleString()}`]);
+  rows.push([`Reconcile — ${reconcile.order.production_code} (as of ${dateStr}) · ordered ${t.ordered.toLocaleString()} / produced ${t.produced.toLocaleString()} / shipped ${(t.shipped ?? t.produced).toLocaleString()} / received ${t.received.toLocaleString()}`]);
   rows.push([]);
   boldRows.push(rows.length);
-  rows.push(['SKU', 'Ordered', 'Produced', 'Received', 'Δ', 'Flag']);
+  rows.push(['SKU', 'Ordered', 'Produced', 'Shipped', 'Received', 'Δ', 'Flag', 'Note']);
 
   for (const g of groupLines(reconcile.lines, resolve)) {
     boldRows.push(rows.length);
@@ -106,12 +143,12 @@ function buildReconcileRows(reconcile, resolve, dateStr, opts = {}) {
     const first = rows.length + 1; // 1-based sheet row of first data line
     for (const l of g.lines) {
       const r = rows.length + 1;
-      rows.push([l.sku, l.ordered, l.produced, l.received == null ? 0 : l.received, `=C${r}-B${r}`, l.flag.toUpperCase()]);
+      rows.push([l.sku, l.ordered, l.produced, l.shipped == null ? l.produced : l.shipped, l.received == null ? 0 : l.received, `=C${r}-B${r}`, l.flag.toUpperCase(), lotNote(l)]);
       flagCells.push({ row: rows.length - 1, col: FLAG_COL, flag: l.flag });
     }
     const last = first + g.lines.length - 1;
     boldRows.push(rows.length);
-    rows.push(['', `=SUM(B${first}:B${last})`, `=SUM(C${first}:C${last})`, `=SUM(D${first}:D${last})`, `=SUM(E${first}:E${last})`, '']);
+    rows.push(['', `=SUM(B${first}:B${last})`, `=SUM(C${first}:C${last})`, `=SUM(D${first}:D${last})`, `=SUM(E${first}:E${last})`, `=SUM(F${first}:F${last})`, '', '']);
     rows.push([]);
   }
 
@@ -122,7 +159,8 @@ function buildReconcileRows(reconcile, resolve, dateStr, opts = {}) {
     '=SUMIFS(C:C,A:A,"<>",A:A,"<>TOTAL")',
     '=SUMIFS(D:D,A:A,"<>",A:A,"<>TOTAL")',
     '=SUMIFS(E:E,A:A,"<>",A:A,"<>TOTAL")',
-    '',
+    '=SUMIFS(F:F,A:A,"<>",A:A,"<>TOTAL")',
+    '', '',
   ]);
 
   rows.push([]);
@@ -130,7 +168,15 @@ function buildReconcileRows(reconcile, resolve, dateStr, opts = {}) {
   rows.push(['⚠ ANOMALIES']);
   for (const line of anomalyLines(anomalies)) rows.push(line);
 
-  return { values: rows, boldRows, flagCells, anomalies, flagColors: FLAG_COLORS };
+  const quality = qualityLines(reconcile);
+  if (quality.length) {
+    rows.push([]);
+    boldRows.push(rows.length);
+    rows.push(['🎨 FABRIC / QUALITY (production issue)']);
+    for (const line of quality) rows.push(line);
+  }
+
+  return { values: rows, boldRows, flagCells, anomalies, flagColors: FLAG_COLORS, ncol: NCOL };
 }
 
 module.exports = { buildReconcileRows, summarizeAnomalies, groupLines, sizeSort };

@@ -148,7 +148,7 @@ async function amendOrder({ orderRef, items }) {
  * @param {string} [p.transferNumber] - unique shipment ref (defaults to <production_code>)
  * @param {string} [p.shipDate] / [p.expectedArrival] - YYYY-MM-DD
  */
-async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, shipDate, expectedArrival, warehouse, remap }) {
+async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, shipDate, expectedArrival, warehouse, remap, flag }) {
   const sb = getSupabaseClient();
   const parsed = parsePackingList(packingListPath);
   const { items: remappedItems, rewritten } = applySkuRemap(parsed.items, remap);
@@ -191,6 +191,32 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     if (dErr) throw new Error(`orphan cleanup inbound_shipment_items: ${dErr.message}`);
   }
 
+  // Record production LOTS for the shipped units (quality + disposition). Standard by
+  // default; SKUs named in `flag.skus` become a flagged lot — e.g. the thin-black-fabric
+  // pink-sticker test batch. Idempotent: replace this shipment's ship-lots.
+  let lotSummary = { standard: 0, flagged: 0 };
+  if (order) {
+    const flagSet = new Set(((flag && flag.skus) || []).map((s) => String(s).toUpperCase()));
+    const quality = (flag && flag.quality) || 'flagged';
+    const marker = (flag && flag.marker) || null;
+    await sb.from('production_lots').delete().eq('inbound_shipment_id', ship.id);
+    const lotRows = canon.map((it) => {
+      const isFlagged = flagSet.has(it.sku.toUpperCase());
+      return {
+        production_order_id: order.id, sku: it.sku, qty: it.qty,
+        quality: isFlagged ? quality : 'standard', marker: isFlagged ? marker : null,
+        disposition: 'ship', inbound_shipment_id: ship.id,
+        notes: isFlagged && flag && flag.notes ? flag.notes : null,
+      };
+    });
+    if (lotRows.length) {
+      const { error: lErr } = await sb.from('production_lots').insert(lotRows);
+      if (lErr) throw new Error(`insert production_lots: ${lErr.message}`);
+    }
+    lotSummary.flagged = lotRows.filter((l) => l.quality !== 'standard').length;
+    lotSummary.standard = lotRows.length - lotSummary.flagged;
+  }
+
   // Mirror produced qty onto matched order lines (qty_produced), for the 3-way view.
   let producedSet = 0;
   if (order) {
@@ -211,6 +237,7 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     sections: parsed.sections,
     canonical_sku_count: canon.length,
     prefix_remapped: rewritten,
+    lots: lotSummary,
     remapped,
     unknown,
     qty_produced_set: producedSet,
@@ -219,11 +246,36 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
   };
 }
 
-// --- 3-way reconciliation ----------------------------------------------------
+// Record hold_storage / remake_next_run lots (produced-but-not-shipped units from a
+// production issue). Idempotent per (order, sku, disposition). lots = [{sku, qty,
+// disposition, quality?, marker?, notes?}].
+async function recordProductionLots({ orderRef, lots }) {
+  const sb = getSupabaseClient();
+  const order = await resolveOrder(orderRef);
+  if (!order) throw new Error(`order "${orderRef}" not found`);
+  const rows = (lots || []).filter((l) => Number(l.qty) > 0).map((l) => ({
+    production_order_id: order.id, sku: l.sku, qty: Number(l.qty),
+    quality: l.quality || 'flagged', marker: l.marker || null,
+    disposition: l.disposition || 'hold_storage', inbound_shipment_id: null, notes: l.notes || null,
+  }));
+  for (const r of rows) {
+    await sb.from('production_lots').delete()
+      .eq('production_order_id', order.id).eq('sku', r.sku).eq('disposition', r.disposition).is('inbound_shipment_id', null);
+  }
+  if (rows.length) {
+    const { error } = await sb.from('production_lots').insert(rows);
+    if (error) throw new Error(`insert production_lots: ${error.message}`);
+  }
+  return { order_id: order.id, production_code: order.production_code, recorded: rows.length };
+}
+
+// --- 3-way reconciliation (+ lots) -------------------------------------------
 
 /**
- * Compare ordered vs produced (shipped) vs received per SKU for an order.
- * produced/received come from the order's inbound shipment(s); ordered from the order.
+ * Compare ordered vs produced vs shipped vs received per SKU for an order, and surface
+ * the lot disposition (standard / flagged, ship / hold / remake). When production_lots
+ * exist they are authoritative for produced/shipped; otherwise falls back to the inbound
+ * shipment quantities (orders received before lot tracking).
  */
 async function reconcileProductionOrder(orderRef) {
   const sb = getSupabaseClient();
@@ -238,33 +290,61 @@ async function reconcileProductionOrder(orderRef) {
     const { data } = await sb.from('inbound_shipment_items').select('sku, qty, qty_received').in('inbound_shipment_id', shipIds);
     inbound = data || [];
   }
+  const { data: lotRows } = await sb.from('production_lots').select('sku, qty, quality, marker, disposition, inbound_shipment_id').eq('production_order_id', order.id);
+  const haveLots = (lotRows || []).length > 0;
 
   const ordered = new Map(); for (const r of orderItems || []) ordered.set(r.sku, (ordered.get(r.sku) || 0) + (r.qty_ordered || 0));
-  const produced = new Map(); const received = new Map();
-  for (const r of inbound) {
-    produced.set(r.sku, (produced.get(r.sku) || 0) + (r.qty || 0));
-    if (r.qty_received != null) received.set(r.sku, (received.get(r.sku) || 0) + r.qty_received);
+  const received = new Map();
+  for (const r of inbound) if (r.qty_received != null) received.set(r.sku, (received.get(r.sku) || 0) + r.qty_received);
+
+  // produced (finished = ship + hold) and shipped, per SKU — from lots when present.
+  const produced = new Map(); const shipped = new Map(); const remake = new Map();
+  const lotsBySku = new Map();
+  if (haveLots) {
+    for (const l of lotRows) {
+      if (!lotsBySku.has(l.sku)) lotsBySku.set(l.sku, []);
+      lotsBySku.get(l.sku).push(l);
+      if (l.disposition === 'ship' || l.disposition === 'hold_storage') produced.set(l.sku, (produced.get(l.sku) || 0) + l.qty);
+      if (l.disposition === 'ship') shipped.set(l.sku, (shipped.get(l.sku) || 0) + l.qty);
+      if (l.disposition === 'remake_next_run') remake.set(l.sku, (remake.get(l.sku) || 0) + l.qty);
+    }
+  } else {
+    for (const r of inbound) { produced.set(r.sku, (produced.get(r.sku) || 0) + (r.qty || 0)); shipped.set(r.sku, (shipped.get(r.sku) || 0) + (r.qty || 0)); }
   }
 
-  const skus = [...new Set([...ordered.keys(), ...produced.keys()])].sort();
+  const skus = [...new Set([...ordered.keys(), ...produced.keys(), ...remake.keys()])].sort();
   const lines = skus.map((sku) => {
     const o = ordered.get(sku) || 0;
     const p = produced.get(sku) || 0;
+    const sh = shipped.get(sku) || 0;
     const rec = received.has(sku) ? received.get(sku) : null;
+    const skuLots = lotsBySku.get(sku) || [];
+    const flagged = skuLots.filter((l) => l.quality && l.quality !== 'standard');
     let flag = 'ok';
-    if (o > 0 && p === 0) flag = 'missing';        // ordered, nothing produced/shipped
-    else if (o === 0 && p > 0) flag = 'extra';      // produced but not on the order
-    else if (p < o) flag = 'short';                 // under-produced
-    else if (p > o) flag = 'over';                  // over-produced (expected, OK)
-    return { sku, ordered: o, produced: p, received: rec, delta: p - o, flag };
+    if (o > 0 && p === 0) flag = 'missing';
+    else if (o === 0 && p > 0) flag = 'extra';
+    else if (p < o) flag = 'short';
+    else if (p > o) flag = 'over';
+    return {
+      sku, ordered: o, produced: p, shipped: sh, received: rec, delta: p - o, flag,
+      remake: remake.get(sku) || 0,
+      lots: skuLots.map((l) => ({ qty: l.qty, quality: l.quality, marker: l.marker, disposition: l.disposition })),
+      flagged: flagged.length > 0,
+      quality: flagged.length ? flagged[0].quality : null,
+      marker: flagged.length ? flagged[0].marker : null,
+    };
   });
 
   const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
   const counts = lines.reduce((acc, l) => { acc[l.flag] = (acc[l.flag] || 0) + 1; return acc; }, {});
   return {
     order: { id: order.id, production_code: order.production_code, status: order.status },
-    totals: { ordered: sum(ordered), produced: sum(produced), received: sum(received), sku_count: lines.length },
+    totals: {
+      ordered: sum(ordered), produced: sum(produced), shipped: sum(shipped),
+      received: sum(received), remake: sum(remake), sku_count: lines.length,
+    },
     flag_counts: counts,
+    has_lots: haveLots,
     lines,
   };
 }
@@ -310,8 +390,9 @@ async function writeReconcileTab(sheets, spreadsheetId, tabName, built) {
   await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: built.values } });
   if (sheetId == null) return;
   const requests = [{ updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 }, properties: { pixelSize: 340 }, fields: 'pixelSize' } }];
+  const ncol = built.ncol || 8;
   for (const ri of built.boldRows) {
-    requests.push({ repeatCell: { range: { sheetId, startRowIndex: ri, endRowIndex: ri + 1, startColumnIndex: 0, endColumnIndex: 6 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } });
+    requests.push({ repeatCell: { range: { sheetId, startRowIndex: ri, endRowIndex: ri + 1, startColumnIndex: 0, endColumnIndex: ncol }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } });
   }
   for (const fc of built.flagCells) {
     const c = built.flagColors[fc.flag];
@@ -439,6 +520,7 @@ module.exports = {
   recordManualOrder,
   amendOrder,
   createInboundShipmentFromPackingList,
+  recordProductionLots,
   reconcileProductionOrder,
   writeReconciliationSheet,
   uploadInboundToWarehance,

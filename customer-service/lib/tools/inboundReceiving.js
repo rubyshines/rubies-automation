@@ -11,7 +11,7 @@
 
 const {
   readOrderTabs, recordManualOrder, amendOrder,
-  createInboundShipmentFromPackingList, reconcileProductionOrder,
+  createInboundShipmentFromPackingList, recordProductionLots, reconcileProductionOrder,
   writeReconciliationSheet, uploadInboundToWarehance, pollInboundReceiving,
 } = require('../merchandising/inboundReceiving');
 
@@ -93,11 +93,11 @@ async function handleAmend({ order_ref, tabs, items }) {
   ].filter(Boolean).join('\n'));
 }
 
-async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse, remap, write_sheet }) {
+async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse, remap, flag, write_sheet }) {
   if (!packing_list_path) return err('`packing_list_path` (path to the supplier .xlsx) is required.');
   const r = await createInboundShipmentFromPackingList({
     packingListPath: packing_list_path, orderRef: order_ref, transferNumber: transfer_number,
-    shipDate: ship_date, expectedArrival: expected_arrival, warehouse, remap,
+    shipDate: ship_date, expectedArrival: expected_arrival, warehouse, remap, flag,
   });
   const p = r.packing;
   const out = [
@@ -107,6 +107,7 @@ async function handleReceive({ packing_list_path, order_ref, transfer_number, sh
     `Canonical SKUs: ${r.canonical_sku_count} (${r.remapped.length} size-alias remaps applied)`,
   ];
   if (r.prefix_remapped && r.prefix_remapped.length) out.push(`🔁 **${r.prefix_remapped.length} prefix correction(s)** applied: ${r.prefix_remapped.map((x) => `${x.from}→${x.to}`).join(', ')}`);
+  if (r.lots && r.lots.flagged) out.push(`🎨 **${r.lots.flagged} flagged lot(s)** recorded (${flag && flag.marker ? flag.marker : 'flagged'}${flag && flag.quality ? ` · ${flag.quality}` : ''}) + ${r.lots.standard} standard.`);
   if (r.unknown.length) out.push(`⚠️ **${r.unknown.length} unknown SKU(s)** (no catalog match — review): ${r.unknown.map((u) => `${u.sku}=${u.qty}`).join(', ')}`);
   if (r.parse_warnings.length) out.push('⚠️ ' + r.parse_warnings.join('\n⚠️ '));
   if (r.reconciliation) out.push('\n' + reconcileBlock(r.reconciliation));
@@ -213,10 +214,41 @@ module.exports = [
           items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, section: { type: 'string', description: 'Case-insensitive substring the packing-list section header must contain for the rule to apply.' } }, required: ['from', 'to'] },
         },
         write_sheet: { type: 'boolean', description: 'Write the founder-facing reconcile tab to the 2026 Production Numbers sheet (default true when linked to an order).' },
+        flag: {
+          type: 'object',
+          description: "Mark a subset of shipped SKUs as a flagged quality lot (a production issue). E.g. the thin-black-fabric test batch: {\"skus\":[\"RUBY-BLK-16\",\"CKY-BLK-M\"],\"quality\":\"thin_black_fabric\",\"marker\":\"pink_sticker\"}. Listed SKUs become flagged lots; the rest are standard.",
+          properties: {
+            skus: { type: 'array', items: { type: 'string' } },
+            quality: { type: 'string', description: "Short quality label, e.g. 'thin_black_fabric'." },
+            marker: { type: 'string', description: "Physical marker on the garment, e.g. 'pink_sticker'." },
+            notes: { type: 'string' },
+          },
+          required: ['skus'],
+        },
       },
       required: ['packing_list_path'],
     },
     handler: handleReceive,
+  },
+  {
+    name: 'record_production_lots',
+    description: "Record produced-but-not-shipped lots for a production order — the other side of a split caused by a production issue: units held in storage (passed QC, not shipped) or units to remake next run (unfinished). Pass `order_ref` and `lots`: [{sku, qty, disposition:'hold_storage'|'remake_next_run', quality?, marker?, notes?}]. Idempotent per (order, sku, disposition). Shipped flagged lots are recorded by receive_shipment's `flag`; this is for the held/remake remainder.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order_ref: { type: 'string', description: 'production_code or order id' },
+        lots: {
+          type: 'array',
+          items: { type: 'object', properties: { sku: { type: 'string' }, qty: { type: 'number' }, disposition: { type: 'string', enum: ['hold_storage', 'remake_next_run'] }, quality: { type: 'string' }, marker: { type: 'string' }, notes: { type: 'string' } }, required: ['sku', 'qty', 'disposition'] },
+        },
+      },
+      required: ['order_ref', 'lots'],
+    },
+    handler: async ({ order_ref, lots }) => {
+      if (!order_ref || !Array.isArray(lots) || !lots.length) return err('`order_ref` and non-empty `lots` are required.');
+      const r = await recordProductionLots({ orderRef: order_ref, lots });
+      return ok(`Recorded **${r.recorded}** hold/remake lot(s) for ${r.production_code} (#${r.order_id}). Re-run \`write_reconciliation\` to refresh the sheet.`);
+    },
   },
   {
     name: 'write_reconciliation',
