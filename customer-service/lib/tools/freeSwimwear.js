@@ -60,13 +60,14 @@ const tools = [
       const supabase = getSupabaseClient();
       const status = input.status || 'new';
       const limit = input.limit || 50;
-      // New queue: newest applications first (triage order). Every other status
-      // is a browse/lookup list (accepted/registered/ordered/expired/rejected/
-      // repeat/duplicate/…) — order those alphabetically by email so a specific
-      // applicant is easy to find.
+      // New queue: oldest applications first (FIFO triage) so the family that
+      // has been waiting longest is served first, matching the ticket queues.
+      // Every other status is a browse/lookup list (accepted/registered/ordered/
+      // expired/rejected/repeat/duplicate/…) — order those alphabetically by
+      // email so a specific applicant is easy to find.
       let query = supabase.from(TABLE).select(LIST_COLS).eq('status', status);
       query = status === 'new'
-        ? query.order('submitted_at', { ascending: false, nullsFirst: false })
+        ? query.order('submitted_at', { ascending: true, nullsFirst: false })
         : query.order('email', { ascending: true });
       const { data, error } = await query.limit(limit);
       if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
