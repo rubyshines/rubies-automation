@@ -1500,16 +1500,36 @@ function unionTicketActions(drafts) {
 // union rule as unionTicketActions — completed work is filed on whichever
 // draft row was active when it executed). Falls back to the draft's own
 // actions[] for drafts without a ticket row.
+// Executed action_type set across a ticket's drafts. Two signals count as
+// "done": (1) an action filed in a draft's actions[] (its action_type), and
+// (2) a draft whose own proposed action was executed (action_executed_at
+// stamped) — its action_type parts count even when the filed actions[] entry
+// recorded only a partial label. A combined "exchange+refund" is commonly filed
+// as a single "exchange" entry (the summary covers both), so without signal (2)
+// the send gate would wrongly flag "refund" as unexecuted and force a spurious
+// "send anyway?" confirmation. The dashboard's client-side gate uses the same
+// rule (app.js sendDraft), so both sides agree on whether a proposal happened.
+function executedActionTypes(drafts) {
+  const list = Array.isArray(drafts) ? drafts.filter(Boolean) : [];
+  const executed = new Set(unionTicketActions(list).map(a => a.action_type).filter(Boolean));
+  for (const d of list) {
+    if (d.action_executed_at && d.action_type) {
+      String(d.action_type).split('+').forEach(t => executed.add(t.trim()));
+    }
+  }
+  return executed;
+}
+
 async function fetchExecutedActionTypes(supabase, draft) {
   let drafts = [draft];
   if (draft.ticket_id) {
     const { data: siblings } = await supabase
       .from('cs_ai_drafts')
-      .select('actions')
+      .select('actions, action_type, action_executed_at')
       .eq('ticket_id', draft.ticket_id);
     if (siblings?.length) drafts = siblings;
   }
-  return new Set(unionTicketActions(drafts).map(a => a.action_type).filter(Boolean));
+  return executedActionTypes(drafts);
 }
 
 async function apiActionChat(draftId, body, { onStream, signal } = {}) {
@@ -3589,4 +3609,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
+module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };

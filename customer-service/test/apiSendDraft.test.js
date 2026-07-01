@@ -23,7 +23,7 @@ const autoLinkerPath = require.resolve('../lib/autoLinker');
 
 // Mutable test state, reset per test.
 let DRAFT;            // the row returned for cs_ai_drafts select('*')
-let SIBLING_DRAFTS;   // rows returned for cs_ai_drafts select('actions') (ticket-union)
+let SIBLING_DRAFTS;   // rows returned for the cs_ai_drafts ticket-union select (actions + action_type + action_executed_at)
 const captured = {};  // captures writes + gorgias calls
 
 // Chainable Supabase mock. Intermediate methods return the builder (which is
@@ -51,20 +51,21 @@ function makeSupabase() {
   return { from: (table) => builder(table) };
 }
 
+// Match on table + which columns are requested, tolerant of column-list changes
+// (the ticket-union select grew from 'actions' to 'actions, action_type,
+// action_executed_at' — matching on inclusion keeps the stub from breaking when
+// the real query adds columns).
 function resolveRead(state) {
-  const key = `${state.table}:${state.cols}`;
-  switch (key) {
-    case 'cs_ai_drafts:*':
-      return { data: DRAFT, error: null };
-    case 'cs_ai_drafts:actions':
-      return { data: SIBLING_DRAFTS, error: null };
-    case 'cs_ai_drafts:draft_response':
-      return { data: { draft_response: DRAFT.draft_response }, error: null };
-    case 'cs_tickets:conversation_history':
-      return { data: { conversation_history: [] }, error: null };
-    default:
-      return { data: null, error: null };
+  const { table, cols } = state;
+  if (table === 'cs_ai_drafts') {
+    if (cols === '*') return { data: DRAFT, error: null };
+    if (cols.includes('draft_response')) return { data: { draft_response: DRAFT.draft_response }, error: null };
+    if (cols.includes('actions')) return { data: SIBLING_DRAFTS, error: null };
   }
+  if (table === 'cs_tickets' && cols.includes('conversation_history')) {
+    return { data: { conversation_history: [] }, error: null };
+  }
+  return { data: null, error: null };
 }
 
 require.cache[supabaseClientPath] = {
@@ -196,6 +197,20 @@ describe('apiSendDraft — unexecuted-action guard', () => {
       () => apiSendDraft(1106, { response: 'Exchange created and refund issued.', after: 'snooze' }),
       (err) => err.code === 'unexecuted_action',
     );
+  });
+
+  // Regression for ticket #106100788: the operator agent did BOTH the exchange
+  // and the refund and stamped action_executed_at, but filed a single actions[]
+  // entry labelled just "exchange" (its summary said "Both done"). The gate must
+  // treat the executed compound proposal as satisfied — no spurious "send
+  // anyway?" confirm, which was bouncing the ticket back into New.
+  it('a compound proposal whose action_executed_at is stamped sends even if actions[] filed only one label', async () => {
+    DRAFT.action_type = 'exchange+refund';
+    DRAFT.action_executed_at = '2026-06-30T23:57:32Z';
+    DRAFT.actions = [{ action_type: 'exchange', executed_at: '2026-06-30T23:57:32Z', summary: 'Both done: exchange + refund' }];
+    const result = await apiSendDraft(1106, { response: 'Exchange created and refund issued.', after: 'close' });
+    assert.equal(result.success, true);
+    assert.equal(captured.replies.length, 1);
   });
 
   it('force_unexecuted_action overrides the guard after operator confirmation', async () => {

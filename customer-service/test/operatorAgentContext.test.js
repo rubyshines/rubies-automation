@@ -6,7 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { unionTicketActions, resolveChatPendingPreview, actionTypeFromTool } = require('../dashboard/server');
+const { unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool } = require('../dashboard/server');
 const { buildSystemPrompt } = require('../lib/operatorAgent');
 
 // --- actionTypeFromTool: create_invoice_order is dual-purpose --------------------
@@ -55,6 +55,39 @@ test('unionTicketActions: entries without executed_at sort first, not dropped', 
     { actions: [{ action_type: 'warehouse_hold' }] },
   ]);
   assert.deepEqual(union.map(a => a.action_type), ['warehouse_hold', 'exchange']);
+});
+
+// --- executedActionTypes (send-gate: has this draft's proposal happened?) ------
+
+test('executedActionTypes: combined exchange+refund filed as a single "exchange" entry counts as both when the draft is executed', () => {
+  // Real shape from ticket #106100788: the operator agent did both actions but
+  // filed one actions[] entry labelled "exchange"; action_executed_at is stamped.
+  const drafts = [{
+    action_type: 'exchange+refund',
+    action_executed_at: '2026-06-30T23:57:32.237Z',
+    actions: [{ action_type: 'exchange', executed_at: '2026-06-30T23:57:32.237Z' }],
+  }];
+  const executed = executedActionTypes(drafts);
+  assert.ok(executed.has('exchange') && executed.has('refund'),
+    'both halves of the executed proposal must count, so the send gate does not force a spurious confirm');
+});
+
+test('executedActionTypes: an unexecuted proposal (no action_executed_at, no filed action) stays missing', () => {
+  const executed = executedActionTypes([{ action_type: 'refund', action_executed_at: null, actions: [] }]);
+  assert.equal(executed.has('refund'), false, 'a proposal that never executed must still be gated');
+});
+
+test('executedActionTypes: filed actions across sibling drafts are unioned', () => {
+  const executed = executedActionTypes([
+    { action_type: null, actions: [{ action_type: 'exchange', executed_at: '2026-06-07T10:00:00Z' }] },
+    { action_type: null, actions: [{ action_type: 'warehouse_hold', executed_at: '2026-06-08T10:00:00Z' }] },
+  ]);
+  assert.ok(executed.has('exchange') && executed.has('warehouse_hold'));
+});
+
+test('executedActionTypes: tolerates empty/null input', () => {
+  assert.equal(executedActionTypes([]).size, 0);
+  assert.equal(executedActionTypes(null).size, 0);
 });
 
 // --- resolveChatPendingPreview (Yes/No confirm-button state) -------------------
