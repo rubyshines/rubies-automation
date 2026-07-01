@@ -43,6 +43,7 @@
 - [IRAP Proposal](initiative_irap_proposal.md) — NRC-IRAP funding for AI ops automation
 - [B2B Expansion](initiative_b2b_expansion.md) — grow retailer partnerships and wholesale channel
 - [SEO & Content](initiative_seo_content.md) — drive organic traffic and revenue
+- [Traffic & Conversion Intelligence](initiative_traffic_conversion_intelligence.md) — GA4 behavioral analysis + attribution via BigQuery raw-event export
 - [Email Campaigns](initiative_email_campaigns.md) — Sadie MacDonald using RUBIES tooling for Klaviyo
 - [Website Theme](initiative_website_theme.md) — build out Shopify theme launched Nov 2025, Natta
 - [LGBTQ+ Partnerships](initiative_lgbtq_partnerships.md) — expand org partnerships, donation closet programs
