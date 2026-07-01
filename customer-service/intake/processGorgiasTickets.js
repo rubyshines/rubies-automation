@@ -72,14 +72,15 @@ function getAdvisorHandler() {
 // — otherwise the operator sees a draft that lies. Returns an `actions` entry
 // to append to the draft on success, or null on skip/failure (failure is
 // logged so the operator agent can still attempt the hold itself).
-// Auto-hold note text, keyed off the advisor's inquiry classification. An
-// address change with no new address yet is proposed as a bare warehouse_hold
-// (the address auto-apply path needs an extracted address), so it lands here
-// rather than in fallbackToHold — message_type 'shipping' is that case and must
-// read as an address change, not a generic item modification.
+// Auto-hold note text, keyed off the advisor's inquiry classification. Every
+// non-cancel modify (item add/swap/remove, or an address change with no new
+// address given yet) is proposed as a bare warehouse_hold and lands here. Don't
+// special-case 'shipping' as an address change: add-item requests also classify
+// as shipping, so guessing "address change" mislabeled those holds. Genuine
+// address changes that fall back to a hold get their accurate reason from
+// fallbackToHold, not from here — so a generic modify reason is correct.
 function autoHoldReason(messageType) {
   if (messageType === 'cancellation') return 'Auto-hold: customer asked to cancel, holding before we cancel';
-  if (messageType === 'shipping') return 'Auto-hold: address change needs operator review';
   return 'Auto-hold: customer wants to modify the order';
 }
 

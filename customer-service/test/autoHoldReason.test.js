@@ -4,18 +4,20 @@ const assert = require('node:assert');
 const { autoHoldReason } = require('../intake/processGorgiasTickets');
 
 // The auto-hold note text is keyed off the advisor's inquiry classification.
-// An address change with no new address yet is proposed as a bare warehouse_hold
-// (the address auto-apply path needs an extracted address), so it falls through
-// to this generic hold path and must still read as an address change.
+// Cancellations read as a cancel-hold; every other modify (item add/swap/remove,
+// or an address change with no new address given) reads as a generic order edit.
+// It must NOT claim "address change" for 'shipping' — add-item requests also
+// classify as shipping, and genuine address-change holds get their accurate
+// reason from fallbackToHold, not this path.
 
 test('autoHoldReason: cancellation', () => {
   assert.match(autoHoldReason('cancellation'), /asked to cancel/i);
 });
 
-test('autoHoldReason: shipping reads as an address change, not an item modification', () => {
+test('autoHoldReason: shipping does NOT mislabel as an address change', () => {
   const reason = autoHoldReason('shipping');
-  assert.match(reason, /address change/i);
-  assert.doesNotMatch(reason, /modify the order/i);
+  assert.doesNotMatch(reason, /address change/i);
+  assert.match(reason, /modify the order/i);
 });
 
 test('autoHoldReason: any other type falls back to generic order modification', () => {
