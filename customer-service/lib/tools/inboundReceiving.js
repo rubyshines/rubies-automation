@@ -12,8 +12,19 @@
 const {
   readOrderTabs, recordManualOrder, amendOrder,
   createInboundShipmentFromPackingList, reconcileProductionOrder,
-  uploadInboundToWarehance, pollInboundReceiving,
+  writeReconciliationSheet, uploadInboundToWarehance, pollInboundReceiving,
 } = require('../merchandising/inboundReceiving');
+
+function anomalyBlock(a) {
+  if (!a) return '';
+  const parts = [];
+  if (a.missing.length) parts.push(`${a.missing.length} missing`);
+  if (a.short.length) parts.push(`${a.short.length} short (beyond tolerance)`);
+  if (a.extra.length) parts.push(`${a.extra.length} extra`);
+  if (a.big_over.length) parts.push(`${a.big_over.length} large over-run`);
+  if (a.pending_catalog.length) parts.push(`${[...new Set(a.pending_catalog)].length} pending catalog`);
+  return parts.length ? `⚠️ Anomalies: ${parts.join(' · ')}` : '✅ No anomalies beyond tolerance.';
+}
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
 const err = (text) => ({ content: [{ type: 'text', text: `Error: ${text}` }] });
@@ -82,7 +93,7 @@ async function handleAmend({ order_ref, tabs, items }) {
   ].filter(Boolean).join('\n'));
 }
 
-async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse, remap }) {
+async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse, remap, write_sheet }) {
   if (!packing_list_path) return err('`packing_list_path` (path to the supplier .xlsx) is required.');
   const r = await createInboundShipmentFromPackingList({
     packingListPath: packing_list_path, orderRef: order_ref, transferNumber: transfer_number,
@@ -99,8 +110,30 @@ async function handleReceive({ packing_list_path, order_ref, transfer_number, sh
   if (r.unknown.length) out.push(`⚠️ **${r.unknown.length} unknown SKU(s)** (no catalog match — review): ${r.unknown.map((u) => `${u.sku}=${u.qty}`).join(', ')}`);
   if (r.parse_warnings.length) out.push('⚠️ ' + r.parse_warnings.join('\n⚠️ '));
   if (r.reconciliation) out.push('\n' + reconcileBlock(r.reconciliation));
+
+  // Write the founder-facing reconcile tab to the 2026 Production Numbers sheet (default
+  // on when linked to an order). Fail-soft: the shipment is already recorded.
+  if (r.order && write_sheet !== false) {
+    try {
+      const w = await writeReconciliationSheet({ orderRef: r.order.id });
+      out.push(`\n📄 Reconcile tab **"${w.tab_name}"** written to the 2026 Production Numbers sheet. ${anomalyBlock(w.anomalies)}\n[Open the sheet](${w.url})`);
+    } catch (e) {
+      out.push(`\n⚠️ Could not write the reconcile tab: ${e.message}`);
+    }
+  }
   out.push('\nNext: `upload_inbound_to_warehance` to push the ASN to Nitro, then `poll_inbound_receiving` to track check-in.');
   return ok(out.join('\n'));
+}
+
+async function handleWriteReconciliation({ order_ref }) {
+  if (!order_ref) return err('`order_ref` is required.');
+  const w = await writeReconciliationSheet({ orderRef: order_ref });
+  return ok([
+    `## Reconcile tab written — ${w.order.production_code}`,
+    `Tab **"${w.tab_name}"** in the 2026 Production Numbers sheet · ordered ${w.totals.ordered.toLocaleString()} / produced ${w.totals.produced.toLocaleString()} / received ${w.totals.received.toLocaleString()}`,
+    anomalyBlock(w.anomalies),
+    `[Open the sheet](${w.url})`,
+  ].join('\n'));
 }
 
 async function handleReconcile({ order_ref }) {
@@ -176,13 +209,20 @@ module.exports = [
         warehouse: { type: 'string', description: "Destination warehouse name. Default 'Nitro Logistics AMU'." },
         remap: {
           type: 'array',
-          description: "Prefix corrections for a supplier mislabel — rewrite a SKU prefix (from->to), optionally scoped to a packing-list section. E.g. the Evey sports bra shipped under the Ava bra's prefix: [{\"from\":\"SB\",\"to\":\"SPB\",\"section\":\"sports bra\"}]. Section-scoping prevents touching genuine SB (Ava) lines.",
+          description: "SKU corrections for a supplier error. PREFIX rule (from = bare prefix) rewrites the prefix keeping color/size, optionally scoped to a packing-list section — e.g. the Evey sports bra shipped under the Ava bra's prefix: [{\"from\":\"SB\",\"to\":\"SPB\",\"section\":\"sports bra\"}]. EXACT rule (from = full SKU) fixes one size typo — e.g. {\"from\":\"MIA-BLK-11\",\"to\":\"MIA-BLK-10\"}. Section-scoping prevents touching genuine SB (Ava) lines.",
           items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, section: { type: 'string', description: 'Case-insensitive substring the packing-list section header must contain for the rule to apply.' } }, required: ['from', 'to'] },
         },
+        write_sheet: { type: 'boolean', description: 'Write the founder-facing reconcile tab to the 2026 Production Numbers sheet (default true when linked to an order).' },
       },
       required: ['packing_list_path'],
     },
     handler: handleReceive,
+  },
+  {
+    name: 'write_reconciliation',
+    description: "Write (or refresh) the founder-facing reconciliation tab for a production order to the 2026 Production Numbers Google Sheet — a separate 'Reconcile — <code>' tab grouped by product/color, with Ordered / Produced (shipping list) / Received (Warehance) / Δ per SKU, live =SUM totals, colour-coded flags, and an ⚠ ANOMALIES block. Supabase stays the source of truth; this is a disposable review view. Re-run after Warehance receiving to fill the Received column. Pass `order_ref` (production_code or order id).",
+    inputSchema: { type: 'object', properties: { order_ref: { type: 'string', description: 'production_code or order id' } }, required: ['order_ref'] },
+    handler: handleWriteReconciliation,
   },
   {
     name: 'reconcile_production_order',

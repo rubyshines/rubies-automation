@@ -26,6 +26,7 @@ const { nextProductionCode } = require('./productionCode');
 const { parseProductionSheet } = require('./productionSheetParser');
 const { parsePackingList, applySkuRemap } = require('./packingListParser');
 const { loadCatalogSkus, canonicalizeItems } = require('./skuCanonical');
+const { buildReconcileRows } = require('./reconcileSheet');
 const warehance = require('../../../reports/lib/warehanceClient');
 
 const SHEET_ID = process.env.PRODUCTION_SHEET_ID || '1kMZ-thv7pmBEvudlT_Ujw1z1wb-2zwjV5vT_TuNm87w';
@@ -268,6 +269,80 @@ async function reconcileProductionOrder(orderRef) {
   };
 }
 
+// --- Reconciliation view -> Google Sheet ------------------------------------
+
+// Resolve each SKU to its {product title, color} for grouping. Titles come from the
+// synced `products` table (via product_variants); SKUs not in the catalog (e.g. a
+// pending SPB sports bra) fall back to the SKU prefix so they still group sensibly.
+async function buildSkuResolver(skus) {
+  const sb = getSupabaseClient();
+  const { data: variants } = await sb.from('product_variants').select('sku, shopify_product_id').in('sku', skus);
+  const pidBySku = new Map((variants || []).map((v) => [v.sku, v.shopify_product_id]));
+  const pids = [...new Set((variants || []).map((v) => v.shopify_product_id).filter(Boolean))];
+  const titleByPid = new Map();
+  if (pids.length) {
+    const { data: prods } = await sb.from('products').select('shopify_product_id, title').in('shopify_product_id', pids);
+    for (const p of prods || []) titleByPid.set(p.shopify_product_id, p.title);
+  }
+  return (sku) => {
+    const color = String(sku).split('-')[1] || '';
+    const pid = pidBySku.get(sku);
+    const product = (pid && titleByPid.get(pid)) || String(sku).split('-')[0];
+    return { product, color };
+  };
+}
+
+// Add (or clear + reuse) a tab at the front of the sheet, write the values as
+// USER_ENTERED (so =SUM/=C-B formulas evaluate), then bold the header/subtotal rows and
+// colour each Flag cell by severity.
+async function writeReconcileTab(sheets, spreadsheetId, tabName, built) {
+  let sheetId = null;
+  try {
+    const res = await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: tabName, index: 0 } } }] } });
+    sheetId = res.data.replies[0].addSheet.properties.sheetId;
+  } catch (e) {
+    if (!/already exists/i.test(e.message)) throw e;
+    const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties(sheetId,title)' });
+    const ex = (meta.data.sheets || []).find((s) => s.properties.title === tabName);
+    sheetId = ex ? ex.properties.sheetId : null;
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${tabName}'` });
+  }
+  await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: built.values } });
+  if (sheetId == null) return;
+  const requests = [{ updateDimensionProperties: { range: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 1 }, properties: { pixelSize: 340 }, fields: 'pixelSize' } }];
+  for (const ri of built.boldRows) {
+    requests.push({ repeatCell: { range: { sheetId, startRowIndex: ri, endRowIndex: ri + 1, startColumnIndex: 0, endColumnIndex: 6 }, cell: { userEnteredFormat: { textFormat: { bold: true } } }, fields: 'userEnteredFormat.textFormat.bold' } });
+  }
+  for (const fc of built.flagCells) {
+    const c = built.flagColors[fc.flag];
+    if (!c) continue;
+    requests.push({ repeatCell: { range: { sheetId, startRowIndex: fc.row, endRowIndex: fc.row + 1, startColumnIndex: fc.col, endColumnIndex: fc.col + 1 }, cell: { userEnteredFormat: { backgroundColor: c } }, fields: 'userEnteredFormat.backgroundColor' } });
+  }
+  await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });
+}
+
+/**
+ * Reconcile an order and write the review tab to the 2026 Production Numbers sheet.
+ * Rewrites the tab each call (produced now, received once Warehance receiving lands).
+ */
+async function writeReconciliationSheet({ orderRef, spreadsheetId, today }) {
+  const reconcile = await reconcileProductionOrder(orderRef);
+  const resolve = await buildSkuResolver(reconcile.lines.map((l) => l.sku));
+  const catalog = await loadCatalogSkus();
+  const dateStr = today || new Date().toISOString().slice(0, 10);
+  const built = buildReconcileRows(reconcile, resolve, dateStr, { catalog });
+  const sheetId = spreadsheetId || SHEET_ID;
+  const tabName = `Reconcile — ${reconcile.order.production_code}`;
+  const sheets = await getSheetsClient();
+  await writeReconcileTab(sheets, sheetId, tabName, built);
+  return {
+    tab_name: tabName,
+    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
+    order: reconcile.order, totals: reconcile.totals, flag_counts: reconcile.flag_counts,
+    anomalies: built.anomalies,
+  };
+}
+
 // --- Warehance upload / receiving poll --------------------------------------
 
 /**
@@ -365,6 +440,7 @@ module.exports = {
   amendOrder,
   createInboundShipmentFromPackingList,
   reconcileProductionOrder,
+  writeReconciliationSheet,
   uploadInboundToWarehance,
   pollInboundReceiving,
   resolveOrder,
