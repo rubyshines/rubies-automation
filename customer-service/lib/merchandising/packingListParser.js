@@ -127,11 +127,14 @@ function parsePackingList(input, opts = {}) {
   };
 }
 
-// Correct a supplier mislabel by rewriting a SKU's prefix (from -> to), optionally only
+// Correct a supplier SKU error by rewriting a line's SKU (from -> to), optionally only
 // for lines whose packing-list section header matches `section` (case-insensitive
-// substring). Use when a factory barcodes a product under the WRONG prefix — e.g. the
-// Evey sports bra shipped under `SB` (the Ava bra's prefix) when it should be `SPB`.
-// Scoping by section keeps it from ever touching a genuinely-`SB` Ava line.
+// substring). Two forms of rule:
+//   - PREFIX rule: `from` is a bare prefix (no hyphen) -> rewrites the prefix, keeping
+//     the color/size. E.g. {from:'SB', to:'SPB', section:'sports bra'} fixes the Evey
+//     sports bra shipped under the Ava bra's `SB` prefix, without touching real Ava lines.
+//   - EXACT rule: `from` is a full SKU (has a hyphen) -> rewrites that one SKU to `to`.
+//     E.g. {from:'MIA-BLK-11', to:'MIA-BLK-10'} fixes a factory size typo.
 // @param items {sku, qty, section?}[]  @param remap {from, to, section?}[]
 function applySkuRemap(items, remap) {
   if (!remap || !remap.length) return { items, rewritten: [] };
@@ -139,13 +142,21 @@ function applySkuRemap(items, remap) {
   const out = items.map((it) => {
     for (const rule of remap) {
       const from = String(rule.from || '').toUpperCase();
-      const to = String(rule.to || '').toUpperCase();
+      const to = String(rule.to || '');
       if (!from || !to) continue;
-      if (String(it.sku).split('-')[0].toUpperCase() !== from) continue;
       if (rule.section && !String(it.section || '').toLowerCase().includes(String(rule.section).toLowerCase())) continue;
-      const nextSku = String(it.sku).replace(new RegExp(`^${from}-`, 'i'), `${to}-`);
-      rewritten.push({ from: it.sku, to: nextSku, qty: it.qty });
-      return { ...it, sku: nextSku };
+      const sku = String(it.sku);
+      const exact = from.includes('-'); // full SKU vs bare prefix
+      let nextSku = null;
+      if (exact) {
+        if (sku.toUpperCase() === from) nextSku = to;
+      } else if (sku.split('-')[0].toUpperCase() === from) {
+        nextSku = sku.replace(new RegExp(`^${from}-`, 'i'), `${to}-`);
+      }
+      if (nextSku && nextSku !== sku) {
+        rewritten.push({ from: sku, to: nextSku, qty: it.qty });
+        return { ...it, sku: nextSku };
+      }
     }
     return it;
   });

@@ -179,6 +179,17 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     .upsert(itemRows, { onConflict: 'inbound_shipment_id,sku' });
   if (iErr) throw new Error(`upsert inbound_shipment_items: ${iErr.message}`);
 
+  // Orphan cleanup: drop any prior lines for this shipment no longer in the packing
+  // list (e.g. after a corrected re-run where a SKU was remapped away). Scoped to this
+  // shipment + a NOT IN the current set, so it's concurrency-safe (per technical rules).
+  if (canon.length) {
+    const keep = canon.map((it) => it.sku);
+    const { error: dErr } = await sb.from('inbound_shipment_items')
+      .delete().eq('inbound_shipment_id', ship.id)
+      .not('sku', 'in', `(${keep.map((s) => `"${s}"`).join(',')})`);
+    if (dErr) throw new Error(`orphan cleanup inbound_shipment_items: ${dErr.message}`);
+  }
+
   // Mirror produced qty onto matched order lines (qty_produced), for the 3-way view.
   let producedSet = 0;
   if (order) {

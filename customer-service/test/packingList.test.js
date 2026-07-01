@@ -88,3 +88,14 @@ test('applySkuRemap with no rules is a no-op', () => {
   assert.deepEqual(applySkuRemap(items, []).items, items);
   assert.deepEqual(applySkuRemap(items).rewritten, []);
 });
+
+test('applySkuRemap: exact-SKU rule fixes a single size typo, leaves siblings alone', () => {
+  const items = [
+    { sku: 'MIA-BLK-11', qty: 29, section: 'MIA HALTER BIKINI TOP - BLK' }, // typo for 10
+    { sku: 'MIA-BLK-XL', qty: 29, section: 'MIA HALTER BIKINI TOP - BLK' },
+  ];
+  const { items: out, rewritten } = applySkuRemap(items, [{ from: 'MIA-BLK-11', to: 'MIA-BLK-10' }]);
+  assert.equal(out[0].sku, 'MIA-BLK-10');
+  assert.equal(out[1].sku, 'MIA-BLK-XL'); // sibling untouched (exact match only)
+  assert.deepEqual(rewritten, [{ from: 'MIA-BLK-11', to: 'MIA-BLK-10', qty: 29 }]);
+});
