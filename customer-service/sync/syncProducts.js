@@ -132,8 +132,12 @@ async function run() {
     cursor = pageInfo.endCursor;
   }
 
-  const activeProducts = allProducts.filter(p => p.status === 'ACTIVE');
-  console.log(`  Fetched ${activeProducts.length} active products from Shopify`);
+  // Sync ACTIVE and DRAFT products (exclude only ARCHIVED). Drafts are not on the
+  // storefront but must be visible to internal tools while a new product is built.
+  // Customer-facing surfaces (productCache, inventory projections, snapshots) filter
+  // to status='ACTIVE' themselves, so drafts never reach customers.
+  const activeProducts = allProducts.filter(p => p.status !== 'ARCHIVED');
+  console.log(`  Fetched ${activeProducts.length} products from Shopify (active + draft)`);
 
   // 2. Build product rows
   const productRows = activeProducts.map(p => {
