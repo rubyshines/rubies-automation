@@ -287,10 +287,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       showSidebarQueue();
     }
 
-    // j/k or Alt+Arrow for next/prev ticket (only when not typing)
-    if (!inTextField && currentTicketId) {
-      if (e.key === 'j' || (e.altKey && e.key === 'ArrowDown')) { navigateTicket(1); e.preventDefault(); }
-      if (e.key === 'k' || (e.altKey && e.key === 'ArrowUp')) { navigateTicket(-1); e.preventDefault(); }
+    // j/k or Alt+Arrow for next/prev item (only when not typing). Routes to the
+    // active panel's queue so cycling works the same on tickets, outreach, and
+    // free swimwear.
+    if (!inTextField) {
+      const down = e.key === 'j' || (e.altKey && e.key === 'ArrowDown');
+      const up = e.key === 'k' || (e.altKey && e.key === 'ArrowUp');
+      if (down || up) {
+        if (currentTab === 'outreach' && outreachSelectedId) { navigateOutreach(down ? 1 : -1); e.preventDefault(); }
+        else if (currentTab === 'swimwear' && swimwearSelectedId != null) { navigateSwimwear(down ? 1 : -1); e.preventDefault(); }
+        else if (currentTicketId) { navigateTicket(down ? 1 : -1); e.preventDefault(); }
+      }
     }
   });
 
@@ -4985,6 +4992,35 @@ async function selectOutreachEntry(companyId) {
   }
 }
 
+// j/k cycling between companies in the outreach queue (mirrors navigateTicket).
+function navigateOutreach(direction) {
+  if (!outreachSelectedId || !outreachQueue.length) return;
+  const idx = outreachQueue.findIndex(e => e.company_id === outreachSelectedId);
+  if (idx === -1) return;
+  const nextIdx = idx + direction;
+  if (nextIdx >= 0 && nextIdx < outreachQueue.length) selectOutreachEntry(outreachQueue[nextIdx].company_id);
+}
+
+// Drop the acted-on company and move selection to the next one, so you can rip
+// through the queue without bouncing back to the placeholder after every send
+// or dismiss (mirrors swimwearAdvancePast). Local/optimistic — the queue isn't
+// auto-polled, so there's nothing to resurrect the removed row.
+function outreachAdvancePast(companyId) {
+  const idx = outreachQueue.findIndex(e => e.company_id === companyId);
+  const next = outreachQueue[idx + 1] || outreachQueue[idx - 1] || null;
+  outreachQueue = outreachQueue.filter(e => e.company_id !== companyId);
+  outreachDraft = null;
+  outreachSendPreview = null;
+  renderOutreachQueue();
+  if (next) {
+    selectOutreachEntry(next.company_id);
+  } else {
+    outreachSelectedId = null;
+    document.getElementById('outreach-detail').style.display = 'none';
+    document.getElementById('outreach-placeholder').style.display = 'flex';
+  }
+}
+
 function outreachListHtml(title, items, cls) {
   return `<div class="outreach-list ${cls}">
     <div class="outreach-field-label">${title}</div>
@@ -5073,19 +5109,16 @@ async function regenerateOutreachDraft() {
 
 async function dismissOutreachDraft() {
   if (!outreachDraft) return;
+  const companyId = outreachSelectedId;
+  const draftId = outreachDraft.id;
   try {
-    await api(`/api/b2b/drafts/${outreachDraft.id}/dismiss`, { method: 'POST', body: {} });
-    showToast(`Draft #${outreachDraft.id} dismissed`, 'success');
+    await api(`/api/b2b/drafts/${draftId}/dismiss`, { method: 'POST', body: {} });
+    showToast(`Draft #${draftId} dismissed`, 'success');
   } catch (err) {
     showToast(`Dismiss failed: ${err.message}`, 'error');
     return;
   }
-  outreachDraft = null;
-  outreachSelectedId = null;
-  outreachSendPreview = null;
-  document.getElementById('outreach-detail').style.display = 'none';
-  document.getElementById('outreach-placeholder').style.display = 'flex';
-  loadOutreachQueue();
+  outreachAdvancePast(companyId); // advance to the next company in the queue
 }
 
 // Phase 1: always preview first. The response includes gate_enabled so the
@@ -5158,12 +5191,7 @@ async function outreachConfirmSend() {
   }
   if (res.phase === 'sent') {
     showToast(`Sent to ${res.to}`, 'success');
-    outreachDraft = null;
-    outreachSelectedId = null;
-    outreachSendPreview = null;
-    document.getElementById('outreach-detail').style.display = 'none';
-    document.getElementById('outreach-placeholder').style.display = 'flex';
-    loadOutreachQueue();
+    outreachAdvancePast(outreachSelectedId); // advance to the next company
   } else if (res.phase === 'blocked') {
     // The gate is off by design — state it plainly, not as an error.
     resultEl.innerHTML = `<div class="outreach-gate-note">${esc(res.error)}</div>`;
@@ -5655,6 +5683,15 @@ function renderSwimwearDetail(r) {
     ${swimwearField('First reaction', r.first_reaction)}
     ${swimwearField('Suggestions', r.suggestions)}
   `;
+}
+
+// j/k cycling between applications in the swimwear queue (mirrors navigateTicket).
+function navigateSwimwear(direction) {
+  if (swimwearSelectedId == null || !swimwearQueue.length) return;
+  const idx = swimwearQueue.findIndex(r => r.id === swimwearSelectedId);
+  if (idx === -1) return;
+  const nextIdx = idx + direction;
+  if (nextIdx >= 0 && nextIdx < swimwearQueue.length) selectSwimwear(swimwearQueue[nextIdx].id);
 }
 
 // Move selection to the next item in the queue and drop the acted-on row, so
