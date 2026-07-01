@@ -24,7 +24,7 @@ const { getSheetsClient } = require('../../../shared/googleSheetsClient');
 const { getSupplierByName } = require('./supplierRegistry');
 const { nextProductionCode } = require('./productionCode');
 const { parseProductionSheet } = require('./productionSheetParser');
-const { parsePackingList } = require('./packingListParser');
+const { parsePackingList, applySkuRemap } = require('./packingListParser');
 const { loadCatalogSkus, canonicalizeItems } = require('./skuCanonical');
 const warehance = require('../../../reports/lib/warehanceClient');
 
@@ -147,11 +147,12 @@ async function amendOrder({ orderRef, items }) {
  * @param {string} [p.transferNumber] - unique shipment ref (defaults to <production_code>)
  * @param {string} [p.shipDate] / [p.expectedArrival] - YYYY-MM-DD
  */
-async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, shipDate, expectedArrival, warehouse }) {
+async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, shipDate, expectedArrival, warehouse, remap }) {
   const sb = getSupabaseClient();
   const parsed = parsePackingList(packingListPath);
+  const { items: remappedItems, rewritten } = applySkuRemap(parsed.items, remap);
   const catalog = await loadCatalogSkus();
-  const { items: canon, remapped, unknown } = canonicalizeItems(parsed.items, catalog);
+  const { items: canon, remapped, unknown } = canonicalizeItems(remappedItems, catalog);
 
   const order = orderRef != null ? await resolveOrder(orderRef) : null;
   if (orderRef != null && !order) throw new Error(`order "${orderRef}" not found`);
@@ -197,6 +198,7 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     packing: { ...parsed.totals, subtotal_units: parsed.subtotal_units },
     sections: parsed.sections,
     canonical_sku_count: canon.length,
+    prefix_remapped: rewritten,
     remapped,
     unknown,
     qty_produced_set: producedSet,

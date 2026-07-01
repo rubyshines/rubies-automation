@@ -65,6 +65,7 @@ function parsePackingList(input, opts = {}) {
   }
 
   const bySku = new Map();
+  const sectionOf = new Map();  // sku -> the product/color header it first appeared under
   const sections = [];
   const warnings = [];
   const cartonNos = new Set();
@@ -84,6 +85,7 @@ function parsePackingList(input, opts = {}) {
     if (isSku(c0)) {
       if (qty == null) { warnings.push(`Row ${i + 1}: SKU ${c0} has no quantity`); continue; }
       bySku.set(c0, (bySku.get(c0) || 0) + qty);
+      if (!sectionOf.has(c0)) sectionOf.set(c0, curSection ? curSection.name : '');
       units += qty;
       if (curSection) curSection.units += qty;
       const carton = r[cols.carton];
@@ -103,7 +105,7 @@ function parsePackingList(input, opts = {}) {
     sections.push(curSection);
   }
 
-  const items = [...bySku.entries()].map(([sku, qty]) => ({ sku, qty }));
+  const items = [...bySku.entries()].map(([sku, qty]) => ({ sku, qty, section: sectionOf.get(sku) || '' }));
 
   if (subtotalUnits && subtotalUnits !== units) {
     warnings.push(`Checksum: SKU rows sum to ${units} but supplier subtotals sum to ${subtotalUnits}`);
@@ -125,4 +127,29 @@ function parsePackingList(input, opts = {}) {
   };
 }
 
-module.exports = { parsePackingList, isSku };
+// Correct a supplier mislabel by rewriting a SKU's prefix (from -> to), optionally only
+// for lines whose packing-list section header matches `section` (case-insensitive
+// substring). Use when a factory barcodes a product under the WRONG prefix — e.g. the
+// Evey sports bra shipped under `SB` (the Ava bra's prefix) when it should be `SPB`.
+// Scoping by section keeps it from ever touching a genuinely-`SB` Ava line.
+// @param items {sku, qty, section?}[]  @param remap {from, to, section?}[]
+function applySkuRemap(items, remap) {
+  if (!remap || !remap.length) return { items, rewritten: [] };
+  const rewritten = [];
+  const out = items.map((it) => {
+    for (const rule of remap) {
+      const from = String(rule.from || '').toUpperCase();
+      const to = String(rule.to || '').toUpperCase();
+      if (!from || !to) continue;
+      if (String(it.sku).split('-')[0].toUpperCase() !== from) continue;
+      if (rule.section && !String(it.section || '').toLowerCase().includes(String(rule.section).toLowerCase())) continue;
+      const nextSku = String(it.sku).replace(new RegExp(`^${from}-`, 'i'), `${to}-`);
+      rewritten.push({ from: it.sku, to: nextSku, qty: it.qty });
+      return { ...it, sku: nextSku };
+    }
+    return it;
+  });
+  return { items: out, rewritten };
+}
+
+module.exports = { parsePackingList, isSku, applySkuRemap };

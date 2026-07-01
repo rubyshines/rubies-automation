@@ -82,11 +82,11 @@ async function handleAmend({ order_ref, tabs, items }) {
   ].filter(Boolean).join('\n'));
 }
 
-async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse }) {
+async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse, remap }) {
   if (!packing_list_path) return err('`packing_list_path` (path to the supplier .xlsx) is required.');
   const r = await createInboundShipmentFromPackingList({
     packingListPath: packing_list_path, orderRef: order_ref, transferNumber: transfer_number,
-    shipDate: ship_date, expectedArrival: expected_arrival, warehouse,
+    shipDate: ship_date, expectedArrival: expected_arrival, warehouse, remap,
   });
   const p = r.packing;
   const out = [
@@ -95,6 +95,7 @@ async function handleReceive({ packing_list_path, order_ref, transfer_number, sh
     `**Packing:** ${p.units.toLocaleString()} units · ${p.sku_count} SKUs · ${p.cartons} cartons · ${p.cbm} CBM · ${p.gross_weight_kg} kg gross`,
     `Canonical SKUs: ${r.canonical_sku_count} (${r.remapped.length} size-alias remaps applied)`,
   ];
+  if (r.prefix_remapped && r.prefix_remapped.length) out.push(`🔁 **${r.prefix_remapped.length} prefix correction(s)** applied: ${r.prefix_remapped.map((x) => `${x.from}→${x.to}`).join(', ')}`);
   if (r.unknown.length) out.push(`⚠️ **${r.unknown.length} unknown SKU(s)** (no catalog match — review): ${r.unknown.map((u) => `${u.sku}=${u.qty}`).join(', ')}`);
   if (r.parse_warnings.length) out.push('⚠️ ' + r.parse_warnings.join('\n⚠️ '));
   if (r.reconciliation) out.push('\n' + reconcileBlock(r.reconciliation));
@@ -173,6 +174,11 @@ module.exports = [
         ship_date: { type: 'string', description: 'YYYY-MM-DD' },
         expected_arrival: { type: 'string', description: 'YYYY-MM-DD' },
         warehouse: { type: 'string', description: "Destination warehouse name. Default 'Nitro Logistics AMU'." },
+        remap: {
+          type: 'array',
+          description: "Prefix corrections for a supplier mislabel — rewrite a SKU prefix (from->to), optionally scoped to a packing-list section. E.g. the Evey sports bra shipped under the Ava bra's prefix: [{\"from\":\"SB\",\"to\":\"SPB\",\"section\":\"sports bra\"}]. Section-scoping prevents touching genuine SB (Ava) lines.",
+          items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, section: { type: 'string', description: 'Case-insensitive substring the packing-list section header must contain for the rule to apply.' } }, required: ['from', 'to'] },
+        },
       },
       required: ['packing_list_path'],
     },
