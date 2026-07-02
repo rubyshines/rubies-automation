@@ -153,8 +153,16 @@ async function logout() {
 
 let _autoRefreshInterval = null;
 const _actionsInFlight = new Set(); // ticket IDs with pending background actions
-let _lastStatsJson = '';
 let _visibilityDebounce = null;
+
+// A ticket is "in progress" (not yet actionable) when an action you fired is
+// mid-flight, or the advisor is still drafting server-side (an open ticket with
+// no active draft yet: fresh intake, or a reopened ticket awaiting regen). These
+// show as a "working" row badge + a tab dot, and are excluded from the actionable
+// tab count — a number you can't act on yet is what made the count confusing.
+function isTicketInProgress(t) {
+  return _actionsInFlight.has(t.id) || (t.status === 'open' && !t.active_draft_id);
+}
 
 // Tickets optimistically removed from the queue (actioned locally) that the
 // server snapshot may still return until its status flip lands in Gorgias +
@@ -198,21 +206,21 @@ function startAutoRefresh() {
   });
 }
 
+// Non-ticket-queue tabs (their own panels own the sidebar, so loadTicketQueue
+// must not clobber it) plus search (its results replace the tab queue).
+const NON_QUEUE_TABS = ['adhoc', 'outreach', 'swimwear'];
+
 async function autoRefreshTick() {
+  // Skip while an action is settling so the optimistic removal isn't undone
+  // mid-flight (the tombstone handles the post-settle window).
   if (_actionsInFlight.size > 0) return;
-  try {
-    const res = await fetch('/api/tickets/stats');
-    if (res.status === 401) return; // session expired, checkAuth handles redirect
-    const stats = await res.json();
-    const json = JSON.stringify(stats);
-    if (json !== _lastStatsJson) {
-      _lastStatsJson = json;
-      // Don't replace search results with the tab queue on a background tick,
-      // and don't fetch the ticket queue while a non-ticket tab is showing.
-      if (!searchActive && !['adhoc', 'outreach'].includes(currentTab)) loadTicketQueue();
-      loadStats();
-    }
-  } catch { /* network error — skip this tick */ }
+  // Always refresh the current tab's list AND the counts every tick. The old
+  // gate only refreshed when the stats *counts* changed, which missed same-count
+  // churn (one new ticket replacing another) — the list went stale while the
+  // badge still read correctly. loadTicketQueue owns the active tab's number so
+  // the badge can never disagree with what's actually rendered.
+  if (!searchActive && !NON_QUEUE_TABS.includes(currentTab)) loadTicketQueue();
+  loadStats();
 }
 
 // ---------------------------------------------------------------------------
@@ -515,6 +523,11 @@ async function loadTicketQueue() {
 
     currentQueueTicketIds = visibleTickets.map(t => t.id);
 
+    // Own the active tab's badge here (not from loadStats) so the number equals
+    // what's actually rendered — tombstoned/optimistic removals included, and
+    // still-drafting tickets counted as a dot rather than an actionable number.
+    updateActiveTabCount(visibleTickets);
+
     const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
     const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
     // Closed tab gets a filter row (the "AUTO only" chip) above the cards
@@ -568,10 +581,9 @@ function ticketCardHtml(t) {
   const readClass = isUnread ? 'unread' : 'read';
 
   // In progress: an action you fired is mid-flight, OR the advisor is still
-  // drafting server-side (an open ticket with no active draft = fresh intake
-  // generating the first draft, or a reopened ticket awaiting regen). Flag it so
-  // you don't open a half-baked ticket without realizing it's still cooking.
-  const isGenerating = _actionsInFlight.has(t.id) || (t.status === 'open' && !t.active_draft_id);
+  // drafting server-side (see isTicketInProgress). Flag it so you don't open a
+  // half-baked ticket without realizing it's still cooking.
+  const isGenerating = isTicketInProgress(t);
 
   // Row 2: secondary badges (only shown when there's content)
   const row2Parts = [];
@@ -3496,32 +3508,69 @@ async function returnToInbox(classification) {
 // Stats
 // ---------------------------------------------------------------------------
 
+// Tabs whose badge is a rendered ticket queue. The active one is owned by
+// loadTicketQueue (client-derived actionable count + tombstones); loadStats sets
+// the rest from the server so it never fights loadTicketQueue on the live tab.
+const QUEUE_TABS = ['new', 'followup', 'onme', 'parked', 'snoozed'];
+
+// Toggle the "something's cooking" dot on a tab (top nav + mobile bottom nav).
+function setTabProgress(tab, on) {
+  document.querySelectorAll(`.tab[data-tab="${tab}"], .bottom-tab[data-bottom-tab="${tab}"]`)
+    .forEach(el => el.classList.toggle('tab-has-progress', !!on));
+}
+
 async function loadStats() {
   try {
     const s = await api('/api/tickets/stats');
+    // Actionable = total minus still-drafting. The pill and the tab numbers show
+    // only what you can act on now; in-progress surfaces as a dot instead.
+    const newActionable = Math.max(0, s.new - (s.new_in_progress || 0));
+    const followupActionable = Math.max(0, s.followup - (s.followup_in_progress || 0));
+
     const parts = [];
-    if (s.new > 0) parts.push(`${s.new} new`);
-    if (s.followup > 0) parts.push(`${s.followup} follow-up${s.followup > 1 ? 's' : ''}`);
+    if (newActionable > 0) parts.push(`${newActionable} new`);
+    if (followupActionable > 0) parts.push(`${followupActionable} follow-up${followupActionable > 1 ? 's' : ''}`);
     document.getElementById('stat-attention').textContent = parts.length ? parts.join(', ') : 'All clear';
 
-    // Update tab badges (top nav + mobile bottom nav)
-    const setCount = (id, value) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = value || '';
+    // Set a tab's number on both the top nav and the mobile bottom nav, but skip
+    // the active queue tab — loadTicketQueue owns it (so tombstoned/optimistic
+    // removals are reflected and the number matches the rendered list exactly).
+    const setTabCount = (tab, value) => {
+      if (tab === currentTab && QUEUE_TABS.includes(tab)) return;
+      const v = value || '';
+      const top = document.getElementById(`tab-count-${tab}`);
+      const bot = document.getElementById(`bottom-count-${tab}`);
+      if (top) top.textContent = v;
+      if (bot) bot.textContent = v;
     };
-    setCount('tab-count-new', s.new);
-    setCount('tab-count-followup', s.followup);
-    setCount('tab-count-onme', s.onme);
-    setCount('tab-count-parked', s.parked);
-    setCount('tab-count-snoozed', s.snoozed);
-    setCount('bottom-count-new', s.new);
-    setCount('bottom-count-followup', s.followup);
-    setCount('bottom-count-onme', s.onme);
-    setCount('bottom-count-parked', s.parked);
-    setCount('bottom-count-snoozed', s.snoozed);
+    setTabCount('new', newActionable);
+    setTabCount('followup', followupActionable);
+    setTabCount('onme', s.onme);
+    setTabCount('parked', s.parked);
+    setTabCount('snoozed', s.snoozed);
+
+    // In-progress dots (only new/followup ever have drafting tickets). Skip the
+    // active tab — loadTicketQueue sets its dot from the rendered list.
+    if (currentTab !== 'new') setTabProgress('new', (s.new_in_progress || 0) > 0);
+    if (currentTab !== 'followup') setTabProgress('followup', (s.followup_in_progress || 0) > 0);
   } catch (err) {
     console.error('Stats failed:', err);
   }
+}
+
+// The active queue tab's badge, derived from the tickets actually rendered:
+// number = actionable (visible minus in-progress), dot = any in-progress. Called
+// by loadTicketQueue on every refresh so the badge and the list can't disagree.
+function updateActiveTabCount(visibleTickets) {
+  if (!QUEUE_TABS.includes(currentTab)) return; // closed has no badge
+  const inProgress = visibleTickets.filter(isTicketInProgress).length;
+  const actionable = visibleTickets.length - inProgress;
+  const v = actionable || '';
+  const top = document.getElementById(`tab-count-${currentTab}`);
+  const bot = document.getElementById(`bottom-count-${currentTab}`);
+  if (top) top.textContent = v;
+  if (bot) bot.textContent = v;
+  if (currentTab === 'new' || currentTab === 'followup') setTabProgress(currentTab, inProgress > 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -155,6 +155,25 @@ nav { display: flex; gap: 2px; }
 }
 .tab-onme { color: #d97706; }
 .tab-onme.active { color: var(--text); }
+
+/* "Something's cooking" dot: a ticket on this tab is still drafting. Shown next
+   to the count, or alone when the actionable count is 0 (the count span hides
+   when empty). Deliberately not a number — you can't act on it yet. */
+.tab.tab-has-progress::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: #3b82f6;
+  vertical-align: middle;
+  animation: tab-progress-pulse 1.4s ease-in-out infinite;
+}
+@keyframes tab-progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
 .tab-onme .tab-count { background: #fef3c7; color: #d97706; }
 .tab-onme.active .tab-count { background: #d97706; color: white; }
 .btn-onme { color: #d97706; border-color: #fcd34d; }
@@ -5130,6 +5149,20 @@ main { height: calc(100vh - 56px); }
     line-height: 1.4;
   }
   .bottom-tab-count:empty { display: none; }
+
+  /* In-progress dot for the mobile bottom nav — corner dot so it reads even
+     when the actionable count is 0. */
+  .bottom-tab.tab-has-progress::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    right: 22%;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #3b82f6;
+    animation: tab-progress-pulse 1.4s ease-in-out infinite;
+  }
 
   .bottom-more-popover {
     position: absolute;

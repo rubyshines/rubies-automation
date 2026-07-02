@@ -2547,7 +2547,7 @@ async function apiSearchTickets(query) {
 async function apiGetTicketStats() {
   const supabase = getSupabaseClient();
 
-  const [newResult, followupResult, onmeResult, parkedResult, snoozedResult] = await Promise.all([
+  const [newResult, followupResult, onmeResult, parkedResult, snoozedResult, newGenResult, followupGenResult] = await Promise.all([
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'open').eq('has_agent_reply', false),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
@@ -2558,6 +2558,14 @@ async function apiGetTicketStats() {
       .eq('status', 'parked'),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'snoozed'),
+    // In-progress = the advisor is still drafting (open ticket, no active draft
+    // yet: fresh intake or a reopened ticket awaiting regen). These are counted
+    // separately so the dashboard shows them as a "working" dot, not folded into
+    // the actionable number (which would be a count you can't yet act on).
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'open').eq('has_agent_reply', false).is('active_draft_id', null),
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .eq('status', 'open').eq('has_agent_reply', true).is('active_draft_id', null),
   ]);
 
   return {
@@ -2566,6 +2574,8 @@ async function apiGetTicketStats() {
     onme: onmeResult.count || 0,
     parked: parkedResult.count || 0,
     snoozed: snoozedResult.count || 0,
+    new_in_progress: newGenResult.count || 0,
+    followup_in_progress: followupGenResult.count || 0,
   };
 }
 
