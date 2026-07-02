@@ -44,9 +44,12 @@ function extractRichText(val) {
 
 function mapMetafields(metafields) {
   return {
-    collections: toArray(metafields.collections),
-    categories: toArray(metafields.categories),
-    age_groups: toArray(metafields.age_groups),
+    // Live Shopify keys are product_collection / product_category / product_age
+    // (the older collections/categories/age_groups keys no longer exist, which
+    // left these columns empty for every product). Column names kept as-is.
+    collections: toArray(metafields.product_collection),
+    categories: toArray(metafields.product_category),
+    age_groups: toArray(metafields.product_age),
     kid_sizes: toArray(metafields.kid_sizes),
     adult_sizes: toArray(metafields.adult_sizes),
     kid_colors: toArray(metafields.kid_colors),
@@ -132,8 +135,12 @@ async function run() {
     cursor = pageInfo.endCursor;
   }
 
-  const activeProducts = allProducts.filter(p => p.status === 'ACTIVE');
-  console.log(`  Fetched ${activeProducts.length} active products from Shopify`);
+  // Sync ACTIVE and DRAFT products (exclude only ARCHIVED). Drafts are not on the
+  // storefront but must be visible to internal tools while a new product is built.
+  // Customer-facing surfaces (productCache, inventory projections, snapshots) filter
+  // to status='ACTIVE' themselves, so drafts never reach customers.
+  const activeProducts = allProducts.filter(p => p.status !== 'ARCHIVED');
+  console.log(`  Fetched ${activeProducts.length} products from Shopify (active + draft)`);
 
   // 2. Build product rows
   const productRows = activeProducts.map(p => {

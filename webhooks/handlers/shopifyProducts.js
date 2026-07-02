@@ -7,14 +7,17 @@
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { normalizeProductRow, normalizeVariantRow } = require('../lib/normalize');
+const { normalizeProductRow, normalizeVariantRow, toGid } = require('../lib/normalize');
 
 async function handle(topic, payload) {
   const supabase = getSupabaseClient();
 
-  // Skip non-active products
-  if (payload.status && payload.status.toLowerCase() !== 'active') {
-    console.log(`[shopify-products] Skipping ${payload.status} product: ${payload.title}`);
+  // Sync ACTIVE and DRAFT (drafts must be visible to internal tools while a new
+  // product is built; customer-facing surfaces filter to ACTIVE themselves).
+  // ARCHIVED products are removed from the cache, matching the batch sync cleanup.
+  if (payload.status && payload.status.toLowerCase() === 'archived') {
+    console.log(`[shopify-products] Removing archived product: ${payload.title}`);
+    await supabase.from('products').delete().eq('shopify_product_id', toGid('Product', payload.id));
     return;
   }
 

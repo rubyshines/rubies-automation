@@ -27,9 +27,11 @@ function extractRichText(val) {
 
 function mapMetafields(metafields) {
   return {
-    collections: toArray(metafields.collections),
-    categories: toArray(metafields.categories),
-    age_groups: toArray(metafields.age_groups),
+    // Live keys are product_collection / product_category / product_age (kept in
+    // sync with customer-service/sync/syncProducts.js mapMetafields).
+    collections: toArray(metafields.product_collection),
+    categories: toArray(metafields.product_category),
+    age_groups: toArray(metafields.product_age),
     kid_sizes: toArray(metafields.kid_sizes),
     adult_sizes: toArray(metafields.adult_sizes),
     kid_colors: toArray(metafields.kid_colors),
