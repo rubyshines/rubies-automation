@@ -3,7 +3,7 @@ name: Production Pipeline
 description: End-to-end manufacturing workflow — inventory projections, production orders, pre-orders, QC, Warehance receiving
 type: project
 domains: [product_design, inventory, logistics]
-last_updated: 2026-06-28
+last_updated: 2026-07-03
 ---
 
 ## Goal
@@ -14,11 +14,14 @@ Connect the various scripts and processes into one cohesive production pipeline:
 2. Production order generation — design complete (part of Phase 1 plan above)
 3. Pre-order setup — **sheet→web push built** (`sync_pre_orders`); remaining: auto-populate `us-YYYY-MM-DD` tabs from a confirmed production order
 4. QC spreadsheet generation for third-party inspector
-5. Warehance receiving upload + received vs ordered reconciliation
+5. Warehance receiving upload + received vs ordered reconciliation — **built (branch `wt/merch-receiving`): packing-list → inbound shipment → lots (ship/held) → 3-way reconcile → founder review sheet; Warehance ASN upload built, not yet run live**
 6. Graded spec collection — started (shared with product design initiatives)
 
 ## Current Status
 Phase 1+2 design locked June 2026. Existing `rubies-utilities` projection script identified as the baseline; new version rebuilds against Supabase, adds OOS-adjusted velocity, supplier registry, and `get_at_risk_skus` query tool. Phase 3 partially delivered 2026-06-24: the sheet→Shopify pre-order push is built (`sync_pre_orders` tool + `scripts/syncPreOrders.js`) and run live across the catalog — it reads the same `us-YYYY-MM-DD` sheet the projection engine uses and reconciles pre-order metafields + inventory policy. Remaining Phase 3 work is auto-populating those tabs from a confirmed production order. Phases 4-6 not yet started.
+
+## July 2026 Update — Phase 5 receiving built + run live (branch `wt/merch-receiving`)
+Built the full inbound-receiving side and exercised it on Kali's real 2026 shipment (order backfilled as `KALI-2601`). Flow: parse supplier packing-list `.xlsx` → catalog-validated SKU correction (size aliases + section-scoped supplier prefix/typo fixes) → `inbound_shipments`/`_items` → `production_lots` (ship vs held; flagged e.g. pink-sticker) → 3-way reconcile (ordered→produced→shipped→received) with anomaly + fabric flags → disposable "Reconcile — <code>" review tab in the 2026 Production Numbers sheet → Warehance ASN (`POST /inbound-shipments`, built not yet run live). 8 MCP tools, `merchandising_v3.sql` (`production_lots`) applied. Detail in `domain_logistics.md` Key Decisions. Live learnings this run: (1) the sports bra had **no catalog product** and was barcoded under the Ava bra's `SB` prefix — fixed to `SPB` (Kali corrected at source; still need the Shopify product created); (2) a `MIA-BLK-11` size typo → `MIA-BLK-10`; (3) the June thin-black-fabric issue → 7 SKUs / 628 units recorded as a `pink_sticker` held-quality test batch. Idempotent re-run against Kali's officially-updated list matched our corrections exactly. **Open:** create the Evey `SPB-*` product; Kali's held-unit quantities; deploy.
 
 ## Decisions Made
 - **Supabase as canonical store for projection output.** Results written to `inventory_projections` table (upsert by SKU per run). Google Sheets output is optional view only.

@@ -162,6 +162,93 @@ async function cancelOrder(warehanceOrderId) {
 }
 
 /**
+ * Generic POST to the Warehance API.
+ */
+async function apiPost(path, body) {
+  if (!API_KEY) throw new Error('WAREHANCE_API_KEY not set');
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'X-API-KEY': API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Warehance POST ${path} ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+// -------------------------------------------------------------------------
+// Inbound shipments (ASN / receiving)
+// -------------------------------------------------------------------------
+
+/**
+ * Fetch the configured warehouses. Returns array of { id, name, ... }.
+ */
+async function fetchWarehouses() {
+  const json = await apiFetch('/warehouses');
+  return json.data?.warehouses || json.warehouses || json.data || [];
+}
+
+/**
+ * Resolve a warehouse id by name. Honors WAREHANCE_WAREHOUSE_ID as an override so a
+ * live run never depends on a name-match. Throws if it can't resolve one.
+ */
+async function resolveWarehouseId(name) {
+  if (process.env.WAREHANCE_WAREHOUSE_ID) return Number(process.env.WAREHANCE_WAREHOUSE_ID);
+  const warehouses = await fetchWarehouses();
+  if (name) {
+    const hit = warehouses.find((w) => String(w.name).toLowerCase() === String(name).toLowerCase());
+    if (hit) return hit.id;
+  }
+  if (warehouses.length === 1) return warehouses[0].id;
+  throw new Error(`Could not resolve a Warehance warehouse_id for "${name}" — set WAREHANCE_WAREHOUSE_ID or pass an exact warehouse name. Available: ${warehouses.map((w) => w.name).join(', ')}`);
+}
+
+/**
+ * Create an inbound shipment (ASN). Items key on Warehance product_id, not SKU.
+ * @param {object} p
+ * @param {number} p.warehouseId
+ * @param {{product_id:number, ordered:number}[]} p.items
+ * @param {string} [p.referenceNumber]
+ * @param {string} [p.trackingNumber]
+ * @param {string} [p.shipDate] - ISO 8601
+ * @param {string} [p.expectedDate] - ISO 8601
+ * @param {number} [p.clientId] - required for organization-level API keys
+ * @returns {Promise<{id:number}>} the created shipment id
+ */
+async function createInboundShipment({ warehouseId, items, referenceNumber, trackingNumber, shipDate, expectedDate, clientId }) {
+  const body = { warehouse_id: warehouseId, items };
+  if (referenceNumber) body.reference_number = referenceNumber;
+  if (trackingNumber) body.tracking_number = trackingNumber;
+  if (shipDate) body.ship_date = shipDate;
+  if (expectedDate) body.expected_date = expectedDate;
+  if (clientId != null) body.client_id = clientId;
+  const json = await apiPost('/inbound-shipments', body);
+  return json.data || json;
+}
+
+/**
+ * List inbound shipments, optionally filtered by a search term (e.g. reference number).
+ */
+async function listInboundShipments({ searchValue, limit = 100 } = {}) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (searchValue) params.set('search_value', searchValue);
+  const json = await apiFetch(`/inbound-shipments?${params}`);
+  const data = json.data || json;
+  return data.inbound_shipments || [];
+}
+
+/**
+ * Find a single inbound shipment by exact reference number (the production code we set
+ * at creation). Returns the shipment object (with per-item received/rejected) or null.
+ */
+async function fetchInboundShipmentByReference(referenceNumber) {
+  const list = await listInboundShipments({ searchValue: referenceNumber });
+  return list.find((s) => String(s.reference_number) === String(referenceNumber)) || null;
+}
+
+/**
  * Build a Warehance admin URL for an order.
  */
 function warehanceOrderUrl(whOrder) {
@@ -195,6 +282,12 @@ async function fetchSkuStockMany(skus) {
 module.exports = {
   apiFetch,
   apiPatch,
+  apiPost,
+  fetchWarehouses,
+  resolveWarehouseId,
+  createInboundShipment,
+  listInboundShipments,
+  fetchInboundShipmentByReference,
   fetchUnfulfilledOrders,
   fetchOrderByNumber,
   getHoldReasons,
