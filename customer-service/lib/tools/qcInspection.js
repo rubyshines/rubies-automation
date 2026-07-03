@@ -7,7 +7,7 @@
  *   approve_production_qc — approval gate; lists balance payments now due
  */
 
-const { ingestQcResults, ingestQcReport, reviewProductionQc, approveProductionQc } = require('../merchandising/qcResults');
+const { ingestQcResults, ingestQcReport, reviewProductionQc, approveProductionQc, writeQcReviewSheet } = require('../merchandising/qcResults');
 
 const ok = (text) => ({ content: [{ type: 'text', text }] });
 const err = (text) => ({ content: [{ type: 'text', text: `Error: ${text}` }] });
@@ -125,6 +125,32 @@ module.exports = [
         }
         if (r.coverage.not_sampled.length) lines.push(`\nOrdered but not sampled: ${r.coverage.not_sampled.join(', ')}`);
         if (r.coverage.sampled_not_ordered.length) lines.push(`Sampled but NOT on this order: ${r.coverage.sampled_not_ordered.join(', ')}`);
+        return ok(lines.join('\n'));
+      } catch (e) { return err(e.message); }
+    },
+  },
+  {
+    name: 'write_qc_review',
+    description: 'Write the "QC — <code>" review tab to the 2026 Production Numbers sheet — the founder\'s decision surface. AQL pass/fail per product, coverage warnings, and every out-of-tolerance group worst-first with an AI-triaged verdict (real deviation / stale sheet target / data-entry suspect) plus an empty Decision column. Rewrites the tab each call. Requires the QC files to be ingested first.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        production_code: { type: 'string' },
+        file_paths: { type: 'array', items: { type: 'string' }, description: 'QC workbook paths; defaults to the paths recorded at ingest' },
+        skip_triage: { type: 'boolean', description: 'Skip the AI verdict pass (faster, verdict column empty)' },
+      },
+      required: ['production_code'],
+    },
+    handler: async (args) => {
+      try {
+        const r = await writeQcReviewSheet(args);
+        const lines = [
+          `**QC review tab written** — "${r.tab_name}" · ${r.groups} flagged groups`,
+          `Verdicts: ${Object.entries(r.verdict_counts).map(([k, v]) => `${v} ${k}`).join(' · ') || 'none'}`,
+          r.aql_failed.length ? `❌ AQL failed: ${r.aql_failed.join(', ')}` : '✅ All products passed AQL',
+          r.url,
+        ];
+        if (r.drift) lines.push(`⚠️ ${r.drift}`);
         return ok(lines.join('\n'));
       } catch (e) { return err(e.message); }
     },
