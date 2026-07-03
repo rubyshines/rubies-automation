@@ -518,6 +518,7 @@ module.exports = {
   recordProductionLots,
   reconcileProductionOrder,
   writeReconciliationSheet,
+  buildSkuResolver,
   uploadInboundToWarehance,
   pollInboundReceiving,
   resolveOrder,

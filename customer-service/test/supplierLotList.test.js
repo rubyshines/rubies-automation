@@ -39,14 +39,12 @@ test('buildSupplierLotSections splits by lot and highlights only significant dif
   assert.equal(bySku['AJ-BLK-S'].highlight, 'under');
   assert.equal(bySku['AJ-BLK-M'].highlight, null, 'small under-run not highlighted');
   assert.equal(bySku['AJ-BLK-L'].highlight, 'over');
-  assert.equal(bySku['AJ-BLK-XL'], undefined, 'exact lines excluded');
+  assert.equal(bySku['AJ-BLK-XL'].highlight, null, 'exact line kept (full curve) but not highlighted');
+  assert.equal(bySku['AJ-BLK-XL'].note, '');
   assert.equal(bySku['UNW-BLK-M'].highlight, 'under');
   assert.match(bySku['UNW-BLK-M'].note, /not in shipment/);
   assert.equal(bySku['SPB-BLK-M'].highlight, 'over');
   assert.match(bySku['SPB-BLK-M'].note, /not on the order/);
-
-  // under-production sorts before over-production
-  assert.ok(s.shipped.findIndex((r) => r.diff < 0) < s.shipped.findIndex((r) => r.diff > 0));
 
   assert.equal(s.marked.length, 1);
   assert.equal(s.marked[0].sku, 'RUBY-BLK-16');

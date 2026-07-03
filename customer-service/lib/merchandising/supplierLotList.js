@@ -1,24 +1,28 @@
 /**
  * Supplier-facing ordered-vs-produced list for a production order, one section
- * per lot — the artifact Jamie sends the factory to settle quantities:
+ * per lot, organized the way the production order itself reads: grouped by
+ * PRODUCT NAME - COLOR with SKUs in size order and live subtotals per group.
  *
- *   1. SHIPPED GOODS — standard shipped lots: quantity differences to raise
+ *   1. SHIPPED GOODS — the full order curve for standard shipped lots (incl.
+ *      ordered-but-missing and shipped-but-not-ordered lines, in their product
+ *      group), so diffs read in the context of the size curve
  *   2. Marked test batches (e.g. pink sticker) — shipped, for reference
  *   3. HELD AT FACTORY — nominal quantities with a fill-in column; the
  *      supplier's answers become the next shipment's expected packing list
  *
- * Significant discrepancies are highlighted (founder rules — simple, readable,
- * same thresholds as the reconcile anomalies): RED under-production = short by
- * >=10 units AND >=10% of ordered (incl. missing). ORANGE over-production =
- * produced >= 2x ordered (incl. shipped-but-not-ordered >=10 units). Ordinary
- * over-runs stay unhighlighted — factories round up for cutting efficiency.
+ * Significance highlighting (founder rules, same thresholds as the reconcile
+ * anomalies): RED under-production = short by >=10 units AND >=10% of ordered
+ * (incl. missing). ORANGE over-production = produced >= 2x ordered (incl.
+ * shipped-but-not-ordered >=10 units). Ordinary over-runs stay plain —
+ * factories round up for cutting efficiency.
  *
  * Output is .xlsx (suppliers work in Excel, not Google Sheets).
  */
 
 const ExcelJS = require('exceljs');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
-const { resolveOrder } = require('./inboundReceiving');
+const { resolveOrder, buildSkuResolver } = require('./inboundReceiving');
+const { groupLines } = require('./reconcileSheet');
 
 const UNDER_FILL = 'FFF4CCCC'; // light red
 const OVER_FILL = 'FFFCE5CD'; // light orange
@@ -32,10 +36,19 @@ function isSignificant(ordered, diff, { abs = 10, pct = 0.1, overMult = 2 } = {}
   return ordered + diff >= ordered * overMult;
 }
 
+function noteFor(ordered, produced, highlight) {
+  if (ordered > 0 && produced === 0) return 'ordered, not in shipment — please confirm';
+  if (ordered === 0 && produced > 0) return 'shipped but not on the order — please confirm';
+  if (highlight === 'under') return 'short of ordered qty';
+  if (highlight === 'over') return 'large over-run';
+  return '';
+}
+
 /**
  * Pure: split an order's items+lots into the three sections with per-row
- * significance. Returns { shipped: [...], marked: [...], held: [...] } where
- * each row is { sku, ordered, produced, diff, note, highlight: 'under'|'over'|null }.
+ * significance. Section rows: { sku, ordered, produced, diff, note,
+ * highlight: 'under'|'over'|null }. Shipped carries the FULL curve (exact
+ * lines included) so it can be grouped like the order.
  */
 function buildSupplierLotSections({ items, lots }, opts = {}) {
   const ordered = new Map(items.map((i) => [i.sku, i.qty_ordered || 0]));
@@ -48,37 +61,26 @@ function buildSupplierLotSections({ items, lots }, opts = {}) {
   }
 
   const shipped = [];
-  for (const [sku, ord] of [...ordered.entries()].sort()) {
+  const shippedSkus = new Set([...ordered.keys(), ...shipStd.keys()]);
+  for (const sku of shippedSkus) {
     if (held.has(sku) || marked.has(sku)) continue; // their own sections
+    const ord = ordered.get(sku) || 0;
     const prod = shipStd.get(sku) || 0;
-    if (ord === 0 && prod === 0) continue;
+    if (ord === 0 && prod === 0) continue; // zero-qty order lines
     const diff = prod - ord;
-    if (diff === 0) continue; // discrepancies only
-    const sig = isSignificant(ord, diff, opts);
-    shipped.push({
-      sku, ordered: ord, produced: prod, diff,
-      note: prod === 0 ? 'ordered, not in shipment — please confirm' : diff < 0 ? 'short of ordered qty' : 'over-run',
-      highlight: sig ? (diff < 0 ? 'under' : 'over') : null,
-    });
+    const sig = diff !== 0 && isSignificant(ord, diff, opts);
+    const highlight = sig ? (diff < 0 ? 'under' : 'over') : null;
+    shipped.push({ sku, ordered: ord, produced: prod, diff, note: noteFor(ord, prod, highlight), highlight });
   }
-  for (const [sku, prod] of [...shipStd.entries()].sort()) {
-    if (ordered.get(sku)) continue;
-    shipped.push({
-      sku, ordered: 0, produced: prod, diff: prod,
-      note: 'shipped but not on the order — please confirm',
-      highlight: isSignificant(0, prod, opts) ? 'over' : null,
-    });
-  }
-  // under first (the ones that cost sales), then over, big to small
-  shipped.sort((a, b) => (a.diff < 0 ? 0 : 1) - (b.diff < 0 ? 0 : 1) || Math.abs(b.diff) - Math.abs(a.diff));
 
-  const markedRows = [...marked.entries()].sort().map(([sku, prod]) => {
+  const markedRows = [...marked.entries()].map(([sku, prod]) => {
     const ord = ordered.get(sku) || 0;
     const diff = prod - ord;
-    return { sku, ordered: ord, produced: prod, diff, note: '', highlight: isSignificant(ord, diff, opts) ? (diff < 0 ? 'under' : 'over') : null };
+    const sig = diff !== 0 && isSignificant(ord, diff, opts);
+    return { sku, ordered: ord, produced: prod, diff, note: '', highlight: sig ? (diff < 0 ? 'under' : 'over') : null };
   });
 
-  const heldRows = [...held.entries()].sort().map(([sku, qty]) => ({
+  const heldRows = [...held.entries()].map(([sku, qty]) => ({
     sku, ordered: ordered.get(sku) || qty, produced: null, diff: null, note: '', highlight: null,
   }));
 
@@ -97,11 +99,13 @@ async function writeSupplierLotList({ orderRef, outPath }) {
   if (!lots || !lots.length) throw new Error(`order ${order.production_code} has no production_lots recorded — receive the shipment / record lots first`);
 
   const sections = buildSupplierLotSections({ items: items || [], lots });
+  const allSkus = [...new Set([...sections.shipped, ...sections.marked, ...sections.held].map((r) => r.sku))];
+  const resolve = await buildSkuResolver(allSkus);
   const code = order.production_code || `order-${order.id}`;
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(code);
-  ws.columns = [{ width: 22 }, { width: 10 }, { width: 20 }, { width: 10 }, { width: 40 }];
+  ws.columns = [{ width: 30 }, { width: 10 }, { width: 20 }, { width: 10 }, { width: 40 }];
   const bold = (row) => { row.font = { bold: true }; return row; };
   const fillRow = (row, argb) => { for (let c = 1; c <= 5; c++) row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } }; };
   const applyHighlight = (row, h) => { if (h === 'under') fillRow(row, UNDER_FILL); else if (h === 'over') fillRow(row, OVER_FILL); };
@@ -110,37 +114,43 @@ async function writeSupplierLotList({ orderRef, outPath }) {
   ws.addRow([`Generated ${new Date().toISOString().slice(0, 10)} · Red = significant under-production (≥10 units and ≥10%) · Orange = large over-production (2× ordered or more)`]);
   ws.addRow([]);
 
-  bold(ws.addRow(['1. SHIPPED GOODS — quantity differences vs the order']));
+  // One product-color group: header row, size-ordered SKU rows, live subtotal.
+  const emitGroups = (rows, { fillProduced = false } = {}) => {
+    for (const g of groupLines(rows, resolve)) {
+      bold(ws.addRow([g.color ? `${g.product} - ${g.color}` : g.product]));
+      const first = ws.rowCount + 1;
+      for (const r of g.lines) {
+        const rowNum = ws.rowCount + 1;
+        const row = ws.addRow([
+          r.sku, r.ordered,
+          fillProduced ? '' : r.produced,
+          { formula: `C${rowNum}-B${rowNum}` },
+          r.note,
+        ]);
+        applyHighlight(row, r.highlight);
+        if (fillProduced) row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_IN_FILL } };
+      }
+      const last = ws.rowCount;
+      bold(ws.addRow(['', { formula: `SUM(B${first}:B${last})` }, { formula: `SUM(C${first}:C${last})` }, { formula: `SUM(D${first}:D${last})` }, '']));
+      ws.addRow([]);
+    }
+  };
+
+  bold(ws.addRow(['1. SHIPPED GOODS — vs the order']));
   bold(ws.addRow(['SKU', 'Ordered', 'Produced', 'Diff', 'Note']));
-  for (const r of sections.shipped) {
-    const row = ws.addRow([r.sku, r.ordered, r.produced, r.diff, r.note]);
-    applyHighlight(row, r.highlight);
-  }
-  if (!sections.shipped.length) ws.addRow(['(no discrepancies)']);
-  ws.addRow([]);
+  emitGroups(sections.shipped);
 
   if (sections.marked.length) {
     bold(ws.addRow(['2. MARKED TEST BATCH (shipped) — for reference']));
     bold(ws.addRow(['SKU', 'Ordered', 'Produced', 'Diff', '']));
-    const first = ws.rowCount + 1;
-    for (const r of sections.marked) {
-      const row = ws.addRow([r.sku, r.ordered, r.produced, r.diff, '']);
-      applyHighlight(row, r.highlight);
-    }
-    bold(ws.addRow(['Total', { formula: `SUM(B${first}:B${ws.rowCount})` }, { formula: `SUM(C${first}:C${ws.rowCount})` }, '', '']));
-    ws.addRow([]);
+    emitGroups(sections.marked);
   }
 
   if (sections.held.length) {
     bold(ws.addRow(['3. HELD AT FACTORY — ships in the next shipment']));
     ws.addRow(['Our records show the ORDERED quantity. Please fill in the ACTUAL PRODUCED quantity for each SKU.']);
     bold(ws.addRow(['SKU', 'Ordered', 'Produced (please fill)', 'Diff', '']));
-    const first = ws.rowCount + 1;
-    for (const r of sections.held) {
-      const row = ws.addRow([r.sku, r.ordered, '', { formula: `C${ws.rowCount + 1}-B${ws.rowCount + 1}` }, '']);
-      row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_IN_FILL } };
-    }
-    bold(ws.addRow(['Total', { formula: `SUM(B${first}:B${ws.rowCount})` }, { formula: `SUM(C${first}:C${ws.rowCount})` }, '', '']));
+    emitGroups(sections.held, { fillProduced: true });
   }
 
   const path = outPath || `${process.env.HOME}/Downloads/${code} Ordered vs Produced by Lot.xlsx`;
@@ -150,7 +160,8 @@ async function writeSupplierLotList({ orderRef, outPath }) {
     path,
     order: { id: order.id, production_code: order.production_code },
     stats: {
-      shipped_discrepancies: sections.shipped.length,
+      shipped_rows: sections.shipped.length,
+      shipped_discrepancies: sections.shipped.filter((r) => r.diff !== 0).length,
       highlighted_under: sections.shipped.concat(sections.marked).filter((r) => r.highlight === 'under').length,
       highlighted_over: sections.shipped.concat(sections.marked).filter((r) => r.highlight === 'over').length,
       marked_skus: sections.marked.length,
