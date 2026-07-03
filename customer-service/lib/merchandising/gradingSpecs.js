@@ -52,4 +52,4 @@ async function checkGradingConsistency({ product_handle }) {
   return analyzeGrading(reshape(rows));
 }
 
-module.exports = { fetchCurrentSpecs, reshape, getGradedSpecs, checkGradingConsistency };
+module.exports = { fetchCurrentSpecs, reshape, sizeMatches, getGradedSpecs, checkGradingConsistency };
