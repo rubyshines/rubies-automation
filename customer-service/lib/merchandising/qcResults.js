@@ -665,6 +665,94 @@ ${JSON.stringify(chunk, null, 1)}`,
 }
 
 /**
+ * Synthesize the triaged groups into the SHORT list of findings a human acts
+ * on — the generalities, not 139 rows. Groups sharing a root cause (same
+ * product+POM across sizes, systematic offsets, marginal noise) merge into one
+ * finding. Judgment call -> AI.
+ */
+async function synthesizeQcFindings(review) {
+  if (!review.groups.length) return [];
+  const compact = review.groups.map((g) => ({
+    id: g.id,
+    product: g.product,
+    size: g.size,
+    pom: `${g.pom_code} ${g.pom_name || ''}`.trim(),
+    tolerance: g.tolerance_cm,
+    worst_diff: g.worst_diff,
+    samples: g.samples.length,
+    verdict: g.verdict || null,
+    why: g.why || null,
+  }));
+  const aqlContext = review.aql.map((p) => `${p.product_name}: ${p.passed ? 'passed' : 'FAILED'}${p.findings.length ? ` — ${p.findings.join('; ')}` : ''}`).join('\n');
+
+  const response = await callClaude({
+    component: 'qc_review_synthesis',
+    model: 'claude-opus-4-6',
+    max_tokens: 16000,
+    stream: true,
+    streamStallMs: 90000,
+    tools: [{
+      name: 'record_findings',
+      description: 'Record the synthesized QC findings',
+      input_schema: {
+        type: 'object',
+        properties: {
+          findings: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', description: 'The generality, one line, e.g. "Sky One Piece strap lengths systematically wrong across 5 sizes"' },
+                verdict: { type: 'string', enum: ['real_deviation', 'stale_sheet_target', 'data_entry_suspect', 'unclear'] },
+                severity: { type: 'string', enum: ['high', 'medium', 'low'] },
+                scope: { type: 'string', description: 'Products/sizes/POMs affected, compact, e.g. "Sky One Piece · POM K · sizes 9, 13, XLT, 3XLT"' },
+                evidence: { type: 'string', description: 'The numbers that prove it, one line' },
+                action: { type: 'string', description: 'What the founder should do about it, one line' },
+                group_ids: { type: 'array', items: { type: 'integer' }, description: 'The detail-group ids this finding covers' },
+              },
+              required: ['title', 'verdict', 'severity', 'scope', 'evidence', 'action', 'group_ids'],
+            },
+          },
+        },
+        required: ['findings'],
+      },
+    }],
+    tool_choice: { type: 'tool', name: 'record_findings' },
+    messages: [{
+      role: 'user',
+      content: `You are preparing a garment founder's QC review. Below are ${compact.length} out-of-tolerance measurement groups (already triaged) plus the inspector's AQL results. Produce the SHORT list of distinct findings a human should act on — typically 5-15, ordered most important first.
+
+Merge aggressively:
+- Same product + same POM across many sizes = ONE finding (a systematic pattern, e.g. straps cut wrong, band graded small).
+- Related stale-sheet-target groups = ONE finding per product ("QC Master targets outdated for X").
+- Everything marginal (small exceedances, scattered, no pattern) = ONE rollup finding at severity low, stating the count and the typical magnitude — normal sewing variance the founder can accept in one decision.
+- A data-entry suspect stays its own finding only if it would matter; otherwise fold into a rollup.
+Every group id must appear in exactly one finding's group_ids.
+
+Cross-reference the AQL results: a finding confirmed by the inspector's defect log is high severity.
+
+Measurements in cm; diff = measured − sheet target.
+
+AQL results:
+${aqlContext}
+
+Coverage: ${JSON.stringify(review.coverage)}
+
+Triaged groups:
+${JSON.stringify(compact, null, 1)}`,
+    }],
+  });
+  const toolUse = response.content.find((b) => b.type === 'tool_use');
+  if (!toolUse) throw new Error('qc findings synthesis returned no structured output');
+  if (response.stop_reason === 'max_tokens') throw new Error('qc findings synthesis hit max_tokens — output truncated');
+  const findings = toolUse.input.findings;
+  if (!Array.isArray(findings) || !findings.length) {
+    throw new Error(`qc findings synthesis returned ${Array.isArray(findings) ? 'zero findings' : 'no findings array'} for ${review.groups.length} flagged groups`);
+  }
+  return findings;
+}
+
+/**
  * Write the "QC — <code>" review tab to the production sheet.
  */
 async function writeQcReviewSheet({ production_code, file_paths, spreadsheetId, skip_triage = false }) {
@@ -680,6 +768,7 @@ async function writeQcReviewSheet({ production_code, file_paths, spreadsheetId, 
       const v = verdicts[g.id];
       if (v) { g.verdict = v.verdict; g.why = v.why; }
     }
+    review.findings = await synthesizeQcFindings(review);
   }
 
   const dateStr = new Date().toISOString().slice(0, 10);
@@ -696,6 +785,7 @@ async function writeQcReviewSheet({ production_code, file_paths, spreadsheetId, 
     url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
     order: review.order,
     groups: review.groups.length,
+    findings: (review.findings || []).map((f) => `[${f.severity}] ${f.title}`),
     verdict_counts: verdictCounts,
     aql_failed: review.aql.filter((p) => !p.passed).map((p) => p.product_name),
     drift: review.drift,
@@ -715,5 +805,6 @@ module.exports = {
   parseAqlIssues,
   assembleQcReview,
   triageQcGroups,
+  synthesizeQcFindings,
   writeQcReviewSheet,
 };

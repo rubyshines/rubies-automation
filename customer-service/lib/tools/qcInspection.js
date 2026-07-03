@@ -145,8 +145,8 @@ module.exports = [
       try {
         const r = await writeQcReviewSheet(args);
         const lines = [
-          `**QC review tab written** — "${r.tab_name}" · ${r.groups} flagged groups`,
-          `Verdicts: ${Object.entries(r.verdict_counts).map(([k, v]) => `${v} ${k}`).join(' · ') || 'none'}`,
+          `**QC review tab written** — "${r.tab_name}" · ${r.findings.length} key findings from ${r.groups} flagged groups`,
+          ...r.findings.map((f) => `- ${f}`),
           r.aql_failed.length ? `❌ AQL failed: ${r.aql_failed.join(', ')}` : '✅ All products passed AQL',
           r.url,
         ];

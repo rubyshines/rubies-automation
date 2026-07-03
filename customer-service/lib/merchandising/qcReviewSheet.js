@@ -37,26 +37,61 @@ function renderSamples(samples) {
 
 const fmtDiff = (d) => (d == null ? '' : `${d > 0 ? '+' : ''}${d}`);
 
+const SEVERITY_ICONS = { high: '❗', medium: '⚠️', low: '·' };
+
 /**
  * @param review {
  *   order, totals, inspections, aql: [{product_name, category, passed, majors, minors, findings: [string]}],
- *   packing_status, coverage, groups: [{ product, tab, size, pom_code, pom_name, tolerance_cm,
- *     sheet_target, spec_target, samples: [{color, measured_cm, diff_cm}], worst_diff,
- *     verdict, why }]  — worst-first
+ *   packing_status, coverage,
+ *   findings: [{title, verdict, severity, scope, evidence, action, group_ids}] — the generalities,
+ *   groups: [{ product, tab, size, pom_code, pom_name, tolerance_cm, sheet_target, spec_target,
+ *     samples: [{color, measured_cm, diff_cm}], worst_diff, verdict, why }]  — worst-first detail
  * }
+ * Layout is findings-first: the founder reviews and decides on ~a dozen
+ * generalities; the per-group detail sits at the bottom as reference only.
  * @returns { values, boldRows, flagCells, flagColors, ncol }
  */
 function buildQcReviewRows(review, dateStr) {
   const rows = [];
   const boldRows = [];
   const flagCells = [];
-  const NCOL = 11;
-  const VERDICT_COL = 8; // 0-based: Product,Size,POM,Tol,SheetTarget,SpecTarget,Samples,WorstDiff,Verdict,Why,Decision
+  const NCOL = 7;
+  const findings = review.findings || [];
 
   boldRows.push(rows.length);
   rows.push([
     `QC Review — ${review.order.production_code} (as of ${dateStr}) · ${review.totals.measurements.toLocaleString()} measurements · ${review.totals.skus_measured} SKUs sampled · ${review.totals.out_of_tolerance} out of tolerance`,
   ]);
+  rows.push([]);
+
+  // --- Key findings — the decision surface ------------------------------------
+  const FINDING_VERDICT_COL = 4; // #,Finding,Scope,Evidence,Verdict,Action,Decision
+  boldRows.push(rows.length);
+  rows.push([`🎯 KEY FINDINGS (${findings.length}) — decide here; per-measurement detail is at the bottom for reference`]);
+  rows.push(['Mark Decision: OK (accept) / REWORK / DISCUSS.']);
+  if (findings.length) {
+    boldRows.push(rows.length);
+    rows.push(['#', 'Finding', 'Scope', 'Evidence', 'Verdict', 'Suggested action', 'Decision']);
+    findings.forEach((f, i) => {
+      rows.push([
+        `${SEVERITY_ICONS[f.severity] || ''} F${i + 1}`,
+        f.title,
+        f.scope,
+        f.evidence,
+        VERDICT_LABELS[f.verdict] || (f.verdict || ''),
+        f.action,
+        '',
+      ]);
+      if (f.verdict) flagCells.push({ row: rows.length - 1, col: FINDING_VERDICT_COL, flag: f.verdict });
+    });
+  } else if (!review.groups.length) {
+    rows.push(['None — every measured sample within tolerance.']);
+  } else {
+    rows.push([`(untriaged run — ${review.groups.length} out-of-tolerance groups in the detail section below)`]);
+  }
+  rows.push([]);
+  boldRows.push(rows.length);
+  rows.push(['✍️ When done: run approve_production_qc (per category — swimwear and underwear approve independently).']);
   rows.push([]);
 
   // --- AQL inspection results ------------------------------------------------
@@ -83,34 +118,31 @@ function buildQcReviewRows(review, dateStr) {
     rows.push([]);
   }
 
-  // --- Flagged measurement groups ------------------------------------------------
-  boldRows.push(rows.length);
-  rows.push([`⚠ FLAGGED MEASUREMENTS — ${review.groups.length} out-of-tolerance groups, worst first`]);
-  rows.push(['Mark Decision: OK (accept) / REWORK / DISCUSS. Verdict + Why are AI triage — check anything marked REAL DEVIATION first.']);
-  boldRows.push(rows.length);
-  rows.push(['Product', 'Size', 'POM', 'Tolerance', 'Sheet Target', 'Spec Target', 'Samples (cm)', 'Worst Diff', 'Verdict', 'Why', 'Decision']);
-
-  for (const g of review.groups) {
-    rows.push([
-      g.product,
-      g.size,
-      `${g.pom_code}${g.pom_name ? ` — ${g.pom_name}` : ''}`,
-      g.tolerance_cm == null ? '' : `±${g.tolerance_cm}`,
-      g.sheet_target ?? '',
-      g.spec_target ?? '',
-      renderSamples(g.samples),
-      fmtDiff(g.worst_diff),
-      VERDICT_LABELS[g.verdict] || (g.verdict || ''),
-      g.why || '',
-      '',
-    ]);
-    if (g.verdict) flagCells.push({ row: rows.length - 1, col: VERDICT_COL, flag: g.verdict });
+  // --- Detail (reference only) -------------------------------------------------
+  if (review.groups.length) {
+    // Finding id per group, so detail rows trace back to the finding they support.
+    const findingByGroup = new Map();
+    findings.forEach((f, i) => (f.group_ids || []).forEach((gid) => findingByGroup.set(gid, `F${i + 1}`)));
+    rows.push([]);
+    boldRows.push(rows.length);
+    rows.push([`📎 FULL DETAIL — ${review.groups.length} out-of-tolerance groups, worst first (reference; decisions go in KEY FINDINGS above)`]);
+    boldRows.push(rows.length);
+    rows.push(['Finding', 'Product', 'Size', 'POM', 'Tolerance', 'Sheet Target', 'Spec Target', 'Samples (cm)', 'Worst Diff', 'Triage']);
+    for (const g of review.groups) {
+      rows.push([
+        findingByGroup.get(g.id) || '',
+        g.product,
+        g.size,
+        `${g.pom_code}${g.pom_name ? ` — ${g.pom_name}` : ''}`,
+        g.tolerance_cm == null ? '' : `±${g.tolerance_cm}`,
+        g.sheet_target ?? '',
+        g.spec_target ?? '',
+        renderSamples(g.samples),
+        fmtDiff(g.worst_diff),
+        g.why || '',
+      ]);
+    }
   }
-  if (!review.groups.length) rows.push(['None — every measured sample within tolerance.']);
-
-  rows.push([]);
-  boldRows.push(rows.length);
-  rows.push(['✍️ When done: run approve_production_qc (per category — swimwear and underwear approve independently).']);
 
   return { values: rows, boldRows, flagCells, flagColors: VERDICT_COLORS, ncol: NCOL };
 }
