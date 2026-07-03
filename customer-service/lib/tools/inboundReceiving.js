@@ -281,4 +281,28 @@ module.exports = [
     inputSchema: { type: 'object', properties: { inbound_shipment_id: { type: 'number' } }, required: ['inbound_shipment_id'] },
     handler: handlePoll,
   },
+  {
+    name: 'export_supplier_lot_list',
+    description: 'Export the supplier-facing ordered-vs-produced .xlsx for a production order, one section per lot: shipped-goods discrepancies (significant under-production highlighted red, over-production orange — significant means ≥10 units and ≥10% of ordered), marked test batches for reference, and held-at-factory SKUs with a fill-in produced column for the supplier to confirm. Writes to ~/Downloads unless out_path is given.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order_ref: { type: 'string', description: 'production_code (e.g. KALI-2601) or order id' },
+        out_path: { type: 'string' },
+      },
+      required: ['order_ref'],
+    },
+    handler: async (args) => {
+      try {
+        const { writeSupplierLotList } = require('../merchandising/supplierLotList');
+        const r = await writeSupplierLotList({ orderRef: args.order_ref, outPath: args.out_path });
+        const s = r.stats;
+        return ok([
+          `**Supplier lot list written** — ${r.order.production_code}`,
+          `${s.shipped_discrepancies} shipped discrepancies (${s.highlighted_under} significant under 🟥 · ${s.highlighted_over} significant over 🟧) · ${s.marked_skus} test-batch SKUs · ${s.held_skus} held SKUs to confirm`,
+          r.path,
+        ].join('\n'));
+      } catch (e) { return err(e.message); }
+    },
+  },
 ];
