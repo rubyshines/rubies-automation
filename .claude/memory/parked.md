@@ -7,6 +7,18 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 # Parked Items
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
+## Per-shipment reconcile tab + multi-shipment hardening
+- Parked: 2026-07-03
+- Domains: logistics, inventory
+- Type: idea (planned)
+- Notes: Extend the receiving reconcile (see domain_logistics Key Decisions) so each distinct inbound shipment of an order gets its own scoped "Shipment — <transfer>" tab (SKU | Ordered | This Shipment | Cumulative | Remaining | Flag | Note; + OUTSTANDING and FABRIC/QUALITY blocks). Jamie chose scoped-per-shipment over per-shipment columns. A pure `buildShipmentRows` was drafted then reverted (unwired) — re-derive from the design here. Also harden multi-shipment: auto-number `transfer_number` (`<code>-1/-2`) so a second shipment can't overwrite the first, and make the `qty_produced` mirror sum across shipments (reconcile already uses lots, so it's cosmetic). Plus a `seed_order_from_held`/next-order helper that starts a replacement order from an order's held lots. Use when the order actually splits into ocean+air / a later batch arrives.
+
+## Local storage to organize production discussions/decisions per order & product
+- Parked: 2026-06-30
+- Domains: logistics, inventory, product_design, tech
+- Type: idea
+- Notes: Surfaced during the merchandising receiving-tool build. A single production order spawns many scattered email/decision threads (SKU corrections, barcode/sticker approvals, fabric issues, QC bookings, shipping lists) — e.g. tracing the sports-bra SB→SPB mislabel required a long sweep across Gmail. Idea: capture and organize production-related discussions/decisions in local storage (Supabase table and/or a per-order/per-product notes surface) so context isn't re-derived from Gmail each session. Ties to production_orders / tech_packs / suppliers and possibly the already-synced email_messages table (link threads to an order/product).
+
 ## New-product / new-colourway tool (guided dev → first-order workflow)
 - Parked: 2026-06-27
 - Domains: product_design, inventory, logistics

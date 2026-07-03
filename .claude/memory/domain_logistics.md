@@ -26,6 +26,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 - **Production:** Daily unfulfilled order alerts. Shipping delay detection across all carriers (reads `orders.fulfillments[].events`). Address hold auto-resolution. Hourly Passport scrape mirrors into fulfillment row. Delivery time estimation. Shipping info tool (pre-purchase). Passport claims tracking.
 - **Partial:** Shipping zone sync from Shopify ready but currently manual table seeding.
+- **Production inbound receiving:** supplier packing-list ingest → `inbound_shipments` → lot splitting → 3-way reconcile → founder review tab in the 2026 Production Numbers sheet → Warehance ASN. Warehance ASN upload path built but not yet exercised against the live API. See Key Decisions.
 
 ## Key Files
 
@@ -36,6 +37,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `customer-service/sync/syncPassportDelivery.js` — Hourly Passport scrape; mirrors normalized events into the fulfillment row.
 - `reports/lib/shippingDelays.js` — Daily shipping-delay analyzer; reads fulfillment events for every carrier.
 - `webhooks/handlers/shopifyFulfillments.js`, `webhooks/handlers/shopifyOrders.js` — Webhook handlers preserve fulfillment events on merge (REST payloads don't carry events).
+- `customer-service/lib/merchandising/{packingListParser,skuCanonical,inboundReceiving,reconcileSheet}.js` — production inbound receiving: parse supplier packing list, catalog-validated SKU correction, inbound shipment + lots + reconcile, founder review sheet. Schema: `customer-service/schema/merchandising_v3.sql` (`production_lots`).
+- `customer-service/lib/tools/inboundReceiving.js` — 8 receiving MCP tools (`receive_shipment`, `reconcile_production_order`, `write_reconciliation`, `record_manual_order`, `amend_production_order`, `record_production_lots`, `upload_inbound_to_warehance`, `poll_inbound_receiving`).
 
 ## Key Decisions
 
@@ -51,7 +54,10 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - **Nitro and Warehance are the same 3PL** — Nitro is the company/brand, Warehance the WMS; the API client, docs, and Passport handoff all use the names interchangeably (see [warehanceClient.js](../../reports/lib/warehanceClient.js), titled "Warehance (Nitro)"). Warehance/Nitro holds physical stock and is the **inventory-quantity source of truth**, syncing levels to Shopify via its own connector (near real-time; not driven by our code — we never push inventory to Shopify). Key consequence for any inventory reasoning: Shopify `available` = on-hand minus committed, so a **fully-committed in-stock SKU reads 0 available without being out of stock**. The genuine shortfall signal is Warehance **`backordered > 0`** (demand beyond physical on-hand). Treat Shopify `available ≤ 0` only as a cheap "maybe OOS" pre-filter and confirm true unfulfillability against Warehance backordered. `fetchSkuStock` / `fetchSkuStockMany` in warehanceClient expose the live per-SKU on-hand/allocated/available/backordered breakdown.
 - **Feb 2026: Nitro changed Passport handoff identifier.** Passport invoice `order_id` field switched from Shopify order number (`#28547`) to Warehance internal order ID (`WH-{warehance_order_id}-{hash}`). Format mix in transition: Feb 58% Shopify / 42% WH-, by April 99% WH-. The `WH-{12digits}` middle segment is the Warehance Order ID, resolvable via Warehance API `/orders/{id}` → `order_number` (Shopify form). Resolver lives in `finance/resolvePassportShopifyOrders.js`. The Warehance bill CSV's `Shipment ID` column is a *different* identifier (starts `231185...` vs Passport's `231186...`) and does NOT bridge the two — must use the API.
 
+- **Production inbound receiving = packing-list → inbound_shipment → lots → 3-way reconcile → review sheet (`merchandising_v3`).** Supplier `.xlsx` packing lists parse to per-SKU qty; SKU corrections are catalog-validated — size aliases (Kali codes plus sizes `1X`→catalog `XL`), and supplier prefix/typo fixes via a section-scoped `remap` — so we never invent a SKU (uncatalogued SKUs are flagged, not guessed). `inbound_shipments`/`_items` hold what physically ships (many per order → supports ocean+air splits). `production_lots` split a produced line by quality×disposition (`ship`, optionally flagged e.g. a pink-sticker test batch, vs `hold_storage`) — a production issue like the June 2026 thin-black-swimwear-fabric mistake records flagged/held lots. `reconcile_production_order` computes ordered→produced→shipped→received per SKU with anomaly + fabric flags, written to a disposable "Reconcile — <code>" tab (live formulas; Supabase stays canonical). Warehance ASN via `POST /inbound-shipments` keys on `product_id` (resolve SKU→id). **Lesson (SB/SPB):** a brand-new product with no catalog SKUs got barcoded under an existing product's prefix (sports bra shipped as Ava's `SB`); always create the Shopify product + SKUs before first production.
+
 ## What's Next
 
 - Real-time Warehance webhook integration
 - Automate Passport loss claim filing at 30+ days
+- Per-shipment reconcile tab (parked); seed-next-order-from-held helper
