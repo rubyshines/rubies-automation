@@ -77,8 +77,19 @@ function anomalyLines(a) {
   return out;
 }
 
-// Per-line note describing the lot split (marker, quality, held count).
-function lotNote(l) {
+// Per-line Lot label: which lot(s) this SKU's produced units sit in, e.g.
+// "ship", "ship · pink_sticker", "held · thin_black_fabric", or a split like
+// "ship 100 · pink_sticker + held 50". Falls back to marker/held math for
+// orders received before lot tracking.
+function lotLabel(l) {
+  if (l.lots && l.lots.length) {
+    return l.lots.map((lot) => {
+      const disp = lot.disposition === 'ship' ? 'ship' : 'held';
+      const qty = l.lots.length > 1 ? ` ${lot.qty}` : '';
+      const tag = lot.marker || (lot.quality && lot.quality !== 'standard' ? lot.quality : null);
+      return `${disp}${qty}${tag ? ` · ${tag}` : ''}`;
+    }).join(' + ');
+  }
   const parts = [];
   if (l.marker) parts.push(l.marker);
   if (l.quality && l.quality !== 'standard') parts.push(l.quality);
@@ -126,13 +137,13 @@ function buildReconcileRows(reconcile, resolve, dateStr, opts = {}) {
   const flagCells = [];
   const t = reconcile.totals;
   const NCOL = 8;
-  const FLAG_COL = 6; // column G (0-based): SKU,Ord,Prod,Ship,Recv,Δ,Flag,Note
+  const FLAG_COL = 6; // column G (0-based): SKU,Ord,Prod,Ship,Recv,Δ,Flag,Lot
 
   boldRows.push(rows.length);
   rows.push([`Reconcile — ${reconcile.order.production_code} (as of ${dateStr}) · ordered ${t.ordered.toLocaleString()} / produced ${t.produced.toLocaleString()} / shipped ${(t.shipped ?? t.produced).toLocaleString()} / received ${t.received.toLocaleString()}`]);
   rows.push([]);
   boldRows.push(rows.length);
-  rows.push(['SKU', 'Ordered', 'Produced', 'Shipped', 'Received', 'Δ', 'Flag', 'Note']);
+  rows.push(['SKU', 'Ordered', 'Produced', 'Shipped', 'Received', 'Δ', 'Flag', 'Lot']);
 
   for (const g of groupLines(reconcile.lines, resolve)) {
     boldRows.push(rows.length);
@@ -140,7 +151,7 @@ function buildReconcileRows(reconcile, resolve, dateStr, opts = {}) {
     const first = rows.length + 1; // 1-based sheet row of first data line
     for (const l of g.lines) {
       const r = rows.length + 1;
-      rows.push([l.sku, l.ordered, l.produced, l.shipped == null ? l.produced : l.shipped, l.received == null ? 0 : l.received, `=C${r}-B${r}`, l.flag.toUpperCase(), lotNote(l)]);
+      rows.push([l.sku, l.ordered, l.produced, l.shipped == null ? l.produced : l.shipped, l.received == null ? 0 : l.received, `=C${r}-B${r}`, l.flag.toUpperCase(), lotLabel(l)]);
       flagCells.push({ row: rows.length - 1, col: FLAG_COL, flag: l.flag });
     }
     const last = first + g.lines.length - 1;
