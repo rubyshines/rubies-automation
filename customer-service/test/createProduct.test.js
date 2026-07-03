@@ -5,6 +5,19 @@ const assert = require('node:assert');
 
 const cp = require('../lib/tools/createProduct');
 
+test('toBulkCreateInput moves sku under inventoryItem for the Admin API', () => {
+  const api = cp.toBulkCreateInput([
+    { optionValues: [{ name: '6', optionName: 'Youth Size' }, { name: 'Black', optionName: 'Color' }], sku: 'SPB-BLK-6', price: '39.00' },
+  ]);
+  assert.deepStrictEqual(api[0], {
+    optionValues: [{ name: '6', optionName: 'Youth Size' }, { name: 'Black', optionName: 'Color' }],
+    price: '39.00',
+    inventoryItem: { sku: 'SPB-BLK-6' },
+  });
+  // must NOT carry a top-level sku (the API rejects it)
+  assert.strictEqual('sku' in api[0], false);
+});
+
 test('deriveHandle strips leading "the" and hyphenates', () => {
   assert.strictEqual(cp.deriveHandle('THE EVEY SHAPING SPORTS BRA'), 'evey-shaping-sports-bra');
   assert.strictEqual(cp.deriveHandle('Evey Sports Bra'), 'evey-sports-bra');

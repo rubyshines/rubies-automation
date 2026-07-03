@@ -111,6 +111,18 @@ function buildVariants({ sizes, colors, skuPrefix, pricing, sizeOptionName = 'Si
   return variants;
 }
 
+/**
+ * Map plan variants to the productVariantsBulkCreate input shape. SKU lives under
+ * inventoryItem in the current Admin API (a top-level `sku` field is rejected).
+ */
+function toBulkCreateInput(variants) {
+  return variants.map(v => ({
+    optionValues: v.optionValues,
+    price: v.price,
+    inventoryItem: { sku: v.sku },
+  }));
+}
+
 /** Build the materials_composition rich-text value from {body, lining} or a prebuilt object/string. */
 function materialsRichText(materials) {
   if (!materials) return null;
@@ -397,7 +409,7 @@ async function applyPlan(plan, { log = () => {} } = {}) {
     productId = created.id;
     log(`created product ${created.id}`);
     if (plan.variants.length) {
-      const made = await createProductVariants(productId, plan.variants);
+      const made = await createProductVariants(productId, toBulkCreateInput(plan.variants));
       log(`created ${made.length} variants`);
     }
     if (plan.seo) {
@@ -512,7 +524,7 @@ const tools = [
 
 module.exports = tools;
 Object.assign(module.exports, {
-  deriveHandle, normalizeTitle, skuFor, priceFor, buildVariants,
+  deriveHandle, normalizeTitle, skuFor, priceFor, buildVariants, toBulkCreateInput,
   materialsRichText, buildCustomMetafields, buildCsConfigRow, buildPlan,
   checkCompleteness, generateDescription, runCreateProduct, applyPlan,
 });
