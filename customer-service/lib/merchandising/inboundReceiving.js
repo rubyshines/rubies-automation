@@ -518,7 +518,6 @@ module.exports = {
   recordProductionLots,
   reconcileProductionOrder,
   writeReconciliationSheet,
-  writeFormattedTab: writeReconcileTab,
   uploadInboundToWarehance,
   pollInboundReceiving,
   resolveOrder,

@@ -98,30 +98,12 @@ async function upsertInspection(sb, { production_order_id, category, patch }) {
 // Validate the sheet's Orig targets against the digitized grading. The sheet
 // is the operative contract the inspector measured against; a drift from
 // tech_pack_specs means one of the two is stale and Jamie should know which.
-// specRows -> lookup fn: ({tab, size, pom_code, pom_name}) -> spec row | null.
-// Matches by pom_code first, then normalized name (sheet and spec POM-code
-// conventions drift per product: AJ numeric↔numeric, Sassy numeric↔letters).
-function buildSpecLookup(specRows) {
+function validateAgainstSpecs(rows, specRows) {
   const specsByHandle = new Map();
   for (const r of specRows) {
     if (!specsByHandle.has(r.product_handle)) specsByHandle.set(r.product_handle, []);
     specsByHandle.get(r.product_handle).push(r);
   }
-  return (row) => {
-    const handles = [].concat(TAB_HANDLES[row.tab] || []);
-    for (const h of handles) {
-      const candidates = (specsByHandle.get(h) || []).filter((s) => sizesOverlap(s.size, row.size));
-      const spec = candidates.find((s) => String(s.pom_code).toUpperCase() === String(row.pom_code).toUpperCase())
-        || candidates.find((s) => normName(s.pom_name) === normName(row.pom_name))
-        || null;
-      if (spec) return spec;
-    }
-    return null;
-  };
-}
-
-function validateAgainstSpecs(rows, specRows) {
-  const lookup = buildSpecLookup(specRows);
   const seen = new Set();
   const mismatches = [];
   const unmatched = [];
@@ -130,8 +112,16 @@ function validateAgainstSpecs(rows, specRows) {
     const key = `${row.tab}|${row.size}|${row.pom_code}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (![].concat(TAB_HANDLES[row.tab] || []).length) { unmatched.push({ ...keyInfo(row), reason: 'no_tab_mapping' }); continue; }
-    const spec = lookup(row);
+    const handles = [].concat(TAB_HANDLES[row.tab] || []);
+    if (!handles.length) { unmatched.push({ ...keyInfo(row), reason: 'no_tab_mapping' }); continue; }
+    let spec = null;
+    for (const h of handles) {
+      const candidates = (specsByHandle.get(h) || []).filter((s) => sizesOverlap(s.size, row.size));
+      spec = candidates.find((s) => String(s.pom_code).toUpperCase() === String(row.pom_code).toUpperCase())
+        || candidates.find((s) => normName(s.pom_name) === normName(row.pom_name))
+        || null;
+      if (spec) break;
+    }
     if (!spec) { unmatched.push({ ...keyInfo(row), reason: 'no_spec' }); continue; }
     const delta = Number((row.target_cm - spec.target_cm).toFixed(2));
     if (Math.abs(delta) > 0.05) {
@@ -483,328 +473,13 @@ async function approveProductionQc({ production_code, category, approved_by = 'J
   return { order, approved: updated, due_payments: payments || [] };
 }
 
-// --- QC review tab (founder's decision surface) --------------------------------
-
-// Parse "[Product] finding — AQL 2.5 · sampled 50 · majors 7 / minors 4 · FAILED"
-// back into structured AQL results (the format ingestQcReport writes).
-function parseAqlIssues(issues) {
-  const byProduct = new Map();
-  for (const i of issues) {
-    const m = String(i.description).match(/^\[([^\]]+)\]\s*(.*?)(?:\s*—\s*AQL.*?majors\s*([\d.]+)\s*\/\s*minors\s*([\d.]+).*?(PASSED|FAILED))?$/i);
-    if (!m || m[1] === 'Packing') continue;
-    const [, product, finding, majors, minors, verdict] = m;
-    if (!byProduct.has(product)) byProduct.set(product, { product_name: product, findings: [], majors: 0, minors: 0, passed: true });
-    const p = byProduct.get(product);
-    if (finding && !/^No defects found$/i.test(finding.trim())) p.findings.push(finding.trim());
-    if (majors != null) p.majors = Number(majors);
-    if (minors != null) p.minors = Number(minors);
-    if (verdict) p.passed = verdict.toUpperCase() === 'PASSED';
-  }
-  return [...byProduct.values()].sort((a, b) => Number(a.passed) - Number(b.passed) || a.product_name.localeCompare(b.product_name));
-}
-
-/**
- * Assemble everything the review tab needs. Re-parses the QC workbooks (paths
- * from the inspections' sheet_url, or file_paths override) to recover POM names,
- * sample detail and spec targets — pure recompute of the ingest pass; Supabase
- * stays canonical for issues/coverage and is cross-checked for drift.
- */
-async function assembleQcReview({ production_code, file_paths }) {
-  const review = await reviewProductionQc({ production_code });
-
-  const paths = file_paths && file_paths.length
-    ? file_paths
-    : review.inspections.map((i) => i.sheet_url).filter(Boolean);
-  if (!paths.length) throw new Error('No QC workbook paths on file — pass file_paths');
-  const missing = paths.filter((p) => !fs.existsSync(p));
-  if (missing.length) throw new Error(`QC workbook file(s) moved since ingest — pass file_paths. Missing: ${missing.join(', ')}`);
-
-  const catalog = await loadCatalogSkus();
-  const specLookup = buildSpecLookup(await fetchAllCurrentSpecs());
-
-  const allRows = [];
-  for (const p of paths) {
-    const parsed = parseQcWorkbook(p);
-    const { rows } = flattenMeasurements(parsed, { catalog, expectedPrefixByTab: TAB_PREFIX_OVERRIDES });
-    allRows.push(...rows.filter((r) => r.measured_cm != null));
-  }
-
-  // Drift guard: the tab is built from the files; the DB is what was ingested.
-  const parseOot = allRows.filter((r) => r.in_tolerance === false).length;
-  const drift = parseOot !== review.totals.out_of_tolerance
-    ? `workbook parse found ${parseOot} out-of-tolerance vs ${review.totals.out_of_tolerance} in Supabase — file changed since ingest? Re-run ingest_qc_results.`
-    : null;
-
-  const groups = new Map();
-  for (const r of allRows.filter((x) => x.in_tolerance === false)) {
-    const key = `${r.tab}|${r.pom_code}|${r.size}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        id: groups.size + 1,
-        product: r.tab, tab: r.tab, size: r.size, pom_code: r.pom_code, pom_name: r.pom_name,
-        tolerance_cm: r.tolerance_cm, sheet_target: r.target_cm,
-        spec_target: (specLookup(r) || {}).target_cm ?? null,
-        samples: [], worst_diff: 0,
-      });
-    }
-    const g = groups.get(key);
-    g.samples.push({ color: r.color, measured_cm: r.measured_cm, diff_cm: r.diff_cm });
-    if (Math.abs(r.diff_cm) > Math.abs(g.worst_diff)) g.worst_diff = r.diff_cm;
-  }
-  const sorted = [...groups.values()].sort(
-    (a, b) => Math.abs(b.worst_diff) / (b.tolerance_cm || 1) - Math.abs(a.worst_diff) / (a.tolerance_cm || 1)
-  );
-
-  return {
-    order: review.order,
-    totals: review.totals,
-    inspections: review.inspections,
-    inspector: review.inspections.map((i) => i.inspector).find(Boolean) || null,
-    aql: parseAqlIssues(review.issues),
-    packing_status: (review.issues.find((i) => i.description.startsWith('[Packing]')) || {}).description?.replace('[Packing] ', '') || null,
-    coverage: review.coverage,
-    groups: sorted,
-    drift,
-  };
-}
-
-/**
- * Opus triage of the flagged groups: is each one a real garment deviation, a
- * stale sheet target (the digitized spec + measurements agree, the sheet Orig
- * doesn't), or a data-entry suspect (implausible value)? Judgment call -> AI,
- * with the deterministic facts as input.
- */
-async function triageQcGroups(review, { batchSize = 25 } = {}) {
-  if (!review.groups.length) return {};
-  const payload = review.groups.map((g) => ({
-    id: g.id,
-    product: g.product,
-    size: g.size,
-    pom: `${g.pom_code} ${g.pom_name || ''}`.trim(),
-    tolerance: g.tolerance_cm,
-    sheet_target: g.sheet_target,
-    digitized_spec_target: g.spec_target,
-    samples: g.samples.map((s) => s.measured_cm),
-    worst_diff_vs_sheet_target: g.worst_diff,
-  }));
-  const aqlContext = review.aql.map((p) => `${p.product_name}: ${p.passed ? 'passed' : 'FAILED'}${p.findings.length ? ` — ${p.findings.join('; ')}` : ''}`).join('\n');
-
-  // Batched + retried: one big call proved fragile on a flaky uplink, and an
-  // order can have arbitrarily many flagged groups.
-  const verdicts = {};
-  for (let i = 0; i < payload.length; i += batchSize) {
-    const chunk = payload.slice(i, i + batchSize);
-    let lastErr;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        Object.assign(verdicts, await triageBatch(chunk, aqlContext));
-        lastErr = null;
-        break;
-      } catch (e) {
-        lastErr = e;
-        await new Promise((r) => setTimeout(r, attempt * 5000));
-      }
-    }
-    if (lastErr) throw lastErr;
-  }
-  return verdicts;
-}
-
-async function triageBatch(chunk, aqlContext) {
-  const response = await callClaude({
-    component: 'qc_review_triage',
-    model: 'claude-opus-4-6',
-    max_tokens: 4000,
-    stream: true,
-    streamStallMs: 90000,
-    tools: [{
-      name: 'record_triage',
-      description: 'Record the triage verdict for every flagged group',
-      input_schema: {
-        type: 'object',
-        properties: {
-          verdicts: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                id: { type: 'integer' },
-                verdict: { type: 'string', enum: ['real_deviation', 'stale_sheet_target', 'data_entry_suspect', 'unclear'] },
-                why: { type: 'string', description: 'One short sentence a founder can act on' },
-              },
-              required: ['id', 'verdict', 'why'],
-            },
-          },
-        },
-        required: ['verdicts'],
-      },
-    }],
-    tool_choice: { type: 'tool', name: 'record_triage' },
-    messages: [{
-      role: 'user',
-      content: `You are triaging out-of-tolerance QC measurements from a third-party garment inspection so the founder reviews real problems first.
-
-For each flagged group decide:
-- "real_deviation" — the garments genuinely measure off-spec (samples consistent with each other, target trustworthy). Cross-reference the inspector's AQL findings below; a matching finding strongly confirms.
-- "stale_sheet_target" — the QC sheet's target (Orig) is wrong/outdated: the measurements cluster near the digitized spec target instead, or the sheet target breaks the product's size progression while measurements look sane.
-- "data_entry_suspect" — the measured value is implausible for the POM (wrong magnitude, e.g. 2.375 where ~19 is expected; lone wild sample while siblings sit near target).
-- "unclear" — genuinely ambiguous; say what would settle it.
-
-Measurements are in cm. diff = measured − sheet target. The digitized spec is a first-stab import and can itself be wrong — when sheet and spec disagree, let the measurements arbitrate.
-
-Inspector AQL results:
-${aqlContext}
-
-Flagged groups:
-${JSON.stringify(chunk, null, 1)}`,
-    }],
-  });
-  const toolUse = response.content.find((b) => b.type === 'tool_use');
-  if (!toolUse) throw new Error('qc triage returned no structured output');
-  return Object.fromEntries(toolUse.input.verdicts.map((v) => [v.id, v]));
-}
-
-/**
- * Synthesize the triaged groups into the SHORT list of findings a human acts
- * on — the generalities, not 139 rows. Groups sharing a root cause (same
- * product+POM across sizes, systematic offsets, marginal noise) merge into one
- * finding. Judgment call -> AI.
- */
-async function synthesizeQcFindings(review) {
-  if (!review.groups.length) return [];
-  const compact = review.groups.map((g) => ({
-    id: g.id,
-    product: g.product,
-    size: g.size,
-    pom: `${g.pom_code} ${g.pom_name || ''}`.trim(),
-    tolerance: g.tolerance_cm,
-    worst_diff: g.worst_diff,
-    samples: g.samples.length,
-    verdict: g.verdict || null,
-    why: g.why || null,
-  }));
-  const aqlContext = review.aql.map((p) => `${p.product_name}: ${p.passed ? 'passed' : 'FAILED'}${p.findings.length ? ` — ${p.findings.join('; ')}` : ''}`).join('\n');
-
-  const response = await callClaude({
-    component: 'qc_review_synthesis',
-    model: 'claude-opus-4-6',
-    max_tokens: 16000,
-    stream: true,
-    streamStallMs: 90000,
-    tools: [{
-      name: 'record_findings',
-      description: 'Record the synthesized QC findings',
-      input_schema: {
-        type: 'object',
-        properties: {
-          findings: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                title: { type: 'string', description: 'The generality, one line, e.g. "Sky One Piece strap lengths systematically wrong across 5 sizes"' },
-                verdict: { type: 'string', enum: ['real_deviation', 'stale_sheet_target', 'data_entry_suspect', 'unclear'] },
-                severity: { type: 'string', enum: ['high', 'medium', 'low'] },
-                scope: { type: 'string', description: 'Products/sizes/POMs affected, compact, e.g. "Sky One Piece · POM K · sizes 9, 13, XLT, 3XLT"' },
-                evidence: { type: 'string', description: 'The numbers that prove it, one line' },
-                action: { type: 'string', description: 'What the founder should do about it, one line' },
-                group_ids: { type: 'array', items: { type: 'integer' }, description: 'The detail-group ids this finding covers' },
-              },
-              required: ['title', 'verdict', 'severity', 'scope', 'evidence', 'action', 'group_ids'],
-            },
-          },
-        },
-        required: ['findings'],
-      },
-    }],
-    tool_choice: { type: 'tool', name: 'record_findings' },
-    messages: [{
-      role: 'user',
-      content: `You are preparing a garment founder's QC review. Below are ${compact.length} out-of-tolerance measurement groups (already triaged) plus the inspector's AQL results. Produce the SHORT list of distinct findings a human should act on — typically 5-15, ordered most important first.
-
-Merge aggressively:
-- Same product + same POM across many sizes = ONE finding (a systematic pattern, e.g. straps cut wrong, band graded small).
-- Related stale-sheet-target groups = ONE finding per product ("QC Master targets outdated for X").
-- Everything marginal (small exceedances, scattered, no pattern) = ONE rollup finding at severity low, stating the count and the typical magnitude — normal sewing variance the founder can accept in one decision.
-- A data-entry suspect stays its own finding only if it would matter; otherwise fold into a rollup.
-Every group id must appear in exactly one finding's group_ids.
-
-Cross-reference the AQL results: a finding confirmed by the inspector's defect log is high severity.
-
-Measurements in cm; diff = measured − sheet target.
-
-AQL results:
-${aqlContext}
-
-Coverage: ${JSON.stringify(review.coverage)}
-
-Triaged groups:
-${JSON.stringify(compact, null, 1)}`,
-    }],
-  });
-  const toolUse = response.content.find((b) => b.type === 'tool_use');
-  if (!toolUse) throw new Error('qc findings synthesis returned no structured output');
-  if (response.stop_reason === 'max_tokens') throw new Error('qc findings synthesis hit max_tokens — output truncated');
-  const findings = toolUse.input.findings;
-  if (!Array.isArray(findings) || !findings.length) {
-    throw new Error(`qc findings synthesis returned ${Array.isArray(findings) ? 'zero findings' : 'no findings array'} for ${review.groups.length} flagged groups`);
-  }
-  return findings;
-}
-
-/**
- * Write the "QC — <code>" review tab to the production sheet.
- */
-async function writeQcReviewSheet({ production_code, file_paths, spreadsheetId, skip_triage = false }) {
-  const { buildQcReviewRows } = require('./qcReviewSheet');
-  const { writeFormattedTab } = require('./inboundReceiving');
-  const { getSheetsClient } = require('../../../shared/googleSheetsClient');
-  const SHEET_ID = process.env.PRODUCTION_SHEET_ID || '1kMZ-thv7pmBEvudlT_Ujw1z1wb-2zwjV5vT_TuNm87w';
-
-  const review = await assembleQcReview({ production_code, file_paths });
-  if (!skip_triage) {
-    const verdicts = await triageQcGroups(review);
-    for (const g of review.groups) {
-      const v = verdicts[g.id];
-      if (v) { g.verdict = v.verdict; g.why = v.why; }
-    }
-    review.findings = await synthesizeQcFindings(review);
-  }
-
-  const dateStr = new Date().toISOString().slice(0, 10);
-  const built = buildQcReviewRows(review, dateStr);
-  const sheetId = spreadsheetId || SHEET_ID;
-  const tabName = `QC — ${review.order.production_code}`;
-  const sheets = await getSheetsClient();
-  await writeFormattedTab(sheets, sheetId, tabName, built);
-
-  const verdictCounts = {};
-  for (const g of review.groups) verdictCounts[g.verdict || 'untriaged'] = (verdictCounts[g.verdict || 'untriaged'] || 0) + 1;
-  return {
-    tab_name: tabName,
-    url: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
-    order: review.order,
-    groups: review.groups.length,
-    findings: (review.findings || []).map((f) => `[${f.severity}] ${f.title}`),
-    verdict_counts: verdictCounts,
-    aql_failed: review.aql.filter((p) => !p.passed).map((p) => p.product_name),
-    drift: review.drift,
-  };
-}
-
 module.exports = {
   TAB_HANDLES,
   TAB_PREFIX_OVERRIDES,
-  buildSpecLookup,
   validateAgainstSpecs,
   inferCategory,
   ingestQcResults,
   ingestQcReport,
   reviewProductionQc,
   approveProductionQc,
-  parseAqlIssues,
-  assembleQcReview,
-  triageQcGroups,
-  synthesizeQcFindings,
-  writeQcReviewSheet,
 };
