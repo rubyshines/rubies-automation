@@ -65,6 +65,7 @@ const gradingSpecsTools = require('./lib/tools/gradingSpecs');
 const suppliersTools = require('./lib/tools/suppliers');
 const productionOrderLoopTools = require('./lib/tools/productionOrderLoop');
 const inboundReceivingTools = require('./lib/tools/inboundReceiving');
+const qcInspectionTools = require('./lib/tools/qcInspection');
 const freeOfferTools = require('./lib/tools/freeOffer');
 const freeSwimwearTools = require('./lib/tools/freeSwimwear');
 const discountTools = require('./lib/tools/discounts');
@@ -120,6 +121,7 @@ const allTools = [
   ...suppliersTools,
   ...productionOrderLoopTools,
   ...inboundReceivingTools,
+  ...qcInspectionTools,
   ...freeOfferTools,
   ...freeSwimwearTools,
   ...discountTools,

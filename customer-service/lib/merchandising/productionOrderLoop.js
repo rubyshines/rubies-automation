@@ -371,8 +371,15 @@ async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_dat
 function groupItems(items) {
   const groups = new Map();
   for (const it of items) {
-    const key = `${it.product_name}|||${it.color || ''}`;
-    if (!groups.has(key)) groups.set(key, { product_name: it.product_name, color: it.color || '', lines: [] });
+    // Callers that pass bare {sku, qty} (order rewrites from DB rows) still get
+    // correct product-color grouping + size sort — derive both from the SKU.
+    // Without this, every line keyed to "undefined" and the whole order came
+    // out in one jumbled group.
+    const segs = String(it.sku || '').split('-');
+    const name = it.product_name || segs[0] || '';
+    const color = it.color || (segs.length > 2 ? segs[1] : '');
+    const key = `${name}|||${color}`;
+    if (!groups.has(key)) groups.set(key, { product_name: name, color, lines: [] });
     groups.get(key).lines.push(it);
   }
   const arr = [...groups.values()];

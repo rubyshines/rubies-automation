@@ -13,6 +13,12 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: idea (planned)
 - Notes: Extend the receiving reconcile (see domain_logistics Key Decisions) so each distinct inbound shipment of an order gets its own scoped "Shipment — <transfer>" tab (SKU | Ordered | This Shipment | Cumulative | Remaining | Flag | Note; + OUTSTANDING and FABRIC/QUALITY blocks). Jamie chose scoped-per-shipment over per-shipment columns. A pure `buildShipmentRows` was drafted then reverted (unwired) — re-derive from the design here. Also harden multi-shipment: auto-number `transfer_number` (`<code>-1/-2`) so a second shipment can't overwrite the first, and make the `qty_produced` mirror sum across shipments (reconcile already uses lots, so it's cosmetic). Plus a `seed_order_from_held`/next-order helper that starts a replacement order from an order's held lots. Use when the order actually splits into ocean+air / a later batch arrives.
 
+## Production order revision history
+- Parked: 2026-07-04
+- Domains: logistics, inventory
+- Type: idea
+- Notes: Order quantities now change after placement (the KALI-2606 adjustment for KALI-2601 production deltas was applied directly to production_order_items with only a notes-field summary). A revisions log (who/when/why per line change) would make a production run's evolution traceable and support "track history of order updates for the same production run". Schema + tooling change; design when the next order revision happens.
+
 ## Local storage to organize production discussions/decisions per order & product
 - Parked: 2026-06-30
 - Domains: logistics, inventory, product_design, tech
@@ -275,3 +281,11 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: idea
 - Domains: tech, cs
 - Notes: The deferred optional piece from the AI observability work. `ai_calls` + `ai_costs_daily` now hold per-component cost/latency; the daily ops digest already shows yesterday's per-component line + MTD spend + cap warning. A dashboard widget (stacked bar by component over 30 days, latency curves) would make trends visible at a glance instead of only in the daily email. Add a `/api/ai-costs` route on the existing dashboard server reading `ai_costs_daily`. Not urgent — the email covers the alerting need.
+
+## Security review sweep of the whole codebase
+- Parked: 2026-07-02
+- Last touched: 2026-07-02
+- Type: idea
+- Domains: tech
+- Resume when: next session with fresh token budget (follow-up to the 2026-07-02 comprehensive review workflow)
+- Notes: Run a security-lens multi-agent review, same shape as the July 2026 bugs/DRY workflow (per-subsystem finders + adversarial verification). Lenses worth covering: webhook auth (HMAC/secret verification on every route, incl. Gmail Pub/Sub), dashboard server endpoint authn/authz + the ngrok preview exposure, secrets hygiene (keys in code/logs/committed files), injection surfaces (SQL via Supabase/pg, prompt injection through customer emails reaching tool-calling agents), PII handling (customer data in logs, ai_calls payloads, dead-letter tables), and dependency audit (npm audit). The prompt-injection surface is the RUBIES-specific one: customer-controlled email text feeds an Opus agent holding refund/exchange tools.

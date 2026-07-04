@@ -212,6 +212,36 @@ async function run() {
   }
   console.log(`  Upserted ${variantRows.length} variants`);
 
+  // 6b. Remove orphan variants — rows for a SURVIVING product whose variant no
+  // longer exists in Shopify (variants deleted/recreated on a live product).
+  // Stale-product cleanup below only catches whole-product deletions; without
+  // this pass, deleted variants linger in the mirror with stale variant ids
+  // (observed: the Evey sports bra trimmed from 45 speculative variants to 9 —
+  // the 36 leftovers made pre-order clears fail forever). Narrow per-product
+  // NOT-IN delete, concurrency-safe alongside the upsert above.
+  {
+    const liveByProduct = new Map();
+    for (const r of variantRows) {
+      if (!liveByProduct.has(r.shopify_product_id)) liveByProduct.set(r.shopify_product_id, []);
+      liveByProduct.get(r.shopify_product_id).push(r.shopify_variant_id);
+    }
+    let orphansRemoved = 0;
+    for (const [productId, variantIds] of liveByProduct) {
+      const { data: removed, error } = await supabase
+        .from('product_variants')
+        .delete()
+        .eq('shopify_product_id', productId)
+        .not('shopify_variant_id', 'in', `(${variantIds.map((id) => `"${id}"`).join(',')})`)
+        .select('sku');
+      if (error) throw new Error(`Orphan variant cleanup failed for ${productId}: ${error.message}`);
+      if (removed && removed.length) {
+        orphansRemoved += removed.length;
+        console.log(`  Removed ${removed.length} orphan variant(s) of ${productId}: ${removed.map((r) => r.sku).join(', ')}`);
+      }
+    }
+    if (!orphansRemoved) console.log('  No orphan variants');
+  }
+
   // 7. Delete stale products (CASCADE removes their variants)
   const activeIds = new Set(activeProducts.map(p => p.id));
   const { data: existingProducts } = await supabase
