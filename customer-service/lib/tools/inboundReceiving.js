@@ -282,6 +282,27 @@ module.exports = [
     handler: handlePoll,
   },
   {
+    name: 'draft_supplier_order_email',
+    description: 'Create a Gmail DRAFT (never sends) to the supplier for a production order, with the supplier-ready order .xlsx ALWAYS attached — built fresh from the canonical Supabase order lines. Use `updated: true` when the order revises one already sent; `note` adds order-specific context to the body.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        order_ref: { type: 'string', description: 'production_code (e.g. KALI-2606) or order id' },
+        note: { type: 'string', description: 'Optional context paragraph, e.g. why quantities changed' },
+        updated: { type: 'boolean', description: 'True when this replaces a previously sent order' },
+        to: { type: 'string', description: 'Override recipient; defaults to the supplier email on file' },
+      },
+      required: ['order_ref'],
+    },
+    handler: async (args) => {
+      try {
+        const { draftSupplierOrderEmail } = require('../merchandising/supplierEmail');
+        const r = await draftSupplierOrderEmail({ orderRef: args.order_ref, note: args.note, updated: args.updated, to: args.to });
+        return ok(`**Gmail draft created** — "${r.subject}" to ${r.to}\n${r.sku_count} SKUs · ${r.total_units.toLocaleString()} units · attachment: ${r.filename}\nReview and send from Gmail drafts.`);
+      } catch (e) { return err(e.message); }
+    },
+  },
+  {
     name: 'export_supplier_lot_list',
     description: 'Export the supplier-facing ordered-vs-produced .xlsx for a production order, one section per lot: shipped-goods discrepancies (significant under-production highlighted red, over-production orange — significant means ≥10 units and ≥10% of ordered), marked test batches for reference, and held-at-factory SKUs with a fill-in produced column for the supplier to confirm. Writes to ~/Downloads unless out_path is given.',
     inputSchema: {

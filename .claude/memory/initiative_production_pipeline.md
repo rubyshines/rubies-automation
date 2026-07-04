@@ -3,7 +3,7 @@ name: Production Pipeline
 description: End-to-end manufacturing workflow — inventory projections, production orders, pre-orders, QC, Warehance receiving
 type: project
 domains: [product_design, inventory, logistics]
-last_updated: 2026-07-03
+last_updated: 2026-07-04
 ---
 
 ## Goal
@@ -13,7 +13,7 @@ Connect the various scripts and processes into one cohesive production pipeline:
 1. Inventory projection engine + supplier registry — **design complete, ready to build** (plan: `.claude/plans/merchandising-projection-engine.md`)
 2. Production order generation — design complete (part of Phase 1 plan above)
 3. Pre-order setup — **sheet→web push built** (`sync_pre_orders`); remaining: auto-populate `us-YYYY-MM-DD` tabs from a confirmed production order
-4. QC spreadsheet generation for third-party inspector
+4. QC spreadsheet generation for third-party inspector — **ingest side built + run live on KALI-2601 (PR #48); remaining: generate_qc_sheet for the next order**
 5. Warehance receiving upload + received vs ordered reconciliation — **built (branch `wt/merch-receiving`): packing-list → inbound shipment → lots (ship/held) → 3-way reconcile → founder review sheet; Warehance ASN upload built, not yet run live**
 6. Graded spec collection — started (shared with product design initiatives)
 
@@ -22,6 +22,9 @@ Phase 1+2 design locked June 2026. Existing `rubies-utilities` projection script
 
 ## July 2026 Update — Phase 5 receiving built + run live (branch `wt/merch-receiving`)
 Built the full inbound-receiving side and exercised it on Kali's real 2026 shipment (order backfilled as `KALI-2601`). Flow: parse supplier packing-list `.xlsx` → catalog-validated SKU correction (size aliases + section-scoped supplier prefix/typo fixes) → `inbound_shipments`/`_items` → `production_lots` (ship vs held; flagged e.g. pink-sticker) → 3-way reconcile (ordered→produced→shipped→received) with anomaly + fabric flags → disposable "Reconcile — <code>" review tab in the 2026 Production Numbers sheet → Warehance ASN (`POST /inbound-shipments`, built not yet run live). 8 MCP tools, `merchandising_v3.sql` (`production_lots`) applied. Detail in `domain_logistics.md` Key Decisions. Live learnings this run: (1) the sports bra had **no catalog product** and was barcoded under the Ava bra's `SB` prefix — fixed to `SPB` (Kali corrected at source; still need the Shopify product created); (2) a `MIA-BLK-11` size typo → `MIA-BLK-10`; (3) the June thin-black-fabric issue → 7 SKUs / 628 units recorded as a `pink_sticker` held-quality test batch. Idempotent re-run against Kali's officially-updated list matched our corrections exactly. **Open:** create the Evey `SPB-*` product; Kali's held-unit quantities; deploy.
+
+## July 2026 Update — Phase 4 QC ingest + supplier-comms tools (PR #48)
+Joyce's completed QC came back for KALI-2601 and the ingest side of Phase 4 was built and run live: QC Master `.xlsx` (per-sample measurements, 1,878 rows) + AQL PDF report (Opus extraction) → `qc_inspections`/`qc_measurements`/`qc_issues`, with sheet targets cross-validated against `tech_pack_specs` (caught stale QC Master targets). A review-tab reporting layer (AI triage + findings synthesis) was built then **deliberately removed** — QC is recorded data-only for historical comparison; `review_production_qc`/`approve_production_qc` remain as the chat summary + payment gate. Supplier-comms tools added: `export_supplier_lot_list` (per-lot ordered-vs-produced `.xlsx`, significant under/over highlighted) and `draft_supplier_order_email` (Gmail draft with the order `.xlsx` always attached). KALI-2601's two-lot split (shipped + held black swim) recorded; KALI-2606 adjusted for confirmed production deltas. Detail in `domain_logistics.md`.
 
 ## Decisions Made
 - **Supabase as canonical store for projection output.** Results written to `inventory_projections` table (upsert by SKU per run). Google Sheets output is optional view only.
