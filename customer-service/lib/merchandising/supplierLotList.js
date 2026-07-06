@@ -115,23 +115,36 @@ async function writeSupplierLotList({ orderRef, outPath }) {
   ws.addRow([]);
 
   // One product-color group: header row, size-ordered SKU rows, live subtotal.
+  // Formula cells always carry a cached result — viewers that don't recalc
+  // (Numbers, previews) render result-less formulas as blank, which reads as
+  // missing subtotals. Held-section fill-in diffs stay result-less on purpose
+  // (blank until the supplier fills the produced column).
   const emitGroups = (rows, { fillProduced = false } = {}) => {
     for (const g of groupLines(rows, resolve)) {
       bold(ws.addRow([g.color ? `${g.product} - ${g.color}` : g.product]));
       const first = ws.rowCount + 1;
+      let subOrd = 0, subProd = 0, subDiff = 0;
       for (const r of g.lines) {
         const rowNum = ws.rowCount + 1;
+        subOrd += r.ordered || 0;
+        subProd += fillProduced ? 0 : (r.produced || 0);
+        const diff = fillProduced ? undefined : (r.produced || 0) - (r.ordered || 0);
+        if (diff !== undefined) subDiff += diff;
         const row = ws.addRow([
           r.sku, r.ordered,
           fillProduced ? '' : r.produced,
-          { formula: `C${rowNum}-B${rowNum}` },
+          diff === undefined ? { formula: `C${rowNum}-B${rowNum}` } : { formula: `C${rowNum}-B${rowNum}`, result: diff },
           r.note,
         ]);
         applyHighlight(row, r.highlight);
         if (fillProduced) row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: FILL_IN_FILL } };
       }
       const last = ws.rowCount;
-      bold(ws.addRow(['', { formula: `SUM(B${first}:B${last})` }, { formula: `SUM(C${first}:C${last})` }, { formula: `SUM(D${first}:D${last})` }, '']));
+      bold(ws.addRow(['',
+        { formula: `SUM(B${first}:B${last})`, result: subOrd },
+        fillProduced ? { formula: `SUM(C${first}:C${last})` } : { formula: `SUM(C${first}:C${last})`, result: subProd },
+        fillProduced ? { formula: `SUM(D${first}:D${last})` } : { formula: `SUM(D${first}:D${last})`, result: subDiff },
+        '']));
       ws.addRow([]);
     }
   };

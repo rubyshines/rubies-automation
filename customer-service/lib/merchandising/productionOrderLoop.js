@@ -300,6 +300,35 @@ function isBoldRow(row) {
 // Build an exceljs workbook from [colA, colB] rows. "=..." strings become live
 // formulas; rows in boldSet (or detected via isBoldRow when boldSet is null) are
 // bolded. Reproduces the production order sheet (layout + bold + formulas).
+// Compute the value a formula will evaluate to, so .xlsx formula cells carry a
+// cached result. Excel recalculates on open either way, but viewers that don't
+// (Numbers, Quick Look, Google preview) render result-less formula cells as
+// BLANK — which reads as "the subtotals are missing." Handles the two shapes
+// the order layout emits: SUM(<col>a:<col>b) and the SUMIFS grand total.
+function cachedFormulaResult(formula, rows) {
+  const colIdx = (letter) => letter.charCodeAt(0) - 65;
+  let m = formula.match(/^SUM\(([A-Z])(\d+):\1(\d+)\)$/);
+  if (m) {
+    let s = 0;
+    for (let r = Number(m[2]); r <= Number(m[3]); r++) {
+      const v = rows[r - 1]?.[colIdx(m[1])];
+      if (typeof v === 'number') s += v;
+    }
+    return s;
+  }
+  m = formula.match(/^SUMIFS\(([A-Z]):\1,A:A,"<>",A:A,"<>TOTAL"\)$/);
+  if (m) {
+    let s = 0;
+    for (const row of rows) {
+      const a = row?.[0];
+      const v = row?.[colIdx(m[1])];
+      if (a != null && a !== '' && String(a).toUpperCase() !== 'TOTAL' && typeof v === 'number') s += v;
+    }
+    return s;
+  }
+  return undefined;
+}
+
 async function buildOrderWorkbook(rows, boldSet) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Order');
@@ -307,8 +336,11 @@ async function buildOrderWorkbook(rows, boldSet) {
     const wsRow = ws.getRow(i + 1);
     (row || []).forEach((cell, ci) => {
       const c = wsRow.getCell(ci + 1);
-      if (typeof cell === 'string' && cell.startsWith('=')) c.value = { formula: cell.slice(1) };
-      else if (cell !== '' && cell != null) c.value = cell;
+      if (typeof cell === 'string' && cell.startsWith('=')) {
+        const formula = cell.slice(1);
+        const result = cachedFormulaResult(formula, rows);
+        c.value = result === undefined ? { formula } : { formula, result };
+      } else if (cell !== '' && cell != null) c.value = cell;
     });
     if (boldSet ? boldSet.has(i) : isBoldRow(row)) wsRow.font = { bold: true };
   });
@@ -536,4 +568,4 @@ async function removePricingTab(sheets, spreadsheetId, orderTabName) {
   return !!p;
 }
 
-module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, prependTitle, resolveOrderItems, categoryRank, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, cachedFormulaResult, prependTitle, resolveOrderItems, categoryRank, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };

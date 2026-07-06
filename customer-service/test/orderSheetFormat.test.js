@@ -59,3 +59,31 @@ test('buildSheetRows honors explicit product_name/color when provided', () => {
   assert.ok(start !== -1, 'explicit product_name used for the group header');
   assert.deepEqual(labels.slice(start + 1, start + 3), ['AJ-BLK-8', 'AJ-BLK-M']);
 });
+
+// The .xlsx must render subtotals EVERYWHERE, including viewers that never
+// recalculate formulas (Numbers, Quick Look, Google preview): every formula
+// cell carries a cached result alongside the live formula. Regression: the
+// workbook once wrote result-less formulas and every subtotal displayed blank.
+test('buildOrderWorkbook: subtotal + grand total cells carry live formula AND cached result', async () => {
+  const { buildOrderWorkbook, prependTitle } = require('../lib/merchandising/productionOrderLoop');
+  const items = [
+    { sku: 'AJ-BLK-8', qty: 100 },
+    { sku: 'AJ-BLK-M', qty: 50 },
+    { sku: 'CM-BLK-XS', qty: 40 },
+  ];
+  const { rows } = buildSheetRows(items, { formulas: true });
+  const titled = prependTitle(rows, 'Production Order: TEST');
+  const wb = await buildOrderWorkbook(titled, null);
+  const ws = wb.worksheets[0];
+
+  const formulaCells = [];
+  ws.eachRow((row) => row.eachCell((cell) => {
+    if (cell.value && typeof cell.value === 'object' && cell.value.formula) formulaCells.push(cell.value);
+  }));
+  assert.equal(formulaCells.length, 3, 'two colorway subtotals + one grand total');
+  for (const v of formulaCells) {
+    assert.equal(typeof v.result, 'number', `formula ${v.formula} must carry a cached numeric result`);
+  }
+  const results = formulaCells.map((v) => v.result).sort((a, b) => a - b);
+  assert.deepEqual(results, [40, 150, 190], 'AJ subtotal 150, CM subtotal 40, grand 190');
+});
