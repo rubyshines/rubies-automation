@@ -298,7 +298,11 @@ module.exports = [
       try {
         const { draftSupplierOrderEmail } = require('../merchandising/supplierEmail');
         const r = await draftSupplierOrderEmail({ orderRef: args.order_ref, note: args.note, updated: args.updated, to: args.to });
-        return ok(`**Gmail draft created** — "${r.subject}" to ${r.to}\n${r.sku_count} SKUs · ${r.total_units.toLocaleString()} units · attachment: ${r.filename}\nReview and send from Gmail drafts.`);
+        const parts = [];
+        if (r.catalog_created && r.catalog_created.length) parts.push(`\n✅ Added ${r.catalog_created.length} missing variant(s) to Shopify (sibling price): ${r.catalog_created.join(', ')}`);
+        if (r.catalog_unresolvable && r.catalog_unresolvable.length) parts.push(`\n🚨 ${r.catalog_unresolvable.length} SKU(s) have NO PRODUCT in Shopify (cannot auto-create): ${r.catalog_unresolvable.join(', ')} — create the product first.`);
+        const warn = parts.join('');
+        return ok(`**Gmail draft created** — "${r.subject}" to ${r.to}\n${r.sku_count} SKUs · ${r.total_units.toLocaleString()} units · attachment: ${r.filename}${warn}\nReview and send from Gmail drafts.`);
       } catch (e) { return err(e.message); }
     },
   },

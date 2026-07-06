@@ -87,3 +87,24 @@ test('buildOrderWorkbook: subtotal + grand total cells carry live formula AND ca
   const results = formulaCells.map((v) => v.result).sort((a, b) => a - b);
   assert.deepEqual(results, [40, 150, 190], 'AJ subtotal 150, CM subtotal 40, grand 190');
 });
+
+// Catalog guard (founder rule): missing variants are CREATED in Shopify and
+// reported — never flagged inside the spreadsheet. The sheet itself stays
+// clean; displaySizeForSku maps SKU size codes to customer display sizes.
+test('displaySizeForSku: XL-form SKU codes map to 1X/2X display sizes', () => {
+  const { displaySizeForSku } = require('../lib/merchandising/productionOrderLoop');
+  assert.equal(displaySizeForSku('XL'), '1X');
+  assert.equal(displaySizeForSku('2XL'), '2X');
+  assert.equal(displaySizeForSku('4XL'), '4X');
+  assert.equal(displaySizeForSku('3XLT'), '3XT');
+  assert.equal(displaySizeForSku('M'), 'M');
+  assert.equal(displaySizeForSku('12'), '12');
+});
+
+test('buildSheetRows: never emits a NOT IN SHOPIFY banner (guard creates, not flags)', () => {
+  const { rows } = buildSheetRows([
+    { sku: 'AJ-BLK-M', qty: 50, in_catalog: true },
+    { sku: 'NEW-BLK-3XL', qty: 20, in_catalog: false },
+  ], { formulas: true });
+  assert.ok(!rows.some((r) => String(r[0]).includes('NOT IN SHOPIFY')));
+});

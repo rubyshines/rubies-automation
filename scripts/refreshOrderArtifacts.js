@@ -15,7 +15,7 @@ const path = require('path');
 const os = require('os');
 const { getSupabaseClient } = require('../shared/supabaseClient');
 const { getSheetsClient } = require('../shared/googleSheetsClient');
-const { buildSheetRows, buildOrderWorkbook, prependTitle, writeOrderTab, resolveOrderItems } = require('../customer-service/lib/merchandising/productionOrderLoop');
+const { buildSheetRows, buildOrderWorkbook, prependTitle, writeOrderTab, resolveOrderItems, ensureCatalogVariants } = require('../customer-service/lib/merchandising/productionOrderLoop');
 const { resolveOrder } = require('../customer-service/lib/merchandising/inboundReceiving');
 
 const PRE_ORDER_SHEET = process.env.PRE_ORDER_SHEET_ID || '1m2efAIbrV_fSYhJEfyAghROwJb7_3Fm5PuwR6GYjLwo';
@@ -54,7 +54,11 @@ async function writeIncomingTab(sheets, tabName, items) {
   const order = await resolveOrder(orderRef);
   if (!order) throw new Error(`order "${orderRef}" not found`);
   const { data: rows } = await sb.from('production_order_items').select('sku, qty_ordered').eq('production_order_id', order.id);
-  const items = await resolveOrderItems(rows.filter((i) => (i.qty_ordered || 0) > 0).map((i) => ({ sku: i.sku, qty: i.qty_ordered })));
+  const bare = rows.filter((i) => (i.qty_ordered || 0) > 0).map((i) => ({ sku: i.sku, qty: i.qty_ordered }));
+  const guard = await ensureCatalogVariants(bare);
+  if (guard.created.length) console.log(`✅ added missing variants to Shopify: ${guard.created.join(', ')}`);
+  if (guard.unresolvable.length) console.log(`🚨 no product in Shopify for: ${guard.unresolvable.join(', ')} — create the product first`);
+  const items = await resolveOrderItems(bare);
   const total = items.reduce((s, i) => s + i.qty, 0);
   const code = order.production_code || `order-${order.id}`;
   console.log(`${code}: ${items.length} SKUs / ${total.toLocaleString()} units`);

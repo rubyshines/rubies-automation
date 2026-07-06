@@ -6,7 +6,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getGmail, createDraftWithAttachment } = require('../../../gmail-management/lib/gmailClient');
-const { buildSheetRows, buildOrderWorkbook, prependTitle, resolveOrderItems } = require('./productionOrderLoop');
+const { buildSheetRows, buildOrderWorkbook, prependTitle, resolveOrderItems, ensureCatalogVariants } = require('./productionOrderLoop');
 const { resolveOrder } = require('./inboundReceiving');
 
 // Pure: subject + body for an order update email. `note` lets the agent add
@@ -49,7 +49,9 @@ async function draftSupplierOrderEmail({ orderRef, note, updated = false, to }) 
 
   const code = order.production_code || `order-${order.id}`;
   const date = new Date().toISOString().slice(0, 10);
-  const { rows } = buildSheetRows(await resolveOrderItems(lines), { formulas: true });
+  const guard = await ensureCatalogVariants(lines);
+  const enriched = await resolveOrderItems(lines);
+  const { rows } = buildSheetRows(enriched, { formulas: true });
   const titled = prependTitle(rows, `Production Order: ${supplier.name} (${code})${updated ? ` — UPDATED ${date}` : ` ${date}`}`);
   const wb = await buildOrderWorkbook(titled, null);
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
@@ -64,7 +66,7 @@ async function draftSupplierOrderEmail({ orderRef, note, updated = false, to }) 
     attachment: { filename, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: buffer },
   });
 
-  return { draft_id: draftId, to: recipient, subject, filename, sku_count: lines.length, total_units: totalUnits, order: { id: order.id, production_code: order.production_code } };
+  return { draft_id: draftId, to: recipient, subject, filename, sku_count: lines.length, total_units: totalUnits, catalog_created: guard.created, catalog_unresolvable: guard.unresolvable, order: { id: order.id, production_code: order.production_code } };
 }
 
 module.exports = { buildOrderEmailContent, draftSupplierOrderEmail };
