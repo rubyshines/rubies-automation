@@ -7,6 +7,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 # Parked Items
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
+
+## CS advocacy Phase B — /help share page + P.S. link + effectiveness tracking + provider capture
+- Parked: 2026-07-06
+- Last touched: 2026-07-06
+- Type: idea (planned)
+- Domains: cs, marketing, community
+- Plan: .claude/plans/cs-email-signature-advocacy.md
+- Notes: Phase A shipped 2026-07-06 (standardized signature + link-LESS advocacy P.S., once-ever dedup via `advocacy_asks_sent`; see domain_cs.md). Phase B: (1) build the rubyshines.com/help share page — tell another parent (with a ready-to-paste blurb), tell your therapist/doctor/clinic, connect an LGBTQ+ org, share on social; (2) append " Here are some ways you can help: [link]" to the P.S. (constants in signatures.js `ADVOCACY_PS`); (3) effectiveness tracking — an owned tracked-redirect route + `advocacy_events` table (sent → click → page actions), surfaced in the daily digest; (4) provider capture — a form on the page → `provider_leads` → community/B2B outreach (fold into the Unified B2B Outreach system as a "providers" channel, don't build parallel). Revenue attribution rides the EXISTING referral program on the peer avenue. Note: once-ever dedup means Phase-A recipients won't get the link version later (accepted). Next concrete step: draft the /help page content for Natta. Dependencies: sample cards/one-pager for providers (Creative), tracked links/UTMs. Full design + decisions in the plan file.
+
 ## Per-shipment reconcile tab + multi-shipment hardening
 - Parked: 2026-07-03
 - Domains: logistics, inventory
