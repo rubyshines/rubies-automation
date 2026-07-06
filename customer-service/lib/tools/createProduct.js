@@ -70,8 +70,18 @@ function normalizeTitle(title) {
   return String(title || '').trim().replace(/^the\s+/i, '').toUpperCase();
 }
 
+// Display plus sizes (1X/2X/3X/4X, optional T tall suffix) map to the legacy
+// XL-form SKU convention used across every product (SPB briefly launched with
+// 1X-form SKUs and had to be renamed). Display names stay as passed; only the
+// SKU is canonicalized.
+function skuSizeCode(size) {
+  const m = String(size).toUpperCase().match(/^(\d)X(T?)$/);
+  if (!m) return String(size).toUpperCase();
+  return `${m[1] === '1' ? '' : m[1]}XL${m[2]}`;
+}
+
 function skuFor(prefix, colorCode, size) {
-  return `${prefix}-${colorCode}-${size}`;
+  return `${prefix}-${colorCode}-${skuSizeCode(size)}`;
 }
 
 /**
@@ -285,9 +295,18 @@ async function deleteMetafields(ownerId, identifiers) {
 /** Copy design-independent shopify.* taxonomy from an analog product. */
 async function copyTaxonomyFromAnalog(fromHandle, toProductId) {
   const SAFE_KEYS = ['color-pattern', 'target-gender', 'fabric', 'care-instructions', 'bra-closure-type', 'bra-features'];
-  const q = `query($h:String!){ productByHandle(handle:$h){ metafields(first:60){ edges{ node{ namespace key type value } } } } }`;
+  const q = `query($h:String!){ productByHandle(handle:$h){ category { id } metafields(first:60){ edges{ node{ namespace key type value } } } } }`;
   const p = (await shopifyGraphQL(q, { h: fromHandle })).productByHandle;
   if (!p) return 0;
+  // The taxonomy CATEGORY itself, not just shopify.* attribute metafields —
+  // custom.* definitions are category-constrained, so setting them on a
+  // product with no category fails with "Owner subtype does not match".
+  if (p.category?.id) {
+    await shopifyGraphQL(
+      `mutation($input: ProductInput!){ productUpdate(input:$input){ product { id } userErrors { field message } } }`,
+      { input: { id: toProductId, category: p.category.id } }
+    );
+  }
   const copy = p.metafields.edges.map(e => e.node)
     .filter(m => m.namespace === 'shopify' && SAFE_KEYS.includes(m.key))
     .map(m => ({ key: m.key, type: m.type, value: m.value }));
@@ -397,6 +416,16 @@ async function applyPlan(plan, { log = () => {} } = {}) {
     const n = await reconcileVariants(existing, plan.variants);
     log(`reconciled ${n} variants (sku + price)`);
   } else {
+    // Declare Size/Color options up front — variantsBulkCreate can only
+    // reference options that already exist on the product.
+    const optionValues = (name) => {
+      const seen = [];
+      for (const v of plan.variants) {
+        const val = v.optionValues.find((o) => o.optionName === name)?.name;
+        if (val && !seen.includes(val)) seen.push(val);
+      }
+      return seen.map((n) => ({ name: n }));
+    };
     const created = await createShopifyProduct({
       title: plan.product.title,
       handle: plan.product.handle,
@@ -405,6 +434,10 @@ async function applyPlan(plan, { log = () => {} } = {}) {
       productType: plan.product.productType || undefined,
       tags: plan.product.tags,
       descriptionHtml: plan.product.descriptionHtml || `<p>${plan.product.title}</p>`,
+      productOptions: [
+        { name: 'Size', values: optionValues('Size') },
+        { name: 'Color', values: optionValues('Color') },
+      ],
     });
     productId = created.id;
     log(`created product ${created.id}`);
@@ -418,10 +451,13 @@ async function applyPlan(plan, { log = () => {} } = {}) {
     }
   }
 
+  // Taxonomy first: the custom.* metafield definitions are constrained by
+  // product subtype, so a fresh product must carry its taxonomy category
+  // before those metafields can be set ("Owner subtype does not match").
+  if (plan.copyTaxonomyFrom) { const t = await copyTaxonomyFromAnalog(plan.copyTaxonomyFrom, productId); log(`copied ${t} shopify.* taxonomy fields`); }
   await setMetafields(productId, plan.customMetafields, 'custom');
   log(`set ${plan.customMetafields.length} custom metafields`);
   if (plan.deleteLegacy.length) { await deleteMetafields(productId, plan.deleteLegacy); log('removed legacy metafields'); }
-  if (plan.copyTaxonomyFrom) { const t = await copyTaxonomyFromAnalog(plan.copyTaxonomyFrom, productId); log(`copied ${t} shopify.* taxonomy fields`); }
   if (plan.collections.length) { const c = await addToCollections(productId, plan.collections); log(`added to ${c} collections`); }
   await upsertCsConfig(plan.csConfig);
   log('upserted product_cs_config (draft)');

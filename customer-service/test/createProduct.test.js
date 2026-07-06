@@ -53,7 +53,10 @@ test('buildVariants produces color x size with SKUs and tiered prices', () => {
     { name: '6', optionName: 'Youth Size' },
     { name: 'Black', optionName: 'Color' },
   ]);
-  assert.strictEqual(variants.find(v => v.sku === 'SPB-WHT-4X').price, '42.00');
+  // display size 4X maps to the legacy XL-form SKU convention (SKU 4XL)
+  const wht4x = variants.find(v => v.sku === 'SPB-WHT-4XL');
+  assert.strictEqual(wht4x.price, '42.00');
+  assert.deepStrictEqual(wht4x.optionValues[0], { name: '4X', optionName: 'Youth Size' });
 });
 
 test('buildCustomMetafields uses the live keys', () => {

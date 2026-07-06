@@ -1488,9 +1488,12 @@ async function addCodeToPriceRule(priceRuleId, code) {
  * @returns {Object} Created product { id, title, handle, status }
  */
 async function createShopifyProduct(input) {
+  // ProductCreateInput (not legacy ProductInput) so productOptions can be
+  // declared at creation — without them, productVariantsBulkCreate on a fresh
+  // product fails with "Option does not exist".
   const data = await shopifyGraphQL(`
-    mutation productCreate($input: ProductInput!) {
-      productCreate(input: $input) {
+    mutation productCreate($product: ProductCreateInput!) {
+      productCreate(product: $product) {
         product {
           id
           title
@@ -1500,7 +1503,7 @@ async function createShopifyProduct(input) {
         userErrors { field message }
       }
     }
-  `, { input });
+  `, { product: input });
   return data.productCreate.product;
 }
 
@@ -1511,9 +1514,11 @@ async function createShopifyProduct(input) {
  * @returns {Array} Created variants
  */
 async function createProductVariants(productId, variants) {
+  // REMOVE_STANDALONE_VARIANT drops the placeholder default variant that
+  // productCreate leaves on a new product.
   const data = await shopifyGraphQL(`
     mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkCreate(productId: $productId, variants: $variants) {
+      productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: REMOVE_STANDALONE_VARIANT) {
         productVariants {
           id
           title
