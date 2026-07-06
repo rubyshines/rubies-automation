@@ -368,26 +368,67 @@ async function createOrderFromParsed({ sup, parsed, sheetRows, expected_ship_dat
 
 // Group items by product+color; sort groups by SKU prefix then color, and lines
 // by size within each group.
+// Category order on supplier-facing sheets: underwear first, then swimwear,
+// then anything else (founder-preferred reading order).
+function categoryRank(category) {
+  const c = String(category || '');
+  if (c.startsWith('underwear')) return 0;
+  if (c.startsWith('swim') || c === 'onepiece') return 1;
+  return 2;
+}
+
+/**
+ * Enrich bare {sku, qty} lines with the FULL product title (never the SKU
+ * prefix), and the category rank, resolved from the catalog. Every spreadsheet
+ * in the merchandising pipeline should feed its items through this so headings
+ * read "THE AJ NO-TUCK SHAPING UNDERWEAR - BLK", not "AJ - BLK". Unresolvable
+ * SKUs keep the prefix fallback.
+ */
+async function resolveOrderItems(items) {
+  const sb = getSupabaseClient();
+  const skus = [...new Set(items.map((i) => i.sku).filter(Boolean))];
+  const { data: variants } = await sb.from('product_variants').select('sku, shopify_product_id').in('sku', skus);
+  const pidBySku = new Map((variants || []).map((v) => [v.sku, v.shopify_product_id]));
+  const pids = [...new Set((variants || []).map((v) => v.shopify_product_id).filter(Boolean))];
+  const prodByPid = new Map();
+  if (pids.length) {
+    const { data: prods } = await sb.from('products').select('shopify_product_id, title, handle').in('shopify_product_id', pids);
+    const handles = (prods || []).map((p) => p.handle).filter(Boolean);
+    const { data: cfgs } = handles.length
+      ? await sb.from('product_cs_config').select('product_handle, category').in('product_handle', handles)
+      : { data: [] };
+    const catByHandle = new Map((cfgs || []).map((c) => [c.product_handle, c.category]));
+    for (const p of prods || []) prodByPid.set(p.shopify_product_id, { title: p.title, category: catByHandle.get(p.handle) || null });
+  }
+  return items.map((it) => {
+    const prod = prodByPid.get(pidBySku.get(it.sku));
+    if (!prod) return { ...it };
+    return { ...it, product_name: it.product_name || prod.title, category_rank: it.category_rank ?? categoryRank(prod.category) };
+  });
+}
+
 function groupItems(items) {
   const groups = new Map();
   for (const it of items) {
     // Callers that pass bare {sku, qty} (order rewrites from DB rows) still get
     // correct product-color grouping + size sort — derive both from the SKU.
     // Without this, every line keyed to "undefined" and the whole order came
-    // out in one jumbled group.
+    // out in one jumbled group. (Prefer resolveOrderItems upstream so headers
+    // carry the full product title and categories order underwear-first.)
     const segs = String(it.sku || '').split('-');
     const name = it.product_name || segs[0] || '';
     const color = it.color || (segs.length > 2 ? segs[1] : '');
     const key = `${name}|||${color}`;
-    if (!groups.has(key)) groups.set(key, { product_name: name, color, lines: [] });
+    if (!groups.has(key)) groups.set(key, { product_name: name, color, rank: it.category_rank ?? 2, lines: [] });
     groups.get(key).lines.push(it);
   }
   const arr = [...groups.values()];
   for (const g of arr) g.lines.sort((a, b) => sizeSort(sizeFromSku(a.sku)) - sizeSort(sizeFromSku(b.sku)));
-  arr.sort((a, b) => {
-    const pa = String(a.lines[0]?.sku || '').split('-')[0], pb = String(b.lines[0]?.sku || '').split('-')[0];
-    return pa !== pb ? pa.localeCompare(pb) : (a.color || '').localeCompare(b.color || '');
-  });
+  // underwear -> swimwear -> other, then product title, then color
+  arr.sort((a, b) =>
+    a.rank - b.rank
+    || String(a.product_name).localeCompare(String(b.product_name))
+    || (a.color || '').localeCompare(b.color || ''));
   return arr;
 }
 
@@ -456,7 +497,8 @@ function buildPricingRows(pricing) {
 
 // Write the clean ORDER tab. Tab name passed in (e.g. "2026-06-29 - Kali Swim and Underwear").
 async function writeOrderTab({ sheets, spreadsheetId, tabName, items }) {
-  const { rows, boldRows } = buildSheetRows(items);
+  const enriched = await resolveOrderItems(items);
+  const { rows, boldRows } = buildSheetRows(enriched);
   await writeTabAtFront(sheets, spreadsheetId, tabName, rows, boldRows, 2);
   return { tabName };
 }
@@ -494,4 +536,4 @@ async function removePricingTab(sheets, spreadsheetId, orderTabName) {
   return !!p;
 }
 
-module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, prependTitle, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, prependTitle, resolveOrderItems, categoryRank, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };

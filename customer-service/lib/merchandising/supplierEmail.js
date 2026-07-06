@@ -6,7 +6,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getGmail, createDraftWithAttachment } = require('../../../gmail-management/lib/gmailClient');
-const { buildSheetRows, buildOrderWorkbook, prependTitle } = require('./productionOrderLoop');
+const { buildSheetRows, buildOrderWorkbook, prependTitle, resolveOrderItems } = require('./productionOrderLoop');
 const { resolveOrder } = require('./inboundReceiving');
 
 // Pure: subject + body for an order update email. `note` lets the agent add
@@ -49,7 +49,7 @@ async function draftSupplierOrderEmail({ orderRef, note, updated = false, to }) 
 
   const code = order.production_code || `order-${order.id}`;
   const date = new Date().toISOString().slice(0, 10);
-  const { rows } = buildSheetRows(lines, { formulas: true });
+  const { rows } = buildSheetRows(await resolveOrderItems(lines), { formulas: true });
   const titled = prependTitle(rows, `Production Order: ${supplier.name} (${code})${updated ? ` — UPDATED ${date}` : ` ${date}`}`);
   const wb = await buildOrderWorkbook(titled, null);
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
