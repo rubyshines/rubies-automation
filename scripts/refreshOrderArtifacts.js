@@ -31,6 +31,14 @@ async function writeIncomingTab(sheets, tabName, items) {
   const ex = meta.data.sheets.find((s) => s.properties.title === tabName);
   if (!ex) throw new Error(`incoming tab "${tabName}" not found`);
   await sheets.spreadsheets.values.clear({ spreadsheetId: PRE_ORDER_SHEET, range: `'${tabName}'` });
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: PRE_ORDER_SHEET,
+    requestBody: { requests: [{ repeatCell: {
+      range: { sheetId: ex.properties.sheetId },
+      cell: { userEnteredFormat: { textFormat: { bold: false } } },
+      fields: 'userEnteredFormat.textFormat.bold',
+    } }] },
+  });
   await sheets.spreadsheets.values.update({ spreadsheetId: PRE_ORDER_SHEET, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values } });
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: PRE_ORDER_SHEET,

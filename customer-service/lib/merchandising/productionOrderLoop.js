@@ -63,6 +63,19 @@ async function writeTabAtFront(sheets, spreadsheetId, tabName, values, boldRows 
     const existing = (meta.data.sheets || []).find((s) => s.properties.title === tabName);
     sheetId = existing ? existing.properties.sheetId : null;
     await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${tabName}'` });
+    // values.clear wipes VALUES only — bold/background from earlier writes
+    // survives and strands mid-data when the layout shifts between runs
+    // ("why are random rows bold"). Reset formatting before re-applying.
+    if (sheetId != null) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: [{ repeatCell: {
+          range: { sheetId },
+          cell: { userEnteredFormat: { textFormat: { bold: false }, backgroundColor: { red: 1, green: 1, blue: 1 } } },
+          fields: 'userEnteredFormat(textFormat.bold,backgroundColor)',
+        } }] },
+      });
+    }
   }
   await sheets.spreadsheets.values.update({
     spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values },

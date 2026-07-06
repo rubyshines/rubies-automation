@@ -381,6 +381,17 @@ async function writeReconcileTab(sheets, spreadsheetId, tabName, built) {
     const ex = (meta.data.sheets || []).find((s) => s.properties.title === tabName);
     sheetId = ex ? ex.properties.sheetId : null;
     await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${tabName}'` });
+    // reset stale bold + flag colours from prior writes (values.clear keeps formatting)
+    if (sheetId != null) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: { requests: [{ repeatCell: {
+          range: { sheetId },
+          cell: { userEnteredFormat: { textFormat: { bold: false }, backgroundColor: { red: 1, green: 1, blue: 1 } } },
+          fields: 'userEnteredFormat(textFormat.bold,backgroundColor)',
+        } }] },
+      });
+    }
   }
   await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${tabName}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: built.values } });
   if (sheetId == null) return;
