@@ -409,6 +409,74 @@ function categoryRank(category) {
   return 2;
 }
 
+// SKU size code -> customer display size: XL-form plus sizes render 1X/2X/3X/4X
+// (SKUs keep the legacy XL convention; see domain_inventory Key Decisions).
+function displaySizeForSku(sizeCode) {
+  const m = String(sizeCode).toUpperCase().match(/^(\d?)XL(T?)$/);
+  if (!m) return String(sizeCode).toUpperCase();
+  return `${m[1] || '1'}X${m[2]}`;
+}
+
+/**
+ * Catalog guard (founder rule: DO it and report, don't flag): order lines whose
+ * SKU has no Shopify variant get the variant CREATED on the existing product
+ * (sibling price, display size derived from the SKU) so the catalog never
+ * drifts from what we order. Only a missing PRODUCT is left for a human.
+ * Returns { created: [sku...], unresolvable: [sku...] }.
+ */
+async function ensureCatalogVariants(items) {
+  const sb = getSupabaseClient();
+  const skus = [...new Set(items.map((i) => i.sku).filter(Boolean))];
+  const { data: existing } = await sb.from('product_variants').select('sku').in('sku', skus);
+  const have = new Set((existing || []).map((v) => v.sku));
+  const missing = skus.filter((sku) => !have.has(sku) && String(sku).split('-').length >= 3);
+  if (!missing.length) return { created: [], unresolvable: [] };
+
+  const created = [];
+  const unresolvable = [];
+  const { createProductVariants } = require('../shopify');
+  const { shopifyGraphQL } = require('../shopify');
+
+  for (const sku of missing) {
+    const [prefix, colorCode, ...rest] = sku.split('-');
+    const sizeCode = rest.join('-');
+    // sibling variant of the same product (same prefix) anchors product + price + color name
+    const { data: sibs } = await sb.from('product_variants')
+      .select('sku, price, shopify_product_id, shopify_variant_id')
+      .like('sku', `${prefix}-%`).limit(50);
+    const sib = (sibs || []).find((v) => v.sku.split('-')[1] === colorCode) || (sibs || [])[0];
+    if (!sib) { unresolvable.push(sku); continue; }
+
+    const q = await shopifyGraphQL(
+      `query($id: ID!){ product(id: $id){ options { name values } variants(first: 100){ nodes { sku selectedOptions { name value } } } } }`,
+      { id: sib.shopify_product_id }
+    );
+    const prod = q.data ? q.data.product : q.product;
+    if (!prod) { unresolvable.push(sku); continue; }
+    const sizeOption = prod.options.find((o) => o.name !== 'Color');
+    const colorOption = prod.options.find((o) => o.name === 'Color');
+    const sibNode = prod.variants.nodes.find((v) => v.sku && v.sku.split('-')[1] === colorCode);
+    const colorName = colorOption
+      ? (sibNode?.selectedOptions.find((o) => o.name === 'Color')?.value || colorOption.values[0])
+      : null;
+
+    const optionValues = [{ name: displaySizeForSku(sizeCode), optionName: sizeOption ? sizeOption.name : 'Size' }];
+    if (colorOption && colorName) optionValues.push({ name: colorName, optionName: 'Color' });
+
+    const made = await createProductVariants(sib.shopify_product_id, [
+      { optionValues, inventoryItem: { sku }, price: String(Number(sib.price).toFixed(2)) },
+    ]);
+    if (!made || !made.length) { unresolvable.push(sku); continue; }
+    // mirror immediately so resolveOrderItems (and everything else) sees it now
+    await sb.from('product_variants').upsert([{
+      shopify_variant_id: made[0].id, shopify_product_id: sib.shopify_product_id,
+      sku, price: Number(sib.price), title: made[0].title || null, synced_at: new Date().toISOString(),
+    }], { onConflict: 'shopify_variant_id' });
+    created.push(sku);
+  }
+  return { created, unresolvable };
+}
+
 /**
  * Enrich bare {sku, qty} lines with the FULL product title (never the SKU
  * prefix), and the category rank, resolved from the catalog. Every spreadsheet
@@ -434,8 +502,11 @@ async function resolveOrderItems(items) {
   }
   return items.map((it) => {
     const prod = prodByPid.get(pidBySku.get(it.sku));
-    if (!prod) return { ...it };
-    return { ...it, product_name: it.product_name || prod.title, category_rank: it.category_rank ?? categoryRank(prod.category) };
+    // Explicitly mark SKUs with no Shopify variant — downstream writers put a
+    // NOT IN SHOPIFY banner on the artifact so catalog drift can't be missed
+    // (lesson: SPB shipped mislabeled, GAF 3X/4X sat invisible for weeks).
+    if (!prod) return { ...it, in_catalog: false };
+    return { ...it, in_catalog: true, product_name: it.product_name || prod.title, category_rank: it.category_rank ?? categoryRank(prod.category) };
   });
 }
 
@@ -529,10 +600,11 @@ function buildPricingRows(pricing) {
 
 // Write the clean ORDER tab. Tab name passed in (e.g. "2026-06-29 - Kali Swim and Underwear").
 async function writeOrderTab({ sheets, spreadsheetId, tabName, items }) {
+  const guard = await ensureCatalogVariants(items);
   const enriched = await resolveOrderItems(items);
   const { rows, boldRows } = buildSheetRows(enriched);
   await writeTabAtFront(sheets, spreadsheetId, tabName, rows, boldRows, 2);
-  return { tabName };
+  return { tabName, catalog_created: guard.created, catalog_unresolvable: guard.unresolvable };
 }
 
 // Write the PRICING companion tab named "<orderTabName> (Pricing)". `costOverrides`
@@ -568,4 +640,4 @@ async function removePricingTab(sheets, spreadsheetId, orderTabName) {
   return !!p;
 }
 
-module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, cachedFormulaResult, prependTitle, resolveOrderItems, categoryRank, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
+module.exports = { buildSheetRows, buildPricingRows, buildOrderWorkbook, cachedFormulaResult, prependTitle, resolveOrderItems, categoryRank, displaySizeForSku, ensureCatalogVariants, writeOrderTab, writePricingTab, orderDescriptor, draftOrderReview, draftProductionOrder, createOrderFromTab, createOrderFromParsed, SHEET_ID };
