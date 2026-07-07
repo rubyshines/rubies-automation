@@ -1,12 +1,15 @@
 /**
  * Gorgias webhook validation middleware
  *
- * Gorgias HTTP integrations don't send HMAC signatures.
- * Authentication relies on:
- * 1. Only Gorgias knows the webhook URL (obscurity)
- * 2. We validate the payload has the expected Gorgias shape
- * 3. Optional: check a shared secret passed as a query param or header
+ * Gorgias HTTP integrations don't send HMAC signatures. Authentication relies on:
+ * 1. A required shared secret passed as the `?secret=` query param (append
+ *    ?secret=xxx to the webhook URL in Gorgias config). GORGIAS_WEBHOOK_SECRET
+ *    is provisioned, so it is treated as mandatory — a request that omits or
+ *    mismatches it is rejected; it can never be skipped by dropping the param.
+ * 2. We also validate the payload has the expected Gorgias shape (ticket.id).
  */
+
+const { verifySharedSecret } = require('./webhookSecret');
 
 function verifyGorgiasSecret(req, res, next) {
   const payload = req.body;
@@ -17,14 +20,10 @@ function verifyGorgiasSecret(req, res, next) {
     return res.status(400).json({ error: 'invalid payload — missing ticket.id' });
   }
 
-  // Optional: if GORGIAS_WEBHOOK_SECRET is set, check it as a query param
-  // (you can append ?secret=xxx to the webhook URL in Gorgias config)
-  const secret = process.env.GORGIAS_WEBHOOK_SECRET;
-  if (secret && req.query.secret) {
-    if (req.query.secret !== secret) {
-      console.warn('[gorgias-auth] Rejected: secret mismatch');
-      return res.status(401).json({ error: 'invalid secret' });
-    }
+  const check = verifySharedSecret(req, 'GORGIAS_WEBHOOK_SECRET', { mandatory: true });
+  if (!check.ok) {
+    console.warn(`[gorgias-auth] Rejected: ${check.error}`);
+    return res.status(check.status).json({ error: check.error });
   }
 
   next();

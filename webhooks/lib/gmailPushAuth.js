@@ -5,8 +5,14 @@
  * We validate:
  * 1. Payload has message.data (base64-encoded)
  * 2. Decoded data has emailAddress matching our account
- * 3. Optional: shared secret via query param (same as Gorgias pattern)
+ * 3. Shared secret via query param, IF GMAIL_WEBHOOK_SECRET is configured.
+ *    It's optional here (not yet provisioned) — when set, it is enforced and
+ *    cannot be skipped by omitting the param; when unset, we fall back to the
+ *    Pub/Sub shape + account-email checks above. Set GMAIL_WEBHOOK_SECRET in
+ *    Railway to add the required-secret layer.
  */
+
+const { verifySharedSecret } = require('./webhookSecret');
 
 const OUR_EMAIL = 'jamie@rubyshines.com';
 
@@ -33,13 +39,11 @@ function verifyGmailPush(req, res, next) {
     return res.status(400).json({ error: 'invalid message.data encoding' });
   }
 
-  // Optional secret check
-  const secret = process.env.GMAIL_WEBHOOK_SECRET;
-  if (secret && req.query.secret) {
-    if (req.query.secret !== secret) {
-      console.warn('[gmail-push-auth] Rejected: secret mismatch');
-      return res.status(401).json({ error: 'invalid secret' });
-    }
+  // Shared secret check (enforced when GMAIL_WEBHOOK_SECRET is configured)
+  const check = verifySharedSecret(req, 'GMAIL_WEBHOOK_SECRET', { mandatory: false });
+  if (!check.ok) {
+    console.warn(`[gmail-push-auth] Rejected: ${check.error}`);
+    return res.status(check.status).json({ error: check.error });
   }
 
   next();

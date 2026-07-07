@@ -46,31 +46,6 @@ app.use('/webhooks', (req, _res, next) => {
 // ---------------------------------------------------------------------------
 // Health check
 // ---------------------------------------------------------------------------
-// Temporary debug endpoint — remove after Shopify webhooks confirmed working
-app.post('/webhooks/debug', (req, res) => {
-  const crypto = require('crypto');
-  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
-  const hmacHeader = req.get('X-Shopify-Hmac-Sha256') || 'none';
-  const isBuffer = Buffer.isBuffer(req.body);
-  const bodyStr = isBuffer ? req.body.toString() : JSON.stringify(req.body);
-  const computed = isBuffer
-    ? crypto.createHmac('sha256', secret).update(req.body).digest('base64')
-    : 'not-a-buffer';
-
-  const info = {
-    bodyIsBuffer: isBuffer,
-    bodyLength: req.body?.length,
-    bodyPreview: bodyStr?.substring(0, 100),
-    hmacHeader,
-    computedHmac: computed,
-    match: hmacHeader === computed,
-    secretLength: secret?.length,
-    secretPrefix: secret?.substring(0, 6),
-  };
-  console.log('[debug]', JSON.stringify(info));
-  res.json(info);
-});
-
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
