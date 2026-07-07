@@ -189,28 +189,37 @@ async function runDailyMetrics(targetDates, results) {
       await sleep(500); // rate limiting between metric queries
     }
 
-    // Calculate rates and upsert
-    const rows = targetDates.map(date => {
-      const d = dailyData[date];
-      const sent = d.emails_sent || 1; // avoid division by zero
-      return {
-        date,
-        ...d,
-        open_rate: Math.round((d.opens / sent) * 10000) / 100,
-        click_rate: Math.round((d.clicks / sent) * 10000) / 100,
-        bounce_rate: Math.round((d.bounces / sent) * 10000) / 100,
-        unsubscribe_rate: Math.round((d.unsubscribes / sent) * 10000) / 100,
-      };
-    });
+    // Only upsert if EVERY metric query succeeded. A failed query leaves its
+    // column zero-filled across the whole range; writing that would look
+    // "complete" to gap-detection (which keys off the max stored date), so the
+    // poisoned dates would never be retried. Skip the write and let the next run
+    // re-fetch the full range. (A metric that's structurally absent from Klaviyo
+    // sets no hadError above, so it doesn't block progress.)
+    if (hadError) {
+      console.error('  ✗ Skipping klaviyo_daily_metrics upsert — a metric query failed; leaving these dates as gaps to retry next run.');
+    } else {
+      const rows = targetDates.map(date => {
+        const d = dailyData[date];
+        const sent = d.emails_sent || 1; // avoid division by zero
+        return {
+          date,
+          ...d,
+          open_rate: Math.round((d.opens / sent) * 10000) / 100,
+          click_rate: Math.round((d.clicks / sent) * 10000) / 100,
+          bounce_rate: Math.round((d.bounces / sent) * 10000) / 100,
+          unsubscribe_rate: Math.round((d.unsubscribes / sent) * 10000) / 100,
+        };
+      });
 
-    rowsWritten = await upsert('klaviyo_daily_metrics', rows, ['date']);
+      rowsWritten = await upsert('klaviyo_daily_metrics', rows, ['date']);
+    }
   } catch (err) {
     hadError = true;
     lastError = err.message;
   }
 
   results[sourceKey] = {
-    success: !hadError || rowsWritten > 0,
+    success: !hadError,
     rowsWritten,
     error: hadError ? lastError : null,
   };

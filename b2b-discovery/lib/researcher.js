@@ -97,6 +97,11 @@ async function researchProspect(prospect, { model, verbose, mapsApiKey, skipIfNo
   }
 
   // ── Step 3: Scrape ─────────────────────────────────────────────────────────
+  // Clear any stale failure state carried in from the DB row. `--retry-failed`
+  // feeds rows with scrape_status='failed', so without this reset the guard
+  // below short-circuits and the retry never actually re-scrapes.
+  result.scrape_status = null;
+  result.scrape_error = null;
   let rawHtmlByPage = {};
   if (result.website && result.scrape_status !== 'failed') {
     _step = Date.now();

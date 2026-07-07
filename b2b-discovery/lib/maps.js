@@ -73,6 +73,7 @@ async function searchCityTerm({ term, cityStr, apiKey, verbose = false }) {
   const results = [];
   let pageToken = null;
   let page = 0;
+  const MAX_RATE_LIMIT_RETRIES = 3;
 
   do {
     // Google requires ≥2s between page requests for next_page_token to activate
@@ -81,23 +82,32 @@ async function searchCityTerm({ term, cityStr, apiKey, verbose = false }) {
     if (verbose) process.stdout.write(`  Page ${page + 1}... `);
 
     let resp;
-    try {
-      resp = await textSearch(query, apiKey, pageToken);
-    } catch (err) {
-      if (verbose) console.log(`ERROR: ${err.message}`);
-      break;
+    let rateLimitRetries = 0;
+    // Fetch the page, retrying the SAME page on rate limit. (The old code used
+    // `continue` inside the do-while, which exited the loop on page 0 because
+    // pageToken was still null — a page-0 rate limit returned zero results and
+    // the caller then marked the search permanently complete.)
+    while (true) {
+      try {
+        resp = await textSearch(query, apiKey, pageToken);
+      } catch (err) {
+        // Transport error: surface it so the caller skips markProgressComplete
+        // (the search did NOT finish) and retries on a later run, instead of
+        // silently recording an incomplete/empty search as done.
+        if (verbose) console.log(`ERROR: ${err.message}`);
+        throw err;
+      }
+      if (resp.status !== 'OVER_QUERY_LIMIT') break;
+      if (++rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+        throw new Error(`Maps API OVER_QUERY_LIMIT after ${MAX_RATE_LIMIT_RETRIES} retries for "${query}"`);
+      }
+      if (verbose) console.log(`rate limited — waiting 60s (retry ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})...`);
+      await sleep(60000);
     }
 
     if (resp.status === 'ZERO_RESULTS') {
       if (verbose) console.log('0 results');
       break;
-    }
-
-    if (resp.status === 'OVER_QUERY_LIMIT') {
-      if (verbose) console.log('rate limited — waiting 60s...');
-      await sleep(60000);
-      // Don't increment page — retry same page
-      continue;
     }
 
     if (resp.status !== 'OK') {
