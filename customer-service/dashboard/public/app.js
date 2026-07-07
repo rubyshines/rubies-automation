@@ -4430,6 +4430,73 @@ function plainTextBeforeQuote(text) {
   return text.slice(0, cut).trim();
 }
 
+// Tags removed entirely, content and all — they execute code or load resources.
+const SANITIZE_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'svg', 'math', 'noscript', 'template', 'title', 'head', 'audio', 'video', 'button', 'input', 'textarea', 'select']);
+// Formatting tags we keep. Anything not here and not dropped is unwrapped (children preserved, tag discarded).
+const SANITIZE_KEEP_TAGS = new Set(['a', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'ins', 'p', 'br', 'hr', 'div', 'span', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'blockquote', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'caption', 'colgroup', 'col', 'img', 'sub', 'sup', 'small', 'big', 'font', 'center', 'abbr', 'mark']);
+const SANITIZE_OK_ATTRS = new Set(['class', 'title', 'alt', 'width', 'height', 'align', 'valign', 'color', 'target', 'rel', 'colspan', 'rowspan', 'border', 'cellpadding', 'cellspacing', 'bgcolor', 'dir', 'lang']);
+
+function sanitizeUrl(url) {
+  const u = (url || '').trim();
+  if (/^(https?:|mailto:|tel:|cid:|#|\/)/i.test(u)) return u;
+  // Allow raster image data URLs; block svg data (can carry script) and everything else (javascript:, vbscript:, data:text/html, …).
+  if (/^data:image\/(png|jpe?g|gif|webp|bmp)/i.test(u)) return u;
+  return '';
+}
+
+/**
+ * Sanitize untrusted customer email HTML before it reaches innerHTML. Keeps safe
+ * formatting tags, strips scripts, event handlers, dangerous tags, and unsafe
+ * URLs. Dependency-free (CSP blocks external libs) — uses the browser's own
+ * parser via DOMParser, which does NOT execute scripts or load resources during
+ * parsing.
+ */
+function sanitizeHtml(html) {
+  if (!html || typeof html !== 'string') return html || '';
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  } catch {
+    return esc(html);
+  }
+  const walk = (node) => {
+    Array.from(node.childNodes).forEach(child => {
+      if (child.nodeType === 8) { child.remove(); return; } // comments
+      if (child.nodeType !== 1) return; // keep text nodes as-is
+      const tag = child.tagName.toLowerCase();
+      if (SANITIZE_DROP_TAGS.has(tag)) { child.remove(); return; }
+      if (!SANITIZE_KEEP_TAGS.has(tag)) {
+        // Unwrap: sanitize children, then hoist them in place of this tag.
+        walk(child);
+        while (child.firstChild) node.insertBefore(child.firstChild, child);
+        child.remove();
+        return;
+      }
+      Array.from(child.attributes).forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on')) { child.removeAttribute(attr.name); return; }
+        if (name === 'href' || name === 'src') {
+          const safe = sanitizeUrl(attr.value);
+          if (safe) child.setAttribute(attr.name, safe);
+          else child.removeAttribute(attr.name);
+          return;
+        }
+        if (name === 'style') {
+          if (/expression\(|javascript:|url\s*\(/i.test(attr.value)) child.removeAttribute(attr.name);
+          return;
+        }
+        if (!SANITIZE_OK_ATTRS.has(name)) child.removeAttribute(attr.name);
+      });
+      if (tag === 'a' && child.getAttribute('target') === '_blank') {
+        child.setAttribute('rel', 'noopener noreferrer');
+      }
+      walk(child);
+    });
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
+
 /**
  * Choose what to render for a message body. Normally body_html wins (it preserves
  * formatting). But some mail clients (notably Outlook) send a multipart email whose
@@ -4458,7 +4525,10 @@ function pickRichestBody(m) {
 function renderMessageBubble(m, ticket) {
   const rawHtml = pickRichestBody(m);
   const cleaned = cleanMessageBody(rawHtml);
-  const processed = collapseQuotedContent(cleaned);
+  // Sanitize the untrusted customer HTML BEFORE collapseQuotedContent, so both
+  // the visible body and the raw quoted snapshot it re-embeds are neutralized,
+  // while the trusted toggle control it appends afterward is left intact.
+  const processed = collapseQuotedContent(sanitizeHtml(cleaned));
   const attachmentHtml = (m.attachments || []).length
     ? `<div class="msg-attachments">${m.attachments.map(a => {
         const isImage = (a.content_type || '').startsWith('image/');
@@ -4531,7 +4601,7 @@ function extractCustomerWords(botMessages) {
     // Use body_html if available (preserves formatting for HTML emails)
     if (m.body_html) {
       const cleaned = cleanMessageBody(m.body_html);
-      words.push(collapseQuotedContent(cleaned));
+      words.push(collapseQuotedContent(sanitizeHtml(cleaned)));
     } else {
       words.push(esc(text).replace(/\n/g, '<br>'));
     }

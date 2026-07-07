@@ -153,7 +153,11 @@ function verifySession(cookie) {
   const [b64, sig] = cookie.split('.');
   if (!b64 || !sig) return null;
   const expected = crypto.createHmac('sha256', SESSION_SECRET).update(b64).digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  // timingSafeEqual throws RangeError on length mismatch — the sig is
+  // attacker-controlled, so guard the length before comparing.
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) return null;
   try {
     const payload = JSON.parse(Buffer.from(b64, 'base64url').toString());
     if (payload.exp < Math.floor(Date.now() / 1000)) return null;
@@ -166,7 +170,17 @@ function parseCookies(req) {
   const cookies = {};
   header.split(';').forEach(pair => {
     const [name, ...rest] = pair.trim().split('=');
-    if (name) cookies[name.trim()] = decodeURIComponent(rest.join('='));
+    if (!name) return;
+    const raw = rest.join('=');
+    // decodeURIComponent throws URIError on malformed encoding (e.g. "%ZZ").
+    // A bad cookie must not crash the server — fall back to the raw value.
+    let value;
+    try {
+      value = decodeURIComponent(raw);
+    } catch {
+      value = raw;
+    }
+    cookies[name.trim()] = value;
   });
   return cookies;
 }
