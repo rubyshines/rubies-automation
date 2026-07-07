@@ -282,27 +282,37 @@ async function summarizeThreads(threads, { onProgress } = {}) {
 // Save threads to Supabase
 // ---------------------------------------------------------------------------
 
-async function upsertThreads(threads) {
+// `includeSummary` controls whether the AI-derived summary columns are written.
+// The structural pass (built from freshly-aggregated threads that have no
+// summary yet) MUST pass false — otherwise the upsert writes null over an
+// existing thread's summary/next_action. Only the post-summarization pass, which
+// actually carries those fields, writes them (includeSummary defaults true).
+async function upsertThreads(threads, { includeSummary = true } = {}) {
   const supabase = getSupabaseClient();
-  const rows = threads.map(t => ({
-    gmail_thread_id: t.gmail_thread_id,
-    subject: t.subject,
-    classification: t.classification,
-    participants: t.participants,
-    message_count: t.message_count,
-    first_message_at: t.first_message_at,
-    last_message_at: t.last_message_at,
-    last_sender: t.last_sender,
-    awaiting_response_from: t.awaiting_response_from,
-    summary: t.summary || null,
-    summary_updated_at: t.summary_updated_at || null,
-    key_decisions: t.key_decisions || null,
-    next_action: t.next_action || null,
-    next_action_due: t.next_action_due || null,
-    next_action_owner: t.next_action_owner || null,
-    is_active: t.is_active !== undefined ? t.is_active : true,
-    updated_at: new Date().toISOString(),
-  }));
+  const rows = threads.map(t => {
+    const row = {
+      gmail_thread_id: t.gmail_thread_id,
+      subject: t.subject,
+      classification: t.classification,
+      participants: t.participants,
+      message_count: t.message_count,
+      first_message_at: t.first_message_at,
+      last_message_at: t.last_message_at,
+      last_sender: t.last_sender,
+      awaiting_response_from: t.awaiting_response_from,
+      is_active: t.is_active !== undefined ? t.is_active : true,
+      updated_at: new Date().toISOString(),
+    };
+    if (includeSummary) {
+      row.summary = t.summary || null;
+      row.summary_updated_at = t.summary_updated_at || null;
+      row.key_decisions = t.key_decisions || null;
+      row.next_action = t.next_action || null;
+      row.next_action_due = t.next_action_due || null;
+      row.next_action_owner = t.next_action_owner || null;
+    }
+    return row;
+  });
 
   // Batch upsert in chunks of 100
   for (let i = 0; i < rows.length; i += 100) {

@@ -135,43 +135,47 @@ async function run() {
     await upsert('email_messages', rows, ['gmail_message_id']);
     console.log(`  Saved ${rows.length} messages`);
 
-    // --- Step 6: Build/update threads ---
-    const threads = aggregateThreads(classified);
-    await upsertThreads(threads);
-    console.log(`  Updated ${threads.length} threads`);
+    // --- Step 6: Rebuild thread stats from the FULL thread ---
+    // Aggregate from every stored message in each affected thread (not just the
+    // newly-fetched ones) so message_count / first_message_at / participants
+    // reflect the whole thread. Load once and reuse for summarization below.
+    const affectedThreadIds = [...new Set(
+      classified.filter(m => m.classification !== 'skip').map(m => m.gmail_thread_id)
+    )];
 
-    // --- Step 7: Summarize new/updated threads (skip internal, spam, skip) ---
-    const summarizable = threads.filter(t =>
-      !['skip', 'internal', 'spam'].includes(t.classification)
-    );
-
-    if (summarizable.length > 0) {
-      // Load full messages for these threads (need body for summarization)
-      const threadIds = summarizable.map(t => t.gmail_thread_id);
-      const { data: allMsgs } = await supabase
+    if (affectedThreadIds.length > 0) {
+      const { data: allMsgs, error: msgErr } = await supabase
         .from('email_messages')
         .select('*')
-        .in('gmail_thread_id', threadIds)
+        .in('gmail_thread_id', affectedThreadIds)
         .neq('classification', 'skip')
         .order('date', { ascending: true });
+      if (msgErr) throw new Error(`Failed to load thread messages: ${msgErr.message}`);
 
+      const threads = aggregateThreads(allMsgs || []);
+      // Structural pass: omit the summary columns so an existing thread's
+      // summary/next_action survives (they are written by the pass below).
+      await upsertThreads(threads, { includeSummary: false });
+      console.log(`  Updated ${threads.length} threads`);
+
+      // --- Step 7: Summarize new/updated threads (skip internal, spam, skip) ---
       const msgsByThread = new Map();
       for (const msg of (allMsgs || [])) {
         if (!msgsByThread.has(msg.gmail_thread_id)) msgsByThread.set(msg.gmail_thread_id, []);
         msgsByThread.get(msg.gmail_thread_id).push(msg);
       }
 
-      const threadsToSummarize = summarizable.map(t => ({
-        ...t,
-        messages: msgsByThread.get(t.gmail_thread_id) || [],
-      })).filter(t => t.messages.length > 0);
+      const threadsToSummarize = threads
+        .filter(t => !['skip', 'internal', 'spam'].includes(t.classification))
+        .map(t => ({ ...t, messages: msgsByThread.get(t.gmail_thread_id) || [] }))
+        .filter(t => t.messages.length > 0);
 
       if (threadsToSummarize.length > 0) {
         console.log(`  Summarizing ${threadsToSummarize.length} threads...`);
         await summarizeThreads(threadsToSummarize, {
           onProgress: (done, total) => process.stderr.write(`  Summarized ${done}/${total}...\r`),
         });
-        await upsertThreads(threadsToSummarize);
+        await upsertThreads(threadsToSummarize, { includeSummary: true });
         threadsSummarized = threadsToSummarize.length;
         console.log(`  Summarized ${threadsSummarized} threads`);
       }

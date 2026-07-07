@@ -153,7 +153,7 @@ function parsePeriod(arg) {
     const months = [];
     let y = sY, m = sM;
     while (y < eY || (y === eY && m <= eM)) { months.push(monthMeta(y, m)); m++; if (m > 12) { m = 1; y++; } }
-    if (!months.length) { console.error(`Empty range "${arg}".`); process.exit(1); }
+    if (!months.length) { throw new Error(`Empty range "${arg}".`); }
     const last = months[months.length - 1];
     const label = sY === eY ? `${MONTHS[sM - 1]} to ${MONTHS[eM - 1]} ${eY}` : `${months[0].label} to ${last.label}`;
     return {
@@ -170,8 +170,7 @@ function parsePeriod(arg) {
       start: m.start, endIncl: m.endIncl, endExcl: m.endExcl,
     };
   }
-  console.error(`Bad period "${arg}". Use YYYY-MM, Q4-2025, or 2026-03..2026-05.`);
-  process.exit(1);
+  throw new Error(`Bad period "${arg}". Use YYYY-MM, Q4-2025, or 2026-03..2026-05.`);
 }
 
 // ---------------------------------------------------------------------------

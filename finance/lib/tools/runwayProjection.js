@@ -8,6 +8,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getQboClient } = require('../qbo');
 const { parseReport } = require('../reportParser');
 const { fmtCurrency, fmtPct, formatDate } = require('./helpers');
+const { filterMonthlySnapshots } = require('../monthlySnapshots');
 
 async function handleRunwayProjection({ months_forward, scenario }) {
   const projMonths = months_forward || 6;
@@ -52,16 +53,13 @@ async function handleRunwayProjection({ months_forward, scenario }) {
 
   const { data: snapshots } = await supabase
     .from('qbo_report_snapshots')
-    .select('period_start, summary')
+    .select('period_start, period_end, summary')
     .eq('report_type', 'ProfitAndLoss')
     .gte('period_start', cutoff)
     .order('period_start', { ascending: true });
 
-  // Filter to monthly snapshots
-  const monthly = (snapshots || []).filter(s => {
-    const parts = s.period_start.split('-');
-    return parts.length >= 2;
-  });
+  // One row per calendar month (drops YTD/quarter spans + daily current-month dups).
+  const monthly = filterMonthlySnapshots(snapshots);
 
   if (!monthly.length) {
     return { content: [{ type: 'text', text: 'Not enough P&L data for runway projection. Run `npm run finance-backfill` first.' }] };
