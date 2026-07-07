@@ -220,7 +220,12 @@ async function main() {
     const duration = Date.now() - start;
     const rows = sumRows(result);
     const rawStatus = result?.status || 'failure';
-    const status = rawStatus === 'ok' ? 'success' : rawStatus;
+    // Normalize 'ok'->'success' and 'error'->'failure' so a pipeline that
+    // reports 'error' (e.g. Gmail-watch renewal, dead-letter replay) actually
+    // counts as a failure — otherwise it slips through to a green digest + exit 0.
+    const status = rawStatus === 'ok' ? 'success'
+      : rawStatus === 'error' ? 'failure'
+      : rawStatus;
 
     if (status === 'failure') anyFailure = true;
 
