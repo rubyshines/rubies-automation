@@ -55,8 +55,8 @@ The swimsuit arrived with a hole in the seam near the leg. I'm pretty disappoint
   if (!d1.includes(ADVOCACY_PS.peer_self)) pass('draft did not use the self framing for a parent');
   else fail('draft used the self P.S. for a parent (wrong framing)');
 
-  if (/Every girl deserves to shine/.test(d1) && /rubyshines\.com/.test(d1)) pass('draft carries the standardized signature (tagline + site)');
-  else fail('draft is missing the standardized signature brand lines');
+  if (/Jamie Alexander, RUBIES Founder/.test(d1) && /rubyshines\.com/.test(d1)) pass('draft carries the standardized signature (name/title line + site)');
+  else fail('draft is missing the standardized signature');
 
   if (!/rubyshines\.com\/help|https?:\/\//.test(ADVOCACY_PS.peer_parent)) pass('Phase A P.S. has no link');
 

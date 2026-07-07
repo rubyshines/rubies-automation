@@ -17,10 +17,11 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
-const { SIGNATURE_NAME_BLOCK } = require('./signatures');
+const { SIGNATURE_BLOCK_MD } = require('./signatures');
 
-// Signature block indented to match the 2-space prompt indentation.
-const SIG_INDENTED = SIGNATURE_NAME_BLOCK.split('\n').map(l => `  ${l}`).join('\n');
+// Signature block (markdown link → clickable on send) indented to match the
+// 2-space prompt indentation.
+const SIG_INDENTED = SIGNATURE_BLOCK_MD.split('\n').map(l => `  ${l}`).join('\n');
 
 let _client = null;
 function getClient() {
@@ -42,11 +43,13 @@ const SYSTEM_PROMPT = `You are RUBIES's CS advisor composing a proactive outboun
 - Be concrete: name what's actually happening, what we're doing about it, and what (if anything) we need from the customer.
 - When the email shows the customer data we have on file (a shipping address, order contents, dates), reproduce it exactly as it appears in the context or steer, character for character. Never normalize, correct, or omit parts of it. If the steer quotes a value verbatim, your email quotes it verbatim too.
 - If the steer says to offer options, lay them out as a short bullet list ("- Option A", "- Option B"). Otherwise no bullets.
-- Sign off as Jamie. When the email asks the customer to reply (a question, a confirmation, a choice), use exactly:
+- Sign off as Jamie. When the email asks the customer to reply (a question, a confirmation, a choice), use exactly (keep the blank line and the markdown link):
   Talk soon,
+
 ${SIG_INDENTED}
   When no reply is expected (a pure heads-up or thank-you), use exactly:
   Take care,
+
 ${SIG_INDENTED}
 
 ## Output format
