@@ -434,22 +434,34 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
 // Shadow Sonnet evaluation for operator agent
 // ---------------------------------------------------------------------------
 
-// Action tools that create/modify real Shopify resources — must NOT run in shadow eval
-const SHADOW_BLOCKED_TOOLS = new Set([
-  'create_exchange_order',
-  'create_invoice_order',
-  'create_order',
-  'create_order_complete',
-  'create_wholesale_order',
-  'refund_order',
-  'edit_order',
-  'delete_draft_order',
-  'send_draft_order_invoice',
-  'warehouse_hold',
-  'release_warehouse_hold',
-  'release_address_hold',
-  'add_order_note',
-  'split_shipment',
+// Shadow eval must be side-effect-free. Rather than blocklisting mutations (which
+// leaves any newly-added mutation tool unprotected by default — the bug this
+// replaces), ALLOWLIST the tools that are known to be read-only and block
+// everything else. A tool missing from this set is blocked in shadow mode; the
+// worst case is a degraded shadow turn, never a real cancellation/refund/discount/
+// profile edit. When adding a genuinely read-only tool, add it here.
+const SHADOW_READONLY_TOOLS = new Set([
+  // Customer / order reads
+  'lookup_customer', 'get_customer_orders', 'get_order_details', 'get_order_notes',
+  'get_order_allocation', 'get_order_profitability', 'list_pending_orders',
+  'list_draft_orders', 'customer_ltv', 'top_customers_ltv',
+  // Product / inventory / sizing reads
+  'search_products', 'get_product_catalog', 'get_product_margins', 'get_wholesale_margins',
+  'get_inventory_snapshot', 'inventory_velocity', 'cs_get_sizing_guide', 'exchange_difference',
+  // Shipping / delivery reads
+  'shipping_lookup', 'shipping_info', 'delivery_estimate', 'delivery_time_report',
+  'shipping_delay_list', 'passport_claims',
+  // Knowledge / history / reviews reads
+  'cs_get_knowledge', 'cs_search_faq', 'cs_search_history', 'search_reviews',
+  'review_summary', 'find_review_quotes', 'detect_bypasses',
+  // Free-swimwear / donation reads
+  'free_swimwear_get_request', 'free_swimwear_list_requests', 'free_swimwear_summary',
+  'donation_partner_list', 'donation_partner_list_submissions',
+  // Marketing / SEO / Klaviyo reads
+  'seo_report', 'seo_keywords', 'klaviyo_campaigns', 'klaviyo_flows', 'klaviyo_list_stats',
+  'klaviyo_campaign_content', 'klaviyo_subscription_status', 'list_blog_posts',
+  'blog_topic_ideas', 'blog_search_emails', 'email_report', 'email_calendar_plan',
+  'email_campaign_ideas', 'email_subject_lab', 'parse_wholesale_input',
 ]);
 
 async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMessages, opusResult, context }) {
@@ -506,9 +518,10 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
         try {
           if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
 
-          // Block action tools in shadow mode — record what Sonnet wanted to do without executing
-          if (SHADOW_BLOCKED_TOOLS.has(toolUse.name)) {
-            result = JSON.stringify({ shadow_blocked: true, tool: toolUse.name, input: toolUse.input, message: 'Action tool blocked in shadow evaluation mode — not executed.' });
+          // Only known read-only tools execute in shadow mode; everything else is
+          // recorded (what Sonnet wanted to do) without executing.
+          if (!SHADOW_READONLY_TOOLS.has(toolUse.name)) {
+            result = JSON.stringify({ shadow_blocked: true, tool: toolUse.name, input: toolUse.input, message: 'Non-read-only tool blocked in shadow evaluation mode — not executed.' });
             sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input, blocked: true });
           } else {
             const toolResult = await handler(toolUse.input);
@@ -597,4 +610,4 @@ Respond as JSON: { "tool_selection": { "rating": "...", "direction": "...", "not
   }
 }
 
-module.exports = { operatorAgent, stripAutoConfirm, buildSystemPrompt };
+module.exports = { operatorAgent, stripAutoConfirm, buildSystemPrompt, SHADOW_READONLY_TOOLS };
