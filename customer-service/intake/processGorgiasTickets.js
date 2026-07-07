@@ -27,6 +27,7 @@ const gorgias = require('../import/gorgiasClient');
 const { canonicalMessageType } = require('../lib/messageTypes');
 const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankYouClassifier');
 const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
+const { transplantContinuation, buildTransplantMessages } = require('../lib/ticketContinuation');
 
 // Pull a clean text body off a Gorgias message. Gorgias's own stripper is
 // English-biased — for non-English replies (Danish "Den ... skrev :", etc.) it
@@ -344,7 +345,17 @@ function cleanHelpCenterBody(body) {
  * a thread we already ingested (and likely answered); closing that ticket as a
  * "duplicate" eats the unprocessed reply, so it is never a close candidate.
  *
- * @returns {string|object} 'close_new' | { action: 'close_existing', ticketsToClose } | 'keep_both' | null
+ * A first-contact ticket that CONTINUES an existing conversation (the
+ * customer's reply failed to thread and spawned a fresh ticket) is never a
+ * plain close either — it returns 'continuation' with the surviving ticket so
+ * the caller can transplant the message (2026-07-07 eaten-replies incident).
+ *
+ * @returns {object|string|null}
+ *   { action: 'close_new', survivor }          true duplicate — safe to close
+ *   { action: 'continuation', survivor }       reply on a broken thread — transplant it
+ *   { action: 'close_existing', ticketsToClose } new ticket supersedes old
+ *   'keep_both'                                 different issues
+ *   null                                        no dedup applicable
  */
 /**
  * True when an email belongs to an internal RUBIES staff address (@rubyshines.com).
@@ -415,7 +426,7 @@ async function checkForDuplicateTicket(supabase, customerEmail, newTicketId, new
     metadata: { customer_email: customerEmail, task: 'duplicate_detection' },
     model: MODELS.OPUS,
     max_tokens: 200,
-    messages: [{ role: 'user', content: `A customer (${customerEmail}) just created a new support ticket. They already have existing open ticket(s). Determine if the new ticket is about the same issue.
+    messages: [{ role: 'user', content: `A customer (${customerEmail}) just created a new support ticket. They already have existing open ticket(s). Determine how the new ticket relates to the existing conversation.
 
 EXISTING TICKET(S):
 ${existingSummaries}
@@ -425,16 +436,16 @@ ${newContent}
 
 Respond with ONLY a JSON object:
 {
-  "action": "close_new" | "close_existing" | "keep_both",
+  "action": "continuation" | "close_new" | "close_existing" | "keep_both",
+  "existing_ticket_id": <the related existing ticket's number, or null when action is keep_both>,
   "reason": "brief explanation"
 }
 
 Rules:
-- "close_new": new ticket is clearly about the same issue and the existing ticket has equal or more context (e.g. agent already replied). Close the new one.
-- "close_existing": new ticket is about the same issue but has MORE context or detail. Close the old one(s), process the new one.
-- "keep_both": tickets are about genuinely different issues (different orders, different problems). Keep both.
-- Bot chat retries (short/empty messages about same topic) → close_new
-- If existing ticket already has an agent reply with sizing help → close_new (don't restart the conversation)` }],
+- "continuation": the new message RESPONDS TO or ADVANCES the existing conversation — it answers a question our agent asked, provides requested information or photos, chases us for a reply, or adds new details about the same issue. This is the common case when the existing ticket already has an agent reply: the customer DID reply, but their email failed to thread onto the existing ticket. The message will be moved onto the existing ticket and answered there.
+- "close_new": the new ticket adds NOTHING the existing ticket doesn't already contain — a resend of the same text, an empty or near-empty chat retry, or a double-send minutes apart. If the new message contains ANY new information, answer, or request, it is a continuation, not close_new.
+- "close_existing": same issue, but the new ticket has MORE context or detail and the existing ticket has no agent reply yet. Close the old one(s), process the new one.
+- "keep_both": tickets are about genuinely different issues (different orders, different problems). Keep both.` }],
   });
 
   const text = response.content[0]?.text || '';
@@ -442,7 +453,13 @@ Rules:
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}');
     console.log(`[intake] Duplicate check for ${newTicketId}: ${parsed.action} — ${parsed.reason}`);
 
-    if (parsed.action === 'close_new') return 'close_new';
+    // Resolve the survivor: the AI-named existing ticket, else the most recent.
+    const survivor =
+      existingTickets.find(t => String(t.gorgias_ticket_id) === String(parsed.existing_ticket_id))
+      || [...existingTickets].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+
+    if (parsed.action === 'continuation') return { action: 'continuation', survivor };
+    if (parsed.action === 'close_new') return { action: 'close_new', survivor };
     if (parsed.action === 'close_existing') {
       return { action: 'close_existing', ticketsToClose: existingTickets };
     }
@@ -784,10 +801,26 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   // share the same staff requester.
   if (customerEmail && !isInternalRubiesAddress(customerEmail)) {
     const dupAction = await checkForDuplicateTicket(supabase, customerEmail, ticketId, messages);
-    if (dupAction === 'close_new') {
+    if (dupAction?.action === 'continuation') {
+      // The customer's reply failed to thread and spawned this fresh ticket.
+      // Move the message onto the surviving ticket (fires the message webhook,
+      // so the advisor drafts a reply there) and close this stray one.
+      console.log(`[intake] Ticket ${ticketId}: continuation of #${dupAction.survivor.gorgias_ticket_id} — transplanting`);
+      await transplantContinuation({
+        gorgias,
+        supabase,
+        newTicketId: ticketId,
+        survivor: dupAction.survivor,
+        customerEmail,
+        customerName: senderName,
+        customerMessages: buildTransplantMessages(messages, m => extractCleanBody(m).text),
+      });
+      return { skipped: true, reason: 'continuation' };
+    }
+    if (dupAction?.action === 'close_new') {
       console.log(`[intake] Skip ${ticketId}: duplicate of existing ticket`);
       // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
-      await gorgias.addInternalNote(ticketId, 'Auto-closed: duplicate of existing open ticket for this customer.');
+      await gorgias.addInternalNote(ticketId, `Auto-closed: duplicate of existing open ticket #${dupAction.survivor.gorgias_ticket_id} for this customer.`);
       await gorgias.closeTicket(ticketId);
       return { skipped: true, reason: 'duplicate' };
     }

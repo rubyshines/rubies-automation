@@ -66,11 +66,45 @@ test('triage: duplicate → closed, disposition duplicate', async () => {
     supabase, gorgias,
     ticket: { id: 1, customer: { email: 'a@b.com' }, subject: 'Order #1' },
     messages: customerMsg('same issue again'),
-    _checkDuplicate: async () => 'close_new',
+    _checkDuplicate: async () => ({ action: 'close_new', survivor: { id: 10, gorgias_ticket_id: 999 } }),
   });
   assert.equal(res.disposition, 'duplicate');
   assert.ok(calls.some(c => c[0] === 'close' && c[1] === 1));
   assert.ok(!calls.some(c => c[0] === 'tag'));
+});
+
+test('triage: continuation → transplanted, NOT closed as duplicate', async () => {
+  const { calls, gorgias, supabase } = makeHarness();
+  const transplants = [];
+  const res = await triageDriftTicket({
+    supabase, gorgias,
+    ticket: { id: 6, customer: { email: 'a@b.com', name: 'Nancy' }, subject: 'Re: Order #30748' },
+    messages: customerMsg('Yes, the youth size 11 please!'),
+    _checkDuplicate: async () => ({ action: 'continuation', survivor: { id: 10, gorgias_ticket_id: 999 } }),
+    _transplant: async (args) => transplants.push(args),
+  });
+  assert.equal(res.disposition, 'continuation');
+  assert.equal(transplants.length, 1);
+  assert.equal(transplants[0].newTicketId, 6);
+  assert.equal(transplants[0].survivor.gorgias_ticket_id, 999);
+  assert.equal(transplants[0].customerMessages[0].text, 'Yes, the youth size 11 please!');
+  // triage itself must not close the stray — the transplant owns the writes
+  assert.ok(!calls.some(c => c[0] === 'close'));
+});
+
+test('triage: continuation dryRun classifies without transplanting', async () => {
+  const { calls, gorgias, supabase } = makeHarness();
+  const transplants = [];
+  const res = await triageDriftTicket({
+    supabase, gorgias, dryRun: true,
+    ticket: { id: 7, customer: { email: 'a@b.com' }, subject: 'Re: Order #30748' },
+    messages: customerMsg('Following up on my exchange'),
+    _checkDuplicate: async () => ({ action: 'continuation', survivor: { id: 10, gorgias_ticket_id: 999 } }),
+    _transplant: async (args) => transplants.push(args),
+  });
+  assert.equal(res.disposition, 'continuation');
+  assert.equal(transplants.length, 0);
+  assert.equal(calls.length, 0);
 });
 
 test('triage: emoji reaction → closed, disposition reaction', async () => {

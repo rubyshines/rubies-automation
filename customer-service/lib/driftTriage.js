@@ -23,6 +23,7 @@
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { extractCleanBody, checkForDuplicateTicket } = require('../intake/processGorgiasTickets');
+const { transplantContinuation, buildTransplantMessages } = require('./ticketContinuation');
 
 /**
  * Deterministic: is this customer "message" actually a Gmail emoji reaction or
@@ -104,6 +105,8 @@ async function closeAsResolved({ gorgias, supabase, ticketId, note }) {
  *
  * Returns { disposition, reason } where disposition is one of:
  *   'duplicate' | 'reaction' | 'spam'   → auto-resolved (closed unless dryRun)
+ *   'continuation'                      → reply on a broken thread; transplanted
+ *                                         onto the surviving ticket, stray closed
  *   'real_miss'                         → genuine customer miss; reconciler reports it
  *
  * @param {object}  args
@@ -118,18 +121,35 @@ async function triageDriftTicket({
   // test seams — default to the real implementations
   _checkDuplicate = checkForDuplicateTicket,
   _classifyVendorSpam = classifyVendorSpam,
+  _transplant = transplantContinuation,
 }) {
   const ticketId = ticket.id;
   const customerEmail = ticket.customer?.email || null;
   const customerMsgs = (messages || []).filter(m => m.from_agent === false && m.channel !== 'internal-note');
   const latest = customerMsgs[customerMsgs.length - 1];
 
-  // 1) Duplicate of an existing open ticket for the same customer?
+  // 1) Duplicate or unthreaded continuation of an existing open ticket?
   if (customerEmail) {
     try {
       const dup = await _checkDuplicate(supabase, customerEmail, ticketId, messages);
-      if (dup === 'close_new') {
-        if (!dryRun) await closeAsResolved({ gorgias, supabase, ticketId, note: 'Auto-closed by drift triage: duplicate of an existing open ticket for this customer.' });
+      if (dup?.action === 'continuation') {
+        // The customer's reply spawned a fresh ticket instead of threading.
+        // Move it onto the surviving ticket — never close it away.
+        if (!dryRun) {
+          await _transplant({
+            gorgias,
+            supabase,
+            newTicketId: ticketId,
+            survivor: dup.survivor,
+            customerEmail,
+            customerName: ticket.customer?.name || null,
+            customerMessages: buildTransplantMessages(messages, m => extractCleanBody(m).text),
+          });
+        }
+        return { disposition: 'continuation', reason: `reply on a broken thread — moved to #${dup.survivor.gorgias_ticket_id}` };
+      }
+      if (dup?.action === 'close_new') {
+        if (!dryRun) await closeAsResolved({ gorgias, supabase, ticketId, note: `Auto-closed by drift triage: duplicate of existing open ticket #${dup.survivor.gorgias_ticket_id} for this customer.` });
         return { disposition: 'duplicate', reason: 'duplicate of an existing open ticket' };
       }
     } catch (e) {
