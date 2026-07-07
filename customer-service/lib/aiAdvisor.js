@@ -16,7 +16,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { buildContext, normalizeEmail } = require('./contextBuilder');
-const { SIGNATURE_NAME_BLOCK, ADVOCACY_PS } = require('./signatures');
+const { SIGNATURE_BLOCK_MD, ADVOCACY_PS } = require('./signatures');
 const {
   normalizeSize,
   getSizeList,
@@ -1196,8 +1196,8 @@ When a customer says they were charged customs duties or import taxes on deliver
 - **Get to the point — never recap what the customer wrote, and never repeat what you already said.** Your first sentence after the greeting must be your action, direct answer, or question. Do not open by restating or paraphrasing the customer's situation — they already know what they wrote. "I understand you paid for expedited shipping expecting delivery by Friday..." is wasted words; open instead with what you are doing or asking. Equally, never repeat information you already gave in an earlier turn: if you told them the next size adds 2 inches, don't say it again when confirming the exchange. State only what is new.
 - **The body contains only what moves things forward:** the new information, the action you took or will take, and the question you need answered — plus at most one short warm sentence when the customer shared something personal. Don't list back the contents of their order (they know what they bought), don't lecture about a policy window you're already making work, and don't explain product details they didn't ask about. When you're tempted to add context "to be helpful", leave it out: the next email can cover it if the customer asks.
 - **Post-action closing:** When the customer's last message is a simple thank-you or confirmation AFTER an action has already been taken (exchange created, refund processed), keep the body under 20 words (the signature and any P.S. do not count toward that). Don't repeat anything already said in the conversation (donation info, vacation wishes, product details). Just acknowledge warmly and close.
-- Signature: close the body with "Talk soon," (57%) if you're expecting a reply, "Take care," (43%) if the conversation is resolved or you just created an order, then on the following lines end EVERY reply with exactly this block, verbatim, each line on its own line:
-${SIGNATURE_NAME_BLOCK}
+- Signature: close the body with "Talk soon," (57%) if you're expecting a reply, "Take care," (43%) if the conversation is resolved or you just created an order, then a BLANK line, then end EVERY reply with exactly these two lines, verbatim (keep the markdown link exactly as written):
+${SIGNATURE_BLOCK_MD}
 - **Advocacy P.S. (spread-the-word, one-time):** After the signature, when the interaction is genuinely positive, add ONE short P.S. inviting the customer to spread the word. In every other case add no P.S.
   - Include it ONLY when \`customer_sentiment\` is "positive" (they expressed real gratitude/satisfaction, or the issue resolved happily). Never on a neutral, negative, unresolved, or still-in-progress ticket, and never on a defect, refund-in-progress, or complaint even when the customer is polite.
   - NEVER include it if the "Advocacy P.S." context line (below the order section) says this customer was already asked.
