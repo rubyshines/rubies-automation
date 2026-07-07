@@ -454,7 +454,7 @@ Example: NO | exchange confirmed and created, no reply needed`;
       reason,
     })),
     autoResolved,
-    undelivered: undelivered.map(({ ticket, failedMessages }) => ({
+    undelivered: undelivered.map(({ ticket, failedMessages, autoclosed }) => ({
       ticketId: ticket.id,
       email: ticket.customer?.email || '?',
       failedCount: failedMessages.length,

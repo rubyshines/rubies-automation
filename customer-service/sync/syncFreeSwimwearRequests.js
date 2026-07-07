@@ -43,6 +43,11 @@ async function fetchExistingKeys(supabase) {
     const { data, error } = await supabase
       .from(TABLE)
       .select('email, submitted_at')
+      // Stable ordering is required for .range() paging — without it, pages can
+      // overlap/skip and a missed identity key re-inserts a duplicate that then
+      // aborts the whole run on the unique index.
+      .order('email', { ascending: true })
+      .order('submitted_at', { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) throw new Error(`fetch existing keys: ${error.message}`);
     for (const r of data) keys.add(identityKey(r));
