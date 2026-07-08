@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { callClaude } = require('../../../shared/aiClient');
+const { MODELS } = require('../../../shared/aiPricing');
 const { loadCatalogSkus } = require('./skuCanonical');
 const { parseQcWorkbook, flattenMeasurements } = require('./qcSheetParser');
 
@@ -317,7 +318,7 @@ async function extractReport(text) {
   const tabNames = Object.keys(TAB_HANDLES);
   const response = await callClaude({
     component: 'qc_report_ingest',
-    model: 'claude-opus-4-6',
+    model: MODELS.OPUS,
     max_tokens: 4000,
     tools: [{
       name: 'record_extraction',

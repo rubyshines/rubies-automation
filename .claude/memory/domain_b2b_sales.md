@@ -27,6 +27,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Discovery backlog fully researched (all 3,537 Feb rows triaged + analyzed 2026-06-11 → 41 qualified retailers, 144 community-partner orgs). Wholesale orders working via MCP tools. Outreach engine deployed with sending OFF — drafts only, warm-first migration order (partners → re-routed orgs → cold retailers).
+- **Not yet exercised:** Jamie hasn't run the b2b discovery/outreach tooling end-to-end yet — no real-world signal on quality (incl. whether Haiku is adequate for the prospect routing/dismiss decision; revisit the model tier after first real runs).
 - **Partial:** Sheet sync exists but unclear if continuous or one-time. Contact-loss auto-re-intro draft flow not yet wired (detection + cadence pause + general_email fallback are live).
 
 ## Key Files

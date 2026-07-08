@@ -39,7 +39,7 @@ These are strategic direction. Initiatives in MEMORY.md track execution against 
 
 ### AI-First Architecture
 
-This project uses Opus (claude-opus-4-6) as the reasoning engine for customer service, action routing, and decision-making. The architecture is: **clear prompts + capable model + real tools**.
+This project uses Opus (`MODELS.OPUS` in `shared/aiPricing.js`) as the reasoning engine for customer service, action routing, and decision-making. The architecture is: **clear prompts + capable model + real tools**.
 
 **When the AI makes a wrong decision, fix the prompt — not the code.** Do NOT add deterministic pre-processing, regex, counters, or code-based validation to work around AI mistakes. If the AI is reasoning incorrectly, the prompt is unclear or contradictory. Fix the prompt.
 
@@ -69,11 +69,15 @@ Every business function maps to one of eight advisors plus a supervisor. This is
 
 Every domain in MEMORY.md maps to exactly one advisor. Tools are agent-agnostic — any advisor can call any tool. The supervisor coordinates when two advisors touch the same work. Marketing and Creative will naturally overlap on campaign creative; that coordination is expected and normal.
 
-### Always use Opus
+### Right model for the task
 
-Use claude-opus-4-6 for all AI-powered features. Never use Sonnet or Haiku for tool-calling or decision-making tasks. Sonnet is unreliable for multi-tool agentic workflows.
+Choose the model that best balances accuracy and cost. The test: does the quality of *this* decision materially affect a customer, a relationship, or a dollar — and is there no downstream check that would catch a mistake?
 
-Exception: pre-filter passes that are binary triage feeding into a later Opus step may use Haiku (e.g. "could this business conceivably sell apparel?" before running full prospect analysis). The test: does this agent make a decision that affects a customer or relationship? If yes, Opus. If it is a cheap cull before a real reasoning step, Haiku is acceptable.
+- **Opus (MODELS.OPUS) — required** for: customer-facing drafts and any final text a customer reads (CS advisor, outbound B2B/community); multi-tool agentic loops that move money or change orders (refunds, orders, holds, exchanges); high-stakes judgment with no operator review before it reaches a customer. Sonnet is unreliable for multi-tool agentic workflows.
+- **Sonnet — fine** for: narrow classification / structured extraction that fails closed or is reviewed/reconciled downstream (thank-you closers, drift/status classification, batch email classification); light tone-polish of already-correct deterministic text. Not for consequential agentic action loops.
+- **Haiku — fine** for: binary pre-filter triage and cheap culls feeding a later Opus step (e.g. "could this business conceivably sell apparel?" before full prospect analysis).
+
+When you deliberately pick a cheaper model, note why in a code comment. When in doubt on customer-facing quality, use Opus. Never downgrade a consequential action loop to save cost — that's where cheap models fail. Model IDs live in `shared/aiPricing.js` `MODELS` — never hardcode an ID in code, prompts, or docs.
 
 ### Use the real tools
 
@@ -105,7 +109,7 @@ See domain files in MEMORY.md for systems detail. Deployment: Railway (scheduled
 - **Pronoun sensitivity:** Never use Shopify profile names (dead name risk). Default they/them for customers. Detect whether the buyer is purchasing for themselves or someone else.
 - **Brand voice:** All customer-facing content must be playful/supportive, never political, righteous, or judgmental.
 - **No em dashes in customer-facing copy.** Use commas, parentheses, or short sentences instead. Applies to advisor drafts, marketing emails, blog content, and any AI-generated customer text.
-- **Always use Opus** (claude-opus-4-6) for AI features — never Sonnet or Haiku for tool-calling.
+- **Right model for the task** (see Building Principles): Opus for anything customer-facing, money-moving, or multi-tool agentic; Sonnet only for narrow fail-closed classification or tone-polish; Haiku only for pre-filter culls. Never hardcode model IDs — use `MODELS.*` from `shared/aiPricing.js`.
 - **Run tests** before and after changes: `node --test customer-service/test/*.test.js`
 - **Memory directory location:** Memory lives at `.claude/memory/` in the project repo and is committed to git. Reference memory files using the workspace-relative path `.claude/memory/<file>.md` so Jamie can click them open in VSCode. Do NOT edit memory files at any other location — duplicates elsewhere are stale artifacts.
 - **Plans directory location:** Plans live at `~/.claude/plans/` and are symlinked into the project at `.claude/plans/` (gitignored, shared across all projects). Reference plan files as `.claude/plans/<name>.md` so they're clickable in VSCode.

@@ -11,17 +11,10 @@
  */
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
-const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../../shared/aiClient');
 const { MODELS } = require('../../../shared/aiPricing');
 const { addBusinessDays, businessDaysBetween } = require('../../../shared/businessDays');
 const { relativeDay } = require('./analyzer');
-
-let _client = null;
-function getAI() {
-  if (!_client) _client = new Anthropic();
-  return _client;
-}
 
 // ---------------------------------------------------------------------------
 // Check inventory levels via Shopify

@@ -8,16 +8,9 @@
  * Returns results for each held order so the report can show what happened.
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { releaseAddressHold } = require('./warehanceClient');
-
-let _ai = null;
-function getAI() {
-  if (!_ai) _ai = new Anthropic();
-  return _ai;
-}
 
 // ---------------------------------------------------------------------------
 // Rule 1: Previous fulfilled order to same address
@@ -196,7 +189,7 @@ async function classifyAddressImage(imageBuffer, addressStr) {
   try {
     const response = await callClaude({
       component: 'address_hold_resolver',
-      model: MODELS.SONNET,
+      model: MODELS.OPUS,
       max_tokens: 150,
       messages: [{
         role: 'user',
