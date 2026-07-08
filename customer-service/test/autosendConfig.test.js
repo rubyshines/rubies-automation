@@ -5,7 +5,6 @@ const {
   judgmentStats,
   buildAutosendConfig,
   validateAutosendFlagKey,
-  fetchAll,
 } = require('../lib/autosendConfig');
 const { NEVER_TYPES } = require('../lib/autosendGate');
 const { CANONICAL_MESSAGE_TYPES } = require('../lib/messageTypes');
@@ -139,40 +138,5 @@ test('validateAutosendFlagKey rejects arbitrary flags and malformed keys', () =>
   assert.equal(validateAutosendFlagKey(42).ok, false);
 });
 
-// ---------------------------------------------------------------------------
-// fetchAll — pagination past Supabase's 1000-row default limit
-// ---------------------------------------------------------------------------
-
-function fakeQuery(allRows) {
-  const calls = [];
-  const buildQuery = () => ({
-    range(from, to) {
-      calls.push([from, to]);
-      return Promise.resolve({ data: allRows.slice(from, to + 1), error: null });
-    },
-  });
-  return { buildQuery, calls };
-}
-
-test('fetchAll pages through results larger than one page', async () => {
-  const allRows = Array.from({ length: 2500 }, (_, i) => ({ id: i }));
-  const { buildQuery, calls } = fakeQuery(allRows);
-  const rows = await fetchAll(buildQuery, 1000);
-  assert.equal(rows.length, 2500);
-  assert.deepEqual(calls, [[0, 999], [1000, 1999], [2000, 2999]]);
-  assert.equal(rows[2499].id, 2499);
-});
-
-test('fetchAll stops after a single short page', async () => {
-  const { buildQuery, calls } = fakeQuery([{ id: 1 }, { id: 2 }]);
-  const rows = await fetchAll(buildQuery, 1000);
-  assert.equal(rows.length, 2);
-  assert.equal(calls.length, 1);
-});
-
-test('fetchAll surfaces query errors', async () => {
-  const buildQuery = () => ({
-    range: () => Promise.resolve({ data: null, error: { message: 'boom' } }),
-  });
-  await assert.rejects(() => fetchAll(buildQuery), /boom/);
-});
+// Pagination behavior (formerly a local fetchAll here) is covered by
+// supabaseHelpers.test.js — autosendConfig now uses the shared fetchAllPaginated.

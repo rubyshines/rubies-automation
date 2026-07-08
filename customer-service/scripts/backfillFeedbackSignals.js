@@ -13,26 +13,13 @@
  * Usage: node customer-service/scripts/backfillFeedbackSignals.js [--execute]
  */
 require('dotenv').config();
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const sb = getSupabaseClient();
 
 const EXECUTE = process.argv.includes('--execute');
 
-async function fetchAll(query, pageSize = 1000) {
-  const rows = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await query().range(from, from + pageSize - 1);
-    if (error) throw error;
-    rows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return rows;
-}
-
 async function backfillManualSends() {
-  const manualDrafts = await fetchAll(() =>
+  const manualDrafts = await fetchAllPaginated(() =>
     sb.from('cs_ai_drafts')
       .select('id, gorgias_ticket_id, sent_response, sent_at, turn_number')
       .eq('draft_kind', 'manual_send')
@@ -42,7 +29,7 @@ async function backfillManualSends() {
   if (!manualDrafts.length) return { inserted: 0, skipped: 0 };
 
   const draftIds = manualDrafts.map(d => d.id);
-  const existing = await fetchAll(() =>
+  const existing = await fetchAllPaginated(() =>
     sb.from('cs_ai_feedback_log')
       .select('draft_id')
       .in('draft_id', draftIds)
@@ -79,7 +66,7 @@ async function backfillManualSends() {
 }
 
 async function backfillSteers() {
-  const steeredDrafts = await fetchAll(() =>
+  const steeredDrafts = await fetchAllPaginated(() =>
     sb.from('cs_ai_drafts')
       .select('id, operator_steer, draft_history')
       .not('operator_steer', 'is', null)
@@ -90,7 +77,7 @@ async function backfillSteers() {
   if (!steeredDrafts.length) return { updated: 0, skipped: 0, noFeedbackRow: 0 };
 
   const byDraft = new Map(steeredDrafts.map(d => [d.id, d]));
-  const feedback = await fetchAll(() =>
+  const feedback = await fetchAllPaginated(() =>
     sb.from('cs_ai_feedback_log')
       .select('id, draft_id, operator_steer')
       .in('draft_id', steeredDrafts.map(d => d.id))
