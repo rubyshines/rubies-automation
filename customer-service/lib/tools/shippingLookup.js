@@ -114,20 +114,27 @@ async function cacheTracking(trackingNumber, data) {
 
 async function getShippingZone(countryCode) {
   if (!countryCode) return null;
-  try {
-    const supabase = getSupabaseClient();
-    const { data } = await supabase
-      .from('shipping_zones')
-      .select('zone, duties_prepaid')
-      .eq('country_code', countryCode)
-      .single();
-    return data?.zone || null;
-  } catch (e) {
-    // Fallback: US = us, CA = canada, known DDP countries
+  // Fallback: US = us, CA = canada, known DDP countries. supabase-js returns
+  // { data: null, error } instead of throwing, so the fallback must run on
+  // missing rows/query errors too — a catch-only fallback was dead code and
+  // unknown countries silently got zone = null.
+  const fallbackZone = () => {
     if (countryCode === 'US') return 'us';
     if (countryCode === 'CA') return 'canada';
     const ddpCountries = new Set(['AU', 'NZ', 'GB', 'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'NO', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE']);
     return ddpCountries.has(countryCode) ? 'ddp' : 'ddu';
+  };
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('shipping_zones')
+      .select('zone, duties_prepaid')
+      .eq('country_code', countryCode)
+      .maybeSingle();
+    if (error || !data?.zone) return fallbackZone();
+    return data.zone;
+  } catch (e) {
+    return fallbackZone();
   }
 }
 
@@ -171,7 +178,9 @@ async function handleShippingLookup({ customer_email, order_number, _context }) 
 
   // Step 2: Get fulfillment + tracking info
   const fulfillments = order.fulfillments || [];
-  if (fulfillments.length === 0 || order.fulfillmentStatus === 'UNFULFILLED') {
+  // getOrderByNumber returns displayFulfillmentStatus (fulfillmentStatus never
+  // exists on this shape).
+  if (fulfillments.length === 0 || order.displayFulfillmentStatus === 'UNFULFILLED') {
     // Unfulfilled order — investigate why
     const { analyzeUnfulfilledOrder, draftUnfulfilledResponse } = require('../tracking/fulfillmentChecker');
     try {

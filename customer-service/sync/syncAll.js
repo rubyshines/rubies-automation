@@ -360,7 +360,7 @@ async function syncCustomers({ batchSize = 50 } = {}) {
   if (error) throw new Error(`Query failed: ${error.message}`);
   if (!customers?.length) {
     console.log('[CustomerSync] All customers are up to date');
-    return;
+    return 0;
   }
 
   console.log(`[CustomerSync] Enriching ${customers.length} customers from Shopify...`);
@@ -413,6 +413,8 @@ async function syncCustomers({ batchSize = 50 } = {}) {
   if (count > 0) {
     console.log(`[CustomerSync] ${count} more customers need enrichment. Run again to continue.`);
   }
+
+  return enriched;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,10 +459,12 @@ async function runOrders({ since, full } = {}) {
 
 async function runCustomers({ batchSize } = {}) {
   try {
-    await syncCustomers({ batchSize });
+    // Report the ACTUAL enriched count — rowsWritten used to be fabricated
+    // as batchSize regardless of what happened.
+    const enriched = await syncCustomers({ batchSize });
     return {
       sources: {
-        customers: { success: true, rowsWritten: batchSize || 50, error: null },
+        customers: { success: true, rowsWritten: enriched || 0, error: null },
       },
       status: 'success',
     };

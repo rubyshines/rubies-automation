@@ -185,7 +185,9 @@ function decideLifecycle(row, { customer = null, orders = [], now = new Date() }
   // Expire / resend only apply to still-open accepted/registered rows.
   if (status === 'accepted' || status === 'registered') {
     const expiry = row.expiry_date ? new Date(row.expiry_date) : null;
-    const daysLeft = expiry ? daysBetween(expiry, now) : null;
+    // ceil, not floor: floor treats an expiry <24h away as already expired
+    // (codes died up to a day early). Partial days remaining count as a day.
+    const daysLeft = expiry ? Math.ceil((expiry.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)) : null;
     if (daysLeft !== null && daysLeft <= 0) {
       patch.status = 'expired';
       return { action: 'expired', patch };

@@ -506,16 +506,20 @@ async function apiSendDraft(id, body) {
   try {
     const donation = draft.structured_output?.prescription?.donation;
     if (donation?.type && donation.type !== 'skip_defect') {
-      const { count } = await supabase
+      const orderNum = String(draft.order_number || '').replace('#', '') || null;
+      // .eq(col, null) never matches NULL rows in PostgREST — use .is() for
+      // order-less tickets or repeat sends double-count donations.
+      let dedupe = supabase
         .from('donation_routings')
         .select('id', { count: 'exact', head: true })
-        .eq('customer_email', draft.customer_email)
-        .eq('order_number', String(draft.order_number || '').replace('#', '') || null);
+        .eq('customer_email', draft.customer_email);
+      dedupe = orderNum ? dedupe.eq('order_number', orderNum) : dedupe.is('order_number', null);
+      const { count } = await dedupe;
       if (!count) {
         const { logDonationRouting } = require('../lib/donationRouting');
         await logDonationRouting({
           customer_email: draft.customer_email,
-          order_number: String(draft.order_number || '').replace('#', '') || null,
+          order_number: orderNum,
           partner_id: donation.partner_id || null,
           items_count: donation.items_count || 1,
           routing_type: donation.type,
@@ -1120,10 +1124,11 @@ const { dayBounds: _dayBounds, classifyFeedback: _classifyFeedback, pct: _pct, c
 async function _queryDayStats(supabase, dateStr) {
   const { start, end, date } = _dayBounds(dateStr);
 
-  // Feedback log for the day
+  // Feedback log for the day. haiku_score_post_steer must be selected — the
+  // loop below reads it, and without it avg_steer_accuracy was always null.
   const { data: feedback } = await supabase
     .from('cs_ai_feedback_log')
-    .select('id, action, original_response, final_response, message_type, confidence, draft_id, haiku_score, created_at')
+    .select('id, action, original_response, final_response, message_type, confidence, draft_id, haiku_score, haiku_score_post_steer, created_at')
     .gte('created_at', start).lte('created_at', end)
     .order('created_at', { ascending: true });
 

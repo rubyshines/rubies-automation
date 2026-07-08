@@ -74,7 +74,9 @@ async function backfill() {
         .upsert({
           gorgias_ticket_id: gorgiasTicketId,
           status: ticketStatus,
-          message_count: latest.message_count || latest.turn_number || 1,
+          // cs_ai_drafts has no message_count column — turn_number is the
+          // real source (the old first operand was always undefined).
+          message_count: latest.turn_number || 1,
           customer_email: latest.customer_email,
           customer_name: latest.customer_name,
           customer_pronouns: latest.customer_pronouns,

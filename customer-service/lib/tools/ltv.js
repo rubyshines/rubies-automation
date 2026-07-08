@@ -95,11 +95,17 @@ async function handleCustomerLtv({ email }) {
   md += '\n### Engagement\n\n';
   md += `| Metric | Value |\n`;
   md += `|--------|-------|\n`;
-  md += `| First Order | ${new Date(firstOrder).toLocaleDateString('en-AU')} |\n`;
-  md += `| Last Order | ${new Date(lastOrder).toLocaleDateString('en-AU')} |\n`;
-  md += `| Customer Lifespan | ${Math.round(lifespanDays)} days |\n`;
-  md += `| Avg Days Between Orders | ${avgDaysBetweenOrders != null ? Math.round(avgDaysBetweenOrders) + ' days' : 'N/A (single order)'} |\n`;
-  md += `| Days Since Last Order | ${Math.round(daysSinceLast)} days |\n`;
+  if (paidOrders.length > 0) {
+    md += `| First Order | ${new Date(firstOrder).toLocaleDateString('en-AU')} |\n`;
+    md += `| Last Order | ${new Date(lastOrder).toLocaleDateString('en-AU')} |\n`;
+    md += `| Customer Lifespan | ${Math.round(lifespanDays)} days |\n`;
+    md += `| Avg Days Between Orders | ${avgDaysBetweenOrders != null ? Math.round(avgDaysBetweenOrders) + ' days' : 'N/A (single order)'} |\n`;
+    md += `| Days Since Last Order | ${Math.round(daysSinceLast)} days |\n`;
+  } else {
+    // All orders are $0 exchanges — no paid dates to report ('Invalid
+    // Date'/NaN used to render here).
+    md += `| Paid Orders | none (all orders are $0 exchanges) |\n`;
+  }
 
   md += '\n### Order History\n\n';
   md += '| # | Date | Total | Status |\n';

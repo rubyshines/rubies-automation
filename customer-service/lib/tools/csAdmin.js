@@ -535,12 +535,14 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
           body_html: `<p>${followUpText.replace(/\n/g, '<br>')}</p>`,
         });
 
-        // Create audit draft record
+        // Create audit draft record. gorgias_message_id NULL, not 0 — a
+        // second (ticket, 0) row collides on the unique constraint and the
+        // audit row is silently lost (see followUp.js).
         const { data: newDraft } = await supabase
           .from('cs_ai_drafts')
           .insert({
             gorgias_ticket_id: ticket.gorgias_ticket_id,
-            gorgias_message_id: 0,
+            gorgias_message_id: null,
             customer_email: draft.customer_email,
             customer_name: draft.customer_name,
             order_number: draft.order_number,
@@ -680,12 +682,12 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
           trackingSettings: { clickTracking: { enable: false, enableText: false } },
         });
 
-        // Create audit draft record
+        // Create audit draft record (gorgias_message_id NULL — see above).
         const { data: newDraft } = await supabase
           .from('cs_ai_drafts')
           .insert({
             gorgias_ticket_id: ticket.gorgias_ticket_id,
-            gorgias_message_id: 0,
+            gorgias_message_id: null,
             customer_email: followUpDraft.customer_email,
             customer_name: followUpDraft.customer_name,
             order_number: followUpDraft.order_number,

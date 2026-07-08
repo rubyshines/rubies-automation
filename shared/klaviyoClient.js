@@ -91,6 +91,11 @@ function getKlaviyoClient() {
           const upd = c.attributes?.updated_at || c.attributes?.send_time || c.attributes?.created_at;
           if (upd && upd < updatedSince) { stopped = true; break; }
         }
+        // Apply the documented status filter — it was accepted but never
+        // applied, so drafts/scheduled campaigns leaked into "sent" syncs.
+        // Case-insensitive (Klaviyo reports 'Sent'/'Draft'/'Scheduled');
+        // pass status: null to fetch all statuses.
+        if (status && String(c.attributes?.status || '').toLowerCase() !== String(status).toLowerCase()) continue;
         campaigns.push(c);
         if (limit && campaigns.length >= limit) { stopped = true; break; }
       }

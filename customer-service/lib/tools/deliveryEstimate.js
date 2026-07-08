@@ -43,10 +43,12 @@ function dateDaysAgo(days) {
 function r(n) { return n != null ? Math.round(n) : null; }
 function range(lo, hi) { return lo === hi ? `${lo}` : `${lo}-${hi}`; }
 
-async function handleDeliveryEstimate({ country_code, province_code }) {
+// province_code was removed from the schema: the cascade only queries at
+// country / sub-zone granularity, so advertising regional precision told the
+// AI the tool did something it doesn't.
+async function handleDeliveryEstimate({ country_code }) {
   const supabase = getSupabaseClient();
   const cc = (country_code || '').toUpperCase();
-  const pc = (province_code || '').toUpperCase() || null;
 
   if (!cc) return { content: [{ type: 'text', text: 'country_code is required.' }] };
 
@@ -195,10 +197,6 @@ module.exports = [
         country_code: {
           type: 'string',
           description: 'ISO 2-letter country code (e.g. "US", "CA", "GB", "AU")',
-        },
-        province_code: {
-          type: 'string',
-          description: 'State/province code for US or Canada (e.g. "CA", "NY", "ON", "BC"). Optional for other countries.',
         },
       },
       required: ['country_code'],

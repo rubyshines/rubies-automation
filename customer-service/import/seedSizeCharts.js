@@ -104,7 +104,10 @@ const SIZE_CHARTS = [
   { category: 'adult_tops', size: 'L',   type: 'chest', min_in: 34, max_in: 36, min_cm: 86.5, max_cm: 91.5 },
   { category: 'adult_tops', size: '1X',  type: 'chest', min_in: 36, max_in: 38, min_cm: 91.5, max_cm: 96.5 },
   { category: 'adult_tops', size: '2X',  type: 'chest', min_in: 38, max_in: 40, min_cm: 96.5, max_cm: 101.5 },
-  { category: 'adult_tops', size: '3X',  type: 'chest', min_in: 40, max_in: 42, min_cm: 101.5, max_cm: 106 },
+  // 3X max_cm 106.5 (not 106): every other 42-inch boundary converts to 106.5
+  // on both sides — 106 left a 0.5cm hole where e.g. a 106.2cm chest matched
+  // no size at all.
+  { category: 'adult_tops', size: '3X',  type: 'chest', min_in: 40, max_in: 42, min_cm: 101.5, max_cm: 106.5 },
   { category: 'adult_tops', size: '4X',  type: 'chest', min_in: 42, max_in: 45, min_cm: 106.5, max_cm: 114 },
 
   // --- Adult One-Piece (with + sizes for XS, waist + height) ---
