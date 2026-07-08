@@ -21,9 +21,14 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-
-const VIEW_ALL_OPEN = 28532;
-const VIEW_UNASSIGNED = 28531;
+const {
+  fetchOpenGorgiasTickets,
+  fetchAdvisorTicketsFor,
+  findAdvisorOnlyOpen,
+  countGorgiasMessages,
+  countAdvisorCustomerMessages,
+  isStatusInSync,
+} = require('./lib/gorgiasDriftCore');
 
 async function run({ execute = false } = {}) {
   const dryRun = !execute;
@@ -44,39 +49,17 @@ async function run({ execute = false } = {}) {
   // ── Step 1: Fetch all open tickets from Gorgias views ──
 
   console.log('Fetching open tickets from Gorgias views...');
-  const openTickets = await gorgias.getViewItems(VIEW_ALL_OPEN);
-  const unassignedTickets = await gorgias.getViewItems(VIEW_UNASSIGNED);
-
-  const ticketMap = new Map();
-  for (const t of [...openTickets, ...unassignedTickets]) {
-    if (!t.spam) ticketMap.set(t.id, t);
-  }
-  const gorgiasTickets = [...ticketMap.values()];
+  const gorgiasTickets = await fetchOpenGorgiasTickets(gorgias);
   console.log(`  Found ${gorgiasTickets.length} open tickets in Gorgias\n`);
 
   // ── Step 2: Fetch matching Advisor tickets ──
 
   const gorgiasIds = gorgiasTickets.map(t => t.id);
-  let advisorTickets = [];
-  if (gorgiasIds.length) {
-    const batchSize = 200;
-    for (let i = 0; i < gorgiasIds.length; i += batchSize) {
-      const { data } = await supabase
-        .from('cs_tickets')
-        .select('id, gorgias_ticket_id, status, customer_email, conversation_history')
-        .in('gorgias_ticket_id', gorgiasIds.slice(i, i + batchSize));
-      if (data) advisorTickets.push(...data);
-    }
-  }
-  const advisorMap = new Map();
-  for (const t of advisorTickets) advisorMap.set(t.gorgias_ticket_id, t);
+  const COLS = 'id, gorgias_ticket_id, status, customer_email, conversation_history';
+  const { byGorgiasId: advisorMap } = await fetchAdvisorTicketsFor(supabase, gorgiasIds, COLS);
 
   // Also find Advisor tickets that are still open but not in Gorgias open views
-  const { data: advisorDrift } = await supabase
-    .from('cs_tickets')
-    .select('id, gorgias_ticket_id, status, customer_email, conversation_history')
-    .in('status', ['open', 'snoozed', 'follow_up'])
-    .not('gorgias_ticket_id', 'in', `(${gorgiasIds.length ? gorgiasIds.join(',') : '0'})`);
+  const advisorDrift = await findAdvisorOnlyOpen(supabase, gorgiasIds, COLS);
 
   // ── Step 3: Fetch existing draft message IDs per ticket ──
 
@@ -106,26 +89,20 @@ async function run({ execute = false } = {}) {
       continue;
     }
 
-    // Check status drift
-    //  - Gorgias open: Advisor open/snoozed/parked are all fine (operator may have parked/snoozed on our side)
-    //  - Gorgias snoozed: Advisor must also be snoozed
+    // Check status drift — canonical compatibility map in the shared drift core
     const gStatus = gTicket.status;
     const aStatus = advisor.status;
-    if (gStatus === 'open' && !['open', 'snoozed', 'parked', 'pending_operator'].includes(aStatus)) {
-      toProcess.push({ ticket: gTicket, reason: `status drift (G:open → A:${aStatus})`, existingIds });
-      continue;
-    }
-    if (gStatus === 'snoozed' && aStatus !== 'snoozed') {
-      toProcess.push({ ticket: gTicket, reason: `status drift (G:snoozed → A:${aStatus})`, existingIds });
+    if (!isStatusInSync(gStatus, aStatus)) {
+      toProcess.push({ ticket: gTicket, reason: `status drift (G:${gStatus} → A:${aStatus})`, existingIds });
       continue;
     }
 
     // Check message count — fetch messages to compare
     const messages = await gorgias.getTicketMessages(gTicket.id);
-    const gCustMsgs = messages.filter(m => !m.from_agent && m.channel !== 'internal-note');
-    const aCustMsgs = (advisor.conversation_history || []).filter(m => m.sender === 'customer' && m.channel !== 'internal-note');
-    if (gCustMsgs.length > aCustMsgs.length) {
-      toProcess.push({ ticket: gTicket, reason: `missing messages (G:${gCustMsgs.length} vs A:${aCustMsgs.length} customer msgs)`, existingIds });
+    const gCust = countGorgiasMessages(messages).customer;
+    const aCust = countAdvisorCustomerMessages(advisor.conversation_history);
+    if (gCust > aCust) {
+      toProcess.push({ ticket: gTicket, reason: `missing messages (G:${gCust} vs A:${aCust} customer msgs)`, existingIds });
     }
     await gorgias.delay(300);
   }
