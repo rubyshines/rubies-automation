@@ -1338,7 +1338,9 @@ async function generateReport(periodArg, { log = () => {} } = {}) {
     takeaways = await writeTakeaways(campaigns, flows, period, playbook, audienceCtx);
   } catch (err) {
     log(`  Takeaways failed: ${err.message}`);
-    takeaways = ['(Takeaways could not be generated. Check ANTHROPIC_API_KEY / network.)'];
+    // renderTakeaways expects { highlights, underperformers, opportunities } —
+    // a bare array rendered as three empty groups, silently dropping the notice.
+    takeaways = { highlights: ['(Takeaways could not be generated. Check ANTHROPIC_API_KEY / network.)'], underperformers: [], opportunities: [] };
   }
 
   const html = renderHTML({ period, campaigns, campSummary, flows, flowRev, takeaways, flowSource: source, series, growth, funnel, form, previews, comparisons, momentum, playbook, audience });

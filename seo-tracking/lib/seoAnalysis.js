@@ -143,15 +143,24 @@ async function fetchTrackedUrls(categories) {
 // Fetchers
 // ---------------------------------------------------------------------------
 
+// A DB error must not silently render as an all-zeros week in the digest —
+// supabase-js returns { data: null, error } instead of throwing.
+function assertNoError(results, label) {
+  for (const r of results) {
+    if (r?.error) throw new Error(`${label} query failed: ${r.error.message}`);
+  }
+  return results;
+}
+
 async function fetchOverview(ranges) {
   const supabase = getSupabase();
   const { current, compare } = ranges;
 
   // GSC summary
-  const [gscCurrent, gscCompare] = await Promise.all([
+  const [gscCurrent, gscCompare] = assertNoError(await Promise.all([
     supabase.from('gsc_daily_summary').select('*').gte('date', current.start).lte('date', current.end),
     supabase.from('gsc_daily_summary').select('*').gte('date', compare.start).lte('date', compare.end),
-  ]);
+  ]), 'gsc_daily_summary');
 
   const sumGsc = (rows) => {
     if (!rows || !rows.length) return { clicks: 0, impressions: 0, ctr: 0, position: 0, days: 0 };
@@ -176,10 +185,10 @@ async function fetchOverview(ranges) {
   const gscPrev = sumGsc(gscCompare.data);
 
   // GA4 organic sessions
-  const [ga4Current, ga4Compare] = await Promise.all([
+  const [ga4Current, ga4Compare] = assertNoError(await Promise.all([
     supabase.from('ga4_daily').select('*').gte('date', current.start).lte('date', current.end),
     supabase.from('ga4_daily').select('*').gte('date', compare.start).lte('date', compare.end),
-  ]);
+  ]), 'ga4_daily');
 
   const sumGa4 = (rows) => {
     if (!rows || !rows.length) return { sessions: 0, users: 0, engagementRate: 0, bounceRate: 0, days: 0 };
@@ -204,10 +213,10 @@ async function fetchOverview(ranges) {
   const ga4Prev = sumGa4(ga4Compare.data);
 
   // Shopify organic revenue
-  const [shopCurrent, shopCompare] = await Promise.all([
+  const [shopCurrent, shopCompare] = assertNoError(await Promise.all([
     supabase.from('shopify_daily_channels').select('*').eq('channel', 'Search').gte('date', current.start).lte('date', current.end),
     supabase.from('shopify_daily_channels').select('*').eq('channel', 'Search').gte('date', compare.start).lte('date', compare.end),
-  ]);
+  ]), 'shopify_daily_channels');
 
   const sumShop = (rows) => {
     if (!rows || !rows.length) return { sessions: 0, orders: 0, revenue: 0, conversionRate: 0, days: 0 };

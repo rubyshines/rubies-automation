@@ -1219,7 +1219,10 @@ async function loadCustomerContext(email, orderNumber) {
   } catch (err) {
     console.warn('Failed to load customer context:', err);
     if (currentTicketId !== ticketAtStart) return;
-    document.getElementById('ltv-stats').innerHTML = `<span style="color:var(--text-tertiary);font-size:11px">Context unavailable</span>`;
+    // .ltv-stats is a class, not an id — getElementById returned null and
+    // threw here, so "Context unavailable" never actually rendered.
+    const ltvEl = document.querySelector('.ltv-stats');
+    if (ltvEl) ltvEl.innerHTML = `<span style="color:var(--text-tertiary);font-size:11px">Context unavailable</span>`;
   }
 }
 
@@ -3312,7 +3315,9 @@ async function refreshDraft(steer) {
     }
     trace.finalize();
 
-    // If user navigated away, just cache the result
+    // If user navigated away, just cache the result (controls re-enable in
+    // the finally below — the early return used to skip re-enabling, leaving
+    // the steer input permanently disabled).
     if (currentTicketId !== ticketId) {
       if (finalResult?.draft_response) localStorage.setItem(`draft-ticket-${ticketId}`, finalResult.draft_response);
       return;
@@ -3332,15 +3337,15 @@ async function refreshDraft(steer) {
 
     if (steerInput) {
       steerInput.value = '';
-      steerInput.disabled = false;
       steerInput.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    btn.disabled = false;
   } catch (err) {
-    btn.disabled = false;
-    if (steerInput) steerInput.disabled = false;
     editor.placeholder = '';
     alert('Refresh failed: ' + err.message);
+  } finally {
+    // Every exit path (early return, success, error) restores the controls.
+    btn.disabled = false;
+    if (steerInput) steerInput.disabled = false;
   }
 }
 

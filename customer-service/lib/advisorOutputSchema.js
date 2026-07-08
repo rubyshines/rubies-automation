@@ -37,8 +37,11 @@ const ADVISOR_OUTPUT_SCHEMA = {
       description: 'What the customer is trying to achieve, or null if not applicable.',
     },
     action_type: {
-      enum: [null, 'warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code', 'split_shipment', 'invoice_kept_items'],
-      description: 'Set when an order, profile, discount-code, split-shipment, or invoice-kept-items action is needed beyond exchange/refund. Otherwise null.',
+      // free_order is mandated by the advisor prompt (send-at-no-charge with no
+      // return story) and accepted by the legacy parser — it was missing from
+      // this enforced enum, so schema mode could never emit it.
+      enum: [null, 'warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code', 'split_shipment', 'invoice_kept_items', 'free_order'],
+      description: 'Set when an order, profile, discount-code, split-shipment, invoice-kept-items, or free-order action is needed beyond exchange/refund. Otherwise null.',
     },
     new_address: {
       anyOf: [

@@ -38,7 +38,10 @@ const PUPPETEER_RECYCLE_AFTER = 10;
 // Serialize Puppeteer calls — one at a time across parallel workers
 let _puppeteerLock = Promise.resolve();
 function withPuppeteerLock(fn) {
-  const next = _puppeteerLock.then(fn).catch(fn); // always advance the chain
+  // .then(fn, fn) runs fn exactly ONCE whether the previous task resolved or
+  // rejected — the old .then(fn).catch(fn) re-invoked fn a second time when
+  // fn itself failed, silently doubling failed Puppeteer scrapes.
+  const next = _puppeteerLock.then(fn, fn);
   _puppeteerLock = next.then(() => {}, () => {});
   return next;
 }

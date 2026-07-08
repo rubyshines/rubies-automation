@@ -83,13 +83,16 @@ async function handleAuditLog({ action_type, days_back, limit }) {
 async function writeAuditEntry({ action_type, actor, details, entity_type, entity_id }) {
   try {
     const supabase = getSupabaseClient();
-    await supabase.from('audit_log').insert({
+    // supabase-js returns { error } instead of throwing — without this check
+    // failed inserts were fully silent and the audit trail went empty.
+    const { error } = await supabase.from('audit_log').insert({
       action_type,
       actor: actor || 'claude_code',
       details: details || {},
       entity_type: entity_type || null,
       entity_id: entity_id || null,
     });
+    if (error) console.error('[Audit] Warning: could not write audit entry:', error.message);
   } catch (e) {
     // Audit logging should never break the main flow
     console.error('[Audit] Warning: could not write audit entry:', e.message);

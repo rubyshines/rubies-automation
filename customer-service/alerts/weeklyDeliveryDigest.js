@@ -172,7 +172,10 @@ async function run() {
     });
     console.log('Digest email sent.');
   } catch (err) {
+    // Report the failure honestly — this used to swallow the error and
+    // return sent: true, so a broken digest looked healthy.
     console.error('Failed to send email:', err.message);
+    return { sent: false, error: err.message, total7, total30 };
   }
 
   return { sent: true, total7, total30 };

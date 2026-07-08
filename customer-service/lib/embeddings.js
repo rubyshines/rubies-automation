@@ -11,6 +11,7 @@
  * Free tier: 200M tokens/month.
  */
 
+const crypto = require('crypto');
 const { embedTexts } = require('../../shared/aiClient');
 
 const VOYAGE_API_URL = 'https://api.voyageai.com/v1/embeddings';
@@ -33,8 +34,9 @@ function getApiKey() {
 async function embed(text, { model = DEFAULT_MODEL } = {}) {
   if (!text || !text.trim()) throw new Error('Cannot embed empty text');
 
-  // Check cache
-  const cacheKey = `${model}:${text.slice(0, 200)}`;
+  // Check cache — key on a hash of the FULL text. A 200-char prefix key
+  // returned the wrong cached vector for distinct texts sharing a prefix.
+  const cacheKey = `${model}:${crypto.createHash('sha256').update(text).digest('hex')}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
 
   const { vectors } = await embedTexts({
