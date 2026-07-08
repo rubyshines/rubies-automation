@@ -120,6 +120,54 @@ async function searchCustomers(query) {
   return data.customers.edges.map(e => e.node);
 }
 
+/**
+ * Flatten an order's lineItems connection, KEEPING fully-refunded items.
+ *
+ * Shopify sets currentQuantity=0 on fully refunded line items (even NO_RESTOCK
+ * refunds), so the naive `currentQuantity > 0` filter makes refunded items
+ * vanish from the order entirely — the advisor then reasons as if the customer
+ * never bought them. Keep an item when it is untouched/still in the order, OR
+ * when it appears in the refunds map (marked `_refunded: true` so callers can
+ * render its status). Items genuinely removed by order edits (currentQuantity=0
+ * with no refund record) are correctly dropped.
+ *
+ * Requires the order node to include a `refunds { refundLineItems }` selection.
+ * Returns { lineItems, refundedBySkuVariant }.
+ */
+function flattenLineItemsKeepingRefunds(orderNode) {
+  const refundedBySkuVariant = {};
+  for (const refund of (orderNode.refunds || [])) {
+    for (const rli of (refund.refundLineItems?.edges || []).map(e => e.node)) {
+      const key = `${rli.lineItem?.sku || ''}::${rli.lineItem?.variantTitle || ''}`;
+      refundedBySkuVariant[key] = (refundedBySkuVariant[key] || 0) + rli.quantity;
+    }
+  }
+  const lineItems = orderNode.lineItems.edges
+    .map(li => li.node)
+    .filter(li => {
+      if (li.currentQuantity == null || li.currentQuantity > 0) return true;
+      const key = `${li.sku || ''}::${li.variantTitle || ''}`;
+      return (refundedBySkuVariant[key] || 0) > 0;
+    })
+    .map(li => {
+      if (li.currentQuantity === 0) return { ...li, _refunded: true };
+      return li;
+    });
+  return { lineItems, refundedBySkuVariant };
+}
+
+const REFUNDS_SELECTION = `
+              refunds {
+                refundLineItems(first: 50) {
+                  edges {
+                    node {
+                      quantity
+                      lineItem { sku variantTitle }
+                    }
+                  }
+                }
+              }`;
+
 async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
   const gid = normalizeGid(customerId, 'Customer');
   const variables = { id: gid, first: limit };
@@ -146,6 +194,7 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
               totalPriceSet { shopMoney { amount currencyCode } }
               currentTotalPriceSet { shopMoney { amount currencyCode } }
               totalRefundedSet { shopMoney { amount currencyCode } }
+              ${REFUNDS_SELECTION}
               lineItems(first: 50) {
                 edges {
                   node {
@@ -168,7 +217,7 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
     customer: data.customer,
     orders: data.customer.orders.edges.map(e => ({
       ...e.node,
-      lineItems: e.node.lineItems.edges.map(li => li.node).filter(li => li.currentQuantity > 0),
+      lineItems: flattenLineItemsKeepingRefunds(e.node).lineItems,
     })),
   };
 }
@@ -295,6 +344,7 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
             totalPriceSet { shopMoney { amount currencyCode } }
             currentTotalPriceSet { shopMoney { amount currencyCode } }
             totalRefundedSet { shopMoney { amount currencyCode } }
+            ${REFUNDS_SELECTION}
             lineItems(first: 50) {
               edges {
                 node {
@@ -316,7 +366,7 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
   return data.orders.edges
     .map(e => ({
       ...e.node,
-      lineItems: e.node.lineItems.edges.map(li => li.node).filter(li => li.currentQuantity > 0),
+      lineItems: flattenLineItemsKeepingRefunds(e.node).lineItems,
     }))
     .filter(o =>
       o.displayFulfillmentStatus === 'FULFILLED' &&
@@ -894,30 +944,11 @@ async function fetchOrdersForSync(since = null, cursor = null) {
   const orders = data.orders.edges.map(e => {
     const o = e.node;
 
-    // Build per-line-item refunded quantity map from refunds first — we need
-    // it to decide whether a currentQuantity=0 item was removed by an order
-    // edit (drop) vs fully refunded (keep, with strikethrough on the card).
-    const refundedBySkuVariant = {};
-    for (const refund of (o.refunds || [])) {
-      for (const rli of (refund.refundLineItems?.edges || []).map(e => e.node)) {
-        const key = `${rli.lineItem?.sku || ''}::${rli.lineItem?.variantTitle || ''}`;
-        refundedBySkuVariant[key] = (refundedBySkuVariant[key] || 0) + rli.quantity;
-      }
-    }
+    // Flatten line items, keeping fully-refunded ones (see
+    // flattenLineItemsKeepingRefunds — the map drives card strikethrough).
+    const { lineItems, refundedBySkuVariant } = flattenLineItemsKeepingRefunds(o);
     o._refundedBySkuVariant = refundedBySkuVariant;
-
-    // Flatten line items — keep when:
-    //   • currentQuantity is null (untouched) or > 0 (still in the order), OR
-    //   • the item appears in the refunds map (fully refunded — Shopify drops
-    //     currentQuantity to 0 even on NO_RESTOCK refunds; we still want to
-    //     show it on the order card with strikethrough).
-    // Items genuinely removed by order edits (currentQuantity=0, no refund
-    // record) are correctly dropped.
-    o.lineItems = o.lineItems.edges.map(li => li.node).filter(li => {
-      if (li.currentQuantity == null || li.currentQuantity > 0) return true;
-      const key = `${li.sku || ''}::${li.variantTitle || ''}`;
-      return (refundedBySkuVariant[key] || 0) > 0;
-    });
+    o.lineItems = lineItems;
 
     // Flatten discount applications
     o.discountApplications = (o.discountApplications?.edges || []).map(e => e.node);
@@ -2003,6 +2034,7 @@ module.exports = {
   searchCustomers,
   getCustomerOrders,
   getCustomerFulfilledOrders,
+  flattenLineItemsKeepingRefunds,
   getOrderByNumber,
   fetchAllProducts,
   fetchOrdersForSync,

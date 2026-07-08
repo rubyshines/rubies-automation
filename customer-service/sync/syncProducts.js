@@ -272,7 +272,9 @@ async function run() {
   };
 }
 
-module.exports = { run };
+// mapMetafields (+ helpers) is the single metafield→column mapping; the
+// products webhook consumes it via webhooks/handlers/productMetafields.js.
+module.exports = { run, mapMetafields, extractRichText, toArray };
 
 // ---------------------------------------------------------------------------
 // Standalone mode

@@ -29,6 +29,78 @@ const {
   getAdminUrl,
 } = require('../shopify');
 
+/**
+ * Allocate requested SKUs across fulfillment-order line items.
+ *
+ * Same allocation pattern as refundOrder's allocateRefundLineItems, applied to
+ * FO line items: a single SKU can span MULTIPLE line items on one order
+ * (Simple Bundles unbundles a bundle into one line item per component, each
+ * quantity 1), so a `.find()`/`matches[0]` resolver either rejects a
+ * satisfiable request ("requested 2 but only 1 unfulfilled") or double-targets
+ * the first line. Spread the requested quantity across matching lines and
+ * track consumed capacity. Requested quantity defaults to ALL unfulfilled
+ * units of that SKU.
+ *
+ * Pure + deterministic (no I/O) so it's unit-testable.
+ * Returns { byFo: Map<foId, [{id, quantity}]>, matchedSummary, newOrderLineItems, errors }.
+ */
+function allocateSplitLineItems(allFoLineItems, items) {
+  const remaining = new Map(allFoLineItems.map(li => [li.id, li.remainingQuantity]));
+  const byFo = new Map();
+  const matchedSummary = [];
+  const newOrderLineItems = [];
+  const errors = [];
+
+  const pushFoAllocation = (foId, lineId, qty) => {
+    const list = byFo.get(foId) || [];
+    const existing = list.find(e => e.id === lineId);
+    if (existing) existing.quantity += qty;
+    else list.push({ id: lineId, quantity: qty });
+    byFo.set(foId, list);
+  };
+
+  for (const requested of items) {
+    const sku = requested.sku;
+    if (!sku) { errors.push('Each item needs a sku.'); continue; }
+    const matches = allFoLineItems.filter(li => li.lineItem?.sku === sku);
+    if (matches.length === 0) {
+      errors.push(`SKU not found in unfulfilled items: ${sku}`);
+      continue;
+    }
+    const noVariant = matches.find(li => !li.lineItem.variant?.id);
+    if (noVariant) {
+      errors.push(`SKU ${sku}: no variant id on original line item — cannot create pre-order line item. Likely a custom/manual item.`);
+      continue;
+    }
+    const totalAvail = matches.reduce((s, li) => s + (remaining.get(li.id) || 0), 0);
+    const requestedQty = requested.quantity ?? totalAvail;
+    if (requestedQty > totalAvail) {
+      errors.push(`SKU ${sku}: requested ${requestedQty} but only ${totalAvail} unfulfilled across ${matches.length} line item(s).`);
+      continue;
+    }
+    let need = requestedQty;
+    for (const target of matches) {
+      if (need <= 0) break;
+      const avail = remaining.get(target.id) || 0;
+      if (avail <= 0) continue;
+      const take = Math.min(avail, need);
+      remaining.set(target.id, avail - take);
+      pushFoAllocation(target.fulfillmentOrderId, target.id, take);
+      matchedSummary.push(`${take}x ${target.lineItem.title}${target.lineItem.variantTitle ? ` — ${target.lineItem.variantTitle}` : ''} (${sku})`);
+      newOrderLineItems.push({
+        variantId: target.lineItem.variant.id,
+        quantity: take,
+        customAttributes: [
+          { key: 'Pre-order', value: 'Will ship when in stock' },
+        ],
+      });
+      need -= take;
+    }
+  }
+
+  return { byFo, matchedSummary, newOrderLineItems, errors };
+}
+
 const PRE_ORDER_PENDING_TAG = 'pre-order-pending';
 const NEW_ORDER_TAGS = ['pre-order', 'cs-mcp'];
 
@@ -199,41 +271,8 @@ const tools = [
         return { content: [{ type: 'text', text: `Error: order ${order.name} has no unfulfilled line items in any open fulfillment order.` }] };
       }
 
-      const byFo = new Map();
-      const matchedSummary = [];
-      const newOrderLineItems = [];
-      const errors = [];
-
-      for (const requested of items) {
-        const sku = requested.sku;
-        if (!sku) { errors.push('Each item needs a sku.'); continue; }
-        const matches = allFoLineItems.filter(li => li.lineItem?.sku === sku);
-        if (matches.length === 0) {
-          errors.push(`SKU not found in unfulfilled items: ${sku}`);
-          continue;
-        }
-        const target = matches[0];
-        const requestedQty = requested.quantity ?? target.remainingQuantity;
-        if (requestedQty > target.remainingQuantity) {
-          errors.push(`SKU ${sku}: requested ${requestedQty} but only ${target.remainingQuantity} unfulfilled.`);
-          continue;
-        }
-        if (!target.lineItem.variant?.id) {
-          errors.push(`SKU ${sku}: no variant id on original line item — cannot create pre-order line item. Likely a custom/manual item.`);
-          continue;
-        }
-        const list = byFo.get(target.fulfillmentOrderId) || [];
-        list.push({ id: target.id, quantity: requestedQty });
-        byFo.set(target.fulfillmentOrderId, list);
-        matchedSummary.push(`${requestedQty}x ${target.lineItem.title}${target.lineItem.variantTitle ? ` — ${target.lineItem.variantTitle}` : ''} (${sku})`);
-        newOrderLineItems.push({
-          variantId: target.lineItem.variant.id,
-          quantity: requestedQty,
-          customAttributes: [
-            { key: 'Pre-order', value: 'Will ship when in stock' },
-          ],
-        });
-      }
+      const { byFo, matchedSummary, newOrderLineItems, errors } =
+        allocateSplitLineItems(allFoLineItems, items);
 
       if (errors.length) {
         return { content: [{ type: 'text', text: `Error preparing fulfillment:\n${errors.map(e => `- ${e}`).join('\n')}` }] };
@@ -306,3 +345,4 @@ const tools = [
 ];
 
 module.exports = tools;
+module.exports.allocateSplitLineItems = allocateSplitLineItems;

@@ -416,6 +416,9 @@ async function executeToolCall(toolName, toolInput) {
             // The Pre-order target the customer saw at checkout (line-item
             // attribute, persists after the window closes). Null = not a pre-order.
             pre_order: (li.customAttributes || []).find(a => a.key === 'Pre-order')?.value || null,
+            // Fully-refunded items stay visible (Shopify zeroes currentQuantity
+            // on refunds) — flagged so the advisor knows their status.
+            ...(li._refunded ? { refunded: true } : {}),
           })),
         } : null,
         fulfilled_order_count: ctx.fulfilled.length,
