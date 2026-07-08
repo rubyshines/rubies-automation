@@ -304,9 +304,11 @@ async function run() {
   try {
     return await main();
   } catch (err) {
-    // Gracefully skip if no new bills or API unavailable
-    console.log('Nitro bills sync skipped:', err.message);
-    return { sources: { 'nitro-bills': { success: true, rowsWritten: 0, error: err.message } }, status: 'ok' };
+    // A real failure (API/DB error) must be surfaced, not reported as success —
+    // otherwise a broken finance sync is invisible in the daily digest. Warning,
+    // not hard-failure, so it doesn't fail the whole daily run.
+    console.error('Nitro bills sync failed:', err.message);
+    return { sources: { 'nitro-bills': { success: false, rowsWritten: 0, error: err.message } }, status: 'warning' };
   }
 }
 

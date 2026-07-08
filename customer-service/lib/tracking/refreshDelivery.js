@@ -84,13 +84,19 @@ async function refreshOrderDelivery(order, { supabase = getSupabaseClient(), get
     return { refreshed: false, fulfillments: order.fulfillments || [], error: err.message };
   }
   const normalized = normalizeFulfillments(live?.fulfillments, order.fulfillments || []);
+  // Supabase returns { error } rather than throwing, so the old try/catch never
+  // caught a failed write and always reported persisted:true. Check the error.
+  let error;
   try {
-    await supabase
+    ({ error } = await supabase
       .from('orders')
       .update({ fulfillments: normalized.length ? normalized : null })
-      .eq('shopify_order_id', order.shopify_order_id);
+      .eq('shopify_order_id', order.shopify_order_id));
   } catch (err) {
-    return { refreshed: true, persisted: false, fulfillments: normalized, error: err.message };
+    error = err;
+  }
+  if (error) {
+    return { refreshed: true, persisted: false, fulfillments: normalized, error: error.message };
   }
   return { refreshed: true, persisted: true, fulfillments: normalized };
 }

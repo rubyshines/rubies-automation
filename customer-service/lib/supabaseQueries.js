@@ -8,7 +8,15 @@
  * code expects (matching the Shopify GraphQL response format).
  */
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, readMany } = require('../../shared/supabaseClient');
+
+// Read a single row, throwing on a real DB error (vs. swallowing it as
+// "not found"). The queries below already apply .maybeSingle().
+async function readSingle(query) {
+  const { data, error } = await query;
+  if (error) throw new Error(`supabaseQueries: ${error.message}`);
+  return data || null;
+}
 
 // ---------------------------------------------------------------------------
 // Customer lookup
@@ -23,24 +31,24 @@ async function searchCustomersFromSupabase(query) {
   const q = query.toLowerCase().trim();
 
   // Try exact email match first
-  const { data: exactMatch } = await supabase
+  const exactMatch = await readMany(supabase
     .from('customers')
     .select('*')
     .eq('email', q)
-    .limit(1);
+    .limit(1));
 
-  if (exactMatch?.length) {
+  if (exactMatch.length) {
     return exactMatch.map(rowToCustomer);
   }
 
   // Fuzzy search: email contains, name contains, phone contains
-  const { data: fuzzy } = await supabase
+  const fuzzy = await readMany(supabase
     .from('customers')
     .select('*')
     .or(`email.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%,phone.ilike.%${q}%`)
-    .limit(10);
+    .limit(10));
 
-  return (fuzzy || []).map(rowToCustomer);
+  return fuzzy.map(rowToCustomer);
 }
 
 function rowToCustomer(row) {
@@ -91,22 +99,20 @@ async function getCustomerOrdersFromSupabase(customerIdOrEmail, limit = 10) {
 
   if (isEmail) {
     email = customerIdOrEmail.toLowerCase().trim();
-    const { data } = await supabase
+    customerRow = await readSingle(supabase
       .from('customers')
       .select('*')
       .eq('email', email)
-      .maybeSingle();
-    customerRow = data;
+      .maybeSingle());
   } else {
     // GID or numeric ID — look up by shopify_customer_id
     let gid = customerIdOrEmail;
     if (!gid.startsWith('gid://')) gid = `gid://shopify/Customer/${gid}`;
-    const { data } = await supabase
+    customerRow = await readSingle(supabase
       .from('customers')
       .select('*')
       .eq('shopify_customer_id', gid)
-      .maybeSingle();
-    customerRow = data;
+      .maybeSingle());
     email = customerRow?.email;
   }
 
@@ -115,23 +121,23 @@ async function getCustomerOrdersFromSupabase(customerIdOrEmail, limit = 10) {
   const customer = rowToCustomer(customerRow);
 
   // Fetch orders
-  const { data: orderRows } = await supabase
+  const orderRows = await readMany(supabase
     .from('orders')
     .select('*')
     .eq('customer_email', email)
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .limit(limit));
 
-  if (!orderRows?.length) {
+  if (!orderRows.length) {
     return { customer, orders: [] };
   }
 
   // Fetch line items for all orders
   const orderIds = orderRows.map(o => o.shopify_order_id);
-  const { data: allLineItems } = await supabase
+  const allLineItems = await readMany(supabase
     .from('order_line_items')
     .select('*')
-    .in('shopify_order_id', orderIds);
+    .in('shopify_order_id', orderIds));
 
   const lineItemsByOrder = {};
   for (const li of (allLineItems || [])) {
@@ -152,28 +158,28 @@ async function getOrderByNumberFromSupabase(orderNumber) {
   const supabase = getSupabaseClient();
   const num = parseInt(String(orderNumber).replace(/\D/g, ''), 10);
 
-  const { data: orderRow } = await supabase
+  const orderRow = await readSingle(supabase
     .from('orders')
     .select('*')
     .eq('order_number', num)
-    .maybeSingle();
+    .maybeSingle());
 
   if (!orderRow) return null;
 
   // Fetch line items
-  const { data: lineItems } = await supabase
+  const lineItems = await readMany(supabase
     .from('order_line_items')
     .select('*')
-    .eq('shopify_order_id', orderRow.shopify_order_id);
+    .eq('shopify_order_id', orderRow.shopify_order_id));
 
   // Fetch customer
   let customer = null;
   if (orderRow.customer_email) {
-    const { data: custRow } = await supabase
+    const custRow = await readSingle(supabase
       .from('customers')
       .select('shopify_customer_id, first_name, last_name, email')
       .eq('email', orderRow.customer_email)
-      .maybeSingle();
+      .maybeSingle());
     if (custRow) {
       customer = {
         id: custRow.shopify_customer_id,
@@ -203,17 +209,17 @@ async function getCustomerFulfilledOrdersFromSupabase(customerIdOrEmail, limit =
   } else {
     let gid = customerIdOrEmail;
     if (!gid.startsWith('gid://')) gid = `gid://shopify/Customer/${gid}`;
-    const { data } = await supabase
+    const custRow = await readSingle(supabase
       .from('customers')
       .select('email')
       .eq('shopify_customer_id', gid)
-      .maybeSingle();
-    email = data?.email;
+      .maybeSingle());
+    email = custRow?.email;
   }
 
   if (!email) return [];
 
-  const { data: orderRows } = await supabase
+  const orderRows = await readMany(supabase
     .from('orders')
     .select('*')
     .eq('customer_email', email)
@@ -221,16 +227,16 @@ async function getCustomerFulfilledOrdersFromSupabase(customerIdOrEmail, limit =
     .neq('financial_status', 'REFUNDED')
     .is('cancelled_at', null)
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .limit(limit));
 
-  if (!orderRows?.length) return [];
+  if (!orderRows.length) return [];
 
   // Fetch line items
   const orderIds = orderRows.map(o => o.shopify_order_id);
-  const { data: allLineItems } = await supabase
+  const allLineItems = await readMany(supabase
     .from('order_line_items')
     .select('*')
-    .in('shopify_order_id', orderIds);
+    .in('shopify_order_id', orderIds));
 
   const lineItemsByOrder = {};
   for (const li of (allLineItems || [])) {

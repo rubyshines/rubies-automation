@@ -5,7 +5,7 @@
  */
 
 const { fetchAllProducts } = require('./shopify');
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const {
   KNOWN_SIZES, NUMERIC_TO_LETTER, TALL_ALIASES,
   normalizeSizeLower,
@@ -24,21 +24,24 @@ async function loadFromSupabase() {
   try {
     const supabase = getSupabaseClient();
 
-    const { data: products, error: pErr } = await supabase
+    // Paginate both — product_variants routinely exceeds Supabase's 1000-row
+    // default (many products × sizes × colors), so an unpaginated select
+    // silently dropped variants from the advisor's product cache.
+    const products = await fetchAllPaginated(() => supabase
       .from('products')
       .select('*')
-      .eq('status', 'ACTIVE');
-    if (pErr) throw pErr;
-    if (!products || !products.length) return false;
+      .eq('status', 'ACTIVE')
+      .order('shopify_product_id', { ascending: true }));
+    if (!products.length) return false;
 
-    const { data: variants, error: vErr } = await supabase
+    const variants = await fetchAllPaginated(() => supabase
       .from('product_variants')
-      .select('*');
-    if (vErr) throw vErr;
+      .select('*')
+      .order('shopify_variant_id', { ascending: true }));
 
     // Group variants by product
     const variantsByProduct = new Map();
-    for (const v of (variants || [])) {
+    for (const v of variants) {
       if (!variantsByProduct.has(v.shopify_product_id)) {
         variantsByProduct.set(v.shopify_product_id, []);
       }
