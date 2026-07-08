@@ -61,7 +61,7 @@ function computeBuildInfo() {
 }
 const GIT_VERSION = computeBuildInfo();
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
 const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
@@ -1086,11 +1086,12 @@ async function apiReturnToInbox(ticketId, body) {
 async function apiGetStats() {
   const supabase = getSupabaseClient();
 
-  const { data: recentFeedback } = await supabase
+  const recentFeedback = await fetchAllPaginated(() => supabase
     .from('cs_ai_feedback_log')
     .select('action, confidence, message_type, created_at')
     .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false }));
 
   const { count: pendingCount } = await supabase
     .from('cs_ai_drafts')
@@ -1222,19 +1223,24 @@ async function apiGetStatsRange(query) {
   const rangeStart = `${startDate}T00:00:00Z`;
   const rangeEnd = `${endDate}T23:59:59.999Z`;
 
-  const [{ data: allFeedback }, { data: allSteered }, { data: allDrafts }] = await Promise.all([
-    supabase.from('cs_ai_feedback_log')
+  // Paginated: a 90-day range holds >1000 feedback/draft rows, and the
+  // unpaginated versions silently dropped the tail of the range.
+  const [allFeedback, allSteered, allDrafts] = await Promise.all([
+    fetchAllPaginated(() => supabase.from('cs_ai_feedback_log')
       .select('id, action, message_type, confidence, draft_id, haiku_score, haiku_score_post_steer, created_at')
       .gte('created_at', rangeStart).lte('created_at', rangeEnd)
-      .order('created_at', { ascending: true }),
-    supabase.from('cs_ai_drafts')
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })),
+    fetchAllPaginated(() => supabase.from('cs_ai_drafts')
       .select('ticket_id, created_at')
       .not('operator_steer', 'is', null)
-      .gte('created_at', rangeStart).lte('created_at', rangeEnd),
-    supabase.from('cs_ai_drafts')
+      .gte('created_at', rangeStart).lte('created_at', rangeEnd)
+      .order('id', { ascending: true })),
+    fetchAllPaginated(() => supabase.from('cs_ai_drafts')
       .select('id, focus_time_seconds')
       .gt('focus_time_seconds', 0)
-      .gte('created_at', rangeStart).lte('created_at', rangeEnd),
+      .gte('created_at', rangeStart).lte('created_at', rangeEnd)
+      .order('id', { ascending: true })),
   ]);
 
   const feedbackRows = allFeedback || [];
@@ -1421,14 +1427,13 @@ async function apiGetStatsCategories(query) {
   const endDate = query.get('end');
   if (!startDate || !endDate) throw new Error('start and end query params required');
 
-  const { data } = await supabase
+  const rows = await fetchAllPaginated(() => supabase
     .from('cs_ai_feedback_log')
     .select('haiku_category, haiku_summary')
     .not('haiku_category', 'is', null)
     .gte('created_at', `${startDate}T00:00:00Z`)
-    .lte('created_at', `${endDate}T23:59:59.999Z`);
-
-  const rows = data || [];
+    .lte('created_at', `${endDate}T23:59:59.999Z`)
+    .order('id', { ascending: true }));
   const counts = {};
   for (const r of rows) {
     counts[r.haiku_category] = (counts[r.haiku_category] || 0) + 1;

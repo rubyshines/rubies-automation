@@ -4,7 +4,7 @@
  * Tools: get_inventory_snapshot
  */
 
-const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../../shared/supabaseClient');
 
 // ---------------------------------------------------------------------------
 // Tool: get_inventory_snapshot
@@ -30,18 +30,19 @@ async function handleGetInventory({ product_handle, sku, days_back }) {
 
   if (daysBack === 1) {
     // Current snapshot only
-    let query = supabase
-      .from('inventory_snapshots')
-      .select('*')
-      .eq('date', latestDate)
-      .order('product_handle')
-      .order('sku');
+    const data = await fetchAllPaginated(() => {
+      let query = supabase
+        .from('inventory_snapshots')
+        .select('*')
+        .eq('date', latestDate)
+        .order('product_handle')
+        .order('sku')
+        .order('variant_id');
 
-    if (product_handle) query = query.eq('product_handle', product_handle);
-    if (sku) query = query.ilike('sku', `%${sku}%`);
-
-    const { data, error } = await query;
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+      if (product_handle) query = query.eq('product_handle', product_handle);
+      if (sku) query = query.ilike('sku', `%${sku}%`);
+      return query;
+    });
     if (!data || !data.length) {
       return { content: [{ type: 'text', text: 'No inventory rows match your filters.' }] };
     }
@@ -78,18 +79,20 @@ async function handleGetInventory({ product_handle, sku, days_back }) {
   startDate.setDate(startDate.getDate() - daysBack + 1);
   const startStr = startDate.toISOString().split('T')[0];
 
-  let query = supabase
-    .from('inventory_snapshots')
-    .select('date, product_handle, inventory_quantity')
-    .gte('date', startStr)
-    .lte('date', latestDate)
-    .order('date');
+  // ~500 variant rows/day, so any multi-day trend blows past the 1000-row cap.
+  const data = await fetchAllPaginated(() => {
+    let query = supabase
+      .from('inventory_snapshots')
+      .select('date, product_handle, inventory_quantity')
+      .gte('date', startStr)
+      .lte('date', latestDate)
+      .order('date')
+      .order('variant_id');
 
-  if (product_handle) query = query.eq('product_handle', product_handle);
-  if (sku) query = query.ilike('sku', `%${sku}%`);
-
-  const { data, error } = await query;
-  if (error) throw new Error(`Supabase error: ${error.message}`);
+    if (product_handle) query = query.eq('product_handle', product_handle);
+    if (sku) query = query.ilike('sku', `%${sku}%`);
+    return query;
+  });
   if (!data || !data.length) {
     return { content: [{ type: 'text', text: 'No inventory data for the requested period.' }] };
   }

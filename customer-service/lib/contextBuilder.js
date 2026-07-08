@@ -419,7 +419,10 @@ async function buildContext({ customer_email, customer_name, order_number, issue
             lineItems: (orderResult.lineItems || []).filter(li => li.currentQuantity > 0),
           };
           const orderCustomerEmail = orderResult.customer?.email;
-          if (orderCustomerEmail && orderCustomerEmail.toLowerCase() !== customer_email.toLowerCase()) {
+          // customer_email may be null (no-email channels like Messenger) — a
+          // null here must mean "different", not a TypeError swallowed by the
+          // catch below, so the re-association lookup still runs.
+          if (orderCustomerEmail && orderCustomerEmail.toLowerCase() !== (customer_email || '').toLowerCase()) {
             const orderCustomers = await searchCustomers(orderCustomerEmail);
             if (orderCustomers.length) {
               customer = orderCustomers[0];

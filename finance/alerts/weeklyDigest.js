@@ -20,7 +20,7 @@ if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 }
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
 
 function fmtCurrency(n) {
@@ -57,18 +57,23 @@ async function run() {
   const weekEnd = todayDate();
   const fourWeeksAgo = daysAgo(28);
 
-  // Get weekly transaction totals by account type
-  const { data: weekTxns } = await supabase
+  // Get weekly transaction totals by account type — paginated (a busy window
+  // exceeds Supabase's 1000-row cap and silently skewed the spike baselines).
+  const weekTxns = await fetchAllPaginated(() => supabase
     .from('qbo_transactions')
     .select('account_id, total_amount, txn_type, entity_name')
     .gte('txn_date', weekStart)
-    .lte('txn_date', weekEnd);
+    .lte('txn_date', weekEnd)
+    .order('id')
+    .order('txn_type'));
 
-  const { data: trailingTxns } = await supabase
+  const trailingTxns = await fetchAllPaginated(() => supabase
     .from('qbo_transactions')
     .select('account_id, total_amount, txn_date')
     .gte('txn_date', fourWeeksAgo)
-    .lt('txn_date', weekStart);
+    .lt('txn_date', weekStart)
+    .order('id')
+    .order('txn_type'));
 
   // ----- Large transactions -----
   if (weekTxns) {

@@ -9,7 +9,7 @@
  */
 
 const { updateCollectionSeo, updateProductSeo, getAdminUrl } = require('../shopify');
-const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../../shared/supabaseClient');
 const { MODELS } = require('../../../shared/aiPricing');
 
 const TITLE_MAX = 80;
@@ -201,15 +201,32 @@ HARD RULES (do not break):
 OUTPUT FORMAT (strict JSON, no prose, no code fences):
 {"title":"...","description":"...","reasoning":"one short sentence covering category fit and keyword choice"}`;
 
+/**
+ * True when a GSC page_url refers to exactly `path` — ignoring host, query
+ * string, and trailing slash. A bare substring/ilike match is NOT enough:
+ * '/collections/tops' is a prefix of '/collections/tops-for-adults', so
+ * sibling pages would pollute this page's keyword anchors.
+ */
+function pageUrlMatchesPath(rowUrl, path) {
+  const normalize = (p) => p.split(/[?#]/)[0].replace(/\/+$/, '');
+  const rowPath = String(rowUrl || '').replace(/^https?:\/\/[^/]+/i, '');
+  return normalize(rowPath).toLowerCase() === normalize(path).toLowerCase();
+}
+
 async function fetchTopKeywordsForPage(supabase, pageUrl, days = 90) {
-  // Match on suffix because GSC stores full URLs but page may be canonical-with-trailing-slash etc.
+  const path = pageUrl.replace(STORE_BASE, '');
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const { data, error } = await supabase
+  // ilike narrows server-side (GSC stores full URLs); exact-path filter below
+  // drops sibling-page rows the substring match also catches.
+  const rows = await fetchAllPaginated(() => supabase
     .from('gsc_keyword_pages')
-    .select('keyword, impressions, clicks, position')
-    .ilike('page_url', `%${pageUrl.replace(STORE_BASE, '')}%`)
-    .gte('date', since);
-  if (error) throw new Error(`gsc_keyword_pages query failed: ${error.message}`);
+    .select('keyword, impressions, clicks, position, page_url')
+    .ilike('page_url', `%${path}%`)
+    .gte('date', since)
+    .order('date')
+    .order('page_url')
+    .order('keyword'));
+  const data = rows.filter(r => pageUrlMatchesPath(r.page_url, path));
 
   const agg = new Map();
   for (const r of data || []) {
@@ -419,5 +436,6 @@ const tools = [
 
 module.exports = tools;
 module.exports.validateMeta = validateMeta;
+module.exports.pageUrlMatchesPath = pageUrlMatchesPath;
 module.exports.handleUpdate = handleUpdate;
 module.exports.handleDraft = handleDraft;

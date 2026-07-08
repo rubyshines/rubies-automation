@@ -26,13 +26,20 @@ require.cache[supabasePath] = {
           eq: () => ({
             not: () => ({
               gte: () => ({
-                range: () => ({ data: ROWS, error: null }),
+                order: () => ({
+                  range: () => ({ data: ROWS, error: null }),
+                }),
               }),
             }),
           }),
         }),
       }),
     }),
+    fetchAllPaginated: async (buildQuery) => {
+      const { data, error } = await buildQuery().range(0, 999);
+      if (error) throw new Error(`fetchAllPaginated: ${error.message}`);
+      return data || [];
+    },
   },
 };
 

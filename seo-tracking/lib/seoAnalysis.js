@@ -114,6 +114,10 @@ function getSupabase() {
   return _supabase;
 }
 
+function fetchAllPaginated(buildQuery) {
+  return require('../../shared/supabaseClient').fetchAllPaginated(buildQuery);
+}
+
 // ---------------------------------------------------------------------------
 // Supabase state fetchers (replaces config.json for dynamic state)
 // ---------------------------------------------------------------------------
@@ -242,15 +246,19 @@ async function fetchKeywords(ranges, keywordType = 'all', limit = 10) {
   const supabase = getSupabase();
   const { current, compare } = ranges;
 
-  let currentQuery = supabase.from('gsc_keywords').select('*').gte('date', current.start).lte('date', current.end);
-  let compareQuery = supabase.from('gsc_keywords').select('*').gte('date', compare.start).lte('date', compare.end);
+  // Paginated: keyword × day rows exceed Supabase's 1000-row cap on longer windows.
+  const buildKwQuery = (range) => () => {
+    let q = supabase.from('gsc_keywords').select('*')
+      .gte('date', range.start).lte('date', range.end)
+      .order('date').order('keyword');
+    if (keywordType !== 'all') q = q.eq('keyword_type', keywordType);
+    return q;
+  };
 
-  if (keywordType !== 'all') {
-    currentQuery = currentQuery.eq('keyword_type', keywordType);
-    compareQuery = compareQuery.eq('keyword_type', keywordType);
-  }
-
-  const [kwCurrent, kwCompare] = await Promise.all([currentQuery, compareQuery]);
+  const [kwCurrentData, kwCompareData] = await Promise.all([
+    fetchAllPaginated(buildKwQuery(current)),
+    fetchAllPaginated(buildKwQuery(compare)),
+  ]);
 
   const aggregate = (rows) => {
     const agg = {};
@@ -275,8 +283,8 @@ async function fetchKeywords(ranges, keywordType = 'all', limit = 10) {
     }));
   };
 
-  const nowAgg = aggregate(kwCurrent.data);
-  const prevAgg = aggregate(kwCompare.data);
+  const nowAgg = aggregate(kwCurrentData);
+  const prevAgg = aggregate(kwCompareData);
   const prevMap = new Map(prevAgg.map(k => [k.keyword, k]));
 
   const withChange = nowAgg.map(k => {
@@ -314,9 +322,15 @@ async function fetchPages(ranges, limit = 10) {
   const supabase = getSupabase();
   const { current, compare } = ranges;
 
-  const [pagesCurrent, pagesCompare, trackedUrls] = await Promise.all([
-    supabase.from('gsc_pages').select('*').gte('date', current.start).lte('date', current.end),
-    supabase.from('gsc_pages').select('*').gte('date', compare.start).lte('date', compare.end),
+  // Paginated: gsc_pages holds one row per (date, page_url) and a 30-day
+  // window routinely exceeds Supabase's 1000-row cap.
+  const buildPagesQuery = (range) => () => supabase.from('gsc_pages').select('*')
+    .gte('date', range.start).lte('date', range.end)
+    .order('date').order('page_url');
+
+  const [pagesCurrentData, pagesCompareData, trackedUrls] = await Promise.all([
+    fetchAllPaginated(buildPagesQuery(current)),
+    fetchAllPaginated(buildPagesQuery(compare)),
     fetchTrackedUrls(['priority_product', 'priority_page']),
   ]);
 
@@ -346,8 +360,8 @@ async function fetchPages(ranges, limit = 10) {
     }));
   };
 
-  const nowAgg = aggregate(pagesCurrent.data);
-  const prevAgg = aggregate(pagesCompare.data);
+  const nowAgg = aggregate(pagesCurrentData);
+  const prevAgg = aggregate(pagesCompareData);
   const prevMap = new Map(prevAgg.map(p => [p.url, p]));
 
   const withChange = nowAgg.map(p => {

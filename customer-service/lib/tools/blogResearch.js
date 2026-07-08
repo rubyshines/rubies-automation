@@ -5,7 +5,7 @@
  * search email campaign content for topic-relevant material.
  */
 
-const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../../shared/supabaseClient');
 const { fetchStrategyItems } = require('../../../seo-tracking/lib/seoAnalysis');
 
 // ---------------------------------------------------------------------------
@@ -136,14 +136,15 @@ const tools = [
       const fmt = (d) => d.toISOString().slice(0, 10);
 
       try {
-        // Fetch all keywords in the period
-        const { data: rows, error } = await supabase
+        // Fetch all keywords in the period (paginated — an uncapped
+        // period_days window can exceed Supabase's 1000-row default).
+        const rows = await fetchAllPaginated(() => supabase
           .from('gsc_keywords')
           .select('keyword, clicks, impressions, position')
           .gte('date', fmt(startDate))
-          .lte('date', fmt(endDate));
-
-        if (error) throw new Error(`Supabase query failed: ${error.message}`);
+          .lte('date', fmt(endDate))
+          .order('date')
+          .order('keyword'));
 
         // Aggregate by keyword
         const agg = {};

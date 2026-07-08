@@ -10,19 +10,20 @@ if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 }
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { canonicalMessageType } = require('../lib/messageTypes');
 
 async function backfill() {
   const supabase = getSupabaseClient();
 
-  // 1. Get all distinct gorgias_ticket_ids from drafts
-  const { data: allDrafts, error: fetchErr } = await supabase
+  // 1. Get all distinct gorgias_ticket_ids from drafts — paginated, or a re-run
+  // past 1000 drafts sees only the OLDEST drafts and clobbers live cs_tickets
+  // rows with stale data (the header's idempotency claim depended on this).
+  const allDrafts = await fetchAllPaginated(() => supabase
     .from('cs_ai_drafts')
     .select('id, gorgias_ticket_id, gorgias_message_id, customer_email, customer_name, customer_pronouns, customer_country, order_number, conversation_history, order_context, customer_context, message_type, confidence, advisor_status, turn_number, status, created_at')
-    .order('created_at', { ascending: true });
-
-  if (fetchErr) throw fetchErr;
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true }));
   console.log(`Loaded ${allDrafts.length} drafts`);
 
   // Group by gorgias_ticket_id
