@@ -301,10 +301,11 @@ async function runFetchAndClassify() {
   }
   console.log(`  Saved ${rows.length} messages\n`);
 
-  // Build threads (structural only — no AI)
+  // Build threads (structural only — no AI). Omit summary columns so a re-run
+  // can't null summaries written by the summarization pass below.
   console.log('  Building threads...');
   const threads = aggregateThreads(classified);
-  await upsertThreads(threads);
+  await upsertThreads(threads, { includeSummary: false });
   console.log(`  Built ${threads.length} threads\n`);
 
   // Summary

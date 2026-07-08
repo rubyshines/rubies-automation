@@ -171,18 +171,24 @@ RUBIES Founder`;
       trackingSettings: { clickTracking: { enable: false, enableText: false } },
     });
 
-    // Mark as notified
-    await supabase.from('passport_claims').upsert({
+    // Mark as notified. Do NOT write status/claim_reason here — this upsert must
+    // not clobber an existing claim's state (a resolved claim would be reset to
+    // open). status defaults to 'open' for a fresh row; the reconciliation pass
+    // owns status/claim_reason. Check the error: a silent failure leaves
+    // customer_customs_notified_at unset and the customer gets re-emailed daily.
+    const { error: markErr } = await supabase.from('passport_claims').upsert({
       order_number: alert.order_number,
       tracking_number: alert.tracking_number,
       country_code: alert.country,
       destination: alert.destination,
       customer_email: alert.customer_email,
       shipping_zone: alert.zone,
-      status: 'open',
-      claim_reason: 'customs_hold',
       customer_customs_notified_at: new Date().toISOString(),
     }, { onConflict: 'order_number' });
+    if (markErr) {
+      console.error(`  [Shipping] Customs email SENT to ${alert.customer_email} for #${alert.order_number} but failed to mark notified — will re-email tomorrow: ${markErr.message}`);
+      return;
+    }
 
     console.log(`  [Shipping] Customs email sent to ${alert.customer_email} for #${alert.order_number}`);
   } catch (e) {
@@ -243,7 +249,7 @@ async function checkShippingDelays({ showResolved = false } = {}) {
   let allOrders = [];
   let offset = 0;
   while (true) {
-    const { data: orders } = await supabase
+    const { data: orders, error } = await supabase
       .from('orders')
       .select('order_number, shopify_order_id, created_at, fulfilled_at, fulfillments, shipping_address, customer_email, total_price, shop_currency')
       .eq('fulfillment_status', 'FULFILLED')
@@ -252,6 +258,9 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       .gte('fulfilled_at', cutoff)
       .order('order_number', { ascending: false })
       .range(offset, offset + 999);
+    // A DB error must NOT read as "no in-transit orders" — that produces a
+    // silent all-clear shipping report. Surface it instead.
+    if (error) throw new Error(`checkShippingDelays: in-transit orders query failed at offset ${offset}: ${error.message}`);
     if (!orders || orders.length === 0) break;
     offset += orders.length;
     for (const o of orders) {

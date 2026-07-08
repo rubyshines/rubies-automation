@@ -7,6 +7,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { fmtCurrency, fmtPct, fmtDelta, sparkline } = require('./helpers');
+const { filterMonthlySnapshots } = require('../monthlySnapshots');
 
 async function handleTrendAnalysis({ metric, months, granularity }) {
   const numMonths = months || 12;
@@ -50,12 +51,8 @@ async function handleTrendAnalysis({ metric, months, granularity }) {
       .order('period_start', { ascending: true });
 
     if (snapshots?.length) {
-      // Filter to monthly snapshots (start and end in same month)
-      const monthly = snapshots.filter(s => {
-        const start = new Date(s.period_start);
-        const end = new Date(s.period_end);
-        return start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
-      });
+      // One row per calendar month (drops YTD/quarter spans + daily current-month dups).
+      const monthly = filterMonthlySnapshots(snapshots);
 
       dataPoints = monthly.map(s => ({
         period: s.period_start.slice(0, 7),

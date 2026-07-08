@@ -8,6 +8,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getQboClient } = require('../qbo');
 const { parseReport, getSectionByName } = require('../reportParser');
 const { parsePeriod, fmtCurrency, fmtPct, sparkline } = require('./helpers');
+const { filterMonthlySnapshots } = require('../monthlySnapshots');
 
 async function handleMarginAnalysis({ period, months }) {
   const numMonths = months || 12;
@@ -81,18 +82,14 @@ async function handleMarginAnalysis({ period, months }) {
 
   const { data: snapshots } = await supabase
     .from('qbo_report_snapshots')
-    .select('period_start, summary')
+    .select('period_start, period_end, summary')
     .eq('report_type', 'ProfitAndLoss')
     .gte('period_start', cutoffStr)
     .order('period_start', { ascending: true });
 
-  if (snapshots?.length >= 2) {
-    // Filter to monthly only
-    const monthly = snapshots.filter(s => {
-      const end = new Date(s.period_start);
-      return true; // all snapshots from our query should be monthly
-    });
-
+  // One row per calendar month (drops YTD/quarter spans + daily current-month dups).
+  const monthly = filterMonthlySnapshots(snapshots);
+  if (monthly.length >= 2) {
     const grossMargins = monthly.map(s => s.summary?.grossMarginPct).filter(v => v != null);
     const netMargins = monthly.map(s => s.summary?.netMarginPct).filter(v => v != null);
 
