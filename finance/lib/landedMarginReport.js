@@ -11,7 +11,7 @@
  */
 
 if (!process.env.SUPABASE_URL) require('dotenv').config();
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 
 // Cutoff: Passport invoice lag is up to 30 days from ship date.
 // A month is "fully closed" once its last day is >= 30 days ago.
@@ -57,34 +57,23 @@ function priorMonths(yyyymm, n) {
   return out;
 }
 
-async function fetchAllPaginated(query) {
-  let all = [];
-  let from = 0;
-  while (true) {
-    const { data, error } = await query.range(from, from + 999);
-    if (error) throw error;
-    all = all.concat(data);
-    if (data.length < 1000) break;
-    from += 1000;
-  }
-  return all;
-}
-
 async function getOrdersInRange(sb, start, end) {
-  return fetchAllPaginated(
+  return fetchAllPaginated(() =>
     sb.from('orders')
       .select('order_number, shopify_order_id, total_price, current_total_price, total_shipping, total_refunded, shipping_address, created_at, financial_status')
       .gte('created_at', `${start}T00:00:00Z`)
       .lte('created_at', `${end}T23:59:59Z`)
+      .order('shopify_order_id', { ascending: true })
   );
 }
 
 async function getOFCInRange(sb, start, end) {
-  return fetchAllPaginated(
+  return fetchAllPaginated(() =>
     sb.from('order_fulfillment_costs')
       .select('order_number, fulfillment_provider, packing_fee_usd, shipping_fee_usd, ddp_total_usd, customer_shipping_usd, cogs_total_usd, shipping_zone, shipping_country_code')
       .gte('created_at', `${start}T00:00:00Z`)
       .lte('created_at', `${end}T23:59:59Z`)
+      .order('order_number', { ascending: true })
   );
 }
 

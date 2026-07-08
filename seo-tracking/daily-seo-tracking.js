@@ -20,7 +20,7 @@ const configPath = path.join(__dirname, '..', 'config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
 // Shared clients
-const { getSupabaseClient, upsert } = require('../shared/supabaseClient');
+const { getSupabaseClient, upsert, fetchAllPaginated } = require('../shared/supabaseClient');
 const { getSearchConsoleClient } = require('../shared/googleSearchConsoleClient');
 const { getGa4Client } = require('../shared/ga4Client');
 const { getSheetsClient } = require('../shared/googleSheetsClient');
@@ -793,11 +793,13 @@ async function writePipelineSummary(targetDates) {
     .in('category', ['priority_product', 'priority_page']);
   const prioritySet = new Set((trackedUrlRows || []).map(r => r.url));
 
-  const { data: pageRows } = await supabase
+  const pageRows = await fetchAllPaginated(() => supabase
     .from('gsc_pages')
     .select('date,page_url,clicks,impressions,ctr,position')
     .gte('date', sevenDaysAgo)
-    .lte('date', today);
+    .lte('date', today)
+    .order('date')
+    .order('page_url'));
 
   function normalizePagePath(url) {
     if (!url || typeof url !== 'string') return '';

@@ -17,6 +17,7 @@ const {
   MASTER_FLAG, KIND_FLAG_PREFIX, AUTO_CAPABLE, NEVER_AUTO,
   SOURCE, isAutoSource, kindForSource,
 } = require('./autoactionGate');
+const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
 const ACTIVITY_WINDOW_DAYS = 30;
 const FEED_LIMIT = 40;
@@ -132,20 +133,6 @@ function validateAutoactionFlagKey(key) {
   return { ok: true };
 }
 
-/** Paginate past Supabase's 1000-row default (same shape as autosendConfig). */
-async function fetchAll(buildQuery, pageSize = 1000) {
-  const rows = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return rows;
-}
-
 /**
  * Fetch flags + recent auto-executed actions and assemble the config response.
  * @param {object} sb — Supabase client
@@ -153,7 +140,7 @@ async function fetchAll(buildQuery, pageSize = 1000) {
 async function fetchAutoactionConfig(sb) {
   const since = new Date(Date.now() - ACTIVITY_WINDOW_DAYS * 86400000).toISOString();
 
-  const flagRows = await fetchAll(() =>
+  const flagRows = await fetchAllPaginated(() =>
     sb.from('system_flags')
       .select('key, enabled')
       .like('key', 'autoaction%')
@@ -163,7 +150,7 @@ async function fetchAutoactionConfig(sb) {
   // Drafts with at least one filed action in the window. We over-fetch and
   // filter for auto sources in JS (JSONB array prefix-match isn't expressible in
   // PostgREST); volume is bounded by the 30-day window.
-  const draftRows = await fetchAll(() =>
+  const draftRows = await fetchAllPaginated(() =>
     sb.from('cs_ai_drafts')
       .select('id, ticket_id, order_number, actions')
       .gte('created_at', since)
@@ -188,7 +175,6 @@ module.exports = {
   activityStats,
   buildAutoactionConfig,
   validateAutoactionFlagKey,
-  fetchAll,
   fetchAutoactionConfig,
   KIND_LABELS,
   ACTIVITY_WINDOW_DAYS,

@@ -15,6 +15,7 @@
  */
 const { NEVER_TYPES, MASTER_FLAG, CATEGORY_FLAG_PREFIX } = require('./autosendGate');
 const { CANONICAL_MESSAGE_TYPES } = require('./messageTypes');
+const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
 const JUDGMENT_WINDOW_DAYS = 90;
 
@@ -114,37 +115,20 @@ function validateAutosendFlagKey(key) {
 }
 
 /**
- * Paginate past Supabase's 1000-row default limit. buildQuery must return a
- * fresh ordered query each call (same shape as lib/autosendShadow.js).
- */
-async function fetchAll(buildQuery, pageSize = 1000) {
-  const rows = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return rows;
-}
-
-/**
  * Fetch flags + trailing-window judgments and assemble the config response.
  * @param {object} sb — Supabase client
  */
 async function fetchAutosendConfig(sb) {
   const since = new Date(Date.now() - JUDGMENT_WINDOW_DAYS * 86400000).toISOString();
 
-  const flagRows = await fetchAll(() =>
+  const flagRows = await fetchAllPaginated(() =>
     sb.from('system_flags')
       .select('key, enabled')
       .like('key', 'autosend%')
       .order('key', { ascending: true })
   );
 
-  const judgmentRows = await fetchAll(() =>
+  const judgmentRows = await fetchAllPaginated(() =>
     sb.from('cs_draft_judgments')
       .select('message_type, category')
       .gte('created_at', since)
@@ -160,7 +144,6 @@ module.exports = {
   judgmentStats,
   buildAutosendConfig,
   validateAutosendFlagKey,
-  fetchAll,
   fetchAutosendConfig,
   JUDGMENT_WINDOW_DAYS,
 };

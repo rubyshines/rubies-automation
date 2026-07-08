@@ -33,7 +33,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../..', '.env') });
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { MODELS } = require('../../shared/aiPricing');
 
 const BATCH_SIZE = 8; // Fewer per batch than rules — need full message context
@@ -106,13 +106,14 @@ async function fetchConversations(supabase) {
 }
 
 async function fetchMessages(supabase, conversationIds) {
-  const { data: messages, error } = await supabase
+  // Paginated: 150 conversations × ~7 messages exceeds the 1000-row cap, and
+  // the unpaginated read silently dropped the newest messages.
+  const messages = await fetchAllPaginated(() => supabase
     .from('cs_messages')
     .select('conversation_id, sender_type, sender_name, body_text, created_at')
     .in('conversation_id', conversationIds)
-    .order('created_at', { ascending: true });
-
-  if (error) throw new Error(`Failed to fetch messages: ${error.message}`);
+    .order('created_at', { ascending: true })
+    .order('conversation_id', { ascending: true }));
 
   const byConv = {};
   for (const m of (messages || [])) {

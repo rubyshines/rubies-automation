@@ -16,7 +16,7 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { fetchAllProducts } = require('../lib/shopify');
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,12 +72,13 @@ function mapMetafields(metafields) {
 // ---------------------------------------------------------------------------
 
 async function detectPriceChanges(supabase, newVariants) {
-  // Fetch current prices from Supabase
-  const { data: existing, error } = await supabase
+  // Fetch current prices from Supabase — paginated, or variants past the
+  // 1000-row cap look "new" and their price changes are never logged.
+  const existing = await fetchAllPaginated(() => supabase
     .from('product_variants')
-    .select('shopify_variant_id, price, title, sku, shopify_product_id');
-  if (error) throw error;
-  if (!existing || !existing.length) return 0;
+    .select('shopify_variant_id, price, title, sku, shopify_product_id')
+    .order('shopify_variant_id'));
+  if (!existing.length) return 0;
 
   const oldPrices = new Map();
   for (const v of existing) {
@@ -85,9 +86,10 @@ async function detectPriceChanges(supabase, newVariants) {
   }
 
   // We need product titles for the log
-  const { data: products } = await supabase
+  const products = await fetchAllPaginated(() => supabase
     .from('products')
-    .select('shopify_product_id, title');
+    .select('shopify_product_id, title')
+    .order('shopify_product_id'));
   const productTitles = new Map((products || []).map(p => [p.shopify_product_id, p.title]));
 
   const changes = [];
@@ -244,9 +246,10 @@ async function run() {
 
   // 7. Delete stale products (CASCADE removes their variants)
   const activeIds = new Set(activeProducts.map(p => p.id));
-  const { data: existingProducts } = await supabase
+  const existingProducts = await fetchAllPaginated(() => supabase
     .from('products')
-    .select('shopify_product_id');
+    .select('shopify_product_id')
+    .order('shopify_product_id'));
   const staleIds = (existingProducts || [])
     .map(p => p.shopify_product_id)
     .filter(id => !activeIds.has(id));

@@ -14,7 +14,7 @@ if (!process.env.SUPABASE_URL) {
   require('dotenv').config({ path: path.resolve(__dirname, '../..', '.env') });
 }
 
-const { getSupabaseClient, upsert } = require('../../shared/supabaseClient');
+const { getSupabaseClient, upsert, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { getGmail } = require('../lib/gmailClient');
 const { listMessages, fetchMessages } = require('../lib/gmailSync');
 const { classifyMessages } = require('../lib/classifier');
@@ -144,13 +144,13 @@ async function run() {
     )];
 
     if (affectedThreadIds.length > 0) {
-      const { data: allMsgs, error: msgErr } = await supabase
+      const allMsgs = await fetchAllPaginated(() => supabase
         .from('email_messages')
         .select('*')
         .in('gmail_thread_id', affectedThreadIds)
         .neq('classification', 'skip')
-        .order('date', { ascending: true });
-      if (msgErr) throw new Error(`Failed to load thread messages: ${msgErr.message}`);
+        .order('date', { ascending: true })
+        .order('gmail_message_id', { ascending: true }));
 
       const threads = aggregateThreads(allMsgs || []);
       // Structural pass: omit the summary columns so an existing thread's

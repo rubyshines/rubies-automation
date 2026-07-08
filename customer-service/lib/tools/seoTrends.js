@@ -298,7 +298,7 @@ const seoKeywordsTool = {
     required: [],
   },
   handler: async ({ keyword, min_position, max_position, min_impressions, period_days, sort_by, limit }) => {
-    const { getSupabaseClient } = require('../../../shared/supabaseClient');
+    const { getSupabaseClient, fetchAllPaginated } = require('../../../shared/supabaseClient');
     const supabase = getSupabaseClient();
 
     const periodDays = period_days || 30;
@@ -314,16 +314,18 @@ const seoKeywordsTool = {
     startDate.setDate(startDate.getDate() - (periodDays - 1));
     const fmt = (d) => d.toISOString().slice(0, 10);
 
-    let query = supabase
-      .from('gsc_keywords')
-      .select('keyword, clicks, impressions, position, ctr, date')
-      .gte('date', fmt(startDate))
-      .lte('date', fmt(endDate));
+    const data = await fetchAllPaginated(() => {
+      let query = supabase
+        .from('gsc_keywords')
+        .select('keyword, clicks, impressions, position, ctr, date')
+        .gte('date', fmt(startDate))
+        .lte('date', fmt(endDate))
+        .order('date')
+        .order('keyword');
 
-    if (keyword) query = query.ilike('keyword', `%${keyword}%`);
-
-    const { data, error } = await query;
-    if (error) throw new Error(`Supabase error: ${error.message}`);
+      if (keyword) query = query.ilike('keyword', `%${keyword}%`);
+      return query;
+    });
 
     // Aggregate by keyword
     const agg = {};

@@ -15,7 +15,7 @@
  * DRAFTS ONLY. Sending is sendB2bEmail's job, behind its own off-by-default
  * flag, after operator review.
  */
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 
@@ -42,29 +42,16 @@ function pickAdvisor(company) {
   return { name: 'b2b_sales_advisor', prompt: require('../prompts/salesAdvisorPrompt').PROMPT };
 }
 
-async function fetchAll(buildQuery, pageSize = 1000) {
-  const rows = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return rows;
-}
-
 /** Assemble the per-company context block the advisor reads. */
 async function buildCompanyContext(sb, companyId) {
   const { data: company, error } = await sb.from('b2b_companies').select('*').eq('id', companyId).maybeSingle();
   if (error || !company) throw new Error(`company ${companyId}: ${error?.message || 'not found'}`);
 
-  const contacts = await fetchAll(() => sb.from('b2b_contacts')
+  const contacts = await fetchAllPaginated(() => sb.from('b2b_contacts')
     .select('email, full_name, role, title, is_primary, is_active, notes')
     .eq('company_id', companyId).order('is_primary', { ascending: false }));
 
-  const messages = await fetchAll(() => sb.from('b2b_messages')
+  const messages = await fetchAllPaginated(() => sb.from('b2b_messages')
     .select('direction, message_type, body_text, sent_at, from_email')
     .eq('company_id', companyId).order('sent_at', { ascending: false })).then(r => r.slice(0, 20).reverse());
 

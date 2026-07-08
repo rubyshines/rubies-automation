@@ -4,29 +4,19 @@
  * pending drafts for a set of companies and builds the ctx objects that
  * cadence.evaluateDue / queue.computeQueueEntry consume.
  */
-async function fetchAll(buildQuery, pageSize = 1000) {
-  const rows = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    rows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return rows;
-}
+const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
 async function buildContexts(sb, companies) {
   const ids = (companies || []).map(c => c.id);
-  const messages = ids.length ? await fetchAll(() =>
+  const messages = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_messages')
       .select('company_id, direction, message_type, sent_at')
       .in('company_id', ids)
       .order('sent_at', { ascending: true })
   ) : [];
-  const drafts = ids.length ? await fetchAll(() =>
+  const drafts = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_drafts').select('company_id').eq('status', 'pending').in('company_id', ids)
+      .order('id', { ascending: true })
   ) : [];
   const pendingSet = new Set(drafts.map(d => d.company_id));
 
@@ -62,4 +52,4 @@ async function buildContexts(sb, companies) {
   return byCompany;
 }
 
-module.exports = { buildContexts, fetchAll };
+module.exports = { buildContexts };

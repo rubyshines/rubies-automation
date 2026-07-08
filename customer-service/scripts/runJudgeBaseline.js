@@ -12,7 +12,7 @@
  * Usage: node customer-service/scripts/runJudgeBaseline.js [--execute] [--limit 25] [--days 90]
  */
 require('dotenv').config();
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { judgeDraftVsSent } = require('../lib/closenessJudge');
 const { normalizeForCompare } = require('../lib/feedbackSignals');
 
@@ -25,23 +25,10 @@ const arg = (name, dflt) => {
 const LIMIT = arg('--limit', 25);
 const DAYS = arg('--days', 90);
 
-async function fetchAll(buildQuery, pageSize = 1000) {
-  const rows = [];
-  let from = 0;
-  for (;;) {
-    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
-    if (error) throw error;
-    rows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-  return rows;
-}
-
 (async () => {
   const cutoff = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const drafts = await fetchAll(() =>
+  const drafts = await fetchAllPaginated(() =>
     sb.from('cs_ai_drafts')
       .select('id, gorgias_ticket_id, draft_response, sent_response, message_type, conversation_history, sent_at')
       .eq('status', 'sent')
@@ -52,7 +39,7 @@ async function fetchAll(buildQuery, pageSize = 1000) {
       .order('sent_at', { ascending: false })
   );
 
-  const judged = await fetchAll(() =>
+  const judged = await fetchAllPaginated(() =>
     sb.from('cs_draft_judgments').select('draft_id').order('id', { ascending: true })
   );
   const done = new Set(judged.map(j => j.draft_id));

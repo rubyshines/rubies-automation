@@ -27,7 +27,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
-const { getSupabaseClient, upsert } = require('../../shared/supabaseClient');
+const { getSupabaseClient, upsert, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { getGmail } = require('../lib/gmailClient');
 const { listMessages, fetchMessages } = require('../lib/gmailSync');
 const { classifyMessages } = require('../lib/classifier');
@@ -403,14 +403,16 @@ async function runSummarize() {
     return;
   }
 
-  // Load messages for these threads
+  // Load messages for these threads — paginated: up to 500 threads easily
+  // exceeds the 1000-row cap, which silently dropped the newest messages.
   const threadIds = needsSummary.map(t => t.gmail_thread_id);
-  const { data: allMessages } = await supabase
+  const allMessages = await fetchAllPaginated(() => supabase
     .from('email_messages')
     .select('*')
     .in('gmail_thread_id', threadIds)
     .neq('classification', 'skip')
-    .order('date', { ascending: true });
+    .order('date', { ascending: true })
+    .order('gmail_message_id', { ascending: true }));
 
   // Group messages by thread
   const msgsByThread = new Map();

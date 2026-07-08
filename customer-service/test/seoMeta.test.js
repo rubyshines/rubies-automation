@@ -81,10 +81,15 @@ require.cache[supabasePath] = {
         };
       },
     }),
+    fetchAllPaginated: async (buildQuery) => {
+      const { data, error } = await buildQuery().range(0, 999);
+      if (error) throw new Error(`fetchAllPaginated: ${error.message}`);
+      return data || [];
+    },
   },
 };
 
-const { validateMeta, handleUpdate } = require('../lib/tools/seoMeta');
+const { validateMeta, handleUpdate, pageUrlMatchesPath } = require('../lib/tools/seoMeta');
 
 beforeEach(() => {
   collectionUpdateCalls = [];
@@ -274,5 +279,30 @@ describe('handleUpdate', () => {
     });
     assert.equal(result.isError, true);
     assert.ok(result.content[0].text.includes('em dash'));
+  });
+});
+
+// ─── pageUrlMatchesPath — keyword anchors must come from THIS page only ───────
+
+describe('pageUrlMatchesPath', () => {
+  it('matches the exact path with host, trailing slash, or query', () => {
+    const path = '/collections/tops';
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/collections/tops', path), true);
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/collections/tops/', path), true);
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/collections/tops?page=2', path), true);
+    assert.equal(pageUrlMatchesPath('/collections/tops', path), true);
+  });
+
+  it('rejects sibling pages whose handle extends the target', () => {
+    const path = '/collections/tops';
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/collections/tops-for-adults', path), false);
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/collections/tops-for-kids/', path), false);
+  });
+
+  it('rejects sub-paths and unrelated pages', () => {
+    const path = '/products/ava';
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/products/ava-bra', path), false);
+    assert.equal(pageUrlMatchesPath('https://rubyshines.com/collections/all/products/ava', path), false);
+    assert.equal(pageUrlMatchesPath(null, path), false);
   });
 });

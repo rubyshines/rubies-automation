@@ -21,7 +21,7 @@
  *   node scripts/backfill-stranded-actions.js --send   # execute the writes
  */
 require('dotenv').config();
-const { getSupabaseClient } = require('../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../shared/supabaseClient');
 
 const SEND = process.argv.includes('--send');
 
@@ -96,12 +96,12 @@ function buildEntryFromLegacyPath(draft) {
 
 (async () => {
   const sb = getSupabaseClient();
-  const { data: drafts, error } = await sb
+  const drafts = await fetchAllPaginated(() => sb
     .from('cs_ai_drafts')
     .select('id, gorgias_ticket_id, action_type, action_executed_at, actions, action_result, created_at')
     .not('action_result', 'is', null)
-    .order('created_at', { ascending: true });
-  if (error) throw error;
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true }));
 
   const candidates = drafts.filter(d => {
     const actionsLen = Array.isArray(d.actions) ? d.actions.length : 0;

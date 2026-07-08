@@ -4,7 +4,7 @@
  * Transaction-level drill into any account. Fuzzy matches account name.
  */
 
-const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated, readMany } = require('../../../shared/supabaseClient');
 const { parsePeriod, fmtCurrency } = require('./helpers');
 
 async function handleAccountDetail({ account_name, period }) {
@@ -12,39 +12,38 @@ async function handleAccountDetail({ account_name, period }) {
   const supabase = getSupabaseClient();
 
   // Fuzzy match account name
-  const { data: accounts } = await supabase
+  let accounts = await readMany(supabase
     .from('qbo_accounts')
     .select('id, name, full_name, account_type, classification')
     .ilike('name', `%${account_name}%`)
-    .eq('active', true);
+    .eq('active', true));
 
-  if (!accounts?.length) {
+  if (!accounts.length) {
     // Try full_name
-    const { data: accounts2 } = await supabase
+    accounts = await readMany(supabase
       .from('qbo_accounts')
       .select('id, name, full_name, account_type, classification')
       .ilike('full_name', `%${account_name}%`)
-      .eq('active', true);
+      .eq('active', true));
 
-    if (!accounts2?.length) {
+    if (!accounts.length) {
       return { content: [{ type: 'text', text: `No account matching "${account_name}". Try a broader search term.` }] };
     }
-    accounts.push(...accounts2);
   }
 
   const accountIds = accounts.map(a => a.id);
   const accountNames = accounts.map(a => a.name);
 
-  // Fetch transactions
-  const { data: txns, error } = await supabase
+  // Fetch transactions — paginated; a broad match over a long period easily
+  // exceeds Supabase's 1000-row cap, and the totals below must be complete.
+  const txns = await fetchAllPaginated(() => supabase
     .from('qbo_transactions')
     .select('txn_date, txn_type, doc_number, total_amount, entity_name, memo, currency_code')
     .in('account_id', accountIds)
     .gte('txn_date', startDate)
     .lte('txn_date', endDate)
-    .order('txn_date', { ascending: true });
-
-  if (error) throw error;
+    .order('txn_date', { ascending: true })
+    .order('doc_number', { ascending: true }));
 
   let md = `## Account Detail: ${accountNames.join(', ')}\n`;
   md += `*${label} | Type: ${accounts[0].account_type} | Classification: ${accounts[0].classification}*\n\n`;
