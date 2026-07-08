@@ -10,7 +10,6 @@
  * JSON object. Fail-closed on any uncertainty or parse error.
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 
@@ -37,12 +36,6 @@ const CLASSIFY_TOOL = {
     required: ['auto_close', 'reason'],
   },
 };
-
-let _client = null;
-function getClient() {
-  if (!_client) _client = new Anthropic();
-  return _client;
-}
 
 const SYSTEM_PROMPT = `You decide whether a customer's latest message is a pure thank-you closer with no new ask.
 

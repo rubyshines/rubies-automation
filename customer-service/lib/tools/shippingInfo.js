@@ -234,7 +234,7 @@ async function handleShippingInfo({ customer_email, issue_description, _context 
       const response = await callClaude({
         component: 'shipping_info',
         metadata: { task: 'polish_domestic' },
-        model: MODELS.SONNET,
+        model: MODELS.OPUS,
         max_tokens: 400,
         messages: [{
           role: 'user',
@@ -344,7 +344,7 @@ async function handleDutiesInquiry({ customer_email, issue_description, _context
       const response = await callClaude({
         component: 'shipping_info',
         metadata: { task: 'polish_intl' },
-        model: MODELS.SONNET,
+        model: MODELS.OPUS,
         max_tokens: 400,
         messages: [{
           role: 'user',

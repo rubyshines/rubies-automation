@@ -28,6 +28,12 @@ Every production Anthropic or Voyage call MUST go through `callClaude`/`embedTex
 - Writes are fail-soft (missing `ai_calls` table → no-op), so the wrapper never breaks a production path.
 - Per-component cost surfaces in the daily ops digest (the "RUBIES Daily Sync" email) via `lib/rollupAiCosts.js` → `ai_costs_daily`.
 
+## Right model for the task — balance accuracy and cost
+
+Full policy lives in CLAUDE.md (Building Principles → "Right model for the task"). The test: does the quality of *this* decision materially affect a customer, a relationship, or a dollar — and is there no downstream check that would catch a mistake? Opus for customer-facing text, money-moving loops, and unreviewed high-stakes judgment; Sonnet for fail-closed classification and tone-polish of deterministic text; Haiku for pre-filter culls. Deliberate cheap-model picks get a code comment saying why. Model IDs come from `MODELS.*` in [shared/aiPricing.js](../../shared/aiPricing.js) — never hardcoded.
+
+**Why:** The old rule was an absolute "Always use Opus," which the 2026-07 review mechanically applied, flagging deliberate cost decisions (thank-you closer, junk-ticket triage, batch email classification) as violations. The balanced test keeps Opus where model quality is the product and stops mislabeling correct Sonnet/Haiku picks.
+
 ## Data and infrastructure patterns
 
 - Supabase for state, files for config — no duplicate stores

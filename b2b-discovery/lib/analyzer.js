@@ -63,6 +63,9 @@ async function analyzeProspect({ companyName, website, city, state, content, mod
       component: 'b2b_analyzer',
       metadata: { company_name: companyName, city, state },
       requestOptions: { timeout: 30000, maxRetries: 2 },
+      // Deliberately Haiku (2026-07): discovery-stage analysis at scrape volume.
+      // The b2b tooling hasn't been exercised end-to-end yet — revisit the tier
+      // for the routing/dismiss decision once real runs show its error rate.
       model: model || MODELS.HAIKU,
       max_tokens: 1500,
       temperature: 0,

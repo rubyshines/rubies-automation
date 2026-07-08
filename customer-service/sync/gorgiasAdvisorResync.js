@@ -207,6 +207,7 @@ async function run({ execute = false } = {}) {
   if (!dryRun) {
   const { executeStage1, executeStage2 } = require('../lib/followUp');
   const { callClaude } = require('../../shared/aiClient');
+  const { MODELS } = require('../../shared/aiPricing');
 
   const CLASSIFIER_SYSTEM = `You are reviewing a customer service conversation for RUBIES (gender-affirming underwear and swimwear for trans girls and women).
 
@@ -243,7 +244,8 @@ Example: NO | exchange confirmed and created, no reply needed`;
 
     try {
       const response = await callClaude({
-        model: 'claude-haiku-4-5-20251001',
+        // Deliberately Haiku: low-stakes junk-ticket triage, reconciled downstream.
+        model: MODELS.HAIKU,
         component: 'followup_classifier',
         system: CLASSIFIER_SYSTEM,
         messages: [{ role: 'user', content: `Conversation:\n\n${relevant.join('\n\n')}` }],

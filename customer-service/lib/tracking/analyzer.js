@@ -7,16 +7,9 @@
  * 2. summarizeForCustomer() — generates a customer-facing message from structured data
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
 const { callClaude } = require('../../../shared/aiClient');
 const { MODELS } = require('../../../shared/aiPricing');
 const { addBusinessDays, businessDaysSince } = require('../../../shared/businessDays');
-
-let _client = null;
-function getClient() {
-  if (!_client) _client = new Anthropic();
-  return _client;
-}
 
 // ---------------------------------------------------------------------------
 // Parse tracking page text → structured data
@@ -485,7 +478,7 @@ async function summarizeForCustomer(trackingData, context) {
     const response = await callClaude({
       component: 'tracking_analyzer',
       metadata: { task: 'polish_response' },
-      model: MODELS.SONNET,
+      model: MODELS.OPUS,
       max_tokens: 400,
       messages: [{
         role: 'user',
