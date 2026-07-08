@@ -98,14 +98,43 @@ describe('checkForDuplicateTicket first-contact gate', () => {
   it('still runs the duplicate check on first contact when a sibling ticket exists', async () => {
     const { client } = makeSupabase([EXISTING_SNOOZED_TICKET]);
     aiCalls.length = 0;
-    nextVerdict = { action: 'close_new', reason: 'same issue, existing has reply' };
+    nextVerdict = { action: 'close_new', existing_ticket_id: 102793209, reason: 'double-send, same text' };
 
     const result = await checkForDuplicateTicket(
       client, 'abigail@example.com', 102792991, FIRST_CONTACT_MESSAGES,
     );
 
-    assert.equal(result, 'close_new');
+    assert.equal(result.action, 'close_new');
+    assert.equal(result.survivor.gorgias_ticket_id, 102793209, 'close_new must carry the surviving ticket');
     assert.equal(aiCalls.length, 1, 'first-contact duplicate check should consult the AI');
+  });
+
+  it('returns continuation with the surviving ticket when the reply spawned a new ticket', async () => {
+    const { client } = makeSupabase([EXISTING_SNOOZED_TICKET]);
+    aiCalls.length = 0;
+    nextVerdict = { action: 'continuation', existing_ticket_id: 102793209, reason: 'answers the agent question' };
+
+    const result = await checkForDuplicateTicket(
+      client, 'abigail@example.com', 102792991, FIRST_CONTACT_MESSAGES,
+    );
+
+    assert.equal(result.action, 'continuation');
+    assert.equal(result.survivor.gorgias_ticket_id, 102793209);
+    assert.equal(result.survivor.id, 1697, 'survivor must be the cs_tickets row (needed for the Supabase reset)');
+  });
+
+  it('falls back to the most recent sibling when the AI omits existing_ticket_id', async () => {
+    const older = { ...EXISTING_SNOOZED_TICKET, id: 1500, gorgias_ticket_id: 102000000, created_at: '2026-06-01T00:00:00Z' };
+    const { client } = makeSupabase([older, EXISTING_SNOOZED_TICKET]);
+    aiCalls.length = 0;
+    nextVerdict = { action: 'continuation', reason: 'follow-up on the exchange' };
+
+    const result = await checkForDuplicateTicket(
+      client, 'abigail@example.com', 102792991, FIRST_CONTACT_MESSAGES,
+    );
+
+    assert.equal(result.action, 'continuation');
+    assert.equal(result.survivor.gorgias_ticket_id, 102793209, 'most recent sibling wins on fallback');
   });
 
   it('returns null on first contact when the customer has no other open tickets', async () => {
