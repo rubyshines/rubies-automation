@@ -220,7 +220,11 @@ ${emailSummaries}`,
   } catch (e) {
     console.error('Failed to parse classifier response:', e.message);
     console.error('Raw response:', response.content[0].text.substring(0, 500));
-    return messages.map((_, i) => ({ index: i, classification: 'internal', confidence: 0.1 }));
+    // Do NOT fall back to labeling the whole batch 'internal' — 'internal' is
+    // skipped by CS routing, so that silently drops every customer email in the
+    // batch. Throw so the messages stay unclassified and this batch is retried
+    // on the next run instead of being permanently mislabeled.
+    throw new Error(`Classifier response parse failed: ${e.message}`);
   }
 }
 

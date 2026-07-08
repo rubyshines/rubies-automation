@@ -12,7 +12,7 @@
  * server lifetime is fine — restart or call refreshReturnRates() to update.
  */
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated, readMany } = require('../../shared/supabaseClient');
 
 let ratesMap = null; // Map<sku_prefix, { sold, refunded, exchanged, refundRate, exchangeRate }>
 
@@ -27,34 +27,30 @@ async function loadReturnRates() {
   // Layer A: orders tagged 'exchange' (MCP-created exchanges only;
   // CS_AIOD is a general "CS draft order" tag, NOT exchange-specific)
   const exchangeOrderIds = new Set();
-  let offset = 0;
-  while (true) {
-    const { data } = await supabase.from('orders')
-      .select('shopify_order_id')
-      .contains('tags', ['exchange'])
-      .range(offset, offset + 999);
-    if (!data || data.length === 0) break;
-    data.forEach(o => exchangeOrderIds.add(o.shopify_order_id));
-    offset += 1000;
-    if (data.length < 1000) break;
-  }
+  const taggedExchanges = await fetchAllPaginated(() => supabase.from('orders')
+    .select('shopify_order_id')
+    .contains('tags', ['exchange'])
+    .order('id', { ascending: true }));
+  taggedExchanges.forEach(o => exchangeOrderIds.add(o.shopify_order_id));
 
   // Layer B: cs_conversations with resolution_type='exchange'
-  // For each, find $0 draft orders by the same customer
-  const { data: convExchanges } = await supabase.from('cs_conversations')
+  // For each, find $0 draft orders by the same customer. (Paginated — this was
+  // unpaginated and truncated at 1000, undercounting exchanges → wrong rates.)
+  const convExchanges = await fetchAllPaginated(() => supabase.from('cs_conversations')
     .select('customer_email')
-    .eq('resolution_type', 'exchange');
+    .eq('resolution_type', 'exchange')
+    .order('id', { ascending: true }));
 
-  const uniqueEmails = [...new Set((convExchanges || []).map(c => c.customer_email).filter(Boolean))];
+  const uniqueEmails = [...new Set(convExchanges.map(c => c.customer_email).filter(Boolean))];
   for (let i = 0; i < uniqueEmails.length; i += 50) {
     const batch = uniqueEmails.slice(i, i + 50);
     for (const email of batch) {
-      const { data: custOrders } = await supabase.from('orders')
+      const custOrders = await readMany(supabase.from('orders')
         .select('shopify_order_id')
         .eq('customer_email', email)
         .lte('total_price', 1)
-        .eq('source_name', 'shopify_draft_order');
-      for (const o of (custOrders || [])) {
+        .eq('source_name', 'shopify_draft_order'));
+      for (const o of custOrders) {
         exchangeOrderIds.add(o.shopify_order_id);
       }
     }
@@ -65,30 +61,21 @@ async function loadReturnRates() {
   const refundedByPrefix = {};
   const exchangedByPrefix = {};
 
-  offset = 0;
-  const pageSize = 1000;
-  while (true) {
-    const { data: items } = await supabase.from('order_line_items')
-      .select('shopify_order_id,sku,quantity,refunded_quantity')
-      .range(offset, offset + pageSize - 1);
-    if (!items || items.length === 0) break;
+  const items = await fetchAllPaginated(() => supabase.from('order_line_items')
+    .select('shopify_order_id,sku,quantity,refunded_quantity')
+    .order('id', { ascending: true }));
+  for (const li of items) {
+    if (!li.sku) continue;
+    const prefix = li.sku.split('-')[0].toUpperCase();
 
-    for (const li of items) {
-      if (!li.sku) continue;
-      const prefix = li.sku.split('-')[0].toUpperCase();
-
-      if (exchangeOrderIds.has(li.shopify_order_id)) {
-        // This is an exchange order — count units as exchange replacements
-        exchangedByPrefix[prefix] = (exchangedByPrefix[prefix] || 0) + li.quantity;
-      } else {
-        // Paid order — count sold + refunded
-        soldByPrefix[prefix] = (soldByPrefix[prefix] || 0) + li.quantity;
-        refundedByPrefix[prefix] = (refundedByPrefix[prefix] || 0) + (li.refunded_quantity || 0);
-      }
+    if (exchangeOrderIds.has(li.shopify_order_id)) {
+      // This is an exchange order — count units as exchange replacements
+      exchangedByPrefix[prefix] = (exchangedByPrefix[prefix] || 0) + li.quantity;
+    } else {
+      // Paid order — count sold + refunded
+      soldByPrefix[prefix] = (soldByPrefix[prefix] || 0) + li.quantity;
+      refundedByPrefix[prefix] = (refundedByPrefix[prefix] || 0) + (li.refunded_quantity || 0);
     }
-
-    offset += pageSize;
-    if (items.length < pageSize) break;
   }
 
   // ── Step 3: Build rates map ──

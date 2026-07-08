@@ -8,7 +8,7 @@
  * Exports: checkUnfulfilledOrders() — returns structured results, no email/console.
  */
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { businessDaysSince: sharedBusinessDaysSince, pastNextBusinessDay5pmPT } = require('../../shared/businessDays');
 const { fetchUnfulfilledOrders, getHoldReasons, warehanceOrderUrl, cancelOrder } = require('./warehanceClient');
 const { resolveAddressHolds } = require('./addressHoldResolver');
@@ -44,21 +44,19 @@ function isPreOrderByTags(tags) {
 // ---------------------------------------------------------------------------
 
 async function fetchUnfulfilledFromSupabase(supabase) {
-  const { data, error } = await supabase
+  // Paginate — an unpaginated select truncated at Supabase's 1000-row default,
+  // feeding a partial set to the downstream auto-resolve / auto-cancel /
+  // auto-draft logic. Newest first (with id as a stable tiebreaker for paging)
+  // so the daily report surfaces today's orders at the top of each section.
+  return fetchAllPaginated(() => supabase
     .from('orders')
     .select('*, order_line_items(*)')
     .in('fulfillment_status', ['UNFULFILLED', 'PARTIALLY_FULFILLED'])
     .not('financial_status', 'in', '("REFUNDED","VOIDED")')
     .is('cancelled_at', null)
     .is('closed_at', null)
-    // Newest first so the daily report surfaces today's orders at the top of
-    // each section — easier to spot fresh issues without scrolling past stale
-    // pre-orders. Downstream auto-resolve/auto-cancel logic doesn't depend on
-    // sort order.
-    .order('created_at', { ascending: false });
-
-  if (error) throw new Error(`Orders query failed: ${error.message}`);
-  return data || [];
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false }));
 }
 
 // ---------------------------------------------------------------------------
