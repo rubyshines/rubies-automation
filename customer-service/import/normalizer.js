@@ -82,12 +82,18 @@ function calculateResponseTime(messages) {
  * Normalize a Gorgias ticket into our cs_conversations format.
  */
 function normalizeGorgiasTicket(ticket, messages) {
-  const normalizedMessages = messages.map(m => ({
+  const normalizedMessages = messages.map(m => {
+    // Gorgias distinguishes sender via `from_agent` (boolean) + the internal-note
+    // channel — NOT source.type (which carries the channel, e.g. 'email', and is
+    // never 'customer'). The old source.type check classified EVERY customer
+    // message as 'agent'.
+    const isNote = m.channel === 'internal-note' || m.source?.type === 'internal-note';
+    return {
     id: `gorgias:${m.id}`,
     conversation_id: `gorgias:${ticket.id}`,
     source: 'gorgias',
-    sender_type: m.source?.type === 'customer' ? 'customer'
-      : m.source?.type === 'internal-note' ? 'system'
+    sender_type: isNote ? 'system'
+      : m.from_agent === false ? 'customer'
       : 'agent',
     sender_name: m.source?.from?.name || m.source?.from?.address || null,
     body_text: stripHtml(m.body_html || m.body_text || ''),
@@ -98,8 +104,9 @@ function normalizeGorgiasTicket(ticket, messages) {
       url: a.url,
       type: a.content_type,
     }))) : null,
-    is_internal: m.source?.type === 'internal-note',
-  }));
+    is_internal: isNote,
+    };
+  });
 
   // Collect all text for order/product extraction
   const allText = normalizedMessages.map(m => m.body_text).join(' ');

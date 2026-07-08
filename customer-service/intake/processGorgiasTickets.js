@@ -823,13 +823,9 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   if (prevDraft) {
     previousIntake = prevDraft.intake_state;
     previousDraftId = prevDraft.id;
-
-    // Supersede old pending drafts
-    await supabase
-      .from('cs_ai_drafts')
-      .update({ status: 'superseded' })
-      .eq('gorgias_ticket_id', ticketId)
-      .eq('status', 'pending');
+    // NOTE: superseding old pending drafts is deferred to just before the new
+    // draft insert below. Doing it here orphaned the pending draft whenever any
+    // early-return / advisor failure bailed before a replacement was created.
   }
 
   // Extract message text (use stripped version for cleaner input)
@@ -1074,6 +1070,15 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     console.warn(`[intake] autosend gate error (ignored): ${e.message}`);
   }
 
+  // Supersede any still-pending draft for this ticket now that the advisor has
+  // succeeded and we're about to insert its replacement. (Deferred from the
+  // top of the function so early returns / failures don't orphan it.)
+  await supabase
+    .from('cs_ai_drafts')
+    .update({ status: 'superseded' })
+    .eq('gorgias_ticket_id', ticketId)
+    .eq('status', 'pending');
+
   // Insert draft — save advisor result verbatim, no post-processing
   const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
@@ -1082,7 +1087,10 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       ticket_id: ticketRow.id,
       gorgias_ticket_id: ticketId,
       gorgias_message_id: latestCustomerMsgId,
-      customer_email: customerEmail,
+      // Use the effective (forward-redirect-aware) email, matching the cs_tickets
+      // upsert above — not the raw ticket email, which is the internal forwarder
+      // on forwarded tickets.
+      customer_email: resolvedEmail || customerEmail,
       customer_name: structured.customer?.name || null,
       customer_pronouns: structured.customer?.pronouns || null,
       customer_country: structured.customer?.country || null,

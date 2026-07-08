@@ -243,20 +243,30 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
     const firstMsg = thread[0];
     const isOurAddress = (addr) => addr && (addr.toLowerCase().includes('@rubyshines.com'));
 
-    // Upload attachments from the first message for Gorgias
-    const firstMsgAttachments = await uploadAttachmentsForGorgias(
-      gmail, supabase, firstMsg.gmail_message_id, firstMsg.attachment_meta
-    );
+    // Upload attachments + create the ticket. The claim above set processed_at
+    // for concurrency safety, but if this external work fails the claim would
+    // strand the email as processed-but-never-forwarded (lost forever). Release
+    // the claim on failure so the next run retries.
+    let firstMsgAttachments, ticket;
+    try {
+      firstMsgAttachments = await uploadAttachmentsForGorgias(
+        gmail, supabase, firstMsg.gmail_message_id, firstMsg.attachment_meta
+      );
 
-    // Create ticket with the first (oldest) message in the thread
-    const ticket = await gorgias.createTicket({
-      customerEmail: firstMsg.is_sent ? (msg.from_address) : firstMsg.from_address,
-      customerName: firstMsg.is_sent ? (msg.from_name || undefined) : (firstMsg.from_name || undefined),
-      subject: firstMsg.subject || msg.subject || '(no subject)',
-      bodyText: stripQuotedContent(firstMsg.body_text || ''),
-      tags: ['gmail-import'],
-      attachments: firstMsgAttachments,
-    });
+      // Create ticket with the first (oldest) message in the thread
+      ticket = await gorgias.createTicket({
+        customerEmail: firstMsg.is_sent ? (msg.from_address) : firstMsg.from_address,
+        customerName: firstMsg.is_sent ? (msg.from_name || undefined) : (firstMsg.from_name || undefined),
+        subject: firstMsg.subject || msg.subject || '(no subject)',
+        bodyText: stripQuotedContent(firstMsg.body_text || ''),
+        tags: ['gmail-import'],
+        attachments: firstMsgAttachments,
+      });
+    } catch (err) {
+      await supabase.from('email_messages').update({ processed_at: null }).eq('gmail_message_id', msg.gmail_message_id);
+      console.error(`[gmail-cs] Forwarding failed for ${msg.gmail_message_id} — released claim for retry: ${err.message}`);
+      throw err;
+    }
 
     // Add remaining thread messages chronologically
     for (let i = 1; i < thread.length; i++) {
