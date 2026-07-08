@@ -3195,16 +3195,26 @@ function createReasoningTrace(container, opts = {}) {
   };
 }
 
+// Email-start greeting patterns — the ONE list both splitThinkingFromDraft and
+// the streaming probe in refreshDraft use. Add greetings here (only), and keep
+// the server-side stripInternalThinking() in sync.
+const EMAIL_START_PATTERNS = [
+  /^Hi[\s,]/m, /^Hey[\s,]/m, /^Hola[\s,]/m, /^No problem/m,
+  /^Thanks /m, /^Sorry /m, /^Ooops/m, /^Ok[, ]/m, /^Doh!/m,
+  /^D[eé]sol[eé]/m, /^For sure/m, /^That was really/m, /^Glad /m, /^Aww/m,
+];
+
+// True when any line of the text starts with a customer-email greeting
+// (same /m semantics the inline streaming probe used).
+function looksLikeEmailStart(text) {
+  return EMAIL_START_PATTERNS.some(p => p.test(text));
+}
+
 // Split AI internal reasoning from the customer-facing email during streaming.
 // Mirrors the server-side stripInternalThinking() patterns so the thinking shows
 // in a trace element instead of polluting the draft textarea.
 function splitThinkingFromDraft(text) {
-  const emailStartPatterns = [
-    /^Hi[\s,]/m, /^Hey[\s,]/m, /^Hola[\s,]/m, /^No problem/m,
-    /^Thanks /m, /^Sorry /m, /^Ooops/m, /^Ok[, ]/m, /^Doh!/m,
-    /^D[eé]sol[eé]/m, /^For sure/m, /^That was really/m, /^Glad /m, /^Aww/m,
-  ];
-  for (const pattern of emailStartPatterns) {
+  for (const pattern of EMAIL_START_PATTERNS) {
     const match = text.match(pattern);
     if (match && match.index > 0) {
       const before = text.substring(0, match.index).trim();
@@ -3278,9 +3288,8 @@ async function refreshDraft(steer) {
                 editor.value = draft;
               } else {
                 // No split detected. Either it's pure email (starts with greeting)
-                // or pure pre-email reasoning. Probe the first line.
-                const startsWithEmail = /^(Hi[\s,]|Hey[\s,]|Hola[\s,]|No problem|Thanks |Sorry |Ooops|Ok[, ]|Doh!|D[eé]sol[eé]|For sure|That was really|Glad |Aww)/m.test(displayText);
-                if (startsWithEmail) editor.value = displayText;
+                // or pure pre-email reasoning. Probe with the shared pattern list.
+                if (looksLikeEmailStart(displayText)) editor.value = displayText;
                 else trace.setLive(displayText);
               }
               autoExpandTextarea(editor);

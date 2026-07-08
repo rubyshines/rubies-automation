@@ -161,3 +161,56 @@ describe('classifyOutcome', () => {
     assert.equal(classifyOutcome(undefined, 0), 'unknown');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Previously-uncounted action families (bypassed_*/manual_*/auto_*)
+// ---------------------------------------------------------------------------
+
+describe('classifyOutcome — full action vocabulary', () => {
+  it('classifies bypassed variants (bare + compound)', () => {
+    assert.equal(classifyOutcome('bypassed', 0), 'bypassed');
+    assert.equal(classifyOutcome('bypassed_snooze', 0), 'bypassed');
+    assert.equal(classifyOutcome('bypassed_close', 0), 'bypassed');
+  });
+
+  it('classifies manual variants (compound + backfilled)', () => {
+    assert.equal(classifyOutcome('manual_snooze', 0), 'manual');
+    assert.equal(classifyOutcome('manual_backfilled', 0), 'manual');
+  });
+
+  it('classifies auto-close and auto-follow-up', () => {
+    assert.equal(classifyOutcome('auto_close_thank_you', 0), 'auto_closed');
+    assert.equal(classifyOutcome('auto_follow_up_stage1', 0), 'auto_follow_up');
+    assert.equal(classifyOutcome('auto_follow_up_stage2', 0), 'auto_follow_up');
+  });
+
+  it('classifies bare sent (detect_bypasses writer) as no_edit', () => {
+    assert.equal(classifyOutcome('sent', 0), 'no_edit');
+  });
+
+  it('classifies returned_to_inbox', () => {
+    assert.equal(classifyOutcome('returned_to_inbox', 0), 'returned_to_inbox');
+  });
+});
+
+describe('classifyFeedback — new counters', () => {
+  it('counts the previously-invisible families', () => {
+    const result = classifyFeedback([
+      { action: 'bypassed_snooze' },
+      { action: 'bypassed' },
+      { action: 'manual_close' },
+      { action: 'manual_backfilled' },
+      { action: 'auto_close_thank_you' },
+      { action: 'auto_follow_up_stage1' },
+      { action: 'returned_to_inbox' },
+      { action: 'something_else' },
+    ]);
+    assert.equal(result.bypassed, 2);
+    assert.equal(result.manual, 2);
+    assert.equal(result.autoClosed, 1);
+    assert.equal(result.autoFollowUp, 1);
+    assert.equal(result.returnedToInbox, 1);
+    assert.equal(result.unknown, 1);
+    assert.equal(result.noEdit, 0);
+  });
+});

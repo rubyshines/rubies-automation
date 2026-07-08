@@ -656,11 +656,53 @@ async function recomposeOutboundDraft({ ticketId, draftId, existingDraft, custom
   return { draft_response: composed.plain_body, draft_id: newRow.id, structured };
 }
 
+/**
+ * Build the advisor input from live Gorgias state — messages, sender name and
+ * the [CONVERSATION HISTORY]/[LATEST CUSTOMER MESSAGE] issue description,
+ * including the attachments note. Single implementation for apiRefreshDraft
+ * and createFreshDraftForTicket (the two had diverged — the refresh path was
+ * silently dropping the attachments note).
+ *
+ * lastCustomer is null for operator-initiated outbound tickets — callers
+ * route those to recomposeOutboundDraft.
+ */
+async function buildAdvisorInputFromGorgias(gorgiasTicketId) {
+  const gorgiasClient = require('../import/gorgiasClient');
+  const { extractCleanBody, buildConversationContext } = require('../intake/processGorgiasTickets');
+
+  const [messages, gorgiasTicket] = await Promise.all([
+    gorgiasClient.getTicketMessages(gorgiasTicketId),
+    gorgiasClient.getTicket(gorgiasTicketId).catch(() => null),
+  ]);
+  const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+  if (!lastCustomer) {
+    return { messages, gorgiasTicket, lastCustomer: null, senderName: null, issueDescription: null };
+  }
+
+  const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || gorgiasTicket?.customer?.name || null;
+
+  const messageText = extractCleanBody(lastCustomer).text;
+  const contextParts = [];
+  if (typeof buildConversationContext === 'function') {
+    const ctx = buildConversationContext(messages, lastCustomer.id);
+    if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
+  }
+  const attachments = lastCustomer.attachments || [];
+  const attachmentNote = attachments.length
+    ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
+    : '';
+  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
+
+  return { messages, gorgiasTicket, lastCustomer, senderName, issueDescription: contextParts.join('\n\n') };
+}
+
 async function apiRefreshDraft(id, { steer, onStream } = {}) {
   const warnings = [];
   const _emit = onStream || (() => {});
   const supabase = getSupabaseClient();
-  const gorgiasClient = require('../import/gorgiasClient');
 
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts')
@@ -670,11 +712,8 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
   if (fetchErr) throw fetchErr;
 
   // Re-fetch messages + ticket from Gorgias and re-run advisor
-  const [messages, gorgiasTicket] = await Promise.all([
-    gorgiasClient.getTicketMessages(draft.gorgias_ticket_id),
-    gorgiasClient.getTicket(draft.gorgias_ticket_id).catch(() => null),
-  ]);
-  const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+  const { gorgiasTicket, lastCustomer, senderName, issueDescription } =
+    await buildAdvisorInputFromGorgias(draft.gorgias_ticket_id);
   if (!lastCustomer) {
     // No customer reply yet — operator-initiated outbound ticket.
     if (!steer) throw new Error('No customer message yet. Add a steer to update the outbound draft.');
@@ -689,20 +728,6 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
       emit: _emit,
     });
   }
-  const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
-    .filter(Boolean)
-    .join(' ')
-    .trim() || gorgiasTicket?.customer?.name || null;
-
-  const { extractCleanBody, buildConversationContext } = require('../intake/processGorgiasTickets');
-  const messageText = extractCleanBody(lastCustomer).text;
-  let contextParts = [];
-  if (typeof buildConversationContext === 'function') {
-    const ctx = buildConversationContext(messages, lastCustomer.id);
-    if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
-  }
-  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}`);
-  const issueDescription = contextParts.join('\n\n');
 
   // Build context up front so we can update cs_tickets with the resolved
   // customer/order (sidebar card), and pass it to the advisor as preContext.
@@ -1097,17 +1122,23 @@ async function apiGetStats() {
     .select('id', { count: 'exact', head: true })
     .eq('status', 'pending');
 
+  // Action classification is owned by statsHelpers (the inline filters here
+  // had diverged — bare 'sent'/'bypassed' and the bypassed_*/manual_* families
+  // were silently uncounted).
   const feedback = recentFeedback || [];
   const total = feedback.length;
-  const sent = feedback.filter(f => f.action?.startsWith('sent_')).length;
-  const edited = feedback.filter(f => f.action?.startsWith('edited_')).length;
-  const released = feedback.filter(f => f.action === 'released').length;
-  const bypassed = feedback.filter(f => f.action === 'bypassed').length;
+  const counts = _classifyFeedback(feedback);
 
   return {
     pending: pendingCount || 0,
-    last30Days: { total, sent, edited, released, bypassed },
-    acceptanceRate: total > 0 ? ((sent / total) * 100).toFixed(1) + '%' : 'N/A',
+    last30Days: {
+      total,
+      sent: counts.noEdit,
+      edited: counts.edited,
+      released: counts.released,
+      bypassed: counts.bypassed,
+    },
+    acceptanceRate: total > 0 ? ((counts.noEdit / total) * 100).toFixed(1) + '%' : 'N/A',
   };
 }
 
@@ -1794,17 +1825,12 @@ async function createFreshDraftForTicket(ticketId, { steer, onStream } = {}) {
     .eq('id', ticketId).single();
   if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
 
-  const gorgiasClient = require('../import/gorgiasClient');
-  const { buildConversationContext, extractCleanBody } = require('../intake/processGorgiasTickets');
   const { aiAdvisor } = require('../lib/aiAdvisor');
 
   if (onStream) onStream({ type: 'status', text: 'Generating draft...' });
 
-  const [messages, gorgiasTicket] = await Promise.all([
-    gorgiasClient.getTicketMessages(t.gorgias_ticket_id),
-    gorgiasClient.getTicket(t.gorgias_ticket_id).catch(() => null),
-  ]);
-  const lastCustomer = [...messages].reverse().find(m => m.from_agent === false);
+  const { gorgiasTicket, lastCustomer, senderName, issueDescription } =
+    await buildAdvisorInputFromGorgias(t.gorgias_ticket_id);
   if (!lastCustomer) {
     // No customer reply yet — operator-initiated outbound ticket.
     if (!steer) throw new Error('No customer message yet. Add a steer to update the outbound draft.');
@@ -1819,27 +1845,10 @@ async function createFreshDraftForTicket(ticketId, { steer, onStream } = {}) {
     });
   }
 
-  const senderName = [gorgiasTicket?.customer?.firstname, gorgiasTicket?.customer?.lastname]
-    .filter(Boolean)
-    .join(' ')
-    .trim() || gorgiasTicket?.customer?.name || null;
-
-  const messageText = extractCleanBody(lastCustomer).text;
-  let contextParts = [];
-  if (typeof buildConversationContext === 'function') {
-    const ctx = buildConversationContext(messages, lastCustomer.id);
-    if (ctx) contextParts.push(`[CONVERSATION HISTORY]\n${ctx}`);
-  }
-  const attachments = lastCustomer.attachments || [];
-  const attachmentNote = attachments.length
-    ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
-    : '';
-  contextParts.push(`[LATEST CUSTOMER MESSAGE]\n${messageText}${attachmentNote}`);
-
   const result = await aiAdvisor({
     customer_email: t.customer_email,
     customer_name: senderName,
-    issue_description: contextParts.join('\n\n'),
+    issue_description: issueDescription,
     operatorSteer: steer || undefined,
     onStream: onStream ? (event) => onStream(event) : undefined,
     ticket_id: t.gorgias_ticket_id,
