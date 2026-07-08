@@ -250,13 +250,29 @@ function formatEtaRelative(rawEta) {
   return `${start} to ${end}`;
 }
 
+/**
+ * Parse an event date that may lack a year (e.g. "Dec 28"). Blindly assuming
+ * the current year put December events read in January ~a year in the future
+ * (negative daysSince), breaking stale/lost detection at every year boundary —
+ * a yearless date ahead of today belongs to the previous year.
+ */
+function parseEventDate(raw) {
+  if (!raw) return null;
+  const hasYear = /\d{4}/.test(raw);
+  let d = new Date(hasYear ? raw : `${raw} ${new Date().getFullYear()}`);
+  if (isNaN(d)) return null;
+  if (!hasYear && d.getTime() > Date.now() + 2 * 86400000) {
+    d = new Date(`${raw} ${new Date().getFullYear() - 1}`);
+    if (isNaN(d)) return null;
+  }
+  return d;
+}
+
 function daysSinceEvent(events) {
   if (!events?.length) return null;
   const latest = events[0]; // most recent first
-  // Try parsing the date — events use various formats
-  const year = new Date().getFullYear();
-  const eventDate = new Date(latest.date?.includes(',') ? latest.date : `${latest.date} ${year}`);
-  if (isNaN(eventDate)) return null;
+  const eventDate = parseEventDate(latest.date);
+  if (!eventDate) return null;
   return Math.floor((Date.now() - eventDate.getTime()) / 86400000);
 }
 
@@ -267,9 +283,8 @@ function daysSinceDelivery(trackingData) {
     /deliver/i.test(e.description)
   );
   if (!deliveryEvent) return daysSinceEvent(trackingData.events);
-  const year = new Date().getFullYear();
-  const d = new Date(deliveryEvent.date?.includes(',') ? deliveryEvent.date : `${deliveryEvent.date} ${year}`);
-  if (isNaN(d)) return null;
+  const d = parseEventDate(deliveryEvent.date);
+  if (!d) return null;
   return Math.floor((Date.now() - d.getTime()) / 86400000);
 }
 

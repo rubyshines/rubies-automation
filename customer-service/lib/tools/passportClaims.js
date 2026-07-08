@@ -71,18 +71,31 @@ async function handlePassportClaimUpdate({ order_number, status, note }) {
     return { content: [{ type: 'text', text: `Invalid status. Use: ${validStatuses.join(', ')}` }] };
   }
 
+  // APPEND the note to the resolution history (passport_claim_note's dated
+  // format) — an unconditional overwrite destroyed the note history.
   const update = {
     status,
-    resolution: note || null,
     resolution_date: status !== 'open' ? new Date().toISOString() : null,
   };
+  if (note) {
+    const { data: claim, error: readErr } = await supabase
+      .from('passport_claims')
+      .select('resolution')
+      .eq('order_number', order_number)
+      .maybeSingle();
+    if (readErr) return { content: [{ type: 'text', text: `Error: ${readErr.message}` }], isError: true };
+    const today = new Date().toISOString().split('T')[0];
+    update.resolution = claim?.resolution
+      ? `${claim.resolution}\n[${today}] ${note}`
+      : `[${today}] ${note}`;
+  }
 
   const { error } = await supabase
     .from('passport_claims')
     .update(update)
     .eq('order_number', order_number);
 
-  if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }] };
+  if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
 
   return { content: [{ type: 'text', text: `Claim #${order_number} updated to **${status}**${note ? ': ' + note : ''}` }] };
 }
@@ -115,10 +128,11 @@ async function handlePassportClaimNote({ order_number, note }) {
     ? `${existing}\n[${today}] ${note}`
     : `[${today}] ${note}`;
 
-  await supabase
+  const { error: noteErr } = await supabase
     .from('passport_claims')
     .update({ resolution: updated })
     .eq('order_number', order_number);
+  if (noteErr) return { content: [{ type: 'text', text: `Error saving note: ${noteErr.message}` }], isError: true };
 
   return { content: [{ type: 'text', text: `Note added to claim #${order_number}: "${note}"` }] };
 }
@@ -136,13 +150,14 @@ async function handleShippingDelayResolve({ order_number, action, note }) {
 
   const resolved = action === 'resolve';
 
-  await supabase.from('order_alert_notes').insert({
+  const { error: insertErr } = await supabase.from('order_alert_notes').insert({
     order_number,
     note,
     resolved,
     author: 'operator',
     alert_type: 'shipping',
   });
+  if (insertErr) return { content: [{ type: 'text', text: `Error saving: ${insertErr.message}` }], isError: true };
 
   const verb = action === 'resolve' ? 'Resolved' : action === 'unresolve' ? 'Unresolved' : 'Note added to';
   return { content: [{ type: 'text', text: `${verb} #${order_number}: "${note}"` }] };

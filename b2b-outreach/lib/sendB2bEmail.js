@@ -86,7 +86,11 @@ async function sendB2bEmail(p = {}) {
   let subject = p.subject || (thread?.subject ? (thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`) : null);
   if (!subject) return { ok: false, error: 'subject required for a new thread' };
 
-  // Last outbound/inbound message in the thread → In-Reply-To / References
+  // Last outbound/inbound message in the thread → In-Reply-To / References.
+  // gmail_message_id is the Gmail API id, NOT an RFC 2822 Message-ID —
+  // wrapping it in <> produced a bogus In-Reply-To that broke recipient-side
+  // threading (Gmail-side threading still worked via the threadId param).
+  // Fetch the real Message-ID header from the Gmail API instead.
   let inReplyTo = null;
   if (thread) {
     const { data: lastMsg } = await sb.from('b2b_messages')
@@ -96,7 +100,22 @@ async function sendB2bEmail(p = {}) {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (lastMsg?.gmail_message_id) inReplyTo = `<${lastMsg.gmail_message_id}>`;
+    if (lastMsg?.gmail_message_id) {
+      try {
+        const { getGmail: getGmailForHeaders } = require('../../gmail-management/lib/gmailClient');
+        const gmailMeta = await getGmailForHeaders();
+        const meta = await gmailMeta.users.messages.get({
+          userId: 'me',
+          id: lastMsg.gmail_message_id,
+          format: 'metadata',
+          metadataHeaders: ['Message-ID'],
+        });
+        const header = (meta.data.payload?.headers || []).find(h => (h.name || '').toLowerCase() === 'message-id');
+        if (header?.value) inReplyTo = header.value; // already includes <...>
+      } catch (e) {
+        console.warn(`[sendB2bEmail] Message-ID lookup failed (${e.message}) — sending without In-Reply-To`);
+      }
+    }
   }
 
   const preview = {

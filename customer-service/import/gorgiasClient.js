@@ -110,11 +110,31 @@ async function getTickets({ cursor, limit = 30, order_by = 'created_datetime:des
 }
 
 /**
- * Fetch all messages for a specific ticket.
+ * Fetch ALL messages for a specific ticket, oldest first.
+ *
+ * Paginates via the cursor like getViewItems — the old single 50-message page
+ * silently returned only the OLDEST 50, so "did the customer reply?" checks
+ * that read messages[length-1] looked at message #50, not the latest one.
+ * MAX_PAGES bounds a pathological thread (500 messages) without truncating
+ * any real conversation.
  */
 async function getTicketMessages(ticketId) {
-  const result = await apiFetch(`/tickets/${ticketId}/messages?limit=50&order_by=created_datetime:asc`);
-  return result.data || [];
+  const MAX_PAGES = 10;
+  const all = [];
+  let cursor = null;
+  let pages = 0;
+  do {
+    const params = new URLSearchParams();
+    params.set('limit', '50');
+    params.set('order_by', 'created_datetime:asc');
+    if (cursor) params.set('cursor', cursor);
+    const result = await apiFetch(`/tickets/${ticketId}/messages?${params}`);
+    if (result.data) all.push(...result.data);
+    cursor = result.meta?.next_cursor || null;
+    pages++;
+    if (cursor && pages < MAX_PAGES) await delay(300);
+  } while (cursor && pages < MAX_PAGES);
+  return all;
 }
 
 /**

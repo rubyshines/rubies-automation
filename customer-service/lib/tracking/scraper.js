@@ -78,16 +78,16 @@ async function fetchPassportPage(trackingNumber) {
 
       const text = await page.evaluate(() => document.body.innerText);
 
-      // If this URL returned usable data, use it
+      // If this URL returned usable data, use it (the finally below closes
+      // the page — the success path used to leak it until browser recycle).
       if (text && !/can.t find the tracking number/i.test(text) && text.length > 100) {
         return text;
       }
-
-      // Otherwise try next URL
-      await page.close().catch(() => {});
+      // Otherwise fall through to try the next URL.
     } catch {
-      await page.close().catch(() => {});
       // Try next URL on error
+    } finally {
+      await page.close().catch(() => {});
     }
   }
 

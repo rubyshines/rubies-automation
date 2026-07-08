@@ -171,8 +171,12 @@ async function prescribeDonationRouting(intake, context) {
     };
   }
 
-  // Multiple items — find closest partner by geographic proximity
-  let partner = partners[0];
+  // Multiple items — find closest partner by geographic proximity.
+  // Default = least-loaded partner (true load balancing). The sort used to
+  // live only in the geocode-failure catch, so the no-address and no-coords
+  // paths always picked partners[0] regardless of load.
+  const byLoad = [...partners].sort((a, b) => (a.donations_routed || 0) - (b.donations_routed || 0));
+  let partner = byLoad[0];
   let routingMethod = 'load_balance';
 
   const customerAddress = context.customer?.defaultAddress;
@@ -195,7 +199,7 @@ async function prescribeDonationRouting(intake, context) {
         }
       }
     } catch (e) {
-      partner = partners.sort((a, b) => a.donations_routed - b.donations_routed)[0];
+      partner = byLoad[0];
       routingMethod = 'load_balance (geocoding failed)';
     }
   }

@@ -131,17 +131,21 @@ async function run() {
   }
 
   // ----- P&L snapshot metrics -----
-  // Get most recent monthly snapshot
-  const { data: recentPL } = await supabase
+  // Current vs prior CALENDAR MONTH. The raw table holds YTD/quarter spans
+  // and one daily partial per day of the current month, so "two most recent
+  // rows" compared two arbitrary snapshots (often the same month's partials).
+  const { filterMonthlySnapshots } = require('../lib/monthlySnapshots');
+  const { data: recentPLRaw } = await supabase
     .from('qbo_report_snapshots')
-    .select('summary, period_start')
+    .select('summary, period_start, period_end')
     .eq('report_type', 'ProfitAndLoss')
     .order('period_start', { ascending: false })
-    .limit(2);
+    .limit(60);
 
-  if (recentPL?.length >= 2) {
-    const current = recentPL[0].summary;
-    const prior = recentPL[1].summary;
+  const recentMonthly = filterMonthlySnapshots(recentPLRaw).slice(-2);
+  if (recentMonthly.length >= 2) {
+    const current = recentMonthly[1].summary;
+    const prior = recentMonthly[0].summary;
 
     metrics.currentRevenue = current?.totalIncome;
     metrics.priorRevenue = prior?.totalIncome;

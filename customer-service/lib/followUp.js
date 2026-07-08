@@ -109,13 +109,16 @@ async function executeStage1(gorgias, ticket, { snoozeDays, gorgiasTicket } = {}
     ticket: gorgiasTicket,
   });
 
-  // Create audit draft record
+  // Create audit draft record. gorgias_message_id must be NULL (not 0) —
+  // UNIQUE(gorgias_ticket_id, gorgias_message_id) made a second (ticket, 0)
+  // row collide, so Stage 2's audit insert always failed silently. NULLs are
+  // distinct under the constraint.
   const now = new Date().toISOString();
-  const { data: newDraft } = await supabase
+  const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
     .insert({
       gorgias_ticket_id: ticket.gorgias_ticket_id,
-      gorgias_message_id: 0,
+      gorgias_message_id: null,
       customer_email: draft.customer_email,
       customer_name: draft.customer_name,
       order_number: draft.order_number,
@@ -134,6 +137,14 @@ async function executeStage1(gorgias, ticket, { snoozeDays, gorgiasTicket } = {}
     })
     .select('id')
     .single();
+
+  // Stage 2's gate depends on this row existing — a swallowed failure here
+  // left the ticket looping daily as 'no_follow_up_care_draft' with no error
+  // anywhere. The email is already sent, so surface loudly (the throw happens
+  // BEFORE the re-snooze/stage update, so the run is retried).
+  if (insertErr) {
+    throw new Error(`[follow-up] Stage 1 audit draft insert failed for ticket ${ticket.gorgias_ticket_id} (email WAS sent): ${insertErr.message}`);
+  }
 
   // Link original → follow-up
   if (newDraft) {
@@ -227,13 +238,13 @@ async function executeStage2(gorgias, ticket) {
     trackingSettings: { clickTracking: { enable: false, enableText: false } },
   });
 
-  // Create audit draft record
+  // Create audit draft record (gorgias_message_id NULL — see Stage 1 note).
   const now = new Date().toISOString();
-  const { data: newDraft } = await supabase
+  const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
     .insert({
       gorgias_ticket_id: ticket.gorgias_ticket_id,
-      gorgias_message_id: 0,
+      gorgias_message_id: null,
       customer_email: followUpDraft.customer_email,
       customer_name: followUpDraft.customer_name,
       order_number: followUpDraft.order_number,
@@ -251,6 +262,11 @@ async function executeStage2(gorgias, ticket) {
     })
     .select('id')
     .single();
+
+  // The customer email is already sent; a lost audit row must be visible.
+  if (insertErr) {
+    console.error(`[follow-up] Stage 2 audit draft insert failed for ticket ${ticket.gorgias_ticket_id} (email WAS sent): ${insertErr.message}`);
+  }
 
   // Link stage 1 → stage 2
   if (newDraft) {

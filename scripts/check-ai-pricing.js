@@ -89,7 +89,15 @@ async function fetchPricingRates() {
       max_tokens: 1024,
       messages: [{
         role: 'user',
-        content: `From this Anthropic pricing page text, extract per-million-token USD rates for Claude models as strict JSON: {"<model name>": {"input": <num>, "output": <num>}}. Use the model names as shown. If you cannot find clear per-model rates, return {}. Output ONLY the JSON.\n\n${text}`,
+        // Keys MUST be our exact API model ids — diffPricing looks extracted
+        // rates up in RATES (keyed by model id). "Use the model names as
+        // shown" made every extracted key miss, so drift could never fire.
+        content: `From this Anthropic pricing page text, extract per-million-token USD rates for Claude models as strict JSON: {"<model id>": {"input": <num>, "output": <num>}}.
+
+Map the page's display names onto these exact API model ids and use the ids as the JSON keys (omit any model you cannot confidently map):
+${Object.keys(RATES).join('\n')}
+
+If you cannot find clear per-model rates, return {}. Output ONLY the JSON.\n\n${text}`,
       }],
     });
     const m = (r.text || '').match(/\{[\s\S]*\}/);

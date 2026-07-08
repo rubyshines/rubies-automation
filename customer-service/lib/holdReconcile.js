@@ -116,12 +116,14 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
         links: [],
         source: SOURCE.HOLD_SWEEP,
       };
+      // Atomic append — read-modify-write here raced the dashboard operator
+      // path and could silently drop the other writer's entry.
+      const { appendDraftAction } = require('./draftActions');
+      const ap = await appendDraftAction(supabase, d.id, action);
+      if (ap.error) console.error(`[hold-reconcile] actions append failed for draft ${d.id}: ${ap.error}`);
       await supabase
         .from('cs_ai_drafts')
-        .update({
-          actions: [...(Array.isArray(d.actions) ? d.actions : []), action],
-          action_executed_at: action.executed_at,
-        })
+        .update({ action_executed_at: action.executed_at })
         .eq('id', d.id);
       placed++;
       console.log(`[hold-reconcile] placed hold on #${orderNumber} (draft ${d.id})`);

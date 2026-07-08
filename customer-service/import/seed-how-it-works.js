@@ -71,8 +71,11 @@ async function main() {
 
   // Generate embedding if embeddings module is available
   try {
-    const { embedText } = require('../lib/embeddings');
-    const embedding = await embedText(CONTENT);
+    // The module exports `embed`, not `embedText` — the old destructure made
+    // this always throw and the article was seeded with no embedding, while
+    // the catch mislabeled it as a missing API key.
+    const { embed } = require('../lib/embeddings');
+    const embedding = await embed(CONTENT);
     if (embedding) {
       const { error: embErr } = await supabase
         .from('cs_knowledge_base')

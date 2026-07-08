@@ -172,7 +172,9 @@ const tools = [
     },
     handler: async ({ period_days, compare_to }) => {
       const periodDays = period_days || 30;
-      const compareTo = compare_to || 'baseline';
+      // Schema documents previous_period as the default; the code defaulted to
+      // baseline, so every default report compared against strategy start.
+      const compareTo = compare_to || 'previous_period';
 
       const ranges = computeDateRanges(periodDays, compareTo);
       let md = '';

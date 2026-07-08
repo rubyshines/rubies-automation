@@ -39,9 +39,12 @@ async function handleTestConversation({ customer_email, messages, order_number }
   for (let i = 0; i < messages.length; i++) {
     const customerMsg = messages[i];
     let s = null;
+    // Declared outside the try — it's read after the catch, and a try-scoped
+    // const made every successful path throw ReferenceError.
+    let result = null;
 
     try {
-      const result = await aiAdvisor({
+      result = await aiAdvisor({
         customer_email,
         issue_description: customerMsg,
         order_number: order_number || undefined,

@@ -76,7 +76,12 @@ async function run(start = isoDaysAgo(45), endIncl = isoDaysAgo(0)) {
   // Drop null list-size keys for non-today rows so upsert doesn't wipe a prior snapshot.
   for (const r of rows) { if (r.email_list_size == null) delete r.email_list_size; if (r.sms_list_size == null) delete r.sms_list_size; }
 
-  if (!rows.length) { console.log('No audience rows.'); return 0; }
+  // An empty day is a graceful skip, not a failure — a bare `0` return made
+  // the daily runner report FAILURE and exit 1.
+  if (!rows.length) {
+    console.log('No audience rows.');
+    return { status: 'success', sources: { audience: { success: true, rowsWritten: 0 } } };
+  }
   const n = await upsert('klaviyo_audience_daily', rows, ['date']);
   console.log(`Upserted ${n} day(s) of audience metrics (${start} → ${endIncl}).${emailSize ? ` List sizes: email ${emailSize}, sms ${smsSize}.` : ''}`);
   return { status: 'success', sources: { audience: { success: true, rowsWritten: n } } };

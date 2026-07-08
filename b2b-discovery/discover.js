@@ -16,7 +16,7 @@ const {
 } = require('./lib/db');
 const { researchProspect } = require('./lib/researcher');
 const { syncProspectsToSheet } = require('./lib/sheets');
-const { getSupabaseClient } = require('../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../shared/supabaseClient');
 const { MODELS } = require('../shared/aiPricing');
 
 function sleep(ms) {
@@ -495,13 +495,15 @@ async function main() {
     if (fresh) {
       // Fresh: fetch all qualifying prospects and rewrite the sheet
       console.log(`\n[SHEETS] Fresh sync — fetching all prospects with score >= ${minScore}...`);
-      const { data: prospects, error } = await client
+      // Paginated — a fresh sync CLEARS the sheet then rewrites it, so a
+      // 1000-row truncation here permanently dropped already-synced prospects.
+      const prospects = await fetchAllPaginated(() => client
         .from('retailer_prospects')
         .select('*')
         .gte('score', minScore)
         .not('status', 'eq', 'found')
-        .order('score', { ascending: false });
-      if (error) { console.error('DB error:', error.message); process.exit(1); }
+        .order('score', { ascending: false })
+        .order('id', { ascending: true }));
       console.log(`[SHEETS] Found ${prospects.length} prospects`);
       const added = await syncProspectsToSheet(prospects, { verbose: true, fresh: true });
       // Mark all as synced
@@ -513,13 +515,13 @@ async function main() {
     } else {
       // Incremental: only fetch prospects not yet synced
       console.log(`\n[SHEETS] Fetching new prospects with score >= ${minScore} not yet in sheet...`);
-      const { data: prospects, error } = await client
+      const prospects = await fetchAllPaginated(() => client
         .from('retailer_prospects')
         .select('*')
         .gte('score', minScore)
         .not('status', 'eq', 'found')
-        .eq('synced_to_sheet', false);
-      if (error) { console.error('DB error:', error.message); process.exit(1); }
+        .eq('synced_to_sheet', false)
+        .order('id', { ascending: true }));
       console.log(`[SHEETS] Found ${prospects.length} new prospects to add`);
       const added = await syncProspectsToSheet(prospects, { verbose: true, fresh: false });
       if (added > 0) {

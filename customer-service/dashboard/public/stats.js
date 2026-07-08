@@ -296,12 +296,17 @@ async function loadTrends() {
 
   const { start, end } = dateRange(currentRange);
 
-  // Prior-period range for delta comparison (same length, immediately before start)
-  const priorEnd = new Date(start);
-  priorEnd.setDate(priorEnd.getDate() - 1);
-  const priorStart = new Date(priorEnd);
-  priorStart.setDate(priorStart.getDate() - currentRange);
-  const fmt = (d) => d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  // Prior-period range for delta comparison (same length, immediately before
+  // start). Date-only strings parse as UTC midnight, and re-formatting that in
+  // ET shifted the whole prior window a day early — do the arithmetic at local
+  // noon so no timezone/DST edge can move the date.
+  const shiftDateStr = (dstr, days) => {
+    const d = new Date(`${dstr}T12:00:00`);
+    d.setDate(d.getDate() + days);
+    return d.toLocaleDateString('en-CA');
+  };
+  const priorEnd = shiftDateStr(start, -1);
+  const priorStart = shiftDateStr(priorEnd, -currentRange);
 
   // Show loading state
   showTrendsLoading(true);
@@ -310,7 +315,7 @@ async function loadTrends() {
     const [range, categories, priorRange] = await Promise.all([
       api(`/api/stats/range?start=${start}&end=${end}`),
       api(`/api/stats/categories?start=${start}&end=${end}`),
-      api(`/api/stats/range?start=${fmt(priorStart)}&end=${fmt(priorEnd)}`),
+      api(`/api/stats/range?start=${priorStart}&end=${priorEnd}`),
     ]);
     showTrendsLoading(false);
     renderTrendsSummary(range, priorRange);

@@ -52,6 +52,24 @@ function getKlaviyoClient() {
     return results;
   }
 
+  // Reporting endpoints throttle hard (~1/s). Retry on 429, honoring the
+  // "Expected available in N seconds" hint, with exponential fallback.
+  // ONE implementation — this loop was copy-pasted in three call sites and
+  // had already diverged on backoff caps and error swallowing.
+  async function fetchWithRetry(path, options = {}, { maxAttempts = 6, maxBackoffMs = 30000 } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await apiFetch(path, options);
+      } catch (err) {
+        const is429 = /Klaviyo 429/.test(err.message);
+        if (!is429 || attempt >= maxAttempts) throw err;
+        const hint = /available in (\d+) second/.exec(err.message);
+        const waitMs = hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, maxBackoffMs);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
+  }
+
   // ── metric ID cache ──────────────────────────────────────────────────
 
   async function getMetricIdMap() {
@@ -91,6 +109,11 @@ function getKlaviyoClient() {
           const upd = c.attributes?.updated_at || c.attributes?.send_time || c.attributes?.created_at;
           if (upd && upd < updatedSince) { stopped = true; break; }
         }
+        // Apply the documented status filter — it was accepted but never
+        // applied, so drafts/scheduled campaigns leaked into "sent" syncs.
+        // Case-insensitive (Klaviyo reports 'Sent'/'Draft'/'Scheduled');
+        // pass status: null to fetch all statuses.
+        if (status && String(c.attributes?.status || '').toLowerCase() !== String(status).toLowerCase()) continue;
         campaigns.push(c);
         if (limit && campaigns.length >= limit) { stopped = true; break; }
       }
@@ -153,23 +176,9 @@ function getKlaviyoClient() {
         },
       },
     };
-    // Reporting endpoints throttle hard (~1/s). Retry on 429, honoring the
-    // "Expected available in N seconds" hint, with exponential fallback.
-    let data;
-    for (let attempt = 0; ; attempt++) {
-      try {
-        data = await apiFetch('/api/flow-values-reports', {
-          method: 'POST', body: JSON.stringify(body),
-        });
-        break;
-      } catch (err) {
-        const is429 = /Klaviyo 429/.test(err.message);
-        if (!is429 || attempt >= 6) throw err;
-        const hint = /available in (\d+) second/.exec(err.message);
-        const waitMs = hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, 30000);
-        await new Promise((r) => setTimeout(r, waitMs));
-      }
-    }
+    const data = await fetchWithRetry('/api/flow-values-reports', {
+      method: 'POST', body: JSON.stringify(body),
+    });
     const results = data.data?.attributes?.results || [];
 
     // Aggregate flow-message rows into flow-level totals.
@@ -208,18 +217,16 @@ function getKlaviyoClient() {
     return fetchAll('/api/lists');
   }
 
-  // Current profile count for a list (the live subscriber total). Retries on 429.
+  // Current profile count for a list (the live subscriber total). Retries on
+  // 429; fail-soft to null (deliberately — list size is a nice-to-have on the
+  // daily snapshot, not worth failing the sync over).
   async function getListSize(listId) {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const d = await apiFetch(`/api/lists/${listId}?additional-fields[list]=profile_count`);
-        return d.data?.attributes?.profile_count ?? null;
-      } catch (err) {
-        const is429 = /Klaviyo 429/.test(err.message);
-        if (!is429 || attempt >= 6) return null;
-        const hint = /available in (\d+) second/.exec(err.message);
-        await new Promise((r) => setTimeout(r, hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, 20000)));
-      }
+    try {
+      const d = await fetchWithRetry(`/api/lists/${listId}?additional-fields[list]=profile_count`, {}, { maxBackoffMs: 20000 });
+      return d.data?.attributes?.profile_count ?? null;
+    } catch (err) {
+      console.warn(`[klaviyo] getListSize(${listId}) failed: ${err.message}`);
+      return null;
     }
   }
 
@@ -263,17 +270,7 @@ function getKlaviyoClient() {
       page_size: 500, timezone: 'UTC',
       filter: [`greater-or-equal(datetime,${start}T00:00:00+00:00)`, `less-than(datetime,${endExcl}T00:00:00+00:00)`],
     } } };
-    let d;
-    for (let attempt = 0; ; attempt++) {
-      try { d = await apiFetch('/api/metric-aggregates', { method: 'POST', body: JSON.stringify(body) }); break; }
-      catch (err) {
-        const is429 = /Klaviyo 429/.test(err.message);
-        if (!is429 || attempt >= 6) throw err;
-        const hint = /available in (\d+) second/.exec(err.message);
-        const waitMs = hint ? (Number(hint[1]) + 1) * 1000 : Math.min(2 ** attempt * 1000, 30000);
-        await new Promise((r) => setTimeout(r, waitMs));
-      }
-    }
+    const d = await fetchWithRetry('/api/metric-aggregates', { method: 'POST', body: JSON.stringify(body) });
     const dates = d.data?.attributes?.dates || [];
     const vals = d.data?.attributes?.data?.[0]?.measurements?.[measurement] || [];
     const out = {};

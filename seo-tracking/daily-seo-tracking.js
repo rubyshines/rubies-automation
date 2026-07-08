@@ -505,7 +505,11 @@ async function runShopify(targetDates, results) {
     return;
   }
 
-  if (!process.env.SHOPIFY_STORE_URL || !(process.env.SHOPIFY_PASSWORD || process.env.SHOPIFY_API_PASSWORD || process.env.SHOPIFY_API_KEY)) {
+  // Mirror shared/shopifyClient.js's actual credentials (SHOPIFY_ACCESS_TOKEN
+  // or SHOPIFY_PASSWORD/SHOPIFY_API_PASSWORD) — the old check accepted
+  // SHOPIFY_API_KEY (unused by the client) and missed SHOPIFY_ACCESS_TOKEN,
+  // so it could pass while the client failed, or skip while it would work.
+  if (!process.env.SHOPIFY_STORE_URL || !(process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_PASSWORD || process.env.SHOPIFY_API_PASSWORD)) {
     results[sourceKey] = { success: false, rowsWritten: 0, error: 'Shopify credentials not set' };
     return;
   }
