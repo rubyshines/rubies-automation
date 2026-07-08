@@ -1,18 +1,41 @@
 /**
- * Auto follow-up engine (event-driven off Gorgias snooze expiry).
+ * Auto follow-up engine.
  *
  * Stage 1: Send static follow-up from care@ via Gorgias, re-snooze.
  * Stage 2: Send personal email from jamie@ via SendGrid, close ticket.
  *
- * Called from gorgiasTicketUpdated webhook handler when a snoozed ticket
- * transitions to open (snooze expired without customer reply).
+ * In practice both stages fire from the daily sync's follow-up sweep
+ * (gorgiasAdvisorResync.js, 12:30 UTC cron) — Gorgias does not emit a
+ * ticket-updated webhook on snooze expiry, so the gorgiasTicketUpdated
+ * handler path only runs when something else reopens the ticket.
  */
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { getAiBotUserId } = require('../intake/processGorgiasTickets');
+const { getAiBotUserId, buildConversationHistorySnapshot } = require('../intake/processGorgiasTickets');
 const { signOff, signOffHtml } = require('./signatures');
 
 const DEFAULT_SNOOZE_DAYS = 3;
+
+/**
+ * Refresh the ticket's stored conversation snapshot from live Gorgias messages.
+ *
+ * The snapshot otherwise only rebuilds at intake (when a customer replies), so
+ * follow-up sends were invisible in the dashboard — snoozed tickets looked
+ * untouched even after Stage 1 went out (2026-07-08). Best-effort: the send
+ * has already happened, so a visibility failure must never fail the stage.
+ */
+async function refreshConversationSnapshot(gorgias, supabase, gorgiasTicketId) {
+  try {
+    const messages = await gorgias.getTicketMessages(gorgiasTicketId);
+    const snapshot = buildConversationHistorySnapshot(messages);
+    await supabase.from('cs_tickets').update({
+      conversation_history: snapshot,
+      message_count: messages.length,
+    }).eq('gorgias_ticket_id', gorgiasTicketId);
+  } catch (e) {
+    console.warn(`[follow-up] snapshot refresh failed for ${gorgiasTicketId}: ${e.message}`);
+  }
+}
 
 /**
  * Build the personal follow-up email (Stage 2) from jamie@rubyshines.com.
@@ -136,6 +159,9 @@ async function executeStage1(gorgias, ticket, { snoozeDays, gorgiasTicket } = {}
     follow_up_stage: 1,
   }).eq('id', ticket.id);
 
+  // Make the nudge visible in the dashboard thread
+  await refreshConversationSnapshot(gorgias, supabase, ticket.gorgias_ticket_id);
+
   console.log(`[follow-up] Stage 1 sent: ${draft.customer_email} (ticket ${ticket.gorgias_ticket_id}), re-snoozed ${days}d`);
   return { sent: true, draftId: newDraft?.id };
 }
@@ -239,6 +265,20 @@ async function executeStage2(gorgias, ticket) {
     feedback_notes: 'Personal follow-up sent via SendGrid (jamie@) — snooze expiry, ticket closed',
   });
 
+  // Record the off-Gorgias send where every future snapshot rebuild will keep
+  // it: an internal note in Gorgias. The email itself lives only in SendGrid /
+  // Jamie's Gmail, so without this the conversation record silently omits a
+  // customer-visible touch (and nothing explains the auto-close).
+  try {
+    await gorgias.addInternalNote(
+      ticket.gorgias_ticket_id,
+      'Auto follow-up Stage 2: personal email sent from jamie@rubyshines.com via SendGrid, ' +
+      'quoting our previous reply. Ticket closed — any reply to that email arrives in Jamie\'s Gmail, not here.',
+    );
+  } catch (e) {
+    console.warn(`[follow-up] Could not add Stage 2 note to ticket ${ticket.gorgias_ticket_id}: ${e.message}`);
+  }
+
   // Close ticket in Gorgias
   try {
     await gorgias.closeTicket(ticket.gorgias_ticket_id);
@@ -257,8 +297,11 @@ async function executeStage2(gorgias, ticket) {
     follow_up_stage: 2,
   }).eq('id', ticket.id);
 
+  // Make the note (and full thread) visible in the dashboard
+  await refreshConversationSnapshot(gorgias, supabase, ticket.gorgias_ticket_id);
+
   console.log(`[follow-up] Stage 2 sent: ${followUpDraft.customer_email} (ticket ${ticket.gorgias_ticket_id}) — closed`);
   return { sent: true, draftId: newDraft?.id };
 }
 
-module.exports = { executeStage1, executeStage2, buildPersonalFollowUpEmail };
+module.exports = { executeStage1, executeStage2, buildPersonalFollowUpEmail, refreshConversationSnapshot };
