@@ -2363,3 +2363,16 @@ describe('prescribePrePurchaseSizing', () => {
     assert.ok(action.text.includes('10'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Export contract for the advisor's analyze_onepiece_fit tool — these were
+// missing from module.exports, so the tool threw TypeError when invoked.
+// ---------------------------------------------------------------------------
+
+describe('advisor tool export contract', () => {
+  it('exports analyzeOnepieceFit and getSeparatesText (used by aiAdvisor analyze_onepiece_fit)', () => {
+    const se = require('../lib/sizingEngine');
+    assert.equal(typeof se.analyzeOnepieceFit, 'function');
+    assert.equal(typeof se.getSeparatesText, 'function');
+  });
+});

@@ -2352,6 +2352,10 @@ module.exports = {
   getChartCategory,
   formatMeasurementDisplay,
   getMeasureLocation,
+  // Live path: the advisor's analyze_onepiece_fit tool destructures these —
+  // they were missing from exports, so the tool threw TypeError when invoked.
+  analyzeOnepieceFit,
+  getSeparatesText,
   KID_LABELS,
   prescribePrePurchaseSizing,
   // Config-driven products (populated by initCsConfig)
