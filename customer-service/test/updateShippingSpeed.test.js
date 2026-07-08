@@ -21,6 +21,20 @@ const warehanceClientPath = require.resolve('../../reports/lib/warehanceClient')
 const shippingLookupPath = require.resolve('../lib/tools/shippingLookup');
 const shopifyPath = require.resolve('../lib/shopify');
 
+// Grab the REAL pure matcher before stubbing the module, so these tests
+// exercise the actual zone+speed routing rule against the live method list.
+const { pickShippingMethod } = require('../../reports/lib/warehanceClient');
+delete require.cache[warehanceClientPath];
+
+// Live method list (names + IDs as configured in Warehance, 2026-04-30).
+const LIVE_METHODS = [
+  { id: 231185182340, name: 'US Standard Shipping' },
+  { id: 231185182342, name: 'US Expedited Shipping' },
+  { id: 231185182476, name: 'Fedex' },
+  { id: 231185182424, name: 'Passport DDP' },
+  { id: 231185182425, name: 'Passport DDU' },
+];
+
 let stubOrder = null;
 let lastUpdateShippingMethod = null;
 let lastSupabaseInsert = null;
@@ -58,6 +72,7 @@ require.cache[warehanceClientPath] = {
       lastUpdateShippingMethod = { orderId, methodId };
       return {};
     },
+    resolveShippingMethod: async ({ zone, speed }) => pickShippingMethod(LIVE_METHODS, zone, speed),
     warehanceOrderUrl: (o) => o ? `https://staging.warehance.com/orders/${o.id}` : null,
   },
 };

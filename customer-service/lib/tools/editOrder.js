@@ -22,30 +22,10 @@ const {
   updateOrderShippingAddress,
 } = require('../shopify');
 const { searchProducts } = require('../productCache');
-const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl, fetchShippingMethods, updateShippingMethod } = require('../../../reports/lib/warehanceClient');
+const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl, resolveShippingMethod, updateShippingMethod } = require('../../../reports/lib/warehanceClient');
 const { getShippingZone } = require('./shippingLookup');
 const { writeAuditEntry } = require('./adminTools');
 const { toCountryCode } = require('../addressUtils');
-
-/**
- * Given a list of Warehance shipping methods and a destination zone + speed,
- * return the best-matching method. Zone is one of: us, canada, ddp, ddu.
- * Falls back to the first candidate if no speed-specific match is found.
- */
-function matchWarehanceShippingMethod(methods, zone, isExpedited) {
-  const nm = m => (m.name || m.title || '').toLowerCase();
-  const candidates = methods.filter(m => {
-    const n = nm(m);
-    if (zone === 'us')     return !n.includes('canada') && !n.includes('international') && !n.includes('passport');
-    if (zone === 'canada') return n.includes('canada');
-    if (zone === 'ddp')    return n.includes('passport') || n.includes('ddp') || (n.includes('duties') && n.includes('international'));
-    if (zone === 'ddu')    return n.includes('ddu') || (n.includes('international') && !n.includes('duties') && !n.includes('ddp'));
-    return false;
-  });
-  if (!candidates.length) return null;
-  if (isExpedited) return candidates.find(m => nm(m).includes('expedited')) || candidates[0];
-  return candidates.find(m => !nm(m).includes('expedited')) || candidates[0];
-}
 
 // Server-side store for pending edit data (MCP can't round-trip custom fields)
 const pendingEdits = new Map();
@@ -206,8 +186,7 @@ const tools = [
             try {
               const isExpedited = /expedited/i.test(_edit_data.shipping_line_title || '');
               const newZone = await getShippingZone(newCountry);
-              const methods = await fetchShippingMethods();
-              const match = matchWarehanceShippingMethod(methods, newZone, isExpedited);
+              const match = await resolveShippingMethod({ zone: newZone, speed: isExpedited ? 'expedited' : 'standard' });
               if (match) {
                 await updateShippingMethod(_edit_data.warehance_order_id, match.id);
                 lines.push(`**Warehance shipping:** Updated to "${match.name}" for new country`);
@@ -386,8 +365,7 @@ const tools = [
               const currentTitle = order.shippingLines?.[0]?.title || '';
               const isExpedited = /expedited/i.test(currentTitle);
               const newZone = await getShippingZone(newCountry);
-              const methods = await fetchShippingMethods();
-              const match = matchWarehanceShippingMethod(methods, newZone, isExpedited);
+              const match = await resolveShippingMethod({ zone: newZone, speed: isExpedited ? 'expedited' : 'standard' });
               if (match) {
                 await updateShippingMethod(whOrder.id, match.id);
                 lines.push(`**Warehance shipping:** Updated to "${match.name}"`);
