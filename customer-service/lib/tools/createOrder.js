@@ -76,7 +76,6 @@ async function handleCreateOrder({
   customer_id,
   items, custom_items, discount_percent, free, donation, note, tags,
   shipping_speed,
-  confirmed,
 }) {
   const hasItems = items && items.length > 0;
   const hasCustomItems = custom_items && custom_items.length > 0;
@@ -187,8 +186,7 @@ async function handleCreateOrder({
   // Build preview markdown
   let md = `**Order Preview**\n\n`;
   md += `**Customer:** ${customerInfo.name}`;
-  if (customerInfo.created && !confirmed) md += ` (will be created)`;
-  if (customerInfo.created && confirmed) md += ` (newly created)`;
+  if (customerInfo.created) md += ` (newly created)`;
   md += `\n**Email:** ${customerInfo.email || email}\n`;
   if (customerInfo.created && phone) md += `**Phone:** ${phone}\n`;
 
@@ -275,7 +273,7 @@ async function handleCreateOrder({
 const tools = [
   {
     name: 'create_order',
-    description: 'Create a new order for any customer (new or existing). Supports paid orders, free orders (samples/gifts), and custom discounts. Two-phase: preview first (confirmed omitted/false), then create (confirmed=true). Free orders: 100% discount + free shipping, completed and marked as paid. Paid orders: draft order created and invoice automatically sent to customer. For new customers, provide email + name + address and the customer is created in Shopify automatically.',
+    description: 'Create a new order for any customer (new or existing). Supports paid orders, free orders (samples/gifts), and custom discounts. Two-phase: create_order always stages a DRAFT and returns its admin link + Shopify-calculated totals; review it, then call create_order_complete with the draft_order_id to finish (free orders are marked paid; paid orders get the invoice sent). Do NOT re-call create_order to confirm — that just creates a second draft. For new customers, provide email + name + address and the customer is created in Shopify automatically.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -344,10 +342,6 @@ const tools = [
           type: 'string',
           enum: ['standard', 'expedited'],
           description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate (US Standard / US Expedited / Free Canada Standard / Canada Expedited / Free International / Expedited International). Price is always $0 — RUBIES covers shipping on operator-created orders. Default: "standard".',
-        },
-        confirmed: {
-          type: 'boolean',
-          description: 'Set to true to create the order. Omit or false for preview.',
         },
       },
       required: [],

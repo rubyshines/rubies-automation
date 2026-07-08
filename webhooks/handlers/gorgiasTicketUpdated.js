@@ -83,19 +83,45 @@ async function handle(payload) {
     const stage = ourTicket.follow_up_stage || 0;
 
     if (stage === 0) {
+      // Atomically claim the 0→1 transition before sending. A duplicate
+      // ticket-updated event (Gorgias retries / concurrent snooze-expiry) that
+      // also reads stage 0 will fail this guarded update and bail, so the
+      // customer gets exactly one Stage 1 follow-up instead of two.
+      const { data: claimed } = await supabase.from('cs_tickets')
+        .update({ follow_up_stage: 1, updated_at: now })
+        .eq('id', ourTicket.id)
+        .eq('follow_up_stage', 0)
+        .eq('status', 'snoozed')
+        .select('id');
+      if (!claimed || claimed.length === 0) {
+        console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 1 already claimed by another event, skipping`);
+        return;
+      }
       try {
         await executeStage1(gorgias, ourTicket);
         console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 1 follow-up sent, re-snoozed`);
       } catch (err) {
         console.error(`[gorgias-ticket-updated] ${ticketId} — Stage 1 error: ${err.message}`);
-        // Leave ticket as snoozed so next expiry retries
+        // Roll the claim back so the next expiry retries.
         await supabase.from('cs_tickets').update({
           status: 'open',
+          follow_up_stage: 0,
           updated_at: now,
         }).eq('id', ourTicket.id);
       }
 
     } else if (stage === 1) {
+      // Same atomic claim for the 1→2 transition.
+      const { data: claimed } = await supabase.from('cs_tickets')
+        .update({ follow_up_stage: 2, updated_at: now })
+        .eq('id', ourTicket.id)
+        .eq('follow_up_stage', 1)
+        .eq('status', 'snoozed')
+        .select('id');
+      if (!claimed || claimed.length === 0) {
+        console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 2 already claimed by another event, skipping`);
+        return;
+      }
       try {
         await executeStage2(gorgias, ourTicket);
         console.log(`[gorgias-ticket-updated] ${ticketId} — Stage 2 follow-up sent, ticket closed`);
@@ -103,6 +129,7 @@ async function handle(payload) {
         console.error(`[gorgias-ticket-updated] ${ticketId} — Stage 2 error: ${err.message}`);
         await supabase.from('cs_tickets').update({
           status: 'open',
+          follow_up_stage: 1,
           updated_at: now,
         }).eq('id', ourTicket.id);
       }

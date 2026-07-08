@@ -180,18 +180,44 @@ const tools = [
           note || _edit_data.note || 'Order edited via CS MCP tool',
         );
 
-        // Update shipping address if provided alongside item edits
-        if (shipping_address) {
+        // Update shipping address if one was staged in Phase 1 (or re-passed on
+        // this call). The staged fallback is the fix — previously the address was
+        // silently dropped unless the operator happened to re-pass it here.
+        const addr = shipping_address || _edit_data.shipping_address;
+        if (addr) {
           const addrInput = {};
-          if (shipping_address.first_name) addrInput.firstName = shipping_address.first_name;
-          if (shipping_address.last_name) addrInput.lastName = shipping_address.last_name;
-          if (shipping_address.address1) addrInput.address1 = shipping_address.address1;
-          if (shipping_address.address2 !== undefined) addrInput.address2 = shipping_address.address2 || '';
-          if (shipping_address.city) addrInput.city = shipping_address.city;
-          if (shipping_address.province) addrInput.province = shipping_address.province;
-          if (shipping_address.country) addrInput.countryCode = toCountryCode(shipping_address.country);
-          if (shipping_address.zip) addrInput.zip = shipping_address.zip;
+          if (addr.first_name) addrInput.firstName = addr.first_name;
+          if (addr.last_name) addrInput.lastName = addr.last_name;
+          if (addr.address1) addrInput.address1 = addr.address1;
+          if (addr.address2 !== undefined) addrInput.address2 = addr.address2 || '';
+          if (addr.city) addrInput.city = addr.city;
+          if (addr.province) addrInput.province = addr.province;
+          if (addr.country) addrInput.countryCode = toCountryCode(addr.country);
+          if (addr.zip) addrInput.zip = addr.zip;
           await updateOrderShippingAddress(committedOrder.id, addrInput);
+          lines.push('**Shipping address:** Updated');
+
+          // On a cross-border change, re-match the Warehance shipping method to
+          // the new zone (Shopify's shipping line title is immutable on placed
+          // orders). Mirrors the address-only branch; best-effort.
+          const newCountry = (toCountryCode(addr.country) || '').toUpperCase();
+          const oldCountry = (_edit_data.old_country || '').toUpperCase();
+          if (newCountry && oldCountry && newCountry !== oldCountry && _edit_data.warehance_order_id) {
+            try {
+              const isExpedited = /expedited/i.test(_edit_data.shipping_line_title || '');
+              const newZone = await getShippingZone(newCountry);
+              const methods = await fetchShippingMethods();
+              const match = matchWarehanceShippingMethod(methods, newZone, isExpedited);
+              if (match) {
+                await updateShippingMethod(_edit_data.warehance_order_id, match.id);
+                lines.push(`**Warehance shipping:** Updated to "${match.name}" for new country`);
+              } else {
+                lines.push(`**⚠️ Warehance shipping:** No method matched for zone "${newZone}" — update manually in Warehance`);
+              }
+            } catch (e) {
+              lines.push(`**⚠️ Warehance shipping:** Country-change method fix failed (${e.message}) — check manually in Warehance`);
+            }
+          }
         }
 
         lines.push('**Order Edit Completed**', '');
@@ -208,12 +234,17 @@ const tools = [
         }
         lines.push('');
 
-        // Handle price difference using Shopify's calculated amounts
+        // Handle price difference using Shopify's calculated amounts. Trust
+        // Shopify's committed totals — they already reflect any even-swap
+        // discounts that were actually applied. (The old `hasEvenSwaps ? 0`
+        // override zeroed the delta for the WHOLE edit whenever ANY single swap
+        // was even, silently skipping the invoice/refund owed on the other
+        // swaps.) The |delta| <= 0.01 thresholds below absorb tax rounding noise
+        // on a genuinely even swap.
         const originalTotal = parseFloat(committedOrder.totalPriceSet.shopMoney.amount);
         const currentTotal = parseFloat(committedOrder.currentTotalPriceSet.shopMoney.amount);
         const currency = committedOrder.totalPriceSet.shopMoney.currencyCode;
-        const hasEvenSwaps = _edit_data.swaps.some(s => s.even_swap);
-        const delta = hasEvenSwaps ? 0 : currentTotal - originalTotal;
+        const delta = currentTotal - originalTotal;
 
         if (delta > 0.01) {
           // Customer owes more — send invoice
@@ -656,6 +687,13 @@ const tools = [
         warehance_order_id: warehanceOrderId,
         swaps: stagedSwaps,
         note: note || null,
+        // Stage the address alongside the swaps so Phase 2 applies it even if the
+        // operator doesn't re-pass it on the confirm call. old_country /
+        // shipping_line_title let Phase 2 fix the Warehance method on a
+        // cross-border change (Shopify's shipping line title is immutable).
+        shipping_address: shipping_address || null,
+        old_country: (order.shippingAddress?.countryCodeV2 || '').toUpperCase(),
+        shipping_line_title: order.shippingLines?.[0]?.title || '',
       };
 
       // 7. Build preview output
@@ -679,6 +717,16 @@ const tools = [
         const whUrl = warehanceOrderUrl(whOrder);
         lines.push(`**Warehance:** ${whOrder.fulfillment_status}${whUrl ? ` — ${whUrl}` : ''}`);
         if (!dry_run) lines.push('  → Warehouse hold will be placed during edit');
+      }
+
+      if (shipping_address) {
+        const a = shipping_address;
+        const preview = [a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`.trim(), a.country].filter(Boolean).join(', ');
+        lines.push('', `**Shipping address change:** ${preview}`);
+        const newCountry = (toCountryCode(a.country) || '').toUpperCase();
+        if (newCountry && editData.old_country && newCountry !== editData.old_country) {
+          lines.push(`  → Cross-border change (${editData.old_country} → ${newCountry}); Warehance shipping method will be re-matched.`);
+        }
       }
 
       lines.push('', '**Changes:**');

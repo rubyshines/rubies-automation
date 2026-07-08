@@ -15,9 +15,19 @@ function getConfig() {
   return { storeUrl, token };
 }
 
-async function shopifyGraphQL(query, variables = {}, { retries = 3 } = {}) {
+async function shopifyGraphQL(query, variables = {}, { retries = 3, idempotent } = {}) {
   const { storeUrl, token } = getConfig();
   const url = `https://${storeUrl}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+
+  // A mutation may have already been APPLIED when a 5xx or a network drop occurs
+  // (e.g. the connection resets while reading the response body), so blindly
+  // retrying it risks double-executing — a double refund, a duplicate draft/
+  // exchange order, a duplicate fulfillment. Retry those transient failures only
+  // for reads. Mutations still retry on 429, which means the request was
+  // rejected before it ran. Auto-detect from the document (a GraphQL mutation
+  // starts with the `mutation` keyword); an explicit `idempotent` overrides.
+  const isMutation = /^\s*mutation\b/.test(query);
+  const retryTransient = idempotent !== undefined ? idempotent : !isMutation;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -30,8 +40,10 @@ async function shopifyGraphQL(query, variables = {}, { retries = 3 } = {}) {
         body: JSON.stringify({ query, variables }),
       });
 
-      // Retry on 429 (rate limit) and 5xx
-      if ((response.status === 429 || response.status >= 500) && attempt < retries) {
+      // 429 = rejected before execution → always safe to retry. 5xx may have
+      // applied a mutation → only retry for reads (or explicitly-idempotent ops).
+      const canRetryStatus = response.status === 429 || (response.status >= 500 && retryTransient);
+      if (canRetryStatus && attempt < retries) {
         const waitMs = response.status === 429 ? 2000 * attempt : 1000 * attempt;
         console.error(`[Shopify] ${response.status} on attempt ${attempt}, retrying in ${waitMs}ms...`);
         await new Promise(r => setTimeout(r, waitMs));
@@ -59,8 +71,10 @@ async function shopifyGraphQL(query, variables = {}, { retries = 3 } = {}) {
 
       return json.data;
     } catch (err) {
-      // Retry on network errors (ECONNRESET, fetch failed, etc.)
-      if (attempt < retries && (err.cause?.code === 'ECONNRESET' || err.message?.includes('fetch failed'))) {
+      // Network errors (ECONNRESET, fetch failed): the request may have reached
+      // Shopify and applied, so only retry for reads (or explicitly-idempotent ops).
+      const isNetworkErr = err.cause?.code === 'ECONNRESET' || err.message?.includes('fetch failed');
+      if (attempt < retries && retryTransient && isNetworkErr) {
         const waitMs = 2000 * attempt;
         console.error(`[Shopify] Network error on attempt ${attempt}: ${err.message}, retrying in ${waitMs}ms...`);
         await new Promise(r => setTimeout(r, waitMs));
