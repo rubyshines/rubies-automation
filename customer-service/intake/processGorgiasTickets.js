@@ -614,21 +614,57 @@ async function tryAutoCloseThankYou({ supabase, ticketId, messages, latestCustom
     return { handled: false, reason: 'classifier_negative', classifier: cls };
   }
 
-  await sendAutoCloseReply({
+  const sendResult = await sendAutoCloseReply({
     supabase, ticketId, messages, latestCustomerMsg, lastSentDraft, classifier: cls,
   });
-  return { handled: true, classifier: cls };
+  // claimed=false → a concurrent worker (webhook vs reconcile vs resync) owns
+  // this message and is sending the reply — still "handled" for this caller.
+  return { handled: true, classifier: cls, claimedElsewhere: sendResult?.claimed === false };
 }
 
 async function sendAutoCloseReply({ supabase, ticketId, messages, latestCustomerMsg, lastSentDraft, classifier }) {
   const reply = pickAutoCloseTemplate();
   const replyHtml = `<p>${reply}</p>`;
 
+  // Atomic claim BEFORE any Gorgias write. processTicket can race between the
+  // webhook, reconcileTickets, and gorgiasAdvisorResync; check-then-act here
+  // sends the customer duplicate replies. UNIQUE(gorgias_ticket_id,
+  // gorgias_message_id) makes exactly one caller the owner — a 23505 collision
+  // means another worker owns this message, so bail without sending. The claim
+  // records ownership only (status 'superseded' keeps it out of dashboard
+  // queues); it becomes the real sent row after the Gorgias writes succeed.
+  const { data: claim, error: claimErr } = await supabase
+    .from('cs_ai_drafts')
+    .insert({
+      gorgias_ticket_id: ticketId,
+      gorgias_message_id: latestCustomerMsg.id,
+      draft_response: reply,
+      structured_output: { auto_close_path: 'thank_you', claim: true },
+      audit_trail: ['auto_close_thank_you: claim'],
+      status: 'superseded',
+      message_type: 'closing',
+    })
+    .select('id')
+    .single();
+
+  if (claimErr) {
+    if (claimErr.code === '23505') return { claimed: false };
+    // Can't verify ownership — do NOT send a customer-facing reply blind.
+    throw new Error(`auto-close claim failed for ticket ${ticketId}: ${claimErr.message}`);
+  }
+
   // Gorgias writes FIRST (per domain key decision: errors propagate, no split-brain).
-  const replyResult = await gorgias.createTicketReply(ticketId, {
-    body_text: reply,
-    body_html: replyHtml,
-  });
+  let replyResult;
+  try {
+    replyResult = await gorgias.createTicketReply(ticketId, {
+      body_text: reply,
+      body_html: replyHtml,
+    });
+  } catch (err) {
+    // Nothing reached the customer — release the claim so a later pass retries.
+    await supabase.from('cs_ai_drafts').delete().eq('id', claim.id);
+    throw err;
+  }
   await gorgias.closeTicket(ticketId);
   await gorgias.assignTicket(ticketId, null);
   await gorgias.addTicketTag(ticketId, 'ai-resolved');
@@ -690,8 +726,6 @@ async function sendAutoCloseReply({ supabase, ticketId, messages, latestCustomer
 
   const draftRow = {
     ticket_id: ticketRow?.id || null,
-    gorgias_ticket_id: ticketId,
-    gorgias_message_id: latestCustomerMsg.id,
     customer_email: existingTicket?.customer_email || null,
     customer_name: existingTicket?.customer_name || null,
     draft_response: reply,
@@ -718,15 +752,17 @@ async function sendAutoCloseReply({ supabase, ticketId, messages, latestCustomer
     previous_draft_id: lastSentDraft.id,
   };
 
+  // Flesh out the claim row into the real sent draft.
   const { data: newDraft, error: insertErr } = await supabase
     .from('cs_ai_drafts')
-    .insert(draftRow)
+    .update(draftRow)
+    .eq('id', claim.id)
     .select('id')
     .single();
 
   if (insertErr) {
-    console.error(`[intake] Auto-close draft insert error for ${ticketId}: ${insertErr.message}`);
-    return;
+    console.error(`[intake] Auto-close draft update error for ${ticketId}: ${insertErr.message}`);
+    return { claimed: true };
   }
 
   await supabase.from('cs_ai_feedback_log').insert({
@@ -739,6 +775,8 @@ async function sendAutoCloseReply({ supabase, ticketId, messages, latestCustomer
     confidence: 'high',
     message_type: 'closing',
   });
+
+  return { claimed: true };
 }
 
 // ---------------------------------------------------------------------------

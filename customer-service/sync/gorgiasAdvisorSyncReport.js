@@ -26,10 +26,15 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-
-// Gorgias view IDs (built-in default views)
-const VIEW_ALL_OPEN = 28532;    // eq(ticket.status, "open") — excludes snoozed
-const VIEW_UNASSIGNED = 28531;  // open + no assignee
+const {
+  fetchOpenGorgiasTickets,
+  fetchAdvisorTicketsFor,
+  findAdvisorOnlyOpen,
+  countGorgiasMessages,
+  countAdvisorMessages,
+  countAdvisorCustomerMessages,
+  isStatusInSync,
+} = require('./lib/gorgiasDriftCore');
 
 // ─── Display helpers ────────────────────────────────────────
 
@@ -69,28 +74,11 @@ function section(title, desc, items, printTable) {
   console.log('└' + '─'.repeat(70));
 }
 
-// ─── Message counting ───────────────────────────────────────
+// ─── Message counting — canonical impls live in lib/gorgiasDriftCore ──
 
-function countAdvisorMsgs(r) {
-  const h = r?.conversation_history;
-  if (!Array.isArray(h)) return 0;
-  return h.filter(m => m.channel !== 'internal-note').length;
-}
-
-function countAdvisorCustomerMsgs(r) {
-  const h = r?.conversation_history;
-  if (!Array.isArray(h)) return 0;
-  return h.filter(m => m.sender === 'customer' && m.channel !== 'internal-note').length;
-}
-
-function countGorgiasMsgs(messages) {
-  const visible = messages.filter(m => m.channel !== 'internal-note');
-  return {
-    customer: visible.filter(m => !m.from_agent).length,
-    agent: visible.filter(m => m.from_agent).length,
-    total: visible.length,
-  };
-}
+const countAdvisorMsgs = (r) => countAdvisorMessages(r?.conversation_history);
+const countAdvisorCustomerMsgs = (r) => countAdvisorCustomerMessages(r?.conversation_history);
+const countGorgiasMsgs = countGorgiasMessages;
 
 // ─── Main ───────────────────────────────────────────────────
 
@@ -110,23 +98,9 @@ async function run() {
   // ── Step 1: Fetch ALL non-closed tickets from Gorgias via views ──
 
   console.log('Fetching open tickets from Gorgias views...');
-  const openTickets = await gorgias.getViewItems(VIEW_ALL_OPEN);
-  console.log(`  "All open" view: ${openTickets.length} tickets`);
-
-  const unassignedTickets = await gorgias.getViewItems(VIEW_UNASSIGNED);
-  console.log(`  "Unassigned" view: ${unassignedTickets.length} tickets`);
-
-  // Merge + dedup by ticket ID
-  const ticketMap = new Map();
-  for (const t of [...openTickets, ...unassignedTickets]) {
-    if (!t.spam) ticketMap.set(t.id, t);
-  }
-
-  // Also check for snoozed tickets — Gorgias views exclude them from "All open"
-  // but the raw API returns them as status:"open" with snooze_datetime set.
-  // We'll catch these via Advisor-side check below.
-
-  const gorgiasTickets = [...ticketMap.values()];
+  // Snoozed tickets are excluded from the views but caught via the
+  // Advisor-side check below.
+  const gorgiasTickets = await fetchOpenGorgiasTickets(gorgias);
   console.log(`  Combined (deduped): ${gorgiasTickets.length} tickets\n`);
 
   // ── Step 2: Fetch messages for each Gorgias ticket ──
@@ -146,25 +120,11 @@ async function run() {
 
   const ADVISOR_COLS = 'id, gorgias_ticket_id, status, customer_email, customer_name, conversation_history, turn_number, created_at, updated_at, gorgias_status, active_draft_id';
 
-  let advisorMatched = [];
-  if (gorgiasIds.length) {
-    const batchSize = 200;
-    for (let i = 0; i < gorgiasIds.length; i += batchSize) {
-      const { data } = await supabase
-        .from('cs_tickets').select(ADVISOR_COLS)
-        .in('gorgias_ticket_id', gorgiasIds.slice(i, i + batchSize));
-      if (data) advisorMatched.push(...data);
-    }
-  }
+  const { rows: advisorMatched, byGorgiasId: advisorByGorgias } =
+    await fetchAdvisorTicketsFor(supabase, gorgiasIds, ADVISOR_COLS);
 
   // Find Advisor tickets that are still open but weren't in our Gorgias views
-  const { data: advisorOpenNotInViews } = await supabase
-    .from('cs_tickets').select(ADVISOR_COLS)
-    .in('status', ['open', 'snoozed', 'follow_up'])
-    .not('gorgias_ticket_id', 'in', `(${gorgiasIds.length ? gorgiasIds.join(',') : '0'})`);
-
-  const advisorByGorgias = new Map();
-  for (const t of advisorMatched) advisorByGorgias.set(t.gorgias_ticket_id, t);
+  const advisorOpenNotInViews = await findAdvisorOnlyOpen(supabase, gorgiasIds, ADVISOR_COLS);
 
   // ── Step 4: Find RUBIES AI bot ──
 
@@ -208,13 +168,11 @@ async function run() {
 
     // ── Status drift ──
     // Tickets from the "All open" view are genuinely open — trust the view,
-    // not snooze_datetime (which may be stale/expired).
+    // not snooze_datetime (which may be stale/expired). The canonical
+    // status-compatibility map lives in lib/gorgiasDriftCore.
     const gStatus = g.status;
     const aStatus = a.status;
-    // parked and snoozed are Advisor-only states — Gorgias doesn't know about them.
-    // Only flag snoozed if Gorgias is the one showing snoozed (not Advisor-side snooze).
-    const advisorOnlyState = aStatus === 'parked' || (aStatus === 'snoozed' && gStatus === 'open');
-    if (gStatus !== aStatus && !advisorOnlyState) {
+    if (!isStatusInSync(gStatus, aStatus)) {
       syncDrift.status.push({
         gorgiasId: gId,
         customer: g.customer?.name || '',

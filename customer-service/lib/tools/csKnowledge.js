@@ -7,22 +7,22 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { embed } = require('../embeddings');
 const { searchProducts, getProducts } = require('../productCache');
+const { NUMERIC_SIZES, LETTER_SIZES, NUMERIC_TO_LETTER_UPPER } = require('../sizeUtils');
 
-// Size chart data (mirrors productCache.js constants for display)
+// Size chart display data — sizes/equivalences come from sizeUtils (the single
+// source of truth) so the customer-facing chart can never drift from the engine.
 const SIZE_CHART = {
   numeric: {
     label: 'Youth Size (Numeric)',
     products: 'AJ, Charlie, Brooke, Ruby',
-    sizes: ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16'],
+    sizes: NUMERIC_SIZES,
   },
   letter: {
     label: 'Size (Letter)',
     products: 'Ava, Cheeky, Sassy',
-    sizes: ['XXS', 'XXS+', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X', '4X'],
+    sizes: LETTER_SIZES,
   },
-  numericToLetter: {
-    '10': 'XXS', '11': 'XXS+', '12': 'XS', '13': 'XS+', '14': 'S', '16': 'M',
-  },
+  numericToLetter: NUMERIC_TO_LETTER_UPPER,
 };
 
 // ---------------------------------------------------------------------------

@@ -143,6 +143,47 @@ async function updateShippingMethod(warehanceOrderId, shippingMethodId) {
 }
 
 /**
+ * Pick the Warehance shipping method for a destination zone + speed from a
+ * method list. Single source of truth for the routing rule (was duplicated
+ * between orderNotes' hardcoded ID tables and editOrder's name matcher, with
+ * divergent strategies):
+ *   US:                 US Standard / US Expedited
+ *   Non-US expedited:   Fedex (regardless of zone)
+ *   Non-US standard:    Passport DDP (canada / ddp zone) or Passport DDU
+ * Matches by name so recreated/renamed methods can't strand stale IDs (the
+ * 2026-04-30 stale-ID incident). Pure — unit-tested.
+ *
+ * @param {Array<{id, name}>} methods — from fetchShippingMethods()
+ * @param {'us'|'canada'|'ddp'|'ddu'|null} zone — from getShippingZone()
+ * @param {'standard'|'expedited'} speed
+ * @returns {{id, name}|null}
+ */
+function pickShippingMethod(methods, zone, speed) {
+  const nm = m => (m.name || m.title || '').toLowerCase();
+  const byName = pred => (methods || []).find(m => pred(nm(m))) || null;
+  const expedited = speed === 'expedited';
+
+  if (zone === 'us') {
+    return expedited
+      ? byName(n => /\bus\b/.test(n) && n.includes('expedited'))
+      : byName(n => /\bus\b/.test(n) && n.includes('standard'));
+  }
+  if (expedited) return byName(n => n.includes('fedex'));
+  return (zone === 'ddp' || zone === 'canada')
+    ? byName(n => n.includes('ddp'))
+    : byName(n => n.includes('ddu'));
+}
+
+/**
+ * Resolve the Warehance shipping method for a zone + speed against the LIVE
+ * method list. Returns { id, name } or null when nothing matches.
+ */
+async function resolveShippingMethod({ zone, speed }) {
+  const methods = await fetchShippingMethods();
+  return pickShippingMethod(methods, zone, speed);
+}
+
+/**
  * Cancel an order in Warehance (e.g., already fulfilled in Shopify, nothing to ship).
  */
 async function cancelOrder(warehanceOrderId) {
@@ -296,6 +337,8 @@ module.exports = {
   releaseWarehouseHold,
   fetchShippingMethods,
   updateShippingMethod,
+  pickShippingMethod,
+  resolveShippingMethod,
   cancelOrder,
   warehanceOrderUrl,
   fetchSkuStock,

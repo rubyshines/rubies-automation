@@ -83,6 +83,7 @@ function makeSupabaseMock() {
     nextSelectResult: { data: null, error: null }, // controlled per-test
     nextInsertResult: { data: { id: 555 }, error: null },
     nextUpsertResult: { data: { id: 777 }, error: null },
+    nextUpdateResult: { data: { id: 555 }, error: null },
   };
 
   function chain(table) {
@@ -99,7 +100,13 @@ function makeSupabaseMock() {
     api.single = async () => {
       if (state.op === 'insert') return handler.nextInsertResult;
       if (state.op === 'upsert') return handler.nextUpsertResult;
+      if (state.op === 'update') return handler.nextUpdateResult;
       return handler.nextSelectResult;
+    };
+    api.delete = () => {
+      state.op = 'delete';
+      supabaseUpdates.push({ table, row: null, op: 'delete' });
+      return api;
     };
     api.insert = (row) => {
       state.op = 'insert';
@@ -297,18 +304,40 @@ describe('tryAutoCloseThankYou — classifier outcomes', () => {
     assert.equal(ticketUpsert.row.customer_sentiment, 'positive');
     assert.equal(ticketUpsert.row.active_draft_id, null);
 
-    // cs_ai_drafts insert with auto_close_path='thank_you'
-    const draftInsert = supabaseInserts.find(i => i.table === 'cs_ai_drafts');
-    assert.ok(draftInsert);
-    assert.equal(draftInsert.row.auto_close_path, 'thank_you');
-    assert.equal(draftInsert.row.status, 'sent');
-    assert.equal(draftInsert.row.message_type, 'closing');
-    assert.equal(draftInsert.row.previous_draft_id, 200);
+    // Atomic claim: cs_ai_drafts insert BEFORE the Gorgias reply, marked as a
+    // claim and kept out of dashboard queues (status 'superseded').
+    const claimInsert = supabaseInserts.find(i => i.table === 'cs_ai_drafts');
+    assert.ok(claimInsert);
+    assert.equal(claimInsert.row.structured_output.claim, true);
+    assert.equal(claimInsert.row.status, 'superseded');
+    assert.equal(claimInsert.row.gorgias_message_id, 3);
+
+    // The claim row is then fleshed out into the real sent draft via update
+    const draftUpdate = supabaseUpdates.find(u => u.table === 'cs_ai_drafts' && u.row);
+    assert.ok(draftUpdate);
+    assert.equal(draftUpdate.row.auto_close_path, 'thank_you');
+    assert.equal(draftUpdate.row.status, 'sent');
+    assert.equal(draftUpdate.row.message_type, 'closing');
+    assert.equal(draftUpdate.row.previous_draft_id, 200);
 
     // feedback log
     const fbInsert = supabaseInserts.find(i => i.table === 'cs_ai_feedback_log');
     assert.ok(fbInsert);
     assert.equal(fbInsert.row.action, 'auto_close_thank_you');
+  });
+
+  it('bails without any Gorgias write when another worker owns the claim', async () => {
+    classifierResult = { auto_close: true, reason: 'pure_thanks' };
+    // Unique-violation on the claim insert = a concurrent processTicket
+    // (webhook vs reconcile vs resync) already owns this message.
+    supabaseMock.handler.nextInsertResult = { data: null, error: { code: '23505', message: 'duplicate key' } };
+
+    const result = await tryAutoCloseThankYou(makeOpts());
+
+    assert.equal(result.handled, true);
+    assert.equal(result.claimedElsewhere, true);
+    assert.equal(gorgiasCalls.length, 0, 'no customer-facing write may happen without the claim');
+    assert.equal(supabaseUpserts.length, 0);
   });
 });
 

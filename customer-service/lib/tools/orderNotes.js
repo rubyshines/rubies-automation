@@ -10,27 +10,10 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { businessDaysSince } = require('../../../shared/businessDays');
-const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
+const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehouseHold, updateShippingMethod, resolveShippingMethod, warehanceOrderUrl } = require('../../../reports/lib/warehanceClient');
 const { getShippingZone } = require('./shippingLookup');
 const { getDraftOrderByName, updateDraftOrderShipping, getAdminUrl } = require('../shopify');
 const { getShippingMethodTitle } = require('../orderUtils');
-
-// Warehance shipping method IDs (from /shipping-methods endpoint).
-// Refreshed 2026-04-30 — earlier IDs (231185182253 / 231185182258) were stale.
-const US_SHIPPING_METHODS = {
-  standard: { id: 231185182340, name: 'US Standard Shipping' },
-  expedited: { id: 231185182342, name: 'US Expedited Shipping' },
-};
-
-// Non-US expedited routes through Fedex regardless of zone.
-const FEDEX_METHOD = { id: 231185182476, name: 'Fedex' };
-
-// Non-US standard: Passport with duties prepaid (Canada / DDP zone) or duties
-// unpaid (DDU zone). Method name encodes the Incoterms, so no separate field.
-const PASSPORT_METHODS = {
-  ddp: { id: 231185182424, name: 'Passport DDP' },
-  ddu: { id: 231185182425, name: 'Passport DDU' },
-};
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -560,19 +543,17 @@ async function handleUpdateShippingSpeed({ order_number, speed, reason }) {
 
   const countryCode = whOrder.ship_to_address?.country_code;
 
-  // Pick the Warehance method to apply:
-  //   US: standard ↔ expedited (US Standard / US Expedited)
-  //   Non-US expedited: Fedex
-  //   Non-US standard: Passport DDP for Canada / DDP zone, Passport DDU for DDU
-  //     zone (zone determined from shipping_zones; falls back to DDU when unknown).
+  // Pick the Warehance method to apply — routing rule lives in
+  // warehanceClient.pickShippingMethod (matched against the live method list).
+  const zone = countryCode === 'US' ? 'us' : await getShippingZone(countryCode);
   let method;
-  if (countryCode === 'US') {
-    method = US_SHIPPING_METHODS[speed];
-  } else if (speed === 'expedited') {
-    method = FEDEX_METHOD;
-  } else {
-    const zone = await getShippingZone(countryCode);
-    method = (zone === 'ddp' || zone === 'canada') ? PASSPORT_METHODS.ddp : PASSPORT_METHODS.ddu;
+  try {
+    method = await resolveShippingMethod({ zone, speed });
+  } catch (err) {
+    return { content: [{ type: 'text', text: `Failed to load Warehance shipping methods: ${err.message}\n\nWarehance: ${whUrl}` }], isError: true };
+  }
+  if (!method) {
+    return { content: [{ type: 'text', text: `No Warehance shipping method matched zone "${zone}" / ${speed} — update manually in Warehance.\n\nWarehance: ${whUrl}` }], isError: true };
   }
 
   if (whOrder.fulfillment_status === 'in_progress') {

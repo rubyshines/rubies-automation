@@ -24,9 +24,15 @@ if (!process.env.SUPABASE_URL) {
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
-
-const VIEW_ALL_OPEN = 28532;
-const VIEW_UNASSIGNED = 28531;
+const {
+  fetchOpenGorgiasTickets,
+  fetchAdvisorTicketsFor,
+  findAdvisorOnlyOpen,
+  countGorgiasMessages,
+  countAdvisorMessages,
+  countAdvisorCustomerMessages,
+  isStatusInSync,
+} = require('./lib/gorgiasDriftCore');
 
 function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
@@ -44,36 +50,17 @@ async function run() {
   const gorgias = require('../import/gorgiasClient');
   const supabase = getSupabaseClient();
 
-  // ── Fetch open tickets from Gorgias views ──
-  const openTickets = await gorgias.getViewItems(VIEW_ALL_OPEN);
-  const unassignedTickets = await gorgias.getViewItems(VIEW_UNASSIGNED);
-  const ticketMap = new Map();
-  for (const t of [...openTickets, ...unassignedTickets]) {
-    if (!t.spam) ticketMap.set(t.id, t);
-  }
-  const gorgiasTickets = [...ticketMap.values()];
+  // ── Fetch open tickets from Gorgias views (shared drift core) ──
+  const gorgiasTickets = await fetchOpenGorgiasTickets(gorgias);
 
   // ── Fetch matching Advisor tickets ──
   const gorgiasIds = gorgiasTickets.map(t => t.id);
   const COLS = 'id, gorgias_ticket_id, status, customer_email, customer_name, conversation_history';
-  let advisorTickets = [];
-  if (gorgiasIds.length) {
-    const batchSize = 200;
-    for (let i = 0; i < gorgiasIds.length; i += batchSize) {
-      const { data } = await supabase
-        .from('cs_tickets').select(COLS)
-        .in('gorgias_ticket_id', gorgiasIds.slice(i, i + batchSize));
-      if (data) advisorTickets.push(...data);
-    }
-  }
-  const advisorMap = new Map();
-  for (const t of advisorTickets) advisorMap.set(t.gorgias_ticket_id, t);
+  const { rows: advisorTickets, byGorgiasId: advisorMap } =
+    await fetchAdvisorTicketsFor(supabase, gorgiasIds, COLS);
 
   // ── Check for Advisor tickets open but not in Gorgias views ──
-  const { data: advisorDrift } = await supabase
-    .from('cs_tickets').select(COLS)
-    .in('status', ['open', 'snoozed', 'follow_up'])
-    .not('gorgias_ticket_id', 'in', `(${gorgiasIds.length ? gorgiasIds.join(',') : '0'})`);
+  const advisorDrift = await findAdvisorOnlyOpen(supabase, gorgiasIds, COLS);
 
   // ── Find RUBIES AI bot ──
   const aiBot = await gorgias.findUser('RUBIES AI');
@@ -98,18 +85,32 @@ async function run() {
       continue;
     }
 
+    // Status check (was advertised in the header but never populated — the
+    // canonical compatibility map lives in the shared drift core).
+    const gStatus = gTicket.snooze_datetime ? 'snoozed' : gTicket.status;
+    if (!isStatusInSync(gStatus, a.status)) {
+      issues.statusDrift.push({
+        id: gTicket.id,
+        customer: gTicket.customer?.name || '',
+        email: gTicket.customer?.email || '',
+        gorgiasStatus: gStatus,
+        advisorStatus: a.status,
+      });
+    }
+
     // Message count check
     const messages = await gorgias.getTicketMessages(gTicket.id);
-    const gCust = messages.filter(m => !m.from_agent && m.channel !== 'internal-note').length;
-    const aCust = (a.conversation_history || []).filter(m => m.sender === 'customer' && m.channel !== 'internal-note').length;
-    if (gCust > aCust) {
+    const gCounts = countGorgiasMessages(messages);
+    const aCust = countAdvisorCustomerMessages(a.conversation_history);
+    if (gCounts.customer > aCust) {
       issues.messageDrift.push({
         id: gTicket.id,
         customer: gTicket.customer?.name || '',
         email: gTicket.customer?.email || '',
-        gCust, aCust,
-        gTotal: messages.filter(m => m.channel !== 'internal-note').length,
-        aTotal: (a.conversation_history || []).filter(m => m.channel !== 'internal-note').length,
+        gCust: gCounts.customer,
+        aCust,
+        gTotal: gCounts.total,
+        aTotal: countAdvisorMessages(a.conversation_history),
       });
     }
     await gorgias.delay(300);
@@ -121,8 +122,8 @@ async function run() {
     try {
       const g = await gorgias.getTicket(t.gorgias_ticket_id);
       const gStatus = g.snooze_datetime ? 'snoozed' : g.status;
-      // Only flag real drift — not parked or advisor-snoozed
-      if (gStatus === 'closed' && ['open', 'follow_up'].includes(t.status)) {
+      // Only flag real drift — the canonical map tolerates parked/advisor-snoozed
+      if (!isStatusInSync(gStatus, t.status)) {
         issues.advisorDrift.push({
           id: t.gorgias_ticket_id,
           customer: t.customer_name || '',
@@ -308,6 +309,25 @@ function buildEmailHtml(issues, ticketCount, totalIssues, elapsed, advisorSummar
         <td style="${tdStyle}">${r.aCust}</td>
         <td style="${tdStyle}">${r.gTotal}</td>
         <td style="${tdStyle}">${r.aTotal}</td>
+      </tr>`).join('')}
+    </table>`;
+  }
+
+  // Status drift (both tickets known, statuses incompatible)
+  if (issues.statusDrift.length) {
+    body += `<h3 style="margin:24px 0 8px;color:#d97706;">Status Drift (${issues.statusDrift.length})</h3>`;
+    body += `<p style="margin:4px 0 8px;color:#666;font-size:12px;">Gorgias and CS Advisor disagree on ticket status</p>`;
+    body += `<table style="${tableStyle}">
+      <tr>
+        <th style="${thStyle}">Ticket</th><th style="${thStyle}">Customer</th><th style="${thStyle}">Email</th>
+        <th style="${thStyle}">Gorgias</th><th style="${thStyle}">Advisor</th>
+      </tr>
+      ${issues.statusDrift.map(r => `<tr>
+        <td style="${tdStyle}">#${r.id}</td>
+        <td style="${tdStyle}">${esc(r.customer)}</td>
+        <td style="${tdStyle}">${esc(r.email)}</td>
+        <td style="${tdStyle}">${r.gorgiasStatus}</td>
+        <td style="${tdStyle}">${r.advisorStatus}</td>
       </tr>`).join('')}
     </table>`;
   }
