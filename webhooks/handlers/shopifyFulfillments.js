@@ -54,12 +54,18 @@ async function handle(topic, payload) {
   // Merge into existing fulfillments array
   const existingFulfillments = existingOrder.fulfillments || [];
   const fulfillmentId = String(payload.id);
+  // Store the Shopify fulfillment id so later update events match this entry
+  // even without a tracking number — tracking-only matching made no-tracking
+  // fulfillments re-append a duplicate on every update event.
+  newFulfillment.shopifyFulfillmentId = fulfillmentId;
 
-  // Replace existing entry with same ID or append
+  // Replace existing entry with same fulfillment id (or same tracking number,
+  // for entries written before the id was stored) or append
   let found = false;
   const updatedFulfillments = existingFulfillments.map(f => {
-    // Match by tracking number since we don't store fulfillment ID
-    if (f.trackingNumber && f.trackingNumber === newFulfillment.trackingNumber) {
+    const idMatch = f.shopifyFulfillmentId && f.shopifyFulfillmentId === fulfillmentId;
+    const trackingMatch = f.trackingNumber && f.trackingNumber === newFulfillment.trackingNumber;
+    if (idMatch || trackingMatch) {
       found = true;
       // Preserve fields the REST payload doesn't carry: events, displayStatus,
       // inTransitAt, estimatedDeliveryAt (populated by daily GraphQL sync), and

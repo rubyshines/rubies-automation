@@ -8,6 +8,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { getQboClient } = require('../qbo');
 const { parseReport } = require('../reportParser');
 const { fmtCurrency, fmtPct, formatDate, sparkline } = require('./helpers');
+const { filterMonthlySnapshots } = require('../monthlySnapshots');
 
 async function handleFinancialHealth({ live }) {
   const supabase = getSupabaseClient();
@@ -62,13 +63,17 @@ async function handleFinancialHealth({ live }) {
 
   const { data: monthlySnaps } = await supabase
     .from('qbo_report_snapshots')
-    .select('period_start, summary')
+    .select('period_start, period_end, summary')
     .eq('report_type', 'ProfitAndLoss')
     .gte('period_start', cutoff)
     .order('period_start', { ascending: true });
 
-  const monthlyRevenues = (monthlySnaps || []).map(s => s.summary?.totalIncome).filter(v => v != null);
-  const monthlyNetIncomes = (monthlySnaps || []).map(s => s.summary?.netIncome).filter(v => v != null);
+  // One row per calendar month — the raw table also holds YTD/quarter spans
+  // and one daily partial per day of the current month, which skewed the
+  // trend and growth grade.
+  const monthly = filterMonthlySnapshots(monthlySnaps);
+  const monthlyRevenues = monthly.map(s => s.summary?.totalIncome).filter(v => v != null);
+  const monthlyNetIncomes = monthly.map(s => s.summary?.netIncome).filter(v => v != null);
 
   // Compute health score
   let healthScore = 0;

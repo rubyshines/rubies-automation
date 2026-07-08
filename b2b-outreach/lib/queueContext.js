@@ -21,7 +21,7 @@ async function buildContexts(sb, companies) {
   const ids = (companies || []).map(c => c.id);
   const messages = ids.length ? await fetchAll(() =>
     sb.from('b2b_messages')
-      .select('company_id, direction, message_type, sent_at')
+      .select('company_id, direction, message_type, sent_at, thread_id')
       .in('company_id', ids)
       .order('sent_at', { ascending: true })
   ) : [];
@@ -36,6 +36,7 @@ async function buildContexts(sb, companies) {
       hasPendingDraft: pendingSet.has(c.id),
       sentTypes: new Set(),
       lastInboundAt: null,
+      lastInboundThreadId: null,
       lastOutboundAt: c.last_outbound_at || null,
       lastOrderAt: c.last_order_date || null,
       orderCount: c.order_count || 0,
@@ -47,6 +48,9 @@ async function buildContexts(sb, companies) {
     if (!ctx) continue;
     if (m.direction === 'inbound') {
       ctx.lastInboundAt = m.sent_at;
+      // Carry the inbound's thread so Tier-1 reply drafts send IN the thread
+      // (without it every reply went out as a brand-new email).
+      ctx.lastInboundThreadId = m.thread_id || ctx.lastInboundThreadId;
     } else {
       ctx.lastOutboundAt = ctx.lastOutboundAt && ctx.lastOutboundAt > m.sent_at ? ctx.lastOutboundAt : m.sent_at;
       if (m.message_type) {

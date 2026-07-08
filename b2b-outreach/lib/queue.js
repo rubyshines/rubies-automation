@@ -60,6 +60,9 @@ function computeQueueEntry(company, ctx, now = new Date()) {
       message_type: null, // advisor reads the thread and decides
       reason: `replied ${Math.round((now - new Date(ctx.lastInboundAt)) / 3600000)}h ago — waiting on us`,
       waiting_since: ctx.lastInboundAt,
+      // Thread the reply — without this the draft stored thread_id null and
+      // sendB2bEmail sent the reply as a brand-new email outside the thread.
+      thread_id: ctx.lastInboundThreadId || null,
     };
   }
 

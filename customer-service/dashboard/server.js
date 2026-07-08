@@ -1703,7 +1703,11 @@ async function apiActionChat(draftId, body, { onStream, signal } = {}) {
       summary:     result.response || '',
       links:       result.links || [],
     };
-    updates.actions = [...(Array.isArray(draft.actions) ? draft.actions : []), entry];
+    // Atomic append — read-modify-write here raced the holdReconcile sweep
+    // and could silently drop the other writer's entry.
+    const { appendDraftAction } = require('../lib/draftActions');
+    const ap = await appendDraftAction(supabase, draftId, entry);
+    if (ap.error) console.error(`[apiActionChat] actions append failed for draft ${draftId}: ${ap.error}`);
     // Clear the in-progress chat scratchpad — the action is now filed in the
     // timeline and the bottom panel should return to idle for the next action.
     // EXCEPT when the same turn ALSO staged a new awaiting-confirmation preview

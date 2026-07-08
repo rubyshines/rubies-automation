@@ -127,22 +127,11 @@ async function classifyBatchTier3(messages) {
   Preview: ${bodyPreview}`;
   }).join('\n\n');
 
-  const validLabels = CLASSIFICATION_LABELS.concat(['spam']).join(', ');
-
-  const PRIMARY_MODEL = MODELS.SONNET;
-  const FALLBACK_MODEL = MODELS.HAIKU;
-
-  let response;
-  let modelUsed = PRIMARY_MODEL;
-  try {
-    response = await callClaude({
-      component: 'gmail_email_classifier',
-      metadata: { batch_size: messages.length, tier: 'primary' },
-      model: PRIMARY_MODEL,
-      max_tokens: 2000,
-      messages: [{
-        role: 'user',
-        content: `Classify each email into exactly ONE business area for a small gender-affirming underwear brand called RUBIES (rubyshines.com).
+  // ONE prompt for both tiers. The Haiku 529-fallback used to carry its own
+  // trimmed copy that had dropped the newsletter/auto_reply guidance and the
+  // spam-vs-lgbtq_org discrimination rules — exactly when the fallback fired,
+  // real LGBTQ+ org outreach was most likely to be misclassified.
+  const classifyPrompt = `Classify each email into exactly ONE business area for a small gender-affirming underwear brand called RUBIES (rubyshines.com).
 
 Categories:
 - customer_support: End-customer (B2C consumer) emails about orders, sizing, returns, exchanges, product questions
@@ -164,9 +153,21 @@ Return a JSON array with one object per email: [{"index": 0, "classification": "
 Only return the JSON array, nothing else.
 
 Emails:
-${emailSummaries}`,
-    }],
-  });
+${emailSummaries}`;
+
+  const PRIMARY_MODEL = MODELS.SONNET;
+  const FALLBACK_MODEL = MODELS.HAIKU;
+
+  let response;
+  let modelUsed = PRIMARY_MODEL;
+  try {
+    response = await callClaude({
+      component: 'gmail_email_classifier',
+      metadata: { batch_size: messages.length, tier: 'primary' },
+      model: PRIMARY_MODEL,
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: classifyPrompt }],
+    });
   } catch (err) {
     if (err.status === 529) {
       console.warn(`[classifier] Sonnet overloaded — falling back to Haiku for ${messages.length} emails`);
@@ -176,32 +177,7 @@ ${emailSummaries}`,
         metadata: { batch_size: messages.length, tier: 'fallback' },
         model: FALLBACK_MODEL,
         max_tokens: 2000,
-        messages: [{
-          role: 'user',
-          content: `Classify each email into exactly ONE business area for a small gender-affirming underwear brand called RUBIES (rubyshines.com).
-
-Categories:
-- customer_support: End-customer (B2C consumer) emails about orders, sizing, returns, exchanges, product questions
-- wholesale: B2B retailer/shop communications — sales outreach, reorders, wholesale account management
-- lgbtq_org: LGBTQ+ community organizations — donation programs, partnership outreach, community centers, pride events, gender-affirming programs
-- product_rd: Product design, fit testing, sampling, development with suppliers/designers
-- production_orders: Active manufacturing orders, factory production, PO tracking
-- email_marketing: Email campaigns, marketing strategy, Klaviyo, content planning — specifically OUR campaigns and our marketing team (e.g. Hope Team Marketing)
-- 3pl_fulfillment: 3PL warehouse, logistics, shipping operations, inventory management
-- finance_legal: Accounting, tax, banking, legal, corporate, trust matters
-- internal: Team communications, internal operations
-- newsletter: Recurring newsletters, digests, or updates we subscribed to — not direct communications
-- auto_reply: Out-of-office replies, vacation auto-responders, automatic replies
-- spam: Unsolicited sales pitches, cold outreach FROM other companies trying to sell TO us
-
-IMPORTANT: LGBTQ+ organizations reaching out for the first time are NEVER spam, even if unsolicited. Classify as lgbtq_org.
-
-Return a JSON array with one object per email: [{"index": 0, "classification": "...", "confidence": 0.0-1.0}]
-Only return the JSON array, nothing else.
-
-Emails:
-${emailSummaries}`,
-        }],
+        messages: [{ role: 'user', content: classifyPrompt }],
       });
     } else {
       throw err;
