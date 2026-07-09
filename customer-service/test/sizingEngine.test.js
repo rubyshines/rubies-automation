@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
 // Mock Supabase BEFORE requiring decisionTree (it destructures at import time)
 // ---------------------------------------------------------------------------
 const supabaseModulePath = require.resolve('../../shared/supabaseClient');
-const mockSupabaseData = { partners: [], sizeMatches: [] };
+const mockSupabaseData = { partners: [], sizeMatches: [], routings: [], routingsError: false };
 
 // Mock product CS config data (normally loaded from product_cs_config table)
 const mockCsConfig = [
@@ -40,18 +40,39 @@ require.cache[supabaseModulePath] = {
   loaded: true,
   exports: {
     getSupabaseClient: () => ({
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            eq: () => Promise.resolve({ data: mockSupabaseData.partners }),
+      from: (table) => {
+        if (table === 'donation_routings') {
+          // Chain used by fetchRecentPartnerLoads via fetchAllPaginated:
+          // select().gte().not().order().range()
+          const chain = {
+            select: () => chain,
+            gte: () => chain,
+            not: () => chain,
+            order: () => chain,
+            range: () => (mockSupabaseData.routingsError
+              ? Promise.resolve({ data: null, error: { message: 'mock routings error' } })
+              : Promise.resolve({ data: mockSupabaseData.routings, error: null })),
+          };
+          return chain;
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => Promise.resolve({ data: mockSupabaseData.partners }),
+            }),
           }),
-        }),
-      }),
+        };
+      },
       rpc: (fn) => {
         if (fn === 'get_cs_product_config') return Promise.resolve({ data: mockCsConfig, error: null });
         return Promise.resolve({ data: mockSupabaseData.sizeMatches });
       },
     }),
+    fetchAllPaginated: async (buildQuery) => {
+      const { data, error } = await buildQuery().range(0, 999);
+      if (error) throw new Error(`fetchAllPaginated: ${error.message}`);
+      return data || [];
+    },
     upsert: () => Promise.resolve(),
   },
 };
@@ -1372,6 +1393,48 @@ describe('prescribeDonationRouting', () => {
     assert.equal(result.type, 'local_no_partner');
   });
 
+  it('balances by trailing-window item volume from donation_routings, not lifetime counters', async () => {
+    // X looks idle by lifetime counter (0) but heavy in the window (20 items);
+    // Y looks busy by counter (99) but has nothing recent. Windowed loads must
+    // favor Y. rng=0.5 lands on Y under windowed loads (weights 1/21 vs 1) and
+    // would land on X under counter-based loads (weights 1 vs 1/100).
+    mockSupabaseData.partners = [
+      { id: 1, name: 'Partner X', city: 'X City', donations_routed: 0 },
+      { id: 2, name: 'Partner Y', city: 'Y City', donations_routed: 99 },
+    ];
+    mockSupabaseData.routings = [
+      { partner_id: 1, items_count: 12 },
+      { partner_id: 1, items_count: 8 },
+    ];
+    mockSupabaseData.routingsError = false;
+    const intake = makeIntake({ items: [makeItem({ issue: 'close_fit_tight' })] });
+    const ctx = makeContext({
+      targetOrder: makeOrder({ lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', quantity: 3 }] }),
+    });
+    ctx._rng = () => 0.5;
+    const result = await prescribeDonationRouting(intake, ctx);
+    assert.equal(result.type, 'partner');
+    assert.equal(result.partner.name, 'Partner Y');
+    assert.ok(result.audit.includes('0 items routed in last 90d'));
+  });
+
+  it('falls back to lifetime counters when the routings log is unreadable', async () => {
+    mockSupabaseData.partners = [
+      { id: 1, name: 'Partner X', city: 'X City', donations_routed: 50 },
+      { id: 2, name: 'Partner Y', city: 'Y City', donations_routed: 0 },
+    ];
+    mockSupabaseData.routings = [];
+    mockSupabaseData.routingsError = true;
+    const intake = makeIntake({ items: [makeItem({ issue: 'close_fit_tight' })] });
+    const ctx = makeContext({
+      targetOrder: makeOrder({ lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', quantity: 3 }] }),
+    });
+    ctx._rng = () => 0.5; // weights 1/51 vs 1 → lands on Y
+    const result = await prescribeDonationRouting(intake, ctx);
+    assert.equal(result.partner.name, 'Partner Y');
+    mockSupabaseData.routingsError = false;
+  });
+
   it('renders the partner description verbatim and the wash reminder on its own line', async () => {
     mockSupabaseData.partners = [{
       id: 1,
@@ -1394,6 +1457,35 @@ describe('prescribeDonationRouting', () => {
     // Wash reminder carries the worn/tried-on vs new-with-tags distinction.
     assert.ok(result.response_text.includes('Please wash any items that have been worn or tried on before donating.'));
     assert.ok(result.response_text.includes('Anything still new with tags can be sent as is.'));
+  });
+});
+
+describe('pickWeightedByLoad', () => {
+  const { pickWeightedByLoad } = require('../lib/donationRouting');
+  // Candidates in distance order: A load 0 (w=1), B load 1 (w=0.5), C load 3
+  // (w=0.25). Total weight 1.75; buckets: A [0,1), B [1,1.5), C [1.5,1.75).
+  const candidates = [
+    { name: 'A', load: 0 },
+    { name: 'B', load: 1 },
+    { name: 'C', load: 3 },
+  ];
+  const getLoad = c => c.load;
+
+  it('lands in the correct bucket for each rng value', () => {
+    assert.equal(pickWeightedByLoad(candidates, getLoad, () => 0.5).name, 'A');   // 0.875
+    assert.equal(pickWeightedByLoad(candidates, getLoad, () => 0.6).name, 'B');   // 1.05
+    assert.equal(pickWeightedByLoad(candidates, getLoad, () => 0.99).name, 'C');  // 1.7325
+  });
+
+  it('never fully excludes a loaded candidate', () => {
+    // rng just under 1 always resolves to the last candidate — a heavily
+    // loaded partner still has a nonzero share (the anti-blackout property).
+    const heavy = [{ name: 'new', load: 0 }, { name: 'old', load: 1000 }];
+    assert.equal(pickWeightedByLoad(heavy, getLoad, () => 0.9999).name, 'old');
+  });
+
+  it('handles a single candidate and missing loads', () => {
+    assert.equal(pickWeightedByLoad([{ name: 'only' }], () => undefined).name, 'only');
   });
 });
 

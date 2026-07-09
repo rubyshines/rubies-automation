@@ -8,7 +8,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Donation Partner Registry (SSOT):** `donation_partners` in Supabase is the single source for both CS routing AND the public donation map. Each row carries `mailing_address` (multi-line "RUBIES Returns / c/o ORG" block), `logo_url` (always on cdn.shopify.com), `website_url`, `size_range`, `latitude`, `longitude`, `country_code`, `description`, `active`, `donations_routed`. The website reads a static JSON asset published from this table; CS routing reads the same rows at runtime.
 
-**Geographic Donation Routing:** Google Maps geocoding of customer address → haversine distance to all active partners in customer's country → selects 3 closest → load-balances by fewest prior donations. Fallback: single-item returns suggest local donation. No partners in country → suggest local + ask for referral. `formatDonationText` prefers `mailing_address` from the partner row, with legacy reconstruction as fallback.
+**Geographic Donation Routing:** Google Maps geocoding of customer address → haversine distance to all active partners in customer's country → selects 3 closest → weighted-random pick, inverse to item volume routed over the trailing 90 days (from the `donation_routings` log). Fallback: single-item returns suggest local donation. No partners in country → suggest local + ask for referral. `formatDonationText` prefers `mailing_address` from the partner row, with legacy reconstruction as fallback.
 
 **Donation Logging:** Tracks customer email, order number, partner assigned, item count, routing type (partner/local_single/local_no_partner). Enables impact reporting.
 
@@ -47,7 +47,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Key Decisions
 
 - **Single source of truth in `donation_partners`:** Theme reads a published JSON asset, never edits partners through Shopify section blocks. Updates flow only from rubies-automations.
-- **Geographic + load-balance hybrid routing:** Closest 3 candidates balanced by prior donation count.
+- **Geographic + load-balance hybrid routing:** Closest 3 candidates, weighted-random by trailing-90-day item volume (from `donation_routings`, not the lifetime counter). Replaced deterministic least-loaded-by-lifetime-count 2026-07: a newly added partner entered at count 0 and monopolized its region until it caught up (Montgomery blacked out Raleigh for two weeks), and counting routings instead of items undercounted big shipments. Weighted random keeps every nearby partner active; the lifetime `donations_routed` counter remains for impact reporting only.
 - **Defect exclusion:** Only exchanges get donated, not defects.
 - **Match survey submissions to existing partners by website domain:** Org names drift (e.g. "Rainbow Youth Center" vs "Four Corners Rainbow Youth Center"); domains stay stable. Name match is a fallback only.
 - **Logos always re-hosted on Shopify CDN:** External hosts (Squarespace, Wix, org sites) move, expire, or hotlink-block. Re-hosting on save keeps the registry self-contained. Backfilled the 5 historical externals; 3 needed manual replacements because the source URLs were already broken.

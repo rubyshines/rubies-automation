@@ -3,10 +3,17 @@
  *
  * Routes returned items to the closest LGBTQ+ partner org based on
  * customer address (Google Maps geocoding + haversine distance).
- * Load-balanced among the 3 closest partners.
+ * Load-balanced among the 3 closest partners by item volume over a
+ * trailing window, picked weighted-random so no nearby partner goes
+ * dark while a newly added one catches up.
  */
 
-const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
+
+// Trailing window for load balancing. Lifetime counts made every newly added
+// partner monopolize its region until it caught up (Montgomery blacked out
+// Raleigh for two weeks in June 2026); a window keeps the comparison current.
+const LOAD_WINDOW_DAYS = 90;
 
 // ---------------------------------------------------------------------------
 // Geocoding & distance
@@ -42,6 +49,53 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
     Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ---------------------------------------------------------------------------
+// Load balancing
+// ---------------------------------------------------------------------------
+
+/**
+ * Sum items routed per partner over the trailing window, from the
+ * `donation_routings` audit log (the source of truth for what was actually
+ * sent). Partners with no recent routings simply have no entry (load 0).
+ * Falls back to the lifetime `donations_routed` counters if the log can't be
+ * read, so routing never hard-fails on a reporting table.
+ */
+async function fetchRecentPartnerLoads(supabase, partners) {
+  try {
+    const cutoff = new Date(Date.now() - LOAD_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await fetchAllPaginated(() =>
+      supabase
+        .from('donation_routings')
+        .select('partner_id, items_count')
+        .gte('created_at', cutoff)
+        .not('partner_id', 'is', null)
+        .order('id'));
+    const loads = new Map();
+    for (const row of rows) {
+      loads.set(row.partner_id, (loads.get(row.partner_id) || 0) + (row.items_count || 1));
+    }
+    return loads;
+  } catch (e) {
+    return new Map(partners.map(p => [p.id, p.donations_routed || 0]));
+  }
+}
+
+/**
+ * Weighted-random pick, weight = 1 / (load + 1). A lightly loaded partner is
+ * strongly preferred but never wins outright, so a new partner takes the
+ * majority of its region's flow without blacking out established neighbors.
+ */
+function pickWeightedByLoad(candidates, getLoad, rng = Math.random) {
+  const weights = candidates.map(c => 1 / ((getLoad(c) || 0) + 1));
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  let r = rng() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
 }
 
 // ---------------------------------------------------------------------------
@@ -171,12 +225,14 @@ async function prescribeDonationRouting(intake, context) {
     };
   }
 
-  // Multiple items — find closest partner by geographic proximity.
-  // Default = least-loaded partner (true load balancing). The sort used to
-  // live only in the geocode-failure catch, so the no-address and no-coords
-  // paths always picked partners[0] regardless of load.
-  const byLoad = [...partners].sort((a, b) => (a.donations_routed || 0) - (b.donations_routed || 0));
-  let partner = byLoad[0];
+  // Multiple items — find the closest partners by geographic proximity, then
+  // pick weighted-random by recent item volume (trailing window from the
+  // donation_routings log, NOT the lifetime counter — see fetchRecentPartnerLoads).
+  const loads = await fetchRecentPartnerLoads(supabase, partners);
+  const getLoad = p => loads.get(p.id) || 0;
+  const rng = context._rng || Math.random;
+
+  let partner = pickWeightedByLoad(partners, getLoad, rng);
   let routingMethod = 'load_balance';
 
   const customerAddress = context.customer?.defaultAddress;
@@ -194,12 +250,11 @@ async function prescribeDonationRouting(intake, context) {
 
         if (withDistance.length > 0) {
           const closest3 = withDistance.slice(0, 3);
-          partner = closest3.sort((a, b) => a.donations_routed - b.donations_routed)[0];
+          partner = pickWeightedByLoad(closest3, getLoad, rng);
           routingMethod = `geographic (${Math.round(partner.distance_km)} km away)`;
         }
       }
     } catch (e) {
-      partner = byLoad[0];
       routingMethod = 'load_balance (geocoding failed)';
     }
   }
@@ -209,7 +264,7 @@ async function prescribeDonationRouting(intake, context) {
     type: 'partner',
     partner,
     response_text: formatDonationText(programExplanation, partner, washReminder),
-    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${partner.donations_routed} previous donations`,
+    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d`,
   };
 }
 
@@ -254,4 +309,4 @@ async function logDonationRouting({ customer_email, order_number, partner_id, it
   }
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting };
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads };
