@@ -4951,6 +4951,111 @@ async function setAutosendFlag(key, enabled) {
 }
 
 // ---------------------------------------------------------------------------
+// Operator facts panel (knowledge loop) — pending queue from the daily judge,
+// approve (with optional edit/category/expiry) or reject; active facts list
+// with retire. Reuses the autosend panel's CSS classes.
+// ---------------------------------------------------------------------------
+
+function openFactsPanel() {
+  document.getElementById('facts-overlay').classList.add('active');
+  loadFactsPanel();
+}
+
+function closeFactsPanel() {
+  document.getElementById('facts-overlay').classList.remove('active');
+}
+
+async function loadFactsPanel() {
+  const pendingEl = document.getElementById('facts-pending');
+  try {
+    const data = await api('/api/advisor-facts');
+    renderFactsPanel(data);
+    updateFactsBadges(data.pending.length);
+  } catch (err) {
+    pendingEl.innerHTML = `<div class="autosend-loading">Failed to load: ${esc(err.message)}</div>`;
+  }
+}
+
+function updateFactsBadges(pendingCount) {
+  const badge = document.getElementById('facts-pending-badge');
+  if (badge) badge.textContent = pendingCount ? ` ${pendingCount}` : '';
+  const bottomCount = document.getElementById('bottom-count-facts');
+  if (bottomCount) bottomCount.textContent = pendingCount ? String(pendingCount) : '';
+}
+
+function factsCategorySelect(id, categories, selected) {
+  return `<select id="fact-cat-${id}">${categories.map(c =>
+    `<option value="${esc(c)}" ${c === selected ? 'selected' : ''}>${esc(c.replace(/_/g, ' '))}</option>`).join('')}</select>`;
+}
+
+function renderFactsPanel(data) {
+  // Manual add row
+  document.getElementById('facts-add').innerHTML = `
+    <div class="autosend-row">
+      <div class="autosend-row-main" style="flex:1">
+        <input type="text" id="fact-add-text" placeholder="Teach the advisor a fact (one sentence)&hellip;" style="width:100%" maxlength="500">
+      </div>
+      ${factsCategorySelect('add', data.categories, 'general')}
+      <button class="btn btn-fact" onclick="addAdvisorFact()">Add</button>
+    </div>`;
+
+  const pendingEl = document.getElementById('facts-pending');
+  pendingEl.innerHTML = data.pending.length ? data.pending.map(f => `
+    <div class="autosend-row" style="flex-wrap:wrap;gap:6px">
+      <textarea id="fact-text-${f.id}" style="width:100%" rows="2" maxlength="500">${esc(f.fact)}</textarea>
+      <span class="autosend-row-note" style="width:100%">${f.source === 'judge' ? `from a correction you made${f.source_rationale ? ': ' + esc(f.source_rationale) : ''}` : esc(f.source)}</span>
+      ${factsCategorySelect(f.id, data.categories, f.category)}
+      <input type="date" id="fact-exp-${f.id}" title="Optional expiry (perishable facts drop out automatically)">
+      <button class="btn btn-fact" onclick="decideAdvisorFact(${f.id}, 'approve')">Approve</button>
+      <button class="btn-ghost btn-ghost-danger btn-fact" onclick="decideAdvisorFact(${f.id}, 'reject')">Reject</button>
+    </div>`).join('')
+    : '<div class="autosend-loading">Nothing pending — the daily judge proposes facts when your sent reply corrects a draft.</div>';
+
+  const activeEl = document.getElementById('facts-active');
+  activeEl.innerHTML = data.active.length ? data.active.map(f => `
+    <div class="autosend-row">
+      <div class="autosend-row-main">
+        <span class="autosend-row-name" style="font-weight:normal">${esc(f.fact)}</span>
+        <span class="autosend-row-note">${esc((f.category || 'general').replace(/_/g, ' '))}${f.expires_at ? ' &middot; expires ' + esc(f.expires_at.slice(0, 10)) : ''}</span>
+      </div>
+      <button class="btn-ghost btn-ghost-danger btn-fact" onclick="decideAdvisorFact(${f.id}, 'reject')" title="Remove from the advisor's prompt">Retire</button>
+    </div>`).join('')
+    : '<div class="autosend-loading">No active facts yet.</div>';
+}
+
+async function decideAdvisorFact(id, action) {
+  try {
+    const body = { action };
+    const textEl = document.getElementById(`fact-text-${id}`);
+    const catEl = document.getElementById(`fact-cat-${id}`);
+    const expEl = document.getElementById(`fact-exp-${id}`);
+    if (action === 'approve') {
+      if (textEl) body.fact = textEl.value;
+      if (catEl) body.category = catEl.value;
+      if (expEl) body.expires_at = expEl.value || null;
+    }
+    await api(`/api/advisor-facts/${id}/decision`, { method: 'POST', body });
+    showToast(action === 'approve' ? 'Fact active — in the next draft\'s prompt' : 'Fact retired', 'success');
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+  loadFactsPanel();
+}
+
+async function addAdvisorFact() {
+  const text = document.getElementById('fact-add-text')?.value?.trim();
+  const category = document.getElementById('fact-cat-add')?.value || 'general';
+  if (!text) { showToast('Type the fact first', 'error'); return; }
+  try {
+    await api('/api/advisor-facts', { method: 'POST', body: { fact: text, category } });
+    showToast('Fact added and active', 'success');
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+  loadFactsPanel();
+}
+
+// ---------------------------------------------------------------------------
 // Auto-actions panel — kill switches for the actions the system runs on its own
 // (warehouse holds, same-country address edits) plus a feed of recent ones.
 // Reuses the autosend panel's CSS classes; no shadow phase. Toggles default ON.

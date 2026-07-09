@@ -37,8 +37,9 @@ Also set:
 - "draft_may_be_right": true ONLY when the DRAFT's substance looks more correct or more complete than the SENT version (e.g. the draft caught a policy detail the sent version missed, or the sent version contains an apparent factual slip). Cosmetic preferences never qualify.
 - "severity": "low" | "medium" | "high" — how much the difference would matter to the customer. Cosmetic is always low.
 - "rationale": 1-2 plain sentences explaining the classification.
+- "candidate_fact": when the SENT version reveals a REUSABLE business or product fact the DRAFT lacked or got wrong (a product detail, policy, stockist, program window, shipping behavior, restock story), state it as ONE self-contained sentence a future draft could rely on, written generally (no customer names, no order numbers, no dates relative to "today"). Otherwise null. One-off situation details (this customer's address, this order's contents) are NOT reusable facts — null those.
 
-Judge the SUBSTANCE delivered to the customer. Do not reward verbosity or politeness padding. Respond with ONLY a JSON object: {"category": "...", "draft_may_be_right": false, "severity": "...", "rationale": "..."}`;
+Judge the SUBSTANCE delivered to the customer. Do not reward verbosity or politeness padding. Respond with ONLY a JSON object: {"category": "...", "draft_may_be_right": false, "severity": "...", "rationale": "...", "candidate_fact": null}`;
 
 /** Trim conversation history to the last few messages, bounded per message. */
 function excerptConversation(history, maxMessages = 6, maxChars = 600) {
@@ -74,6 +75,9 @@ function parseJudgeVerdict(text) {
     draft_may_be_right: parsed.draft_may_be_right === true,
     severity: ['low', 'medium', 'high'].includes(parsed.severity) ? parsed.severity : 'low',
     rationale: typeof parsed.rationale === 'string' ? parsed.rationale.slice(0, 1000) : '',
+    candidate_fact: (typeof parsed.candidate_fact === 'string' && parsed.candidate_fact.trim())
+      ? parsed.candidate_fact.trim().slice(0, 500)
+      : null,
   };
 }
 

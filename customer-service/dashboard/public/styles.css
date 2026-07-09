@@ -5452,3 +5452,14 @@ main { height: calc(100vh - 56px); }
   font-size: 15px;
   line-height: 1.5;
 }
+
+/* Operator facts panel (knowledge loop) — small additions on autosend styles */
+.btn-fact { padding: 4px 12px; font-size: 12px; }
+#facts-pending textarea, #facts-add input[type="text"] {
+  font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #d1d5db;
+  border-radius: 6px; resize: vertical; box-sizing: border-box;
+}
+#facts-pending select, #facts-add select, #facts-pending input[type="date"] {
+  font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px;
+}
+#facts-add .autosend-row { gap: 6px; }

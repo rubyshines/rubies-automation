@@ -30,6 +30,8 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 
 **Unnotified Pre-Order Outreach (auto-drafter):** Detects unfulfilled orders containing a paid item at inventory ≤ 0 whose line item lacks the `Pre-order` customAttribute. Classifies each order A/B/C, composes per-case outreach with restock ETA from variant metafields, seeds a pending CS Advisor draft via `seedOutboundDraft()`. Each candidate verified against live Warehance `ready_to_ship` before flagging. Runs inside the daily order alerts cron. See [reports/lib/unnotifiedPreOrder.js](../../reports/lib/unnotifiedPreOrder.js).
 
+**Operator-knowledge loop (2026-07-09):** the fix for the sweep's #1 divergence driver (~37% = facts only Jamie knew). `advisor_facts` table → active facts injected verbatim into the advisor's static prompt (`buildFactsBlock`); the daily closeness judge proposes a `candidate_fact` on factual-correction verdicts (deduped against all statuses so rejected facts never requeue); dashboard Facts panel (approve-with-edit/reject/retire, manual add goes straight active, expiry dates auto-drop perishable facts). Logic in [advisorFacts.js](../../customer-service/lib/advisorFacts.js); schema `customer-service/drafter/advisor-facts-schema.sql`.
+
 ## Current Status
 
 - **Production:** AI advisor handling all ticket types (enforced-schema output since 2026-06-11). Dashboard fully operational. Intake running (Gorgias webhooks + Gmail). Auto follow-ups re-enabled. Costs (bill-verified at corrected rates 2026-06-10): ~$0.13/draft, ~$8/day all-in production AI.
@@ -57,6 +59,7 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 - **Structured output:** Advisor returns `_structured` JSON alongside customer-facing markdown. Dashboard consumes structured data directly.
 - **Exchange sizing from SKU, not variant title:** Last segment of SKU is the canonical size.
 - **Advisor prompt changes:** Always trace execution path, read audit trails, check existing rules before modifying. Don't add rules that duplicate existing logic.
+- **Operator facts are injected, not retrieved.** Approved `advisor_facts` render inline in the static prompt rather than behind a search tool — the failure mode being fixed is the advisor not knowing a fact exists, so retrieval (which requires knowing to look) can't fix it. Growth valves: Jamie's approval gate, expiry on perishable facts, dedupe-on-propose, and a retrieval fallback only if the set ever exceeds ~200 facts. Facts state durable business truths; live data (inventory, order state, rates) stays tool-fetched and wins on conflict.
 - **Always check stored ticket data** in Supabase before diagnosing advisor issues on a ticket.
 - **Testing workflow:** Pull real conversations from Supabase, run tests directly via node (not MCP).
 - **Gorgias writes before Supabase writes:** Call Gorgias first and let errors propagate; only update `cs_tickets` after Gorgias confirms. Never wrap the Gorgias call in try/catch — that causes silent split-brain between the two systems.

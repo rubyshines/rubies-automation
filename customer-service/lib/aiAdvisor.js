@@ -655,6 +655,32 @@ async function executeToolCall(toolName, toolInput) {
 // System prompt builder
 // ---------------------------------------------------------------------------
 
+/**
+ * Render approved operator facts as a prompt block. Pure — unit-tested.
+ * Facts are curated one-sentence statements Jamie approved in the dashboard
+ * (see advisor-facts-schema.sql); grouped by category for scanability.
+ */
+function buildFactsBlock(facts) {
+  if (!facts?.length) return '';
+  const byCategory = {};
+  for (const f of facts) {
+    const cat = f.category || 'general';
+    (byCategory[cat] = byCategory[cat] || []).push(f.fact);
+  }
+  const CATEGORY_LABELS = {
+    product: 'Products', shipping: 'Shipping', returns_donations: 'Returns & donations',
+    programs: 'Programs', process: 'Process', general: 'General',
+  };
+  const sections = Object.entries(byCategory).map(([cat, items]) =>
+    `${CATEGORY_LABELS[cat] || cat}:\n${items.map(x => `- ${x}`).join('\n')}`);
+  return `
+## OPERATOR FACTS (verbatim — Jamie-approved; treat as correct)
+These facts were approved by Jamie after real conversations. When one answers the customer's question, answer directly from it — do NOT defer ("let me check") or contradict it. Tool results still win for live data (inventory counts, order state, rates).
+
+${sections.join('\n\n')}
+`;
+}
+
 function buildSystemPrompt(toneSamples, orderContext, opts = {}) {
   let orderSection = '';
   if (orderContext) {
@@ -764,7 +790,7 @@ Use these exact facts when relevant. If a customer asks something here, answer d
 - **Discreet packaging:** All orders ship in a plain, unbranded poly mailer. There is no indication of the contents or the brand on the outside, OTHER THAN our name on the return address in a small font. Do NOT claim the return address is blank, says "Shipment", or has no RUBIES reference — that is false.
 - **Free Swimwear for Families in Need program:** the page is https://rubyshines.com/pages/free-swimwear-for-families-in-need . If a customer asks for the program link (or says theirs is broken), give this URL directly.
 - **Bra vs swim-top band:** when describing where a measurement/band sits, use "where a bra band sits" for bras (e.g. the Ava, the Brooke) and "where a bikini band sits" for bikini/swim tops (e.g. the Mia). Match the product type.
-
+${opts.factsBlock || ''}
 ## RESPONSE LENGTH & REGISTER (CRITICAL)
 - Target 35-80 words. Median should be ~55 words.
 - Short replies (10-30 words) are the norm for confirmations, quick actions, and later messages in a thread: "No problem, I updated your order." / "Ok great. I sent over the invoice."
@@ -1463,6 +1489,22 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   } catch (e) { console.warn('[advisor] tone sample fetch threw:', e.message); }
   _t.steps.tone_fetch_ms = Date.now() - _tTone;
 
+  // Load Jamie-approved operator facts (advisor_facts, status=active, not
+  // expired). Same fail-soft + loud-warn contract as the tone fetch — a
+  // silent empty block here would quietly reintroduce the ~37% knowledge gap.
+  let operatorFacts = [];
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('advisor_facts')
+      .select('fact, category')
+      .eq('status', 'active')
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .limit(200);
+    if (error) console.warn('[advisor] operator facts fetch failed:', error.message);
+    if (data?.length) operatorFacts = data;
+  } catch (e) { console.warn('[advisor] operator facts fetch threw:', e.message); }
+
   // Pre-fetch order context for system prompt
   // Use preContext if caller already did the deterministic lookup (intake path)
   const _tCtx = Date.now();
@@ -1508,7 +1550,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     } catch (e) { /* table may not exist yet — treat as not asked */ }
   }
 
-  const { staticPart, dynamicPart } = buildSystemPrompt(toneSamples, orderContext, { alreadyAskedAdvocacy });
+  const { staticPart, dynamicPart } = buildSystemPrompt(toneSamples, orderContext, { alreadyAskedAdvocacy, factsBlock: buildFactsBlock(operatorFacts) });
 
   // Build system prompt with cache_control — static part is cacheable, dynamic part changes per ticket
   const systemBlocks = [
@@ -2165,4 +2207,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor, executeToolCall };
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock };
