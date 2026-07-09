@@ -53,6 +53,7 @@ originSessionId: 327e54a2-8e87-46eb-aca3-d44cd69bb1b2
 ## Key Decisions
 
 - **Agentic loops, not decision trees:** Opus controls flow. All exchange/sizing/response rules live in the advisor prompt, not in code.
+- **One shared tool-loop engine:** every agentic loop (advisor main+shadow, operator main+shadow, ad-hoc standalone) runs on `customer-service/lib/runToolLoop.js`; callers inject divergent behavior via callbacks (dispatch, streaming, 529/stall fallback, abort, shadow allowlist). New agents use it — don't hand-roll the call→dispatch→append loop again. (Phase 4 of the 2026-07 review, shipped 2026-07-08.)
 - **Structured output:** Advisor returns `_structured` JSON alongside customer-facing markdown. Dashboard consumes structured data directly.
 - **Exchange sizing from SKU, not variant title:** Last segment of SKU is the canonical size.
 - **Advisor prompt changes:** Always trace execution path, read audit trails, check existing rules before modifying. Don't add rules that duplicate existing logic.

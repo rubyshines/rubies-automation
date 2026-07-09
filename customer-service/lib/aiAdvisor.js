@@ -11,10 +11,10 @@
  * Compatible with the existing _structured output format.
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
+const { runToolLoop } = require('./runToolLoop');
 const { buildContext, normalizeEmail } = require('./contextBuilder');
 const { SIGNATURE_BLOCK_MD, ADVOCACY_PS } = require('./signatures');
 const {
@@ -55,12 +55,6 @@ const SCHEMA_OUTPUT_ENABLED = process.env.ADVISOR_SCHEMA_OUTPUT === '1';
 // lost. 30s with zero SSE events is unambiguously a stall (a healthy stream
 // emits events every few hundred ms); on trip we fall back to legacy mode.
 const STREAM_STALL_MS = 30_000;
-
-let _client = null;
-function getClient() {
-  if (!_client) _client = new Anthropic();
-  return _client;
-}
 
 // ---------------------------------------------------------------------------
 // Tool definitions for Claude tool_use
@@ -1420,7 +1414,6 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     try { await initCsConfig(); } catch (e) { console.error('[aiAdvisor] initCsConfig failed:', e.message); }
   }
 
-  const client = getClient();
   const audit = [];
 
   // Load ALL tone samples — Opus needs to see Jamie's full voice range
@@ -1557,18 +1550,12 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   }
 
   // Run the agentic loop with tool use
-  let response;
-  let toolCallCount = 0;
   const MAX_TOOL_CALLS = 10;
-  let currentMessages = [...messages];
   const toolsCalled = [];
   _t.api_calls = [];
 
   const _emit = onStream || (() => {});
   const useStreaming = !!onStream;
-  // Best-effort tool-loop linkage: the first call in the loop becomes the
-  // parent of every subsequent call for this draft.
-  let parentCallId = null;
 
   // Side-channel sink for the donation routing decision (partner_id, type,
   // items_count). Populated when the agent calls get_donation_partner; read
@@ -1578,7 +1565,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
 
   // Output mode. Default legacy (see SCHEMA_OUTPUT_ENABLED above) — the
   // <structured>-text path is fast (1-2s) and not load-shed. Schema mode, when
-  // enabled, still flips to legacy on a 529 (fallback below) and starts in
+  // enabled, still flips to legacy on a 529 (onApiError below) and starts in
   // legacy when a recent 529 tripped the breaker (the API holds the stream
   // 47-150s before erroring, so skip straight to the mode that works).
   let legacyMode = !SCHEMA_OUTPUT_ENABLED || schemaLoadShedBreaker.active();
@@ -1586,70 +1573,57 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     audit.push('Schema mode skipped — recent 529 tripped the load-shed breaker; starting in legacy output mode');
   }
 
-  while (toolCallCount < MAX_TOOL_CALLS) {
-    const _tApi = Date.now();
-    const apiParams = {
-      model: MODELS.OPUS,
-      max_tokens: 4096,
-      system: legacyMode ? legacySystemBlocks : systemBlocks,
-      tools: filteredTools,
-      messages: currentMessages,
-      // Enforced output schema (#2): the final message IS this JSON — no
-      // <structured> tag parsing, no malformed-output class, no thinking
-      // leakage into prose (customer_reply is a schema-constrained field).
-      ...(legacyMode ? {} : { output_config: { format: { type: 'json_schema', schema: ADVISOR_OUTPUT_SCHEMA } } }),
-    };
+  const { response } = await runToolLoop({
+    messages,
+    maxIterations: Infinity,
+    maxToolCalls: MAX_TOOL_CALLS,
+    buildApiParams: () => {
+      const apiParams = {
+        component: 'cs_advisor',
+        model: MODELS.OPUS,
+        max_tokens: 4096,
+        system: legacyMode ? legacySystemBlocks : systemBlocks,
+        tools: filteredTools,
+        ticket_id, draft_id,
+        metadata: { customer_email },
+        // Enforced output schema (#2): the final message IS this JSON — no
+        // <structured> tag parsing, no malformed-output class, no thinking
+        // leakage into prose (customer_reply is a schema-constrained field).
+        ...(legacyMode ? {} : { output_config: { format: { type: 'json_schema', schema: ADVISOR_OUTPUT_SCHEMA } } }),
+        // Schema-enforced calls fail fast on 529 (no SDK retries): load-shed of
+        // large-grammar requests persists for hours, so the SDK's retry-after
+        // backoff (~45-150s observed 2026-06-11) only freezes the draft before
+        // the legacy fallback (onApiError) can run. Legacy calls keep default retries.
+        ...(legacyMode ? {} : { requestOptions: { maxRetries: 0 } }),
+      };
+      if (!useStreaming) return apiParams;
 
-    // Schema-enforced calls fail fast on 529 (no SDK retries): load-shed of
-    // large-grammar requests persists for hours, so the SDK's retry-after
-    // backoff (~45-150s observed 2026-06-11) only freezes the draft before
-    // the legacy fallback below can run. Legacy calls keep default retries.
-    const schemaRequestOptions = legacyMode ? {} : { requestOptions: { maxRetries: 0 } };
-
-    try {
-      if (useStreaming) {
-        let onText;
-        if (legacyMode) {
-          // Legacy streaming: raw deltas; prose_complete when <structured> opens.
-          let runningText = '';
-          let proseDone = false;
-          onText = (text) => {
-            runningText += text;
-            _emit({ type: 'text_delta', text });
-            if (!proseDone && runningText.includes('<structured>')) {
-              proseDone = true;
-              _emit({ type: 'prose_complete' });
-            }
-          };
-        } else {
-          // Schema streaming — customer_reply is the first schema property, so
-          // the extractor surfaces the email text live and fires prose_complete
-          // at its closing quote; remaining fields stream invisibly after.
-          onText = createCustomerReplyStreamExtractor({
-            onReplyText: (text) => _emit({ type: 'text_delta', text }),
-            onProseComplete: () => _emit({ type: 'prose_complete' }),
-          });
-        }
-        response = await callClaude({
-          component: 'cs_advisor',
-          ...apiParams,
-          ...schemaRequestOptions,
-          stream: true,
-          onText,
-          streamStallMs: STREAM_STALL_MS,
-          ticket_id, draft_id, parent_call_id: parentCallId,
-          metadata: { customer_email },
-        });
+      // Streaming callbacks carry per-call state — rebuilt fresh each round.
+      let onText;
+      if (legacyMode) {
+        // Legacy streaming: raw deltas; prose_complete when <structured> opens.
+        let runningText = '';
+        let proseDone = false;
+        onText = (text) => {
+          runningText += text;
+          _emit({ type: 'text_delta', text });
+          if (!proseDone && runningText.includes('<structured>')) {
+            proseDone = true;
+            _emit({ type: 'prose_complete' });
+          }
+        };
       } else {
-        response = await callClaude({
-          component: 'cs_advisor',
-          ...apiParams,
-          ...schemaRequestOptions,
-          ticket_id, draft_id, parent_call_id: parentCallId,
-          metadata: { customer_email },
+        // Schema streaming — customer_reply is the first schema property, so
+        // the extractor surfaces the email text live and fires prose_complete
+        // at its closing quote; remaining fields stream invisibly after.
+        onText = createCustomerReplyStreamExtractor({
+          onReplyText: (text) => _emit({ type: 'text_delta', text }),
+          onProseComplete: () => _emit({ type: 'prose_complete' }),
         });
       }
-    } catch (err) {
+      return { ...apiParams, stream: true, onText, streamStallMs: STREAM_STALL_MS };
+    },
+    onApiError: (err) => {
       // 529 fallback: very large schema-enforced requests get load-shed while
       // the identical request without output_config succeeds (paired evidence
       // 2026-06-11, 14h window). One mode flip per draft; rethrow anything else.
@@ -1659,7 +1633,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
         schemaLoadShedBreaker.trip(); // subsequent drafts skip schema for the cooldown window
         audit.push('529 on schema-enforced call — falling back to legacy <structured> output mode for this draft');
         console.warn('[advisor] 529 on schema call — retrying in legacy output mode (breaker tripped: next drafts start legacy)');
-        continue;
+        return 'retry';
       }
       // Stream stalled mid-response: the schema-grammar request went idle after
       // customer_reply, before the action fields. Recover THIS draft by flipping
@@ -1670,79 +1644,52 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
         legacyMode = true;
         audit.push('Schema stream stalled — falling back to legacy <structured> output mode for this draft');
         console.warn('[advisor] schema stream stalled — retrying in legacy output mode (breaker NOT tripped)');
-        continue;
+        return 'retry';
       }
-      throw err;
-    }
-    if (parentCallId === null) parentCallId = response._ai_call_id;
-
-    const apiTiming = {
-      duration_ms: Date.now() - _tApi,
-      input_tokens: response.usage?.input_tokens,
-      output_tokens: response.usage?.output_tokens,
-      cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
-      cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
-    };
-
-    // Check if there are tool calls
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-    apiTiming.tool_calls = toolUseBlocks.map(b => b.name);
-    // Capture this round's text content for debugging multi-round prose drift.
-    // text_preview kept for back-compat with steerProseLoss scenario; full_text
-    // captures the entire round so we can see whether pre-final rounds wrote
-    // a clean draft that the final round threw away.
-    const roundTextBlocks = response.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text || '');
-    apiTiming.text_preview = roundTextBlocks.map(t => t.substring(0, 120)).join(' || ');
-    apiTiming.full_text = roundTextBlocks.join('\n\n---\n\n');
-    _t.api_calls.push(apiTiming);
-
-    if (toolUseBlocks.length === 0) {
-      // No more tool calls, AI is done
-      break;
-    }
-
-    // Execute each tool call
-    const toolResults = [];
-    for (const toolBlock of toolUseBlocks) {
-      toolCallCount++;
-      toolsCalled.push(toolBlock.name);
-      audit.push(`Tool call: ${toolBlock.name}(${JSON.stringify(toolBlock.input).substring(0, 100)})`);
-      _emit({ type: 'tool_call', tool: toolBlock.name });
+    },
+    onResponse: (response, { durationMs }) => {
+      const apiTiming = {
+        duration_ms: durationMs,
+        input_tokens: response.usage?.input_tokens,
+        output_tokens: response.usage?.output_tokens,
+        cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
+        cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
+      };
+      apiTiming.tool_calls = response.content.filter(b => b.type === 'tool_use').map(b => b.name);
+      // Capture this round's text content for debugging multi-round prose drift.
+      // text_preview kept for back-compat with steerProseLoss scenario; full_text
+      // captures the entire round so we can see whether pre-final rounds wrote
+      // a clean draft that the final round threw away.
+      const roundTextBlocks = response.content
+        .filter(b => b.type === 'text')
+        .map(b => b.text || '');
+      apiTiming.text_preview = roundTextBlocks.map(t => t.substring(0, 120)).join(' || ');
+      apiTiming.full_text = roundTextBlocks.join('\n\n---\n\n');
+      _t.api_calls.push(apiTiming);
+    },
+    dispatchTool: async (name, input) => {
+      toolsCalled.push(name);
+      audit.push(`Tool call: ${name}(${JSON.stringify(input).substring(0, 100)})`);
+      _emit({ type: 'tool_call', tool: name });
 
       // Auto-populate customer_address for donation routing from order context
-      if (toolBlock.name === 'get_donation_partner' && !toolBlock.input.customer_address && orderContext?.target_order?.shipping_address) {
-        toolBlock.input.customer_address = orderContext.target_order.shipping_address;
+      if (name === 'get_donation_partner' && !input.customer_address && orderContext?.target_order?.shipping_address) {
+        input.customer_address = orderContext.target_order.shipping_address;
       }
       // Inject routing sink so the tool can record the chosen partner_id +
       // routing type for post-loop attachment to prescription.donation.
-      if (toolBlock.name === 'get_donation_partner') {
-        toolBlock.input.__routingSink = donationRoutingSink;
+      if (name === 'get_donation_partner') {
+        input.__routingSink = donationRoutingSink;
       }
 
-      let result;
-      const _tTool = Date.now();
-      try {
-        result = await executeToolCall(toolBlock.name, toolBlock.input);
-      } catch (e) {
-        result = { error: e.message };
-        audit.push(`Tool error: ${toolBlock.name} - ${e.message}`);
-      }
+      return executeToolCall(name, input);
+    },
+    onToolResult: (entry) => {
+      if (entry.error) audit.push(`Tool error: ${entry.tool} - ${entry.error}`);
       if (!_t.steps.tool_executions) _t.steps.tool_executions = [];
-      _t.steps.tool_executions.push({ tool: toolBlock.name, duration_ms: Date.now() - _tTool });
-
-      toolResults.push({
-        type: 'tool_result',
-        tool_use_id: toolBlock.id,
-        content: JSON.stringify(result),
-      });
-    }
-
-    // Add assistant message + tool results to conversation
-    currentMessages.push({ role: 'assistant', content: response.content });
-    currentMessages.push({ role: 'user', content: toolResults });
-  }
+      _t.steps.tool_executions.push({ tool: entry.tool, duration_ms: entry.duration_ms });
+    },
+  });
 
   // Extract the final text response
   const textBlocks = response.content.filter(b => b.type === 'text');
@@ -2046,7 +1993,6 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
   const { isFlagEnabled } = require('../../shared/systemFlags');
   if (!(await isFlagEnabled('cs_diagnostics'))) return;
 
-  const client = getClient();
   const supabase = getSupabaseClient();
 
   // Verify diagnostic table exists (fail silently if not yet created)
@@ -2058,45 +2004,34 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
   // Run Sonnet on the same inputs
   const sonnetTiming = { start: Date.now(), api_calls: [] };
   let sonnetResponse;
-  let sonnetMessages = [...messages];
   let sonnetToolsCalled = [];
-  const MAX_TOOL_CALLS = 10;
-  let toolCallCount = 0;
 
   try {
-    while (toolCallCount < MAX_TOOL_CALLS) {
-      const _tApi = Date.now();
-      sonnetResponse = await callClaude({
+    ({ response: sonnetResponse } = await runToolLoop({
+      messages: [...messages],
+      maxIterations: Infinity,
+      maxToolCalls: 10,
+      buildApiParams: () => ({
         component: 'cs_advisor_shadow',
         model: MODELS.SONNET,
         max_tokens: 8192,
         thinking: { type: 'enabled', budget_tokens: 4000 },
         system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for Sonnet
         tools: filteredTools,
-        messages: sonnetMessages,
         ticket_id, draft_id, metadata: { customer_email },
-      });
-      sonnetTiming.api_calls.push({
-        duration_ms: Date.now() - _tApi,
-        input_tokens: sonnetResponse.usage?.input_tokens,
-        output_tokens: sonnetResponse.usage?.output_tokens,
-      });
-
-      const toolUseBlocks = sonnetResponse.content.filter(b => b.type === 'tool_use');
-      if (toolUseBlocks.length === 0) break;
-
-      const toolResults = [];
-      for (const toolBlock of toolUseBlocks) {
-        toolCallCount++;
-        sonnetToolsCalled.push(toolBlock.name);
-        let result;
-        try { result = await executeToolCall(toolBlock.name, toolBlock.input); }
-        catch (e) { result = { error: e.message }; }
-        toolResults.push({ type: 'tool_result', tool_use_id: toolBlock.id, content: JSON.stringify(result) });
-      }
-      sonnetMessages.push({ role: 'assistant', content: sonnetResponse.content });
-      sonnetMessages.push({ role: 'user', content: toolResults });
-    }
+      }),
+      dispatchTool: async (name, input) => {
+        sonnetToolsCalled.push(name);
+        return executeToolCall(name, input);
+      },
+      onResponse: (response, { durationMs }) => {
+        sonnetTiming.api_calls.push({
+          duration_ms: durationMs,
+          input_tokens: response.usage?.input_tokens,
+          output_tokens: response.usage?.output_tokens,
+        });
+      },
+    }));
   } catch (err) {
     console.warn('[shadow] Sonnet call failed:', err.message);
     return;

@@ -1,7 +1,11 @@
 /**
- * Run holdout test — recent conversations only (last 90 days).
+ * Run holdout test — categorized exchange conversations within a lookback window.
  * Shows each conversation clearly: customer, opus, jamie.
- * Usage: node customer-service/test/runHoldout.js [count]
+ * Usage: node customer-service/test/runHoldout.js [count] [--days N] [--tickets id1,id2,...]
+ *   --days N        lookback window in days (default 90). Conversation categorization
+ *                   stopped 2026-03-12, so windows shorter than the gap find nothing.
+ *   --tickets ...   run exactly these Gorgias source_ids (for before/after A-B runs
+ *                   on identical tickets); overrides count/shuffle.
  */
 require('dotenv').config();
 const fs = require('fs');
@@ -10,8 +14,15 @@ const gorgias = require('../import/gorgiasClient');
 const { aiAdvisor } = require('../lib/aiAdvisor');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 
-const TOTAL = parseInt(process.argv[2]) || 20;
-const NINETY_DAYS_AGO = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+const argv = process.argv.slice(2);
+const flagVal = (name) => {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : null;
+};
+const TOTAL = parseInt(argv.find(a => /^\d+$/.test(a))) || 20;
+const DAYS = parseInt(flagVal('--days')) || 90;
+const PINNED_TICKETS = flagVal('--tickets')?.split(',').map(s => s.trim()).filter(Boolean) || null;
+const WINDOW_START = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000).toISOString();
 
 // Suppress DecisionTree debug logs
 const origError = console.error;
@@ -20,29 +31,41 @@ console.error = (...args) => { if (args[0]?.includes?.('[DecisionTree]')) return
 (async () => {
   const sb = getSupabaseClient();
 
-  const { data: convos } = await sb
-    .from('cs_conversations')
-    .select('id, customer_email, order_numbers, subject, source_id, created_at')
-    .eq('category', 'exchange_return')
-    .not('source_id', 'is', null)
-    .gt('message_count', 3)
-    .gt('created_at', NINETY_DAYS_AGO)
-    .order('created_at', { ascending: false })
-    .limit(200);
+  let convos;
+  if (PINNED_TICKETS) {
+    const { data } = await sb
+      .from('cs_conversations')
+      .select('id, customer_email, order_numbers, subject, source_id, created_at')
+      .in('source_id', PINNED_TICKETS);
+    // Preserve the order given on the command line
+    convos = PINNED_TICKETS.map(t => (data || []).find(c => String(c.source_id) === t)).filter(Boolean);
+    console.log(`Pinned run: ${convos.length}/${PINNED_TICKETS.length} tickets resolved.\n`);
+  } else {
+    const { data } = await sb
+      .from('cs_conversations')
+      .select('id, customer_email, order_numbers, subject, source_id, created_at')
+      .eq('category', 'exchange_return')
+      .not('source_id', 'is', null)
+      .gt('message_count', 3)
+      .gt('created_at', WINDOW_START)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    convos = data || [];
 
-  // Shuffle
-  for (let i = convos.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [convos[i], convos[j]] = [convos[j], convos[i]];
+    // Shuffle
+    for (let i = convos.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [convos[i], convos[j]] = [convos[j], convos[i]];
+    }
+
+    console.log(`Found ${convos.length} exchange conversations in last ${DAYS} days. Testing ${TOTAL}.\n`);
   }
-
-  console.log(`Found ${convos.length} recent exchange conversations. Testing ${TOTAL}.\n`);
 
   const results = [];
   let tested = 0;
 
   for (const convo of convos) {
-    if (tested >= TOTAL) break;
+    if (!PINNED_TICKETS && tested >= TOTAL) break;
 
     try {
       const msgs = await gorgias.getTicketMessages(convo.source_id);

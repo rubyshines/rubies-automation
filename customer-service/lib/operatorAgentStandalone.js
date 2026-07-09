@@ -6,16 +6,9 @@
  * lookups, and general business questions from any device.
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
-const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
-
-let _anthropic;
-function getAnthropic() {
-  if (!_anthropic) _anthropic = new Anthropic();
-  return _anthropic;
-}
+const { runToolLoop } = require('./runToolLoop');
 
 // ---------------------------------------------------------------------------
 // Load tool schemas — shared with the ticket-bound operator agent
@@ -100,7 +93,6 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
   const _t = { start: Date.now(), api_calls: [] };
   const { tools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt();
-  const client = getAnthropic();
 
   const systemBlocks = [
     { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
@@ -126,102 +118,59 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
     userContent = message;
   }
 
-  let currentMessages = [...history, { role: 'user', content: userContent }];
   let finalResponse = '';
   const toolResults = [];
-  const maxIterations = 10;
   const emit = onEvent || (() => {});
-  // Best-effort tool-loop linkage: first call in the loop parents the rest.
-  let parentCallId = null;
 
-  for (let i = 0; i < maxIterations; i++) {
-    const _tApi = Date.now();
-    const apiParams = {
+  const { messages: currentMessages } = await runToolLoop({
+    messages: [...history, { role: 'user', content: userContent }],
+    maxIterations: 10,
+    buildApiParams: () => ({
+      component: 'cs_operator_standalone',
       model: MODELS.OPUS,
       max_tokens: 1024,
       system: systemBlocks,
       tools,
-      messages: currentMessages,
-    };
-
-    let response;
-    if (onEvent) {
-      response = await callClaude({
-        component: 'cs_operator_standalone',
-        ...apiParams,
-        stream: true,
-        onText: (text) => emit({ type: 'text_delta', data: text }),
-        parent_call_id: parentCallId,
+      ...(onEvent ? { stream: true, onText: (text) => emit({ type: 'text_delta', data: text }) } : {}),
+    }),
+    dispatchTool: async (name, input) => {
+      const handler = handlers[name];
+      if (!handler) throw new Error(`Unknown tool: ${name}`);
+      emit({ type: 'tool_call', data: { tool: name, input } });
+      return handler(input);
+    },
+    formatToolResult: (raw) => raw.content?.[0]?.text || JSON.stringify(raw),
+    onResponse: (response, { durationMs }) => {
+      _t.api_calls.push({
+        duration_ms: durationMs,
+        input_tokens: response.usage?.input_tokens,
+        output_tokens: response.usage?.output_tokens,
+        cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
+        cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
       });
-    } else {
-      response = await callClaude({
-        component: 'cs_operator_standalone',
-        ...apiParams,
-        parent_call_id: parentCallId,
-      });
-    }
-    if (parentCallId === null) parentCallId = response._ai_call_id;
-
-    _t.api_calls.push({
-      duration_ms: Date.now() - _tApi,
-      input_tokens: response.usage?.input_tokens,
-      output_tokens: response.usage?.output_tokens,
-      cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
-      cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
-    });
-
-    const textBlocks = response.content.filter(b => b.type === 'text');
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-
-    if (textBlocks.length) {
-      const text = textBlocks.map(b => b.text).join('\n');
-      finalResponse = text;
-      emit({ type: 'text', data: text });
-    }
-
-    if (toolUseBlocks.length === 0) break;
-
-    const toolResultMessages = [];
-    for (const toolUse of toolUseBlocks) {
-      const handler = handlers[toolUse.name];
-      let result;
-      try {
-        if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
-        emit({ type: 'tool_call', data: { tool: toolUse.name, input: toolUse.input } });
-
-        const _tTool = Date.now();
-        const toolResult = await handler(toolUse.input);
-        const text = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
-        result = text;
-        toolResults.push({
-          tool: toolUse.name,
-          input: toolUse.input,
-          result: text,
-          _refund_data: toolResult._refund_data,
-          _duration_ms: Date.now() - _tTool,
-        });
-        emit({ type: 'tool_result', data: { tool: toolUse.name, result: text } });
-      } catch (err) {
-        result = JSON.stringify({ error: err.message });
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, error: err.message });
-        emit({ type: 'tool_result', data: { tool: toolUse.name, error: err.message } });
+      const textBlocks = response.content.filter(b => b.type === 'text');
+      if (textBlocks.length) {
+        const text = textBlocks.map(b => b.text).join('\n');
+        finalResponse = text;
+        emit({ type: 'text', data: text });
       }
-
-      toolResultMessages.push({
-        type: 'tool_result',
-        tool_use_id: toolUse.id,
-        content: typeof result === 'string' ? result : JSON.stringify(result),
-      });
-    }
-
-    currentMessages = [
-      ...currentMessages,
-      { role: 'assistant', content: response.content },
-      { role: 'user', content: toolResultMessages },
-    ];
-
-    if (response.stop_reason === 'end_turn') continue;
-  }
+    },
+    onToolResult: (entry) => {
+      if (entry.error) {
+        toolResults.push({ tool: entry.tool, input: entry.input, error: entry.error });
+        emit({ type: 'tool_result', data: { tool: entry.tool, error: entry.error } });
+      } else {
+        toolResults.push({
+          tool: entry.tool,
+          input: entry.input,
+          result: entry.content,
+          _refund_data: entry.raw?._refund_data,
+          _duration_ms: entry.duration_ms,
+        });
+        emit({ type: 'tool_result', data: { tool: entry.tool, result: entry.content } });
+      }
+    },
+  });
 
   _t.total_ms = Date.now() - _t.start;
 
