@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const shopifyPath = require.resolve('../lib/shopify');
 
 let mockOrder = null;
+let mockOrdersByNumber = {};
 let createFulfillmentCalls = [];
 let addTagsCalls = [];
 let appendNoteCalls = [];
@@ -25,7 +26,10 @@ require.cache[shopifyPath] = {
   filename: shopifyPath,
   loaded: true,
   exports: {
-    getOrderWithFulfillmentOrders: async () => mockOrder,
+    getOrderWithFulfillmentOrders: async (orderNumber) => {
+      const key = String(orderNumber).replace(/^#/, '');
+      return mockOrdersByNumber[key] || mockOrder;
+    },
     createFulfillment: async (input) => {
       createFulfillmentCalls.push(input);
       return createFulfillmentResult;
@@ -75,6 +79,7 @@ function makeOrder(overrides = {}) {
 }
 
 function resetCalls() {
+  mockOrdersByNumber = {};
   createFulfillmentCalls = [];
   addTagsCalls = [];
   appendNoteCalls = [];
@@ -261,5 +266,135 @@ describe('split_shipment — phase 2 (execute)', () => {
     assert.match(result.content[0].text, /Partial success/);
     assert.match(result.content[0].text, /Pre-order creation failed/);
     assert.match(result.content[0].text, /Recovery: manually create/);
+  });
+});
+
+function makeDestOrder(overrides = {}) {
+  return makeOrder({
+    id: 'gid://shopify/Order/55555',
+    name: '#31479',
+    fulfillmentOrders: [
+      {
+        id: 'gid://shopify/FulfillmentOrder/fo-dest',
+        status: 'OPEN',
+        lineItems: [
+          { id: 'gid://shopify/FulfillmentOrderLineItem/foli-dest-ava', remainingQuantity: 1, totalQuantity: 1, lineItem: { id: 'gid://shopify/LineItem/li-d1', title: 'Ava Bra', variantTitle: 'Black / M', sku: 'SB-BLK-M', variant: { id: 'gid://shopify/ProductVariant/v-ava' } } },
+          { id: 'gid://shopify/FulfillmentOrderLineItem/foli-dest-cky', remainingQuantity: 1, totalQuantity: 1, lineItem: { id: 'gid://shopify/LineItem/li-d2', title: 'Cheeky', variantTitle: 'Black / M', sku: 'CKY-BLK-M', variant: { id: 'gid://shopify/ProductVariant/v-cky' } } },
+        ],
+      },
+    ],
+    ...overrides,
+  });
+}
+
+describe('split_shipment — merge mode (ship_with_order)', () => {
+  beforeEach(() => {
+    mockOrder = makeOrder();
+    resetCalls();
+    mockOrdersByNumber = { 30267: makeOrder(), 31479: makeDestOrder() };
+  });
+
+  it('preview references the destination order and creates no pre-order', async () => {
+    const result = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    const text = result.content[0].text;
+    assert.match(text, /Shipment Merge Preview — Awaiting Confirmation/);
+    assert.match(text, /Destination order \(ships the items\):.*#31479/);
+    assert.match(text, /No new pre-order will be created/);
+    assert.match(text, /ships-with-31479/);
+    assert.doesNotMatch(text, /New pre-order to create/);
+    // remaining items framed as staying, not shipping now
+    assert.match(text, /remaining \(unchanged, ships from this order when available\)/);
+    // no mutations in phase 1
+    assert.equal(createFulfillmentCalls.length, 0);
+    assert.equal(createDraftOrderCalls.length, 0);
+    assert.equal(addTagsCalls.length, 0);
+    assert.equal(appendNoteCalls.length, 0);
+  });
+
+  it('warns when the destination lacks the merged SKU in sufficient quantity', async () => {
+    const dest = makeDestOrder();
+    dest.fulfillmentOrders[0].lineItems = dest.fulfillmentOrders[0].lineItems.filter(li => li.lineItem.sku !== 'SB-BLK-M');
+    mockOrdersByNumber['31479'] = dest;
+    const result = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    assert.match(result.content[0].text, /has 0x SB-BLK-M unfulfilled but 1x are being merged/);
+  });
+
+  it('rejects merging an order into itself', async () => {
+    mockOrdersByNumber['31479'] = makeOrder(); // same id as original
+    const result = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    assert.match(result.content[0].text, /same order/i);
+  });
+
+  it('rejects a cancelled destination order', async () => {
+    mockOrdersByNumber['31479'] = makeDestOrder({ cancelledAt: '2026-07-01T00:00:00Z' });
+    const result = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    assert.match(result.content[0].text, /destination order #31479 is cancelled/i);
+  });
+
+  it('rejects an already-fulfilled destination order', async () => {
+    mockOrdersByNumber['31479'] = makeDestOrder({ displayFulfillmentStatus: 'FULFILLED' });
+    const result = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    assert.match(result.content[0].text, /already fully fulfilled — too late to merge/i);
+  });
+
+  it('allows a customer-less original order (no pre-order needs creating)', async () => {
+    const orig = makeOrder({ customer: null });
+    mockOrder = orig;
+    mockOrdersByNumber['30267'] = orig;
+    const result = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    assert.match(result.content[0].text, /Shipment Merge Preview/);
+  });
+
+  it('phase 2 placeholder-fulfills, tags, cross-notes both orders, and never creates an order', async () => {
+    const preview = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    const fulfillData = previewFulfillData(preview.content[0].text);
+    assert.deepEqual(fulfillData.ship_with, { dest_order_id: 'gid://shopify/Order/55555', dest_order_name: '#31479' });
+
+    const result = await handler({
+      order_number: '30267',
+      items: [{ sku: 'SB-BLK-M' }],
+      ship_with_order: '31479',
+      confirmed: true,
+      _fulfill_data: fulfillData,
+    });
+
+    // placeholder fulfillment on the original, silent
+    assert.equal(createFulfillmentCalls.length, 1);
+    assert.equal(createFulfillmentCalls[0].notifyCustomer, false);
+
+    // no new order of any kind
+    assert.equal(createDraftOrderCalls.length, 0);
+    assert.equal(completeDraftOrderCalls.length, 0);
+
+    // ships-with tag on the original, NOT pre-order-pending
+    assert.equal(addTagsCalls.length, 1);
+    assert.equal(addTagsCalls[0].id, 'gid://shopify/Order/12345');
+    assert.deepEqual(addTagsCalls[0].tags, ['ships-with-31479']);
+
+    // cross-referencing notes on both orders
+    assert.equal(appendNoteCalls.length, 2);
+    assert.equal(appendNoteCalls[0].id, 'gid://shopify/Order/12345');
+    assert.match(appendNoteCalls[0].note, /will ship with order #31479/);
+    assert.equal(appendNoteCalls[1].id, 'gid://shopify/Order/55555');
+    assert.match(appendNoteCalls[1].note, /Includes .*from order #30267 — paid there, shipping here/);
+
+    assert.match(result.content[0].text, /Shipment merged into existing order/);
+  });
+
+  it('phase 2 passes staff_note through to both notes', async () => {
+    const preview = await handler({ order_number: '30267', items: [{ sku: 'SB-BLK-M' }], ship_with_order: '31479' });
+    const fulfillData = previewFulfillData(preview.content[0].text);
+
+    await handler({
+      order_number: '30267',
+      items: [{ sku: 'SB-BLK-M' }],
+      ship_with_order: '31479',
+      staff_note: 'Lost-package replacement, ticket #2377',
+      confirmed: true,
+      _fulfill_data: fulfillData,
+    });
+
+    assert.match(appendNoteCalls[0].note, /Lost-package replacement, ticket #2377/);
+    assert.match(appendNoteCalls[1].note, /Lost-package replacement, ticket #2377/);
   });
 });
