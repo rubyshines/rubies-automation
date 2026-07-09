@@ -25,7 +25,6 @@ const CRON_SERVICES = [
   { id: '2303e347-a55b-4f70-970d-298593e1f36b', name: 'daily-cs-comparison' },
   { id: 'b0d922fa-b672-4c26-850a-e2b970ccb69e', name: 'daily-cs-stats' },
   { id: '3ea556ed-3087-4ef5-82cb-d5ab538a97b8', name: 'cs-dashboard' },
-  { id: '9b5beaad-be99-4964-ba31-6bbd9a07409f', name: 'cs-drift-check' },
 ];
 
 function gql(query, variables) {

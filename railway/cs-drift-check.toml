@@ -1,7 +1,0 @@
-[build]
-builder = "NIXPACKS"
-nixpacksConfigPath = "nixpacks-no-chromium.toml"
-
-[deploy]
-startCommand = "node customer-service/sync/hourlyDriftCheck.js"
-cronSchedule = "0 * * * *"
