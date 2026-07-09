@@ -219,72 +219,59 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
     { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
   ];
 
-  let currentMessages = [...history, { role: 'user', content: message }];
   let finalResponse = '';
   let toolResults = [];
-  const maxIterations = 10;
   const emit = onEvent || (() => {});
   const _ticketId = context.gorgias_ticket_id || context.ticket_id || null;
   const _draftId = context.draft_id || (context.draft && context.draft.id) || null;
-  // Best-effort tool-loop linkage: first call in the loop parents the rest.
-  let parentCallId = null;
 
-  // 30-second hard timeout per API call using a native AbortController.
-  // The SDK's requestOptions.timeout may not reliably cancel a stalled stream
-  // (if TCP data started flowing then stopped, the SDK considers it "active").
-  // An explicit AbortController is guaranteed to kill the call at the fetch level.
+  // 30-second hard timeout per API call using a native AbortController
+  // (wired by runToolLoop's abort option, combined with the caller's
+  // disconnect signal). The SDK's requestOptions.timeout may not reliably
+  // cancel a stalled stream (if TCP data started flowing then stopped, the
+  // SDK considers it "active"); an explicit AbortController is guaranteed
+  // to kill the call at the fetch level.
   const API_CALL_TIMEOUT_MS = 30_000;
 
-  for (let i = 0; i < maxIterations; i++) {
-    const _tApi = Date.now();
-    const _elapsed = Date.now() - _t.start;
-    console.log(`[operator-agent] iter=${i + 1} elapsed=${_elapsed}ms calling claude (ticket=${_ticketId || 'none'})`);
-    emit({ type: 'trace_step', data: `Calling Claude (step ${i + 1})…` });
+  // Per-round stream-tail flush, set by buildApiParams and invoked by
+  // onResponse once the round's API call has returned (the held-back tail
+  // is only known to be marker-free when the stream is complete).
+  let _flushStreamTail = null;
 
-    const apiParams = {
-      model: MODELS.OPUS,
-      max_tokens: 1024,
-      system: systemBlocks,
-      tools,
-      messages: currentMessages,
-    };
+  const { messages: currentMessages } = await runToolLoop({
+    messages: [...history, { role: 'user', content: message }],
+    maxIterations: 10,
+    abort: { signal, timeoutMs: API_CALL_TIMEOUT_MS },
+    buildApiParams: (i) => {
+      console.log(`[operator-agent] iter=${i + 1} elapsed=${Date.now() - _t.start}ms calling claude (ticket=${_ticketId || 'none'})`);
+      emit({ type: 'trace_step', data: `Calling Claude (step ${i + 1})…` });
 
-    // Build a per-call AbortController that combines: (a) 30s hard timeout,
-    // (b) the caller's disconnect signal. This is the reliable way to cancel
-    // a stalled Anthropic streaming call — SDK-level requestOptions.timeout
-    // only guards the initial connection, not mid-stream stalls.
-    const _callCtrl = new AbortController();
-    const _callTimer = setTimeout(
-      () => _callCtrl.abort(new Error(`Operator API call timed out after ${API_CALL_TIMEOUT_MS}ms`)),
-      API_CALL_TIMEOUT_MS,
-    );
-    if (signal) {
-      if (signal.aborted) {
-        _callCtrl.abort(signal.reason);
-      } else {
-        const _fwd = () => _callCtrl.abort(signal.reason);
-        signal.addEventListener('abort', _fwd, { once: true });
-        // Clean up listener after the call (handled in finally-equivalent below).
-        _callCtrl.signal._cleanupFwd = () => signal.removeEventListener('abort', _fwd);
-      }
-    }
-    const _requestOptions = { signal: _callCtrl.signal };
+      const apiParams = {
+        component: 'cs_operator',
+        model: MODELS.OPUS,
+        max_tokens: 1024,
+        system: systemBlocks,
+        tools,
+        ticket_id: _ticketId, draft_id: _draftId,
+        metadata: { customer_email: context.customer_email },
+      };
+      if (!onEvent) return apiParams;
 
-    let response;
-    try {
-    if (onEvent) {
       // Streaming mode — emit text deltas as they arrive, but suppress the
       // trailing `AUTO_CONFIRM:` verdict line (automation-only, stripped before
       // display). Hold back a short tail so a marker split across deltas
       // ("AUTO" then "_CONFIRM:") is still caught before it streams to the UI.
+      // State is per API call, so the closure is rebuilt each round.
       let acc = '';        // full accumulated text this turn
       let emitted = 0;      // chars already emitted
       let cut = false;      // true once the verdict marker is seen
-      response = await callClaude({
-        component: 'cs_operator',
+      // Flush any held-back tail that turned out not to be the marker.
+      _flushStreamTail = () => {
+        if (!cut && emitted < acc.length) emit({ type: 'text_delta', data: acc.slice(emitted) });
+      };
+      return {
         ...apiParams,
         stream: true,
-        requestOptions: _requestOptions,
         onText: (text) => {
           if (cut) return;
           acc += text;
@@ -302,104 +289,65 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
             emitted = safeEnd;
           }
         },
-        ticket_id: _ticketId, draft_id: _draftId, parent_call_id: parentCallId,
-        metadata: { customer_email: context.customer_email },
-      });
-      // Flush any held-back tail that turned out not to be the marker.
-      if (!cut && emitted < acc.length) emit({ type: 'text_delta', data: acc.slice(emitted) });
-    } else {
-      response = await callClaude({
-        component: 'cs_operator',
-        ...apiParams,
-        requestOptions: _requestOptions,
-        ticket_id: _ticketId, draft_id: _draftId, parent_call_id: parentCallId,
-        metadata: { customer_email: context.customer_email },
-      });
-    }
-    } finally {
-      clearTimeout(_callTimer);
-      if (_callCtrl.signal._cleanupFwd) _callCtrl.signal._cleanupFwd();
-    }
+      };
+    },
+    dispatchTool: async (name, input) => {
+      const handler = handlers[name];
+      if (!handler) throw new Error(`Unknown tool: ${name}`);
+      emit({ type: 'tool_call', data: { tool: name, input } });
 
-    if (parentCallId === null) parentCallId = response._ai_call_id;
-
-    const _apiDuration = Date.now() - _tApi;
-    const _toolNames = response.content.filter(b => b.type === 'tool_use').map(b => b.name);
-    console.log(`[operator-agent] iter=${i + 1} api_done=${_apiDuration}ms tools=[${_toolNames.join(',')}] stop=${response.stop_reason}`);
-
-    _t.api_calls.push({
-      duration_ms: _apiDuration,
-      input_tokens: response.usage?.input_tokens,
-      output_tokens: response.usage?.output_tokens,
-      cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
-      cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
-    });
-
-    const textBlocks = response.content.filter(b => b.type === 'text');
-    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
-
-    if (textBlocks.length) {
-      const text = textBlocks.map(b => b.text).join('\n');
-      // Always capture the latest text — overwrite, don't accumulate intermediate chatter
-      finalResponse = text;
-      // Strip the automation-only verdict from the displayed text (it's parsed
-      // out of finalResponse below and returned as a structured field).
-      emit({ type: 'text', data: stripAutoConfirm(text).clean });
-    }
-
-    if (toolUseBlocks.length === 0) break;
-
-    // Execute tool calls
-    const toolResultMessages = [];
-    for (const toolUse of toolUseBlocks) {
-      const handler = handlers[toolUse.name];
-      let result;
-      try {
-        if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
-        emit({ type: 'tool_call', data: { tool: toolUse.name, input: toolUse.input } });
-
-        // Auto-fix common model mistakes before calling the tool
-        if (toolUse.name === 'create_exchange_order' && !toolUse.input.confirmed) {
-          // Resolve customer_id: the model may pass an email or skip it
-          if (!toolUse.input.customer_id || toolUse.input.customer_id.includes('@')) {
-            const { searchCustomers } = require('./shopify');
-            const customers = await searchCustomers(context.customer_email);
-            if (customers?.[0]) toolUse.input.customer_id = customers[0].id;
-          }
-          // Strip original_order_id when it's the order number, not a Shopify GID.
-          // The tool auto-finds the correct fulfilled order when this is omitted
-          if (toolUse.input.original_order_id && !String(toolUse.input.original_order_id).includes('gid://')) {
-            delete toolUse.input.original_order_id;
-          }
+      // Auto-fix common model mistakes before calling the tool
+      if (name === 'create_exchange_order' && !input.confirmed) {
+        // Resolve customer_id: the model may pass an email or skip it
+        if (!input.customer_id || input.customer_id.includes('@')) {
+          const { searchCustomers } = require('./shopify');
+          const customers = await searchCustomers(context.customer_email);
+          if (customers?.[0]) input.customer_id = customers[0].id;
         }
-
-        const _tTool = Date.now();
-        const toolResult = await handler(toolUse.input);
-        const _toolDuration = Date.now() - _tTool;
-        const text = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
-        result = text;
-        console.log(`[operator-agent]   tool=${toolUse.name} done=${_toolDuration}ms`);
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, result: text, _refund_data: toolResult._refund_data, _duration_ms: _toolDuration });
-        emit({ type: 'tool_result', data: { tool: toolUse.name, result: text } });
-      } catch (err) {
-        result = JSON.stringify({ error: err.message });
-        toolResults.push({ tool: toolUse.name, input: toolUse.input, error: err.message });
-        emit({ type: 'tool_result', data: { tool: toolUse.name, error: err.message } });
+        // Strip original_order_id when it's the order number, not a Shopify GID.
+        // The tool auto-finds the correct fulfilled order when this is omitted
+        if (input.original_order_id && !String(input.original_order_id).includes('gid://')) {
+          delete input.original_order_id;
+        }
       }
 
-      toolResultMessages.push({
-        type: 'tool_result',
-        tool_use_id: toolUse.id,
-        content: typeof result === 'string' ? result : JSON.stringify(result),
-      });
-    }
+      return handler(input);
+    },
+    formatToolResult: (raw) => raw.content?.[0]?.text || JSON.stringify(raw),
+    onResponse: (response, { iteration, durationMs }) => {
+      if (_flushStreamTail) { _flushStreamTail(); _flushStreamTail = null; }
+      const _toolNames = response.content.filter(b => b.type === 'tool_use').map(b => b.name);
+      console.log(`[operator-agent] iter=${iteration + 1} api_done=${durationMs}ms tools=[${_toolNames.join(',')}] stop=${response.stop_reason}`);
 
-    currentMessages = [
-      ...currentMessages,
-      { role: 'assistant', content: response.content },
-      { role: 'user', content: toolResultMessages },
-    ];
-  }
+      _t.api_calls.push({
+        duration_ms: durationMs,
+        input_tokens: response.usage?.input_tokens,
+        output_tokens: response.usage?.output_tokens,
+        cache_read_tokens: response.usage?.cache_read_input_tokens || 0,
+        cache_creation_tokens: response.usage?.cache_creation_input_tokens || 0,
+      });
+
+      const textBlocks = response.content.filter(b => b.type === 'text');
+      if (textBlocks.length) {
+        const text = textBlocks.map(b => b.text).join('\n');
+        // Always capture the latest text — overwrite, don't accumulate intermediate chatter
+        finalResponse = text;
+        // Strip the automation-only verdict from the displayed text (it's parsed
+        // out of finalResponse below and returned as a structured field).
+        emit({ type: 'text', data: stripAutoConfirm(text).clean });
+      }
+    },
+    onToolResult: (entry) => {
+      if (entry.error) {
+        toolResults.push({ tool: entry.tool, input: entry.input, error: entry.error });
+        emit({ type: 'tool_result', data: { tool: entry.tool, error: entry.error } });
+      } else {
+        console.log(`[operator-agent]   tool=${entry.tool} done=${entry.duration_ms}ms`);
+        toolResults.push({ tool: entry.tool, input: entry.input, result: entry.content, _refund_data: entry.raw?._refund_data, _duration_ms: entry.duration_ms });
+        emit({ type: 'tool_result', data: { tool: entry.tool, result: entry.content } });
+      }
+    },
+  });
 
   _t.total_ms = Date.now() - _t.start;
 
