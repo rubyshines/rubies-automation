@@ -9,6 +9,7 @@
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
+const { runToolLoop } = require('./runToolLoop');
 
 // Parse + remove the automation-only `AUTO_CONFIRM: SAFE | HOLD — reason` verdict
 // the operator agent appends to phase-1 previews. Returns the clean operator-facing
@@ -481,60 +482,47 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
   } catch (_) { return; }
 
   const sonnetTiming = { start: Date.now(), api_calls: [] };
-  let sonnetMessages = [...initialMessages];
-  let sonnetResponse;
   let sonnetFinalResponse = '';
   let sonnetToolResults = [];
 
   try {
-    for (let i = 0; i < 10; i++) {
-      const _tApi = Date.now();
-      sonnetResponse = await callClaude({
+    // Only known read-only tools execute in shadow mode (toolAllowlist);
+    // everything else is recorded (what Sonnet wanted to do) without executing.
+    await runToolLoop({
+      messages: [...initialMessages],
+      maxIterations: 10,
+      toolAllowlist: SHADOW_READONLY_TOOLS,
+      buildApiParams: () => ({
         component: 'cs_operator_shadow',
         model: MODELS.SONNET,
         max_tokens: 1024,
         system: systemPrompt,
         tools,
-        messages: sonnetMessages,
         ticket_id: context.gorgias_ticket_id || context.ticket_id || null,
         draft_id: context.draft_id || (context.draft && context.draft.id) || null,
         metadata: { customer_email: context.customer_email },
-      });
-      sonnetTiming.api_calls.push({
-        duration_ms: Date.now() - _tApi,
-        input_tokens: sonnetResponse.usage?.input_tokens,
-        output_tokens: sonnetResponse.usage?.output_tokens,
-      });
-
-      const textBlocks = sonnetResponse.content.filter(b => b.type === 'text');
-      const toolUseBlocks = sonnetResponse.content.filter(b => b.type === 'tool_use');
-      if (textBlocks.length) sonnetFinalResponse = textBlocks.map(b => b.text).join('\n');
-      if (toolUseBlocks.length === 0) break;
-
-      const toolResultMessages = [];
-      for (const toolUse of toolUseBlocks) {
-        const handler = handlers[toolUse.name];
-        let result;
-        try {
-          if (!handler) throw new Error(`Unknown tool: ${toolUse.name}`);
-
-          // Only known read-only tools execute in shadow mode; everything else is
-          // recorded (what Sonnet wanted to do) without executing.
-          if (!SHADOW_READONLY_TOOLS.has(toolUse.name)) {
-            result = JSON.stringify({ shadow_blocked: true, tool: toolUse.name, input: toolUse.input, message: 'Non-read-only tool blocked in shadow evaluation mode — not executed.' });
-            sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input, blocked: true });
-          } else {
-            const toolResult = await handler(toolUse.input);
-            result = toolResult.content?.[0]?.text || JSON.stringify(toolResult);
-            sonnetToolResults.push({ tool: toolUse.name, input: toolUse.input });
-          }
-        } catch (err) {
-          result = JSON.stringify({ error: err.message });
-        }
-        toolResultMessages.push({ type: 'tool_result', tool_use_id: toolUse.id, content: result });
-      }
-      sonnetMessages = [...sonnetMessages, { role: 'assistant', content: sonnetResponse.content }, { role: 'user', content: toolResultMessages }];
-    }
+      }),
+      dispatchTool: async (name, input) => {
+        const handler = handlers[name];
+        if (!handler) throw new Error(`Unknown tool: ${name}`);
+        return handler(input);
+      },
+      formatToolResult: (raw) => raw.content?.[0]?.text || JSON.stringify(raw),
+      onResponse: (response, { durationMs }) => {
+        sonnetTiming.api_calls.push({
+          duration_ms: durationMs,
+          input_tokens: response.usage?.input_tokens,
+          output_tokens: response.usage?.output_tokens,
+        });
+        const textBlocks = response.content.filter(b => b.type === 'text');
+        if (textBlocks.length) sonnetFinalResponse = textBlocks.map(b => b.text).join('\n');
+      },
+      onToolResult: (entry) => {
+        if (entry.blocked) sonnetToolResults.push({ tool: entry.tool, input: entry.input, blocked: true });
+        else if (!entry.error) sonnetToolResults.push({ tool: entry.tool, input: entry.input });
+        // tool errors deliberately unrecorded — matches the historical shadow loop
+      },
+    });
   } catch (err) {
     console.warn('[shadow] Operator Sonnet call failed:', err.message);
     return;
