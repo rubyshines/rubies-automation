@@ -13,10 +13,16 @@
  *      The new order queues with Warehance and ships automatically when
  *      inventory arrives.
  *
+ * Merge mode (`ship_with_order`): when the specified items are ALREADY part of
+ * another existing order (e.g. a free replacement order was created containing
+ * them so everything leaves the warehouse in one box), pass that order's
+ * number. Step 3 is skipped — no new pre-order is created; instead both orders
+ * get cross-referencing notes and the original is tagged `ships-with-<dest>`.
+ *
  * Two-phase: phase 1 previews; phase 2 (confirmed=true) executes.
  *
- * For manual fulfillment with real tracking, or partial fulfillment without
- * a follow-on pre-order, build a different tool when the need arises.
+ * For manual fulfillment with real tracking, build a different tool when the
+ * need arises.
  */
 
 const {
@@ -114,6 +120,7 @@ const tools = [
       'You MUST present the phase 1 preview to the operator and receive explicit confirmation before calling phase 2.',
       'Pass the SKUs of the HELD items (the ones being moved to a new pre-order), not the in-stock items being shipped now.',
       'Use this when the customer has agreed to split their order so in-stock items ship now and pre-order/OOS items follow. The held items go to a new $0 pre-order (not a refund — the customer pays nothing extra and receives nothing less, this just splits the shipment timing).',
+      'MERGE MODE (ship_with_order): when the specified items are ALREADY included in another existing order — e.g. a free replacement order was created containing both the replacement items AND this order\'s in-stock items so everything ships in ONE box — pass that destination order number as ship_with_order. No new pre-order is created: the items are placeholder-fulfilled here (so the warehouse cannot double-ship them), the original is tagged `ships-with-<dest>`, and both orders get cross-referencing staff notes. Recipe for a one-box merge: 1) create_order with the replacement items PLUS this order\'s in-stock items (free=true so the already-paid items are not charged again), 2) create_order_complete, 3) split_shipment with ship_with_order=<new order number> and items=<the in-stock items that moved>.',
       'Do NOT use for manual fulfillment with real tracking — that is a different flow.',
     ].join(' '),
     inputSchema: {
@@ -133,6 +140,10 @@ const tools = [
           },
         },
         staff_note: { type: 'string', description: 'Optional additional context appended to both the original-order note and the new pre-order note' },
+        ship_with_order: {
+          type: 'string',
+          description: 'MERGE MODE: order number of an EXISTING order that already contains these items (e.g. "31479" or "#31479"). When set, no new pre-order is created — the items are placeholder-fulfilled on the original order and both orders get cross-referencing notes, because they will physically ship via the destination order.',
+        },
         confirmed: { type: 'boolean', description: 'Set true in phase 2 to execute' },
         _fulfill_data: {
           type: 'object',
@@ -141,7 +152,7 @@ const tools = [
       },
       required: ['order_number', 'items'],
     },
-    handler: async ({ order_number, items, staff_note, confirmed, _fulfill_data }) => {
+    handler: async ({ order_number, items, staff_note, ship_with_order, confirmed, _fulfill_data }) => {
       // --- Phase 2: execute ---
       if (confirmed && _fulfill_data) {
         const {
@@ -152,6 +163,7 @@ const tools = [
           customer_id,
           shipping_address,
           new_order_line_items,
+          ship_with,
         } = _fulfill_data;
 
         const originalShortName = (order_name || '').replace(/^#/, '');
@@ -161,6 +173,43 @@ const tools = [
           lineItemsByFulfillmentOrder: line_items_by_fo,
           notifyCustomer: false,
         });
+
+        // --- Merge mode: items ship via an existing destination order ---
+        if (ship_with) {
+          const destShortName = (ship_with.dest_order_name || '').replace(/^#/, '');
+
+          const originalNote = [
+            `Merged shipment: ${item_summary} will ship with order ${ship_with.dest_order_name} (already paid on this order); marked fulfilled here so the warehouse doesn't double-ship.`,
+            staff_note || null,
+          ].filter(Boolean).join(' — ');
+          await appendOrderNote(order_id, originalNote);
+          await addTags(order_id, [`ships-with-${destShortName}`]);
+
+          const destNote = [
+            `Includes ${item_summary} from order ${order_name} — paid there, shipping here.`,
+            staff_note || null,
+          ].filter(Boolean).join(' — ');
+          await appendOrderNote(ship_with.dest_order_id, destNote);
+
+          return {
+            content: [{
+              type: 'text',
+              text: [
+                '**Shipment merged into existing order**',
+                '',
+                `**Original order:** ${order_name} — ${getAdminUrl(order_id)}`,
+                `  - Items marked fulfilled (placeholder, ship via ${ship_with.dest_order_name}): ${item_summary}`,
+                `  - Tag added: \`ships-with-${destShortName}\``,
+                `  - Fulfillment id: ${fulfillment?.id || '(none)'}`,
+                '',
+                `**Destination order:** ${ship_with.dest_order_name} — ${getAdminUrl(ship_with.dest_order_id)}`,
+                '  - Cross-referencing note added.',
+                '',
+                `Warehance will ship ${ship_with.dest_order_name} as the single outgoing shipment; ${order_name} keeps only its remaining (unfulfilled) items.`,
+              ].join('\n'),
+            }],
+          };
+        }
 
         // Step 2: tag + note original order
         const originalNote = [
@@ -256,8 +305,30 @@ const tools = [
       if (order.displayFulfillmentStatus === 'FULFILLED') {
         return { content: [{ type: 'text', text: `Error: order ${order.name} is already fully fulfilled.` }] };
       }
-      if (!order.customer?.id) {
+      if (!ship_with_order && !order.customer?.id) {
         return { content: [{ type: 'text', text: `Error: order ${order.name} has no associated customer — cannot create a new pre-order without a customer.` }] };
+      }
+
+      // Merge mode: resolve + validate the destination order the items will ship with
+      let destOrder = null;
+      if (ship_with_order) {
+        try {
+          destOrder = await getOrderWithFulfillmentOrders(ship_with_order);
+        } catch (err) {
+          return { content: [{ type: 'text', text: `Error: could not find destination order "${ship_with_order}": ${err.message || err}` }] };
+        }
+        if (!destOrder) {
+          return { content: [{ type: 'text', text: `Error: destination order "${ship_with_order}" not found.` }] };
+        }
+        if (destOrder.id === order.id) {
+          return { content: [{ type: 'text', text: `Error: ship_with_order is the same order as ${order.name} — the destination must be a different, existing order that already contains the items.` }] };
+        }
+        if (destOrder.cancelledAt) {
+          return { content: [{ type: 'text', text: `Error: destination order ${destOrder.name} is cancelled — items cannot ship with it.` }] };
+        }
+        if (destOrder.displayFulfillmentStatus === 'FULFILLED') {
+          return { content: [{ type: 'text', text: `Error: destination order ${destOrder.name} is already fully fulfilled — too late to merge items into its shipment.` }] };
+        }
       }
 
       // Map requested SKUs to fulfillment-order line items with remaining > 0
@@ -286,14 +357,39 @@ const tools = [
       const itemSummary = matchedSummary.join('; ');
       const originalShortName = (order.name || '').replace(/^#/, '');
 
+      // Merge mode: soft-check that the destination actually contains the
+      // requested SKUs in sufficient unfulfilled quantity. Warn, don't block —
+      // the operator may have deliberately used a different variant.
+      const destWarnings = [];
+      if (destOrder) {
+        const destRemaining = new Map();
+        for (const fo of destOrder.fulfillmentOrders || []) {
+          for (const li of fo.lineItems || []) {
+            const sku = li.lineItem?.sku;
+            if (!sku || !li.remainingQuantity) continue;
+            destRemaining.set(sku, (destRemaining.get(sku) || 0) + li.remainingQuantity);
+          }
+        }
+        for (const requested of items) {
+          const needed = requested.quantity
+            ?? allFoLineItems.filter(li => li.lineItem?.sku === requested.sku)
+              .reduce((s, li) => s + li.remainingQuantity, 0);
+          const have = destRemaining.get(requested.sku) || 0;
+          if (have < needed) {
+            destWarnings.push(`⚠️ Destination ${destOrder.name} has ${have}x ${requested.sku} unfulfilled but ${needed}x are being merged — verify the destination order really contains these items before confirming.`);
+          }
+        }
+      }
+
       const fulfillData = {
         order_id: order.id,
         order_name: order.name,
         line_items_by_fo: lineItemsByFulfillmentOrder,
         item_summary: itemSummary,
-        customer_id: order.customer.id,
+        customer_id: order.customer?.id || null,
         shipping_address: order.shippingAddress || null,
         new_order_line_items: newOrderLineItems,
+        ship_with: destOrder ? { dest_order_id: destOrder.id, dest_order_name: destOrder.name } : undefined,
       };
 
       const stayingUnfulfilled = allFoLineItems
@@ -312,6 +408,34 @@ const tools = [
 
       const customerName = [order.customer?.firstName, order.customer?.lastName].filter(Boolean).join(' ').trim() || '(no name)';
       const newOrderTags = [...NEW_ORDER_TAGS, `pre-order-from-${originalShortName}`];
+
+      if (destOrder) {
+        const destShortName = (destOrder.name || '').replace(/^#/, '');
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              '**Shipment Merge Preview — Awaiting Confirmation**',
+              '',
+              `**Original order:** ${order.name} — ${getAdminUrl(order.id)}`,
+              `**Customer:** ${customerName} (${order.customer?.email || 'no email'})`,
+              `**Destination order (ships the items):** ${destOrder.name} — ${getAdminUrl(destOrder.id)}`,
+              '',
+              '**On the original order — mark fulfilled (placeholder, no tracking, no customer email):**',
+              `  ${itemSummary}`,
+              stayingUnfulfilled.length
+                ? '\n**On the original order — remaining (unchanged, ships from this order when available):**\n' + stayingUnfulfilled.map(l => `  ${l}`).join('\n')
+                : '\n**Remaining on original:** none — original will become fully fulfilled.',
+              '',
+              `**No new pre-order will be created** — the items already exist on ${destOrder.name}, which ships as the single outgoing shipment.`,
+              `**Tag to add on original:** \`ships-with-${destShortName}\``,
+              destWarnings.length ? '\n' + destWarnings.join('\n') + '\n' : '',
+              staff_note ? `**Staff note (added to both orders):** ${staff_note}\n` : '',
+              `To confirm, call split_shipment again with confirmed=true, order_number="${order_number}", items=${JSON.stringify(items)}, ship_with_order="${ship_with_order}", and _fulfill_data=${JSON.stringify(fulfillData)}.`,
+            ].filter(Boolean).join('\n'),
+          }],
+        };
+      }
 
       return {
         content: [{
