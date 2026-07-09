@@ -80,7 +80,7 @@ originals were left intact where they don't teach a mistake, cleaned where they 
 
 | # | situation | sample | source |
 |---|---|---|---|
-| 31 | closing_heartfelt | "This made my day, thank you for sharing it. That's exactly why we make these, so your daughter can just have normal underwear and swimwear that works. I'm so glad they're a hit, and thank you for the reorder." | draft 2358 (sent identical) |
+| 31 | closing_heartfelt | "This made my day, thank you for sharing." | draft 2358, shortened per Jamie's review 2026-07-09 (the longer sent version was an accepted AI draft, not his own words) |
 | 32 | closing_warm_short | "That's so kind, thank you. Hope she gets back in the water soon, 2.5 years is a long time to miss something she loves." | draft 2310 (sent identical) |
 
 ## Retire from the March set

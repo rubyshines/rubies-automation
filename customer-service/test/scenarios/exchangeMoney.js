@@ -15,11 +15,14 @@
  *     separate order on the site"
  *   - no hand-computed dollar amounts (exchange_difference owns the math)
  *
- * Case 1 anchors on ticket 103998306 (draft 1947): Sue exchanging a Sky
- * one-piece (Pink 16) for a Queeny tankini + Ruby bottom — new items cost
- * more, Jamie sent an invoice for the difference.
- * Case 2 is a synthetic straight swap on the same customer context: same
- * product, size change only — must stay free with no invoice mention.
+ * Both cases run synthetic messages against the CURRENT order state of the
+ * ticket-103998306 customer (whose order now carries a Queeny tankini + Ruby
+ * bottom in Pink 16 after the original exchange executed). Replaying the
+ * historical ticket text is confounded by order-state drift — the original
+ * Sky one-piece is no longer on the order (first run confirmed: advisor
+ * correctly asked a clarifying question instead of exercising the money path).
+ * Case 1: cross-product swap Queeny ($47) → Sky one-piece ($65) = upcharge.
+ * Case 2: straight same-product size swap — must stay free, no invoice talk.
  *
  * Usage: node customer-service/test/scenarios/exchangeMoney.js
  */
@@ -64,11 +67,14 @@ async function ticketToInput(ticketId) {
   console.log('=== exchange money rules ===\n');
 
   // --- Case 1: cross-product exchange with an upcharge → invoice the difference ---
-  console.log(`[upcharge] loading ticket ${UPCHARGE_TICKET_ID} from Gorgias...`);
-  const { customerEmail, issueDescription } = await ticketToInput(UPCHARGE_TICKET_ID);
+  console.log(`[upcharge] resolving customer from ticket ${UPCHARGE_TICKET_ID}...`);
+  const { customerEmail } = await ticketToInput(UPCHARGE_TICKET_ID);
   if (!customerEmail) { fail('could not extract customer email from ticket'); return; }
 
-  const r1 = await aiAdvisor({ customer_email: customerEmail, issue_description: issueDescription });
+  const UPCHARGE = `Hi,
+
+My daughter has been trying the Queeny tankini in Pink size 16 and it just isn't her style. Could we exchange the tankini for the Sky one-piece in Pink size 16 instead? I understand the one-piece costs more.`;
+  const r1 = await aiAdvisor({ customer_email: customerEmail, issue_description: UPCHARGE });
   const s1 = r1?._structured || {};
   const d1 = (s1._composedResponse || '').trim();
   console.log('[upcharge] draft:\n---\n' + d1 + '\n---');
@@ -95,7 +101,7 @@ async function ticketToInput(ticketId) {
   // --- Case 2: straight same-product size swap → free, no invoice talk ---
   const STRAIGHT_SWAP = `Hi,
 
-The Sky one-piece in size 16 is a bit big on my daughter. Could we exchange it for the exact same suit in size 14?`;
+The Queeny tankini in Pink size 16 is a bit big on my daughter. Could we exchange it for the exact same tankini in size 14?`;
   const r2 = await aiAdvisor({ customer_email: customerEmail, issue_description: STRAIGHT_SWAP });
   const s2 = r2?._structured || {};
   const d2 = (s2._composedResponse || '').trim();
