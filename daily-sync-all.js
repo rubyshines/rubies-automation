@@ -144,6 +144,15 @@ const PIPELINES = [
     run: () => require('./lib/autosendShadow').run(),
   },
   {
+    name: 'Decision Queue',
+    // "Needs your decision" aggregator: pending advisor facts, expiring facts,
+    // auto-send categories that met the promotion bar. Turns waiting decisions
+    // into daily digest items so they can't be forgotten (the auto-send shadow
+    // sat proven-but-unpromoted for a month with only a stats line to speak
+    // for it). Empty output = section absent. See lib/decisionQueue.js.
+    run: () => require('./lib/decisionQueue').run(),
+  },
+  {
     name: 'AI Pricing Check',
     // Monthly drift detector (new models + pricing changes). Runs on the 1st
     // only; a no-op the rest of the month so it doesn't add daily cost/noise.
@@ -555,6 +564,25 @@ function buildAutosendShadowHtml(results) {
     </div>`;
 }
 
+// "Needs your decision" box — one amber item per waiting human decision, with
+// the justifying data and the exact next step. Renders at the TOP of the
+// digest and repeats daily until the decision is made; absent when empty.
+function buildDecisionQueueHtml(results) {
+  const task = results.find(r => r.name === 'Decision Queue');
+  const m = task?.result?.sources?.decision_queue;
+  if (!m || m.skipped || !m.count) return '';
+  const items = m.items.map(i => `
+    <li style="margin-bottom:8px;">
+      ${i.urgent ? '<strong style="color:#b91c1c;">overdue — </strong>' : ''}${esc(i.text)}<br>
+      <span style="color:#92700c;font-weight:normal;font-size:12px;">→ ${esc(i.action)}</span>
+    </li>`).join('');
+  return `
+    <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;margin:12px 0 0;color:#b45309;">
+      <strong>Needs your decision (${m.count})</strong>
+      <ul style="margin:6px 0 0;padding-left:18px;">${items}</ul>
+    </div>`;
+}
+
 // Monthly bill-vs-ledger reconciliation (1st only). Three states: clean match
 // (quiet gray line), drift beyond tolerance (amber alarm), or failure/missing
 // key (red alarm — an unverifiable bill is itself a finding, never silent).
@@ -648,6 +676,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
     }
   }
 
+  // --- Needs your decision (top billing — repeats daily until resolved) ---
+  const decisionQueueHtml = buildDecisionQueueHtml(results);
+
   // --- Drift / undelivered section ---
   const driftHtml = buildTicketDriftHtml(results);
 
@@ -677,6 +708,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       <h2 style="margin-bottom:4px;font-size:18px;">Daily Sync \u2014 ${date}</h2>
       <p style="color:#6b7280;margin-top:0;font-size:13px;">${results.length} pipelines &middot; ${totalRows} rows &middot; ${formatDuration(overallDuration)}${gorgiasRetries ? ` &middot; ${gorgiasRetries} Gorgias retr${gorgiasRetries === 1 ? 'y' : 'ies'}` : ''}</p>
 
+      ${decisionQueueHtml}
       ${driftHtml}
       ${deadLetterHtml}
       ${errorsHtml}
