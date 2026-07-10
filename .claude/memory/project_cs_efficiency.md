@@ -187,6 +187,12 @@ A 1–5 score with 3 = baseline (tied with Opus) replaced the prior 3-bucket ver
 
 **Decision: Stay on Opus for everything.** Shadow eval disabled via `CS_DIAGNOSTICS_DISABLED=true` on Railway webhook-server (2026-04-30). Infrastructure preserved for next-gen model evaluations.
 
+## Sonnet 5 shadow eval (started 2026-07-10)
+
+Next-gen Sonnet shipped — the trigger the 2026-04 verdict was waiting for. Candidate: `MODELS.SONNET_5` (claude-sonnet-5, intro $2/$10 per MTok through 2026-08-31, then $3/$15). Both shadow functions updated (aiAdvisor + operatorAgent); Sonnet 5 API surface change handled (budget_tokens thinking 400s — adaptive thinking now). Gate is the `cs_diagnostics` flag in `system_flags` (DB flag, all runtimes — the env-var leak class is closed). Stakes: advisor+operator = 87% of AI spend ($216/mo); Sonnet 5 viable ≈ $150+/mo saved.
+
+**Decision rules (pre-registered, same as 2026-04, 1–5 scale):** primary metric = first draft per unique ticket, 50+ unique tickets before deciding (~10 days at current volume). Mean ≥3.5 and <5% rated 1 → plan migration. Mean <3.0 or ≥15% rated 1 → not viable. Between → judgment/extend. Analyze with `scripts/analyze-shadow-runs.js`. Also lean on the closeness-to-final method (sent_response ground truth) now that ticket_id/draft_id are threaded.
+
 ## Shadow eval cost leak + gate inversion (2026-05-27)
 
 Investigating a jump to ~$15/day in CS API spend, a per-day reconstruction from `_timing` token fields (the `ai_calls` observability table, now described in domain_tech.md, was built right after and supersedes this manual method) over a 14-day window found the spend was dominated by the shadow eval that was supposed to be off since Apr 30:
