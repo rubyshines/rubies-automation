@@ -442,7 +442,7 @@ async function runOperatorShadowEval({ systemPrompt, tools, handlers, initialMes
       toolAllowlist: SHADOW_READONLY_TOOLS,
       buildApiParams: () => ({
         component: 'cs_operator_shadow',
-        model: MODELS.SONNET,
+        model: MODELS.SONNET_5, // 2026-07 eval candidate (see project_cs_efficiency.md)
         max_tokens: 1024,
         system: systemPrompt,
         tools,

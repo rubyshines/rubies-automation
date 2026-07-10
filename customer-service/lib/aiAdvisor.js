@@ -2083,10 +2083,13 @@ async function runShadowEvaluation({ systemBlocks, filteredTools, messages, opus
       maxToolCalls: 10,
       buildApiParams: () => ({
         component: 'cs_advisor_shadow',
-        model: MODELS.SONNET,
+        // 2026-07 eval candidate: Sonnet 5. Note the API surface change from
+        // the 2026-04 Sonnet 4.6 runs: budget_tokens thinking 400s on Sonnet 5;
+        // adaptive is the only on-mode (and its default when omitted).
+        model: MODELS.SONNET_5,
         max_tokens: 8192,
-        thinking: { type: 'enabled', budget_tokens: 4000 },
-        system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for Sonnet
+        thinking: { type: 'adaptive' },
+        system: systemBlocks.map(b => ({ type: b.type, text: b.text })), // strip cache_control for the candidate
         tools: filteredTools,
         ticket_id, draft_id, metadata: { customer_email },
       }),

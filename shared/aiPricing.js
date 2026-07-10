@@ -21,6 +21,10 @@
 const MODELS = {
   OPUS:   'claude-opus-4-8',
   SONNET: 'claude-sonnet-4-6',
+  // Next-gen Sonnet, under shadow evaluation as an advisor/operator candidate
+  // (2026-07). Promote to SONNET only after the eval passes the decision rules
+  // in project_cs_efficiency.md.
+  SONNET_5: 'claude-sonnet-5',
   HAIKU:  'claude-haiku-4-5-20251001',
 };
 
@@ -35,6 +39,10 @@ const RATES = {
   'claude-opus-4-8':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 },
   'claude-opus-4-7':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
   'claude-opus-4-6':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
+  // Sonnet 5 launch pricing: intro $2/$10 through 2026-08-31, then $3/$15.
+  // Entered at intro rates so ai_calls matches the bill; the monthly pricing
+  // drift check (scripts/check-ai-pricing.js) will flag the September revert.
+  'claude-sonnet-5':           { input: 2,    output: 10,  cache_read: 0.2,  cache_create: 2.5 },
   'claude-sonnet-4-6':         { input: 3,    output: 15,  cache_read: 0.3,  cache_create: 3.75 },
   'claude-sonnet-4-20250514':  { input: 3,    output: 15,  cache_read: 0.3,  cache_create: 3.75 }, // legacy alias
   'claude-haiku-4-5-20251001': { input: 1,    output: 5,   cache_read: 0.1,  cache_create: 1.25 },
