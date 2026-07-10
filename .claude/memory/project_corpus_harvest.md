@@ -36,7 +36,8 @@ He rejects one-off judgment calls and perishable logistics. So: garment measurem
 
 ## Progress
 
-- Step 1 complete (PR #79, 2026-07-10): kb_sources schema applied, harvester live (`customer-service/import/harvestKbSources.js`) — 110 sources staged (products, collections, pages, policies, rendered website pages), idempotent re-run verified. Next: step 2 extraction.
+- Step 1 complete (PR #79, 2026-07-10): kb_sources schema applied, harvester live (`customer-service/import/harvestKbSources.js`) — 110 sources staged (products, collections, pages, policies, rendered website pages), idempotent re-run verified.
+- Step 2 extraction complete (PR #80, 2026-07-10): zero-API extraction via 5 Claude Code subagents following `customer-service/import/kb-extraction-protocol.md` — 110 sources → 74 candidates (37 dropped: dupes, listing/landing pages, free-gift twins, size-chart tables left to graded-specs). Loader `loadKbCandidates.js` validates + upserts + stamps extracted_at. Extraction JSONL backed up in `temp-analysis-data/kb-extract/`. Pending: kb_candidates schema run in SQL Editor, then live load. Next: step 3 reply-corpus mine.
 
 ## Constraints
 
