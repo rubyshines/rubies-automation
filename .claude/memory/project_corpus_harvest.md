@@ -34,6 +34,10 @@ He rejects one-off judgment calls and perishable logistics. So: garment measurem
 5. Embed (Voyage, pennies). Refresh cron (weekly re-pull, re-embed changed).
 6. Advisor tool + precedence prompt rule + pinned scenario. **DO NOT DEPLOY the advisor-side tool before 2026-07-23** (measurement window for PR #74/#76 changes must stay clean). Steps 1-5 are offline-safe anytime.
 
+## Progress
+
+- Step 1 complete (PR #79, 2026-07-10): kb_sources schema applied, harvester live (`customer-service/import/harvestKbSources.js`) — 110 sources staged (products, collections, pages, policies, rendered website pages), idempotent re-run verified. Next: step 2 extraction.
+
 ## Constraints
 
 - Zero Anthropic-API cost for extraction/eval (Claude Code only) — Jamie's standing instruction.
