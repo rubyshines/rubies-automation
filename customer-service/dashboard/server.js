@@ -2663,6 +2663,30 @@ async function apiSetAutosendConfig(body = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Operator facts (knowledge loop) — pending queue from the daily judge +
+// active facts injected into the advisor prompt. Logic in lib/advisorFacts.js.
+// ---------------------------------------------------------------------------
+
+async function apiGetAdvisorFacts() {
+  const { listFacts } = require('../lib/advisorFacts');
+  return listFacts(getSupabaseClient());
+}
+
+async function apiDecideAdvisorFact(id, body = {}) {
+  const { decideFact } = require('../lib/advisorFacts');
+  const result = await decideFact(getSupabaseClient(), id, body);
+  console.log(`[dashboard] advisor fact #${id} → ${result.status}`);
+  return { success: true, fact: result };
+}
+
+async function apiAddAdvisorFact(body = {}) {
+  const { addFact } = require('../lib/advisorFacts');
+  const result = await addFact(getSupabaseClient(), body);
+  console.log(`[dashboard] advisor fact added #${result.id}`);
+  return { success: true, fact: result };
+}
+
+// ---------------------------------------------------------------------------
 // Auto-action kill-switches — master + per-kind flags, plus a recent feed of
 // actions the system executed on its own. Assembly lives in
 // lib/autoactionConfig.js. No shadow phase: these run live, the toggles are
@@ -3179,6 +3203,7 @@ const routes = {
   'GET /api/tickets/stats': () => apiGetTicketStats(),
   'GET /api/autosend-config': () => apiGetAutosendConfig(),
   'GET /api/autoaction-config': () => apiGetAutoactionConfig(),
+  'GET /api/advisor-facts': () => apiGetAdvisorFacts(),
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/classifications': () => {
@@ -3204,6 +3229,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/console\/chat$/, handler: (body) => apiConsoleChat(body) },
   { method: 'POST', pattern: /^\/api\/autosend-config$/, handler: (body) => apiSetAutosendConfig(body) },
   { method: 'POST', pattern: /^\/api\/autoaction-config$/, handler: (body) => apiSetAutoactionConfig(body) },
+  { method: 'POST', pattern: /^\/api\/advisor-facts$/, handler: (body) => apiAddAdvisorFact(body) },
+  { method: 'POST', pattern: /^\/api\/advisor-facts\/(\d+)\/decision$/, handler: (body, id) => apiDecideAdvisorFact(parseInt(id), body) },
   // B2B Outreach panel
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)$/, handler: (_, id) => apiB2bGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/regenerate$/, handler: (body, id) => apiB2bRegenerateDraft(parseInt(id), body) },

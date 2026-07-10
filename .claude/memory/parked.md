@@ -316,14 +316,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Notes: `cs_conversations.category` stopped being populated 2026-03-12 — every row since has `category: null` (categorizer at `customer-service/import/categorizer.js`). Discovered because `runHoldout.js` selects holdout tickets by `category='exchange_return'` and found zero in its 90-day window (worked around with the new `--days` flag; 210 days reaches categorized data). Decide: revive the categorizer, or retire it and repoint the holdout selector at a maintained field (e.g. `cs_tickets.message_type`).
 - Resume when: next CS tooling session.
 
-## Operator-knowledge feedback loop (advisor_facts store + judge-fed approval queue)
-- Parked: 2026-07-09
-- Last touched: 2026-07-09
-- Type: build
-- Priority: high — next CS build after PR #74
-- Domains: cs
-- Notes: #1 recommendation from the 2026-07-09 accuracy sweep: ~37% of all draft↔sent divergences were facts only Jamie knows (product facts, stockists, restock stories, program windows, incidents). Build: (1) `advisor_facts` table (fact text, category, optional `expires`/`review_after`, source draft_id); (2) inject active facts as a compact block in the advisor's static prompt (~45 facts ≈ 1.2K tokens ≈ +$0.02/draft — injection beats retrieval because the failure mode is not-knowing-to-look); (3) feed from the daily closeness judge — on `factual_correction` verdicts, extract the candidate fact, queue in dashboard for one-click approve/edit/reject, dedupe-on-approve against existing facts; (4) expiry auto-drops perishable facts. Seed list (45 facts, curated from the sweep): `customer-service/drafter/advisor-facts-seed-2026-07.md` — includes one conflict to resolve with Jamie (BAGLY Boston address current vs stale).
-- Resume when: Jamie says go on the knowledge-loop build.
 
 ## Stale-draft guard — block send when executed actions contradict the draft
 - Parked: 2026-07-09

@@ -56,6 +56,7 @@
       <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
     </nav>
     <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
+    <button class="btn-stats btn-autosend" onclick="openFactsPanel()" title="Operator facts the advisor is taught (knowledge loop)">Facts <span id="facts-pending-badge"></span></button>
     <button class="btn-stats btn-autoaction" onclick="openAutoactionPanel()" title="Auto-actions the system runs on its own">Auto-actions</button>
     <a href="/stats" class="btn-stats btn-stats-follow" title="Performance stats">Stats</a>
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
@@ -301,6 +302,7 @@
       <button onclick="bottomMoreSelect('snoozed')">Snoozed <span class="bottom-tab-count" id="bottom-count-snoozed"></span></button>
       <button onclick="bottomMoreSelect('outreach')">Outreach</button>
       <button onclick="toggleBottomMore(event);openAutosendPanel()">Auto-send</button>
+      <button onclick="toggleBottomMore(event);openFactsPanel()">Facts <span class="bottom-tab-count" id="bottom-count-facts"></span></button>
       <a href="/stats">Stats</a>
     </div>
   </nav>
@@ -315,6 +317,22 @@
       <div id="autosend-master"></div>
       <div id="autosend-rows"><div class="autosend-loading">Loading&hellip;</div></div>
       <div class="autosend-foot">Clean % = judge verdicts identical or cosmetic, trailing 90 days. Never-list categories can never auto-send, regardless of flags.</div>
+    </div>
+  </div>
+
+  <!-- Operator facts panel (knowledge loop; reuses autosend panel styles) -->
+  <div class="autosend-overlay" id="facts-overlay" onclick="if(event.target===this)closeFactsPanel()">
+    <div class="autosend-panel">
+      <div class="autosend-head">
+        <h2>Operator facts</h2>
+        <button class="autosend-close" onclick="closeFactsPanel()" aria-label="Close">&times;</button>
+      </div>
+      <div id="facts-add"></div>
+      <div class="autosend-head" style="margin-top:10px;margin-bottom:6px;"><h2 style="font-size:13px;">Pending review</h2></div>
+      <div id="facts-pending"><div class="autosend-loading">Loading&hellip;</div></div>
+      <div class="autosend-head" style="margin-top:14px;margin-bottom:6px;"><h2 style="font-size:13px;">Active (in the advisor's prompt)</h2></div>
+      <div id="facts-active"></div>
+      <div class="autosend-foot">The daily judge proposes a fact whenever your sent reply corrected the draft. Approving injects it verbatim into every future draft; rejecting also stops it from being re-proposed. Facts with an expiry drop out automatically.</div>
     </div>
   </div>
 
