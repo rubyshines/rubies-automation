@@ -894,9 +894,10 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   if (prevDraft) {
     previousIntake = prevDraft.intake_state;
     previousDraftId = prevDraft.id;
-    // NOTE: superseding old pending drafts is deferred to just before the new
-    // draft insert below. Doing it here orphaned the pending draft whenever any
-    // early-return / advisor failure bailed before a replacement was created.
+    // NOTE: superseding old pending drafts happens inside commitDraft, AFTER
+    // the replacement insert succeeds. Doing it here orphaned the pending
+    // draft whenever any early-return / advisor failure bailed before a
+    // replacement was created.
   }
 
   // Extract message text (use stripped version for cleaner input)
@@ -1141,19 +1142,13 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     console.warn(`[intake] autosend gate error (ignored): ${e.message}`);
   }
 
-  // Supersede any still-pending draft for this ticket now that the advisor has
-  // succeeded and we're about to insert its replacement. (Deferred from the
-  // top of the function so early returns / failures don't orphan it.)
-  await supabase
-    .from('cs_ai_drafts')
-    .update({ status: 'superseded' })
-    .eq('gorgias_ticket_id', ticketId)
-    .eq('status', 'pending');
-
-  // Insert draft — save advisor result verbatim, no post-processing
-  const { data: newDraft, error: insertErr } = await supabase
-    .from('cs_ai_drafts')
-    .insert({
+  // Insert draft (save advisor result verbatim, no post-processing), supersede
+  // the older pending draft, and repoint the ticket — via commitDraft, which
+  // owns the concurrency-safe ordering.
+  const committed = await commitDraft(supabase, {
+    ticketRowId: ticketRow.id,
+    gorgiasTicketId: ticketId,
+    draftFields: {
       ...(autosendShadow.eligible ? { auto_close_path: 'autosend_shadow' } : {}),
       ticket_id: ticketRow.id,
       gorgias_ticket_id: ticketId,
@@ -1180,28 +1175,10 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       actions: initialActions,
       action_executed_at: autoAction ? nowIso : null,
       previous_draft_id: previousDraftId,
-    })
-    .select('id')
-    .single();
-
-  if (insertErr) {
-    console.error(`[intake] Insert error for ticket ${ticketId}: ${insertErr.message}`);
-    // Restore the superseded draft so it's not orphaned without a replacement
-    if (previousDraftId) {
-      await supabase
-        .from('cs_ai_drafts')
-        .update({ status: 'pending' })
-        .eq('id', previousDraftId)
-        .eq('status', 'superseded');
-    }
-    return { skipped: true };
-  }
-
-  // Point ticket to the new active draft
-  await supabase
-    .from('cs_tickets')
-    .update({ active_draft_id: newDraft.id })
-    .eq('id', ticketRow.id);
+    },
+  });
+  if (!committed.id) return { skipped: true };
+  const newDraft = { id: committed.id };
 
   console.log(`[intake] Draft created for ticket ${ticketId} (confidence: ${confidence}, status: ${structured.status}, type: ${messageType})`);
 
@@ -1236,6 +1213,54 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   }
 
   return { drafted: true };
+}
+
+// ---------------------------------------------------------------------------
+// Draft commit — insert, supersede, repoint (in that order)
+// ---------------------------------------------------------------------------
+
+/**
+ * Commit a freshly composed draft: insert it, mark the ticket's OLDER pending
+ * drafts superseded, then repoint active_draft_id. Insert-first is what makes
+ * this safe under concurrent intake runs (webhook retries, multi-message chat
+ * bursts): a duplicate run dies on the UNIQUE (gorgias_ticket_id,
+ * gorgias_message_id) insert before it can touch the winner's draft. The old
+ * supersede-then-insert order let the loser strand a ticket's only draft as
+ * 'superseded' with no replacement (2026-07-09). Two runs committing
+ * DIFFERENT messages converge on the newest draft regardless of write order:
+ * supersede is bounded to id < new id and the active_draft_id update only
+ * moves forward.
+ */
+async function commitDraft(supabase, { ticketRowId, gorgiasTicketId, draftFields }) {
+  const { data: newDraft, error: insertErr } = await supabase
+    .from('cs_ai_drafts')
+    .insert(draftFields)
+    .select('id')
+    .single();
+
+  if (insertErr) {
+    if (insertErr.code === '23505') {
+      console.log(`[intake] Ticket ${gorgiasTicketId}: draft for this message already exists (concurrent run) — skipping`);
+      return { duplicate: true };
+    }
+    console.error(`[intake] Insert error for ticket ${gorgiasTicketId}: ${insertErr.message}`);
+    return { error: insertErr };
+  }
+
+  await supabase
+    .from('cs_ai_drafts')
+    .update({ status: 'superseded' })
+    .eq('gorgias_ticket_id', gorgiasTicketId)
+    .eq('status', 'pending')
+    .lt('id', newDraft.id);
+
+  await supabase
+    .from('cs_tickets')
+    .update({ active_draft_id: newDraft.id })
+    .eq('id', ticketRowId)
+    .or(`active_draft_id.is.null,active_draft_id.lt.${newDraft.id}`);
+
+  return { id: newDraft.id };
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,6 +1368,7 @@ function buildConversationContext(messages, latestMsgId) {
 
 module.exports = {
   processTicket,
+  commitDraft,
   getAiBotUserId,
   buildConversationContext,
   buildPreviousDraftContext,
