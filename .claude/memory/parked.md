@@ -8,6 +8,12 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## cs_messages agent rows contaminated with auto-acks and flow-embedded customer text
+- Parked: 2026-07-11
+- Domains: cs, tech
+- Type: bug
+- Notes: Voice-delta analysis of 2026-era cs_messages (sender_type='agent') found Gorgias auto-acknowledgments ("our team will get back to you soon") and help-center flow transcripts with embedded customer text stored as agent messages; a heuristic check of one 318-message batch found ~7 clear customer-voice bodies + ~118 ambiguous. Affects anything that reads cs_messages as "what RUBIES said" (corpus mining screened for it at consolidation). Investigate the intake path that writes these rows and either fix sender attribution or tag auto-acks.
+
 ## CS advocacy Phase B — /help share page + P.S. link + effectiveness tracking + provider capture
 - Parked: 2026-07-06
 - Last touched: 2026-07-06

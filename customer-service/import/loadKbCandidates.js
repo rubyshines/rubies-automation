@@ -15,6 +15,7 @@
  * Usage:
  *   node customer-service/import/loadKbCandidates.js out/*.jsonl
  *   node customer-service/import/loadKbCandidates.js out/*.jsonl --dry-run
+ *   node customer-service/import/loadKbCandidates.js sheet-approved.jsonl --trust=reply_corpus
  */
 
 const path = require('path');
@@ -79,6 +80,12 @@ async function loadSources(supabase) {
 async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
+  const trustArg = args.find(a => a.startsWith('--trust='));
+  const trust = trustArg ? trustArg.split('=')[1] : 'published';
+  if (!['published', 'reply_corpus'].includes(trust)) {
+    console.error(`bad --trust value: ${trust} (published | reply_corpus)`);
+    process.exit(1);
+  }
   const files = args.filter(a => !a.startsWith('--'));
   if (!files.length) {
     console.error('usage: node customer-service/import/loadKbCandidates.js <file.jsonl> [...] [--dry-run]');
@@ -141,7 +148,7 @@ async function main() {
         title: c.title,
         category: c.category,
         content: c.content.trim(),
-        trust: 'published',
+        trust,
         status: 'candidate',
         source_hash: rec.source_hash,
         updated_at: now,
