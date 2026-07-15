@@ -58,17 +58,32 @@ require.cache[shopifyPath] = {
   exports: { shopifyGraphQL: stubShopifyGraphQL },
 };
 
-// Stub the Warehance client so the hold check in analyzeUnfulfilledOrder never
-// hits the network. Keyed by bare order number; only #31353 is held.
+// Stub the Warehance client so the hold/stock checks in analyzeUnfulfilledOrder
+// never hit the network. Orders keyed by bare number; SKU stock keyed by SKU.
 const warehancePath = require.resolve('../../reports/lib/warehanceClient');
 const WH_FIXTURE = {
   '31353': { id: 'wh-31353', has_hold: true, warehouse_hold: true, address_hold: false },
+  '40001': { id: 'wh-40001', has_hold: false },
+};
+const WH_SKU_STOCK = {
+  // Physically at the warehouse, allocated to an order → site shows 0 available.
+  'ALLOC-BLK-M': { sku: 'ALLOC-BLK-M', on_hand: 1, allocated: 1, available: 0, backordered: 2 },
+  // Genuinely absent from the warehouse — awaiting inbound stock.
+  'GONE-BLK-M': { sku: 'GONE-BLK-M', on_hand: 0, allocated: 0, available: 0, backordered: 12 },
+  'GAF-BLK-M': { sku: 'GAF-BLK-M', on_hand: 40, allocated: 2, available: 38, backordered: 0 },
 };
 require.cache[warehancePath] = {
   id: warehancePath,
   filename: warehancePath,
   loaded: true,
-  exports: { fetchOrderByNumber: async (num) => WH_FIXTURE[String(num).replace('#', '')] || null },
+  exports: {
+    fetchOrderByNumber: async (num) => WH_FIXTURE[String(num).replace('#', '')] || null,
+    fetchSkuStockMany: async (skus) => {
+      const map = new Map();
+      for (const sku of skus || []) map.set(sku, WH_SKU_STOCK[sku] || null);
+      return map;
+    },
+  },
 };
 
 const { analyzeUnfulfilledOrder } = require('../lib/tracking/fulfillmentChecker');
@@ -213,5 +228,76 @@ describe('analyzeUnfulfilledOrder — warehouse hold detection', () => {
     const result = await analyzeUnfulfilledOrder(order);
     assert.equal(result.onHold, false);
     assert.equal(result.issues.some(i => i.type === 'stuck'), true, 'no hold → stuck heuristic still applies');
+  });
+});
+
+describe('analyzeUnfulfilledOrder — warehouse stock is the truth for what can ship', () => {
+  function buildWhOrder(lineItems) {
+    return {
+      name: '#40001', // in WH_FIXTURE (no hold) → warehouse stock path active
+      createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+      fulfillments: [],
+      lineItems,
+    };
+  }
+
+  it('an item allocated to the order (site shows 0, warehouse has it on hand) is NOT out of stock', async () => {
+    const order = buildWhOrder([{
+      title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR',
+      sku: 'ALLOC-BLK-M', quantity: 1,
+      variantId: 'gid://shopify/ProductVariant/100', // Shopify available: 0
+      customAttributes: [],
+    }]);
+    const result = await analyzeUnfulfilledOrder(order);
+    assert.equal(result.hasOutOfStockItems, false, 'allocated item must not be classified OOS');
+    assert.equal(result.issues.some(i => i.type === 'out_of_stock'), false);
+    const alloc = result.issues.find(i => i.type === 'allocated');
+    assert.ok(alloc, 'expected an allocated issue');
+    assert.match(alloc.description, /CAN ship/);
+    assert.equal(result.inventory[0].warehouse.on_hand, 1);
+  });
+
+  it('an item the warehouse physically lacks is out of stock (awaiting stock)', async () => {
+    const order = buildWhOrder([{
+      title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR',
+      sku: 'GONE-BLK-M', quantity: 1,
+      variantId: 'gid://shopify/ProductVariant/100',
+      customAttributes: [],
+    }]);
+    const result = await analyzeUnfulfilledOrder(order);
+    assert.equal(result.hasOutOfStockItems, true);
+    const oos = result.issues.find(i => i.type === 'out_of_stock');
+    assert.ok(oos);
+    assert.match(oos.description, /awaiting stock/);
+    assert.equal(result.issues.some(i => i.type === 'allocated'), false);
+  });
+
+  it('warehouse shortage wins even when Shopify shows stock', async () => {
+    const order = buildWhOrder([{
+      title: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR',
+      sku: 'GONE-BLK-M', quantity: 1,
+      variantId: 'gid://shopify/ProductVariant/200', // Shopify available: 41
+      customAttributes: [],
+    }]);
+    const result = await analyzeUnfulfilledOrder(order);
+    assert.equal(result.hasOutOfStockItems, true, 'warehouse (not Shopify) decides shippability');
+  });
+
+  it('falls back to Shopify availability when the order is not in Warehance', async () => {
+    const order = { // '#TEST' is not in WH_FIXTURE
+      name: '#TEST',
+      createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
+      fulfillments: [],
+      lineItems: [{
+        title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR',
+        sku: 'ALLOC-BLK-M', quantity: 1,
+        variantId: 'gid://shopify/ProductVariant/100', // Shopify available: 0
+        customAttributes: [],
+      }],
+    };
+    const result = await analyzeUnfulfilledOrder(order);
+    assert.equal(result.hasOutOfStockItems, true, 'no warehouse data → Shopify fallback');
+    const oos = result.issues.find(i => i.type === 'out_of_stock');
+    assert.match(oos.description, /out of sync/);
   });
 });

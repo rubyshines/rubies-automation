@@ -3,7 +3,9 @@
  *
  * Checks:
  * 1. Pre-order/backorder (product tags/metafields)
- * 2. Inventory levels (out of stock at warehouse?)
+ * 2. Warehouse stock per item (Warehance is the truth for what can ship —
+ *    items allocated to this order can ship even when the website shows 0;
+ *    Shopify availability is only the fallback when warehouse data is missing)
  * 3. Order age (normal processing vs stuck)
  * 4. Partial fulfillment (some items shipped, some didn't)
  *
@@ -119,12 +121,42 @@ async function analyzeUnfulfilledOrder(order) {
     });
   }
 
+  // Fetch the warehouse view of this order up front. Warehance is the source of
+  // truth for what can actually ship: Shopify "available" is net of allocations,
+  // so an item whose units are already allocated to THIS order reads as 0 on the
+  // website even though it's sitting at the warehouse reserved for the order.
+  // Classifying OOS from Shopify alone mis-reports those items as blockers.
+  let whOrder = null;
+  let whStock = new Map();
+  let whError = null;
+  try {
+    const { fetchOrderByNumber, fetchSkuStockMany } = require('../../../reports/lib/warehanceClient');
+    const orderNum = String(order.name || '').replace('#', '');
+    whOrder = orderNum ? await fetchOrderByNumber(orderNum) : null;
+    if (whOrder) {
+      const skus = (order.lineItems || order.items || []).map(i => i.sku);
+      whStock = await fetchSkuStockMany(skus);
+    }
+  } catch (e) {
+    whError = e.message;
+  }
+
   // Check inventory
   const inventoryResults = await checkInventory(order);
   investigation.inventory = inventoryResults;
 
   for (const item of inventoryResults) {
     if (item.error) continue;
+
+    const wh = whStock.get(item.sku) || null;
+    if (wh) {
+      item.warehouse = {
+        on_hand: wh.on_hand ?? 0,
+        allocated: wh.allocated ?? 0,
+        available: wh.available ?? 0,
+        backordered: wh.backordered ?? 0,
+      };
+    }
 
     if (item.isPreOrder) {
       investigation.hasPreOrderItems = true;
@@ -136,9 +168,34 @@ async function analyzeUnfulfilledOrder(order) {
         item: item.title,
         preOrderTarget: item.preOrderTarget || null,
       });
+      continue;
     }
 
-    if (item.available <= 0 && !item.isPreOrder) {
+    const qtyNeeded = item.ordered || 1;
+    if (wh) {
+      // Warehouse truth: an item only blocks the order if the warehouse
+      // physically lacks it. Units on hand but not "available" are allocated —
+      // for an unfulfilled order that's this order's own reservation.
+      if ((wh.on_hand ?? 0) < qtyNeeded) {
+        investigation.hasOutOfStockItems = true;
+        investigation.issues.push({
+          type: 'out_of_stock',
+          description: `${item.title} (${item.variant}) is not at the warehouse (on hand: ${wh.on_hand ?? 0}, backordered: ${wh.backordered ?? 0}) — awaiting stock.`,
+          item: item.title,
+          variant: item.variant,
+          sku: item.sku,
+        });
+      } else if (item.available <= 0) {
+        investigation.issues.push({
+          type: 'allocated',
+          description: `${item.title} (${item.variant}) shows out of stock on the website, but its unit(s) are on hand at the warehouse allocated to this order — it CAN ship with this order and is NOT a blocker.`,
+          item: item.title,
+          variant: item.variant,
+          sku: item.sku,
+        });
+      }
+    } else if (item.available <= 0) {
+      // No warehouse data for this SKU/order — fall back to Shopify availability.
       investigation.hasOutOfStockItems = true;
       investigation.issues.push({
         type: 'out_of_stock',
@@ -156,10 +213,12 @@ async function analyzeUnfulfilledOrder(order) {
   // hasn't shipped, so it must short-circuit the "stuck/slow" heuristics below —
   // otherwise the advisor reports a held order as "mysteriously stuck" and
   // routes to a human instead of explaining the hold.
-  try {
-    const { fetchOrderByNumber } = require('../../../reports/lib/warehanceClient');
-    const orderNum = String(order.name || '').replace('#', '');
-    const whOrder = orderNum ? await fetchOrderByNumber(orderNum) : null;
+  if (whError) {
+    investigation.issues.push({
+      type: 'hold_check_failed',
+      description: `Could not check warehouse hold status: ${whError}`,
+    });
+  } else {
     if (whOrder && whOrder.has_hold) {
       const holds = [];
       if (whOrder.warehouse_hold) holds.push('warehouse');
@@ -178,11 +237,6 @@ async function analyzeUnfulfilledOrder(order) {
         });
       }
     }
-  } catch (e) {
-    investigation.issues.push({
-      type: 'hold_check_failed',
-      description: `Could not check warehouse hold status: ${e.message}`,
-    });
   }
 
   // Determine severity. A hold is a KNOWN, resolvable cause — it takes priority
