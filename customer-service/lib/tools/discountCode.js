@@ -9,24 +9,46 @@
  *      named product, scoped to that product (effectively makes it free for
  *      one use). Always two-phase since it's a high-value comp.
  *
+ * Percent codes live in one shared "bucket" discount per level ("Thank You
+ * 10", "Thank You 15", ...) — each issued code is appended to the existing
+ * discount rather than creating a new one, so the admin discounts list stays
+ * at one entry per level no matter how many codes are issued. The bucket is
+ * created on first use for a given percent. Shopify's usageLimit on a
+ * multi-code discount applies PER CODE (verified against the store's
+ * Klaviyo-managed "Welcome 10": usageLimit 1, 205 redemptions across 7,890
+ * codes), so usageLimit: 1 keeps every code single-use.
+ *
+ * "Thank You" (not "Welcome") so CS comp codes can never be confused with
+ * the Klaviyo newsletter/SMS signup discounts titled "Welcome 10/15".
+ *
+ * Free-product comps stay one-discount-per-code since they're product-specific.
+ *
  * Discount config:
- *   - Limit 1 use total
+ *   - Limit 1 use per code
  *   - Combines with product/order/shipping discounts
  *   - No minimum purchase
  *   - All customers, all sales channels
  *   - Active from now, no end date
  *   - Code format: 10 random hex chars uppercase (e.g. A1B2C3D4E5).
- *     The Shopify discount's `title` carries the descriptive name for
- *     admin search ("Welcome 10", "Welcome 25", "Free Brooke", etc.);
- *     the code itself is opaque so it works for any discount type.
- *     Collisions are handled by retrying with a fresh code.
+ *     Codes are unique store-wide (Shopify enforces this across all
+ *     discounts); collisions are handled by retrying with a fresh code.
  */
 
-const { createDiscountCode, randomDiscountCode, getAdminUrl } = require('../shopify');
+const {
+  createDiscountCode,
+  findDiscountNodeByTitle,
+  addCodeToPriceRule,
+  randomDiscountCode,
+  getAdminUrl,
+} = require('../shopify');
 const { searchProducts } = require('../productCache');
 
 // The "Discounts" collection — the 19 products eligible for percent-off codes.
 const DISCOUNTS_COLLECTION_GID = 'gid://shopify/Collection/515636363542';
+
+function bucketTitle(percentOff) {
+  return `Thank You ${percentOff}`;
+}
 
 function buildBaseConfig({ title, code, startsAt }) {
   return {
@@ -50,7 +72,7 @@ function buildPercentInput({ percentOff, code }) {
   // subscriptions enabled and Shopify rejects the field in that case.
   return {
     ...buildBaseConfig({
-      title: `Welcome ${percentOff}`,
+      title: bucketTitle(percentOff),
       code,
       startsAt: new Date().toISOString(),
     }),
@@ -80,29 +102,54 @@ function buildFreeProductInput({ amount, productGid, productTitle, code }) {
   };
 }
 
+function isCollisionError(err) {
+  const msg = (err && err.message) || '';
+  return /already.*been.*taken|already.*exists|TAKEN/i.test(msg);
+}
+
 /**
- * Create a discount code with retry on collision.
- * Shopify rejects duplicate codes with a userError; randomDiscountCode has
- * ~1 trillion possibilities so collisions are extremely rare, but we retry
- * up to 3 times with a fresh code as a belt-and-suspenders guarantee.
- * The mutationInput is rebuilt with the new code on each retry.
+ * Run an attempt function with a fresh random code, retrying on code
+ * collision. Shopify rejects duplicate codes store-wide; randomDiscountCode
+ * has ~1 trillion possibilities so collisions are extremely rare, but we
+ * retry up to 3 times with a fresh code as a belt-and-suspenders guarantee.
  */
-async function createWithRetry(buildInput, attempts = 3) {
+async function withCollisionRetry(attempt, attempts = 3) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     const code = randomDiscountCode();
     try {
-      const node = await createDiscountCode(buildInput(code));
-      return { node, code };
+      const result = await attempt(code);
+      return { ...result, code };
     } catch (err) {
       lastErr = err;
-      const msg = err.message || '';
-      const isCollision = /already.*been.*taken|already.*exists|TAKEN/i.test(msg);
-      if (!isCollision) throw err;
+      if (!isCollisionError(err)) throw err;
       // else: retry with a new code
     }
   }
   throw lastErr;
+}
+
+/**
+ * Issue a percent-off code: append to the existing "Thank You N" bucket
+ * discount, or create the bucket (with this first code) if it doesn't exist.
+ * Two first issues at a new level within a short window could race and
+ * create two buckets — the title search index lags creation by a few
+ * seconds. Harmless (both work; one bucket just accumulates from then on)
+ * and effectively impossible at CS volumes now that the standard levels'
+ * buckets exist.
+ */
+async function issuePercentCode(percentOff) {
+  const bucket = await findDiscountNodeByTitle(bucketTitle(percentOff));
+  if (bucket) {
+    return withCollisionRetry(async (code) => {
+      await addCodeToPriceRule(bucket.numericId, code);
+      return { discountGid: bucket.id };
+    });
+  }
+  return withCollisionRetry(async (code) => {
+    const node = await createDiscountCode(buildPercentInput({ percentOff, code }));
+    return { discountGid: node.id };
+  });
 }
 
 function findProductFromQuery(query) {
@@ -121,10 +168,24 @@ function findProductFromQuery(query) {
   };
 }
 
+function createdResponse({ code, discountGid, summary }) {
+  const adminUrl = getAdminUrl(discountGid);
+  const lines = [
+    '**Discount Code Created**',
+    '',
+    `**Code:** \`${code}\``,
+    `**Discount:** ${summary}`,
+    `**Limit:** 1 use total`,
+    '',
+    adminUrl,
+  ];
+  return { content: [{ type: 'text', text: lines.join('\n') }] };
+}
+
 const tools = [
   {
     name: 'create_discount_code',
-    description: 'Create a Shopify discount code. Two modes: (1) percent: % off applied to the "Discounts" collection — the standard response when a customer asks for a discount or never received their welcome code. Default 10%. (2) free_product: fixed-amount discount equal to the highest variant price of a named product, scoped to that product (makes it free for one use). Codes are limit-1-use, combine with product/order/shipping discounts, no minimum, all customers, active immediately. Two-phase confirmation required when percent_off > 10 OR mode=free_product. Returns the generated code string and an admin link.',
+    description: 'Create a Shopify discount code. Two modes: (1) percent: % off applied to the "Discounts" collection — the standard response when a customer asks for a discount or never received their welcome code. Default 10%. Each code is added to the shared "Thank You N" discount for that percent level. (2) free_product: fixed-amount discount equal to the highest variant price of a named product, scoped to that product (makes it free for one use). Codes are limit-1-use, combine with product/order/shipping discounts, no minimum, all customers, active immediately. Two-phase confirmation required when percent_off > 10 OR mode=free_product. Returns the generated code string and an admin link.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -161,38 +222,32 @@ const tools = [
       // --- Phase 2: confirmed execution ---
       if (input.confirmed && input._discount_data) {
         const data = input._discount_data;
-        let buildInput;
-        let summary;
-        if (data.mode === 'percent') {
-          buildInput = (code) => buildPercentInput({ percentOff: data.percent_off, code });
-          summary = `${data.percent_off}% off the Discounts collection`;
-        } else {
-          buildInput = (code) => buildFreeProductInput({
-            amount: data.amount,
-            productGid: data.product_id,
-            productTitle: data.product_title,
-            code,
-          });
-          summary = `$${data.amount.toFixed(2)} off ${data.product_title} (one free for the customer)`;
-        }
-
-        let result;
         try {
-          result = await createWithRetry(buildInput);
+          if (data.mode === 'percent') {
+            const result = await issuePercentCode(data.percent_off);
+            return createdResponse({
+              code: result.code,
+              discountGid: result.discountGid,
+              summary: `${data.percent_off}% off the Discounts collection`,
+            });
+          }
+          const result = await withCollisionRetry(async (code) => {
+            const node = await createDiscountCode(buildFreeProductInput({
+              amount: data.amount,
+              productGid: data.product_id,
+              productTitle: data.product_title,
+              code,
+            }));
+            return { discountGid: node.id };
+          });
+          return createdResponse({
+            code: result.code,
+            discountGid: result.discountGid,
+            summary: `$${data.amount.toFixed(2)} off ${data.product_title} (one free for the customer)`,
+          });
         } catch (err) {
           return { content: [{ type: 'text', text: `Failed to create discount: ${err.message}` }], isError: true };
         }
-        const adminUrl = getAdminUrl(result.node.id);
-        const lines = [
-          '**Discount Code Created**',
-          '',
-          `**Code:** \`${result.code}\``,
-          `**Discount:** ${summary}`,
-          `**Limit:** 1 use total`,
-          '',
-          adminUrl,
-        ];
-        return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
 
       // --- Phase 1 / immediate path ---
@@ -204,23 +259,16 @@ const tools = [
         const needsConfirm = percentOff > 10;
         if (!needsConfirm) {
           // Short-circuit: 10% (or less) is auto-issued without confirmation.
-          let result;
           try {
-            result = await createWithRetry((code) => buildPercentInput({ percentOff, code }));
+            const result = await issuePercentCode(percentOff);
+            return createdResponse({
+              code: result.code,
+              discountGid: result.discountGid,
+              summary: `${percentOff}% off the Discounts collection`,
+            });
           } catch (err) {
             return { content: [{ type: 'text', text: `Failed to create discount: ${err.message}` }], isError: true };
           }
-          const adminUrl = getAdminUrl(result.node.id);
-          const lines = [
-            '**Discount Code Created**',
-            '',
-            `**Code:** \`${result.code}\``,
-            `**Discount:** ${percentOff}% off the Discounts collection`,
-            `**Limit:** 1 use total`,
-            '',
-            adminUrl,
-          ];
-          return { content: [{ type: 'text', text: lines.join('\n') }] };
         }
         // Phase 1 preview for percent > 10
         const _discount_data = { mode: 'percent', percent_off: percentOff };

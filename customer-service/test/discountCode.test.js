@@ -12,6 +12,10 @@ const productCachePath = require.resolve('../lib/productCache');
 
 let createCalls = [];
 let createImpl = null; // tests can override; default below
+let addCodeCalls = [];
+let addCodeImpl = null; // tests can override; default succeeds
+let existingBuckets = {}; // title -> node returned by findDiscountNodeByTitle
+let findCalls = [];
 let mockProducts = [];
 let randomCallCount = 0;
 
@@ -29,6 +33,15 @@ require.cache[shopifyPath] = {
       createCalls.push(input);
       const impl = createImpl || defaultCreateImpl;
       return impl(input);
+    },
+    findDiscountNodeByTitle: async (title) => {
+      findCalls.push(title);
+      return existingBuckets[title] || null;
+    },
+    addCodeToPriceRule: async (priceRuleId, code) => {
+      addCodeCalls.push({ priceRuleId, code });
+      const impl = addCodeImpl || (async () => ({ id: 1, code }));
+      return impl(priceRuleId, code);
     },
     randomDiscountCode: () => {
       randomCallCount++;
@@ -58,16 +71,22 @@ const tool = tools.find(t => t.name === 'create_discount_code');
 beforeEach(() => {
   createCalls = [];
   createImpl = null;
+  addCodeCalls = [];
+  addCodeImpl = null;
+  existingBuckets = {};
+  findCalls = [];
   mockProducts = [];
   randomCallCount = 0;
 });
 
-describe('create_discount_code — percent mode', () => {
-  it('default 10% short-circuits to creation (no preview)', async () => {
+describe('create_discount_code — percent mode, bucket missing', () => {
+  it('default 10% creates the "Thank You 10" bucket with the first code', async () => {
     const res = await tool.handler({ mode: 'percent' });
+    assert.deepEqual(findCalls, ['Thank You 10']);
+    assert.equal(addCodeCalls.length, 0);
     assert.equal(createCalls.length, 1);
     const input = createCalls[0];
-    assert.equal(input.title, 'Welcome 10');
+    assert.equal(input.title, 'Thank You 10');
     assert.equal(input.code, 'DEADBEEF01');
     assert.equal(input.usageLimit, 1);
     assert.equal(input.appliesOncePerCustomer, false);
@@ -87,30 +106,87 @@ describe('create_discount_code — percent mode', () => {
     assert.match(res.content[0].text, /admin\.shopify\.com\/store\/test-store\/discounts\/123456789/);
   });
 
-  it('explicit percent_off 5 short-circuits to creation', async () => {
+  it('explicit percent_off 5 creates a "Thank You 5" bucket', async () => {
     await tool.handler({ mode: 'percent', percent_off: 5 });
     assert.equal(createCalls.length, 1);
     assert.equal(createCalls[0].customerGets.value.percentage, 0.05);
-    assert.equal(createCalls[0].title, 'Welcome 5');
+    assert.equal(createCalls[0].title, 'Thank You 5');
+  });
+});
+
+describe('create_discount_code — percent mode, bucket exists', () => {
+  it('appends a code to the existing bucket instead of creating a discount', async () => {
+    existingBuckets['Thank You 10'] = {
+      id: 'gid://shopify/DiscountCodeNode/555000111',
+      numericId: '555000111',
+      codesCount: 7,
+    };
+    const res = await tool.handler({ mode: 'percent' });
+    assert.equal(createCalls.length, 0);
+    assert.equal(addCodeCalls.length, 1);
+    assert.equal(addCodeCalls[0].priceRuleId, '555000111');
+    assert.equal(addCodeCalls[0].code, 'DEADBEEF01');
+    assert.match(res.content[0].text, /Discount Code Created/);
+    assert.match(res.content[0].text, /DEADBEEF01/);
+    // Admin link points at the bucket discount
+    assert.match(res.content[0].text, /discounts\/555000111/);
   });
 
+  it('confirmed >10% appends to its own level bucket', async () => {
+    existingBuckets['Thank You 25'] = {
+      id: 'gid://shopify/DiscountCodeNode/777000222',
+      numericId: '777000222',
+      codesCount: 2,
+    };
+    const res = await tool.handler({
+      mode: 'percent',
+      confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 25 },
+    });
+    assert.equal(createCalls.length, 0);
+    assert.equal(addCodeCalls.length, 1);
+    assert.equal(addCodeCalls[0].priceRuleId, '777000222');
+    assert.match(res.content[0].text, /25% off the Discounts collection/);
+  });
+
+  it('retries with a fresh code when the bucket add reports a collision', async () => {
+    existingBuckets['Thank You 10'] = {
+      id: 'gid://shopify/DiscountCodeNode/555000111',
+      numericId: '555000111',
+      codesCount: 7,
+    };
+    let attempt = 0;
+    addCodeImpl = async () => {
+      attempt++;
+      if (attempt === 1) throw new Error('addCodeToPriceRule (422): {"code":["has already been taken"]}');
+      return { id: 2 };
+    };
+    const res = await tool.handler({ mode: 'percent' });
+    assert.equal(attempt, 2);
+    assert.notEqual(addCodeCalls[0].code, addCodeCalls[1].code);
+    assert.match(res.content[0].text, /Discount Code Created/);
+  });
+});
+
+describe('create_discount_code — percent mode, two-phase', () => {
   it('percent_off 25 without confirmed returns preview', async () => {
     const res = await tool.handler({ mode: 'percent', percent_off: 25 });
     assert.equal(createCalls.length, 0);
+    assert.equal(addCodeCalls.length, 0);
     assert.match(res.content[0].text, /Awaiting Confirmation/);
     assert.match(res.content[0].text, /25% off the Discounts collection/);
     assert.match(res.content[0].text, /confirmed=true/);
     assert.match(res.content[0].text, /"percent_off":25/);
   });
 
-  it('percent_off 25 with confirmed + _discount_data creates code', async () => {
+  it('percent_off 25 with confirmed + _discount_data creates code (no bucket yet)', async () => {
     const res = await tool.handler({
       mode: 'percent',
       confirmed: true,
       _discount_data: { mode: 'percent', percent_off: 25 },
     });
     assert.equal(createCalls.length, 1);
-    assert.equal(createCalls[0].title, 'Welcome 25');
+    assert.equal(createCalls[0].title, 'Thank You 25');
     assert.equal(createCalls[0].customerGets.value.percentage, 0.25);
     assert.match(res.content[0].text, /Discount Code Created/);
   });
@@ -121,6 +197,7 @@ describe('create_discount_code — percent mode', () => {
     const r2 = await tool.handler({ mode: 'percent', percent_off: 150 });
     assert.equal(r2.isError, true);
     assert.equal(createCalls.length, 0);
+    assert.equal(addCodeCalls.length, 0);
   });
 
   it('surfaces non-collision userErrors from Shopify mutation as tool error', async () => {
@@ -162,7 +239,7 @@ describe('create_discount_code — free_product mode', () => {
     assert.match(res.content[0].text, /No product found/);
   });
 
-  it('with confirmed creates code scoped to product with fixed amount', async () => {
+  it('with confirmed creates a standalone discount scoped to product with fixed amount', async () => {
     const res = await tool.handler({
       mode: 'free_product',
       confirmed: true,
@@ -174,6 +251,7 @@ describe('create_discount_code — free_product mode', () => {
       },
     });
     assert.equal(createCalls.length, 1);
+    assert.equal(addCodeCalls.length, 0);
     const input = createCalls[0];
     assert.equal(input.title, 'Free THE BROOKE SHAPING BRA');
     assert.equal(input.customerGets.value.discountAmount.amount, '42.00');
@@ -199,7 +277,7 @@ describe('create_discount_code — generated code format', () => {
   });
 });
 
-describe('create_discount_code — collision retry', () => {
+describe('create_discount_code — collision retry (bucket creation path)', () => {
   it('retries with a fresh code when Shopify reports the code is taken', async () => {
     let attempt = 0;
     createImpl = async (input) => {
