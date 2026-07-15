@@ -124,25 +124,46 @@ function parseShootFilename(filename) {
 // Image analysis
 // ---------------------------------------------------------------------------
 
+// Pixels with alpha below this are background; at or above, content. Set high
+// enough to ignore stray semi-transparent junk pixels from the cutout.
+const ALPHA_CONTENT = 32;
+
 /**
- * Compute the alpha bounding box and which source edges the content touches.
- * Uses sharp's trim offsets rather than scanning pixels.
+ * Compute the content bounding box and which source edges the content
+ * touches, by scanning the alpha channel directly. (sharp's trim() keys off
+ * the top-left pixel color and can be thrown by semi-transparent remnants.)
  */
 async function analyzeImage(imagePath) {
-  const meta = await sharp(imagePath).metadata();
-  const { info } = await sharp(imagePath)
-    .trim()
+  const { data, info } = await sharp(imagePath)
+    .ensureAlpha()
+    .extractChannel(3)
+    .raw()
     .toBuffer({ resolveWithObject: true });
 
-  const left = Math.abs(info.trimOffsetLeft || 0);
-  const top = Math.abs(info.trimOffsetTop || 0);
-  const right = meta.width - (left + info.width);
-  const bottom = meta.height - (top + info.height);
+  const { width, height } = info;
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (data[row + x] >= ALPHA_CONTENT) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) throw new Error(`No content pixels found in ${imagePath}`);
+
+  const left = minX;
+  const top = minY;
+  const right = width - 1 - maxX;
+  const bottom = height - 1 - maxY;
 
   return {
-    width: meta.width,
-    height: meta.height,
-    bbox: { left, top, width: info.width, height: info.height },
+    width,
+    height,
+    bbox: { left, top, width: maxX - minX + 1, height: maxY - minY + 1 },
     touches: {
       left: left <= EDGE_TOLERANCE,
       top: top <= EDGE_TOLERANCE,
@@ -175,44 +196,43 @@ function hexToRgb(hex) {
  * Composite one image onto the pastel canvas.
  *
  * center      -> trim, fit inside 80% box, center
- * bleed:...   -> fit so the bleeding axis spans the full canvas, anchor to the
- *                touched edges, crop overflow on the anchored axis.
+ * bleed:...   -> the photographer already composed the crop, so preserve the
+ *                source framing: composite the UNTRIMMED source (transparent
+ *                margins included), scaled to span the canvas width, docked
+ *                toward the touched edges. Only when content runs the full
+ *                vertical span does it scale to canvas height and crop
+ *                horizontally (away from the touched side).
  */
 async function composite(imagePath, analysis, bgHex, outPath, canvasWidth) {
   const canvasHeight = Math.round(canvasWidth * CANVAS_RATIO);
   const { touches } = analysis;
   const treatment = treatmentFor(touches);
 
-  const trimmed = await sharp(imagePath).trim().toBuffer();
-  const tMeta = await sharp(trimmed).metadata();
-
-  let scale;
+  let input, srcW, srcH, scale;
   if (treatment === 'center') {
-    scale = Math.min(
-      (canvasWidth * 0.8) / tMeta.width,
-      (canvasHeight * 0.8) / tMeta.height
-    );
+    input = await sharp(imagePath).trim().toBuffer();
+    const tMeta = await sharp(input).metadata();
+    srcW = tMeta.width;
+    srcH = tMeta.height;
+    scale = Math.min((canvasWidth * 0.8) / srcW, (canvasHeight * 0.8) / srcH);
   } else {
-    // Bleed: span the full canvas along the bleeding axis.
-    const horizontalBleed = touches.left || touches.right;
-    const verticalBleed = touches.top || touches.bottom;
-    if (horizontalBleed && verticalBleed) {
-      // Bleeds both ways -> cover the whole canvas.
-      scale = Math.max(canvasWidth / tMeta.width, canvasHeight / tMeta.height);
-    } else if (verticalBleed) {
-      scale = canvasWidth / tMeta.width; // fit width, anchor top/bottom
-    } else {
-      scale = canvasHeight / tMeta.height; // fit height, anchor left/right
-    }
+    input = await sharp(imagePath).toBuffer();
+    srcW = analysis.width;
+    srcH = analysis.height;
+    scale = touches.top && touches.bottom
+      ? canvasHeight / srcH // full-height composition: fill height, crop sides
+      : canvasWidth / srcW; // otherwise: fill width, dock vertically
   }
 
-  const scaledW = Math.round(tMeta.width * scale);
-  const scaledH = Math.round(tMeta.height * scale);
-  const resized = await sharp(trimmed)
+  const scaledW = Math.round(srcW * scale);
+  const scaledH = Math.round(srcH * scale);
+  const resized = await sharp(input)
     .resize({ width: scaledW, height: scaledH })
     .toBuffer();
 
-  // Position: center by default, snap to any touched edge.
+  // Position: center by default; bleed images dock toward the touched edges
+  // (a negative offset crops away from the untouched side via the overflow
+  // extraction below).
   let leftOff = Math.round((canvasWidth - scaledW) / 2);
   let topOff = Math.round((canvasHeight - scaledH) / 2);
   if (treatment !== 'center') {
@@ -309,8 +329,10 @@ async function main() {
       const analysis = await analyzeImage(srcPath);
       const treatment = await composite(srcPath, analysis, bg, path.join(out, outName), width);
 
+      const m = analysis.bbox;
+      const margins = `margins l${m.left} t${m.top} r${analysis.width - m.left - m.width} b${analysis.height - m.top - m.height}`;
       console.log(
-        `${item.file}  ->  ${outName}  [${analysis.width}x${analysis.height}, ${treatment}, bg ${bg}]`
+        `${item.file}  ->  ${outName}  [${analysis.width}x${analysis.height}, ${treatment}, ${margins}, bg ${bg}]`
       );
       manifest.push({
         source: item.file,
