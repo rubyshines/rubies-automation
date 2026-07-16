@@ -22,6 +22,8 @@ const {
   applyShippingAddressOverride,
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
   buildShippingAddress,
+  normalizeCountryCode,
+  unknownDestinationWarning,
 } = require('../orderUtils');
 
 function fmtCurrency(n) {
@@ -194,6 +196,9 @@ async function handleCreateOrder({
     const a = effectiveShippingAddress;
     md += `**Ship to:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}\n`;
   }
+  if (!normalizeCountryCode(shipCountry)) {
+    md += `\n${unknownDestinationWarning(shippingTitle)}\n`;
+  }
 
   md += `\n**Items:**\n`;
   for (const r of itemLines) {
@@ -287,7 +292,8 @@ const tools = [
         shipping_address: {
           ...SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
           description: SHIPPING_ADDRESS_OVERRIDE_SCHEMA.description +
-            ' For new customers, also used to create the customer record.',
+            ' For new customers, also used to create the customer record.' +
+            ' Also pass this (at minimum the country) when the customer has no address on file — without a destination the shipping line defaults to INTERNATIONAL, which misroutes US/Canada orders at the warehouse.',
         },
         customer_id: {
           type: 'string',

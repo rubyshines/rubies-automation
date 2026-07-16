@@ -29,7 +29,7 @@ require.cache[shippingLookupPath] = {
   },
 };
 
-const { getShippingMethodTitle, SHIPPING_METHOD_TITLES, applyShippingAddressOverride } = require('../lib/orderUtils');
+const { getShippingMethodTitle, SHIPPING_METHOD_TITLES, applyShippingAddressOverride, normalizeCountryCode } = require('../lib/orderUtils');
 
 describe('getShippingMethodTitle', () => {
   beforeEach(() => { stubZone = null; });
@@ -72,6 +72,50 @@ describe('getShippingMethodTitle', () => {
   it('falls back to DDU for missing country', async () => {
     assert.equal(await getShippingMethodTitle(null, 'standard'), SHIPPING_METHOD_TITLES.ddu.standard);
     assert.equal(await getShippingMethodTitle('', 'expedited'), SHIPPING_METHOD_TITLES.ddu.expedited);
+  });
+
+  // Regression for order #32333: a spelled-out country name missed the zone
+  // lookup (keyed by alpha-2 code) and silently landed on the international line.
+  it('normalizes full country names to ISO codes', async () => {
+    assert.equal(await getShippingMethodTitle('United States', 'standard'), 'Free US Standard Shipping');
+    assert.equal(await getShippingMethodTitle('UNITED STATES', 'expedited'), 'US Expedited Shipping');
+    assert.equal(await getShippingMethodTitle('USA', 'standard'), 'Free US Standard Shipping');
+    assert.equal(await getShippingMethodTitle('Canada', 'standard'), 'Free Canada Standard Shipping');
+  });
+
+  it('normalizes common aliases (UK → GB)', async () => {
+    stubZone = 'ddp';
+    assert.equal(await getShippingMethodTitle('UK', 'standard'),
+      'Free International Shipping - All Duties and Import Fees Included');
+    assert.equal(await getShippingMethodTitle('United Kingdom', 'standard'),
+      'Free International Shipping - All Duties and Import Fees Included');
+  });
+});
+
+describe('normalizeCountryCode', () => {
+  it('passes through alpha-2 codes uppercased', () => {
+    assert.equal(normalizeCountryCode('us'), 'US');
+    assert.equal(normalizeCountryCode(' CA '), 'CA');
+  });
+
+  it('maps full English names to codes', () => {
+    assert.equal(normalizeCountryCode('United States'), 'US');
+    assert.equal(normalizeCountryCode('australia'), 'AU');
+    assert.equal(normalizeCountryCode('New Zealand'), 'NZ');
+    assert.equal(normalizeCountryCode('Germany'), 'DE');
+  });
+
+  it('maps aliases', () => {
+    assert.equal(normalizeCountryCode('UK'), 'GB');
+    assert.equal(normalizeCountryCode('USA'), 'US');
+    assert.equal(normalizeCountryCode('Great Britain'), 'GB');
+  });
+
+  it('returns empty string for empty or unrecognizable input', () => {
+    assert.equal(normalizeCountryCode(''), '');
+    assert.equal(normalizeCountryCode(null), '');
+    assert.equal(normalizeCountryCode(undefined), '');
+    assert.equal(normalizeCountryCode('Not A Country'), '');
   });
 });
 

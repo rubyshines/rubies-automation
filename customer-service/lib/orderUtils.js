@@ -109,9 +109,52 @@ const SHIPPING_METHOD_TITLES = {
   ddu:    { standard: 'Free Standard International Shipping',                             expedited: 'Expedited International Shipping' },
 };
 
+// Reverse map of English country names → ISO 3166 alpha-2 codes, built once
+// via Intl.DisplayNames. The shipping_zones lookup is keyed by 2-letter code,
+// so a spelled-out country ("United States") would miss and silently land the
+// order on the international (DDU) shipping line — which Warehance routes to
+// the international carrier.
+const COUNTRY_CODE_ALIASES = { UK: 'GB' };
+const COUNTRY_NAME_TO_CODE = (() => {
+  const map = {
+    'USA': 'US', 'U.S.': 'US', 'U.S.A.': 'US', 'UNITED STATES OF AMERICA': 'US', 'AMERICA': 'US',
+    'GREAT BRITAIN': 'GB', 'ENGLAND': 'GB',
+    'SOUTH KOREA': 'KR', 'RUSSIA': 'RU', 'VIETNAM': 'VN', 'CZECH REPUBLIC': 'CZ',
+  };
+  try {
+    const dn = new Intl.DisplayNames(['en'], { type: 'region' });
+    const AZ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    for (const a of AZ) {
+      for (const b of AZ) {
+        const code = a + b;
+        let name;
+        try { name = dn.of(code); } catch { continue; }
+        // Unassigned codes echo back the code itself — skip those.
+        if (name && name !== code) map[name.toUpperCase()] = code;
+      }
+    }
+  } catch (_) {
+    // Intl unavailable — the manual aliases above still cover the common cases.
+  }
+  return map;
+})();
+
+/**
+ * Normalize a country input (ISO alpha-2 code or full English name) to an ISO
+ * alpha-2 code. Returns '' when the input is empty or unrecognizable — callers
+ * must treat '' as "destination unknown" and surface it in previews, because
+ * the shipping title falls back to international.
+ */
+function normalizeCountryCode(raw) {
+  const c = String(raw || '').toUpperCase().trim();
+  if (!c) return '';
+  if (/^[A-Z]{2}$/.test(c)) return COUNTRY_CODE_ALIASES[c] || c;
+  return COUNTRY_NAME_TO_CODE[c] || '';
+}
+
 async function getShippingMethodTitle(country, speed) {
   const s = speed === 'expedited' ? 'expedited' : 'standard';
-  const c = (country || '').toUpperCase().trim();
+  const c = normalizeCountryCode(country);
   if (!c) return SHIPPING_METHOD_TITLES.ddu[s];
 
   // Lazy-require to avoid circular import (shippingLookup pulls in the same
@@ -121,6 +164,18 @@ async function getShippingMethodTitle(country, speed) {
   return (SHIPPING_METHOD_TITLES[zone] || SHIPPING_METHOD_TITLES.ddu)[s];
 }
 
+/**
+ * Warning line appended to order-creation previews when the destination
+ * country couldn't be determined (no address on file, unrecognized country).
+ * The shipping title has already defaulted to international at that point,
+ * and Warehance routes carriers by title — a US order would ship Passport.
+ */
+function unknownDestinationWarning(shippingTitle) {
+  return `⚠️ **Shipping destination unknown — shipping line defaulted to international ("${shippingTitle}").** ` +
+    'If you know where this ships (e.g. a US customer whose checkout failed), pass shipping_address and recreate the draft, ' +
+    'or fix it with update_shipping_speed before sending — the warehouse picks the carrier from this title.';
+}
+
 module.exports = {
   resolveCustomerForDraft,
   buildShippingAddress,
@@ -128,4 +183,6 @@ module.exports = {
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
   getShippingMethodTitle,
   SHIPPING_METHOD_TITLES,
+  normalizeCountryCode,
+  unknownDestinationWarning,
 };
