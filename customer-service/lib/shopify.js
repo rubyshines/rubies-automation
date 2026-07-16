@@ -1493,6 +1493,37 @@ async function createDiscountCode(input) {
 }
 
 /**
+ * Find a code discount node by exact title. Shopify's `query` search on
+ * title is a fuzzy/prefix match, so results are exact-matched client-side.
+ * Returns { id, numericId, codesCount } for the first exact match, or null.
+ * The numericId doubles as the legacy price rule id, usable with
+ * addCodeToPriceRule to append codes to the discount.
+ */
+async function findDiscountNodeByTitle(title) {
+  const data = await shopifyGraphQL(`
+    query($search: String!) {
+      codeDiscountNodes(first: 50, query: $search) {
+        nodes {
+          id
+          codeDiscount {
+            ... on DiscountCodeBasic { title status codesCount { count } }
+          }
+        }
+      }
+    }
+  `, { search: `title:'${title.replace(/'/g, '')}'` });
+  const match = data.codeDiscountNodes.nodes.find(
+    n => n.codeDiscount && n.codeDiscount.title === title && n.codeDiscount.status === 'ACTIVE'
+  );
+  if (!match) return null;
+  return {
+    id: match.id,
+    numericId: match.id.split('/').pop(),
+    codesCount: match.codeDiscount.codesCount ? match.codeDiscount.codesCount.count : null,
+  };
+}
+
+/**
  * Add a single discount code to an EXISTING price rule, via the REST Admin API.
  *
  * Used by the Free Swimwear program: the "Free RUBIES Program" price rule
@@ -2052,6 +2083,7 @@ module.exports = {
   createCustomer,
   updateCustomer,
   createDiscountCode,
+  findDiscountNodeByTitle,
   randomDiscountCode,
   addCodeToPriceRule,
   normalizeOrderNumber,
