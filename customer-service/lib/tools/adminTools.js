@@ -45,8 +45,11 @@ async function handleAuditLog({ action_type, days_back, limit }) {
   const { data, error } = await query;
 
   if (error) {
-    // Table may not exist yet — that's OK
-    if (error.message.includes('does not exist') || error.code === '42P01') {
+    // Table may not exist yet — that's OK. PostgREST reports a missing table
+    // as PGRST205 ("Could not find the table ... in the schema cache"), not
+    // the raw Postgres 42P01.
+    if (error.message.includes('does not exist') || error.message.includes('Could not find the table')
+        || error.code === '42P01' || error.code === 'PGRST205') {
       return {
         content: [{
           type: 'text',
