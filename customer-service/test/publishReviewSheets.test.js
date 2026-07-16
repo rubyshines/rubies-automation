@@ -58,3 +58,51 @@ test('parseVoiceRules parses the real committed sheet without loss', () => {
   assert.ok(rules.every(r => r.rule.length > 0), 'every rule has Rule text');
   assert.ok(rules.every(r => r.group.length > 0), 'every rule has a group');
 });
+
+const os = require('node:os');
+const { loadConflictTopics, loadUnpublished } = require('../import/publishReviewSheets');
+
+function fixtureDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kbmine-'));
+  fs.mkdirSync(path.join(dir, 'verdicts'));
+  fs.writeFileSync(path.join(dir, 'conflicts-full.json'), JSON.stringify([
+    { fact: 'Refunds take 2-3 days.', date: '2026-01-06', seen: 2, conflict_with: 'newer says 5-10' },
+    { fact: 'Refunds take 2-5 days.', date: '2026-04-26', seen: 1, conflict_with: 'same week said 5-10' },
+    { fact: 'Uncovered odd conflict.', date: '2022-01-01', seen: 1, conflict_with: 'whatever' },
+  ]));
+  fs.writeFileSync(path.join(dir, 'conflict-topics.json'), JSON.stringify({
+    topics: [{ title: 'Refund timing', idx: [0, 1], question: 'How long do refunds take?', my_read: 'Newest = 5-10.', ruling_prefill: 'yes?' }],
+  }));
+  fs.writeFileSync(path.join(dir, 'verdicts', 'policy.jsonl'), [
+    JSON.stringify({ verdict: 'unpublished', fact: 'Exchanges are free.', category: 'policy', seen: 21, date: '2026-06-01' }),
+    JSON.stringify({ verdict: 'unpublished', fact: 'Rare fact.', category: 'policy', seen: 1, date: '2026-05-01' }),
+    JSON.stringify({ verdict: 'conflict', fact: 'Should not appear.', category: 'policy', seen: 9 }),
+    JSON.stringify({ verdict: 'drop', fact: 'Nor this.', category: 'policy' }),
+  ].join('\n'));
+  return dir;
+}
+
+test('loadConflictTopics merges by topic and composes dated evidence', () => {
+  const topics = loadConflictTopics(fixtureDir());
+  const refund = topics.find(t => t.title === 'Refund timing');
+  assert.ok(refund);
+  assert.match(refund.evidence, /\[2026-01-06, 2x\] Refunds take 2-3 days\./);
+  assert.match(refund.evidence, /\[2026-04-26\] Refunds take 2-5 days\./);
+  assert.match(refund.evidence, /vs: newer says 5-10/);
+  assert.strictEqual(refund.ruling_prefill, 'yes?');
+});
+
+test('loadConflictTopics gives uncovered conflicts their own safety row', () => {
+  const topics = loadConflictTopics(fixtureDir());
+  assert.strictEqual(topics.length, 2);
+  const safety = topics.find(t => t.title.startsWith('Uncovered odd conflict'));
+  assert.ok(safety, 'uncovered conflict got its own topic row');
+});
+
+test('loadUnpublished keeps only unpublished verdicts, buckets by seen', () => {
+  const rows = loadUnpublished(fixtureDir());
+  assert.strictEqual(rows.length, 2);
+  assert.strictEqual(rows[0].fact, 'Exchanges are free.');
+  assert.strictEqual(rows[0].bucket, 'high-signal');
+  assert.strictEqual(rows[1].bucket, 'long-tail');
+});
