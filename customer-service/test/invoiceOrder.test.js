@@ -76,11 +76,15 @@ require.cache[orderUtilsPath] = {
   filename: orderUtilsPath,
   loaded: true,
   exports: {
-    resolveCustomerForDraft: async () => ({
-      customerName: 'Test Customer',
-      addressBlock: '123 Main St\nPortland, OR 97227',
-      shippingAddress: { firstName: 'Test', lastName: 'Customer', address1: '123 Main St', city: 'Portland', province: 'OR', country: stubCustomerCountry, zip: '97227' },
-    }),
+    resolveCustomerForDraft: async () => (stubCustomerCountry === null
+      // Simulates a customer with no default address on file (e.g. never
+      // completed a checkout) — the order #32333 scenario.
+      ? { customerName: 'Test Customer', addressBlock: 'No address on file', shippingAddress: null }
+      : {
+        customerName: 'Test Customer',
+        addressBlock: '123 Main St\nPortland, OR 97227',
+        shippingAddress: { firstName: 'Test', lastName: 'Customer', address1: '123 Main St', city: 'Portland', province: 'OR', country: stubCustomerCountry, zip: '97227' },
+      }),
     buildShippingAddress: (a, fn, ln) => ({
       firstName: fn || '', lastName: ln || '',
       address1: a.address1, address2: a.address2 || '',
@@ -89,6 +93,8 @@ require.cache[orderUtilsPath] = {
     applyShippingAddressOverride: realOrderUtils.applyShippingAddressOverride,
     SHIPPING_ADDRESS_OVERRIDE_SCHEMA: realOrderUtils.SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
     getShippingMethodTitle: fakeGetShippingMethodTitle,
+    normalizeCountryCode: realOrderUtils.normalizeCountryCode,
+    unknownDestinationWarning: realOrderUtils.unknownDestinationWarning,
   },
 };
 
@@ -276,6 +282,31 @@ describe('create_invoice_order — phase 1 (creates draft + preview)', () => {
       shipping_speed: 'expedited',
     });
     assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'US Expedited Shipping');
+  });
+
+  // Regression for order #32333: customer had no default address (checkout
+  // failed, never completed an order), so the shipping line silently defaulted
+  // to international on a US order. The preview must flag it loudly.
+  it('warns in preview when the customer has no address on file (shipping defaults to international)', async () => {
+    setStubCustomerCountry(null);
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      paid_items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    setStubCustomerCountry('US');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Free Standard International Shipping');
+    assert.equal(lastCreateDraftOrderArgs.shippingAddress, undefined);
+    assert.match(result.content[0].text, /⚠️.*Shipping destination unknown/);
+    assert.match(result.content[0].text, /update_shipping_speed/);
+  });
+
+  it('does NOT warn when a destination country is known', async () => {
+    setStubCustomerCountry('US');
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/42',
+      paid_items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.doesNotMatch(result.content[0].text, /Shipping destination unknown/);
   });
 
   it('normalizes numeric customer_id to a Customer GID', async () => {

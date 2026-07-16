@@ -14,6 +14,8 @@ const {
   getShippingMethodTitle,
   applyShippingAddressOverride,
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+  normalizeCountryCode,
+  unknownDestinationWarning,
 } = require('../orderUtils');
 const { formatAddressBlock } = require('../addressUtils');
 
@@ -28,6 +30,7 @@ const tools = [
       'Phase 2 (confirmed=true + draft_order_id) sends the invoice to the customer.',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
       'When the customer has explicitly asked to ship to a new address (different from what is on file), pass shipping_address with the new address fields — this overrides the customer default.',
+      'If the customer has no default address on file (common when their checkout failed and they never completed an order), pass shipping_address with whatever destination you know — at minimum the country. Without a destination the shipping line defaults to INTERNATIONAL, which misroutes US/Canada orders at the warehouse.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -206,6 +209,9 @@ const tools = [
         addressBlock,
         '',
       ];
+      if (!normalizeCountryCode(shipCountry)) {
+        lines.push(unknownDestinationWarning(shippingTitle), '');
+      }
 
       if (resolvedExchange.length > 0) {
         lines.push('**Exchange items (free):**');

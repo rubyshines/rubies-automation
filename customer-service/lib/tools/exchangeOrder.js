@@ -14,6 +14,8 @@ const {
   getShippingMethodTitle,
   applyShippingAddressOverride,
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+  normalizeCountryCode,
+  unknownDestinationWarning,
 } = require('../orderUtils');
 
 const tools = [
@@ -288,6 +290,11 @@ const tools = [
         `**Ship to:**`,
         addressBlock,
         '',
+      );
+      if (!normalizeCountryCode(shipCountry)) {
+        outputLines.push(unknownDestinationWarning(shippingTitle), '');
+      }
+      outputLines.push(
         `**Items:**`,
         itemLines,
         `**Shipping:** ${shippingTitle} ($0.00)`,
