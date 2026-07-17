@@ -104,12 +104,12 @@ const TOOLS = [
   },
   {
     name: 'get_donation_partner',
-    description: 'Get the donation routing info for a customer exchange. RUBIES donates exchanged items to LGBTQ+ organizations. Returns the partner name, address, and routing instructions. Call this when an exchange is confirmed and you need to tell the customer where to send items.',
+    description: 'Get the donation routing text for items the customer will donate instead of shipping back — call it for BOTH refunds and exchanges, BEFORE writing any donation wording in your reply. RUBIES donates returned items to LGBTQ+ organizations. Returns the exact response_text to relay to the customer. Only this tool decides the routing (local vs a specific partner org); the outcome depends on live partner data and load balancing, so you cannot know what the donation section should say without calling it.',
     input_schema: {
       type: 'object',
       properties: {
         customer_country: { type: 'string', description: 'Country code of the ORDER\'S shipping address (where the items physically are), e.g. "US", "CA", "NL". NOT the customer profile country — those can differ when the order shipped to a friend, family, or while the customer was traveling.' },
-        item_count: { type: 'number', description: 'Number of items being returned/donated' },
+        item_count: { type: 'number', description: 'Total physical units being returned/donated, counted across every line item — a bikini top and a bottom are 2 items even if bought as a set. For a whole-order refund this is the total quantity on the order.' },
         customer_address: {
           type: 'object',
           description: 'Shipping address of the order being exchanged (target_order.shipping_address from get_order_context), used for geographic routing within the country.',
@@ -775,7 +775,7 @@ CRITICAL: You are Jamie. Every reply is signed by Jamie and goes to a customer w
 ## ANTI-HALLUCINATION RULES (ABSOLUTE, NEVER VIOLATE)
 These rules override everything else. Violations cause real harm to customers.
 
-1. **NEVER state a donation address, partner name, or city without calling get_donation_partner first.** Needing donation info and not calling the tool is not an option: the tool is always available, and IT decides local-vs-partner routing (single item → donate locally; multiple items → partner address), not you. Offering "donate locally" or "I can send partner info if you'd like" without having called get_donation_partner is exactly the failure this rule exists to prevent. Do NOT guess or recall donation addresses from memory. Every donation address you remember is wrong.
+1. **Every donation sentence in a reply comes from a get_donation_partner call made in THIS conversation.** Before writing ANY donation wording — an address, a partner name, "donate locally", or an offer to send donation info — call get_donation_partner and relay its response_text. This applies to refunds exactly as much as exchanges. Only the tool decides the routing; the result depends on live partner data and load balancing, so you can never predict what the donation section should say, and there is no case where writing it without the call is correct. Do NOT guess or recall donation addresses from memory. Every donation address you remember is wrong.
 2. **To name any size, color, or variant, call get_adjacent_sizes / compare_products FIRST and say only what it returns.** Sizes and colors vary by product (some youth styles are even sizes only, others include odd sizes; one-pieces also come in Tall variants), so the tool is the only reliable source — check it, then state what's available. (Reinforcement: never assert from memory that "that's the largest size", "XS doesn't exist", or "it only comes in black", and never recommend a plain size when a Tall variant fits a taller customer, unless the tool confirmed it.)
 3. **NEVER state a fabric delta number without calling get_fabric_delta first.** Do NOT estimate, round, or recall deltas from memory. Every delta you remember is wrong.
 4. **NEVER describe order contents from memory.** The order context in the system prompt tells you what's in the order. If the context says "2x AJ size M", trust it. Do NOT say "I see a one-piece" if the context says underwear.
@@ -856,7 +856,7 @@ Include donation info ONLY when:
 Do NOT mention donation when:
 - Gathering info, asking questions, offering size options
 - You haven't confirmed the exchange yet
-CRITICAL: ALWAYS call get_donation_partner when you need donation info. The tool handles all routing logic (single item, no partners, multiple items). Use its response_text as the basis for the donation section of your reply — do not rewrite or add state-conditional framing. Routing is by geographic proximity and the selected partner may be in a different state; that is expected and does not need to be explained to the customer.
+CRITICAL: whenever this section says to include donation info, your NEXT action is a get_donation_partner call — the donation section of your reply is the tool's response_text, never wording you compose yourself. Do not rewrite it or add state-conditional framing. Routing is by geographic proximity and the selected partner may be in a different state; that is expected and does not need to be explained to the customer.
 
 ### When to ask WHAT HAPPENED vs take action
 Use "Can you let me know what didn't work out in case I can help you with another size or recommend another product?" ONLY when:
