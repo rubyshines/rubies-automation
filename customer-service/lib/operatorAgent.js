@@ -544,6 +544,14 @@ Respond as JSON: { "tool_selection": { "rating": "...", "direction": "...", "not
   } catch (err) {
     console.warn('[shadow] Failed to save operator diagnostic:', err.message);
   }
+
+  // Health check after every insert: auto-kills the flag if the accumulating
+  // eval data is degenerate — see shadowEvalGuard.js.
+  try {
+    await require('./shadowEvalGuard').checkShadowEvalHealth();
+  } catch (err) {
+    console.warn('[shadow] health check failed:', err.message);
+  }
 }
 
 module.exports = { operatorAgent, stripAutoConfirm, buildSystemPrompt, SHADOW_READONLY_TOOLS };

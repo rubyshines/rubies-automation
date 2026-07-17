@@ -2221,6 +2221,15 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   } catch (err) {
     console.warn('[shadow] Failed to save diagnostic run:', err.message);
   }
+
+  // Health check after every insert: auto-kills the flag if the accumulating
+  // eval data is degenerate (null candidate output, judge distribution with
+  // no ties) — see shadowEvalGuard.js for the 2026-07 incident this prevents.
+  try {
+    await require('./shadowEvalGuard').checkShadowEvalHealth();
+  } catch (err) {
+    console.warn('[shadow] health check failed:', err.message);
+  }
 }
 
 module.exports = { aiAdvisor, executeToolCall, buildFactsBlock };
