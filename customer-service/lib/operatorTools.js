@@ -56,6 +56,7 @@ function loadAllOperatorTools() {
     require('./tools/storeLocator'),
     require('./tools/b2bOutreach'),
     require('./tools/emailStudio'),
+    require('./tools/preOrderLifecycle'),
   ];
 
   const tools = [];

@@ -60,6 +60,7 @@ const storeLocatorTools = require('./lib/tools/storeLocator');
 const b2bOutreachTools = require('./lib/tools/b2bOutreach');
 const inventoryProjectionTools = require('./lib/tools/inventoryProjection');
 const preOrderTools = require('./lib/tools/preOrders');
+const preOrderLifecycleTools = require('./lib/tools/preOrderLifecycle');
 const gradingSpecsTools = require('./lib/tools/gradingSpecs');
 const suppliersTools = require('./lib/tools/suppliers');
 const productionOrderLoopTools = require('./lib/tools/productionOrderLoop');
@@ -115,6 +116,7 @@ const allTools = [
   ...b2bOutreachTools,
   ...inventoryProjectionTools,
   ...preOrderTools,
+  ...preOrderLifecycleTools,
   ...gradingSpecsTools,
   ...suppliersTools,
   ...productionOrderLoopTools,
