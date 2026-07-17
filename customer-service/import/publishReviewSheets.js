@@ -48,7 +48,7 @@ const VOICE_TAB = 'Voice Rules';
 const V1_TABS = ['Reply Corpus Review', 'Voice Rules Review'];
 const HIGH_SIGNAL_SEEN = 3;
 
-const DECISION_NOTE = 'Blank = not reviewed yet. "yes" or "ok" = approve as written. "no" = reject/dead. Write anything longer and YOUR text wins (corrections, the real answer, an explanation). Claude reads this column back with judgment, so plain English is fine.';
+const DECISION_NOTE = 'Jamie\'s convention: leave BLANK to agree as written - only write when you differ. "no" = reject/dead; anything longer = your correction/explanation and YOUR text wins. Claude reads this column back with judgment, so plain English is fine. (Tell Claude when the tab is reviewed - blanks then count as agreement.)';
 
 function arg(name, dflt) {
   const a = process.argv.find(x => x.startsWith(`--${name}=`));
