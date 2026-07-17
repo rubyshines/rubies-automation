@@ -8,6 +8,18 @@ Evidence IDs reference the source profiles in `temp-analysis-data/kb-mine/voice/
 
 ---
 
+## DECISIONS (Jamie, 2026-07-17 — folded into the advisor prompt same day)
+
+Convention: blank cell = agreed as proposed; a comment = modification or rejection.
+
+- **Adopted as proposed (blank):** 1, 5, 6, 9, 10, 12, 13, 15, 17, 18, 20
+- **Adopted modified:** 2 (polite softeners like "unfortunately" fine, no sorry), 4 (adopted on evidence), 7 (use history already in context, no extra tool cost), 8 (only when the customer stated urgency), 11 (retention line only on first-order FULL refunds; diagnostic question adopted as proposed), 14 (Jamie corrected the proposal: "I" for personal actions, "our" for facilities — NOT "my warehouse")
+- **Rejected:** 3 (no empathy-sorry for fit — PR #81 stands), 16 (always full signature), 19 (transparency nuance stays founder-only)
+
+Pinned scenarios: noApologyForThirdParty.js, retentionLineGating.js (+ existing noApologyForFit.js).
+
+---
+
 ## Apologies
 
 ### [ ] Rule 1: "No problem." opener, never an apology, when the customer just wants something
