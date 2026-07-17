@@ -4364,7 +4364,7 @@ function parseOrderFormItems(text) {
  * @param {string} opts.timestamp - ISO timestamp of first customer message
  */
 function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attachments, intent }) {
-  if (!customerWords.length && !orderItems.length) return '';
+  if (!customerWords.length && !orderItems.length && !(attachments || []).length) return '';
 
   const channelLabel = channel === 'chat' ? 'via chat' : channel === 'facebook-messenger' ? 'via Facebook' : 'via email';
   const time = timestamp ? timeAgo(timestamp, 'long') : '';
@@ -4669,11 +4669,17 @@ function renderConversation(messages, ticket) {
       <div class="bot-group-messages">${botMessages.map(m => renderMessageBubble(m, ticket)).join('')}</div>
     </details>`);
 
-    // Unified intake card: customer words + order items + intent badge
+    // Unified intake card: customer words + order items + intent badge.
+    // Attachments must ride along like the email/messenger paths do — customer
+    // screenshots sent during chat intake are otherwise buried in the collapsed
+    // bot accordion and invisible to the operator.
     const customerWords = extractCustomerWords(botMessages);
     const orderItems = extractOrderItems(botMessages);
     const intent = extractFormIntent(botMessages);
     const firstCustomerMsg = botMessages.find(m => m.sender === 'customer');
+    const botAttachments = botMessages.flatMap(m =>
+      m.sender === 'customer' ? (m.attachments || []) : []
+    );
 
     parts.push(renderIntakeCard({
       channel: 'chat',
@@ -4681,6 +4687,7 @@ function renderConversation(messages, ticket) {
       orderItems,
       intent,
       timestamp: firstCustomerMsg?.created_at,
+      attachments: botAttachments,
     }));
   } else if (messages.length > 0 && messages[0].sender === 'customer') {
     const firstChannel = messages[0].channel || 'email';
