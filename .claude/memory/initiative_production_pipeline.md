@@ -3,7 +3,7 @@ name: Production Pipeline
 description: End-to-end manufacturing workflow — inventory projections, production orders, pre-orders, QC, Warehance receiving
 type: project
 domains: [product_design, inventory, logistics]
-last_updated: 2026-07-04
+last_updated: 2026-07-17
 ---
 
 ## Goal
@@ -29,7 +29,7 @@ Joyce's completed QC came back for KALI-2601 and the ingest side of Phase 4 was 
 ## Decisions Made
 - **Supabase as canonical store for projection output.** Results written to `inventory_projections` table (upsert by SKU per run). Google Sheets output is optional view only.
 - **4 Supabase tables:** `suppliers`, `inventory_projections`, `production_orders`, `production_order_items`. Schema in plan file.
-- **Supplier registry keyed by SKU prefix.** Kali (JINJIANG JIHE) = catch-all for AJ/BB/UNW/CKY/FLO/RUBY/HLA/SHS/SKY2/SPB/RHW/GAF; Queenas = AVA; JustMax = SWS; Wumes = MPAD. Tees excluded.
+- **Supplier registry keyed by SKU prefix — the `suppliers` table is the source of truth for prefix→vendor mappings; don't trust memory snapshots of the lists (they drift).** Corrected 2026-07-17: Stella (RHW) is made by Pigeons and Thread (studio), NOT Kali — first P&T production order placed as PIGEONS-2607. P&T is billed after delivery (payment_terms: 100% balance due on delivery).
 - **OOS adjustment uses `available_quantity <= 0` in snapshots** (committed = effectively sold for planning purposes). Pre-order flag fallback for periods before snapshots started (~March 2026).
 - **Pre-order spreadsheet (`1m2efAIbrV_...`) and incoming-inventory spreadsheet are the same document.** `us-YYYY-MM-DD` tabs serve both the planning script (incoming units) and `update-incoming-inventory.js` (Shopify pre-order metafields). Phase 3 automates populating these tabs from a production order.
 - **Production order CSV format** matches existing 2026 Google Sheet structure (product header + SKU|qty rows + subtotals). Supplier name used as alias (e.g. "Kali" = contact name, company = JINJIANG JIHE IMPORT AND EXPORT).
