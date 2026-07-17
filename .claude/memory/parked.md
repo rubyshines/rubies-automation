@@ -8,6 +8,12 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Forgot-discount-code tool: refund equivalent + disable the code
+- Parked: 2026-07-17
+- Domains: cs
+- Type: idea
+- Notes: Jamie (facts review): customers forget to apply a code and ask after the fact; we refund the equivalent but eat the processing fee, and invalid-code complaints need manual investigation. Wanted: an operator tool that refunds the discount equivalent on an order AND disables/burns the customer's code in one step (plus surfaces why a code was invalid). Fact about the current manual process is loaded in kb_candidates.
+
 ## cs_messages agent rows contaminated with auto-acks and flow-embedded customer text
 - Parked: 2026-07-11
 - Domains: cs, tech
