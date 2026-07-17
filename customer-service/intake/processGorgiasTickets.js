@@ -28,6 +28,7 @@ const { canonicalMessageType } = require('../lib/messageTypes');
 const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankYouClassifier');
 const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 const { transplantContinuation, buildTransplantMessages } = require('../lib/ticketContinuation');
+const { attachmentOnlyPlaceholder, fetchImagesAsBlocks } = require('../lib/attachmentImages');
 
 // Pull a clean text body off a Gorgias message. Gorgias's own stripper is
 // English-biased — for non-English replies (Danish "Den ... skrev :", etc.) it
@@ -900,9 +901,17 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     // replacement was created.
   }
 
-  // Extract message text (use stripped version for cleaner input)
-  const messageText = extractCleanBody(latestCustomerMsg).text;
-  if (!messageText.trim()) return { skipped: true };
+  // Extract message text (use stripped version for cleaner input).
+  // Attachment-only messages (e.g. a customer replying with just screenshots)
+  // have no text at all — substitute a placeholder so they flow through intake
+  // instead of being dropped (a dropped message never reaches the mirror or
+  // the advisor, and surfaces days later as a drift "real miss").
+  const attachments = buildEffectiveAttachments(messages).get(latestCustomerMsg.id) || [];
+  let messageText = extractCleanBody(latestCustomerMsg).text;
+  if (!messageText.trim()) {
+    if (!attachments.length) return { skipped: true };
+    messageText = attachmentOnlyPlaceholder(attachments);
+  }
 
   // === Auto-close fast path: pure thank-you closer ===
   // When the customer's latest message is a pure thank-you with no new ask AND
@@ -933,7 +942,6 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   if (previousDraftContext) contextParts.push(`[PREVIOUS AI PROCESSING]\n${previousDraftContext}`);
   // Surface attachment metadata (filenames + types) so the advisor knows what was
   // attached — including inline images embedded in the HTML body (see buildEffectiveAttachments).
-  const attachments = buildEffectiveAttachments(messages).get(latestCustomerMsg.id) || [];
   const attachmentNote = attachments.length
     ? `\n[ATTACHMENTS: ${attachments.map(a => `${a.name || 'file'} (${a.content_type || 'unknown type'})`).join(', ')}]`
     : '';
@@ -954,8 +962,13 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
     console.warn(`[intake] Pre-context fetch failed for ${ticketId}: ${err.message}`);
   }
 
+  // Fetch the latest message's image attachments as vision blocks so the
+  // advisor reads the content (error screenshots, defect photos), not just
+  // filenames. Fail-soft: on any fetch problem the draft proceeds text-only.
+  const images = await fetchImagesAsBlocks(attachments);
+
   // Run through hybrid advisor (Opus) with tree fallback
-  console.log(`[intake] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."`);
+  console.log(`[intake] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."${images.length ? ` [+${images.length} image(s)]` : ''}`);
 
   let result;
   try {
@@ -966,6 +979,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       intake: previousIntake || undefined,
       preContext,
       ticket_id: ticketId,
+      images,
     });
   } catch (err) {
     console.error(`[intake] AI advisor error on ticket ${ticketId}: ${err.message}`);

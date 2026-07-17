@@ -1458,7 +1458,7 @@ function buildOperatorSteerBlock(steer) {
   );
 }
 
-async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer, onStream, ticket_id, draft_id }) {
+async function aiAdvisor({ customer_email, customer_name, issue_description, order_number, intake: existingIntake, reference_date, preContext, operatorSteer, onStream, ticket_id, draft_id, images }) {
   const _t = { start: Date.now(), steps: {} };
 
   // Ensure product config is loaded
@@ -1609,18 +1609,22 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     forwardedBlock = `\n\n[FORWARDED EMAIL — ACTION REQUIRED] This conversation reached us from the internal RUBIES address ${customer_email}, which means a staff member forwarded a customer's email to us. The real customer is the ORIGINAL external sender shown in the forwarded "From:" line in the message body. You MUST: (1) set forwarded_sender_email to that original sender's email address, exactly as written; (2) set customer_name to their name if the forwarded header shows one; (3) write your reply to that customer. Never address ${customer_email}.`;
   }
 
-  // If there's existing intake (multi-turn), include previous context
+  // If there's existing intake (multi-turn), include previous context.
+  // Image attachments from the latest customer message (screenshots, defect
+  // photos) ride along as vision blocks after the text.
+  const withImages = (text) => (images?.length ? [{ type: 'text', text }, ...images] : text);
   if (existingIntake) {
     messages.push({
       role: 'user',
-      content: `[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}${priorTicketBlock}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${forwardedBlock}${steerBlock}`,
+      content: withImages(`[PREVIOUS CONVERSATION STATE]\n${JSON.stringify(existingIntake, null, 2)}${priorTicketBlock}\n\n[LATEST CUSTOMER MESSAGE]\n${issue_description || '(no message)'}${forwardedBlock}${steerBlock}`),
     });
   } else {
     messages.push({
       role: 'user',
-      content: (issue_description || '(no message provided)') + forwardedBlock + priorTicketBlock + steerBlock,
+      content: withImages((issue_description || '(no message provided)') + forwardedBlock + priorTicketBlock + steerBlock),
     });
   }
+  if (images?.length) audit.push(`Vision input: ${images.length} image attachment(s) from latest customer message`);
 
   // Run the agentic loop with tool use
   const MAX_TOOL_CALLS = 10;
