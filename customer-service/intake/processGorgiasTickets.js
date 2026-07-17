@@ -69,11 +69,13 @@ function getAdvisorHandler() {
 }
 
 // Auto-place a warehouse hold the moment the advisor classifies a ticket as
-// `action_type: warehouse_hold`. Advisor reply text is past-tense ("I've put a
-// hold on the order"), so the hold needs to be real before the draft is filed
-// — otherwise the operator sees a draft that lies. Returns an `actions` entry
-// to append to the draft on success, or null on skip/failure (failure is
-// logged so the operator agent can still attempt the hold itself).
+// `action_type: warehouse_hold` (reply is past-tense "I've put a hold on the
+// order", so the hold must be real before the draft is filed) or
+// `action_type: cancellation` (protective freeze — the cancel waits on
+// operator confirmation, and the order must not ship in that window).
+// Returns an `actions` entry to append to the draft on success, or null on
+// skip/failure (failure is logged so the operator agent can still attempt
+// the hold itself).
 // Auto-hold note text, keyed off the advisor's inquiry classification. Every
 // non-cancel modify (item add/swap/remove, or an address change with no new
 // address given yet) is proposed as a bare warehouse_hold and lands here. Don't
@@ -81,13 +83,20 @@ function getAdvisorHandler() {
 // as shipping, so guessing "address change" mislabeled those holds. Genuine
 // address changes that fall back to a hold get their accurate reason from
 // fallbackToHold, not from here — so a generic modify reason is correct.
-function autoHoldReason(messageType) {
-  if (messageType === 'cancellation') return 'Auto-hold: customer asked to cancel, holding before we cancel';
+function autoHoldReason(messageType, actionType) {
+  if (messageType === 'cancellation' || actionType === 'cancellation') return 'Auto-hold: customer asked to cancel, holding before we cancel';
   return 'Auto-hold: customer wants to modify the order';
 }
 
 async function autoExecuteAdvisorHold(structured) {
-  if (structured?.action_type !== 'warehouse_hold') return null;
+  // 'warehouse_hold' is the advisor's explicit hold proposal. 'cancellation'
+  // gets the same protective freeze: the cancel only executes when the
+  // operator confirms it, and until then nothing stops the warehouse from
+  // shipping the order. A hold is reversible; a cancel raced by fulfillment
+  // isn't. For cancellation drafts the hold is a side action — it must NOT
+  // mark the draft's staged cancel as executed (see the commitDraft call site).
+  const actionType = structured?.action_type;
+  if (actionType !== 'warehouse_hold' && actionType !== 'cancellation') return null;
   const orderName = structured?.order?.name || '';
   const orderNumber = parseInt(String(orderName).replace(/^#/, ''), 10);
   if (!orderNumber) {
@@ -105,7 +114,7 @@ async function autoExecuteAdvisorHold(structured) {
   }
 
   const { handleWarehouseHold } = require('../lib/tools/orderNotes');
-  const reason = autoHoldReason(structured?.intake?.message_type);
+  const reason = autoHoldReason(structured?.intake?.message_type, actionType);
 
   try {
     const result = await handleWarehouseHold({ order_number: orderNumber, reason });
@@ -1139,6 +1148,11 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   const autoAddressAction = autoHoldAction ? null : await autoExecuteAddressChange(structured);
   const autoAction = autoHoldAction || autoAddressAction;
   const initialActions = autoAction ? [autoAction] : [];
+  // On a cancellation draft the auto-hold is a PROTECTIVE side action: the
+  // staged action (the cancel itself) is still pending operator execution, so
+  // action_executed_at must stay null — setting it would make the dashboard
+  // treat the cancel as done.
+  const protectiveHoldOnly = autoHoldAction && structured.action_type === 'cancellation';
   const nowIso = new Date().toISOString();
 
   // Auto-send shadow phase (#4): mark drafts that WOULD have auto-sent so the
@@ -1187,7 +1201,7 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       customer_context: structured.customer || null,
       action_type: structured.action_type || null,
       actions: initialActions,
-      action_executed_at: autoAction ? nowIso : null,
+      action_executed_at: autoAction && !protectiveHoldOnly ? nowIso : null,
       previous_draft_id: previousDraftId,
     },
   });

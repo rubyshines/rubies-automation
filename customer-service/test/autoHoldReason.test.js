@@ -10,8 +10,12 @@ const { autoHoldReason } = require('../intake/processGorgiasTickets');
 // classify as shipping, and genuine address-change holds get their accurate
 // reason from fallbackToHold, not this path.
 
-test('autoHoldReason: cancellation', () => {
+test('autoHoldReason: cancellation message_type', () => {
   assert.match(autoHoldReason('cancellation'), /asked to cancel/i);
+});
+
+test('autoHoldReason: cancellation action_type (protective hold on a clear cancel — message_type is often general_inquiry)', () => {
+  assert.match(autoHoldReason('general_inquiry', 'cancellation'), /asked to cancel/i);
 });
 
 test('autoHoldReason: shipping does NOT mislabel as an address change', () => {

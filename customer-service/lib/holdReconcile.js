@@ -10,7 +10,11 @@
  *
  * This sweep finds drafts where the advisor proposed a warehouse hold that was
  * never executed, on still-open tickets, and places the hold once the order is
- * available. It runs on a short interval from the always-on webhook server
+ * available. Cancellation drafts get the same protective freeze — the cancel
+ * only executes when the operator confirms, and until then nothing stops the
+ * warehouse from shipping the order — but for those the hold is a SIDE action:
+ * it lands in actions[] without touching action_executed_at (which tracks the
+ * cancel itself). It runs on a short interval from the always-on webhook server
  * (see webhooks/server.js). Idempotent and cheap: one DB query plus one
  * Warehance call per outstanding candidate (normally zero).
  */
@@ -48,6 +52,20 @@ function classifyHoldResult(result) {
   return 'pending';
 }
 
+/**
+ * Whether a draft's timeline already shows hold activity (a placed hold OR a
+ * deliberate release). Pure — unit tested. Used to stop the sweep from
+ * re-placing a hold on cancellation drafts, where action_executed_at can't
+ * serve as the done-marker (it tracks the cancel, not the hold), and to
+ * respect an operator's explicit release (a released hold means a human made
+ * a call — the sweep must not override it).
+ */
+function hasHoldActivity(actions) {
+  return (Array.isArray(actions) ? actions : []).some(
+    (a) => a?.action_type === 'warehouse_hold' || a?.action_type === 'release_warehouse_hold',
+  );
+}
+
 async function reconcilePendingHolds({ now = new Date() } = {}) {
   const supabase = getSupabaseClient();
   const since = new Date(now.getTime() - LOOKBACK_DAYS * 86400000).toISOString();
@@ -59,10 +77,13 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
     return { checked: 0, placed: 0, impossible: 0, pending: 0, disabled: true };
   }
 
+  // warehouse_hold drafts: the hold IS the staged action. cancellation drafts:
+  // the hold is protective — action_executed_at null means the cancel hasn't
+  // been executed yet, which is exactly the window the hold must cover.
   const { data: drafts, error } = await supabase
     .from('cs_ai_drafts')
-    .select('id, ticket_id, order_number, actions, audit_trail, status')
-    .eq('action_type', 'warehouse_hold')
+    .select('id, ticket_id, order_number, actions, audit_trail, status, action_type')
+    .in('action_type', ['warehouse_hold', 'cancellation'])
     .is('action_executed_at', null)
     .gte('created_at', since);
   if (error) {
@@ -79,6 +100,10 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
     if (d.status === 'superseded' || d.status === 'deleted') continue;
     // Already gave up on this one (order unholdable) — don't keep hammering it.
     if ((d.audit_trail || []).some((a) => String(a).includes(GAVEUP_MARKER))) continue;
+    // Hold already placed (intake or a prior sweep) or deliberately released
+    // by an operator — either way, no work to do. This is the done-marker for
+    // cancellation drafts, whose action_executed_at tracks the cancel itself.
+    if (hasHoldActivity(d.actions)) continue;
 
     // Only act on the ticket's current active draft, and only if still open.
     const { data: t } = await supabase
@@ -96,7 +121,9 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
     try {
       result = await handleWarehouseHold({
         order_number: orderNumber,
-        reason: 'Auto-hold (backstop): customer wants to modify the order',
+        reason: d.action_type === 'cancellation'
+          ? 'Auto-hold (backstop): customer asked to cancel, holding before we cancel'
+          : 'Auto-hold (backstop): customer wants to modify the order',
       });
     } catch (e) {
       console.error(`[hold-reconcile] #${orderNumber} threw: ${e.message}`);
@@ -121,10 +148,15 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
       const { appendDraftAction } = require('./draftActions');
       const ap = await appendDraftAction(supabase, d.id, action);
       if (ap.error) console.error(`[hold-reconcile] actions append failed for draft ${d.id}: ${ap.error}`);
-      await supabase
-        .from('cs_ai_drafts')
-        .update({ action_executed_at: action.executed_at })
-        .eq('id', d.id);
+      // Cancellation drafts: the hold is protective; action_executed_at tracks
+      // the cancel and stays null until the operator executes it. The appended
+      // hold action is what stops the next sweep from re-placing (hasHoldActivity).
+      if (d.action_type !== 'cancellation') {
+        await supabase
+          .from('cs_ai_drafts')
+          .update({ action_executed_at: action.executed_at })
+          .eq('id', d.id);
+      }
       placed++;
       console.log(`[hold-reconcile] placed hold on #${orderNumber} (draft ${d.id})`);
     } else if (outcome === 'impossible') {
@@ -150,4 +182,4 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
   return { checked: drafts?.length || 0, placed, impossible, pending };
 }
 
-module.exports = { reconcilePendingHolds, classifyHoldResult, GAVEUP_MARKER };
+module.exports = { reconcilePendingHolds, classifyHoldResult, hasHoldActivity, GAVEUP_MARKER };

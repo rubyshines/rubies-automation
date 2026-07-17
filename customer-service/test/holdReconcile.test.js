@@ -8,7 +8,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyHoldResult } = require('../lib/holdReconcile');
+const { classifyHoldResult, hasHoldActivity } = require('../lib/holdReconcile');
 
 // Mirror the real shapes returned by handleWarehouseHold (orderNotes.js).
 const ok = (text) => ({ content: [{ type: 'text', text }] });
@@ -56,5 +56,34 @@ describe('classifyHoldResult', () => {
     assert.equal(classifyHoldResult({ content: [] }), 'placed');
     // Error with no text → unknown → pending (safe retry).
     assert.equal(classifyHoldResult({ isError: true, content: [] }), 'pending');
+  });
+});
+
+// hasHoldActivity is the sweep's done-marker for cancellation drafts (where
+// action_executed_at tracks the cancel, not the hold) and its respect-the-
+// operator guard (a released hold means a human decided — never re-place).
+describe('hasHoldActivity', () => {
+  it('is false for an empty or missing timeline', () => {
+    assert.equal(hasHoldActivity([]), false);
+    assert.equal(hasHoldActivity(null), false);
+    assert.equal(hasHoldActivity(undefined), false);
+  });
+
+  it('sees a placed hold', () => {
+    assert.equal(hasHoldActivity([{ action_type: 'warehouse_hold', summary: 'hold placed' }]), true);
+  });
+
+  it('sees an operator release (must not re-place after a deliberate release)', () => {
+    assert.equal(
+      hasHoldActivity([
+        { action_type: 'warehouse_hold', summary: 'hold placed' },
+        { action_type: 'release_warehouse_hold', summary: 'released' },
+      ]),
+      true,
+    );
+  });
+
+  it('ignores unrelated actions', () => {
+    assert.equal(hasHoldActivity([{ action_type: 'refund', summary: 'refunded' }, {}]), false);
   });
 });

@@ -1108,11 +1108,11 @@ When a customer wants to change their shipping address:
 
 When a customer wants to cancel an unfulfilled order, read the message for **how committed they are to cancelling**:
 
-- **Clear cancel — set action_type to "cancellation".** They've signaled they no longer want the items at all: gave a reason that isn't a fixable product issue (changed mind, daughter changed mind, needs more time, found something elsewhere, no longer needs them, regrouping, ordered too many, life circumstances), OR stated the cancel firmly without ambivalence. Confirm in past tense WITHOUT stating a dollar amount: "I've cancelled order #X and refunded you to your original payment method. You'll get a confirmation email with the details." Keep it ultra-short. Examples: "Please cancel — my daughter changed her mind, she needs more time", "Cancel order 30617, I no longer need it", "Please cancel, I found something locally", "Cancel — ordered too many by accident", "I need to cancel, my circumstances have changed".
+- **Clear cancel — set action_type to "cancellation".** They gave a reason, and the reason rules out any fix we could offer: changed mind, daughter changed mind, needs more time, found something elsewhere, no longer needs them, regrouping, ordered too many, life circumstances. Confirm in past tense WITHOUT stating a dollar amount: "I've cancelled order #X and refunded you to your original payment method. You'll get a confirmation email with the details." Keep it ultra-short. Examples: "Please cancel — my daughter changed her mind, she needs more time", "Cancel order 30617, I no longer need it", "Please cancel, I found something locally", "Cancel — ordered too many by accident", "I need to cancel, my circumstances have changed".
 
-- **Ambivalent or fixable-issue cancel — set action_type to "warehouse_hold" (save-the-sale).** The reason hints at something we could fix with a swap/edit/exchange, OR they gave no reason at all. Examples: "cancel my order" (no reason — could be anything), "I made a mistake on my order" (could be a size/item fix), "the size is wrong, cancel please" (would swap if offered), "I ordered the wrong color, cancel". Put a hold and ask if there's something to swap or change before they cancel: "Hi [name], I've put a hold on the order so it won't ship. Before I cancel, is there anything you'd like to swap or change?" If they reply confirming cancel, THEN set action_type to "cancellation".
+- **Ambivalent or fixable-issue cancel — set action_type to "warehouse_hold" (save-the-sale).** The reason hints at something we could fix with a swap/edit/exchange, OR they gave no reason at all. Firm wording without a reason still belongs here: "I would like to cancel the order and get a refund on my card" is firm but reasonless — hold and ask. An earlier message asking to change or modify the order is a fixable-issue hint even when the latest message says cancel: they likely hit a wall mid-change and defaulted to cancelling. Examples: "cancel my order" (no reason — could be anything), "I made a mistake on my order" (could be a size/item fix), "the size is wrong, cancel please" (would swap if offered), "I ordered the wrong color, cancel", "Change my order before it ships" followed by "cancel and refund me" (started to fix something, then gave up). Put a hold and ask if there's something to swap or change before they cancel: "Hi [name], I've put a hold on the order so it won't ship. Before I cancel, is there anything you'd like to swap or change?" If they reply confirming cancel, THEN set action_type to "cancellation".
 
-- **Discriminator:** ask yourself "is there a plausible fix that would keep this sale?" If the customer's reason rules that out (changed mind, no longer needs, found elsewhere, circumstances changed), go straight to cancellation. If the reason points at a product issue (wrong size, wrong color, wrong item, "mistake") OR they gave no reason, do save-the-sale. Lean toward respecting clear intent — don't push back when they've been explicit.
+- **Discriminator:** ask yourself "did they tell me WHY?" No reason given → save-the-sale hold, no matter how firmly the cancel is worded. Reason given → ask "is there a plausible fix that would keep this sale?" If the reason rules that out (changed mind, no longer needs, found elsewhere, circumstances changed), go straight to cancellation. If it points at a product issue (wrong size, wrong color, wrong item, "mistake"), do save-the-sale. Once a reason is on the table, respect their explicit intent — don't push back.
 
 - If FULFILLED: tell them it's already shipped.
 
@@ -1772,38 +1772,57 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const textBlocks = response.content.filter(b => b.type === 'text');
   const fullText = textBlocks.map(b => b.text).join('\n');
 
-  // Enforced-schema path (#2): the final message IS the JSON. customer_reply
-  // is the email; everything else is the structured payload. No regex
-  // extraction, no stripInternalThinking — the schema makes both obsolete.
+  // Two output shapes, keyed by the mode the final call actually ran in
+  // (legacyMode can flip mid-draft via the 529/stall fallback):
+  //  - schema mode: the final message IS the JSON; customer_reply is the email.
+  //  - legacy mode (the default — see SCHEMA_OUTPUT_ENABLED): prose with a
+  //    <structured> block. Extracting it is the NORMAL path here, not a
+  //    failure — the "Enforced-schema parse failed" audit line only belongs
+  //    on drafts that actually ran schema-enforced. (Pre-fix, every legacy
+  //    draft logged it, which read as a per-draft schema outage.)
   let parsedStructured = null;
   let composedResponse = fullText;
-  try {
-    const parsed = JSON.parse(fullText);
-    const { customer_reply, ...rest } = parsed;
-    composedResponse = (customer_reply || '').trim();
-    parsedStructured = rest;
-  } catch (e) {
-    // Transition fallback: tolerate the legacy <structured>-in-text shape
-    // (e.g. if output_config is ever disabled). Logged loudly — this path
-    // should never fire under the enforced schema.
-    audit.push(`Enforced-schema parse failed (${e.message}) — falling back to legacy <structured> extraction`);
+  const parseJsonShape = () => {
+    try {
+      const parsed = JSON.parse(fullText);
+      const { customer_reply, ...rest } = parsed;
+      composedResponse = (customer_reply || '').trim();
+      parsedStructured = rest;
+      return true;
+    } catch (e) {
+      return e;
+    }
+  };
+  const parseLegacyShape = () => {
     const structuredMatch = fullText.match(/<structured>\s*([\s\S]*?)\s*<\/structured>/);
-    if (structuredMatch) {
-      try {
-        parsedStructured = JSON.parse(structuredMatch[1]);
-        composedResponse = fullText.replace(/<structured>[\s\S]*?<\/structured>/, '').trim();
-      } catch (e2) {
-        audit.push(`Legacy structured parse also failed: ${e2.message}`);
-      }
+    if (!structuredMatch) return false;
+    try {
+      parsedStructured = JSON.parse(structuredMatch[1]);
+      composedResponse = fullText.replace(/<structured>[\s\S]*?<\/structured>/, '').trim();
+      return true;
+    } catch (e2) {
+      audit.push(`Legacy structured parse failed: ${e2.message}`);
+      return false;
     }
-    // Degraded-output guard: if both parses failed, the "draft" is raw model
-    // output (observed during API overload windows: mangled tokens, repetition
-    // loops, max_tokens truncation mid-JSON). Never let that occupy the
-    // customer-facing draft slot — route to human with a clean placeholder.
-    if (!parsedStructured) {
-      audit.push('Draft replaced with route-to-human placeholder (malformed model output — likely degraded/truncated inference; retry by regenerating)');
-      composedResponse = '[AI could not draft a response — needs manual reply]\n\nReason: the model returned malformed output (this correlates with API overload windows). Regenerate the draft, or reply manually.';
+  };
+  if (legacyMode) {
+    // Tolerate the schema JSON shape as a quiet fallback (e.g. the model
+    // imitating the schema instruction from a cached prefix).
+    if (parseLegacyShape() !== true) parseJsonShape();
+  } else {
+    const jsonResult = parseJsonShape();
+    if (jsonResult !== true) {
+      audit.push(`Enforced-schema parse failed (${jsonResult.message}) — falling back to legacy <structured> extraction`);
+      parseLegacyShape();
     }
+  }
+  // Degraded-output guard: if no shape parsed, the "draft" is raw model
+  // output (observed during API overload windows: mangled tokens, repetition
+  // loops, max_tokens truncation mid-JSON). Never let that occupy the
+  // customer-facing draft slot — route to human with a clean placeholder.
+  if (!parsedStructured) {
+    audit.push('Draft replaced with route-to-human placeholder (malformed model output — likely degraded/truncated inference; retry by regenerating)');
+    composedResponse = '[AI could not draft a response — needs manual reply]\n\nReason: the model returned malformed output (this correlates with API overload windows). Regenerate the draft, or reply manually.';
   }
   if (response.stop_reason === 'max_tokens') {
     audit.push('WARNING: response hit max_tokens — output was truncated');
