@@ -86,12 +86,33 @@ The consolidator merges all batch outputs and buckets every unique fact:
 3. **Conflict** — contradicts a `kb_candidates` row, an `advisor_facts` row, or
    a newer mined assertion → goes on the sheet with both sides + dates.
 
-Sheet format follows `customer-service/drafter/tone-samples-2026-07-proposed.md`
-precedent: a reviewable markdown file in `customer-service/drafter/`, one
-checkbox-able entry per item, so Jamie can approve/reject line by line.
-Approved unpublished facts become `kb_candidates` rows with
-`trust='reply_corpus'` (loader: `loadKbCandidates.js` accepts a `--trust` flag
-— see its header) and feed the step-4 rebuild.
+## Triage before founder review (Jamie, 2026-07-17)
+
+Unpublished facts do NOT all go to Jamie — that made phase 1's sheet tediously
+long. A tool-verifying triage pass (Claude Code subagents) buckets them first:
+
+- **A — look-up-able → drop.** Anything derivable from live systems the
+  advisor queries with tools: product catalog (colors, size runs, prices,
+  materials), garment measurements / size charts / grading deltas (graded
+  specs), shipping zones / duties / delivery times, donation-partner registry
+  (names, addresses), inventory. Jamie's rule of thumb: "you should be able
+  to look this up." Never ask him to confirm these.
+- **B — auto-accept.** Durable, non-derivable, and verified with reasoning +
+  tools (no contradiction vs the published KB, advisor facts, or live data).
+  Loads straight to `kb_candidates` at `trust='reply_corpus'` with the
+  verification note in meta. Reversible with a status flip.
+- **C — founder review.** Program eligibility/terms, money/goodwill promises,
+  one-off-kindness vs standing-policy ambiguity, contradictions, anything
+  failing verification. Only this pile reaches the review sheet.
+
+Phase-1 calibration: 230 unpublished → A 46 / B 153 / C 31.
+
+Review happens in the shared Google Sheet (`KB_REVIEW_SHEET_ID`) via
+`publishReviewSheets.js` — free-text decision columns, one row per conflict
+topic; see that script's header. After the first publish, republish ONLY the
+tab you're refreshing (`--tabs=facts`) — a full publish overwrites founder
+decisions on every tab. Approved/curated facts load via `--apply-file`
+(`loadKbCandidates.js --trust` remains for extraction-shaped output).
 
 ## Resume state
 

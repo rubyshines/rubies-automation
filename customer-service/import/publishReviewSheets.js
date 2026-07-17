@@ -28,7 +28,7 @@
  *     {fact, category, meta?} per line. Produced by Claude after --read.
  *
  * Usage:
- *   node customer-service/import/publishReviewSheets.js [--sheet-id=<id>] [--data-dir=<dir>]
+ *   node customer-service/import/publishReviewSheets.js [--sheet-id=<id>] [--data-dir=<dir>] [--tabs=facts]
  *   node customer-service/import/publishReviewSheets.js --read
  *   node customer-service/import/publishReviewSheets.js --apply-file=approved.jsonl
  *   (--sheet-id falls back to env KB_REVIEW_SHEET_ID)
@@ -192,16 +192,25 @@ async function writeTab(sheets, spreadsheetId, title, header, rows, { decisionCo
   return rows.length;
 }
 
-async function publish(sheets, spreadsheetId, dataDir) {
+// tabs: which tabs to (re)write — a full publish OVERWRITES founder decisions
+// on every tab it touches, so scoped republishing (--tabs=facts) is the norm
+// after the first publish.
+async function publish(sheets, spreadsheetId, dataDir, tabs) {
   const removed = await removeV1Tabs(sheets, spreadsheetId);
   if (removed) console.log(`Removed ${removed} v1 checkbox tab(s)`);
+  const wants = t => tabs.includes(t);
+  const published = [];
 
+  if (wants('conflicts')) {
   const topics = loadConflictTopics(dataDir);
   const conflictHeader = ['#', 'Topic', 'The question', 'What we\'ve said (dated)', 'My read', 'Your ruling'];
   const conflictRows = topics.map((t, i) => [i + 1, t.title, t.question, t.evidence, t.my_read || '', t.ruling_prefill || '']);
   const nConf = await writeTab(sheets, spreadsheetId, CONFLICTS_TAB, conflictHeader, conflictRows,
     { decisionCol: 5, widths: [35, 210, 340, 430, 300, 260], wrapCols: [1, 2, 3, 4] });
+  published.push(`"${CONFLICTS_TAB}" ${nConf} topics`);
+  }
 
+  if (wants('facts')) {
   const facts = loadUnpublished(dataDir);
   const factHeader = ['#', 'Priority', 'Category', 'Fact (as we\'ve told customers)', 'Last stated', 'Seen', 'Quote', 'Your call'];
   const factRows = facts.map((r, i) => [
@@ -209,14 +218,19 @@ async function publish(sheets, spreadsheetId, dataDir) {
   ]);
   const nFacts = await writeTab(sheets, spreadsheetId, FACTS_TAB, factHeader, factRows,
     { decisionCol: 7, widths: [35, 90, 90, 430, 95, 45, 320, 260], wrapCols: [3, 6] });
+  published.push(`"${FACTS_TAB}" ${nFacts} facts`);
+  }
 
+  if (wants('voice')) {
   const rules = parseVoiceRules(fs.readFileSync(VOICE_MD, 'utf8'));
   const voiceHeader = ['#', 'Group', 'Rule', 'Detail', 'Advisor today', 'Proposed action', 'Your call'];
   const voiceRows = rules.map(r => [r.num, r.group, r.title, r.rule, r.advisor_today, r.action, '']);
   const nRules = await writeTab(sheets, spreadsheetId, VOICE_TAB, voiceHeader, voiceRows,
     { decisionCol: 6, widths: [35, 125, 280, 400, 300, 140, 260], wrapCols: [2, 3, 4] });
+  published.push(`"${VOICE_TAB}" ${nRules} rules`);
+  }
 
-  console.log(`Published: "${CONFLICTS_TAB}" ${nConf} topics, "${FACTS_TAB}" ${nFacts} facts, "${VOICE_TAB}" ${nRules} rules`);
+  console.log(`Published: ${published.join(', ')}`);
   console.log(`https://docs.google.com/spreadsheets/d/${spreadsheetId}`);
 }
 
@@ -301,9 +315,12 @@ async function main() {
   const spreadsheetId = arg('sheet-id', process.env.KB_REVIEW_SHEET_ID);
   if (!spreadsheetId) { console.error('usage: node customer-service/import/publishReviewSheets.js [--sheet-id=<id>] [--data-dir=<dir>] [--read | --apply-file=<f>]'); process.exit(1); }
   const dataDir = path.resolve(arg('data-dir', path.resolve(__dirname, '../..', 'temp-analysis-data/kb-mine')));
+  const tabs = arg('tabs', 'conflicts,facts,voice').split(',').map(t => t.trim());
+  const bad = tabs.filter(t => !['conflicts', 'facts', 'voice'].includes(t));
+  if (bad.length) { console.error(`unknown --tabs value(s): ${bad.join(', ')}`); process.exit(1); }
   const sheets = await getSheetsClient();
   if (process.argv.includes('--read')) return readBack(sheets, spreadsheetId);
-  return publish(sheets, spreadsheetId, dataDir);
+  return publish(sheets, spreadsheetId, dataDir, tabs);
 }
 
 if (require.main === module) {
