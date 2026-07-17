@@ -34,7 +34,7 @@
 
 ## Active Projects
 - [Knowledge Corpus Harvest](project_corpus_harvest.md) — comprehensive advisor KB: website+reply-corpus harvest, two-tier design, search tool (flip after 2026-07-23)
-- [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, Sonnet+thinking shadow eval pulled 2026-04-30 (not viable)
+- [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, shadow model eval infrastructure and verdicts
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system

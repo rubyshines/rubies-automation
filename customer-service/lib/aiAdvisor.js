@@ -1862,8 +1862,14 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
 
   // Fire shadow Sonnet evaluation in background (diagnostic mode).
   // Does not affect the response — runs asynchronously after Opus completes.
+  // The candidate MUST get the legacy blocks: the shadow call never sets
+  // output_config and its parser reads <structured> from raw text, so only the
+  // legacy template tells the candidate what shape to emit. Passing the
+  // schema-note blocks here (2026-07-10..17 Sonnet 5 run) left the candidate
+  // with no instructed output shape — sonnet_structured was null on every row
+  // and the judge scored ~90% of drafts a 1, invalidating the eval.
   runShadowEvaluation({
-    systemBlocks,
+    systemBlocks: legacySystemBlocks,
     filteredTools,
     messages,
     opusResult: { composedResponse, structured: parsedStructured, toolsCalled, timing: _t },
