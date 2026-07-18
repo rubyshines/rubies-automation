@@ -234,6 +234,18 @@ const TOOLS = [
       required: ['country'],
     },
   },
+  {
+    name: 'search_knowledge',
+    description: 'Semantic search over the RUBIES knowledge base (292 source-linked articles: published site content + founder-approved facts from 6 years of replies). Use when the customer asks a product/policy/program/company question that live-data tools do not answer and OPERATOR FACTS do not cover. Precedence: live data tools (inventory, orders, shipping_info, delivery_estimate, size charts) beat the KB; OPERATOR FACTS beat the KB; the KB beats guessing. NEVER answer a factual question from general knowledge when a search could ground it — if the KB has nothing relevant either, say you will check rather than guessing. Results marked trust=published come from the website; trust=reply_corpus are founder-approved statements from past replies. Respect FOUNDER DISCRETION / WHOLESALE ONLY markers inside results — those facts guide routing and must never be offered or quoted to customers.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to look up, phrased as the underlying question (e.g. "do exchanges ship free", "is the fabric organic cotton")' },
+        category: { type: 'string', enum: ['product', 'sizing', 'shipping', 'policy', 'program', 'community', 'wholesale', 'company', 'faq'], description: 'Optional category filter' },
+      },
+      required: ['query'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -242,6 +254,35 @@ const TOOLS = [
 
 async function executeToolCall(toolName, toolInput) {
   switch (toolName) {
+    case 'search_knowledge': {
+      // Kill switch: system_flags 'advisor_kb_search' (default ON). Flipping it
+      // off returns a loud disabled message rather than silently empty results.
+      const { isFlagEnabled } = require('../../shared/systemFlags');
+      const enabled = await isFlagEnabled('advisor_kb_search', true);
+      if (!enabled) return { disabled: true, note: 'KB search is currently disabled by the operator. Answer from live tools and operator facts only; if the answer is not available, say you will check and route to a human rather than guessing.' };
+      const { query, category } = toolInput;
+      try {
+        const { embed } = require('./embeddings');
+        const supabase = getSupabaseClient();
+        const queryEmbedding = await embed(query);
+        const { data, error } = await supabase.rpc('cs_search_knowledge', {
+          query_embedding: JSON.stringify(queryEmbedding),
+          match_count: category ? 8 : 4,
+        });
+        if (error) throw new Error(error.message);
+        let results = data || [];
+        if (category) results = results.filter(r => r.category === category).slice(0, 4);
+        if (!results.length) return { results: [], note: 'No KB match. Do not guess: if live tools and operator facts do not cover it, tell the customer you will check.' };
+        return {
+          results: results.map(r => ({ id: r.id, title: r.title, category: r.category, trust: r.trust, source_url: r.source_url, content: (r.content || '').slice(0, 1200) })),
+        };
+      } catch (e) {
+        // Fail-soft + loud (tone-fetch lesson): a broken KB fetch must never
+        // silently degrade into confident guessing.
+        console.error(`[search_knowledge] FAILED: ${e.message}`);
+        return { error: `Knowledge search failed (${e.message}). Do not guess: answer only from live tools and operator facts, or say you will check.` };
+      }
+    }
     case 'get_fabric_delta': {
       const { product, from_size, to_size } = toolInput;
       const from = normalizeSize(from_size);
@@ -678,6 +719,13 @@ function buildFactsBlock(facts) {
 These facts were approved by Jamie after real conversations. When one answers the customer's question, answer directly from it — do NOT defer ("let me check") or contradict it. Tool results still win for live data (inventory counts, order state, rates).
 
 ${sections.join('\n\n')}
+
+## KNOWLEDGE PRECEDENCE (when answering any factual question)
+1. LIVE DATA TOOLS first for anything live: inventory, order state, shipping rates/zones, delivery estimates, size charts, product catalog. Never answer these from memory or the KB.
+2. OPERATOR FACTS above beat everything except live data.
+3. search_knowledge for durable product/policy/program/company questions the first two don't cover — the KB holds 292 source-linked, founder-reviewed articles. Search BEFORE answering from general knowledge. Live tools and the KB are COMPLEMENTS, not alternatives: for open-ended or country-specific questions ("anything I should know about ordering to X?"), call the live tools AND search_knowledge — tools give rates/coverage, the KB carries the gotchas tools can't (customs ID requirements, country quirks, program details). A live-tool answer does not excuse skipping the KB when the question is broader than the tool's output.
+4. Never guess. If none of the three cover it, say you'll check and route to a human. A wrong confident answer is the worst outcome; "I'll find out" is always acceptable.
+KB results marked FOUNDER DISCRETION or WHOLESALE ONLY are routing guidance for you — never offer, quote, or hint at them to customers.
 `;
 }
 
@@ -803,7 +851,7 @@ ${opts.factsBlock || ''}
 - **Say it plainly, no meta-talk.** When you need to clarify something, open with the question itself. Verbatim shapes: "Can you let me know [X]?" / "Just to confirm, are you looking to [X]?" / "Do you want [A] or [B]?" The reason you're asking is self-evident from the question — never preface it by narrating your own carefulness ("I want to make sure I get this right", "I want to be honest with you", "I'd hate to give you wrong info").
 - **"Sorry" is reserved for problems RUBIES caused.** Before writing any apology word (sorry, apologies, my bad), check: did WE do this? Wrong item shipped, defect, our delay, a ball we dropped → yes, apologize in one short clause, then the fix: "Sorry for the delay!" / "Sorry, not sure what happened here." Move immediately to what you're doing about it. Never a second apology sentence, never dwell on how bad it is ("that's on us, and I hear you on how much harder this lands...").
 - **Fit, sizing, or preference issues are nobody's fault — open with the fix, zero apology words.** Sizing is personal; an exchange is normal service, not something to atone for. Open with one of these shapes (adapt the product/size, keep the register): "Thanks for letting us know, let's get you into a size that works." / "No problem, we can exchange those for a [size]." This covers "too snug", "too loose", "not what I expected", "the colour isn't for me" — none of these get a "sorry".
-- **Third-party problems (customs/duties, carriers, payment processors, policy limits) get the boundary explained, then the remedy — no "sorry".** Polite softeners are fine; the apology word is not. Verbatim shape: "Countries sometimes collect duties and unfortunately it's out of our control. Please send me the receipt and I'll refund the amount." State plainly it's outside our control, then still do the generous thing.
+- **Third-party problems (customs/duties, carriers, payment processors, policy limits): open with "That sounds frustrating." (or similar empathy WITHOUT an apology word), then the boundary, then the remedy.** Verbatim shapes: "That sounds frustrating. Card declines come from the payment processor or bank, not our site — a few things usually clear it up: ..." / "Countries sometimes collect duties and unfortunately it's out of our control. Please send me the receipt and I'll refund the amount." Polite softeners ("unfortunately") are fine; "sorry" is not — sorry is reserved for problems RUBIES caused.
 - **Mirror the customer's energy on relationship beats.** When the inbound is excited, celebratory, or shares good personal news, reciprocate it: greeting can become "Hi!", enthusiasm gets matched ("Wow, thanks so much for letting me know!"). Transactional sentences (refund/logistics lines) stay flat regardless of the customer's energy.
 - **When the customer just wants something and nothing went wrong, open by granting it.** Verbatim shape: "No problem. I went ahead and created a new order for you." / "Ok no problem. I have sent over a refund." Accept first; details after. This opener replaces both apologies and preamble for routine exchange/cancel/change requests.
 - **Validate a fair complaint explicitly before fixing it.** When a complaint is legitimate, say so in Jamie's register — "I hear you loud and clear" / "You are not the first to make this comment" — then give the causal explanation and the fix. Never absorb blame that isn't ours, never collapse into corporate soothing ("We're very sorry to hear this").

@@ -14,6 +14,11 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: idea
 - Notes: Jamie (facts review): customers forget to apply a code and ask after the fact; we refund the equivalent but eat the processing fee, and invalid-code complaints need manual investigation. Wanted: an operator tool that refunds the discount equivalent on an order AND disables/burns the customer's code in one step (plus surfaces why a code was invalid). Fact about the current manual process is loaded in kb_candidates.
 
+## Corpus-harvest leftovers (small, founder-side)
+- Parked: 2026-07-18
+- Domains: cs, community
+- Notes: (1) 3PL/Passport answer on whether international packages still carry an external customs invoice (discreet-packaging promise; KB stays silent on it until answered). (2) ValidUSA address: registry shows Tucson PO Box #14061 but Jamie earlier said 122 N Craycroft Rd is new - confirm which, then republish donation page. (3) Site edits Jamie plans: remove free-swimwear age limit; update or unpublish stale Friendships page (KB already marks it paused). Weekly KB refresh auto-absorbs the site edits once made.
+
 ## cs_messages agent rows contaminated with auto-acks and flow-embedded customer text
 - Parked: 2026-07-11
 - Domains: cs, tech
