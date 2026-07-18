@@ -59,3 +59,33 @@ describe('normalizeGorgiasTicket sender classification', () => {
     assert.deepEqual(out.messages.map(m => m.sender_type), ['customer', 'agent', 'system']);
   });
 });
+
+// --- classifyGorgiasSender (2026-07 message-hygiene fix) ---
+const { classifyGorgiasSender } = require('../import/normalizer');
+
+it('classifyGorgiasSender: customer and agent basics', () => {
+  assert.strictEqual(classifyGorgiasSender({ from_agent: false }, 'Hi, my order has not arrived', false), 'customer');
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true }, 'Hi, No problem. I went ahead and created a new order for you.', false), 'agent');
+});
+
+it('classifyGorgiasSender: internal notes and flow containers are system', () => {
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true }, 'note text', true), 'system');
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true, meta: { origin: 'flow' } }, 'flow transcript with > customer text', false), 'system');
+});
+
+it('classifyGorgiasSender: auto-ack template at body start is system', () => {
+  const ack = 'Hello, Thanks for reaching out, our team will get back to you soon regarding the following request: Subject: sizing question';
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true }, ack, false), 'system');
+});
+
+it('classifyGorgiasSender: real reply QUOTING the auto-ack stays agent', () => {
+  const reply = 'Hi, It should arrive on your porch. Take care, Jamie On Tue, Mar 10 2026, at 11:53 PM, RUBIES Customer Care wrote: Hello, Thanks for reaching out, our team will get back to you soon regarding the following request';
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true }, reply, false), 'agent');
+});
+
+it('classifyGorgiasSender: AI-bot marker in head is system; quoted marker stays agent', () => {
+  const bot = 'Hi, Just following up on your exchange. This message was created with AI by the RUBIES Customer Care Bot.';
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true }, bot, false), 'system');
+  const humanQuotingBot = 'Hi, Jumping in personally here to sort this out. On Mon, Jul 6 2026, at 9:00 AM, RUBIES wrote: created with AI by the RUBIES Customer Care Bot';
+  assert.strictEqual(classifyGorgiasSender({ from_agent: true }, humanQuotingBot, false), 'agent');
+});
