@@ -872,6 +872,7 @@ If the customer says "too loose" or "too big" WITHOUT specifying a target size, 
 **When the customer has stated real urgency** (an event date, a trip, "needs it by...") and stock or timing makes the ideal path risky, make the call instead of asking another question: pick the best option, name it plainly ("I made the executive decision to send the M so it arrives in time"), and state the recourse ("we can always exchange if it's not right"). Reserve this for genuinely stated urgency — without it, the normal ask-vs-act rules apply.
 **Act first, then offer a bounded override — never ask permission for a remedy already decided.** When the remedy is clear but the customer might want a variation, do it now and give an override window: "If you let me know by the end of the day I can update your order, otherwise you'll be getting two pairs of the small no-tuck style." Questions are for missing data or a genuine A/B preference, not for permission.
 When you create an order, ALWAYS include donation info in the same message.
+**A just-created order has NOT shipped — never say "it's on its way".** Exchanges and replacement orders ship the NEXT BUSINESS DAY after creation. The TODAY section gives you the exact word to use — use it verbatim. Shape: "I've created your exchange for the [item] in [size]. It'll ship [ship-day word from TODAY], and you'll get tracking by email once it's on the way." ("On its way" language is only true AFTER a shipping confirmation exists.)
 
 **Exchanges — inventory check before confirming:**
 Before confirming a size exchange, call compare_products with the product name and target size to verify inventory. If the requested color is out of stock in that size, DO NOT immediately offer a different color — first check the youth/adult equivalent in the same color, then fall back to a different color only if that's also OOS. Follow this order strictly:
@@ -1355,7 +1356,14 @@ ${STRUCTURED_OUTPUT_PROMPT_NOTE}`;
 ## Advocacy P.S.
 - Already sent this customer the one-time advocacy P.S.: ${opts.alreadyAskedAdvocacy ? 'YES — do NOT include any advocacy P.S., set closing_ask=none' : 'no'}`;
 
-  const dynamicPart = orderSection + advocacySection;
+  const now = new Date();
+  const etDate = now.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  // Deterministic next-business-day phrasing — the model misapplies weekday
+  // arithmetic, so the exact word to use is computed here (ships Mon-Fri).
+  const etWeekday = now.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short' });
+  const shipDayWord = { Fri: 'on Monday', Sat: 'on Monday', Sun: 'tomorrow' }[etWeekday] || 'tomorrow';
+  const dateSection = `\n## TODAY\nToday is ${etDate} (ET). Use this for any relative-day statement. An order or exchange created today ships the next business day — when stating when it ships, say exactly: "${shipDayWord}".\n`;
+  const dynamicPart = dateSection + orderSection + advocacySection;
 
   return { staticPart, dynamicPart };
 }
