@@ -83,12 +83,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: cs
 - Notes: From the 2026-05-27 accuracy push (branch `cs-accuracy`, see initiative_cs_automation.md + domain_cs.md). Remaining deferred fixes: (1) **Refund-vs-choice nuance (#1019)** — when a customer is dissatisfied but hasn't firmly demanded a refund, nudge to an alternative (offer exchange-or-refund) before a full refund; Jamie wants a multi-case study across China + pre-China refund tickets before writing the prompt rule (high nuance). (2) Verify `compare_products`/`check_unfulfilled_order` return restock dates so the pre-order nudge (advisor rule 7) has data to state. Validate each via scenario test, not live regen. **DONE 2026-06-16: auto-hold on modify-unshipped (#877)** — all item modifies on unshipped orders (vague AND specific) now route to warehouse_hold; same-country address changes auto-apply with geocode validation, cross-border/invalid fall back to a hold. Also fixed the latent bug that made all auto-holds fail (handleWarehouseHold was never exported). See domain_cs.md Key Decisions.
 
-## CS knowledge base — stale/wrong articles feeding cs_get_knowledge
-- Parked: 2026-05-27
-- Last touched: 2026-05-27
-- Type: bug
-- Domains: cs
-- Notes: Found during the accuracy hard-facts sweep. `cs_knowledge_base` has wrong/stale articles: "RUBIES Shipping Information" describes AUSTRALIA domestic shipping + buyer-pays-duties (wholly wrong — RUBIES ships from US, covers DDP); "Shipping Policy" says ships from Portland, Oregon and $99-everywhere. Most KB articles are raw web-page scrapes with cart/UI junk. The advisor does NOT read the KB, but the `cs_get_knowledge` MCP tool does on other surfaces, so these can surface wrong info elsewhere. Fix: quarantine/correct the shipping articles; consider replacing shipping/policy facts with DB-backed lookups (shipping_zones). DB is the source of truth; KB must not contradict it.
 
 ## Passport shipping-delay rework — re-check live tracking before escalating
 - Parked: 2026-05-23
