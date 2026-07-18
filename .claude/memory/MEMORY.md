@@ -33,7 +33,6 @@
 - [Tech & Website](domain_tech.md) — webhooks, Railway, sync pipelines, shared clients, Gmail
 
 ## Active Projects
-- [Knowledge Corpus Harvest](project_corpus_harvest.md) — comprehensive advisor KB: website+reply-corpus harvest, two-tier design, search tool (flip after 2026-07-23)
 - [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, shadow model eval infrastructure and verdicts
 
 ## Initiatives
