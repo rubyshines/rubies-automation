@@ -19,11 +19,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: cs, community
 - Notes: (1) 3PL/Passport answer on whether international packages still carry an external customs invoice (discreet-packaging promise; KB stays silent on it until answered). (2) ValidUSA address: registry shows Tucson PO Box #14061 but Jamie earlier said 122 N Craycroft Rd is new - confirm which, then republish donation page. (3) Site edits Jamie plans: remove free-swimwear age limit; update or unpublish stale Friendships page (KB already marks it paused). Weekly KB refresh auto-absorbs the site edits once made.
 
-## cs_messages agent rows contaminated with auto-acks and flow-embedded customer text
-- Parked: 2026-07-11
-- Domains: cs, tech
-- Type: bug
-- Notes: Voice-delta analysis of 2026-era cs_messages (sender_type='agent') found Gorgias auto-acknowledgments ("our team will get back to you soon") and help-center flow transcripts with embedded customer text stored as agent messages; a heuristic check of one 318-message batch found ~7 clear customer-voice bodies + ~118 ambiguous. Affects anything that reads cs_messages as "what RUBIES said" (corpus mining screened for it at consolidation). Investigate the intake path that writes these rows and either fix sender attribution or tag auto-acks.
 
 ## CS advocacy Phase B — /help share page + P.S. link + effectiveness tracking + provider capture
 - Parked: 2026-07-06

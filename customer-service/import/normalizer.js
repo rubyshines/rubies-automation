@@ -78,6 +78,33 @@ function calculateResponseTime(messages) {
   return Math.round(diff / 60000); // milliseconds to minutes
 }
 
+// Rule-generated auto-acknowledgments open with this template (the customer's
+// text is embedded below it). Anchored at body start: real founder replies
+// QUOTE the template later in the body and must stay 'agent'.
+const AUTOACK_RE = /^(hello|hi)[,!.]?\s*thanks for reaching out,? our team will get back to you soon/i;
+// AI-bot sends carry this marker; only trust it in the pre-quote head so a
+// human reply quoting a bot message isn't reclassified.
+const BOT_MARKER_RE = /created with ai by the rubies customer care bot/i;
+const QUOTE_SPLIT_RE = /\bon\s.{5,80}?\bwrote:/i;
+
+/**
+ * Classify a Gorgias message's sender for cs_messages.
+ * 'system' = machine-generated (internal notes, help-center flow transcript
+ * containers, rule auto-acks, AI-bot sends) so agent-voice analyses and the
+ * reply-corpus mine can exclude them. Pure — unit-tested.
+ */
+function classifyGorgiasSender(m, bodyText, isNote) {
+  if (isNote) return 'system';
+  // Flow containers pack bot copy + embedded customer text into one message;
+  // they are neither a customer's own words nor an agent's.
+  if (m.meta?.origin === 'flow') return 'system';
+  if (m.from_agent === false) return 'customer';
+  const head = (bodyText || '').split(QUOTE_SPLIT_RE)[0].trim();
+  if (AUTOACK_RE.test(head)) return 'system';
+  if (BOT_MARKER_RE.test(head)) return 'system';
+  return 'agent';
+}
+
 /**
  * Normalize a Gorgias ticket into our cs_conversations format.
  */
@@ -88,15 +115,14 @@ function normalizeGorgiasTicket(ticket, messages) {
     // never 'customer'). The old source.type check classified EVERY customer
     // message as 'agent'.
     const isNote = m.channel === 'internal-note' || m.source?.type === 'internal-note';
+    const bodyText = stripHtml(m.body_html || m.body_text || '');
     return {
     id: `gorgias:${m.id}`,
     conversation_id: `gorgias:${ticket.id}`,
     source: 'gorgias',
-    sender_type: isNote ? 'system'
-      : m.from_agent === false ? 'customer'
-      : 'agent',
+    sender_type: classifyGorgiasSender(m, bodyText, isNote),
     sender_name: m.source?.from?.name || m.source?.from?.address || null,
-    body_text: stripHtml(m.body_html || m.body_text || ''),
+    body_text: bodyText,
     body_html: m.body_html || null,
     created_at: m.created_datetime,
     attachments: m.attachments?.length ? JSON.stringify(m.attachments.map(a => ({
@@ -196,6 +222,7 @@ function normalizeTidioConversation(tidioData, index) {
 }
 
 module.exports = {
+  classifyGorgiasSender,
   normalizeEmail,
   extractOrderNumbers,
   extractProductMentions,
