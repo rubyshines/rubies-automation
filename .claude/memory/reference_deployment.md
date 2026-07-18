@@ -31,7 +31,7 @@ All cron times are UTC. Each has a `railway/<name>.toml` with its `cronSchedule`
 | monthly-competitor-pricing | `0 14 1 * *` (1st, 10am ET) | `competitor-pricing/monthly-competitor-pricing.js` |
 | passport-tracking-sync | `37 * * * *` (hourly at :37) | `customer-service/sync/syncPassportDelivery.js --limit 50` |
 
-Free swimwear (import new applications, then reconcile register/order/expire/resend) runs as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), not a separate cron service.
+KB Refresh runs as a `daily-sync-all` step self-gated to Mondays UTC (re-harvest kb_sources, propagate kb_candidates into cs_knowledge_base with embeddings, flag drifted sources needing re-extraction) — see `customer-service/sync/refreshKb.js`. Free swimwear (import new applications, then reconcile register/order/expire/resend) runs as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), not a separate cron service.
 
 Some cron start commands run `scripts/write-service-account-key.js` first (writes Google service account JSON from env var to disk at runtime): daily-seo-tracking, daily-sync-all, weekly-seo-digest, monthly-competitor-pricing.
 

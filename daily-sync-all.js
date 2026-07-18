@@ -126,6 +126,13 @@ const PIPELINES = [
     run: () => require('./lib/rollupAiCosts').run(),
   },
   {
+    name: 'KB Refresh (weekly)',
+    // Self-gated to Mondays UTC: re-harvests kb_sources, propagates candidate
+    // amendments into cs_knowledge_base (+re-embeds), flags drifted sources
+    // needing a re-extraction session. See customer-service/sync/refreshKb.js.
+    run: () => require('./customer-service/sync/refreshKb').run(),
+  },
+  {
     name: 'Advisor Edit Rate',
     run: () => require('./lib/advisorEditRate').run(),
   },

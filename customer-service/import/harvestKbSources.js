@@ -415,10 +415,7 @@ async function writeRows(supabase, harvested, { fullRun }) {
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes('--dry-run');
-  const only = (args.find(a => /^--(products|collections|pages|policies|website)-only$/.test(a)) || '').replace(/^--|-only$/g, '');
+async function runHarvest({ only = '', dryRun = false } = {}) {
   const run = (name) => !only || only === name;
 
   const harvested = [];
@@ -457,8 +454,16 @@ async function main() {
   console.log(`\nkb_sources: ${stats.inserted} inserted, ${stats.changed} changed, ${stats.unchanged} unchanged, ${stats.gone} marked gone`);
 }
 
+async function main() {
+  const args = process.argv.slice(2);
+  return runHarvest({
+    dryRun: args.includes('--dry-run'),
+    only: (args.find(a => /^--(products|collections|pages|policies|website)-only$/.test(a)) || '').replace(/^--|-only$/g, ''),
+  });
+}
+
 if (require.main === module) {
   main().catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { stripHtml, extractMainContent, extractPageTitle, hashContent, composeProductContent, isJunkSource };
+module.exports = { run: runHarvest, stripHtml, extractMainContent, extractPageTitle, hashContent, composeProductContent, isJunkSource };
