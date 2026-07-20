@@ -46,8 +46,9 @@ function isPreOrderByTags(tags) {
 async function fetchUnfulfilledFromSupabase(supabase) {
   // Paginate — an unpaginated select truncated at Supabase's 1000-row default,
   // feeding a partial set to the downstream auto-resolve / auto-cancel /
-  // auto-draft logic. Newest first (with id as a stable tiebreaker for paging)
-  // so the daily report surfaces today's orders at the top of each section.
+  // auto-draft logic. Newest first (with the PK as a stable tiebreaker for
+  // paging — orders has no id column, its PK is shopify_order_id) so the daily
+  // report surfaces today's orders at the top of each section.
   return fetchAllPaginated(() => supabase
     .from('orders')
     .select('*, order_line_items(*)')
@@ -56,7 +57,7 @@ async function fetchUnfulfilledFromSupabase(supabase) {
     .is('cancelled_at', null)
     .is('closed_at', null)
     .order('created_at', { ascending: false })
-    .order('id', { ascending: false }));
+    .order('shopify_order_id', { ascending: false }));
 }
 
 // ---------------------------------------------------------------------------
