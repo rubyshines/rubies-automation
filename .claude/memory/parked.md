@@ -20,6 +20,14 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Notes: (1) 3PL/Passport answer on whether international packages still carry an external customs invoice (discreet-packaging promise; KB stays silent on it until answered). (2) ValidUSA address: registry shows Tucson PO Box #14061 but Jamie earlier said 122 N Craycroft Rd is new - confirm which, then republish donation page. (3) Site edits Jamie plans: remove free-swimwear age limit; update or unpublish stale Friendships page (KB already marks it paused). Weekly KB refresh auto-absorbs the site edits once made.
 
 
+## Advisor verbosity/voice regression fix — planned, ready to execute
+- Parked: 2026-07-18
+- Domains: cs
+- Type: fix (planned)
+- Priority: high — Jamie is re-editing drafts daily until this ships
+- Plan: .claude/plans/advisor-verbosity-regression-fix.md
+- Notes: Post voice-rules edit assessment (30 edited drafts, 27 shortened, avg -30 words). Approved changes: one-move-per-message governing rule; explanation ONLY for "shaping doesn't work" complaints (plain too-big/too-small gets a measurement/size suggestion instead); REMOVE numeric word-count targets; drop tracking clause from exchange template; generic "the item(s)" in return/donation asks; deterministic sorry-flag (prescription.flags banner, flag-not-strip). Evidence file: temp-analysis-data/edit-assess-2026-07.json. Separate follow-up found: draft 2628 Passport tracking-data mismatch (investigate independently).
+
 ## CS advocacy Phase B — /help share page + P.S. link + effectiveness tracking + provider capture
 - Parked: 2026-07-06
 - Last touched: 2026-07-06
