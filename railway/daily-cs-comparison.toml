@@ -1,6 +1,5 @@
 [build]
 builder = "NIXPACKS"
-nixpacksConfigPath = "nixpacks-no-chromium.toml"
 
 [deploy]
 startCommand = "node analytics/daily-cs-comparison.js"
