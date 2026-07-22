@@ -77,11 +77,17 @@ test('report archive: save + load prior months only, in order', () => {
 });
 
 test('buildSynthesisPrompt: prior reports appear as already-reported context', () => {
-  const config = { objectivesAppendix: [{ heading: 'O', text: 't' }], baseline: { bullets: ['base'] } };
+  const config = {
+    objectivesAppendix: [{ heading: 'O', text: 't' }],
+    baseline: { bullets: ['base'] },
+    technicalUncertainties: ['whether agents can reach 80%+ autonomy'],
+  };
   const period = resolvePeriod('2026-07', JULY_2026);
   const prior = [{ period: { label: 'June 2026' }, sections: [{ heading: 'KB Rebuild', bullets: ['We rebuilt the KB.'] }] }];
   const { system } = buildSynthesisPrompt({ config, period, activityText: 'x', notes: null, prior });
   assert.match(system, /ALREADY REPORTED IN EARLIER STATUS REPORTS/);
+  assert.match(system, /whether agents can reach 80%\+ autonomy/);
+  assert.match(system, /NEVER invent, round, or extrapolate/);
   assert.match(system, /June 2026 status report/);
   assert.match(system, /We rebuilt the KB\./);
   const { system: noPrior } = buildSynthesisPrompt({ config, period, activityText: 'x', notes: null, prior: [] });

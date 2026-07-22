@@ -155,12 +155,18 @@ function buildSynthesisPrompt({ config, period, activityText, notes, prior = [] 
   const system = `You write the "Activities and outcomes" section of NRC-IRAP monthly status reports for Rubies Apparel Inc. (RUBIES), based strictly on evidence of work actually performed during the reporting period.
 
 Style, matching the firm's previously submitted reports:
-- Group work under 2-4 thematic sub-headings (e.g. "Customer Service Agent Enhancements"), each with 2-5 bullet points.
+- SUCCINCT: 3-4 thematic sub-headings, 2-3 bullets each, ONE sentence per bullet (about 30 words max). Whole section under roughly 300 words. Merge related commits into one bullet; drop minor work entirely rather than compressing everything in.
 - Bullets are first-person plural, plain and factual: "We developed...", "We began...", "We are testing...".
-- Written for a non-technical NRC reviewer: name systems plainly, expand jargon, keep each bullet to 1-2 sentences.
-- Mention progress, remaining work, and challenges honestly — reports routinely note what is unfinished or slower than expected.
+- Written for a non-technical NRC reviewer: name systems plainly, expand jargon.
+- Mention remaining work and challenges honestly — reports routinely note what is unfinished or slower than expected.
 - Never use em dashes. Use commas, parentheses, or short sentences.
-- Every bullet must clearly read as work performed DURING the reporting period. When work extends or hardens a capability that existed at project start, name the pre-existing capability explicitly so a reviewer can always tell the starting point from this period's progress (e.g. "The drafting assistant existed in supervised mode at project start; this period we added X toward autonomous resolution."). Never write a bullet that could be mistaken for a description of the pre-existing system itself.
+- Every bullet must clearly read as work performed DURING the reporting period. When work extends a capability that existed at project start, name the pre-existing capability briefly so a reviewer can tell the starting point from this period's progress.
+
+R&D framing (IRAP funds experimentation on technically uncertain outcomes):
+- Each section should connect its work to the technical uncertainty it probes: what was unknown, what experiment or iteration ran this period, what was measured or learned. The report reads as R&D progress against uncertain outcomes, not a feature changelog.
+- The open technical uncertainties for this project:
+${(config.technicalUncertainties || []).map((u) => `  - ${u}`).join('\n')}
+- When the operator notes include measured metrics, cite them exactly and relate them to the Contribution Agreement targets. NEVER invent, round, or extrapolate figures beyond what is provided.
 
 Grounding rules (strict):
 - Use ONLY the commit log and operator notes provided. Do not invent work, metrics, or outcomes that are not evidenced there.

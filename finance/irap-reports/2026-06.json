@@ -7,52 +7,37 @@
   "claimNumber": "1",
   "sections": [
     {
-      "heading": "Autonomous Customer Service Agent (Objective 1)",
+      "heading": "Objective 1: Autonomous Customer Service Agent",
       "bullets": [
-        "The customer service system existed at project start as a drafting assistant in fully supervised mode (every reply reviewed and sent by the founder). This period we built the foundation for autonomous action by establishing a distinct advisor architecture and an operator agent that can carry out ticket-level actions, with conversation history preserved across action completions and deterministic confirm-button state.",
-        "We implemented an auto-hold mechanism that freezes unshipped orders when a customer requests a change, together with a backstop sweep that captures failures, so the agent can safely take action without risking already-in-motion fulfillment. This is new safety infrastructure layered onto the previously supervised workflow.",
-        "We built an auto-send capability in stages: first a shadow phase (gated off, intake marking, dry-run digest line) and then an operator-facing allowlist panel with kill switches and visibility into every auto-executed action. This moves specific, pre-approved ticket types toward closing without founder intervention, versus the 0% autonomous baseline at project start.",
-        "We developed the deterministic exchange and refund handling the agent relies on to act end-to-end, including price-difference exchange calculations with discounts, refund direction, SKU refund allocation across duplicate line items (Simple Bundles), and routing net-price-difference exchanges to a single return-credit invoice.",
-        "We strengthened escalation and quality guards so that malformed or degenerate model output is routed to a human rather than sent, and we added a closeness-to-final judge with a baseline runner and daily quality line to measure how close agent drafts are to what would actually be sent.",
-        "We began building a feedback loop by capturing manual-send and steer training signals in a feedback log, and we added an hourly ticket-drift detector with auto-resolution of drift noise and replay of failed-intake dead letters. Response tone was calibrated for the RUBIES brand voice across several fixes (stop mirroring customer complaints, reciprocate compliments, explicit greeting format)."
+        "Building on the pre-project supervised drafting assistant (0% autonomy), we extended the continuous draft-vs-final judging system that measures autonomous readiness, and June scored 67.7% of AI drafts sent with no or cosmetic edits (294 drafts judged), up from the 64.7% pre-project baseline (785 drafts) and tracking toward the 80% Contribution Agreement target.",
+        "We launched a shadow-mode auto-send experiment on June 11 with a deliberately conservative gate (one low-risk reply category, a hardcoded never-list for anything touching money or orders), which recorded 3 would-have-sent drafts and probes whether autonomous sending can hold quality before real autonomy is enabled.",
+        "We built out the exchange, refund, and hold workflows (deterministic price-difference calculation, SKU refund allocation across duplicate line items, and automatic order freezing on changes) so the agent can execute multi-step actions rather than only drafting text.",
+        "Founder active customer-service handling time measured 12.8 hours in June (about 3.0 hours/week), down from a roughly 10 hours/week pre-project level, though the two are measured differently and so are only directional."
       ]
     },
     {
-      "heading": "Customer Service Reliability and Intake Hardening (Objective 1)",
+      "heading": "Objective 1: Platform Reliability Under Load",
       "bullets": [
-        "We diagnosed and addressed a recurring load-shedding failure (HTTP 529) traced to enforced JSON-schema output on large prompts. We added a circuit breaker that degrades gracefully to a legacy output mode under load, so drafting stays available during peaks. This work extends the reliability of the pre-existing drafting assistant.",
-        "We improved ticket intake handling, including replying to the original sender when staff forward a customer email, capturing inline body images as attachments, gating duplicate-ticket auto-close to first contact only, and auto-closing bounced tickets. A Haiku-based classifier now runs before the main drafting stages to route tickets.",
-        "We built order-alert and note-lifecycle automation so that operator notes and shipping alerts auto-resolve once an order ships, is closed, or is cancelled, and stale delivery tracking self-heals. Each alert email row now deep-links to its customer service ticket, reducing manual reconciliation for the founder.",
-        "We hardened the underlying order tools the agent depends on, including using the most-recent order address in order creation, updating the shipping carrier method when a destination country changes, normalizing country codes for Shopify, and falling back to a Supabase order mirror when Shopify returns no orders. Integration bugs in the Klaviyo subscription API were also fixed."
+        "We diagnosed that provider overload errors (HTTP 529) and latency were caused by enforced structured-output (JSON schema) mode on large prompts, an open question about whether schema-enforced output can be production-reliable.",
+        "We built and live-validated a load-shed circuit breaker that gracefully degrades to a legacy output mode when recent overload errors are detected, plus a degraded-output guard that routes malformed model output to a human.",
+        "We added an intake dead-letter replay and automatic drift-noise resolution so failed ticket intake recovers rather than silently dropping."
       ]
     },
     {
-      "heading": "Partner Channel Discovery and Onboarding (Objective 2)",
+      "heading": "Objective 2: Partner Channel Discovery and Outreach",
       "bullets": [
-        "At project start the partner channel had only early scraping and lead-scoring prototypes with no automated outreach or qualification. This period we ran the prospect backlog through a new discovery pre-filter (Haiku triage) followed by full research of the surviving prospects, producing a qualified set of 41 organizations plus 144 community organizations for review.",
-        "We built the multi-step outreach engine that did not exist before, including message schemas, cadence evaluators, a send function with a two-phase hard gate (kept off by default), reply correlation, a six-tier queue, a two-advisor drafting-and-review step with enforced schema, and a sweep job for follow-ups.",
-        "We surfaced this new capability to the operator by adding an outreach queue panel to the dashboard, registering the B2B outreach tools on the internal tool (MCP) server, and adding console tools to view the queue, draft, and send B2B email under human control.",
-        "We laid the data foundation for onboarding and tracking by seeding partner relationship state from status and order history and backfilling 12 live organization relationships into the B2B tables. We also shipped a public store-locator page (map, geolocation, retail partner listings) on the storefront and the tooling to publish partner stores to it.",
-        "For wholesale account setup we moved wholesale price locking to use price overrides rather than discounts and defaulted non-US wholesale destinations to expedited shipping. Outreach messaging parameters (referral ask, a $300 order floor) were locked with the founder before enabling sends."
+        "Extending early prospect-scraping and lead-scoring prototypes, we completed backlog research yielding 41 qualified partners and 144 community organizations, and added a Haiku-based pre-filter triage of the unprocessed prospect backlog.",
+        "We built a first-version outreach engine (message schemas, cadence evaluators, reply correlation, a six-tier queue, and a two-advisor draft-and-send flow) that remains hard-gated off by default pending validation.",
+        "We added an outreach queue panel to the dashboard and seeded relationship state from existing status and order history, laying groundwork toward the 85% qualification-precision target."
       ]
     },
     {
-      "heading": "Growth Intelligence Platform (Objective 3)",
+      "heading": "Objective 3: Growth Intelligence Groundwork",
       "bullets": [
-        "Business data was siloed at project start with only standalone reporting scripts. This period we began the unified ingestion work by initiating a Traffic and Conversion Intelligence effort using a Google Analytics 4 export into BigQuery, and by building marketing feeds for email reporting, audience, and sessions data.",
-        "We added recurring narrative and loop commands toward the decision-intelligence layer, including a weekly marketing content and SEO loop command, as steps toward automated weekly summaries. This synthesis layer did not exist before the project.",
-        "We added retry handling to the reviews (Judge.me) pipeline to make one of the recurring data feeds more resilient. Broader anomaly detection and the AI-originated experiment framework remain to be built in coming periods."
-      ]
-    },
-    {
-      "heading": "Shared Platform Infrastructure",
-      "bullets": [
-        "We consolidated the platform onto a single repository and established an advisor architecture, migrating the project memory and domain knowledge into the repo. This is the shared foundation the three agent systems build on, extending the pre-existing internal tool layer and business database.",
-        "We built merchandising and inventory infrastructure that the agents draw on, including an inventory projection engine, a multi-stage production-order flow generating supplier order sheets and Gmail drafts, a data-driven SKU-prefix to supplier mapping, and grading-consistency analysis with the supporting schema migration.",
-        "We added shared tooling on the internal tool (MCP) server, including managed-discount and free-gift-offer tools backed by a Supabase registry, store-locator tools, and a monthly Anthropic bill-versus-ledger reconciliation (with corrected model pricing) to keep operating-cost tracking accurate.",
-        "We invested in developer-safety and operational discipline for autonomous sessions, including a worktree workflow with hook-enforced read-only main checkout, kill-switch visibility for auto-executed actions, and dashboard mobile fixes. A significant amount of time this period was spent diagnosing a persistent mobile text-editor caret bug, which was eventually fixed at the root."
+        "We began a Traffic and Conversion Intelligence initiative using a GA4-to-BigQuery export, an early step toward the unified ingestion pipeline the project targets.",
+        "We added an email reporting system with audience and session feeds and a weekly marketing content and SEO loop, extending the standalone reporting scripts that existed at project start toward automated synthesis."
       ]
     }
   ],
-  "generatedAt": "2026-07-22T20:17:16.668Z"
+  "generatedAt": "2026-07-22T20:28:07.692Z"
 }
