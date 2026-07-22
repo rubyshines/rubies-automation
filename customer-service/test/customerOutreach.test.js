@@ -496,6 +496,35 @@ describe('seedOutboundDraft', () => {
     assert.equal(notesInsert.payload.author, 'operator');
   });
 
+  it('stages a paired operator action when actionType + operatorActionSummary are provided', async () => {
+    await seedOutboundDraft({
+      ...BASE_DRAFT,
+      actionType: 'exchange',
+      operatorActionSummary: 'Exchange RUBY-BLK-M -> RUBY-BLK-L on order #12345, ship now.',
+    });
+    const draftsInsert = findCall('cs_ai_drafts', 'insert');
+    assert.equal(draftsInsert.payload.action_type, 'exchange');
+    assert.equal(
+      draftsInsert.payload.structured_output.operator_action_summary,
+      'Exchange RUBY-BLK-M -> RUBY-BLK-L on order #12345, ship now.'
+    );
+    assert.ok(draftsInsert.payload.audit_trail.some(l => /Paired operator action staged: exchange/.test(l)));
+  });
+
+  it('leaves action_type null when no paired action is provided', async () => {
+    await seedOutboundDraft(BASE_DRAFT);
+    const draftsInsert = findCall('cs_ai_drafts', 'insert');
+    assert.equal(draftsInsert.payload.action_type, null);
+    assert.ok(!('operator_action_summary' in draftsInsert.payload.structured_output));
+  });
+
+  it('drops a half-provided action (type without summary)', async () => {
+    await seedOutboundDraft({ ...BASE_DRAFT, actionType: 'exchange', operatorActionSummary: null });
+    const draftsInsert = findCall('cs_ai_drafts', 'insert');
+    assert.equal(draftsInsert.payload.action_type, null);
+    assert.ok(!('operator_action_summary' in draftsInsert.payload.structured_output));
+  });
+
   it('strips leading # from order_number on cs_tickets', async () => {
     await seedOutboundDraft({ ...BASE_DRAFT, orderNumber: '#12345' });
     const ticketsInsert = findCall('cs_tickets', 'insert');

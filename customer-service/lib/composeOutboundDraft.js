@@ -29,6 +29,25 @@ function getClient() {
   return _client;
 }
 
+// Full operator action taxonomy — mirrors the dashboard's EXEC_ACTION_LABELS
+// and the inbound advisor's action_type values (aiAdvisor.js parseStructured
+// derives exchange/refund/exchange+refund from prescription items and
+// whitelists the rest explicitly).
+const OUTREACH_ACTION_TYPES = [
+  'exchange',
+  'refund',
+  'exchange+refund',
+  'free_order',
+  'order_modification',
+  'warehouse_hold',
+  'cancellation',
+  'customer_profile_update',
+  'discount_code',
+  'split_shipment',
+  'order_consolidation',
+  'invoice_kept_items',
+];
+
 const SYSTEM_PROMPT = `You are RUBIES's CS advisor composing a proactive outbound email FROM RUBIES TO a customer. There is no customer message to respond to — the operator (Jamie) is reaching out first, based on the steer below.
 
 ## Brand voice
@@ -52,12 +71,20 @@ ${SIG_INDENTED}
 
 ${SIG_INDENTED}
 
+## Paired operator action
+Sometimes the steer describes not just the email but an operation the operator will execute on the order (an exchange, a refund, a warehouse hold, an order edit). When it does, stage it alongside the draft:
+- Set "action_type" to the matching value: ${OUTREACH_ACTION_TYPES.join(' | ')}.
+- Write "operator_action_summary" as precise, executable instructions for the operator: order number, exact items (title + SKU + size/color), quantities, what to create or change, and any sequencing the steer states. Use only facts from the steer and the order context. Never invent SKUs or quantities.
+When the steer describes no operation (a pure heads-up, delay notice, or feedback request), set both fields to null.
+
 ## Output format
 Return ONLY a JSON object — no commentary, no markdown fences. Schema:
 {
   "subject": "Short, specific email subject line",
   "body": "Plain-text email body, including greeting and signoff",
-  "summary": "One short sentence (under 80 chars) for the dashboard queue card describing what this outreach is about"
+  "summary": "One short sentence (under 80 chars) for the dashboard queue card describing what this outreach is about",
+  "action_type": "One of the paired-action values above, or null",
+  "operator_action_summary": "Precise operator instructions for the paired action, or null"
 }`;
 
 function buildUserMessage({ context, steer, orderNumber }) {
@@ -130,6 +157,26 @@ function parseJsonResponse(text) {
   }
 }
 
+/**
+ * Validate the model's proposed paired action. An action is only staged when
+ * BOTH a whitelisted action_type and a non-empty operator_action_summary are
+ * present — a summary without a type (or vice versa) can't drive the dashboard
+ * action panel, so the pair is dropped and flagged for the audit trail.
+ */
+function normalizeProposedAction(parsed) {
+  const summary = typeof parsed?.operator_action_summary === 'string' && parsed.operator_action_summary.trim()
+    ? parsed.operator_action_summary.trim()
+    : null;
+  const type = typeof parsed?.action_type === 'string' && OUTREACH_ACTION_TYPES.includes(parsed.action_type)
+    ? parsed.action_type
+    : null;
+  if (type && summary) return { actionType: type, operatorActionSummary: summary, dropped: false };
+  const proposedSomething = Boolean(
+    (parsed?.action_type !== null && parsed?.action_type !== undefined) || summary
+  );
+  return { actionType: null, operatorActionSummary: null, dropped: proposedSomething };
+}
+
 function plainToHtml(plain) {
   const lines = String(plain || '').split('\n');
   let html = '';
@@ -190,11 +237,16 @@ async function composeOutboundDraft({ context, orderNumber, steer }) {
     throw new Error(`composeOutboundDraft: model output missing subject or body — got keys: ${Object.keys(parsed).join(', ')}`);
   }
 
+  const { actionType, operatorActionSummary, dropped } = normalizeProposedAction(parsed);
+
   return {
     subject: String(parsed.subject).trim(),
     plain_body: String(parsed.body).trim(),
     html_body: plainToHtml(parsed.body),
     summary: parsed.summary ? String(parsed.summary).trim() : null,
+    action_type: actionType,
+    operator_action_summary: operatorActionSummary,
+    action_dropped: dropped,
     _usage: {
       input_tokens: response.usage?.input_tokens,
       output_tokens: response.usage?.output_tokens,
@@ -205,8 +257,10 @@ async function composeOutboundDraft({ context, orderNumber, steer }) {
 
 module.exports = {
   composeOutboundDraft,
+  OUTREACH_ACTION_TYPES,
   // Exported for testing
   buildUserMessage,
   parseJsonResponse,
   plainToHtml,
+  normalizeProposedAction,
 };

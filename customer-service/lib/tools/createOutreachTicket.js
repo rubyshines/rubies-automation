@@ -95,6 +95,8 @@ async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
     steer,
     noteText: note_text || `Proactive outreach drafted — pending operator review`,
     author: 'operator',
+    actionType: draft.action_type,
+    operatorActionSummary: draft.operator_action_summary,
   });
 
   if (!seedResult.ok) {
@@ -117,6 +119,13 @@ async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
     ``,
     `Nothing has been sent. Review and send (or further steer) in the dashboard.`,
   ];
+  if (draft.action_type) {
+    previewLines.splice(previewLines.length - 1, 0,
+      `Staged operator action (${draft.action_type}): ${draft.operator_action_summary}`, ``);
+  }
+  if (draft.action_dropped) {
+    previewLines.push(`\n_Note: the advisor proposed a paired action but it was incomplete or not a recognized action_type, so it was NOT staged. Re-steer with explicit action instructions if one is needed._`);
+  }
   if (seedResult.note_error) {
     previewLines.push(`\n_Note: order_alert_notes insert failed (${seedResult.note_error}). The draft is still staged correctly._`);
   }
@@ -127,7 +136,7 @@ async function handleCreateOutreachTicket({ order_number, steer, note_text }) {
 const tools = [
   {
     name: 'create_outreach_ticket',
-    description: 'Compose a proactive outbound email to a customer about one of their orders, and stage it as a pending draft for review in the dashboard. Use when Jamie wants to reach out FIRST about an issue (back-order heads-up, shipping delay he wants to disclose proactively, defect notification, post-purchase feedback request) rather than respond to an inbound message. Provide the order number and a free-form steer describing what the email should communicate. The CS advisor composes the draft, no Gorgias ticket is created, and no email is sent until the operator reviews and approves the draft in the dashboard. If the operator only named a customer (no order), use lookup_customer + get_customer_orders FIRST to disambiguate which order, then call this tool with the resolved order number.',
+    description: 'Compose a proactive outbound email to a customer about one of their orders, and stage it as a pending draft for review in the dashboard. Use when Jamie wants to reach out FIRST about an issue (back-order heads-up, shipping delay he wants to disclose proactively, defect notification, post-purchase feedback request) rather than respond to an inbound message. Provide the order number and a free-form steer describing what the email should communicate. If the outreach pairs with an operator action on the order (an exchange, refund, hold, order edit), describe the action in the steer too — the draft is then staged with the action attached so the dashboard action panel and Execute & Send work on it. The CS advisor composes the draft, no Gorgias ticket is created, and no email is sent until the operator reviews and approves the draft in the dashboard. If the operator only named a customer (no order), use lookup_customer + get_customer_orders FIRST to disambiguate which order, then call this tool with the resolved order number.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -137,7 +146,7 @@ const tools = [
         },
         steer: {
           type: 'string',
-          description: 'Free-form description of what this outbound should communicate. The advisor uses this as the brief for composition. Examples: "Back-order heads-up — Naomi gaff is sold out, offer cancel or swap to AJ/Charlie", "Shipping is delayed by ~5 days due to a Warehance issue, apologize and let them know we are watching it", "Post-purchase feedback request — they got their first Brooke, ask how the fit is".',
+          description: 'Free-form description of what this outbound should communicate. The advisor uses this as the brief for composition. Examples: "Back-order heads-up — Naomi gaff is sold out, offer cancel or swap to AJ/Charlie", "Shipping is delayed by ~5 days due to a Warehance issue, apologize and let them know we are watching it", "Post-purchase feedback request — they got their first Brooke, ask how the fit is". If an operator action should be staged with the draft, describe it precisely here (items with SKUs, sizes, quantities, sequencing) — e.g. "...and stage the exchange: RUBY-BLK-M -> RUBY-BLK-L ships now as its own exchange order; CKY-BLK-M -> CKY-BLK-L as a separate exchange order when the restock lands".',
         },
         note_text: {
           type: 'string',

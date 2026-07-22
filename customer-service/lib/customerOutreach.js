@@ -396,6 +396,8 @@ async function seedOutboundDraft({
   steer,
   noteText,
   author = 'operator',
+  actionType = null,
+  operatorActionSummary = null,
 } = {}) {
   if (!customerEmail) throw new Error('seedOutboundDraft: customerEmail is required');
   if (!subject) throw new Error('seedOutboundDraft: subject is required');
@@ -457,8 +459,17 @@ async function seedOutboundDraft({
         subject,
         recipient_email: customerEmail,
         operator_steer: steer || null,
+        ...(actionType && operatorActionSummary
+          ? { operator_action_summary: operatorActionSummary }
+          : {}),
       },
-      audit_trail: [`[Outbound draft] Operator-initiated draft via composeOutboundDraft. Steer: ${steer || '(none)'}`],
+      audit_trail: [
+        `[Outbound draft] Operator-initiated draft via composeOutboundDraft. Steer: ${steer || '(none)'}`,
+        ...(actionType && operatorActionSummary
+          ? [`[Outbound draft] Paired operator action staged: ${actionType} — ${operatorActionSummary}`]
+          : []),
+      ],
+      action_type: actionType && operatorActionSummary ? actionType : null,
       confidence: 'high',
       advisor_status: 'ready',
       message_type: 'proactive_outreach',

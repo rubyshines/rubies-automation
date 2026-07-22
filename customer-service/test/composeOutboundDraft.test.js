@@ -16,6 +16,8 @@ const {
   buildUserMessage,
   parseJsonResponse,
   plainToHtml,
+  normalizeProposedAction,
+  OUTREACH_ACTION_TYPES,
 } = require('../lib/composeOutboundDraft');
 
 const SAMPLE_CONTEXT = {
@@ -109,6 +111,50 @@ describe('parseJsonResponse', () => {
 
   it('throws a clear error when no JSON is parseable', () => {
     assert.throws(() => parseJsonResponse('no json here at all'), /did not return valid JSON/);
+  });
+});
+
+describe('normalizeProposedAction', () => {
+  it('passes through a valid action_type + summary pair', () => {
+    const out = normalizeProposedAction({
+      action_type: 'exchange',
+      operator_action_summary: '  Exchange RUBY-BLK-M -> RUBY-BLK-L, ship now.  ',
+    });
+    assert.equal(out.actionType, 'exchange');
+    assert.equal(out.operatorActionSummary, 'Exchange RUBY-BLK-M -> RUBY-BLK-L, ship now.');
+    assert.equal(out.dropped, false);
+  });
+
+  it('accepts every whitelisted action type', () => {
+    for (const type of OUTREACH_ACTION_TYPES) {
+      const out = normalizeProposedAction({ action_type: type, operator_action_summary: 'do the thing' });
+      assert.equal(out.actionType, type);
+    }
+  });
+
+  it('drops an unrecognized action_type (and flags it)', () => {
+    const out = normalizeProposedAction({
+      action_type: 'ship_stuff',
+      operator_action_summary: 'ship the stuff',
+    });
+    assert.equal(out.actionType, null);
+    assert.equal(out.operatorActionSummary, null);
+    assert.equal(out.dropped, true);
+  });
+
+  it('drops a valid type with an empty summary (and flags it)', () => {
+    const out = normalizeProposedAction({ action_type: 'refund', operator_action_summary: '   ' });
+    assert.equal(out.actionType, null);
+    assert.equal(out.dropped, true);
+  });
+
+  it('returns clean nulls (not dropped) when the model proposed no action', () => {
+    for (const parsed of [{}, { action_type: null, operator_action_summary: null }]) {
+      const out = normalizeProposedAction(parsed);
+      assert.equal(out.actionType, null);
+      assert.equal(out.operatorActionSummary, null);
+      assert.equal(out.dropped, false);
+    }
   });
 });
 
