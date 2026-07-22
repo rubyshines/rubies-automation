@@ -66,6 +66,20 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncConversations').run(),
   },
   {
+    name: 'Conversation Categorizer',
+    run: async () => {
+      const stats = await require('./customer-service/import/categorizer').run();
+      // Embed whatever now has a summary but no vector (same pairing as the
+      // historical import: categorize writes the summary the embedding uses).
+      const { embedConversations } = require('./customer-service/import/runImport');
+      for (let i = 0; i < 10; i++) {
+        const res = await embedConversations({ batchSize: 50 });
+        if (!res || res.remaining === 0) break;
+      }
+      return stats;
+    },
+  },
+  {
     name: 'Finance',
     run: () => require('./finance/sync/syncFinance').run(),
   },

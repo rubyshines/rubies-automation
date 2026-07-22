@@ -322,7 +322,7 @@ async function embedConversations({ batchSize = 50 } = {}) {
   if (error) throw new Error(`Query failed: ${error.message}`);
   if (!convos || !convos.length) {
     console.log('[Embed] No conversations need embedding (all done or no summaries yet — run --categorize first)');
-    return;
+    return { embedded: 0, remaining: 0 };
   }
 
   console.log(`[Embed] Generating embeddings for ${convos.length} conversations...`);
@@ -359,6 +359,7 @@ async function embedConversations({ batchSize = 50 } = {}) {
   if (count > 0) {
     console.log(`[Embed] ${count} more conversations need embedding. Run again to continue.`);
   }
+  return { embedded: updated, remaining: count || 0 };
 }
 
 // ---------------------------------------------------------------------------
