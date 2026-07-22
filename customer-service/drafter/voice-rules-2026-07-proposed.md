@@ -16,7 +16,9 @@ Convention: blank cell = agreed as proposed; a comment = modification or rejecti
 - **Adopted modified:** 2 (polite softeners like "unfortunately" fine, no sorry), 4 (adopted on evidence), 7 (use history already in context, no extra tool cost), 8 (only when the customer stated urgency), 11 (retention line only on first-order FULL refunds; diagnostic question adopted as proposed), 14 (Jamie corrected the proposal: "I" for personal actions, "our" for facilities — NOT "my warehouse")
 - **Rejected:** 3 (no empathy-sorry for fit — PR #81 stands), 16 (always full signature), 19 (transparency nuance stays founder-only)
 
-Pinned scenarios: noApologyForThirdParty.js, retentionLineGating.js (+ existing noApologyForFit.js).
+- **Post-adoption correction (Jamie, 2026-07-18 — dosage, not content):** each adopted rule individually matches Jamie, but the model stacked several per draft (validate + causal explanation + option menu + diagnostic + backstop), and 27/30 founder edits in the week after adoption were deletions (avg −30 words). Fixed 2026-07-20 by gating the rules under a governing "one move per message" rule with explicit explanation triggers (shaping template only when the customer questions the shaping itself; validate + causal explanation only for RUBIES-caused failures; plain fit complaints get a size/measurement move) and removing all numeric word-count targets from the prompt. Pinned scenario: shapingExplanationGating.js.
+
+Pinned scenarios: noApologyForThirdParty.js, retentionLineGating.js (+ existing noApologyForFit.js), shapingExplanationGating.js.
 
 ---
 
