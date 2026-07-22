@@ -129,7 +129,7 @@ const TOOLS = [
   },
   {
     name: 'get_order_context',
-    description: 'Get full customer and order details. Returns customer profile, order line items with SKU-derived sizes, fulfilled orders, and exchange history. Call this at the start of every conversation to understand what the customer ordered.',
+    description: 'Get full customer and order details. Returns customer profile, order line items with SKU-derived sizes, fulfilled orders, and exchange history. Call this at the start of every conversation to understand what the customer ordered. Call it again with a specific order_number whenever the conversation moves to a different order than the one already loaded (e.g. an operator steer or a customer reply names another order).',
     input_schema: {
       type: 'object',
       properties: {
@@ -457,6 +457,24 @@ async function executeToolCall(toolName, toolInput) {
           })),
         } : null,
         fulfilled_order_count: ctx.fulfilled.length,
+        // The customer's other recent orders (not the loaded one, not $0
+        // exchange orders). Lets the advisor notice the message is about a
+        // DIFFERENT order than the auto-linked one — e.g. "my pre order" when
+        // the loaded order has no pre-order line but another order does.
+        other_orders: ctx.all
+          .filter(o => o.name !== ctx.targetOrder?.name
+            && !o.cancelledAt
+            && parseFloat(o.totalPriceSet?.shopMoney?.amount || '0') > 0)
+          .slice(0, 5)
+          .map(o => ({
+            name: o.name,
+            created_at: (o.createdAt || '').split('T')[0] || null,
+            fulfillment_status: o.displayFulfillmentStatus,
+            items: (o.lineItems || []).map(li => {
+              const pre = (li.customAttributes || []).find(a => a.key === 'Pre-order')?.value;
+              return `${li.quantity}x ${li.title}${li.variantTitle ? ` (${li.variantTitle})` : ''}${pre ? ` [PRE-ORDER: ${pre}]` : ''}`;
+            }),
+          })),
         exchange_orders: ctx.exchanges.slice(0, 3).map(ex => ({
           name: ex.name,
           items: (ex.lineItems || []).map(li => ({ title: li.title, variant: li.variantTitle })),
@@ -789,6 +807,9 @@ function buildSystemPrompt(toneSamples, orderContext, opts = {}) {
 ${t ? `- Order: ${t.name} (placed ${t.created_at?.split('T')[0] || 'unknown'}, ${t.days_since_order} days ago)
 - Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}${shipToLine}
 - Items: ${t.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size}${li.unit_price != null ? ` @ $${Number(li.unit_price).toFixed(2)}` : ''} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
+${orderContext.other_orders?.length ? `- Customer's OTHER orders (NOT loaded — only the summary below is known about them):
+${orderContext.other_orders.map(o => `  - ${o.name} (placed ${o.created_at || 'unknown'}, ${o.fulfillment_status}): ${o.items.join(', ')}`).join('\n')}
+- The loaded order above was auto-linked (most recent). Before acting, confirm it is the order the customer means: if their message references something the loaded order doesn't have — a pre-order when no loaded item is marked pre-order, a product name that isn't on it, an unshipped order when the loaded one already shipped — the customer means one of the OTHER orders. Match on those cues, set action_order_number to the matched order, and run check_unfulfilled_order on it before staging any action. If no order clearly matches, ask the customer which order they mean instead of guessing.` : ''}
 ${orderContext.exchange_orders?.length ? `- Previous exchanges: ${orderContext.exchange_orders.map(ex => ex.name).join(', ')}` : ''}
 ${orderContext.order_count != null ? `- Customer order history: ${orderContext.order_count} order(s) total${orderContext.order_count === 1 ? ' — FIRST-TIME BUYER' : ''}${orderContext.previously_refunded_orders ? ` · ⚠️ ${orderContext.previously_refunded_orders} previously refunded order(s) (${(orderContext.previously_refunded_order_names || []).join(', ')}), not counting this one` : ''}` : ''}
 `;
@@ -849,6 +870,7 @@ These rules override everything else. Violations cause real harm to customers.
 7. **For any operational fact, look it up first and state only what the tool returns.** These live in our systems and change over time, so always fetch them: use delivery_estimate for how long shipping takes to a country; use shipping_info for shipping rates, free-shipping thresholds, which countries we ship to, and whether we cover duties; use compare_products / check_unfulfilled_order for whether an item is in stock or on pre-order and its restock date. When a customer's order contains an out-of-stock or pre-order item, look up its restock date and tell them when it ships (don't just suggest splitting the order). (Reinforcement: never quote a delivery window, rate, threshold, or restock date from memory; if no tool can confirm it, say you'll check rather than guess.)
 8. **Only claim actions that are real.** You may write "I've done X" only when X is this draft's own staged action (the action_type/items you are setting now) or an executed action shown in the conversation context. Never claim you contacted, or already heard back from, the warehouse, a carrier, or a supplier — no "I've reached out to FedEx", no "my warehouse confirmed" — unless that contact is visible in this conversation. If outreach to a third party is the right next step, it belongs to the operator: say "Let me check with the warehouse and get back to you" and set status accordingly.
 9. **Money-moving actions require an explicit customer request.** Never stage a refund, cancellation, or exchange (action_type or CONFIRMED/REFUND_CONFIRMED items) unless the customer asked for that outcome in this conversation. A customer confirming a fact ("yes, I placed the order"), expressing mild doubt, or just describing a problem has NOT requested a refund. When in doubt, ask the one question that resolves it.
+10. **Describe an order's contents or state only from loaded data.** The loaded order context and this conversation's tool results are the only sources for what an order contains, whether it holds a pre-order, or what will "stay as is" or "ship together". For any other order — one the operator redirected you to, or one from the customer's other-orders list — call check_unfulfilled_order on it BEFORE describing it or staging an action against it. Never reason "it's a pre-order so it must also contain X" — order composition is a lookup, not an inference.
 
 ## RUBIES FACTS (verbatim — these are correct; do NOT embellish or invent details around them)
 Use these exact facts when relevant. If a customer asks something here, answer directly from this block — do NOT defer ("let me look into that") or fabricate specifics.
@@ -1563,6 +1585,11 @@ function buildOperatorSteerBlock(steer) {
     'Write the customer_reply field and every structured field to reflect the\n' +
     'operator\'s intent. If the operator\'s instruction requires a tool you would\n' +
     'not normally call (e.g. refund, exchange, draft order), call it now.\n\n' +
+    'When the operator directs the action at a DIFFERENT order than the loaded\n' +
+    'context: set action_order_number to that order, name it in\n' +
+    'operator_action_summary, and call check_unfulfilled_order on it before\n' +
+    'describing its contents or state — the loaded context tells you nothing\n' +
+    'about the other order.\n\n' +
     'Call every tool the response requires (donation routing, order context,\n' +
     'etc.) BEFORE your final message. Your final message is, as always, the\n' +
     'single enforced JSON object with the complete email in customer_reply.\n' +
@@ -1689,7 +1716,10 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // - get_order_context: when preContext exists, data is already in the system prompt
   const filteredTools = TOOLS.filter(t => {
     if (t.name === 'get_tone_samples') return false;
-    if (t.name === 'get_order_context' && preContext) return false;
+    // With preContext the loaded order is already in the system prompt — but a
+    // steer can redirect the action to a DIFFERENT order, which the advisor
+    // then needs to be able to load (ticket 2700: it guessed instead).
+    if (t.name === 'get_order_context' && preContext && !operatorSteer) return false;
     return true;
   });
 
@@ -2037,6 +2067,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
       customer: { email: customer_email, name: null, pronouns: 'they/them', country: orderContext?.customer?.country },
       order: orderContext?.target_order || null,
       action_type: null,
+      action_order_number: null,
       confidence: 'low',
       advisor_version: 'hybrid-v3',
       _composedResponse: composedResponse,
@@ -2197,6 +2228,12 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
       })),
     } : null,
     action_type,
+    // Digits-only order number the staged action targets. Consumed by the
+    // intake auto-hold and the backstop sweep so a steer that redirects the
+    // action to a different order than the loaded context holds the right one.
+    action_order_number: parsed.action_order_number
+      ? String(parsed.action_order_number).replace(/^#/, '')
+      : null,
     customer_profile_update: parsed.customer_profile_update || null,
     discount_code: parsed.discount_code || null,
     operator_action_summary: parsed.operator_action_summary || null,

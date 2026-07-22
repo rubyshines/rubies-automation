@@ -43,6 +43,10 @@ const ADVISOR_OUTPUT_SCHEMA = {
       enum: [null, 'warehouse_hold', 'order_modification', 'cancellation', 'customer_profile_update', 'discount_code', 'split_shipment', 'invoice_kept_items', 'free_order'],
       description: 'Set when an order, profile, discount-code, split-shipment, invoice-kept-items, or free-order action is needed beyond exchange/refund. Otherwise null.',
     },
+    action_order_number: {
+      anyOf: [{ type: 'string' }, { type: 'null' }],
+      description: "The order number the staged action targets, digits only (e.g. '31485'). REQUIRED whenever action_type is set or operator_action_summary names an order — usually the loaded order, but when the operator or customer redirects the action to a DIFFERENT order, put THAT order's number here (automatic actions like warehouse holds execute against this order). Null when there is no action.",
+    },
     new_address: {
       anyOf: [
         { type: 'null' },
@@ -147,7 +151,7 @@ const ADVISOR_OUTPUT_SCHEMA = {
   },
   required: [
     'customer_reply', 'status', 'message_type', 'customer_intent', 'action_type',
-    'new_address', 'customer_profile_update', 'discount_code', 'items',
+    'action_order_number', 'new_address', 'customer_profile_update', 'discount_code', 'items',
     'donation_needed', 'customer_name', 'forwarded_sender_email', 'customer_pronouns', 'buying_for',
     'third_party_label', 'duties_refund_amount', 'confidence', 'summary',
     'history_summary', 'customer_sentiment', 'operator_action_summary', 'routing_reason', 'flags', 'audit',
@@ -255,6 +259,7 @@ const LEGACY_STRUCTURED_TEMPLATE = `After handling the conversation, you MUST en
   "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|discount_request|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. If nothing fits, use 'uncategorized' — do not invent new values.)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
   "action_type": "null|warehouse_hold|order_modification|cancellation|customer_profile_update|discount_code|split_shipment|invoice_kept_items",
+  "action_order_number": "null OR the order number the staged action targets, digits only (e.g. '31485') — REQUIRED whenever action_type is set or operator_action_summary names an order. Usually the loaded order; when the operator or customer redirects the action to a DIFFERENT order, use THAT order's number (automatic actions like warehouse holds execute against it).",
   "new_address": "null OR { address1, city, province, zip, country } — REQUIRED when action_type is order_modification and the customer provided a new shipping address.",
   "customer_profile_update": "null OR { new_email, new_first_name, new_last_name } — REQUIRED when action_type is customer_profile_update.",
   "discount_code": "null OR { mode: 'percent'|'free_product', percent_off?: number, product_query?: string } — from the advisor path always { mode: 'percent', percent_off: 10 }.",

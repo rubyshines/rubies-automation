@@ -97,10 +97,17 @@ async function autoExecuteAdvisorHold(structured) {
   // mark the draft's staged cancel as executed (see the commitDraft call site).
   const actionType = structured?.action_type;
   if (actionType !== 'warehouse_hold' && actionType !== 'cancellation') return null;
-  const orderName = structured?.order?.name || '';
-  const orderNumber = parseInt(String(orderName).replace(/^#/, ''), 10);
+  // Prefer the advisor's explicit action target: structured.order echoes the
+  // LOADED context, which is the wrong order when a steer redirected the action
+  // (ticket 2700: hold landed on the loaded #31533 instead of the steered #31485).
+  // Same resolution rule as the backstop sweep — one implementation.
+  const { holdTargetOrderNumber } = require('../lib/holdReconcile');
+  const orderNumber = holdTargetOrderNumber({
+    structured_output: structured,
+    order_number: structured?.order?.name,
+  });
   if (!orderNumber) {
-    recordHoldFailure(structured, orderName || '(none)', 'advisor proposed a hold but no order number was on its output');
+    recordHoldFailure(structured, '(none)', 'advisor proposed a hold but no order number was on its output');
     return null;
   }
 

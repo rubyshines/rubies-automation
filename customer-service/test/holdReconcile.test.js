@@ -8,7 +8,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyHoldResult, hasHoldActivity } = require('../lib/holdReconcile');
+const { classifyHoldResult, hasHoldActivity, holdTargetOrderNumber } = require('../lib/holdReconcile');
 
 // Mirror the real shapes returned by handleWarehouseHold (orderNotes.js).
 const ok = (text) => ({ content: [{ type: 'text', text }] });
@@ -85,5 +85,43 @@ describe('hasHoldActivity', () => {
 
   it('ignores unrelated actions', () => {
     assert.equal(hasHoldActivity([{ action_type: 'refund', summary: 'refunded' }, {}]), false);
+  });
+});
+
+// holdTargetOrderNumber picks which order a proposed hold lands on. Shared by
+// the backstop sweep (draft rows) and the intake auto-hold (live structured
+// output, passed as { structured_output, order_number }). The draft's
+// order_number echoes the LOADED order context, which is wrong when an
+// operator steer redirected the action — ticket 2700 held the loaded #31533
+// (already shipped) instead of the steered #31485.
+describe('holdTargetOrderNumber', () => {
+  it('prefers the advisor-declared action target over the linked order', () => {
+    assert.equal(
+      holdTargetOrderNumber({
+        order_number: '#31533',
+        structured_output: { action_order_number: '31485' },
+      }),
+      31485,
+    );
+  });
+
+  it('falls back to the linked order when no action target was declared', () => {
+    assert.equal(holdTargetOrderNumber({ order_number: '#31533', structured_output: {} }), 31533);
+    assert.equal(holdTargetOrderNumber({ order_number: '31533' }), 31533);
+    assert.equal(holdTargetOrderNumber({ order_number: '#31533', structured_output: { action_order_number: null } }), 31533);
+  });
+
+  it('strips a leading # from the action target', () => {
+    assert.equal(
+      holdTargetOrderNumber({ order_number: '#31533', structured_output: { action_order_number: '#31485' } }),
+      31485,
+    );
+  });
+
+  it('returns null when nothing resolves to a number', () => {
+    assert.equal(holdTargetOrderNumber({}), null);
+    assert.equal(holdTargetOrderNumber({ order_number: null, structured_output: {} }), null);
+    assert.equal(holdTargetOrderNumber({ order_number: 'D6720' }), null);
+    assert.equal(holdTargetOrderNumber(null), null);
   });
 });

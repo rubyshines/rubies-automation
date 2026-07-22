@@ -66,6 +66,20 @@ function hasHoldActivity(actions) {
   );
 }
 
+/**
+ * The order number a draft's hold must land on. Pure — unit tested.
+ *
+ * Prefers the advisor's explicit action target (structured_output.
+ * action_order_number) over the draft's order_number column: order_number is
+ * filled from the loaded order context, which is the WRONG order when an
+ * operator steer redirected the action elsewhere (ticket 2700: the sweep held
+ * the loaded #31533 — already shipped — instead of the steered #31485).
+ */
+function holdTargetOrderNumber(draft) {
+  const target = draft?.structured_output?.action_order_number || draft?.order_number;
+  return parseInt(String(target || '').replace(/^#/, ''), 10) || null;
+}
+
 async function reconcilePendingHolds({ now = new Date() } = {}) {
   const supabase = getSupabaseClient();
   const since = new Date(now.getTime() - LOOKBACK_DAYS * 86400000).toISOString();
@@ -82,7 +96,7 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
   // been executed yet, which is exactly the window the hold must cover.
   const { data: drafts, error } = await supabase
     .from('cs_ai_drafts')
-    .select('id, ticket_id, order_number, actions, audit_trail, status, action_type')
+    .select('id, ticket_id, order_number, structured_output, actions, audit_trail, status, action_type')
     .in('action_type', ['warehouse_hold', 'cancellation'])
     .is('action_executed_at', null)
     .gte('created_at', since);
@@ -114,7 +128,7 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
     if (!t || t.status === 'closed') continue;
     if (t.active_draft_id && t.active_draft_id !== d.id) continue;
 
-    const orderNumber = parseInt(String(d.order_number || '').replace(/^#/, ''), 10);
+    const orderNumber = holdTargetOrderNumber(d);
     if (!orderNumber) continue;
 
     let result;
@@ -182,4 +196,4 @@ async function reconcilePendingHolds({ now = new Date() } = {}) {
   return { checked: drafts?.length || 0, placed, impossible, pending };
 }
 
-module.exports = { reconcilePendingHolds, classifyHoldResult, hasHoldActivity, GAVEUP_MARKER };
+module.exports = { reconcilePendingHolds, classifyHoldResult, hasHoldActivity, holdTargetOrderNumber, GAVEUP_MARKER };
