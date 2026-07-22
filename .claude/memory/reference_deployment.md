@@ -26,7 +26,7 @@ All cron times are UTC. Each has a `railway/<name>.toml` with its `cronSchedule`
 | daily-seo-tracking | `15 10 * * *` (6:15am ET) | `seo-tracking/daily-seo-tracking.js` |
 | daily-cs-comparison | `30 11 * * *` (7:30am ET) | `analytics/daily-cs-comparison.js` |
 | daily-cs-stats | `0 12 * * *` (8:00am ET) | `analytics/daily-cs-stats.js` |
-| daily-sync-all | `30 12 * * *` (8:30am ET) | `daily-sync-all.js` — 17 sub-pipelines |
+| daily-sync-all | `30 12 * * *` (8:30am ET) | `daily-sync-all.js` — 18 sub-pipelines |
 | weekly-seo-digest | `45 10 * * 1` (Mon 6:45am ET) | `seo-tracking/weekly-seo-digest.js` |
 | monthly-competitor-pricing | `0 14 1 * *` (1st, 10am ET) | `competitor-pricing/monthly-competitor-pricing.js` |
 | passport-tracking-sync | `37 * * * *` (hourly at :37) | `customer-service/sync/syncPassportDelivery.js --limit 50` |
