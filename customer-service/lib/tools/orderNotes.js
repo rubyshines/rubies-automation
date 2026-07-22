@@ -371,6 +371,24 @@ async function handleWarehouseHold({ order_number, reason }) {
     };
   }
 
+  // Warehance accepts the hold flag on fulfilled/cancelled orders, so without
+  // this guard a hold on a shipped order "succeeds" silently — and the backstop
+  // sweep (holdReconcile.js) records the staged action as executed instead of
+  // giving up loudly. The error text must contain shipped/fulfilled/cancelled
+  // so classifyHoldResult maps it to 'impossible'.
+  if (['fulfilled', 'cancelled', 'canceled'].includes(whOrder.fulfillment_status)) {
+    const label = whOrder.fulfillment_status === 'fulfilled'
+      ? 'already **shipped** (fulfilled)'
+      : '**cancelled**';
+    return {
+      content: [{
+        type: 'text',
+        text: `**Cannot place warehouse hold** — order #${order_number} is ${label}, so a hold would have no effect. Double-check this is the right order.\n\nWarehance: ${whUrl}`,
+      }],
+      isError: true,
+    };
+  }
+
   if (whOrder.warehouse_hold) {
     return {
       content: [{
