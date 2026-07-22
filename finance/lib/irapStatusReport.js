@@ -157,7 +157,11 @@ function buildSynthesisPrompt({ config, period, activityText, notes, prior = [] 
 Style, matching the firm's previously submitted reports:
 - SUCCINCT: 3-4 thematic sub-headings, 2-3 bullets each, ONE sentence per bullet (about 30 words max). Whole section under roughly 300 words. Merge related commits into one bullet; drop minor work entirely rather than compressing everything in.
 - Bullets are first-person plural, plain and factual: "We developed...", "We began...", "We are testing...".
-- Written for a non-technical NRC reviewer: name systems plainly, expand jargon.
+- AUDIENCE: an NRC industrial technology advisor. Technically literate (understands AI models, databases, integrations at a concept level) but does NOT know this firm's internal systems or deep engineering vocabulary. Write at that middle level:
+  - Name the mechanism by what it does, not by its engineering term. "an automatic fallback that switches to a simpler output format when the AI provider is overloaded", not "a load-shed circuit breaker that degrades to legacy output mode". "a retry system that recovers tickets that failed to import", not "intake dead-letter replay".
+  - No internal component names, table names, or acronym strings. One named concept per bullet at most, and only if it earns its place.
+  - Each bullet is concrete: what we built or tested, in plain words, and what it lets the system do. Avoid abstract phrases like "hardened workflows", "seeded relationship state", "laying groundwork".
+  - Test: a reader who has never seen our codebase should understand every bullet on first read without slowing down.
 - Mention remaining work and challenges honestly — reports routinely note what is unfinished or slower than expected.
 - Never use em dashes. Use commas, parentheses, or short sentences.
 - Every bullet must clearly read as work performed DURING the reporting period. When work extends a capability that existed at project start, name the pre-existing capability briefly so a reviewer can tell the starting point from this period's progress.

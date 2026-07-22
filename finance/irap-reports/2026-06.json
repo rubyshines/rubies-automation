@@ -9,35 +9,34 @@
     {
       "heading": "Objective 1: Autonomous Customer Service Agent",
       "bullets": [
-        "Building on the pre-project supervised drafting assistant (0% autonomy), we extended the continuous draft-vs-final judging system that measures autonomous readiness, and June scored 67.7% of AI drafts sent with no or cosmetic edits (294 drafts judged), up from the 64.7% pre-project baseline (785 drafts) and tracking toward the 80% Contribution Agreement target.",
-        "We launched a shadow-mode auto-send experiment on June 11 with a deliberately conservative gate (one low-risk reply category, a hardcoded never-list for anything touching money or orders), which recorded 3 would-have-sent drafts and probes whether autonomous sending can hold quality before real autonomy is enabled.",
-        "We built out the exchange, refund, and hold workflows (deterministic price-difference calculation, SKU refund allocation across duplicate line items, and automatic order freezing on changes) so the agent can execute multi-step actions rather than only drafting text.",
-        "Founder active customer-service handling time measured 12.8 hours in June (about 3.0 hours/week), down from a roughly 10 hours/week pre-project level, though the two are measured differently and so are only directional."
+        "We rebuilt our supervised drafting assistant into a multi-agent system that reasons over live order and customer data and proposes concrete actions (exchanges, refunds, shipping edits) rather than draft text alone, with a safety layer that freezes unshipped orders before any change is applied.",
+        "We put our draft-vs-final judging instrument into continuous operation, which measures how often the AI draft is sent unchanged: June scored 67.7% (294 drafts judged) against a pre-project baseline of 64.7%, the primary yardstick toward the 80% autonomous-resolution target.",
+        "We launched a shadow-mode auto-send experiment on June 11 with a deliberately narrow gate (one low-risk reply category, hardcoded to never touch money or orders) to measure the would-have-erred rate before enabling any real autonomy, with 3 drafts marked would-have-sent in June.",
+        "We built an intent-routing and escalation layer that classifies incoming tickets, auto-holds orders needing changes, and routes malformed or low-confidence model output to a human, with founder handling time measured at 12.8 hours in June (roughly 3.0 hours/week)."
       ]
     },
     {
       "heading": "Objective 1: Platform Reliability Under Load",
       "bullets": [
-        "We diagnosed that provider overload errors (HTTP 529) and latency were caused by enforced structured-output (JSON schema) mode on large prompts, an open question about whether schema-enforced output can be production-reliable.",
-        "We built and live-validated a load-shed circuit breaker that gracefully degrades to a legacy output mode when recent overload errors are detected, plus a degraded-output guard that routes malformed model output to a human.",
-        "We added an intake dead-letter replay and automatic drift-noise resolution so failed ticket intake recovers rather than silently dropping."
+        "We investigated why enforced structured output from the AI provider was failing under heavy load, tracing intermittent overload errors and slow responses to large-prompt requests demanding strict output formats.",
+        "We built an automatic fallback that switches drafts to a simpler output format when recent overload errors are detected, plus a fail-fast path that recovers a stalled response and its staged action, and validated both in production."
       ]
     },
     {
-      "heading": "Objective 2: Partner Channel Discovery and Outreach",
+      "heading": "Objective 2: Partner Channel Discovery and Onboarding",
       "bullets": [
-        "Extending early prospect-scraping and lead-scoring prototypes, we completed backlog research yielding 41 qualified partners and 144 community organizations, and added a Haiku-based pre-filter triage of the unprocessed prospect backlog.",
-        "We built a first-version outreach engine (message schemas, cadence evaluators, reply correlation, a six-tier queue, and a two-advisor draft-and-send flow) that remains hard-gated off by default pending validation.",
-        "We added an outreach queue panel to the dashboard and seeded relationship state from existing status and order history, laying groundwork toward the 85% qualification-precision target."
+        "We extended our early prospect-scraping and scoring prototypes into a staged discovery pipeline that triages a backlog of unprocessed prospects with a cheap first-pass model, then runs full research on the survivors, yielding 41 qualified prospects and 144 community organizations.",
+        "We built an automated outreach engine with AI-drafted personalized messages, multi-touch follow-up cadence, reply correlation, and a tiered work queue, kept hard-gated off by default so no messages send until quality is validated.",
+        "We built and published a public store-locator map of retail partners and seeded relationship records for 12 live partner organizations as the foundation for onboarding automation."
       ]
     },
     {
-      "heading": "Objective 3: Growth Intelligence Groundwork",
+      "heading": "Objective 3: Growth Intelligence",
       "bullets": [
-        "We began a Traffic and Conversion Intelligence initiative using a GA4-to-BigQuery export, an early step toward the unified ingestion pipeline the project targets.",
-        "We added an email reporting system with audience and session feeds and a weekly marketing content and SEO loop, extending the standalone reporting scripts that existed at project start toward automated synthesis."
+        "We began a traffic-and-conversion intelligence initiative that pulls Google Analytics data into a queryable warehouse, an early step toward the unified ingestion pipeline needed for cross-source synthesis.",
+        "We built an email-marketing reporting feed and a weekly content-and-SEO summary loop, extending the standalone reporting scripts that existed at project start."
       ]
     }
   ],
-  "generatedAt": "2026-07-22T20:28:07.692Z"
+  "generatedAt": "2026-07-22T20:33:20.667Z"
 }
