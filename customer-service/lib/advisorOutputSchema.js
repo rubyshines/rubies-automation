@@ -134,6 +134,15 @@ const ADVISOR_OUTPUT_SCHEMA = {
       anyOf: [{ type: 'string' }, { type: 'null' }],
       description: "Single-line natural-language description of the exact action the operator's tools must execute, matching the order changes the customer_reply promises. MUST be null when status is needs_info or gathering. Required when action_type is set OR the reply states (past tense) that an exchange/refund/edit/profile-update happened. INCLUDE products, quantities, sizes, colors, swaps, order numbers. EXCLUDE customer-facing instructions (donation addresses, washing instructions, ETAs, kind words). NEVER include dollar amounts — refunds are specified by order + items ('refund order #29812 for the 2x Brooke 2X'); the operator's tools compute amounts. Exchange example: 'exchange on order #29863: 2x AJ 10→8 Sandstone, 1x Ruby 10→8 Black'.",
     },
+    routing_reason: {
+      anyOf: [{ type: 'string' }, { type: 'null' }],
+      description: "REQUIRED (non-null) whenever status is route_to_human: ONE plain sentence naming the specific reason this ticket needs Jamie, written for Jamie (e.g. 'Order stuck 4+ business days with no cause found — needs investigation', '3rd refund request on this account — review before refunding'). Name the rule or situation that triggered the routing, never a generic 'needs human review'. Null for every other status.",
+    },
+    flags: {
+      type: 'array',
+      items: { type: 'string' },
+      description: "Operator-facing warning strings shown as a ⚠️ banner on the ticket — the customer never sees them and they never change your reply. Emit one when a rule tells you to raise a flag (e.g. the refund-pattern flag). Empty array when none.",
+    },
     audit: { type: 'array', items: { type: 'string' }, description: 'Your reasoning steps, one per entry.' },
   },
   required: [
@@ -141,7 +150,7 @@ const ADVISOR_OUTPUT_SCHEMA = {
     'new_address', 'customer_profile_update', 'discount_code', 'items',
     'donation_needed', 'customer_name', 'forwarded_sender_email', 'customer_pronouns', 'buying_for',
     'third_party_label', 'duties_refund_amount', 'confidence', 'summary',
-    'history_summary', 'customer_sentiment', 'operator_action_summary', 'audit',
+    'history_summary', 'customer_sentiment', 'operator_action_summary', 'routing_reason', 'flags', 'audit',
   ],
   additionalProperties: false,
 };
@@ -261,6 +270,8 @@ const LEGACY_STRUCTURED_TEMPLATE = `After handling the conversation, you MUST en
   "history_summary": "2-4 sentence prose summary for future advisor calls (exchange/refund/defect only — null otherwise)",
   "customer_sentiment": "positive|neutral|negative|null",
   "operator_action_summary": "null OR single-line description of the exact operator action, matching the draft's promises. MUST be null when status is needs_info/gathering. Never include dollar amounts.",
+  "routing_reason": "null OR one plain sentence naming the specific reason this ticket needs Jamie — REQUIRED (non-null) whenever status is route_to_human, null for every other status.",
+  "flags": ["operator-facing warning strings (⚠️ banner; customer never sees them) — [] when none"],
   "audit": ["reasoning step 1", "reasoning step 2"]
 }
 </structured>

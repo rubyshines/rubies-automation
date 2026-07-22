@@ -462,6 +462,20 @@ async function executeToolCall(toolName, toolInput) {
           items: (ex.lineItems || []).map(li => ({ title: li.title, variant: li.variantTitle })),
         })),
         order_count: ctx.all.length,
+        // Refund history for the refund-pattern rules: past non-cancelled,
+        // non-exchange orders (other than the target) with money refunded.
+        ...(() => {
+          const targetName = (ctx.targetOrder?.name || '').replace('#', '');
+          const refunded = ctx.all.filter(o =>
+            !o.cancelledAt &&
+            (o.name || '').replace('#', '') !== targetName &&
+            Number(o.totalRefundedSet?.shopMoney?.amount || 0) > 0
+          );
+          return {
+            previously_refunded_orders: refunded.length,
+            previously_refunded_order_names: refunded.slice(0, 5).map(o => o.name),
+          };
+        })(),
         resolved_by_name: ctx.resolvedByName || false,
         conversation_email: ctx.conversationEmail || null,
       };
@@ -776,6 +790,7 @@ ${t ? `- Order: ${t.name} (placed ${t.created_at?.split('T')[0] || 'unknown'}, $
 - Fulfillment: ${t.fulfillment_status}${t.financial_status && t.financial_status !== 'PAID' ? ` · Financial: ${t.financial_status}` : ''}${moneyLine}${shipToLine}
 - Items: ${t.line_items.map(li => `${li.quantity}x ${li.title} size ${li.sku_size}${li.unit_price != null ? ` @ $${Number(li.unit_price).toFixed(2)}` : ''} (SKU: ${li.sku})`).join(', ')}` : '- No order found'}
 ${orderContext.exchange_orders?.length ? `- Previous exchanges: ${orderContext.exchange_orders.map(ex => ex.name).join(', ')}` : ''}
+${orderContext.order_count != null ? `- Customer order history: ${orderContext.order_count} order(s) total${orderContext.order_count === 1 ? ' — FIRST-TIME BUYER' : ''}${orderContext.previously_refunded_orders ? ` · ⚠️ ${orderContext.previously_refunded_orders} previously refunded order(s) (${(orderContext.previously_refunded_order_names || []).join(', ')}), not counting this one` : ''}` : ''}
 `;
   }
 
@@ -811,6 +826,8 @@ The order context is available to YOU for reference, but don't present it to the
 CRITICAL: NEVER ask for an order number or email address if you already have order context in the system prompt. The customer's order and email were already looked up for you. Use that data directly. Asking for information you already have is the worst possible customer experience.
 
 CRITICAL: You are Jamie. Every reply is signed by Jamie and goes to a customer who emailed Jamie directly. Write in first person. Say "I" for actions you personally take ("I've created the order", "I sent over a refund") and "our" for company facilities and shared things ("our warehouse", "our 3PL", "our team", "our studio") — never "my warehouse". When status is "route_to_human", say "Let me look into this and get back to you" — the routing is internal.
+
+Every route_to_human comes with its reason. Whenever you set status to "route_to_human", set routing_reason to one plain sentence written FOR Jamie that names the specific rule or situation that triggered the routing — e.g. "Order stuck 4+ business days, check_unfulfilled_order found no cause", "DDP duties refund pending receipt verification", "3rd refund request on this account — review before refunding". Jamie reads this sentence to decide what to do; "needs human review" tells him nothing, so always name the trigger.
 
 ## EMAIL & CUSTOMER SCENARIOS
 - **Order email differs from conversation email:** If the customer account was found, but a specific order has a different email than the conversation, reply to the conversation email and use the order data. Don't ask the customer to re-send from a different address.
@@ -884,9 +901,17 @@ Before confirming a size exchange, call compare_products with the product name a
 The key question is: has the customer received REAL sizing help from you (Jamie/agent) in this conversation? A "real" exchange offer means you suggested a specific size, mentioned fabric delta, or asked for measurements. The Gorgias bot's generic "would you like to exchange?" does NOT count.
 
 - **Process refund immediately** if: (a) you already offered real sizing help and they still want a refund, (b) safety situation, (c) customer explicitly says "just a refund" or "no exchange" after real help, (d) product fundamentally doesn't work for them (not a sizing issue)
+- **Every time you process a refund, also decide the flags field** (see "Refund-pattern flag" below): first-time buyer who declined/preempted sizing help → emit the flag; anyone else → flags: []. This decision is part of the refund flow, not optional.
 - **Nudge first** if: the customer has only been through the bot's intake flow. Even if they said "return" to the bot, YOUR first response should offer real sizing help based on what they told you (e.g. "too small" → suggest next size up with delta)
 - When processing a refund, include donation info in the same message. Do NOT ask them to confirm which items if they already selected them.
 - NEVER say "once you've donated/sent the items" or "let me know when you've shipped them." Refunds are processed upfront, not contingent on anything.
+
+**Refund-pattern flag (operator visibility — never changes your reply):**
+Whenever you process a refund, read the "Customer order history" context line and set the structured "flags" field as the last step of composing the draft. The customer never sees flags, and raising one does NOT change what you write or whether you process the refund — write the same warm reply either way.
+- The context line says FIRST-TIME BUYER AND the customer declined or preempted real sizing help (said no to trying another size, refused to say what went wrong, said "it's not a size thing" / "sizing won't fix it" without trying, or ignored a measurement offer) → emit exactly: "flags": ["Refund-pattern: first-time buyer, [complaint in 2-4 words], declined size help"].
+- The refund covers every item in the order AND the customer gave no reason at all → emit: "flags": ["Refund-pattern: full-order refund, no reason given"].
+- Neither pattern → emit "flags": []. A repeat customer, an engaged customer, or a defect/wrong-item refund never gets a flag.
+- **2+ previously refunded orders → Jamie decides.** When the context shows 2 or more previously refunded orders, do NOT stage the refund. Set status to "route_to_human" with routing_reason "[Nth] refund request on this account ([order names]) — review before refunding", write the standard "Let me look into this and get back to you" reply, and raise the flag "Refund-pattern: repeat refunder — [N] prior refunded orders". One previous refund is normal customer behavior — process it without routing.
 
 ### When to offer size OPTIONS (mention fabric delta)
 Mention fabric delta ONLY when you are presenting size options for the customer to choose between. Typical pattern: "The [size] will have X" less/more fabric around the waist. Does that sound like it will work?" or "The medium will have 2" less and the small will have 4" less. What sounds better?"
@@ -1915,6 +1940,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     // Force route_to_human so no auto path (auto-send, thank-you close) can
     // ever act on a draft whose real reply was lost.
     parsedStructured.status = 'route_to_human';
+    parsedStructured.routing_reason = 'Model returned a degenerate reply (API overload) — regenerate or reply manually';
   }
 
   // Validate for hallucinations (may correct the response).
@@ -1989,6 +2015,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
   if (!parsed) {
     return {
       status: 'route_to_human',
+      routing_reason: 'Advisor output could not be parsed — draft needs manual handling',
       intake: existingIntake || { message_type: null, items: [] },
       prescription: { items: [], donation: null, crossover_note: null, still_needed: [], flags: [] },
       customer: { email: customer_email, name: null, pronouns: 'they/them', country: orderContext?.customer?.country },
@@ -2096,8 +2123,24 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
     status = 'action_needed';
   }
 
+  // Advisor-raised operator flags (⚠️ banner) — validated, capped, never
+  // customer-facing. Intake code may append more later (address-change fallback).
+  const advisorFlags = Array.isArray(parsed.flags)
+    ? parsed.flags.filter(f => typeof f === 'string' && f.trim()).map(f => f.trim()).slice(0, 5)
+    : [];
+
+  // Why this ticket was routed to Jamie — required by prompt whenever the
+  // status is route_to_human; fall back to a visible placeholder so a lapse
+  // shows up as "reason not stated" rather than silence.
+  const routing_reason = status === 'route_to_human'
+    ? ((typeof parsed.routing_reason === 'string' && parsed.routing_reason.trim())
+      ? parsed.routing_reason.trim()
+      : 'Routed to you without a stated reason — advisor lapse, check the audit trail')
+    : null;
+
   return {
     status,
+    routing_reason,
     intake,
     prescription: {
       items: prescriptionItems,
@@ -2107,7 +2150,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
       shipping_address: parsed.new_address || null,
       crossover_note: null,
       still_needed: [],
-      flags: [],
+      flags: advisorFlags,
     },
     // forwarded_sender_email is set only when the advisor detected a customer email
     // forwarded to us from an internal RUBIES address — the real customer is the
@@ -2322,4 +2365,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor, executeToolCall, buildFactsBlock };
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured };

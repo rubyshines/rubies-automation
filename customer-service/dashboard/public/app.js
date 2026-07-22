@@ -1685,6 +1685,14 @@ function renderActionPanel(draft) {
     ).join('');
   }
 
+  // Why the advisor routed this ticket to a human (structured_output.routing_reason)
+  // — rendered as its own banner so "manual" tickets always say WHY they're
+  // on Jamie instead of a bare tag.
+  const routingReason = draft.structured_output?.routing_reason;
+  if (routingReason) {
+    headerEl.innerHTML += `<div class="advisor-flag" style="margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(139,92,246,0.12);border:1px solid #8b5cf6;color:var(--text-primary);font-size:12px;line-height:1.4;font-weight:500;">🧭 Routed to you: ${esc(String(routingReason))}</div>`;
+  }
+
   // Completed actions are filed into the conversation timeline (rendered by
   // renderConversation as `.timeline-action` blocks). The bottom panel only
   // shows in-progress chat or a fresh advisor proposal — never replays

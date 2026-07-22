@@ -165,6 +165,12 @@ const PIPELINES = [
     run: () => require('./lib/autosendShadow').run(),
   },
   {
+    name: 'Refund-pattern Watch',
+    // Trailing-week refund-pattern flags (donation-return honor-system probes)
+    // + route_to_human routing reasons (recurring bogus reasons = prompt gaps).
+    run: () => require('./lib/refundPatternWatch').run(),
+  },
+  {
     name: 'Decision Queue',
     // "Needs your decision" aggregator: pending advisor facts, expiring facts,
     // auto-send categories that met the promotion bar. Turns waiting decisions
@@ -585,6 +591,24 @@ function buildAutosendShadowHtml(results) {
     </div>`;
 }
 
+// Refund-pattern watch: trailing-week advisor "Refund-pattern:" flags and
+// route_to_human routing reasons. Hidden while both are empty.
+function buildRefundPatternHtml(results) {
+  const task = results.find(r => r.name === 'Refund-pattern Watch');
+  const m = task?.result?.sources?.refund_pattern_watch;
+  if (!m || m.skipped || (!m.refund_pattern_count && !m.routed_count)) return '';
+  const flagBits = (m.refund_pattern || [])
+    .map(f => `#${f.ticket}: ${f.flags.join('; ')}`).join('<br>');
+  const routeBits = (m.routing_reasons || [])
+    .map(r => `#${r.ticket}: ${r.reason}`).join('<br>');
+  return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
+      ${m.refund_pattern_count ? `Refund-pattern flags (last ${m.window_days}d): <strong>${m.refund_pattern_count}</strong><br>${flagBits}` : ''}
+      ${m.refund_pattern_count && m.routed_count ? '<br>' : ''}
+      ${m.routed_count ? `Routed to you (last ${m.window_days}d): <strong>${m.routed_count}</strong><br>${routeBits}` : ''}
+    </div>`;
+}
+
 // "Needs your decision" box — one amber item per waiting human decision, with
 // the justifying data and the exact next step. Renders at the TOP of the
 // digest and repeats daily until the decision is made; absent when empty.
@@ -718,6 +742,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- Auto-send shadow dry-run line ---
   const autosendShadowHtml = buildAutosendShadowHtml(results);
 
+  // --- Refund-pattern flags + routing reasons ---
+  const refundPatternHtml = buildRefundPatternHtml(results);
+
   // --- AI pricing/model drift (monthly, 1st only) ---
   const aiPricingHtml = buildAiPricingHtml(results);
 
@@ -737,6 +764,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${advisorEditHtml}
       ${closenessJudgeHtml}
       ${autosendShadowHtml}
+      ${refundPatternHtml}
       ${aiPricingHtml}
       ${billReconcileHtml}
 
