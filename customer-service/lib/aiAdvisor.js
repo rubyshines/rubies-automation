@@ -1469,18 +1469,6 @@ function stripInternalThinking(text) {
 // Post-generation validation — catch obvious hallucinations
 // ---------------------------------------------------------------------------
 
-// Deterministic apology guardrail (2026-07 verbosity regression): the prompt's
-// "sorry is reserved for RUBIES-caused problems" rules drift in production even
-// while pinned scenarios stay green, so EVERY draft containing an apology word
-// gets an operator-visible flag (prescription.flags renders as the ⚠️ banner in
-// renderActionPanel). Flag only — never strip: apologies for problems we caused
-// are correct and stay.
-const APOLOGY_RE = /\bsorry\b|\bapolog/i;
-function apologyFlag(text) {
-  if (!APOLOGY_RE.test(String(text || ''))) return null;
-  return 'Draft apologizes — check the issue is RUBIES\' fault before sending (fit, preference, and third-party issues get no "sorry")';
-}
-
 function validateResponse(composedResponse, toolsCalled, audit, opts = {}) {
   const warnings = [];
   let corrected = composedResponse;
@@ -2197,11 +2185,7 @@ function buildCompatibleStructured(parsed, composedResponse, opts) {
       shipping_address: parsed.new_address || null,
       crossover_note: null,
       still_needed: [],
-      // Model-raised flags (refund-pattern etc.) plus the deterministic
-      // apology guardrail — see apologyFlag above.
-      flags: apologyFlag(composedResponse)
-        ? [...advisorFlags, apologyFlag(composedResponse)]
-        : advisorFlags,
+      flags: advisorFlags,
     },
     // forwarded_sender_email is set only when the advisor detected a customer email
     // forwarded to us from an internal RUBIES address — the real customer is the
@@ -2422,4 +2406,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, apologyFlag };
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured };
