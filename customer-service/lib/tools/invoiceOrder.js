@@ -9,6 +9,7 @@
 
 const { createDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
+const { preOrderLineAttributes } = require('../preOrderAttrs');
 const {
   resolveCustomerForDraft,
   getShippingMethodTitle,
@@ -149,11 +150,14 @@ const tools = [
       // Build line items
       const lineItems = [];
       for (const r of resolvedExchange) {
-        lineItems.push({
+        const li = {
           variantId: r.variantId,
           quantity: r.quantity,
           appliedDiscount: { title: 'Exchange', value: 100, valueType: 'PERCENTAGE' },
-        });
+        };
+        const attrs = preOrderLineAttributes(r);
+        if (attrs) li.customAttributes = attrs;
+        lineItems.push(li);
       }
       // resolveLineItems preserves order, so allPaid[i] ↔ resolvedPaid[i].
       for (let i = 0; i < resolvedPaid.length; i++) {
@@ -163,6 +167,8 @@ const tools = [
         if (dp > 0) {
           li.appliedDiscount = { title: 'Discount', value: dp, valueType: 'PERCENTAGE' };
         }
+        const attrs = preOrderLineAttributes(r);
+        if (attrs) li.customAttributes = attrs;
         lineItems.push(li);
       }
 

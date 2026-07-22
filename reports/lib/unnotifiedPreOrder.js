@@ -38,6 +38,7 @@ const { businessDaysSince, addBusinessDays, pastNextBusinessDay5pmPT } = require
 const { fetchOrderByNumber } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
+const { formatPreOrderDate } = require('../../customer-service/lib/preOrderAttrs');
 
 const DELAY_ACKNOWLEDGE_DAYS = 3;
 const MAX_ALTERNATIVES = 2;
@@ -56,17 +57,6 @@ const STALENESS_DAYS = 14;
 function hasPreOrderAttr(customAttributes) {
   if (!Array.isArray(customAttributes)) return false;
   return customAttributes.some(a => typeof a?.key === 'string' && /^pre-?order$/i.test(a.key));
-}
-
-function formatPreOrderDate(dateStr) {
-  if (!dateStr) return null;
-  const d = new Date(`${dateStr}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return null;
-  const month = d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
-  const day = d.getUTCDate();
-  const year = d.getUTCFullYear();
-  const position = day <= 10 ? 'beginning of' : day <= 20 ? 'middle of' : 'end of';
-  return `${position} ${month}, ${year}`;
 }
 
 function renderItem(li) {

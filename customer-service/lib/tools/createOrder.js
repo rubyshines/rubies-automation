@@ -17,6 +17,7 @@ const {
   getAdminUrl,
 } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
+const { preOrderLineAttributes } = require('../preOrderAttrs');
 const {
   getShippingMethodTitle,
   applyShippingAddressOverride,
@@ -212,6 +213,8 @@ async function handleCreateOrder({
     }
     if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
       md += `  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})\n`;
+      const attrs = preOrderLineAttributes(r);
+      if (attrs) md += `  Line item will carry the property "${attrs[0].key}: ${attrs[0].value}" so it is treated as a known pre-order.\n`;
     }
   }
 
@@ -236,6 +239,8 @@ async function handleCreateOrder({
         variantId: r.variantId,
         quantity: r.quantity,
       };
+      const attrs = preOrderLineAttributes(r);
+      if (attrs) li.customAttributes = attrs;
     }
     if (discountPct > 0) {
       li.appliedDiscount = {

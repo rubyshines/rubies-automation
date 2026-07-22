@@ -51,6 +51,7 @@ async function loadFromSupabase() {
         sku: v.sku,
         price: String(v.price),
         inventoryQuantity: v.inventory_quantity,
+        preOrderDate: v.pre_order_date,
         selectedOptions: v.selected_options || [],
       });
     }
@@ -281,6 +282,7 @@ function getVariantBySku(sku) {
           sku: variant.sku,
           price: variant.price,
           inventoryQuantity: variant.inventoryQuantity,
+          preOrderDate: variant.preOrderDate,
           options: variant.selectedOptions,
         };
       }

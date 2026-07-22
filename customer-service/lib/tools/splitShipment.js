@@ -34,6 +34,7 @@ const {
   completeDraftOrder,
   getAdminUrl,
 } = require('../shopify');
+const { preOrderAttrValue } = require('../preOrderAttrs');
 
 /**
  * Allocate requested SKUs across fulfillment-order line items.
@@ -47,10 +48,12 @@ const {
  * track consumed capacity. Requested quantity defaults to ALL unfulfilled
  * units of that SKU.
  *
- * Pure + deterministic (no I/O) so it's unit-testable.
+ * Pure + deterministic (no I/O) so it's unit-testable. `attrValueForSku`
+ * resolves the `Pre-order` line-item property value (the production caller
+ * passes preOrderAttrValue for the app-identical date-aware text).
  * Returns { byFo: Map<foId, [{id, quantity}]>, matchedSummary, newOrderLineItems, errors }.
  */
-function allocateSplitLineItems(allFoLineItems, items) {
+function allocateSplitLineItems(allFoLineItems, items, attrValueForSku = () => 'Will ship when in stock') {
   const remaining = new Map(allFoLineItems.map(li => [li.id, li.remainingQuantity]));
   const byFo = new Map();
   const matchedSummary = [];
@@ -97,7 +100,7 @@ function allocateSplitLineItems(allFoLineItems, items) {
         variantId: target.lineItem.variant.id,
         quantity: take,
         customAttributes: [
-          { key: 'Pre-order', value: 'Will ship when in stock' },
+          { key: 'Pre-order', value: attrValueForSku(sku) },
         ],
       });
       need -= take;
@@ -343,7 +346,7 @@ const tools = [
       }
 
       const { byFo, matchedSummary, newOrderLineItems, errors } =
-        allocateSplitLineItems(allFoLineItems, items);
+        allocateSplitLineItems(allFoLineItems, items, preOrderAttrValue);
 
       if (errors.length) {
         return { content: [{ type: 'text', text: `Error preparing fulfillment:\n${errors.map(e => `- ${e}`).join('\n')}` }] };
@@ -453,7 +456,7 @@ const tools = [
               : '\n**Remaining on original:** none — original will become fully fulfilled.',
             '',
             '**New pre-order to create:**',
-            `  Items: ${itemSummary} — each tagged with line-item property "Pre-order: Will ship when in stock"`,
+            `  Items: ${itemSummary} — each tagged with a "Pre-order" line-item property (target availability date when known)`,
             `  Total: $0 (already paid via ${order.name})`,
             `  Tags: \`${newOrderTags.join('`, `')}\``,
             `  Customer: ${order.customer?.email || customerName}`,

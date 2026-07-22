@@ -7,6 +7,7 @@
 const { createDraftOrder, completeDraftOrder, normalizeGid, getCustomerOrders, getCustomerFulfilledOrders, getOrderByNumber, getAdminUrl } = require('../shopify');
 const { getCustomerOrdersFromSupabase, getCustomerFulfilledOrdersFromSupabase } = require('../supabaseQueries');
 const { resolveLineItems } = require('../resolveLineItems');
+const { preOrderLineAttributes } = require('../preOrderAttrs');
 const { formatAddressBlock, formatAddressLine } = require('../addressUtils');
 const {
   resolveCustomerForDraft,
@@ -244,20 +245,27 @@ const tools = [
         let line = `  ${r.quantity}x ${r.productTitle} - ${r.variantTitle} (${r.sku || 'no SKU'}) → $0.00`;
         if (r.inventoryQuantity != null && r.inventoryQuantity < r.quantity) {
           line += `\n  ⚠️ **INSUFFICIENT STOCK** — only ${r.inventoryQuantity} available (need ${r.quantity})`;
+          const attrs = preOrderLineAttributes(r);
+          if (attrs) line += `\n  Line item will carry the property "${attrs[0].key}: ${attrs[0].value}" so it is treated as a known pre-order.`;
         }
         return line;
       }).join('\n');
 
       // Create draft order (do NOT complete it yet — wait for confirmation)
-      const lineItems = resolvedItems.map(r => ({
-        variantId: r.variantId,
-        quantity: r.quantity,
-        appliedDiscount: {
-          title: 'Exchange',
-          value: 100,
-          valueType: 'PERCENTAGE',
-        },
-      }));
+      const lineItems = resolvedItems.map(r => {
+        const li = {
+          variantId: r.variantId,
+          quantity: r.quantity,
+          appliedDiscount: {
+            title: 'Exchange',
+            value: 100,
+            valueType: 'PERCENTAGE',
+          },
+        };
+        const attrs = preOrderLineAttributes(r);
+        if (attrs) li.customAttributes = attrs;
+        return li;
+      });
 
       const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
       const shipCountry = shippingAddress?.country || '';
