@@ -766,7 +766,7 @@ async function selectTicket(id) {
   const detailContentEl = document.getElementById('detail-content');
   if (detailContentEl) detailContentEl.classList.add('ticket-switching');
 
-  // Re-open conversation (may have been collapsed by draft focus on mobile)
+  // Re-open conversation (user may have collapsed it manually)
   const convEl = document.getElementById('detail-conversation');
   if (convEl && !convEl.open) convEl.setAttribute('open', '');
 
@@ -1355,7 +1355,7 @@ function renderOtherOrders(showCount) {
 
     return `<details class="past-order-card">
       <summary class="past-order-summary">
-        <span class="past-order-num">${shopUrl ? `<a href="${shopUrl}" target="_blank" onclick="event.stopPropagation()">#${o.order_number}</a>` : `#${o.order_number}`}</span>
+        <span class="past-order-num">#${o.order_number}</span>
         <span class="past-order-date">${timeAgo(o.created_at, 'short')}</span>
         <span class="past-order-amount">${amountStr}</span>
         <span class="past-order-status" style="color:${statusColor}">${esc(statusLower)}</span>
@@ -5506,6 +5506,12 @@ function autoExpandTextarea(el) {
 
 function mobileBackToQueue() {
   document.body.classList.remove('mobile-detail-view');
+  // The sidebar behind the detail sits on the customer-context pane whenever
+  // a ticket is selected (desktop's middle column). On a phone that pane is a
+  // dead end — its only control leads to the queue — so back skips it and
+  // lands on the queue list directly.
+  document.getElementById('sidebar-context').style.display = 'none';
+  document.getElementById('sidebar-queue').style.display = 'block';
   // Pop history state so browser back doesn't re-enter detail
   if (history.state?.mobileDetail) history.back();
 }
@@ -5592,20 +5598,6 @@ function toggleSummaryExpand() {
   }
 }
 
-// Auto-collapse conversation when draft editor gets focus on mobile
-function setupDraftFocusCollapse() {
-  const editor = document.getElementById('draft-editor');
-  if (!editor) return;
-
-  editor.addEventListener('focus', () => {
-    if (!isMobile()) return;
-    const conversation = document.getElementById('detail-conversation');
-    if (conversation && conversation.open) {
-      conversation.removeAttribute('open');
-    }
-  });
-}
-
 // Keyboard handling: scroll textarea into view when mobile keyboard opens
 function setupKeyboardHandler() {
   if (!('visualViewport' in window)) return;
@@ -5623,18 +5615,26 @@ function setupSwipeGesture() {
   // Only in standalone PWA mode to avoid conflict with Safari swipe-back
   if (!window.matchMedia('(display-mode: standalone)').matches) return;
 
-  let startX = 0, startY = 0;
+  let startX = 0, startY = 0, swipeValid = false;
   const detail = document.getElementById('draft-detail');
   if (!detail) return;
 
   detail.addEventListener('touchstart', (e) => {
     if (!isMobile() || !document.body.classList.contains('mobile-detail-view')) return;
+    // Dragging text-selection handles is indistinguishable from a swipe by
+    // coordinates alone — touches that start in a text field (or while the
+    // fullscreen editor is up) are never back-navigation.
+    swipeValid = !e.target.closest('textarea, input, [contenteditable]')
+      && !document.body.classList.contains('editor-fullscreen');
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
   }, { passive: true });
 
   detail.addEventListener('touchend', (e) => {
-    if (!isMobile() || !document.body.classList.contains('mobile-detail-view')) return;
+    if (!swipeValid || !isMobile() || !document.body.classList.contains('mobile-detail-view')) return;
+    // A live selection means this drag was selecting conversation text
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
     const dx = e.changedTouches[0].clientX - startX;
     const dy = e.changedTouches[0].clientY - startY;
     // Horizontal swipe > 80px, angle < 30 degrees from horizontal
@@ -5649,6 +5649,9 @@ function setupHistoryNavigation() {
   window.addEventListener('popstate', (e) => {
     if (isMobile() && document.body.classList.contains('mobile-detail-view')) {
       document.body.classList.remove('mobile-detail-view');
+      // Same as mobileBackToQueue: skip the customer-context pane on mobile
+      document.getElementById('sidebar-context').style.display = 'none';
+      document.getElementById('sidebar-queue').style.display = 'block';
     }
   });
 }
@@ -5673,7 +5676,6 @@ function updateMobileHeaderHeight() {
 
 // Initialize all mobile features
 function initMobile() {
-  setupDraftFocusCollapse();
   setupKeyboardHandler();
   setupSwipeGesture();
   setupHistoryNavigation();
