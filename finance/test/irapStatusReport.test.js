@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   resolvePeriod,
+  shouldIncludeBaseline,
   extractJson,
   renderReportHtml,
   formatActivityForPrompt,
@@ -23,6 +24,34 @@ test('resolvePeriod: explicit forms', () => {
   assert.equal(resolvePeriod('2026-06', JULY_2026).label, 'June 2026');
   assert.equal(resolvePeriod('2027-02', JULY_2026).toStr, 'February 28, 2027');
   assert.throws(() => resolvePeriod('notamonth', JULY_2026), /Cannot parse/);
+});
+
+test('shouldIncludeBaseline: only the project start month', () => {
+  const july = resolvePeriod('2026-07', JULY_2026);
+  const august = resolvePeriod('2026-08', JULY_2026);
+  assert.equal(shouldIncludeBaseline(july, '2026-07-01'), true);
+  assert.equal(shouldIncludeBaseline(august, '2026-07-01'), false);
+  assert.equal(shouldIncludeBaseline(july, null), false);
+});
+
+test('renderReportHtml: baseline section renders when present, omitted when null', () => {
+  const config = { objectivesAppendix: [] };
+  const fields = {
+    baseline: { heading: 'Starting point at project commencement', intro: 'The starting point was:', bullets: ['CS: supervised drafts only'] },
+    claimNumber: '1', projectNumber: '1044596', firmName: 'Rubies Apparel Inc.',
+    periodFrom: 'July 1, 2026', periodTo: 'July 31, 2026',
+    onSchedule: true, completionDate: 'February 28, 2027',
+    addressChanged: false, nameChanged: false, variations: 'None.',
+    preparedBy: 'Jamie Alexander', preparedByTitle: 'Founder', preparedDate: 'August 1, 2026',
+  };
+  const sections = [{ heading: 'H', bullets: ['b'] }];
+  const withBaseline = renderReportHtml({ config, fields, sections });
+  assert.match(withBaseline, /Starting point at project commencement/);
+  assert.match(withBaseline, /CS: supervised drafts only/);
+  // baseline must precede Key Developments
+  assert.ok(withBaseline.indexOf('Starting point') < withBaseline.indexOf('Key Developments'));
+  const without = renderReportHtml({ config, fields: { ...fields, baseline: null }, sections });
+  assert.doesNotMatch(without, /Starting point at project commencement/);
 });
 
 test('extractJson: tolerates prose and code fences around the object', () => {

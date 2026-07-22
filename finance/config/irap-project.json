@@ -1,8 +1,8 @@
 {
   "firmName": "Rubies Apparel Inc.",
-  "nrcProjectNumber": "TBD - set when Contribution Agreement is issued",
+  "nrcProjectNumber": "1044596",
   "projectTitle": "Development of an Agentic AI Operations Platform for Autonomous Business Process Execution",
-  "projectStart": "2026-07-01",
+  "projectStart": "2026-06-01",
   "forecastedCompletionDate": "February 28, 2027",
   "preparedBy": "Jamie Alexander",
   "preparedByTitle": "Founder",
@@ -10,6 +10,16 @@
     "~/Code/rubies-repo/rubies-automations",
     "~/Code/rubies-repo/rubies-ecom-v4"
   ],
+  "baseline": {
+    "heading": "Starting point at project commencement",
+    "intro": "As described in the project proposal, RUBIES entered this project with early-stage internal AI tooling built through prior operations. The project develops these foundations into the production-grade autonomous platform described in the Contribution Agreement. The starting point was:",
+    "bullets": [
+      "Customer service: an AI drafting assistant operating in fully supervised mode. Every customer response is generated as a draft and reviewed, edited, and sent by the founder. Autonomous ticket resolution rate at project start: 0%. Founder customer service time: approximately 10 hours per week.",
+      "Partner channel: 4 wholesale retailer accounts generating approximately $25K annualized (3.5% of revenue), acquired ad hoc. Early prototypes existed for retailer prospect scraping and lead scoring, with no automated outreach, qualification validation, or onboarding pipeline.",
+      "Growth intelligence: business data siloed across Shopify, Google Analytics, Google Search Console, and email marketing systems. Standalone reporting scripts existed (margins, SEO), with no unified ingestion pipeline, no AI synthesis layer, and no AI-originated experiment process.",
+      "Shared infrastructure: an internal tool layer and business database developed for day-to-day operations, which the project builds on as the foundation for autonomous multi-step agent workflows."
+    ]
+  },
   "objectivesAppendix": [
     {
       "heading": "Objectives:",

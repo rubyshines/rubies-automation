@@ -8,6 +8,8 @@
  *   <month>              "June", "June 2026", or "2026-06"
  *   --claim <n>          claim number for the report header
  *   --notes <file>       operator notes to include alongside git history
+ *   --baseline           include the "starting point" section (automatic for
+ *                        the project's first month, per config projectStart)
  *   --delayed "<why>"    mark project off-schedule with this explanation
  *   --completion "<date>"  override forecasted completion date
  *   --variations "<txt>" override the variations section (default: none)
@@ -23,8 +25,11 @@ function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) args[a.slice(2)] = argv[++i];
-    else args._.push(a);
+    if (a.startsWith('--')) {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) args[a.slice(2)] = true;
+      else args[a.slice(2)] = argv[++i];
+    } else args._.push(a);
   }
   return args;
 }
@@ -41,6 +46,7 @@ function parseArgs(argv) {
   const result = await generateStatusReport({
     period,
     claimNumber: args.claim,
+    baseline: args.baseline === true,
     notes,
     delayExplanation: args.delayed,
     completionDate: args.completion,

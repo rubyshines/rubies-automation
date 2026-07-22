@@ -18,6 +18,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Backfill:** 176 report snapshots + 4,062 transactions (Mar 2022 — Mar 2026).
 
+**IRAP Status Reporting:** `finance/generate-irap-status-report.js <month>` builds the NRC-IRAP monthly status report from the month's actual git history across the RUBIES repos (Opus synthesis into NRC-template HTML, Google-Docs-pastable). Project constants + CA objectives appendix + starting-point baseline live in `finance/config/irap-project.json`.
+
 ## Current Status
 
 - **Production:** Daily finance sync runs as part of daily-sync-all.js pipeline. OAuth tokens persisted in Supabase (singleton pattern). Report snapshots populated every sync. Passport→Shopify resolver hits 99.4% (1511/1520) coverage. Margin snapshots written every Passport import.
@@ -33,6 +35,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `finance/resolvePassportShopifyOrders.js` — 3-stage Passport → Shopify order# resolver (idempotent).
 - `finance/syncCustomerShippingFees.js` — Backfills `customer_shipping_usd` on OFC from `orders.total_shipping`.
 - `finance/lib/landedMarginReport.js` — Landed margin report + snapshot writer.
+- `finance/generate-irap-status-report.js` — NRC-IRAP monthly status report from repo history.
 
 ## Key Decisions
 

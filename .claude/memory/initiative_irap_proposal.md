@@ -1,9 +1,9 @@
 ---
 name: IRAP Proposal
-description: NRC-IRAP funding for AI Operations Platform, standard technical project, May-Dec 2026
+description: NRC-IRAP funding for AI Operations Platform, standard technical project, Jun 2026-Feb 2027
 type: project
 domains: [finance, cs, b2b_sales, marketing, tech]
-last_updated: 2026-04-30
+last_updated: 2026-07-22
 originSessionId: cea77ddb-41cd-438f-8b81-dd16fbb62d78
 ---
 ## Goal
@@ -13,13 +13,13 @@ Secure NRC-IRAP funding via the **standard technical IRAP** track (reframed from
 1. ITA meeting with Lisa Boreanaz — complete (Oct 2025)
 2. Reframe from ARP to standard technical IRAP — complete (Apr 2026, Lisa approved)
 3. Objectives drafted with measurable targets — complete (Apr 2026)
-4. Precursor email to Lisa for feedback on objectives shape — drafted, ready to send
-5. Activities and full proposal — not started (after Lisa validates objectives)
-6. Submission and approval — future
-7. Execution (May-Dec 2026, monthly claims, ITA reporting) — future
+4. Precursor email to Lisa for feedback on objectives shape — complete
+5. Activities and full proposal — complete (final proposal declared May 26, 2026: "Development of an Agentic AI Operations Platform for Autonomous Business Process Execution", $116,250 total / $75,000 requested, Jun 2026-Feb 2027)
+6. Submission and approval — submitted; NRC project number 1044596 assigned (Jul 2026). Confirm CA execution status with Lisa.
+7. Execution (monthly claims, ITA reporting) — started; CA backdated to Jun 1, 2026, reporting from Jun 2026
 
 ## Current Status
-Objectives and high-level project summary drafted. Precursor email to Lisa ready to send for feedback on shape before drafting activities and full proposal. Founder hours are claimable as eligible salary cost (agentic development practice).
+Proposal submitted, NRC project number 1044596. Monthly status report generator built (`finance/generate-irap-status-report.js`): builds each report from the month's actual repo history, Opus-synthesized into the NRC template; first report (June 2026, per backdated CA start) includes a "starting point at project commencement" baseline section disclosing pre-existing capabilities. Reports describe in-period work only — pre-project work is disclosed as baseline, never re-reported as new (integrity decision, 2026-07-22). Founder hours are claimable as eligible salary cost (agentic development practice).
 
 ## Project Title
 RUBIES AI Operations Platform: Agentic AI Tooling for Productivity and Revenue Growth
@@ -54,8 +54,8 @@ Develop an agentic AI operations platform — AI agents that reason over real bu
 - Eligible activities email from Lisa (Oct 2025) — ARP-specific, no longer fully applicable post-reframe
 
 ## What's Next
-- Send precursor email to Lisa for objectives feedback
-- Backfill `wholesale` tag on 4 historical retailer accounts (clean baseline before call)
+- Confirm Contribution Agreement status and claim schedule with Lisa
+- First status report + claim for June 2026 (`node finance/generate-irap-status-report.js June --claim 1`); July follows after month end with `--claim 2`
+- Backfill `wholesale` tag on 4 historical retailer accounts (clean objective-2 baseline)
 - Choose affiliate app + verify it tags Shopify orders (not just app dashboard)
-- After Lisa validates: draft activities (one set per objective), draft full proposal sections (firm info, budget, financing, business/market, impact tables, declaration)
-- After approval: monthly claims, ITA reporting cadence, milestone tracking — Claude to manage ongoing
+- Monthly claims, ITA reporting cadence, milestone tracking — Claude to manage ongoing

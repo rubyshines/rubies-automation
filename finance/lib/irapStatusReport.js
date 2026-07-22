@@ -92,6 +92,13 @@ function formatActivityForPrompt(activity) {
     .join('\n\n');
 }
 
+/** The baseline section belongs in the first report of the project. */
+function shouldIncludeBaseline(period, projectStartIso) {
+  if (!projectStartIso) return false;
+  const [y, m] = projectStartIso.split('-').map(Number);
+  return period.year === y && period.month === m;
+}
+
 /** Pull the first balanced JSON object out of a model response. */
 function extractJson(text) {
   const start = text.indexOf('{');
@@ -121,6 +128,9 @@ Grounding rules (strict):
 
 PROJECT SCOPE (from the Contribution Agreement):
 ${objectives}
+
+CAPABILITIES THAT EXISTED BEFORE THE PROJECT STARTED (the project's starting point — never describe these as work performed this period; in-period work may be described as extending or hardening them):
+${(config.baseline && config.baseline.bullets || []).map((b) => `- ${b}`).join('\n')}
 
 Return ONLY a JSON object: {"sections": [{"heading": "...", "bullets": ["...", "..."]}]}`;
 
@@ -213,6 +223,11 @@ function renderReportHtml({ config, fields, sections }) {
   <p style="margin:6px 0;">Has your Firm&rsquo;s name changed since the last status report? &nbsp;&nbsp; ${check(fields.nameChanged)}</p>
 
   <h2 style="${H2_STYLE}">Activities and outcomes (minimum 2 paragraphs)</h2>
+  ${fields.baseline ? `<h3 style="font-size:11pt;margin:14px 0 4px;">${esc(fields.baseline.heading)}</h3>
+  <p style="margin:6px 0;">${esc(fields.baseline.intro)}</p>
+  <ul style="margin:4px 0 10px;">
+    ${fields.baseline.bullets.map((b) => `<li style="margin:3px 0;">${esc(b)}</li>`).join('\n    ')}
+  </ul>` : ''}
   <p style="margin:6px 0;">Key Developments:</p>
   ${sectionsHtml}
 
@@ -252,7 +267,10 @@ async function generateStatusReport(opts) {
 
   const sections = await synthesizeSections({ config, period, activity, notes: opts.notes });
 
+  const includeBaseline = opts.baseline === true
+    || shouldIncludeBaseline(period, config.projectStart);
   const fields = {
+    baseline: (includeBaseline && config.baseline) || null,
     claimNumber: opts.claimNumber || '',
     projectNumber: config.nrcProjectNumber,
     firmName: config.firmName,
@@ -279,6 +297,7 @@ async function generateStatusReport(opts) {
 
 module.exports = {
   resolvePeriod,
+  shouldIncludeBaseline,
   collectGitActivity,
   formatActivityForPrompt,
   extractJson,
