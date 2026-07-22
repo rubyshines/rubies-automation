@@ -52,7 +52,8 @@ test('renderReportHtml: baseline section renders when present, omitted when null
   };
   const sections = [{ heading: 'H', bullets: ['b'] }];
   const withBaseline = renderReportHtml({ config, fields, sections });
-  assert.match(withBaseline, /Starting point at project commencement/);
+  assert.match(withBaseline, /Starting point at project commencement \(capabilities already in place before July 1, 2026\)/);
+  assert.match(withBaseline, /Key Developments during this reporting period \(July 1, 2026 to July 31, 2026\)/);
   assert.match(withBaseline, /CS: supervised drafts only/);
   // baseline must precede Key Developments
   assert.ok(withBaseline.indexOf('Starting point') < withBaseline.indexOf('Key Developments'));

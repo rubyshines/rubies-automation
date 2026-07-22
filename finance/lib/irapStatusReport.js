@@ -160,6 +160,7 @@ Style, matching the firm's previously submitted reports:
 - Written for a non-technical NRC reviewer: name systems plainly, expand jargon, keep each bullet to 1-2 sentences.
 - Mention progress, remaining work, and challenges honestly — reports routinely note what is unfinished or slower than expected.
 - Never use em dashes. Use commas, parentheses, or short sentences.
+- Every bullet must clearly read as work performed DURING the reporting period. When work extends or hardens a capability that existed at project start, name the pre-existing capability explicitly so a reviewer can always tell the starting point from this period's progress (e.g. "The drafting assistant existed in supervised mode at project start; this period we added X toward autonomous resolution."). Never write a bullet that could be mistaken for a description of the pre-existing system itself.
 
 Grounding rules (strict):
 - Use ONLY the commit log and operator notes provided. Do not invent work, metrics, or outcomes that are not evidenced there.
@@ -266,12 +267,12 @@ function renderReportHtml({ config, fields, sections }) {
   <p style="margin:6px 0;">Has your Firm&rsquo;s name changed since the last status report? &nbsp;&nbsp; ${check(fields.nameChanged)}</p>
 
   <h2 style="${H2_STYLE}">Activities and outcomes (minimum 2 paragraphs)</h2>
-  ${fields.baseline ? `<h3 style="font-size:11pt;margin:14px 0 4px;">${esc(fields.baseline.heading)}</h3>
+  ${fields.baseline ? `<h3 style="font-size:11pt;margin:14px 0 4px;">${esc(fields.baseline.heading)} (capabilities already in place before ${esc(fields.periodFrom)})</h3>
   <p style="margin:6px 0;">${esc(fields.baseline.intro)}</p>
   <ul style="margin:4px 0 10px;">
     ${fields.baseline.bullets.map((b) => `<li style="margin:3px 0;">${esc(b)}</li>`).join('\n    ')}
   </ul>` : ''}
-  <p style="margin:6px 0;">Key Developments:</p>
+  <p style="margin:6px 0;"><b>Key Developments during this reporting period (${esc(fields.periodFrom)} to ${esc(fields.periodTo)}):</b></p>
   ${sectionsHtml}
 
   <h2 style="${H2_STYLE}">Variations from the original objectives, work plan or budget</h2>
