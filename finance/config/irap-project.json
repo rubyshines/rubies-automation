@@ -1,0 +1,31 @@
+{
+  "firmName": "Rubies Apparel Inc.",
+  "nrcProjectNumber": "TBD - set when Contribution Agreement is issued",
+  "projectTitle": "Development of an Agentic AI Operations Platform for Autonomous Business Process Execution",
+  "projectStart": "2026-07-01",
+  "forecastedCompletionDate": "February 28, 2027",
+  "preparedBy": "Jamie Alexander",
+  "preparedByTitle": "Founder",
+  "repos": [
+    "~/Code/rubies-repo/rubies-automations",
+    "~/Code/rubies-repo/rubies-ecom-v4"
+  ],
+  "objectivesAppendix": [
+    {
+      "heading": "Objectives:",
+      "text": "The project will develop a production-grade agentic AI operations platform for Rubies Apparel Inc., consisting of three integrated AI agent systems that autonomously execute multi-step workflows across customer service, partner channel growth, and growth intelligence. The platform replaces workflows currently requiring daily founder judgment with AI agents that reason over live business context, invoke internal APIs and tools, and complete tasks end-to-end with minimal human intervention."
+    },
+    {
+      "heading": "OBJECTIVE 1: Autonomous Customer Service Agent",
+      "text": "Target: Develop and deploy a production CS agent that achieves 80%+ autonomous ticket resolution rate (tickets closed without human intervention) and 90%+ intent classification accuracy across defined ticket types, as validated against a held-out test set of historical tickets.\nActivities:\n- Design and architect a multi-agent CS system with webhook integration into the Gorgias helpdesk platform\n- Develop a retrieval-augmented generation (RAG) knowledge base from product catalogue, sizing data, shipping policies, return policies, and historical resolved tickets\n- Build an intent classification layer to route incoming tickets by type (sizing, exchange, refund, shipping, product question)\n- Develop autonomous response generation with structured output validation and tone calibration for the RUBIES brand voice\n- Implement confidence scoring and human escalation logic for edge cases and novel ticket types outside agent scope\n- Build a feedback loop mechanism to refine agent responses and classification rules based on resolution outcomes\n- Integration testing, performance benchmarking, and measurement against pre-project CS time baseline"
+    },
+    {
+      "heading": "OBJECTIVE 2: AI-Driven Partner Channel Discovery and Onboarding",
+      "text": "Target: Develop and validate a partner discovery and qualification pipeline achieving 85%+ precision on qualification scoring, as validated against manual expert review.\nActivities:\n- Design and build a prospect discovery agent using structured web data extraction and business directory APIs to identify retailer and affiliate partner candidates\n- Develop a qualification scoring model based on LGBTQ+ alignment, retailer fit, geography, online presence, and RUBIES brand compatibility\n- Build an automated outreach sequencing system with AI-generated personalized messaging and multi-touch follow-up logic\n- Develop an onboarding workflow automation pipeline for new partner account setup integrated with Shopify wholesale systems\n- Build a partner performance tracking dashboard to monitor partner-channel revenue contribution over time"
+    },
+    {
+      "heading": "OBJECTIVE 3: Growth Opportunity Discovery and Validation Agent",
+      "text": "Target: Build and validate a multi-source growth intelligence system that maintains a 24-hour or less latency from source data update to surfaced insight, and drives 3 or more implemented experiments with documented AI-originated reasoning trails by project end.\nActivities:\n- Build a unified data ingestion and normalization pipeline aggregating Shopify, Google Analytics 4, Google Search Console, competitor pricing signals, and customer cohort data\n- Develop an AI synthesis and anomaly detection layer to identify statistically significant patterns, outliers, and growth opportunities across integrated data sources\n- Build an experiment design framework that generates structured A/B test hypotheses with a documented decision trail from AI analysis to experiment launch\n- Implement experiment tracking and result measurement for pricing, SEO, conversion-rate optimization, and product/bundle mix tests\n- Develop a decision intelligence dashboard delivering automated weekly narrative summaries of business performance and surfaced opportunities"
+    }
+  ]
+}
