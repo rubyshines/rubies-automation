@@ -14,9 +14,12 @@
  *   --completion "<date>"  override forecasted completion date
  *   --variations "<txt>" override the variations section (default: none)
  *   --date "<date>"      prepared-by date (default: today, ET)
- *   --out <path>         output path (default: ~/Downloads/IRAP Status Report - <period>.html)
+ *   --out <path>         output path (default: ~/Downloads/IRAP Status Report - <period>.pdf;
+ *                        a .html path writes Google-Docs-pastable HTML instead)
  *
- * Output is Google-Docs-pastable HTML matching the NRC status report template.
+ * Output is a PDF matching the NRC status report template. Every generated
+ * report is archived to finance/irap-reports/<YYYY-MM>.json and fed into
+ * later months' synthesis so the reports form one continuous narrative.
  */
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { generateStatusReport } = require('./lib/irapStatusReport');
@@ -57,7 +60,9 @@ function parseArgs(argv) {
 
   console.log(`Period:   ${result.period.fromStr} to ${result.period.toStr}`);
   console.log(`Commits:  ${result.commitCount} scanned across repos`);
+  console.log(`Context:  ${result.priorCount} prior report(s) fed into synthesis`);
   console.log(`Sections: ${result.sections.map((s) => s.heading).join(' | ')}`);
+  console.log(`Archive:  ${result.archivePath}`);
   console.log(`Report:   ${result.outPath}`);
 })().catch((err) => {
   console.error(`Failed: ${err.message}`);

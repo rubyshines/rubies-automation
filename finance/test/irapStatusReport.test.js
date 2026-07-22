@@ -1,11 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   resolvePeriod,
   shouldIncludeBaseline,
   extractJson,
   renderReportHtml,
   formatActivityForPrompt,
+  loadPriorReports,
+  saveReportArchive,
+  buildSynthesisPrompt,
 } = require('../lib/irapStatusReport');
 
 const JULY_2026 = new Date('2026-07-22T12:00:00');
@@ -52,6 +58,33 @@ test('renderReportHtml: baseline section renders when present, omitted when null
   assert.ok(withBaseline.indexOf('Starting point') < withBaseline.indexOf('Key Developments'));
   const without = renderReportHtml({ config, fields: { ...fields, baseline: null }, sections });
   assert.doesNotMatch(without, /Starting point at project commencement/);
+});
+
+test('report archive: save + load prior months only, in order', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'irap-archive-'));
+  const june = resolvePeriod('2026-06', JULY_2026);
+  const july = resolvePeriod('2026-07', JULY_2026);
+  const august = resolvePeriod('2026-08', JULY_2026);
+  saveReportArchive({ period: july, claimNumber: '2', sections: [{ heading: 'J', bullets: ['x'] }] }, dir);
+  saveReportArchive({ period: june, claimNumber: '1', sections: [{ heading: 'Older', bullets: ['y'] }] }, dir);
+
+  assert.equal(loadPriorReports(june, dir).length, 0); // nothing before June
+  const beforeAugust = loadPriorReports(august, dir);
+  assert.deepEqual(beforeAugust.map((r) => r.period.label), ['June 2026', 'July 2026']);
+  assert.equal(loadPriorReports(july, dir)[0].sections[0].heading, 'Older');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('buildSynthesisPrompt: prior reports appear as already-reported context', () => {
+  const config = { objectivesAppendix: [{ heading: 'O', text: 't' }], baseline: { bullets: ['base'] } };
+  const period = resolvePeriod('2026-07', JULY_2026);
+  const prior = [{ period: { label: 'June 2026' }, sections: [{ heading: 'KB Rebuild', bullets: ['We rebuilt the KB.'] }] }];
+  const { system } = buildSynthesisPrompt({ config, period, activityText: 'x', notes: null, prior });
+  assert.match(system, /ALREADY REPORTED IN EARLIER STATUS REPORTS/);
+  assert.match(system, /June 2026 status report/);
+  assert.match(system, /We rebuilt the KB\./);
+  const { system: noPrior } = buildSynthesisPrompt({ config, period, activityText: 'x', notes: null, prior: [] });
+  assert.doesNotMatch(noPrior, /ALREADY REPORTED/);
 });
 
 test('extractJson: tolerates prose and code fences around the object', () => {

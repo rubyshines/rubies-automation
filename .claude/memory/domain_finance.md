@@ -18,7 +18,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Backfill:** 176 report snapshots + 4,062 transactions (Mar 2022 — Mar 2026).
 
-**IRAP Status Reporting:** `finance/generate-irap-status-report.js <month>` builds the NRC-IRAP monthly status report from the month's actual git history across the RUBIES repos (Opus synthesis into NRC-template HTML, Google-Docs-pastable). Project constants + CA objectives appendix + starting-point baseline live in `finance/config/irap-project.json`.
+**IRAP Status Reporting:** `finance/generate-irap-status-report.js <month>` builds the NRC-IRAP monthly status report from the month's actual git history across the RUBIES repos (Opus synthesis, PDF output; `.html` out path for Google-Docs-pastable). Every report archives to `finance/irap-reports/<YYYY-MM>.json` and prior months feed the next synthesis for narrative continuity. Project constants + CA objectives appendix + starting-point baseline live in `finance/config/irap-project.json`.
 
 ## Current Status
 

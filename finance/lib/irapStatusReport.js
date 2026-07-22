@@ -18,6 +18,12 @@ const { execFileSync } = require('child_process');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 
+// Archive of every generated report (sections JSON, one file per month).
+// Committed to the repo: these are the firm's own submitted business records,
+// and each month's synthesis reads the prior months so reports form a
+// continuous narrative instead of re-reporting earlier work.
+const REPORTS_DIR = path.join(__dirname, '..', 'irap-reports');
+
 const MONTHS = [
   'january', 'february', 'march', 'april', 'may', 'june',
   'july', 'august', 'september', 'october', 'november', 'december',
@@ -99,6 +105,40 @@ function shouldIncludeBaseline(period, projectStartIso) {
   return period.year === y && period.month === m;
 }
 
+function periodYm(period) {
+  return `${period.year}-${String(period.month).padStart(2, '0')}`;
+}
+
+/** Load archived reports for months strictly before the given period. */
+function loadPriorReports(period, dir = REPORTS_DIR) {
+  if (!fs.existsSync(dir)) return [];
+  const ym = periodYm(period);
+  return fs.readdirSync(dir)
+    .filter((f) => /^\d{4}-\d{2}\.json$/.test(f) && f.slice(0, 7) < ym)
+    .sort()
+    .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
+}
+
+function saveReportArchive({ period, claimNumber, sections }, dir = REPORTS_DIR) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${periodYm(period)}.json`);
+  fs.writeFileSync(file, JSON.stringify({
+    period: { label: period.label, from: period.fromStr, to: period.toStr },
+    claimNumber: claimNumber || null,
+    sections,
+    generatedAt: new Date().toISOString(),
+  }, null, 2));
+  return file;
+}
+
+function formatPriorReportsForPrompt(prior) {
+  if (!prior.length) return '';
+  return prior.map((r) => {
+    const body = r.sections.map((s) => `${s.heading}\n${s.bullets.map((b) => `- ${b}`).join('\n')}`).join('\n');
+    return `--- ${r.period.label} status report ---\n${body}`;
+  }).join('\n\n');
+}
+
 /** Pull the first balanced JSON object out of a model response. */
 function extractJson(text) {
   const start = text.indexOf('{');
@@ -107,7 +147,7 @@ function extractJson(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-function buildSynthesisPrompt({ config, period, activityText, notes }) {
+function buildSynthesisPrompt({ config, period, activityText, notes, prior = [] }) {
   const objectives = config.objectivesAppendix
     .map((o) => `${o.heading}\n${o.text}`)
     .join('\n\n');
@@ -131,6 +171,9 @@ ${objectives}
 
 CAPABILITIES THAT EXISTED BEFORE THE PROJECT STARTED (the project's starting point — never describe these as work performed this period; in-period work may be described as extending or hardening them):
 ${(config.baseline && config.baseline.bullets || []).map((b) => `- ${b}`).join('\n')}
+${prior.length ? `
+ALREADY REPORTED IN EARLIER STATUS REPORTS (do not re-report this work as new; where this period continues it, use continuity language such as "We continued..." or "Building on last period's...", and reference prior progress only briefly):
+${formatPriorReportsForPrompt(prior)}` : ''}
 
 Return ONLY a JSON object: {"sections": [{"heading": "...", "bullets": ["...", "..."]}]}`;
 
@@ -146,9 +189,9 @@ Write the Key Developments sections for this reporting period.`;
   return { system, user };
 }
 
-async function synthesizeSections({ config, period, activity, notes }) {
+async function synthesizeSections({ config, period, activity, notes, prior }) {
   const activityText = formatActivityForPrompt(activity);
-  const { system, user } = buildSynthesisPrompt({ config, period, activityText, notes });
+  const { system, user } = buildSynthesisPrompt({ config, period, activityText, notes, prior });
   // Opus: final text a federal funder reads — customer-facing quality bar.
   const res = await callClaude({
     component: 'irap_status_report',
@@ -255,6 +298,34 @@ function renderReportHtml({ config, fields, sections }) {
 </div>`;
 }
 
+/** Wrap the report body in a printable HTML document. */
+function wrapHtmlDoc(bodyHtml, title) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>@page { size: Letter; } body { margin: 0; } h2, h3 { page-break-after: avoid; } ul, table { page-break-inside: avoid; }</style>
+</head><body>${bodyHtml}</body></html>`;
+}
+
+async function htmlToPdf(html, pdfPath) {
+  // Lazy-require so unit tests of the pure functions never load puppeteer.
+  const puppeteer = require('puppeteer');
+  const browser = await puppeteer.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.pdf({
+      path: pdfPath,
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: '0.6in', bottom: '0.6in', left: '0.7in', right: '0.7in' },
+      displayHeaderFooter: true,
+      headerTemplate: '<div></div>',
+      footerTemplate: '<div style="font-size:8px;color:#666;width:100%;padding:0 0.7in;display:flex;justify-content:space-between;"><span>Status Report — Protected B / Confidential Business Information</span><span>PAGE <span class="pageNumber"></span></span></div>',
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 async function generateStatusReport(opts) {
   const config = opts.config
     || JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'irap-project.json'), 'utf8'));
@@ -265,7 +336,9 @@ async function generateStatusReport(opts) {
     throw new Error(`No commits found for ${period.label} and no --notes provided — nothing to report from.`);
   }
 
-  const sections = await synthesizeSections({ config, period, activity, notes: opts.notes });
+  const prior = loadPriorReports(period);
+  const sections = await synthesizeSections({ config, period, activity, notes: opts.notes, prior });
+  const archivePath = saveReportArchive({ period, claimNumber: opts.claimNumber, sections });
 
   const includeBaseline = opts.baseline === true
     || shouldIncludeBaseline(period, config.projectStart);
@@ -290,9 +363,13 @@ async function generateStatusReport(opts) {
   };
 
   const html = renderReportHtml({ config, fields, sections });
-  const outPath = expandHome(opts.outPath || `~/Downloads/IRAP Status Report - ${period.label}.html`);
-  fs.writeFileSync(outPath, html);
-  return { outPath, period, commitCount, sections };
+  const outPath = expandHome(opts.outPath || `~/Downloads/IRAP Status Report - ${period.label}.pdf`);
+  if (outPath.endsWith('.html')) {
+    fs.writeFileSync(outPath, html); // Google-Docs-pastable variant
+  } else {
+    await htmlToPdf(wrapHtmlDoc(html, `Status Report - ${period.label}`), outPath);
+  }
+  return { outPath, archivePath, period, commitCount, priorCount: prior.length, sections };
 }
 
 module.exports = {
@@ -300,8 +377,13 @@ module.exports = {
   shouldIncludeBaseline,
   collectGitActivity,
   formatActivityForPrompt,
+  loadPriorReports,
+  saveReportArchive,
+  formatPriorReportsForPrompt,
   extractJson,
   buildSynthesisPrompt,
   renderReportHtml,
+  wrapHtmlDoc,
+  htmlToPdf,
   generateStatusReport,
 };
