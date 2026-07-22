@@ -41,6 +41,16 @@ const APOLOGY_PATTERNS = [
   /\bthat'?s on us\b/i,
 ];
 
+// Shaping-expectations lecture markers (2026-07-18 verbosity fix): a plain
+// "too snug" fit complaint gets a sizing move, never the shaping template.
+const LECTURE_PATTERNS = [
+  /two reasons/i,
+  /mismatch of expectations/i,
+  /reshape the front area/i,
+  /feminine mound/i,
+  /shaping is (a )?balance/i,
+];
+
 // Helpful, non-apologetic engagement with the fit problem.
 const HELP_PATTERNS = [
   /exchange/i,
@@ -78,6 +88,14 @@ const HELP_PATTERNS = [
     pass(`draft engages with the fit problem (matched: ${helpHit})`);
   else
     fail('draft avoided apologizing but also failed to help with the fit issue');
+
+  // No shaping lecture on a plain fit complaint (2026-07-18 explanation gating):
+  // "too snug" is a sizing conversation, not a shaping-expectations case.
+  const lectureHit = LECTURE_PATTERNS.find(re => re.test(draft));
+  if (!lectureHit)
+    pass('draft contains no shaping-expectations lecture');
+  else
+    fail(`plain fit complaint got the shaping lecture (matched: ${lectureHit})`);
 
   console.log('\n' + (process.exitCode === 1 ? 'FAILED — see above' : 'PASSED'));
 })().catch(e => { console.error(e); process.exit(1); });

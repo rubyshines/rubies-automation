@@ -21,13 +21,15 @@
  * deterministic hold *placement* is covered by autoAddressChange.test.js +
  * the export regression test; this script checks the *advisor's routing*.
  *
- * Usage: node customer-service/test/scenarios/holdOnUnshippedModify.js [ticketId]
+ * Usage: node customer-service/test/scenarios/holdOnUnshippedModify.js [ticketId] [orderNumber]
  */
 require('dotenv').config();
 const gorgias = require('../../import/gorgiasClient');
 const { aiAdvisor } = require('../../lib/aiAdvisor');
+const { getOrderByNumber } = require('../../lib/shopify');
 
 const TICKET_ID = process.argv[2] || '103643280';
+const ORDER_NUMBER = process.argv[3] || '31618';
 
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }
@@ -51,6 +53,16 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
     }
   }
   if (!customerEmail) { fail('could not extract customer email from ticket'); return; }
+
+  // Drift gate up front (2026-07-22): the hold routing only applies to a live
+  // UNFULFILLED order. Once the anchor ships, a swap request on it correctly
+  // becomes an 'exchange' — which the answer-shape skip below can't tell apart
+  // from a real routing regression, so check the order state deterministically.
+  const order = await getOrderByNumber(ORDER_NUMBER);
+  if (!order || order.cancelledAt || order.displayFulfillmentStatus !== 'UNFULFILLED') {
+    skip(`anchor order #${ORDER_NUMBER} is ${!order ? 'not found' : order.cancelledAt ? 'cancelled' : order.displayFulfillmentStatus} — scenario needs a live unshipped-modify ticket. Re-pin: node customer-service/test/scenarios/holdOnUnshippedModify.js <ticketId> <orderNumber>`);
+    return;
+  }
 
   console.log(`Customer: ${customerEmail}`);
   console.log('Running advisor...');

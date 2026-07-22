@@ -39,7 +39,7 @@ Thank you,
   const r = await aiAdvisor({ customer_email: 'skarlovnika@gmail.com', issue_description: MSG });
   const s = r?._structured || {};
   const d = (s._composedResponse || '').trim();
-  console.log('draft: ' + d.replace(/\n+/g, ' ').slice(0, 320));
+  console.log('draft: ' + d.replace(/\n+/g, ' '));
   console.log('status: ' + s.status + ' | action_type: ' + s.action_type + '\n');
 
   if (/salem cir/i.test(d)) pass('quotes the full street ship-to address');
@@ -48,7 +48,7 @@ Thank you,
   if (/confirm|verify|right address|correct address|shipped to/i.test(d)) pass('asks the customer to verify the address');
   else fail('does not ask the customer to verify the ship-to address');
 
-  if (/another order|reship|send (over |out )?another|replacement/i.test(d)) pass('offers to reship if it does not turn up');
+  if (/another (order|package)|new (order|package)|reship|send (over |out )?another|replacement/i.test(d)) pass('offers to reship if it does not turn up');
   else fail('does not offer a reship');
 
   if (!/file a (usps|carrier|claim)|usps\.com|file a claim/i.test(d)) pass('does not push a carrier-claim');

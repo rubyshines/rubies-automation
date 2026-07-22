@@ -34,6 +34,10 @@ const UPCHARGE_TICKET_ID = '103998306'; // Sky one-piece → Queeny + Ruby (draf
 
 const MONEY_RE = /(?:US?\$|CA\$|\$)\s?\d[\d,]*(?:\.\d{2})?|\b\d+\.\d{2}\b/;
 
+// 2026-07-18 verbosity fix: the exchange confirmation template ends at the
+// ship-day ("It'll ship tomorrow.") — no tracking-email promise on exchanges.
+const TRACKING_CLAUSE_RE = /you'?ll (get|receive) (the )?tracking|tracking (by|via) email|tracking (number|info(rmation)?) (by|via|once)/i;
+
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }
 
@@ -94,8 +98,13 @@ My daughter has been trying the Queeny tankini in Pink size 16 and it just isn't
     else fail('draft states a dollar amount (exchange_difference owns the math)');
 
     const summary = s1.operator_action_summary || '';
-    if (/invoice the difference/i.test(summary)) pass('operator_action_summary flags "invoice the difference"');
+    // "invoice the difference" / "invoice the price difference" are the same
+    // instruction to the (LLM) operator agent — don't fail on the extra word.
+    if (/invoice the (price )?difference/i.test(summary)) pass('operator_action_summary flags "invoice the difference"');
     else fail(`operator_action_summary missing "invoice the difference": "${summary}"`);
+
+    if (!TRACKING_CLAUSE_RE.test(d1)) pass('no tracking-email promise on the exchange confirmation');
+    else fail('exchange confirmation still promises tracking by email (clause removed 2026-07-18)');
   }
 
   // --- Case 2: straight same-product size swap → free, no invoice talk ---
@@ -112,6 +121,9 @@ The Queeny tankini in Pink size 16 is a bit big on my daughter. Could we exchang
 
   if (!MONEY_RE.test(d2)) pass('straight swap draft contains no dollar amount');
   else fail('straight swap draft states a dollar amount');
+
+  if (!TRACKING_CLAUSE_RE.test(d2)) pass('straight swap has no tracking-email promise');
+  else fail('straight swap confirmation still promises tracking by email (clause removed 2026-07-18)');
 
   console.log('\nDone.');
 })().catch(e => { console.error(e); process.exit(1); });
