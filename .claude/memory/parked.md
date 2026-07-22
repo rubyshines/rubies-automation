@@ -322,15 +322,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Notes: The 2026-07-02 whole-codebase multi-agent review (183 confirmed issues) is fully remediated: all 25 highs (PRs #56–#63), Phases 2b/7/8 (PRs #65/#67/#68), Phase 6 model policy (PR #70), and Phase 4 shared `runToolLoop` extraction (the last phase, shipped 2026-07-08) — all 5 duplicated tool-loop bodies (operatorAgent main+shadow, operatorAgentStandalone, aiAdvisor main+shadow) now run on `customer-service/lib/runToolLoop.js`. Full finding list + per-PR manual-test checklist in `temp-analysis-data/` (GITIGNORED — local to Jamie's machine; regenerate via the review workflow script if lost).
   Still open from the review (small, deliberately deferred): dashboard app.js order money-summary dedup + focus-timer/notification bugs (need the dashboard running for visual verification); `conversation_history` 3-writer read-modify-write race (needs a merge-semantics decision); aiAdvisor legacy-output-mode default flip (advisor behavior — holdout first). sizingEngine dead-code deletion and b2b queueContext cadence fields have their own parked entries.
 
-## cs_conversations categorization pipeline dead since 2026-03-12
-- Parked: 2026-07-08
-- Last touched: 2026-07-08
-- Type: bug
-- Domains: cs
-- Notes: `cs_conversations.category` stopped being populated 2026-03-12 — every row since has `category: null` (categorizer at `customer-service/import/categorizer.js`). Discovered because `runHoldout.js` selects holdout tickets by `category='exchange_return'` and found zero in its 90-day window (worked around with the new `--days` flag; 210 days reaches categorized data). Decide: revive the categorizer, or retire it and repoint the holdout selector at a maintained field (e.g. `cs_tickets.message_type`).
-- Resume when: next CS tooling session.
-
-
 ## Stale-draft guard — block send when executed actions contradict the draft
 - Parked: 2026-07-09
 - Last touched: 2026-07-09
