@@ -131,6 +131,24 @@ function saveReportArchive({ period, claimNumber, sections }, dir = REPORTS_DIR)
   return file;
 }
 
+/**
+ * Derive the claim number when the caller doesn't pass one: reuse this
+ * month's archived claim on a regenerate, otherwise max prior claim + 1.
+ */
+function deriveClaimNumber(period, dir = REPORTS_DIR) {
+  if (!fs.existsSync(dir)) return '1';
+  const ym = periodYm(period);
+  const own = path.join(dir, `${ym}.json`);
+  if (fs.existsSync(own)) {
+    const archived = JSON.parse(fs.readFileSync(own, 'utf8')).claimNumber;
+    if (archived) return String(archived);
+  }
+  const priorClaims = loadPriorReports(period, dir)
+    .map((r) => Number(r.claimNumber))
+    .filter((n) => Number.isFinite(n));
+  return priorClaims.length ? String(Math.max(...priorClaims) + 1) : '1';
+}
+
 function formatPriorReportsForPrompt(prior) {
   if (!prior.length) return '';
   return prior.map((r) => {
@@ -348,14 +366,15 @@ async function generateStatusReport(opts) {
   }
 
   const prior = loadPriorReports(period);
+  const claimNumber = opts.claimNumber ? String(opts.claimNumber) : deriveClaimNumber(period);
   const sections = await synthesizeSections({ config, period, activity, notes: opts.notes, prior });
-  const archivePath = saveReportArchive({ period, claimNumber: opts.claimNumber, sections });
+  const archivePath = saveReportArchive({ period, claimNumber, sections });
 
   const includeBaseline = opts.baseline === true
     || shouldIncludeBaseline(period, config.projectStart);
   const fields = {
     baseline: (includeBaseline && config.baseline) || null,
-    claimNumber: opts.claimNumber || '',
+    claimNumber,
     projectNumber: config.nrcProjectNumber,
     firmName: config.firmName,
     periodFrom: period.fromStr,
@@ -380,7 +399,7 @@ async function generateStatusReport(opts) {
   } else {
     await htmlToPdf(wrapHtmlDoc(html, `Status Report - ${period.label}`), outPath);
   }
-  return { outPath, archivePath, period, commitCount, priorCount: prior.length, sections };
+  return { outPath, archivePath, period, claimNumber, commitCount, priorCount: prior.length, sections };
 }
 
 module.exports = {
@@ -390,6 +409,7 @@ module.exports = {
   formatActivityForPrompt,
   loadPriorReports,
   saveReportArchive,
+  deriveClaimNumber,
   formatPriorReportsForPrompt,
   extractJson,
   buildSynthesisPrompt,

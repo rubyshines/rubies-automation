@@ -11,6 +11,7 @@ const {
   formatActivityForPrompt,
   loadPriorReports,
   saveReportArchive,
+  deriveClaimNumber,
   buildSynthesisPrompt,
 } = require('../lib/irapStatusReport');
 
@@ -74,6 +75,29 @@ test('report archive: save + load prior months only, in order', () => {
   assert.deepEqual(beforeAugust.map((r) => r.period.label), ['June 2026', 'July 2026']);
   assert.equal(loadPriorReports(july, dir)[0].sections[0].heading, 'Older');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('deriveClaimNumber: reuse on regenerate, increment for new month, 1 when empty', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'irap-claims-'));
+  const june = resolvePeriod('2026-06', JULY_2026);
+  const july = resolvePeriod('2026-07', JULY_2026);
+  const sept = resolvePeriod('2026-09', JULY_2026);
+
+  assert.equal(deriveClaimNumber(june, dir), '1'); // empty archive
+  saveReportArchive({ period: june, claimNumber: '1', sections: [{ heading: 'H', bullets: ['b'] }] }, dir);
+  assert.equal(deriveClaimNumber(june, dir), '1'); // regenerate reuses own
+  assert.equal(deriveClaimNumber(july, dir), '2'); // next month increments
+  saveReportArchive({ period: july, claimNumber: '2', sections: [{ heading: 'H', bullets: ['b'] }] }, dir);
+  assert.equal(deriveClaimNumber(sept, dir), '3'); // skipped month still max+1
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('MCP tool module: registers irap_status_report with required month', () => {
+  const tools = require('../../customer-service/lib/tools/irapStatusReport');
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].name, 'irap_status_report');
+  assert.deepEqual(tools[0].inputSchema.required, ['month']);
+  assert.equal(typeof tools[0].handler, 'function');
 });
 
 test('buildSynthesisPrompt: prior reports appear as already-reported context', () => {

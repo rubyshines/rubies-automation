@@ -6,7 +6,9 @@
  *   node finance/generate-irap-status-report.js <month> [options]
  *
  *   <month>              "June", "June 2026", or "2026-06"
- *   --claim <n>          claim number for the report header
+ *   --claim <n>          claim number override (default: auto-derived — reuses
+ *                        this month's archived claim on regenerate, else max
+ *                        prior claim + 1)
  *   --notes <file>       operator notes to include alongside git history
  *   --baseline           include the "starting point" section (automatic for
  *                        the project's first month, per config projectStart)
@@ -58,7 +60,7 @@ function parseArgs(argv) {
     outPath: args.out,
   });
 
-  console.log(`Period:   ${result.period.fromStr} to ${result.period.toStr}`);
+  console.log(`Period:   ${result.period.fromStr} to ${result.period.toStr} (claim ${result.claimNumber})`);
   console.log(`Commits:  ${result.commitCount} scanned across repos`);
   console.log(`Context:  ${result.priorCount} prior report(s) fed into synthesis`);
   console.log(`Sections: ${result.sections.map((s) => s.heading).join(' | ')}`);
