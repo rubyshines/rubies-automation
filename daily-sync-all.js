@@ -165,6 +165,13 @@ const PIPELINES = [
     run: () => require('./lib/autosendShadow').run(),
   },
   {
+    name: 'Steer & Send Shadow',
+    // Dry-run report for one-click Steer & Send: how many steered regens the
+    // gate would have sent unreviewed, and whether the judge later found any
+    // substantively wrong. Zero rows until the `steersend_shadow` flag is on.
+    run: () => require('./lib/steerSendShadow').run(),
+  },
+  {
     name: 'Refund-pattern Watch',
     // Trailing-week refund-pattern flags (donation-return honor-system probes)
     // + route_to_human routing reasons (recurring bogus reasons = prompt gaps).
@@ -591,6 +598,22 @@ function buildAutosendShadowHtml(results) {
     </div>`;
 }
 
+// Steer & Send shadow line: how many steered regens the gate would have sent
+// unreviewed in the trailing week, and whether the judge later scored any of
+// them substantively divergent. Hidden until the shadow flag produces rows.
+function buildSteerSendShadowHtml(results) {
+  const task = results.find(r => r.name === 'Steer & Send Shadow');
+  const m = task?.result?.sources?.steersend_shadow;
+  if (!m || m.skipped || !m.steered) return '';
+  const erred = m.would_have_erred
+    ? ` <span style="color:#b91c1c;font-weight:bold;">⚠ ${m.would_have_erred} would have been WRONG (judge-verified)</span>`
+    : ' <span style="color:#15803d;">0 judged wrong</span>';
+  return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
+      Steer &amp; Send dry run (last ${m.window_days}d): <strong>${m.gate_passed}</strong> of ${m.steered} steered draft(s) would have sent unreviewed (${m.verifier_rejected} verifier-rejected · ${m.pure_rejected} ineligible)${erred}
+    </div>`;
+}
+
 // Refund-pattern watch: trailing-week advisor "Refund-pattern:" flags and
 // route_to_human routing reasons. Hidden while both are empty.
 function buildRefundPatternHtml(results) {
@@ -742,6 +765,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- Auto-send shadow dry-run line ---
   const autosendShadowHtml = buildAutosendShadowHtml(results);
 
+  // --- Steer & Send shadow dry-run line ---
+  const steerSendShadowHtml = buildSteerSendShadowHtml(results);
+
   // --- Refund-pattern flags + routing reasons ---
   const refundPatternHtml = buildRefundPatternHtml(results);
 
@@ -764,6 +790,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       ${advisorEditHtml}
       ${closenessJudgeHtml}
       ${autosendShadowHtml}
+      ${steerSendShadowHtml}
       ${refundPatternHtml}
       ${aiPricingHtml}
       ${billReconcileHtml}

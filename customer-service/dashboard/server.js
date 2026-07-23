@@ -829,6 +829,23 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
   await supabase.from('cs_ai_drafts').update(updates).eq('id', id);
   const _tWrite1Done = Date.now();
 
+  // Steer & Send shadow (flag `steersend_shadow`): record whether this steered
+  // regen could have been sent without the final review glance. Fire-and-forget;
+  // never blocks or fails the refresh. prevStructured is the pre-steer draft.
+  if (steer) {
+    const { runSteerSendShadow } = require('../lib/steerSendGate');
+    runSteerSendShadow({
+      steer,
+      structured: s,
+      prevStructured: draft.structured_output,
+      draftResponse: newDraft,
+      messageType: updates.message_type,
+      conversationContext: issueDescription,
+      draftId: id,
+      gorgiasTicketId: draft.gorgias_ticket_id,
+    }).catch((err) => console.warn(`[steersend] shadow failed: ${err.message}`));
+  }
+
   // Also update ticket row with latest classification
   if (draft.ticket_id) {
     // Re-link this draft as the ticket's active draft. No-op when it already is
