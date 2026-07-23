@@ -270,9 +270,9 @@ ${SIGNOFF}`;
 // "Done for you" variant: every leak was swapped to its identical-fit
 // youth/adult equivalent, so the email informs rather than asks. The swapped
 // size IS the ordered garment (identical fit), so there is no "wait for the
-// original" offer, the fit equivalence is stated exactly once, and price is
-// never mentioned (findEquivalentSwap already guarantees same price). The only
-// opt-out is a different color or style.
+// original" offer and no opt-out paragraph at all (a straight swap needs no
+// menu), the fit equivalence is stated exactly once, and price is never
+// mentioned (findEquivalentSwap already guarantees same price).
 function bodySwapDone({ orderNumber, leakPhrase, plural, swaps, apology }) {
   const verb = plural ? 'are' : 'is';
   const swapFacts = joinList(swaps.map(s =>
@@ -284,8 +284,6 @@ function bodySwapDone({ orderNumber, leakPhrase, plural, swaps, apology }) {
 I'm writing about your RUBIES order #${orderNumber}. ${capitalizeFirst(leakPhrase)} you ordered ${verb} on pre-order. Our inventory got out of sync. ${apology}
 
 Good news: ${swapFacts}, and ${stockVerb} in stock. So I went ahead and swapped ${swapActions}, and your full order can now ship right away.
-
-If you'd prefer a different color or style instead, just reply and I'll switch it. Otherwise you're all set, nothing you need to do.
 
 ${SIGNOFF}`;
 }
