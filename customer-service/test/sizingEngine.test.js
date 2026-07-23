@@ -1454,8 +1454,11 @@ describe('prescribeDonationRouting', () => {
     // Description shown as authored — not spliced after "They" and lowercased.
     assert.ok(result.response_text.includes('We have bins around the space with affirming items, free of charge.'));
     assert.ok(!result.response_text.includes('They we have bins'));
+    // Canonical lead-in appears between the program explanation and the address.
+    assert.ok(result.response_text.includes('We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.'));
+    assert.ok(result.response_text.includes('With this in mind can you please send the items you are returning to:'));
     // Wash reminder carries the worn/tried-on vs new-with-tags distinction.
-    assert.ok(result.response_text.includes('Please wash any items that have been worn or tried on before donating.'));
+    assert.ok(result.response_text.includes('Please wash any items that have been worn or tried on before they are returned.'));
     assert.ok(result.response_text.includes('Anything still new with tags can be sent as is.'));
   });
 });

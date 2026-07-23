@@ -165,7 +165,7 @@ async function prescribeDonationRouting(intake, context) {
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
 
-  function formatDonationText(programExplanation, partner, washReminder, proofAsk) {
+  function formatDonationText(partner, washReminder, proofAsk) {
     // Prefer the canonical mailing_address from the partner registry (multi-line
     // "RUBIES Returns / c/o ..." block published to the website). Fall back to
     // reconstructing from `address` for any legacy row that doesn't have it yet.
@@ -193,8 +193,12 @@ async function prescribeDonationRouting(intake, context) {
       ].filter(Boolean).join('\n');
     }
 
+    // Jamie's canonical partner-address wording (matches his sent replies) —
+    // fuller than the shared programExplanation used for local-donation cases.
     const lines = [
-      programExplanation,
+      'We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.',
+      '',
+      'With this in mind can you please send the items you are returning to:',
       '',
       addressBlock,
       '',
@@ -214,7 +218,7 @@ async function prescribeDonationRouting(intake, context) {
   }
 
   const programExplanation = 'We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs.';
-  const washReminder = 'Please wash any items that have been worn or tried on before donating. Anything still new with tags can be sent as is.';
+  const washReminder = 'Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is.';
 
   if (partners.length === 0) {
     return {
@@ -273,7 +277,7 @@ async function prescribeDonationRouting(intake, context) {
     type: 'partner',
     partner,
     proof_ask: includeProofAsk,
-    response_text: formatDonationText(programExplanation, partner, washReminder, includeProofAsk ? PROOF_ASK_TEXT : null),
+    response_text: formatDonationText(partner, washReminder, includeProofAsk ? PROOF_ASK_TEXT : null),
     audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${includeProofAsk ? ', proof ask included' : ''}`,
   };
 }
