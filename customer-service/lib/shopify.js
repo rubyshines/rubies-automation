@@ -1278,7 +1278,7 @@ async function orderEditAddVariant(calculatedOrderId, variantId, quantity) {
   const gid = normalizeGid(variantId, 'ProductVariant');
   const data = await shopifyGraphQL(`
     mutation orderEditAddVariant($id: ID!, $variantId: ID!, $quantity: Int!) {
-      orderEditAddVariant(id: $id, variantId: $variantId, quantity: $quantity) {
+      orderEditAddVariant(id: $id, variantId: $variantId, quantity: $quantity, allowDuplicates: true) {
         calculatedOrder {
           id
           addedLineItems(first: 50) {

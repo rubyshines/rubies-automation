@@ -68,6 +68,8 @@ const tools = [
       'Phase 2 (confirmed=true): Commits the staged edit, then auto-sends invoice (if customer owes more) or auto-refunds (if customer is owed money).',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
       'Each swap_items entry can: swap (remove_sku + add_query), remove only (remove_sku, no add), or add only (add_query, no remove_sku).',
+      'To increase the quantity of a variant already on the order, use an add-only entry for that variant — it is added as a second line (duplicates allowed).',
+      'Lines added in an edit do not inherit bundle pricing, and the order\'s discount code may or may not auto-apply to them (it can also STACK on top of a custom discount) — after staging, verify the added line\'s calculated net price rather than assuming.',
       'Discounts from original items are automatically preserved on replacement items. You can also apply a custom discount (percent or fixed amount) to any added item — e.g. discount: { percent: 100 } to make it free.',
       'Use dry_run=true to test without committing (safe on any order).',
     ].join(' '),
