@@ -39,6 +39,7 @@ const { fetchOrderByNumber } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 const { formatPreOrderDate } = require('../../customer-service/lib/preOrderAttrs');
+const { normalizeSize, NUMERIC_TO_LETTER_UPPER, getVariantColor } = require('../../customer-service/lib/sizeUtils');
 
 const DELAY_ACKNOWLEDGE_DAYS = 3;
 const MAX_ALTERNATIVES = 2;
@@ -303,35 +304,66 @@ function skuSize(sku) {
   return null;
 }
 
-// Resolve a leak's nickname + size by walking the product cache.
-// Returns { nickname, size } or null if we can't classify the SKU.
+// Resolve a leak's nickname, size, and color by walking the product cache.
+// Returns { nickname, size, color } or null if we can't classify the SKU.
 function leakHandle(leakSku) {
   const variant = productCache.getVariantBySku(leakSku);
   if (!variant) return null;
   const nickname = getProductNickname(variant.productTitle);
   if (!nickname || nickname === 'item') return null;
-  return { nickname, size: skuSize(leakSku) };
+  const color = getVariantColor({ selectedOptions: variant.options || [] });
+  return { nickname, size: skuSize(leakSku), color };
+}
+
+/** Adult letter → youth numeric equivalent (inverse of NUMERIC_TO_LETTER_UPPER). */
+const LETTER_TO_NUMERIC = Object.fromEntries(
+  Object.entries(NUMERIC_TO_LETTER_UPPER).map(([num, letter]) => [letter, num]),
+);
+
+// Youth/adult equivalent of a size token (adult S = youth 14, M = 16, XS = 12),
+// or null when none exists (youth tops out at 16 = M; adult L+ has no youth twin).
+function equivalentSize(size) {
+  const norm = normalizeSize(size);
+  if (!norm) return null;
+  return NUMERIC_TO_LETTER_UPPER[norm] || LETTER_TO_NUMERIC[norm] || null;
 }
 
 // Build up to MAX_ALTERNATIVES rendered swap suggestions for one leak SKU,
 // using the advisor's `compare_products` tool. Precedence per the advisor's
-// pre-order playbook (aiAdvisor.js): sibling color of the same product first,
-// then a different product in the same size.
+// pre-order playbook (aiAdvisor.js): youth/adult equivalent size in the
+// customer's own color first (identical fit), then sibling colors of the same
+// product, then a different product in the same size.
 async function pickAlternativesViaCompare(leakSku) {
   const meta = leakHandle(leakSku);
   if (!meta) return [];
-  const { nickname, size } = meta;
+  const { nickname, size, color } = meta;
   if (!size) return [];
+
+  const rendered = [];
+
+  // Tier 0: youth/adult equivalent size, same color — identical fit, so it
+  // beats a color change. Best-effort: any miss falls through to same-size tiers.
+  const eqSize = equivalentSize(size);
+  if (eqSize && color) {
+    try {
+      const eq = await executeToolCall('compare_products', { product: nickname, size: eqSize });
+      const colorHit = (eq?.source?.available_colors || [])
+        .find(c => (c.color || '').toLowerCase() === color);
+      if (colorHit) {
+        const chart = /^\d/.test(eqSize) ? 'youth' : 'adult';
+        rendered.push(`the ${nickname} in ${colorHit.color}, size ${eqSize} (our ${chart} size with the same fit as ${size})`);
+      }
+    } catch { /* fall through */ }
+  }
 
   let comparison;
   try {
     comparison = await executeToolCall('compare_products', { product: nickname, size });
   } catch {
-    return [];
+    return rendered;
   }
-  if (!comparison || comparison.error) return [];
+  if (!comparison || comparison.error) return rendered;
 
-  const rendered = [];
   // Tier 1: same product, in-stock sibling colors at the customer's size.
   for (const c of (comparison.source?.available_colors || [])) {
     if (rendered.length >= MAX_ALTERNATIVES) break;
@@ -530,6 +562,7 @@ module.exports = {
   filterToNotReadyToShip,
   pastNextBusinessDay5pmPT,
   composeBody,
+  pickAlternativesViaCompare,
   formatPreOrderDate,
   hasPreOrderAttr,
   NOTE_PREFIX,
