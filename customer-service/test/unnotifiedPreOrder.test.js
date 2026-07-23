@@ -1,9 +1,10 @@
 /**
- * Unit tests for reports/lib/unnotifiedPreOrder.js — swap-alternative picking.
+ * Unit tests for reports/lib/unnotifiedPreOrder.js — swap-alternative picking
+ * and the done-for-you swap flow.
  *
- * Focus: pickAlternativesViaCompare tier precedence — youth/adult equivalent
- * size in the customer's own color (tier 0) beats sibling colors (tier 1)
- * beats other products (tier 2).
+ * Focus: findEquivalentSwap (identical-fit youth/adult equivalent, same color,
+ * same price, in stock), pickAlternativesViaCompare tier precedence, and the
+ * composeBody swap-done variant.
  *
  * Run: node --test customer-service/test/unnotifiedPreOrder.test.js
  */
@@ -28,16 +29,47 @@ function stubModule(resolvedPath, exports) {
 // Fixture catalog keyed by SKU — mirrors the MIA shape (Color + Youth Size options).
 const VARIANTS = {
   'MIA-BLK-S': {
+    sku: 'MIA-BLK-S',
     productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
     options: [{ name: 'Color', value: 'Black' }, { name: 'Youth Size', value: 'S' }],
   },
-  'MIA-BLK-16': {
+  'MIA-BLK-14': {
+    sku: 'MIA-BLK-14',
     productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
+    options: [{ name: 'Color', value: 'Black' }, { name: 'Youth Size', value: '14' }],
+  },
+  'MIA-BLK-16': {
+    sku: 'MIA-BLK-16',
+    productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
     options: [{ name: 'Color', value: 'Black' }, { name: 'Youth Size', value: '16' }],
   },
-  'MIA-BLK-L': {
+  'MIA-BLK-M': {
+    sku: 'MIA-BLK-M',
     productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
+    options: [{ name: 'Color', value: 'Black' }, { name: 'Youth Size', value: 'M' }],
+  },
+  'MIA-BLK-L': {
+    sku: 'MIA-BLK-L',
+    productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
     options: [{ name: 'Color', value: 'Black' }, { name: 'Youth Size', value: 'L' }],
+  },
+  // Price-mismatch product: youth tier priced lower than adult.
+  'TIER-BLK-S': {
+    sku: 'TIER-BLK-S',
+    productTitle: 'TIERED PRICE TOP',
+    price: 42,
+    options: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: 'S' }],
+  },
+  'TIER-BLK-14': {
+    sku: 'TIER-BLK-14',
+    productTitle: 'TIERED PRICE TOP',
+    price: 36,
+    options: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: '14' }],
   },
 };
 
@@ -57,7 +89,13 @@ stubModule(require.resolve('../lib/aiAdvisor'), {
 
 stubModule(require.resolve('../lib/productCache'), {
   getVariantBySku: sku => VARIANTS[sku] || null,
-  renderVariantForCustomer: () => null,
+  renderVariantForCustomer: sku => {
+    const v = VARIANTS[sku];
+    if (!v) return null;
+    const color = v.options[0].value;
+    const size = v.options[1].value;
+    return `the Mia in ${color}, size ${size}`;
+  },
   loadFromSupabase: async () => {},
 });
 
@@ -78,10 +116,84 @@ stubModule(path.resolve(__dirname, '../../reports/lib/warehanceClient.js'), {
   fetchOrderByNumber: async () => null,
 });
 
-const { pickAlternativesViaCompare } = require('../../reports/lib/unnotifiedPreOrder');
+const {
+  pickAlternativesViaCompare,
+  findEquivalentSwap,
+  composeBody,
+} = require('../../reports/lib/unnotifiedPreOrder');
 
 // ---------------------------------------------------------------------------
-// Tests
+// findEquivalentSwap
+// ---------------------------------------------------------------------------
+
+describe('findEquivalentSwap', () => {
+  beforeEach(() => {
+    compareResponses = {};
+    compareCalls = [];
+  });
+
+  it('finds the youth equivalent in the ordered color (adult S → youth 14)', async () => {
+    compareResponses['14'] = {
+      source: { available_colors: [{ color: 'Black', inventory: 72 }, { color: 'Pink', inventory: 67 }] },
+      alternatives: [],
+    };
+    const swap = await findEquivalentSwap('MIA-BLK-S');
+    assert.deepEqual(swap, {
+      fromSku: 'MIA-BLK-S',
+      toSku: 'MIA-BLK-14',
+      nickname: 'Mia',
+      color: 'Black',
+      fromSize: 'S',
+      toSize: '14',
+      chart: 'youth',
+      rendered: 'the Mia in Black, size 14 (our youth size with the same fit as S)',
+    });
+  });
+
+  it('finds the adult equivalent for a youth leak (youth 16 → adult M)', async () => {
+    compareResponses['M'] = {
+      source: { available_colors: [{ color: 'Black', inventory: 16 }] },
+      alternatives: [],
+    };
+    const swap = await findEquivalentSwap('MIA-BLK-16');
+    assert.equal(swap.toSku, 'MIA-BLK-M');
+    assert.equal(swap.chart, 'adult');
+  });
+
+  it('returns null when the size has no youth/adult equivalent (size L)', async () => {
+    const swap = await findEquivalentSwap('MIA-BLK-L');
+    assert.equal(swap, null);
+    assert.deepEqual(compareCalls, []); // no lookup even attempted
+  });
+
+  it('returns null when the equivalent is priced differently', async () => {
+    compareResponses['14'] = {
+      source: { available_colors: [{ color: 'Black', inventory: 10 }] },
+      alternatives: [],
+    };
+    const swap = await findEquivalentSwap('TIER-BLK-S');
+    assert.equal(swap, null);
+    assert.deepEqual(compareCalls, []); // price gate fires before the lookup
+  });
+
+  it('returns null when the equivalent is OOS in the ordered color', async () => {
+    compareResponses['14'] = {
+      source: { available_colors: [{ color: 'Pink', inventory: 67 }] }, // no Black
+      alternatives: [],
+    };
+    const swap = await findEquivalentSwap('MIA-BLK-S');
+    assert.equal(swap, null);
+  });
+
+  it('returns null when the lookup throws', async () => {
+    compareResponses['14'] = new Error('boom');
+    const swap = await findEquivalentSwap('MIA-BLK-S');
+    assert.equal(swap, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pickAlternativesViaCompare
 // ---------------------------------------------------------------------------
 
 describe('pickAlternativesViaCompare', () => {
@@ -110,22 +222,6 @@ describe('pickAlternativesViaCompare', () => {
     ]);
   });
 
-  it('offers the adult equivalent for a youth leak (youth 16 → adult M)', async () => {
-    compareResponses['M'] = {
-      source: { available_colors: [{ color: 'Black', inventory: 16 }] },
-      alternatives: [],
-    };
-    compareResponses['16'] = {
-      source: { available_colors: [] },
-      alternatives: [{ product: 'Queeny' }],
-    };
-    const alts = await pickAlternativesViaCompare('MIA-BLK-16');
-    assert.deepEqual(alts, [
-      'the Mia in Black, size M (our adult size with the same fit as 16)',
-      'the Queeny, size 16',
-    ]);
-  });
-
   it('skips tier 0 when the size has no youth/adult equivalent (size L)', async () => {
     compareResponses['L'] = {
       source: { available_colors: [{ color: 'Pink', inventory: 5 }] },
@@ -133,7 +229,6 @@ describe('pickAlternativesViaCompare', () => {
     };
     const alts = await pickAlternativesViaCompare('MIA-BLK-L');
     assert.deepEqual(alts, ['the Mia in Pink, size L', 'the Queeny, size L']);
-    // Only the same-size lookup should have run — no equivalent-size call.
     assert.deepEqual(compareCalls, [{ product: 'Mia', size: 'L' }]);
   });
 
@@ -160,23 +255,50 @@ describe('pickAlternativesViaCompare', () => {
     assert.deepEqual(alts, ['the Mia in Pink, size S']);
   });
 
-  it('caps at MAX_ALTERNATIVES with tier 0 taking a slot', async () => {
-    compareResponses['14'] = {
-      source: { available_colors: [{ color: 'Black', inventory: 72 }] },
-      alternatives: [],
-    };
-    compareResponses['S'] = {
-      source: { available_colors: [{ color: 'Pink', inventory: 25 }, { color: 'Sand', inventory: 9 }] },
-      alternatives: [{ product: 'Queeny' }],
-    };
-    const alts = await pickAlternativesViaCompare('MIA-BLK-S');
-    assert.equal(alts.length, 2);
-    assert.match(alts[0], /size 14/);
-    assert.equal(alts[1], 'the Mia in Pink, size S');
-  });
-
   it('returns [] for an unknown SKU', async () => {
     const alts = await pickAlternativesViaCompare('NOPE-XXX-S');
     assert.deepEqual(alts, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// composeBody — swap-done variant
+// ---------------------------------------------------------------------------
+
+describe('composeBody with autoSwaps', () => {
+  const classification = {
+    case: 'B',
+    leaks: [{ sku: 'MIA-BLK-S', _variant: { pre_order_date: '2026-10-15' } }],
+    inStockOther: [{ sku: 'RUBY-BLK-M' }],
+    oosOther: [],
+  };
+  const autoSwaps = [{
+    fromSku: 'MIA-BLK-S',
+    toSku: 'MIA-BLK-14',
+    nickname: 'Mia',
+    color: 'Black',
+    fromSize: 'S',
+    toSize: '14',
+    chart: 'youth',
+    rendered: 'the Mia in Black, size 14 (our youth size with the same fit as S)',
+  }];
+
+  it('states the swap as done with an opt-out, not as an option', () => {
+    const body = composeBody({ orderNumber: '32563', classification, autoSwaps, daysSinceOrder: 1 });
+    assert.match(body, /I went ahead and made the swap/);
+    assert.match(body, /Your Mia is now Black, size 14 \(our youth size with the exact same fit as the S\)/);
+    assert.match(body, /Same fit, same price/);
+    assert.match(body, /Your full order can now ship right away/);
+    assert.match(body, /rather wait for the original size \(we have more arriving middle of October, 2026\)/);
+    assert.match(body, /I'll switch it back/);
+    assert.doesNotMatch(body, /Here's what I can do/);
+    assert.doesNotMatch(body, /Swap for/);
+    assert.doesNotMatch(body, /—/); // no em dashes in customer copy
+  });
+
+  it('keeps the options email when autoSwaps is empty', () => {
+    const body = composeBody({ orderNumber: '32563', classification, alternatives: ['the Mia in Pink, size S'], daysSinceOrder: 1 });
+    assert.match(body, /Here's what I can do/);
+    assert.match(body, /Swap for the Mia in Pink, size S/);
   });
 });

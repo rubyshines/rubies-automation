@@ -46,6 +46,8 @@ const MAX_ALTERNATIVES = 2;
 
 const NOTE_PREFIX = '[auto-draft] Unnotified pre-order outreach drafted';
 const SUBJECT = 'ACTION required on your recent RUBIES order';
+// Swap-done drafts require no customer action, so no ACTION-required subject.
+const SUBJECT_SWAPPED = 'Good news about your recent RUBIES order';
 const SIGNOFF = 'Take care,\nJamie Alexander\nRUBIES Founder';
 // Orders older than this with no existing notes get skipped — they predate
 // the auto-drafter and likely need human review rather than fresh outreach.
@@ -265,11 +267,33 @@ Just reply and let me know what works best.
 ${SIGNOFF}`;
 }
 
-function composeBody({ orderNumber, classification, alternatives = [], daysSinceOrder = 0 }) {
+// "Done for you" variant: every leak was swapped to its identical-fit
+// youth/adult equivalent, so the email informs rather than asks, with an
+// opt-out to switch back.
+function bodySwapDone({ orderNumber, leakPhrase, eta, plural, swaps, apology }) {
+  const verb = plural ? 'are' : 'is';
+  const swapPhrase = joinList(swaps.map(s =>
+    `your ${s.nickname} is now ${s.color}, size ${s.toSize} (our ${s.chart} size with the exact same fit as the ${s.fromSize})`));
+  const waitBack = eta
+    ? `If you'd rather wait for the original size (we have more arriving ${eta}), or prefer a different color or style, just reply and I'll switch it back.`
+    : `If you'd rather wait for the original size, or prefer a different color or style, just reply and I'll switch it back.`;
+  return `Hi,
+
+I'm writing about your RUBIES order #${orderNumber}. ${capitalizeFirst(leakPhrase)} you ordered ${verb} on pre-order. Our inventory got out of sync. ${apology}
+
+Good news: the exact same fit is in stock under a different size label, so I went ahead and made the swap. ${capitalizeFirst(swapPhrase)}. Same fit, same price, just a different label on the tag. Your full order can now ship right away.
+
+${waitBack} Otherwise you're all set, nothing you need to do.
+
+${SIGNOFF}`;
+}
+
+function composeBody({ orderNumber, classification, alternatives = [], autoSwaps = [], daysSinceOrder = 0 }) {
   const leakPhrase = leakItemsPhrase(classification.leaks);
   const eta = bestETA(classification.leaks);
   const plural = classification.leaks.length > 1;
   const apology = apologyLine(daysSinceOrder);
+  if (autoSwaps.length) return bodySwapDone({ orderNumber, leakPhrase, eta, plural, swaps: autoSwaps, apology });
   if (classification.case === 'A') return bodyCaseA({ orderNumber, leakPhrase, eta, plural, alternatives, apology });
   if (classification.case === 'B') return bodyCaseB({ orderNumber, leakPhrase, eta, plural, alternatives, apology });
   const otherPhrase = joinList(classification.oosOther.map(renderItem));
@@ -328,6 +352,49 @@ function equivalentSize(size) {
   return NUMERIC_TO_LETTER_UPPER[norm] || LETTER_TO_NUMERIC[norm] || null;
 }
 
+// Find the youth/adult identical-fit swap target for a leak SKU: same product,
+// same color, equivalent size, in stock, same price. Same-price is a hard gate:
+// some products price youth and adult tiers differently, and a price delta
+// can't ride a "we already did this for you" email. Returns
+// { fromSku, toSku, nickname, color, fromSize, toSize, chart, rendered } or null.
+async function findEquivalentSwap(leakSku) {
+  const meta = leakHandle(leakSku);
+  if (!meta) return null;
+  const { nickname, size, color } = meta;
+  if (!size || !color) return null;
+  const eqSize = equivalentSize(size);
+  if (!eqSize) return null;
+
+  // Target SKU: same product+color segments, equivalent size as last segment.
+  const parts = String(leakSku).split('-');
+  parts[parts.length - 1] = eqSize;
+  const targetSku = parts.join('-');
+  const source = productCache.getVariantBySku(leakSku);
+  const target = productCache.getVariantBySku(targetSku);
+  if (!source || !target) return null;
+  if (Number(target.price) !== Number(source.price)) return null;
+
+  let eq;
+  try {
+    eq = await executeToolCall('compare_products', { product: nickname, size: eqSize });
+  } catch { return null; }
+  const colorHit = (eq?.source?.available_colors || [])
+    .find(c => (c.color || '').toLowerCase() === color);
+  if (!colorHit || (colorHit.inventory ?? 0) <= 0) return null;
+
+  const chart = /^\d/.test(eqSize) ? 'youth' : 'adult';
+  return {
+    fromSku: source.sku,
+    toSku: target.sku,
+    nickname,
+    color: colorHit.color,
+    fromSize: size,
+    toSize: eqSize,
+    chart,
+    rendered: `the ${nickname} in ${colorHit.color}, size ${eqSize} (our ${chart} size with the same fit as ${size})`,
+  };
+}
+
 // Build up to MAX_ALTERNATIVES rendered swap suggestions for one leak SKU,
 // using the advisor's `compare_products` tool. Precedence per the advisor's
 // pre-order playbook (aiAdvisor.js): youth/adult equivalent size in the
@@ -336,25 +403,15 @@ function equivalentSize(size) {
 async function pickAlternativesViaCompare(leakSku) {
   const meta = leakHandle(leakSku);
   if (!meta) return [];
-  const { nickname, size, color } = meta;
+  const { nickname, size } = meta;
   if (!size) return [];
 
   const rendered = [];
 
   // Tier 0: youth/adult equivalent size, same color — identical fit, so it
   // beats a color change. Best-effort: any miss falls through to same-size tiers.
-  const eqSize = equivalentSize(size);
-  if (eqSize && color) {
-    try {
-      const eq = await executeToolCall('compare_products', { product: nickname, size: eqSize });
-      const colorHit = (eq?.source?.available_colors || [])
-        .find(c => (c.color || '').toLowerCase() === color);
-      if (colorHit) {
-        const chart = /^\d/.test(eqSize) ? 'youth' : 'adult';
-        rendered.push(`the ${nickname} in ${colorHit.color}, size ${eqSize} (our ${chart} size with the same fit as ${size})`);
-      }
-    } catch { /* fall through */ }
-  }
+  const eqSwap = await findEquivalentSwap(leakSku);
+  if (eqSwap) rendered.push(eqSwap.rendered);
 
   let comparison;
   try {
@@ -451,8 +508,28 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
 
   if (!verified.length) return [];
 
-  // Attach swap alternatives per leak via the advisor's compare_products tool.
+  // Attach swap data per order. Done-for-you swap: when EVERY leak has an
+  // in-stock, same-price, identical-fit youth/adult equivalent in the ordered
+  // color AND the swap unblocks the whole order (cases A/B), the outreach
+  // states the swap as already made and stages the order edit as the draft's
+  // paired operator action. Case C keeps the options email — other items are
+  // still backordered, so the swap wouldn't unblock shipping and the
+  // customer's choice matters more. Otherwise: rendered alternatives for the
+  // options email.
   for (const c of verified) {
+    if (c.classification.case !== 'C') {
+      const swaps = [];
+      for (const li of c.classification.leaks) {
+        const s = await findEquivalentSwap(li.sku);
+        if (!s) { swaps.length = 0; break; }
+        swaps.push(s);
+      }
+      if (swaps.length) {
+        c.autoSwaps = swaps;
+        c.alternatives = [];
+        continue;
+      }
+    }
     const perLeakAlts = [];
     for (const li of c.classification.leaks) {
       const alts = await pickAlternativesViaCompare(li.sku);
@@ -469,13 +546,20 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
 
 async function draftLeakOutreach({ leaks, write = false }) {
   const results = [];
-  for (const { order, classification, alternatives = [] } of leaks) {
+  for (const { order, classification, alternatives = [], autoSwaps = [] } of leaks) {
     const orderNumber = String(order.order_number).replace('#', '');
     const daysSinceOrder = order.created_at ? businessDaysSince(order.created_at) || 0 : 0;
-    const plain = composeBody({ orderNumber, classification, alternatives, daysSinceOrder });
+    const plain = composeBody({ orderNumber, classification, alternatives, autoSwaps, daysSinceOrder });
     const html = plainToHtml(plain);
-    const summary = `Unnotified pre-order (Case ${classification.case}) — ${classification.leaks.length} pre-order item${classification.leaks.length > 1 ? 's' : ''}`;
+    const swapped = autoSwaps.length > 0;
+    const summary = `Unnotified pre-order (Case ${classification.case}) — ${classification.leaks.length} pre-order item${classification.leaks.length > 1 ? 's' : ''}${swapped ? '; identical-fit swap staged' : ''}`;
     const noteText = `${NOTE_PREFIX} — awaiting send/customer choice (Case ${classification.case})`;
+    // The swap-done email states the swap as already made, so the order edit is
+    // staged as the draft's paired operator action (Execute & Send runs the
+    // action before the send, keeping the past tense true).
+    const operatorActionSummary = swapped
+      ? `Order #${orderNumber}: swap ${joinList(autoSwaps.map(s => `${s.fromSku} to ${s.toSku}`))} via edit_order (identical-fit ${joinList([...new Set(autoSwaps.map(s => s.chart))])} equivalent, in stock, same price). The outreach email states the swap is already done, so execute the swap before sending.`
+      : null;
 
     if (!write) {
       results.push({ order_number: orderNumber, case: classification.case, status: 'dry_run', summary });
@@ -487,13 +571,15 @@ async function draftLeakOutreach({ leaks, write = false }) {
         orderNumber,
         customerEmail: order.customer_email,
         customerName: null,
-        subject: SUBJECT,
+        subject: swapped ? SUBJECT_SWAPPED : SUBJECT,
         plainBody: plain,
         htmlBody: html,
         summary,
-        steer: `Auto-drafted unnotified pre-order outreach. Case ${classification.case}.`,
+        steer: `Auto-drafted unnotified pre-order outreach. Case ${classification.case}.${swapped ? ' Identical-fit swap staged as operator action.' : ''}`,
         noteText,
         author: 'auto',
+        actionType: swapped ? 'order_modification' : null,
+        operatorActionSummary,
       });
       results.push({
         order_number: orderNumber,
@@ -563,6 +649,7 @@ module.exports = {
   pastNextBusinessDay5pmPT,
   composeBody,
   pickAlternativesViaCompare,
+  findEquivalentSwap,
   formatPreOrderDate,
   hasPreOrderAttr,
   NOTE_PREFIX,
