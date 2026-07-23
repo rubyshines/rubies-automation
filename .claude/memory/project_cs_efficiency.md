@@ -202,6 +202,14 @@ Next-gen Sonnet shipped — the trigger the 2026-04 verdict was waiting for. Can
 - **Harness lesson (generalizes):** a shadow candidate must receive the exact prompt variant + output-enforcement combination that matches what the harness's parser expects — when production has multiple output modes, "same inputs as production" is ambiguous and the mismatch fails silently as a 100% candidate-loss signal. A judge distribution with zero 3s across 190 rows was the tell.
 - **Prevention (shipped 2026-07-17):** [shadowEvalGuard.js](../../customer-service/lib/shadowEvalGuard.js) runs after every shadow-run insert and auto-kills `cs_diagnostics` (+ emails Jamie) when the data since flag-enable is degenerate: advisor `sonnet_structured` null on ≥80% of ≥10 runs, or ≥20 judge-scored runs in a source with zero scores ≥3. A broken harness now costs hours, not a week. **Eval-start checklist (process half of the fix):** after enabling the flag, verify the FIRST diagnostic row end-to-end — `sonnet_structured` populated, judge score plausible — before walking away. Never trust an eval you haven't watched produce one valid row.
 
+## Sonnet 5 clean re-run (2026-07-17 → 2026-07-23): NOT VIABLE — question closed
+
+Re-run with the fixed harness (flag re-enabled 2026-07-17T14:15Z; use that as the `--since` floor). Harness verified healthy this time: 0 of 207 advisor rows had null `sonnet_structured`, and no score-1 row was a harness artifact — the failures are genuine content divergences.
+
+- **Advisor: not viable.** Primary mean **2.33** on **n=58 unique tickets** (sample target of 50+ met — this is a confident call). Distribution 1–5: 7/28/20/3/0; 12.1% rated 1. The mean lands well inside the pre-registered not-viable band (<3.0), *below* the plain Sonnet 4.6 baseline (2.37) and Sonnet 4.6+thinking (2.67). Also slightly slower than Opus (16.6s vs 15.9s) — no latency consolation.
+- **Operator: not viable**, again (mean 2.62, n=21, 19% rated 1) — consistent with the 07-17 fair arm and both 2026-04 verdicts.
+- **Decision (2026-07-23): stay on Opus for everything.** `cs_diagnostics` flipped false same day (verdict recorded in the flag note). Run cost ~$25-27 over 6 days. Infrastructure preserved — next candidate model is a flag flip + model-constant change; follow the eval-start checklist above.
+
 ## Shadow eval cost leak + gate inversion (2026-05-27)
 
 Investigating a jump to ~$15/day in CS API spend, a per-day reconstruction from `_timing` token fields (the `ai_calls` observability table, now described in domain_tech.md, was built right after and supersedes this manual method) over a 14-day window found the spend was dominated by the shadow eval that was supposed to be off since Apr 30:
@@ -230,5 +238,5 @@ Investigating a jump to ~$15/day in CS API spend, a per-day reconstruction from 
 2. ~~Drop `cs_diagnostic_runs` table~~ — **Keeping.** Table and schema preserved for future model evaluations. Drop manually when no longer useful.
 3. **Curate tone samples** from 51 to ~25 (saves ~2K tokens/call) — low-risk, doesn't depend on model switching
 4. ~~Sonnet 4.6 + extended thinking shadow eval~~ — **Done 2026-04-29.** Not viable, see verdict in re-evaluation section above. Shadow eval disabled.
-5. **Revisit model evaluation** when next-gen models ship — shadow infrastructure is ready to re-enable
+5. ~~Sonnet 5 shadow eval~~ — **Done 2026-07-23.** Not viable (advisor AND operator), see clean re-run section. Next revisit: when the next model generation ships.
 6. ~~Update documented cost per conversation~~ — done 2026-04-21 (domain_cs.md + initiative_cs_automation.md updated to ~$0.39/draft)
