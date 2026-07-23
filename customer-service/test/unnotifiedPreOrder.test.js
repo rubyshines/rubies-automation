@@ -283,14 +283,17 @@ describe('composeBody with autoSwaps', () => {
     rendered: 'the Mia in Black, size 14 (our youth size with the same fit as S)',
   }];
 
-  it('states the swap as done with an opt-out, not as an option', () => {
+  it('states the swap as done with a color/style opt-out, not as an option', () => {
     const body = composeBody({ orderNumber: '32563', classification, autoSwaps, daysSinceOrder: 1 });
-    assert.match(body, /I went ahead and made the swap/);
-    assert.match(body, /Your Mia is now Black, size 14 \(our youth size with the exact same fit as the S\)/);
-    assert.match(body, /Same fit, same price/);
-    assert.match(body, /Your full order can now ship right away/);
-    assert.match(body, /rather wait for the original size \(we have more arriving middle of October, 2026\)/);
-    assert.match(body, /I'll switch it back/);
+    assert.match(body, /size 14 on our youth size chart is the exact same fit as the S, and it's in stock/);
+    assert.match(body, /I went ahead and swapped your Mia to Black, size 14/);
+    assert.match(body, /your full order can now ship right away/);
+    assert.match(body, /prefer a different color or style instead/);
+    // The swapped size IS the ordered garment: no wait-for-original offer,
+    // no price talk, and the fit equivalence is stated exactly once.
+    assert.doesNotMatch(body, /wait/i);
+    assert.doesNotMatch(body, /price/i);
+    assert.equal((body.match(/same fit/gi) || []).length, 1);
     assert.doesNotMatch(body, /Here's what I can do/);
     assert.doesNotMatch(body, /Swap for/);
     assert.doesNotMatch(body, /—/); // no em dashes in customer copy

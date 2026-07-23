@@ -268,22 +268,24 @@ ${SIGNOFF}`;
 }
 
 // "Done for you" variant: every leak was swapped to its identical-fit
-// youth/adult equivalent, so the email informs rather than asks, with an
-// opt-out to switch back.
-function bodySwapDone({ orderNumber, leakPhrase, eta, plural, swaps, apology }) {
+// youth/adult equivalent, so the email informs rather than asks. The swapped
+// size IS the ordered garment (identical fit), so there is no "wait for the
+// original" offer, the fit equivalence is stated exactly once, and price is
+// never mentioned (findEquivalentSwap already guarantees same price). The only
+// opt-out is a different color or style.
+function bodySwapDone({ orderNumber, leakPhrase, plural, swaps, apology }) {
   const verb = plural ? 'are' : 'is';
-  const swapPhrase = joinList(swaps.map(s =>
-    `your ${s.nickname} is now ${s.color}, size ${s.toSize} (our ${s.chart} size with the exact same fit as the ${s.fromSize})`));
-  const waitBack = eta
-    ? `If you'd rather wait for the original size (we have more arriving ${eta}), or prefer a different color or style, just reply and I'll switch it back.`
-    : `If you'd rather wait for the original size, or prefer a different color or style, just reply and I'll switch it back.`;
+  const swapFacts = joinList(swaps.map(s =>
+    `size ${s.toSize} on our ${s.chart} size chart is the exact same fit as the ${s.fromSize}`));
+  const stockVerb = swaps.length > 1 ? "they're" : "it's";
+  const swapActions = joinList(swaps.map(s => `your ${s.nickname} to ${s.color}, size ${s.toSize}`));
   return `Hi,
 
 I'm writing about your RUBIES order #${orderNumber}. ${capitalizeFirst(leakPhrase)} you ordered ${verb} on pre-order. Our inventory got out of sync. ${apology}
 
-Good news: the exact same fit is in stock under a different size label, so I went ahead and made the swap. ${capitalizeFirst(swapPhrase)}. Same fit, same price, just a different label on the tag. Your full order can now ship right away.
+Good news: ${swapFacts}, and ${stockVerb} in stock. So I went ahead and swapped ${swapActions}, and your full order can now ship right away.
 
-${waitBack} Otherwise you're all set, nothing you need to do.
+If you'd prefer a different color or style instead, just reply and I'll switch it. Otherwise you're all set, nothing you need to do.
 
 ${SIGNOFF}`;
 }
@@ -293,7 +295,7 @@ function composeBody({ orderNumber, classification, alternatives = [], autoSwaps
   const eta = bestETA(classification.leaks);
   const plural = classification.leaks.length > 1;
   const apology = apologyLine(daysSinceOrder);
-  if (autoSwaps.length) return bodySwapDone({ orderNumber, leakPhrase, eta, plural, swaps: autoSwaps, apology });
+  if (autoSwaps.length) return bodySwapDone({ orderNumber, leakPhrase, plural, swaps: autoSwaps, apology });
   if (classification.case === 'A') return bodyCaseA({ orderNumber, leakPhrase, eta, plural, alternatives, apology });
   if (classification.case === 'B') return bodyCaseB({ orderNumber, leakPhrase, eta, plural, alternatives, apology });
   const otherPhrase = joinList(classification.oosOther.map(renderItem));
