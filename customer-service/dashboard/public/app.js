@@ -13,6 +13,7 @@ let _searchDebounce = null;
 let closedAutoOnly = false; // Closed-tab filter: only auto-sent (or shadow-marked) tickets
 
 let currentDraftId = null;
+let currentServerDraft = null; // server draft_response for the open ticket (autosave snapshot)
 let currentDraft = null;
 
 // ---------------------------------------------------------------------------
@@ -309,12 +310,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Autosave draft edits to localStorage + auto-expand textarea
+  // Autosave draft edits to localStorage + auto-expand textarea. The server
+  // draft_response is snapshotted alongside the edit so a server-side rewrite
+  // of the SAME draft row (regen, redraft-from-actions, manual DB update)
+  // invalidates the autosave — draft id alone can't detect that.
   const draftEditor = document.getElementById('draft-editor');
   draftEditor.addEventListener('input', () => {
     if (currentTicketId) {
       localStorage.setItem(`draft-ticket-${currentTicketId}`, draftEditor.value);
       if (currentDraftId) localStorage.setItem(`draft-id-ticket-${currentTicketId}`, currentDraftId);
+      localStorage.setItem(`draft-server-ticket-${currentTicketId}`, currentServerDraft || '');
     }
     autoExpandTextarea(draftEditor);
   });
@@ -963,10 +968,15 @@ function renderTicketDetail(ticket) {
     // Draft editor — restore autosaved edits if any, but only if it matches the current draft
     const savedDraft = localStorage.getItem(`draft-ticket-${ticket.id}`);
     const savedDraftId = localStorage.getItem(`draft-id-ticket-${ticket.id}`);
+    const savedServer = localStorage.getItem(`draft-server-ticket-${ticket.id}`);
     const editor = document.getElementById('draft-editor');
-    // Only use localStorage version if it was saved against the SAME draft ID
-    const useLocal = savedDraft && savedDraftId && parseInt(savedDraftId) === d.id;
+    // Only use the localStorage version if it was saved against the SAME draft ID
+    // AND the server draft hasn't been rewritten since the autosave (same row id
+    // survives regens and server-side updates, so id alone isn't enough).
+    const useLocal = savedDraft && savedDraftId && parseInt(savedDraftId) === d.id
+      && savedServer === d.draft_response;
     editor.value = useLocal ? savedDraft : d.draft_response;
+    currentServerDraft = d.draft_response;
     autoExpandTextarea(editor);
     // The editor self-scrolls (overflow-y:auto on mobile). On reopen, iOS keeps
     // a stale internal scrollTop, which strands the caret until a blur/refocus.
