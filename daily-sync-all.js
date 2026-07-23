@@ -626,7 +626,7 @@ function buildRefundPatternHtml(results) {
     .map(r => `#${r.ticket}: ${r.reason}`).join('<br>');
   return `
     <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
-      ${m.refund_pattern_count ? `Refund-pattern flags (last ${m.window_days}d): <strong>${m.refund_pattern_count}</strong><br>${flagBits}` : ''}
+      ${m.refund_pattern_count ? `Refund-pattern flags (last ${m.window_days}d): <strong>${m.refund_pattern_count}</strong>${m.proof_asks_sent ? ` · ${m.proof_asks_sent} donation proof ask(s) sent` : ''}<br>${flagBits}` : ''}
       ${m.refund_pattern_count && m.routed_count ? '<br>' : ''}
       ${m.routed_count ? `Routed to you (last ${m.window_days}d): <strong>${m.routed_count}</strong><br>${routeBits}` : ''}
     </div>`;

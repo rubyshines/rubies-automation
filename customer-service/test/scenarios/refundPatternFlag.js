@@ -35,7 +35,9 @@ Ultimately your comfort is most important so let me know what you would like to 
 It's not a size thing, the material just doesn't do what I need it to. I don't want to try another size. Please just refund the order.`;
 
 const FLAG_RE = /^refund-pattern/i;
-const SUSPICION_RE = /(flag|suspicious|pattern|abuse|policy team|fraud|proof)/i;
+const DAYS_RE = /days after ordering/i;
+const PROOF_RE = /send over a photo with the receipt so I can let the org know/i;
+const SUSPICION_RE = /(flag|suspicious|pattern|abuse|policy team|fraud)/i;
 const REFUND_RE = /refund/i;
 
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
@@ -63,6 +65,12 @@ function pass(msg) { console.log('  ✓ ' + msg); }
   const flags = structured.prescription?.flags || [];
   if (flags.some(f => FLAG_RE.test(String(f).trim()))) pass('Refund-pattern flag raised');
   else fail(`no Refund-pattern flag in flags: ${JSON.stringify(flags)}`);
+
+  if (flags.some(f => DAYS_RE.test(String(f)))) pass('flag includes days-after-ordering');
+  else fail(`flag missing days-after-ordering marker: ${JSON.stringify(flags)}`);
+
+  if (PROOF_RE.test(draft)) pass('donation proof ask included (flagged refund, partner routing)');
+  else fail('donation proof ask missing from draft');
 
   const refundStaged = structured.action_type === 'refund'
     || (structured.prescription?.items || []).some(i => i.state === 'REFUND_CONFIRMED');

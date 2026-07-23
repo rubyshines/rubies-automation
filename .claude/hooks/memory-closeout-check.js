@@ -66,6 +66,19 @@ try {
 
 if (/^\.claude\/memory\//m.test(touched)) allow();
 
+// Compound `git commit … && git push` commands are evaluated BEFORE the commit
+// runs, so the outgoing range can't include it yet. If the same command also
+// commits and .claude/memory changes are sitting in the working tree (about to
+// be committed), the memory close-out is satisfied.
+if (/\bgit\b[^\n]*\bcommit\b/.test(command)) {
+  try {
+    const pending = execSync('git status --porcelain -- .claude/memory', {
+      cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (pending.trim()) allow();
+  } catch { /* fall through to block */ }
+}
+
 process.stderr.write(
   'BLOCKED: memory close-out gate — this push to main contains no .claude/memory/ commit.\n' +
   'Per feedback_collaboration.md, memory updates ship in the same push as the code they document.\n' +

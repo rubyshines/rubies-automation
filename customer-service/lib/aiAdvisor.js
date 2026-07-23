@@ -123,6 +123,7 @@ const TOOLS = [
         },
         has_defect: { type: 'boolean', description: 'True if any item has a defect (skip donation for defects)' },
         customer_requested_partner: { type: 'boolean', description: 'Set true ONLY when the customer has explicitly accepted a prior offer of partner org info on a single-item donation. Bypasses the default "donate locally" response and returns a partner address. Leave false/omitted otherwise — the tool handles the default single vs multi-item routing.' },
+        include_proof_ask: { type: 'boolean', description: 'Set true ONLY when this same draft raises a "Refund-pattern:" flag. Routes the donation to a partner org even for a single item and appends the photo/receipt request to the donation text. The tool automatically omits the ask when no partner org exists (local-donation fallback) — never compose the ask yourself.' },
       },
       required: ['customer_country', 'item_count'],
     },
@@ -354,7 +355,7 @@ async function executeToolCall(toolName, toolInput) {
     }
 
     case 'get_donation_partner': {
-      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner } = toolInput;
+      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner, include_proof_ask } = toolInput;
       // Reuse the deterministic donation routing from decisionTree
       const intake = {
         items: has_defect
@@ -366,6 +367,7 @@ async function executeToolCall(toolName, toolInput) {
         customer: customer_address ? { defaultAddress: customer_address } : null,
         targetOrder: { lineItems: intake.items.map(() => ({ title: 'item', quantity: 1 })) },
         customerRequestedPartner: !!customer_requested_partner,
+        includeProofAsk: !!include_proof_ask,
       };
       const result = await prescribeDonationRouting(intake, context);
       // Side-channel: stash routing metadata (partner_id + items_count) on the
@@ -379,6 +381,7 @@ async function executeToolCall(toolName, toolInput) {
           partner_id: result.partner?.id || null,
           partner_name: result.partner?.name || null,
           items_count: item_count || 1,
+          proof_ask: !!result.proof_ask,
         };
       }
       return {
@@ -926,13 +929,14 @@ The key question is: has the customer received REAL sizing help from you (Jamie/
 - **Every time you process a refund, also decide the flags field** (see "Refund-pattern flag" below): first-time buyer who declined/preempted sizing help → emit the flag; anyone else → flags: []. This decision is part of the refund flow, not optional.
 - **Nudge first** if: the customer has only been through the bot's intake flow. Even if they said "return" to the bot, YOUR first response should offer real sizing help based on what they told you (e.g. "too small" → suggest next size up with delta)
 - When processing a refund, include donation info in the same message. Do NOT ask them to confirm which items if they already selected them.
-- NEVER say "once you've donated/sent the items" or "let me know when you've shipped them." Refunds are processed upfront, not contingent on anything.
+- NEVER say "once you've donated/sent the items" or "let me know when you've shipped them." Refunds are processed upfront, not contingent on anything. (The donation tool's own photo/receipt request on flagged refunds is fine — it comes after the refund confirmation and never gates it.)
 
 **Refund-pattern flag (operator visibility — never changes your reply):**
 Whenever you process a refund, read the "Customer order history" context line and set the structured "flags" field as the last step of composing the draft. The customer never sees flags, and raising one does NOT change what you write or whether you process the refund — write the same warm reply either way.
-- The context line says FIRST-TIME BUYER AND the customer declined or preempted real sizing help (said no to trying another size, refused to say what went wrong, said "it's not a size thing" / "sizing won't fix it" without trying, or ignored a measurement offer) → emit exactly: "flags": ["Refund-pattern: first-time buyer, [complaint in 2-4 words], declined size help"].
-- The refund covers every item in the order AND the customer gave no reason at all → emit: "flags": ["Refund-pattern: full-order refund, no reason given"].
+- The context line says FIRST-TIME BUYER AND the customer declined or preempted real sizing help (said no to trying another size, refused to say what went wrong, said "it's not a size thing" / "sizing won't fix it" without trying, or ignored a measurement offer) → emit exactly: "flags": ["Refund-pattern: first-time buyer, [complaint in 2-4 words], declined size help, [days_since_order from context] days after ordering"].
+- The refund covers every item in the order AND the customer gave no reason at all → emit: "flags": ["Refund-pattern: full-order refund, no reason given, [days_since_order from context] days after ordering"].
 - Neither pattern → emit "flags": []. A repeat customer, an engaged customer, or a defect/wrong-item refund never gets a flag.
+- **Flagged refund → donation proof ask.** When this draft raises a "Refund-pattern:" flag, call get_donation_partner with include_proof_ask: true (regardless of item count — the tool routes even one item to a partner org and appends the photo/receipt request to its response_text). The tool omits the ask automatically when there is no partner org to notify. Never write the ask in your own words, and never make the refund sound contingent on it — the refund is already processed in the same message.
 - **2+ previously refunded orders → Jamie decides.** When the context shows 2 or more previously refunded orders, do NOT stage the refund. Set status to "route_to_human" with routing_reason "[Nth] refund request on this account ([order names]) — review before refunding", write the standard "Let me look into this and get back to you" reply, and raise the flag "Refund-pattern: repeat refunder — [N] prior refunded orders". One previous refund is normal customer behavior — process it without routing.
 
 ### When to offer size OPTIONS (mention fabric delta)

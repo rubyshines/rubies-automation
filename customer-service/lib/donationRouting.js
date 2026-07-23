@@ -102,8 +102,16 @@ function pickWeightedByLoad(candidates, getLoad, rng = Math.random) {
 // Main routing function
 // ---------------------------------------------------------------------------
 
+// Soft accountability ask appended to partner-routed donation text for
+// refund-pattern-flagged refunds (wording locked by Jamie 2026-07-23). The
+// refund is never contingent on it — it signals the donation is noticed.
+const PROOF_ASK_TEXT = "When you've dropped them off, can you send over a photo with the receipt so I can let the org know to expect the donation?";
+
 async function prescribeDonationRouting(intake, context) {
   const customerRequestedPartner = !!context.customerRequestedPartner;
+  // Refund-pattern proof ask: route even single items to a partner org (a
+  // local donation has no org to notify, so the ask would be meaningless).
+  const includeProofAsk = !!context.includeProofAsk;
   // Skip for defects
   const nonDefectItems = intake.items.filter(i => i.issue !== 'defect');
   if (nonDefectItems.length === 0) {
@@ -157,7 +165,7 @@ async function prescribeDonationRouting(intake, context) {
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
 
-  function formatDonationText(programExplanation, partner, washReminder) {
+  function formatDonationText(programExplanation, partner, washReminder, proofAsk) {
     // Prefer the canonical mailing_address from the partner registry (multi-line
     // "RUBIES Returns / c/o ..." block published to the website). Fall back to
     // reconstructing from `address` for any legacy row that doesn't have it yet.
@@ -197,6 +205,7 @@ async function prescribeDonationRouting(intake, context) {
       '',
       washReminder,
       '',
+      ...(proofAsk ? [proofAsk, ''] : []),
       'Your return will be greatly appreciated by someone in our community.',
       '',
       'Take care,',
@@ -216,7 +225,7 @@ async function prescribeDonationRouting(intake, context) {
     };
   }
 
-  if (itemCount <= 1 && !customerRequestedPartner) {
+  if (itemCount <= 1 && !customerRequestedPartner && !includeProofAsk) {
     return {
       phase: 'donation_routing',
       type: 'local_single',
@@ -263,8 +272,9 @@ async function prescribeDonationRouting(intake, context) {
     phase: 'donation_routing',
     type: 'partner',
     partner,
-    response_text: formatDonationText(programExplanation, partner, washReminder),
-    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d`,
+    proof_ask: includeProofAsk,
+    response_text: formatDonationText(programExplanation, partner, washReminder, includeProofAsk ? PROOF_ASK_TEXT : null),
+    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${includeProofAsk ? ', proof ask included' : ''}`,
   };
 }
 
@@ -309,4 +319,4 @@ async function logDonationRouting({ customer_email, order_number, partner_id, it
   }
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads };
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, PROOF_ASK_TEXT };
