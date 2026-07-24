@@ -5260,21 +5260,22 @@ async function selectOutreachEntry(companyId) {
   document.getElementById('outreach-placeholder').style.display = 'none';
   detailEl.style.display = 'block';
 
-  // Conversation history loads in parallel with the draft; re-renders on
-  // arrival. The endpoint also reconciles manual Gmail sends, so first load
-  // can take a beat — the pane shows its own loading state meanwhile.
+  // Conversation history + orders load in parallel with the draft; the
+  // context block re-renders on arrival. The endpoint also runs Gmail thread
+  // discovery + manual-send reconcile, so first load can take a beat — the
+  // pane shows its own loading state meanwhile.
   api(`/api/b2b/companies/${encodeURIComponent(companyId)}/threads`)
     .then(h => {
       if (outreachSelectedId !== companyId) return;
       outreachHistory = h;
-      const historyEl = document.getElementById('outreach-history');
-      if (historyEl) historyEl.outerHTML = outreachHistoryHtml();
+      const ctxEl = document.getElementById('outreach-context');
+      if (ctxEl) ctxEl.innerHTML = outreachOrdersHtml() + outreachHistoryHtml();
     })
     .catch(() => {
       if (outreachSelectedId !== companyId) return;
       outreachHistory = { threads: [], error: true };
-      const historyEl = document.getElementById('outreach-history');
-      if (historyEl) historyEl.outerHTML = outreachHistoryHtml();
+      const ctxEl = document.getElementById('outreach-context');
+      if (ctxEl) ctxEl.innerHTML = outreachOrdersHtml() + outreachHistoryHtml();
     });
 
   if (!entry.draft) {
@@ -5361,6 +5362,38 @@ function outreachHistoryHtml() {
   return `<div id="outreach-history" class="detail-section outreach-history">
     <h3>Conversation</h3>
     ${threads.map((t, i) => threadHtml(t, i === 0)).join('')}
+  </div>`;
+}
+
+// Order history card — at-a-glance commerce context for companies that buy.
+// Borrows the CS order-summary shape: tabular rows, status badges, admin links.
+function outreachOrdersHtml() {
+  const h = outreachHistory;
+  if (!h || !Array.isArray(h.orders) || !h.orders.length) return '';
+  const c = h.company || {};
+  const summary = [
+    c.order_count ? `${c.order_count} order${c.order_count === 1 ? '' : 's'}` : null,
+    c.total_sales ? `$${Number(c.total_sales).toLocaleString()} lifetime` : null,
+    c.last_order_date ? `last ${esc(timeAgo(c.last_order_date, 'short'))} ago` : null,
+  ].filter(Boolean).join(' · ');
+  const rows = h.orders.map(o => {
+    const adminId = String(o.shopify_order_id || '').split('/').pop();
+    const name = `#${o.order_number}`;
+    const link = adminId
+      ? `<a href="https://admin.shopify.com/store/rubies-active-wear/orders/${esc(adminId)}" target="_blank" rel="noopener">${name}</a>`
+      : name;
+    const status = o.cancelled_at ? 'CANCELLED'
+      : [o.financial_status, o.fulfillment_status].filter(Boolean).join(' · ');
+    return `<div class="outreach-order-row${o.cancelled_at ? ' outreach-order-cancelled' : ''}">
+      <span class="outreach-order-name">${link}</span>
+      <span class="outreach-order-date">${esc(timeAgo(o.created_at, 'short'))} ago</span>
+      <span class="outreach-order-status">${esc(status || '')}</span>
+      <span class="outreach-order-total">$${Number(o.total_price || 0).toFixed(2)}${o.shop_currency && o.shop_currency !== 'USD' ? ' ' + esc(o.shop_currency) : ''}</span>
+    </div>`;
+  }).join('');
+  return `<div id="outreach-orders" class="detail-section outreach-orders">
+    <h3>Orders <span class="outreach-orders-summary">${summary}</span></h3>
+    ${rows}
   </div>`;
 }
 
@@ -5455,7 +5488,7 @@ function renderOutreachDetail(entry, draft) {
     const what = entry.message_type
       ? `the <strong>${esc(entry.message_type.replace(/_/g, ' '))}</strong> message`
       : 'a reply (the advisor reads the thread and drafts Jamie’s response)';
-    el.innerHTML = header + outreachHistoryHtml() + `
+    el.innerHTML = header + `<div id="outreach-context">${outreachOrdersHtml() + outreachHistoryHtml()}</div>` + `
       <div class="detail-section">
         <h3>AI Draft</h3>
         <div class="outreach-empty-note">No draft yet &mdash; the &#8635; button will write ${what}.</div>
@@ -5466,7 +5499,7 @@ function renderOutreachDetail(entry, draft) {
 
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
 
-  el.innerHTML = header + outreachHistoryHtml() + outreachFactsHtml(draft) + `
+  el.innerHTML = header + `<div id="outreach-context">${outreachOrdersHtml() + outreachHistoryHtml()}</div>` + outreachFactsHtml(draft) + `
     <div class="detail-section">
       <h3>AI Draft
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>

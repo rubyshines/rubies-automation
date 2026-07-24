@@ -151,4 +151,88 @@ async function reconcileThreads(sb, { companyIds = null, force = false } = {}) {
   return { checked: due.length, inserted };
 }
 
-module.exports = { reconcileThreads, partitionThreadMessages, extractPlainText };
+const discoveryCooldown = new Map(); // company_id -> epoch ms
+
+/**
+ * Decide a discovered thread's initial status. Pure.
+ * History import must never resurrect ancient "waiting on us" rows: a thread
+ * whose last message is outbound, or is older than `staleDays`, imports as
+ * 'closed' (visible in history, invisible to Tier 1). Only a recent inbound
+ * with no reply imports 'open' — that one genuinely IS waiting on us.
+ */
+function discoveredThreadStatus(lastMsg, now = new Date(), staleDays = 30) {
+  if (!lastMsg) return 'closed';
+  if (lastMsg.direction === 'outbound') return 'closed';
+  const age = now - new Date(lastMsg.sent_at);
+  return age > staleDays * 86400000 ? 'closed' : 'open';
+}
+
+/**
+ * Find Gmail threads with a company's contacts that the engine has never seen
+ * (relationships that predate the outreach build), create b2b_threads rows
+ * for them, and import their messages. Caps at `maxThreads` most recent.
+ * Fail-soft; per-company 15-min cooldown.
+ */
+async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, force = false } = {}) {
+  if (!companyId || !emails?.length) return { discovered: 0 };
+  const now = Date.now();
+  if (!force && now - (discoveryCooldown.get(companyId) || 0) < COOLDOWN_MS) return { discovered: 0 };
+  discoveryCooldown.set(companyId, now);
+
+  const { getGmail } = require('../../gmail-management/lib/gmailClient');
+  let gmail;
+  try { gmail = await getGmail(); } catch (err) {
+    console.error(`[discover] Gmail unavailable: ${err.message}`);
+    return { discovered: 0, error: 'gmail_unavailable' };
+  }
+
+  const q = '{' + emails.map(e => `from:${e} to:${e}`).join(' ') + '}';
+  let listing;
+  try {
+    listing = await gmail.users.threads.list({ userId: 'me', q, maxResults: maxThreads });
+  } catch (err) {
+    console.error(`[discover] ${companyId} thread list failed: ${err.message}`);
+    return { discovered: 0 };
+  }
+  const found = listing.data?.threads || [];
+  if (!found.length) return { discovered: 0 };
+
+  const { data: existing, error } = await sb.from('b2b_threads')
+    .select('gmail_thread_id').in('gmail_thread_id', found.map(t => t.id));
+  if (error) throw new Error(`existing threads: ${error.message}`);
+  const known = new Set((existing || []).map(t => t.gmail_thread_id));
+
+  let discovered = 0;
+  for (const t of found) {
+    if (known.has(t.id)) continue;
+    let resp;
+    try {
+      resp = await gmail.users.threads.get({ userId: 'me', id: t.id, format: 'full' });
+    } catch (err) {
+      console.error(`[discover] thread ${t.id} fetch failed: ${err.message}`);
+      continue;
+    }
+    const rows = partitionThreadMessages(resp.data?.messages, new Set());
+    if (!rows.length) continue;
+    const last = rows[rows.length - 1];
+    const subject = header(resp.data.messages?.[0] || {}, 'Subject') || '(no subject)';
+
+    const { data: thread, error: tErr } = await sb.from('b2b_threads')
+      .upsert({
+        company_id: companyId, thread_type: 'other', subject,
+        gmail_thread_id: t.id, status: discoveredThreadStatus(last),
+        last_message_at: last.sent_at,
+      }, { onConflict: 'gmail_thread_id' })
+      .select('id').single();
+    if (tErr) { console.error(`[discover] thread insert ${t.id}: ${tErr.message}`); continue; }
+
+    const { error: mErr } = await sb.from('b2b_messages')
+      .upsert(rows.map(r => ({ ...r, thread_id: thread.id, company_id: companyId })),
+        { onConflict: 'gmail_message_id', ignoreDuplicates: true });
+    if (mErr) { console.error(`[discover] messages ${t.id}: ${mErr.message}`); continue; }
+    discovered++;
+  }
+  return { discovered };
+}
+
+module.exports = { reconcileThreads, discoverCompanyThreads, discoveredThreadStatus, partitionThreadMessages, extractPlainText };

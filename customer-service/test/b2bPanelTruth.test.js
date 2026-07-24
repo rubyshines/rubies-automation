@@ -4,7 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { computeQueueEntry, humanAge } = require('../../b2b-outreach/lib/queue');
-const { partitionThreadMessages, extractPlainText } = require('../../b2b-outreach/lib/manualSendReconcile');
+const { partitionThreadMessages, extractPlainText, discoveredThreadStatus } = require('../../b2b-outreach/lib/manualSendReconcile');
 
 // ── humanAge ────────────────────────────────────────────────────────────────
 
@@ -94,6 +94,25 @@ test('falls back to snippet when no text/plain part exists', () => {
     new Set()
   );
   assert.equal(rows[0].body_text, 'snippet text');
+});
+
+// ── discoveredThreadStatus ──────────────────────────────────────────────────
+// History import must never resurrect ancient waiting-on-us rows.
+
+test('thread ending with our reply imports closed', () => {
+  const now = new Date('2026-07-24T12:00:00Z');
+  assert.equal(discoveredThreadStatus({ direction: 'outbound', sent_at: '2026-07-23T12:00:00Z' }, now), 'closed');
+});
+
+test('recent unanswered inbound imports open (genuinely waiting)', () => {
+  const now = new Date('2026-07-24T12:00:00Z');
+  assert.equal(discoveredThreadStatus({ direction: 'inbound', sent_at: '2026-07-10T12:00:00Z' }, now), 'open');
+});
+
+test('stale unanswered inbound imports closed (no Tier-1 resurrection)', () => {
+  const now = new Date('2026-07-24T12:00:00Z');
+  assert.equal(discoveredThreadStatus({ direction: 'inbound', sent_at: '2026-04-23T12:00:00Z' }, now), 'closed');
+  assert.equal(discoveredThreadStatus(null, now), 'closed');
 });
 
 // ── extractPlainText ────────────────────────────────────────────────────────

@@ -12,7 +12,7 @@
  */
 const { assembleQueue } = require('./queue');
 const { buildContexts } = require('./queueContext');
-const { reconcileThreads } = require('./manualSendReconcile');
+const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft } = require('./outreachAdvisor');
 const { sendB2bEmail, SEND_FLAG } = require('./sendB2bEmail');
 const { isFlagEnabled } = require('../../shared/systemFlags');
@@ -200,33 +200,72 @@ async function setFactVerified(sb, { draft_id, index, verified } = {}) {
   return { draft_id, facts_verified: structured.facts_verified };
 }
 
+/** All known emails for a company: active contacts + the general front door. */
+async function getCompanyEmails(sb, companyId) {
+  const { data: contacts, error } = await sb.from('b2b_contacts')
+    .select('email').eq('company_id', companyId).eq('is_active', true);
+  if (error) throw new Error(error.message);
+  const { data: company, error: cErr } = await sb.from('b2b_companies')
+    .select('general_email').eq('id', companyId).maybeSingle();
+  if (cErr) throw new Error(cErr.message);
+  const set = new Set((contacts || []).map(c => c.email.toLowerCase()));
+  if (company?.general_email) set.add(company.general_email.toLowerCase());
+  return [...set];
+}
+
 /**
- * Full conversation history for one company: threads newest-first, each with
- * its messages oldest-first — the dashboard history pane payload. Reconciles
- * the company's open threads first so the pane shows manual Gmail replies too.
+ * Full context for one company — the dashboard detail payload:
+ *   threads   newest-first, each with messages oldest-first
+ *   orders    recent Shopify orders matched via the company's known emails
+ *   company   order_count / total_sales / last_order_date summary
+ * Before reading, discovers Gmail threads the engine has never seen (pre-June
+ * relationships) and reconciles open threads for manual sends. Both fail-soft.
  */
 async function fetchCompanyThreads(sb, companyId) {
+  let emails = [];
+  try { emails = await getCompanyEmails(sb, companyId); } catch (err) {
+    console.error(`[queueService] emails lookup failed: ${err.message}`);
+  }
   try {
+    await discoverCompanyThreads(sb, { companyId, emails });
     await reconcileThreads(sb, { companyIds: [companyId] });
   } catch (err) {
     console.error(`[queueService] history reconcile skipped: ${err.message}`);
   }
+
   const { data: threads, error } = await sb.from('b2b_threads')
     .select('id, thread_type, subject, status, gmail_thread_id, created_at, last_message_at')
     .eq('company_id', companyId)
     .order('last_message_at', { ascending: false, nullsFirst: false });
   if (error) throw new Error(error.message);
-  if (!threads?.length) return { threads: [] };
 
-  const { data: messages, error: mErr } = await sb.from('b2b_messages')
-    .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
-    .in('thread_id', threads.map(t => t.id))
-    .order('sent_at', { ascending: true });
-  if (mErr) throw new Error(mErr.message);
+  let withMessages = [];
+  if (threads?.length) {
+    const { data: messages, error: mErr } = await sb.from('b2b_messages')
+      .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
+      .in('thread_id', threads.map(t => t.id))
+      .order('sent_at', { ascending: true });
+    if (mErr) throw new Error(mErr.message);
+    const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
+    for (const m of messages || []) byThread.get(m.thread_id)?.messages.push(m);
+    withMessages = [...byThread.values()];
+  }
 
-  const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
-  for (const m of messages || []) byThread.get(m.thread_id)?.messages.push(m);
-  return { threads: [...byThread.values()] };
+  let orders = [];
+  if (emails.length) {
+    const { data: orderRows, error: oErr } = await sb.from('orders')
+      .select('shopify_order_id, order_number, created_at, total_price, shop_currency, financial_status, fulfillment_status, cancelled_at')
+      .in('customer_email', emails)
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (oErr) console.error(`[queueService] orders lookup failed: ${oErr.message}`);
+    else orders = orderRows || [];
+  }
+
+  const { data: company } = await sb.from('b2b_companies')
+    .select('order_count, total_sales, last_order_date').eq('id', companyId).maybeSingle();
+
+  return { threads: withMessages, orders, company: company || null };
 }
 
 module.exports = {
