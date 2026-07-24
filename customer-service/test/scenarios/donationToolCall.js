@@ -20,7 +20,12 @@
  *   2. get_donation_partner was actually called during the tool loop
  *   3. the draft contains a partner mailing block (RUBIES Returns / c/o ...)
  *   4. the draft does NOT frame donation as optional ("if you'd like",
- *      "I can send you the info", "feel free to donate locally")
+ *      "I can send you the info", "feel free to donate locally", "you're
+ *      welcome to send", "no need to send anything back")
+ *   5. the tool's ask line survives verbatim ("can you please send the items
+ *      you are returning to") — 2026-07-24: production data showed 40/40
+ *      partner-address drafts rewrote the tool copy, half into optional
+ *      framing, the rest dropping the ask so the address floated with no ask
  *
  * Usage: node customer-service/test/scenarios/donationToolCall.js
  */
@@ -105,11 +110,18 @@ function pass(msg) { console.log('  ✓ ' + msg); }
   }
 
   // Assertion 4: donation is not framed as optional
-  const optional = draft.match(/if you'?d like|I can send you (?:the )?info|feel free to donate/i);
+  const optional = draft.match(/if you'?d like|I can send you (?:the )?info|feel free to donate|welcome to send|no need to send anything back|if you(?:'re| are) able|should you (?:wish|like)|totally optional/i);
   if (!optional) {
     pass('donation is not framed as optional');
   } else {
     fail(`draft frames donation as optional (${JSON.stringify(optional[0])}) — the tool's response_text should be relayed as-is`);
+  }
+
+  // Assertion 5: the tool's ask line survives verbatim
+  if (/can you please send the items you are returning to/i.test(draft)) {
+    pass('the ask line is relayed verbatim');
+  } else {
+    fail('the ask line ("can you please send the items you are returning to") is missing — the advisor rewrote or dropped the tool\'s ask');
   }
 
   console.log('');

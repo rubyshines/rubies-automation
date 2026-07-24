@@ -384,15 +384,17 @@ async function executeToolCall(toolName, toolInput) {
           proof_ask: !!result.proof_ask,
         };
       }
+      // The model gets ONLY paste-ready text plus a point-of-use instruction —
+      // no partner object to recompose from. The trailing "Take care," is
+      // trimmed here so word-for-word pasting composes with the signature.
+      const responseText = (result.response_text || '')
+        .replace(/\n+Take care,\s*$/, '') || null;
       return {
         type: routingType,
-        response_text: result.response_text || null,
-        partner: result.partner ? {
-          name: result.partner.name,
-          city: result.partner.city,
-          address: result.partner.address,
-          description: result.partner.description,
-        } : null,
+        response_text: responseText,
+        ...(responseText ? {
+          instruction: 'Paste response_text into your reply word-for-word as the donation section — every line, including the "can you please send the items you are returning to:" ask, the full address block, and the appreciation line. Do not paraphrase, shorten, reorder, or soften any of it. When a partner address is given, sending the items there is the standard next step we ask of every customer: never present it as optional ("you\'re welcome to", "if you\'d like") and never write "no need to send anything back" — they do send the items, just to the partner org instead of us.',
+        } : {}),
         audit: result.audit,
       };
     }
@@ -964,7 +966,7 @@ Include donation info ONLY when:
 Do NOT mention donation when:
 - Gathering info, asking questions, offering size options
 - You haven't confirmed the exchange yet
-CRITICAL: whenever this section says to include donation info, your NEXT action is a get_donation_partner call — the donation section of your reply is the tool's response_text, never wording you compose yourself. Do not rewrite it or add state-conditional framing. Routing is by geographic proximity and the selected partner may be in a different state; that is expected and does not need to be explained to the customer.
+CRITICAL: whenever this section says to include donation info, your NEXT action is a get_donation_partner call — the donation section of your reply is the tool's response_text pasted word-for-word, never wording you compose yourself. The copy already carries the right firmness for each routing case: when it asks the customer to send the items to a partner address, that ask is the standard next step for every customer — relay it as the ask it is, exactly as written. Routing is by geographic proximity and the selected partner may be in a different state; that is expected and does not need to be explained to the customer.
 
 ### When to ask WHAT HAPPENED vs take action
 Use "Can you let me know what didn't work out in case I can help you with another size or recommend another product?" ONLY when:
