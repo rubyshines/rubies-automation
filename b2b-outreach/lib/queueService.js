@@ -248,7 +248,7 @@ function startCompanyGmailSync(sb, companyId, emails) {
  */
 async function fetchCompanyThreads(sb, companyId) {
   // Round 1 — independent lookups in parallel.
-  const [emails, threadsRes, companyRes, recipient] = await Promise.all([
+  const [emails, threadsRes, companyRes, recipient, contactsRes] = await Promise.all([
     getCompanyEmails(sb, companyId).catch(err => {
       console.error(`[queueService] emails lookup failed: ${err.message}`);
       return [];
@@ -257,9 +257,12 @@ async function fetchCompanyThreads(sb, companyId) {
       .select('id, thread_type, subject, status, gmail_thread_id, created_at, last_message_at')
       .eq('company_id', companyId)
       .order('last_message_at', { ascending: false, nullsFirst: false }),
-    sb.from('b2b_companies')
-      .select('order_count, total_sales, last_order_date').eq('id', companyId).maybeSingle(),
+    sb.from('b2b_companies').select('*').eq('id', companyId).maybeSingle(),
     resolveRecipient(sb, companyId).catch(() => null),
+    sb.from('b2b_contacts')
+      .select('email, full_name, role, title, is_primary, is_active')
+      .eq('company_id', companyId).eq('is_active', true)
+      .order('is_primary', { ascending: false }),
   ]);
   if (threadsRes.error) throw new Error(threadsRes.error.message);
   const threads = threadsRes.data || [];
@@ -287,10 +290,26 @@ async function fetchCompanyThreads(sb, companyId) {
   const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
   for (const m of messagesRes.data || []) byThread.get(m.thread_id)?.messages.push(m);
 
+  // Logo: store-locator logo if the company has one, else the donation
+  // partner registry's logo when this org is a partner (domain/name match).
+  const company = companyRes.data || null;
+  let logoUrl = company?.locator_logo_url || null;
+  if (!logoUrl && company?.relationship_type === 'lgbtq_org') {
+    const domain = (company.website || '').toLowerCase().replace(/^https?:\/\/(www\.)?/, '').split('/')[0] || null;
+    const { data: partners } = await sb.from('donation_partners')
+      .select('name, website_url, logo_url').eq('active', true);
+    const match = (partners || []).find(p =>
+      (domain && (p.website_url || '').toLowerCase().includes(domain))
+      || (p.name || '').toLowerCase().trim() === (company.name || '').toLowerCase().trim());
+    logoUrl = match?.logo_url || null;
+  }
+
   return {
     threads: [...byThread.values()],
     orders: ordersRes.data || [],
-    company: companyRes.data || null,
+    company,
+    contacts: contactsRes.error ? [] : (contactsRes.data || []),
+    logo_url: logoUrl,
     recipient,
     gmail_sync: gmailSync,
   };

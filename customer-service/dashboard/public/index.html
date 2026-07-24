@@ -256,7 +256,27 @@
     <!-- Outreach panel — B2B outreach queue: retailers, LGBTQ+ orgs, affiliates -->
     <div id="panel-outreach" class="panel" style="display:none">
       <div class="sidebar">
-        <div id="outreach-queue-list"><div class="outreach-loading">Loading&hellip;</div></div>
+        <!-- View 1: company queue -->
+        <div id="outreach-sidebar-queue">
+          <div id="outreach-queue-list"><div class="outreach-loading">Loading&hellip;</div></div>
+        </div>
+        <!-- View 2: company context (mirrors the CS sidebar takeover) -->
+        <div id="outreach-sidebar-context" style="display:none">
+          <div class="sidebar-nav">
+            <button class="sidebar-back" onclick="showOutreachQueue()">
+              <span class="sidebar-back-arrow">&larr;</span>
+              <span id="outreach-back-count"></span>
+            </button>
+            <div class="sidebar-nav-arrows">
+              <button class="nav-arrow" onclick="navigateOutreach(-1)" title="Previous company (k)">&uarr;</button>
+              <button class="nav-arrow" onclick="navigateOutreach(1)" title="Next company (j)">&darr;</button>
+            </div>
+          </div>
+          <div class="sidebar-context-inner">
+            <div id="outreach-company-card"></div>
+            <div id="outreach-orders-card"></div>
+          </div>
+        </div>
       </div>
       <div class="detail">
         <div id="outreach-placeholder" class="outreach-placeholder">Select a company to review</div>

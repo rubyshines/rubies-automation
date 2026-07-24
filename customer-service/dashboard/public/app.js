@@ -5253,6 +5253,7 @@ async function selectOutreachEntry(companyId) {
   outreachDraft = null;
   outreachHistory = null;
   renderOutreachQueue(); // refresh active highlight
+  renderOutreachSidebarContext(); // sidebar takeover (compact card while loading)
 
   const detailEl = document.getElementById('outreach-detail');
   document.getElementById('outreach-placeholder').style.display = 'none';
@@ -5305,6 +5306,7 @@ function outreachAdvancePast(companyId) {
     outreachSelectedId = null;
     document.getElementById('outreach-detail').style.display = 'none';
     document.getElementById('outreach-placeholder').style.display = 'flex';
+    showOutreachQueue(); // nothing selected — restore the queue sidebar
   }
 }
 
@@ -5372,14 +5374,79 @@ async function loadOutreachContext(companyId, allowRefetch) {
   if (outreachSelectedId !== companyId) return;
   outreachHistory = h;
   const ctxEl = document.getElementById('outreach-context');
-  if (ctxEl) ctxEl.innerHTML = outreachOrdersHtml() + outreachHistoryHtml();
+  if (ctxEl) ctxEl.innerHTML = outreachHistoryHtml();
   const recipEl = document.getElementById('outreach-recipient');
   if (recipEl) recipEl.outerHTML = outreachRecipientHtml();
+  renderOutreachSidebarContext();
   // One follow-up fetch after the background Gmail sync has had time to land.
   // Cooldowns server-side guarantee the second response can't re-trigger it.
   if (allowRefetch && h.gmail_sync === 'started') {
     setTimeout(() => { if (outreachSelectedId === companyId) loadOutreachContext(companyId, false); }, 6000);
   }
+}
+
+// ── Sidebar takeover (mirrors the CS customer-context sidebar) ─────────────
+
+function showOutreachQueue() {
+  document.getElementById('outreach-sidebar-context').style.display = 'none';
+  document.getElementById('outreach-sidebar-queue').style.display = '';
+}
+
+function renderOutreachSidebarContext() {
+  const entry = outreachQueue.find(e => e.company_id === outreachSelectedId);
+  if (!entry) return;
+  document.getElementById('outreach-sidebar-queue').style.display = 'none';
+  document.getElementById('outreach-sidebar-context').style.display = '';
+  document.getElementById('outreach-back-count').textContent = `${outreachQueue.length} in queue`;
+
+  const h = outreachHistory;
+  const c = h?.company;
+  const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '';
+  const cardEl = document.getElementById('outreach-company-card');
+
+  if (!c) {
+    cardEl.innerHTML = `<div class="customer-compact">
+      <div class="customer-compact-line1"><span class="customer-name">${esc(entry.company_name)}</span></div>
+      <div class="customer-compact-line2">${h === null ? 'loading&hellip;' : ''}</div>
+    </div>`;
+    document.getElementById('outreach-orders-card').innerHTML = '';
+    return;
+  }
+
+  const place = [c.city, c.region, c.country].filter(Boolean).join(', ');
+  const flags = Object.entries(c.program_flags || {}).filter(([, v]) => v).map(([k]) => k.replace(/_/g, ' '));
+  const contacts = (h.contacts || []).map(ct => `
+    <div class="outreach-contact-row">
+      <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}${ct.is_primary ? ' <span class="badge badge-muted">primary</span>' : ''}</span>
+      ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
+      <span class="outreach-contact-email">${esc(ct.email)}</span>
+    </div>`).join('');
+
+  cardEl.innerHTML = `
+    <div class="outreach-company-card">
+      ${h.logo_url ? `<img class="outreach-company-logo" src="${esc(h.logo_url)}" alt="" loading="lazy">` : ''}
+      <div class="customer-compact">
+        <div class="customer-compact-line1">
+          <span class="customer-name">${esc(c.name)}</span>
+          <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
+        </div>
+        <div class="customer-compact-line2">
+          ${c.relationship_state ? `<span class="badge badge-muted">${esc(c.relationship_state.replace(/_/g, ' '))}</span>` : ''}
+          ${flags.map(f => `<span class="badge badge-muted">${esc(f)}</span>`).join(' ')}
+        </div>
+      </div>
+      ${c.description ? `<div class="outreach-company-desc">${esc(c.description)}</div>` : ''}
+      <div class="outreach-company-meta">
+        ${c.website ? `<div><a href="${esc(/^https?:/.test(c.website) ? c.website : 'https://' + c.website)}" target="_blank" rel="noopener">${esc(c.website.replace(/^https?:\/\/(www\.)?/, ''))}</a></div>` : ''}
+        ${c.address ? `<div>${esc(c.address)}</div>` : ''}
+        ${place ? `<div>${esc(place)}</div>` : ''}
+        ${c.phone ? `<div>${esc(c.phone)}</div>` : ''}
+        ${c.general_email ? `<div>${esc(c.general_email)}</div>` : ''}
+      </div>
+      ${contacts ? `<div class="context-section-label">Contacts</div>${contacts}` : ''}
+    </div>`;
+
+  document.getElementById('outreach-orders-card').innerHTML = outreachOrdersHtml();
 }
 
 // Order history card — at-a-glance commerce context for companies that buy.
@@ -5505,7 +5572,7 @@ function renderOutreachDetail(entry, draft) {
     const what = entry.message_type
       ? `the <strong>${esc(entry.message_type.replace(/_/g, ' '))}</strong> message`
       : 'a reply (the advisor reads the thread and drafts Jamie’s response)';
-    el.innerHTML = header + `<div id="outreach-context">${outreachOrdersHtml() + outreachHistoryHtml()}</div>` + `
+    el.innerHTML = header + `<div id="outreach-context">${outreachHistoryHtml()}</div>` + `
       <div class="detail-section">
         <h3>AI Draft</h3>
         <div class="outreach-empty-note">No draft yet &mdash; the &#8635; button will write ${what}.</div>
@@ -5516,7 +5583,7 @@ function renderOutreachDetail(entry, draft) {
 
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
 
-  el.innerHTML = header + `<div id="outreach-context">${outreachOrdersHtml() + outreachHistoryHtml()}</div>` + outreachFactsHtml(draft) + `
+  el.innerHTML = header + `<div id="outreach-context">${outreachHistoryHtml()}</div>` + outreachFactsHtml(draft) + `
     <div class="detail-section">
       <h3>AI Draft
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>
