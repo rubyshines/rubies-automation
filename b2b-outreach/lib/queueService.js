@@ -138,13 +138,21 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type } =
  * plus `gate_enabled` (the b2b_send_enabled flag state, so the UI can show
  * the gate plainly before confirming). Phase 2 passes through preview/
  * blocked/sent; on 'sent' the draft row is marked sent.
+ *
+ * `body` optionally overrides the stored draft body (the operator edited it
+ * in the panel). The AI's original stays in b2b_drafts.body — the sent text
+ * lives on the b2b_messages row — and operator_edited is set when they
+ * differ, which is the edit-rate training signal.
  */
-async function sendDraftById(sb, { draft_id, confirmed } = {}) {
+async function sendDraftById(sb, { draft_id, confirmed, body } = {}) {
   if (!draft_id) throw new Error('draft_id required');
   const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', draft_id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!draft) throw new Error(`draft #${draft_id} not found`);
   if (draft.status !== 'pending') throw new Error(`draft #${draft_id} is '${draft.status}' — only pending drafts can be sent`);
+
+  const sendBody = (typeof body === 'string' && body.trim()) ? body : draft.body;
+  const edited = sendBody !== draft.body;
 
   const res = await sendB2bEmail({
     company_id: draft.company_id,
@@ -152,7 +160,7 @@ async function sendDraftById(sb, { draft_id, confirmed } = {}) {
     message_type: draft.message_type,
     variant_id: draft.variant_id || undefined,
     subject: draft.subject || undefined,
-    body: draft.body,
+    body: sendBody,
     confirmed: !!confirmed,
   });
 
@@ -161,11 +169,35 @@ async function sendDraftById(sb, { draft_id, confirmed } = {}) {
   }
   if (res.phase === 'sent') {
     const { error: uErr } = await sb.from('b2b_drafts')
-      .update({ status: 'sent', sent_at: res.sent_at })
+      .update({ status: 'sent', sent_at: res.sent_at, operator_edited: edited })
       .eq('id', draft_id);
     if (uErr) console.error(`[queueService] draft #${draft_id} sent but status update failed: ${uErr.message}`);
   }
   return { ...res, draft_id };
+}
+
+/**
+ * Merge a fact-verification toggle into a draft's structured payload. Pure.
+ * structured.facts_verified is a sorted array of verified fact indices.
+ */
+function mergeFactVerification(structured, index, verified) {
+  const s = structured || {};
+  const set = new Set(Array.isArray(s.facts_verified) ? s.facts_verified : []);
+  if (verified) set.add(index); else set.delete(index);
+  return { ...s, facts_verified: [...set].sort((a, b) => a - b) };
+}
+
+/** Persist a fact-verification toggle on a pending draft. */
+async function setFactVerified(sb, { draft_id, index, verified } = {}) {
+  if (!draft_id || !Number.isInteger(index) || index < 0) throw new Error('draft_id and a non-negative fact index are required');
+  const { data: draft, error } = await sb.from('b2b_drafts')
+    .select('id, structured, status').eq('id', draft_id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!draft) throw new Error(`draft #${draft_id} not found`);
+  const structured = mergeFactVerification(draft.structured, index, !!verified);
+  const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', draft_id);
+  if (uErr) throw new Error(uErr.message);
+  return { draft_id, facts_verified: structured.facts_verified };
 }
 
 /**
@@ -206,4 +238,6 @@ module.exports = {
   fetchCompanyThreads,
   generateDraftForCompany,
   sendDraftById,
+  mergeFactVerification,
+  setFactVerified,
 };

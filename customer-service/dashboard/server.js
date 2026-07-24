@@ -2807,6 +2807,12 @@ async function apiB2bDismissDraft(id) {
 // Two-phase send of a stored draft. Phase 1 (no confirmed) returns the
 // preview + gate_enabled; phase 2 passes through blocked/sent from
 // sendB2bEmail (HARD-GATED on b2b_send_enabled).
+async function apiB2bFactVerified(id, body = {}) {
+  return b2bQueueService.setFactVerified(getSupabaseClient(), {
+    draft_id: parseInt(id), index: body.index, verified: body.verified,
+  });
+}
+
 async function apiB2bSend(body = {}) {
   if (!body.draft_id) {
     const err = new Error('draft_id required');
@@ -2816,6 +2822,7 @@ async function apiB2bSend(body = {}) {
   return b2bQueueService.sendDraftById(getSupabaseClient(), {
     draft_id: parseInt(body.draft_id),
     confirmed: !!body.confirmed,
+    body: typeof body.body === 'string' ? body.body : undefined,
   });
 }
 
@@ -3257,6 +3264,7 @@ const paramRoutes = [
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)$/, handler: (_, id) => apiB2bGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/regenerate$/, handler: (body, id) => apiB2bRegenerateDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   // Free Swimwear panel

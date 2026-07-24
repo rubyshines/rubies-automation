@@ -5324,18 +5324,20 @@ function outreachAdvancePast(companyId) {
 
 // Conversation history pane: threads newest-first, messages oldest-first.
 // Newest thread starts expanded; older threads collapse behind <details>.
+// Bubbles reuse the CS advisor's conversation language: customer/org gray on
+// the left (.msg-customer), Jamie teal on the right (.msg-agent).
 function outreachHistoryHtml() {
   if (outreachHistory === null) {
-    return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+    return `<div id="outreach-history" class="detail-section outreach-history">
       <div class="outreach-loading">Loading conversation&hellip;</div></div>`;
   }
   const threads = outreachHistory.threads || [];
   if (outreachHistory.error) {
-    return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+    return `<div id="outreach-history" class="detail-section outreach-history">
       <div class="outreach-empty-note">Could not load conversation history.</div></div>`;
   }
   if (!threads.length) {
-    return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+    return `<div id="outreach-history" class="detail-section outreach-history">
       <div class="outreach-empty-note">No conversation yet — this will be the first touch.</div></div>`;
   }
   const threadHtml = (t, open) => {
@@ -5343,9 +5345,9 @@ function outreachHistoryHtml() {
       const out = m.direction === 'outbound';
       const who = out ? 'Jamie' : esc(m.from_email || 'them');
       const badge = m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '';
-      return `<div class="outreach-msg outreach-msg-${out ? 'out' : 'in'}">
-        <div class="outreach-msg-meta"><strong>${who}</strong>${badge} · ${m.sent_at ? esc(timeAgo(m.sent_at, 'short')) : ''} ago</div>
-        <div class="outreach-msg-body">${esc(m.body_text || '(no text captured)')}</div>
+      return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
+        <div class="msg-header">${who}${badge} · ${m.sent_at ? esc(timeAgo(m.sent_at, 'short')) + ' ago' : ''}</div>
+        <div class="msg-body">${esc(m.body_text || '(no text captured)')}</div>
       </div>`;
     }).join('');
     return `<details class="outreach-thread"${open ? ' open' : ''}>
@@ -5353,12 +5355,68 @@ function outreachHistoryHtml() {
         ${t.status === 'closed' ? '<span class="badge badge-muted">closed</span>' : ''}
         <span class="outreach-thread-count">${(t.messages || []).length} messages</span>
       </summary>
-      ${msgs}
+      <div class="outreach-thread-msgs">${msgs}</div>
     </details>`;
   };
-  return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
-    <div class="outreach-field-label">Conversation</div>
+  return `<div id="outreach-history" class="detail-section outreach-history">
+    <h3>Conversation</h3>
     ${threads.map((t, i) => threadHtml(t, i === 0)).join('')}
+  </div>`;
+}
+
+// Facts-to-verify checklist. Click a fact to mark it verified (persisted on
+// the draft's structured payload); all verified → the section collapses to a
+// quiet confirmation line.
+function outreachFactsHtml(draft) {
+  const s = (draft && draft.structured) || {};
+  const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
+  if (!facts.length) return '';
+  const verified = new Set(Array.isArray(s.facts_verified) ? s.facts_verified : []);
+  if (facts.every((_, i) => verified.has(i))) {
+    return `<div id="outreach-facts" class="outreach-facts-done" onclick="reopenOutreachFacts()" title="Click to review">
+      &#10003; All ${facts.length} fact${facts.length > 1 ? 's' : ''} verified</div>`;
+  }
+  const rows = facts.map((f, i) => `
+    <label class="outreach-fact${verified.has(i) ? ' outreach-fact-verified' : ''}">
+      <input type="checkbox" ${verified.has(i) ? 'checked' : ''} onchange="toggleOutreachFact(${i}, this.checked)">
+      <span>${esc(f)}</span>
+    </label>`).join('');
+  return `<div id="outreach-facts" class="outreach-facts">
+    <div class="outreach-field-label">Facts to verify before sending</div>
+    ${rows}
+  </div>`;
+}
+
+async function toggleOutreachFact(index, verified) {
+  if (!outreachDraft) return;
+  try {
+    const res = await api(`/api/b2b/drafts/${outreachDraft.id}/fact-verified`, {
+      method: 'POST', body: { index, verified },
+    });
+    outreachDraft.structured = { ...(outreachDraft.structured || {}), facts_verified: res.facts_verified };
+    const el = document.getElementById('outreach-facts');
+    if (el) el.outerHTML = outreachFactsHtml(outreachDraft);
+  } catch (err) {
+    showToast(`Could not save: ${err.message}`, 'error');
+  }
+}
+
+// Re-expand a fully-verified facts list for review: uncheck nothing, just
+// force the expanded rendering once.
+function reopenOutreachFacts() {
+  const el = document.getElementById('outreach-facts');
+  if (!el || !outreachDraft) return;
+  const s = outreachDraft.structured || {};
+  const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
+  const verified = new Set(Array.isArray(s.facts_verified) ? s.facts_verified : []);
+  const rows = facts.map((f, i) => `
+    <label class="outreach-fact${verified.has(i) ? ' outreach-fact-verified' : ''}">
+      <input type="checkbox" ${verified.has(i) ? 'checked' : ''} onchange="toggleOutreachFact(${i}, this.checked)">
+      <span>${esc(f)}</span>
+    </label>`).join('');
+  el.outerHTML = `<div id="outreach-facts" class="outreach-facts">
+    <div class="outreach-field-label">Facts to verify before sending</div>
+    ${rows}
   </div>`;
 }
 
@@ -5369,6 +5427,9 @@ function outreachListHtml(title, items, cls) {
   </div>`;
 }
 
+// Detail layout mirrors the CS advisor ticket view: conversation on top,
+// then "AI Draft" — steer row ABOVE an editable white draft box — then
+// actions. Facts sit between the conversation and the draft as a checklist.
 function renderOutreachDetail(entry, draft) {
   const el = document.getElementById('outreach-detail');
   const s = (draft && draft.structured) || {};
@@ -5383,10 +5444,11 @@ function renderOutreachDetail(entry, draft) {
     <div class="outreach-detail-sub">${esc(entry.reason || '')}</div>`;
 
   const steerBlock = `
-    <div class="steer-row outreach-steer-row">
+    <div class="steer-row">
       <textarea id="outreach-steer" class="steer-input" rows="1"
-        placeholder="optional steer (final authority on intent)"></textarea>
-      <button class="btn btn-ghost" id="outreach-regenerate-btn" onclick="regenerateOutreachDraft()">${draft ? 'Regenerate' : 'Generate draft'}</button>
+        placeholder="redirect the advisor"></textarea>
+      <button id="outreach-regenerate-btn" class="btn-refresh-inline" onclick="regenerateOutreachDraft()"
+        title="${draft ? 'Regenerate draft' : 'Generate draft'}">&#8635;</button>
     </div>`;
 
   if (!draft) {
@@ -5394,35 +5456,39 @@ function renderOutreachDetail(entry, draft) {
       ? `the <strong>${esc(entry.message_type.replace(/_/g, ' '))}</strong> message`
       : 'a reply (the advisor reads the thread and drafts Jamie’s response)';
     el.innerHTML = header + outreachHistoryHtml() + `
-      <div class="detail-section outreach-card">
-        <div class="outreach-empty-note">No draft yet &mdash; generating will write ${what}.</div>
+      <div class="detail-section">
+        <h3>AI Draft</h3>
+        <div class="outreach-empty-note">No draft yet &mdash; the &#8635; button will write ${what}.</div>
         ${steerBlock}
       </div>`;
     return;
   }
 
-  const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
 
-  el.innerHTML = header + outreachHistoryHtml() + `
-    <div class="detail-section outreach-card">
-      <h3>Draft #${draft.id}
+  el.innerHTML = header + outreachHistoryHtml() + outreachFactsHtml(draft) + `
+    <div class="detail-section">
+      <h3>AI Draft
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>
         ${s.confidence ? `<span class="badge badge-${esc(s.confidence)}">${esc(s.confidence)}</span>` : ''}
         ${draft.advisor ? `<span class="badge badge-muted">${esc(draft.advisor.replace(/^b2b_/, '').replace(/_/g, ' '))}</span>` : ''}
       </h3>
       ${s.needs_review_reason ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
-      <div class="outreach-subject"><span class="outreach-field-label">Subject</span>${esc(draft.subject || '(inherits thread subject)')}</div>
-      <div class="outreach-body">${esc(draft.body)}</div>
-      ${facts.length ? outreachListHtml('Facts to verify', facts, 'outreach-facts') : ''}
-      ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
       ${steerBlock}
+      <div class="outreach-subject"><span class="outreach-field-label">Subject</span>${esc(draft.subject || '(inherits thread subject)')}</div>
+      <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
+      ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
       <div class="btn-row btn-row-primary outreach-actions">
         <button class="btn btn-primary" id="outreach-send-btn" onclick="outreachPreviewSend()">Send&hellip;</button>
         <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
       </div>
       <div id="outreach-send-panel"></div>
     </div>`;
+
+  // Set the body via .value (not innerHTML) and size it to content.
+  const editor = document.getElementById('outreach-draft-editor');
+  editor.value = draft.body || '';
+  autoExpandTextarea(editor);
 }
 
 async function regenerateOutreachDraft() {
@@ -5431,7 +5497,7 @@ async function regenerateOutreachDraft() {
   const steer = (document.getElementById('outreach-steer')?.value || '').trim();
   const btn = document.getElementById('outreach-regenerate-btn');
   const hadDraft = !!outreachDraft;
-  if (btn) { btn.disabled = true; btn.textContent = 'Drafting…'; }
+  if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
   try {
     const draft = hadDraft
       ? await api(`/api/b2b/drafts/${outreachDraft.id}/regenerate`, { method: 'POST', body: { steer } })
@@ -5444,7 +5510,7 @@ async function regenerateOutreachDraft() {
     showToast(`Draft #${draft.id} ready`, 'success');
   } catch (err) {
     showToast(`Draft failed: ${err.message}`, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = hadDraft ? 'Regenerate' : 'Generate draft'; }
+    if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
   }
 }
 
@@ -5468,8 +5534,9 @@ async function outreachPreviewSend() {
   if (!outreachDraft) return;
   const panel = document.getElementById('outreach-send-panel');
   panel.innerHTML = '<div class="outreach-loading">Building preview&hellip;</div>';
+  const editedBody = document.getElementById('outreach-draft-editor')?.value;
   try {
-    outreachSendPreview = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id } });
+    outreachSendPreview = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, body: editedBody } });
   } catch (err) {
     panel.innerHTML = `<div class="outreach-send-error">Preview failed: ${esc(err.message)}</div>`;
     return;
@@ -5522,9 +5589,10 @@ async function outreachConfirmSend() {
   const resultEl = document.getElementById('outreach-send-result');
   const btnLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  const editedBody = document.getElementById('outreach-draft-editor')?.value;
   let res;
   try {
-    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true } });
+    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true, body: editedBody } });
   } catch (err) {
     resultEl.innerHTML = `<div class="outreach-send-error">Send failed: ${esc(err.message)}</div>`;
     if (btn) { btn.disabled = false; btn.textContent = btnLabel; }

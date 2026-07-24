@@ -5362,7 +5362,8 @@ main { height: calc(100vh - 56px); }
   margin-bottom: 14px;
 }
 
-/* Conversation history pane (threads + messages above the draft) */
+/* Conversation history pane — bubbles reuse the CS .msg language (customer
+   gray left, Jamie teal right); only thread grouping is outreach-specific. */
 .outreach-history { padding-bottom: 6px; }
 .outreach-thread { margin-bottom: 8px; }
 .outreach-thread summary {
@@ -5378,31 +5379,68 @@ main { height: calc(100vh - 56px); }
   color: var(--text-secondary);
   margin-left: 6px;
 }
-.outreach-msg {
-  border-left: 3px solid var(--border);
-  padding: 8px 12px;
-  margin: 6px 0 6px 8px;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  background: var(--surface-inset);
-}
-/* Jamie's messages carry the panel's "yours" colors (same pair as the active
-   queue row); theirs stay neutral. */
-.outreach-msg-out {
-  border-left-color: var(--accent);
-  background: var(--accent-soft);
-}
-.outreach-msg-out .outreach-msg-meta strong { color: var(--accent); }
-.outreach-msg-meta {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-bottom: 4px;
-}
-.outreach-msg-body {
+.outreach-thread-msgs { padding-top: 4px; }
+.outreach-thread-msgs .msg-body {
   white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.55;
   max-height: 260px;
   overflow-y: auto;
+}
+
+/* Facts-to-verify checklist */
+.outreach-facts {
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+.outreach-fact {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.outreach-fact input { margin-top: 3px; flex: 0 0 auto; }
+.outreach-fact-verified span {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+}
+.outreach-facts-done {
+  font-size: 12px;
+  color: var(--teal);
+  background: var(--teal-soft);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+
+.btn-refresh-inline.spinning { animation: spin 1s linear infinite; }
+
+/* Editable draft box — same look as the CS #draft-editor */
+#outreach-draft-editor {
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: none;
+  overflow: hidden;
+  min-height: 120px;
+  margin-bottom: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+#outreach-draft-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .outreach-list { margin-bottom: 12px; }
