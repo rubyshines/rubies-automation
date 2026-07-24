@@ -67,14 +67,20 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Priority: medium
 - Notes: After an event donation ships and the event happens, send a follow-up asking for photos. Photos received → operator routes to content pipeline → added to rubyshines.com/pages/collaborations and queued for Instagram. Over time builds a public record of community work (see collaborations page as the target format). Touches three systems: B2B outreach (follow-up message type), community (org relationship), marketing (site content + Instagram). Not part of V1 message type catalog — design after the core outreach system is running.
 
-## Unified B2B Outreach & Prospect System — design in progress
+## Unified B2B Outreach — unbuilt remainder (discovery fixes, affiliate onboarding, rename)
 - Parked: 2026-05-28
-- Last touched: 2026-05-28
+- Last touched: 2026-07-24
 - Type: idea (planned)
 - Domains: community, b2b_sales, tech
-- Priority: high
+- Priority: medium
 - Plan: .claude/plans/b2b-outreach-system.md
-- Notes: Full design session in progress. Three channels (retailers, LGBTQ+ orgs, affiliates), one spine. Core concept: same draft+steer+send loop as CS advisor applied to outbound. Gmail direct (not Gorgias). Supabase SSOT (retire the sheet). Full wholesale→B2B rename (deferred to last). Two advisors: prospect + outreach. One signal-based priority queue across all channels. Empirical audit of existing discovery system completed (6,649 rows, ran once Feb/March 2026, never since; 285 dismissed community-orgs belong in LGBTQ+ pipeline; top-10 qualified look strong). Nine design areas still to work through before implementation: state machine, discovery pipeline deep-dive, queue loop, dashboard, advisor split, send flow, evaluation, migration order, rename. Resume by reading the plan file — it has all locked decisions and audit findings.
+- Notes: The system itself is BUILT (2026-06-11) and LIVE (send enabled 2026-07-23) — see domain_b2b_sales.md. This entry now tracks only the deliberately unbuilt remainder from the design: (1) discovery pipeline fixes — aiClient.js port, Haiku pre-filter for the 3,537-row backlog, org routing fix (285 mis-dismissed orgs), scheduled cron; (2) affiliate onboarding flow (GoAffPro); (3) A/B variant evaluation loop; (4) wholesale→B2B rename (last, after everything is proven); (5) CS→outreach transfer tool (one-click move of a community_outreach Gorgias ticket into b2b_companies + thread — done manually for Uniting Pride 2026-07-23, worth automating when inbound org volume justifies it); (6) scheduling the daily cadence sweep (deliberate pull-mode decision — see initiative_b2b_expansion.md). The plan file remains the spec for these.
+
+## Backfill donation partners missing from b2b_companies
+- Parked: 2026-07-24
+- Domains: community, b2b_sales
+- Type: idea
+- Notes: `syncB2bCompanyState` flags org companies matching active donation_partners (by website domain, name fallback), but some of the 18 active partners have no b2b_companies row at all (candidates spotted: RISE @ LA LGBT Center, Trans Healthkit Projekt, Yellow House, Carleton GSRC — verify by diffing registry vs companies). Until they exist, the outreach engine can't run community cadence for them. Small backfill: create rows + contacts from the partner registry/survey sheet, set program_flags.donation_closet, relationship_state active.
 
 ## CS accuracy — finish the deferred fixes from the cs-accuracy branch
 - Parked: 2026-05-27

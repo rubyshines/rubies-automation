@@ -58,6 +58,13 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncAll').runOrders(),
   },
   {
+    name: 'B2B Company State',
+    // Keeps b2b_companies order fields / program flags true from the orders
+    // mirror + donation_partners, so outreach cadence never nudges from stale
+    // data. Runs right after Orders. See b2b-outreach/sync/syncB2bCompanyState.
+    run: () => require('./b2b-outreach/sync/syncB2bCompanyState').run(),
+  },
+  {
     name: 'Customers',
     run: () => require('./customer-service/sync/syncAll').runCustomers(),
   },
