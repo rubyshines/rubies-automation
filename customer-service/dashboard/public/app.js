@@ -253,10 +253,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   // Check for deep links before restoring tab
   const pendingTicketRestore = location.hash.match(/^#ticket-(\d+)$/);
+  const outreachHashRestore = location.hash.match(/^#outreach-(.+)$/);
+  if (outreachHashRestore) pendingOutreachRestore = decodeURIComponent(outreachHashRestore[1]);
 
   // Restore active tab (but don't clear selection if we're about to restore a ticket)
   const savedTab = localStorage.getItem('activeTab');
-  if (pendingTicketRestore) {
+  if (outreachHashRestore) {
+    switchTab('outreach'); // loadOutreachQueue picks up pendingOutreachRestore
+  } else if (pendingTicketRestore) {
     // Restoring a ticket — coerce adhoc back to a ticket tab since we're showing the ticket panel
     currentTab = savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -404,8 +408,9 @@ function switchTab(tab) {
     swimwearPanel.style.display = 'none';
     outreachPanel.style.display = 'flex';
     localStorage.setItem('activeTab', tab);
-    // Clear any stale ticket hash so a refresh restores Outreach, not the prior ticket
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    // Clear any stale ticket hash so a refresh restores Outreach, not the
+    // prior ticket — but keep an #outreach-<id> deep link intact.
+    if (location.hash && !location.hash.startsWith('#outreach-')) history.replaceState(null, '', location.pathname + location.search);
     loadOutreachQueue();
     return;
   }
@@ -5183,6 +5188,7 @@ let outreachQueue = [];
 let outreachSelectedId = null;   // company_id of the selected row
 let outreachDraft = null;        // full b2b_drafts row currently shown
 let outreachHistory = null;      // { threads: [...] } for the selected company (null = loading)
+let pendingOutreachRestore = null; // company_id from an #outreach-<id> deep link, applied after queue load
 
 const OUTREACH_FILTERS = [
   { value: '', label: 'All' },
@@ -5192,16 +5198,29 @@ const OUTREACH_FILTERS = [
 ];
 const OUTREACH_CHANNEL_LABELS = { wholesale: 'retailer', lgbtq_org: 'org', affiliate: 'affiliate' };
 
-async function loadOutreachQueue() {
+async function loadOutreachQueue(isSilentRefresh) {
   const container = document.getElementById('outreach-queue-list');
+  let payload;
   try {
     const url = outreachChannel ? `/api/b2b/queue?channel=${encodeURIComponent(outreachChannel)}` : '/api/b2b/queue';
-    outreachQueue = await api(url);
+    payload = await api(url);
   } catch (err) {
-    container.innerHTML = outreachFilterHtml() + `<div class="outreach-loading">Failed to load queue: ${esc(err.message)}</div>`;
+    if (!isSilentRefresh) container.innerHTML = outreachFilterHtml() + `<div class="outreach-loading">Failed to load queue: ${esc(err.message)}</div>`;
     return;
   }
+  outreachQueue = Array.isArray(payload) ? payload : (payload.entries || []);
   renderOutreachQueue();
+  // Deep link: restore #outreach-<company_id> selection once the queue exists.
+  if (pendingOutreachRestore) {
+    const target = pendingOutreachRestore;
+    pendingOutreachRestore = null;
+    if (outreachQueue.some(e => e.company_id === target)) selectOutreachEntry(target);
+  }
+  // The server kicked a background Gmail reconcile — refresh once after it
+  // lands so freshly-absorbed manual replies clear their rows.
+  if (!isSilentRefresh && payload.gmail_sync === 'started') {
+    setTimeout(() => { if (currentTab === 'outreach') loadOutreachQueue(true); }, 7000);
+  }
 }
 
 function setOutreachChannel(channel) {
@@ -5252,6 +5271,7 @@ async function selectOutreachEntry(companyId) {
   outreachSelectedId = companyId;
   outreachDraft = null;
   outreachHistory = null;
+  location.hash = `outreach-${encodeURIComponent(companyId)}`; // reload restores this company
   renderOutreachQueue(); // refresh active highlight
   renderOutreachSidebarContext(); // sidebar takeover (compact card while loading)
 
@@ -5390,6 +5410,7 @@ async function loadOutreachContext(companyId, allowRefetch) {
 function showOutreachQueue() {
   document.getElementById('outreach-sidebar-context').style.display = 'none';
   document.getElementById('outreach-sidebar-queue').style.display = '';
+  if (location.hash.startsWith('#outreach-')) history.replaceState(null, '', location.pathname + location.search);
 }
 
 function renderOutreachSidebarContext() {

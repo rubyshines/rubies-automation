@@ -87,16 +87,23 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
   });
 }
 
-/** Queue + pending-draft id/snippet per company — the dashboard payload. */
+/**
+ * Queue + pending-draft id/snippet per company — the dashboard payload.
+ * Returns { entries, gmail_sync }: the queue renders at DB speed while the
+ * manual-send reconcile (Gmail) runs in the background; when it was kicked
+ * off, the client re-fetches once shortly after so any manual replies that
+ * just landed clear their rows.
+ */
+let queueReconcileInFlight = false;
 async function fetchQueueWithDrafts(sb, { channel } = {}) {
   const companies = await fetchCompanies(sb, { channel });
-  // Absorb any manual Gmail replies before computing "waiting on us" — the
-  // queue must reflect what actually happened in the inbox, not just what the
-  // send tool wrote. Fail-soft + per-thread cooldown inside.
-  try {
-    await reconcileThreads(sb, { companyIds: companies.map(c => c.id) });
-  } catch (err) {
-    console.error(`[queueService] reconcile skipped: ${err.message}`);
+  let gmailSync = 'recent';
+  if (!queueReconcileInFlight) {
+    queueReconcileInFlight = true;
+    gmailSync = 'started';
+    reconcileThreads(sb, { companyIds: companies.map(c => c.id) })
+      .catch(err => console.error(`[queueService] reconcile failed: ${err.message}`))
+      .finally(() => { queueReconcileInFlight = false; });
   }
   const contexts = await buildContexts(sb, companies);
   const queue = assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) })));
@@ -110,7 +117,7 @@ async function fetchQueueWithDrafts(sb, { channel } = {}) {
     drafts = data || [];
   }
   const merged = mergePendingDraftEntries(queue, drafts, new Map(companies.map(c => [c.id, c])));
-  return attachDrafts(merged, drafts);
+  return { entries: attachDrafts(merged, drafts), gmail_sync: gmailSync };
 }
 
 /**
