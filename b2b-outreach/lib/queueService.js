@@ -162,6 +162,7 @@ async function sendDraftById(sb, { draft_id, confirmed, body } = {}) {
     subject: draft.subject || undefined,
     body: sendBody,
     confirmed: !!confirmed,
+    next_touch_days: draft.structured?.next_touch_days ?? null,
   });
 
   if (res.phase === 'preview') {

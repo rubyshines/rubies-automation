@@ -65,7 +65,7 @@ async function resolveRecipient(sb, companyId) {
  *                     subject?, body, confirmed? }
  */
 async function sendB2bEmail(p = {}) {
-  const { company_id, thread_id, message_type, variant_id, body, confirmed } = p;
+  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days } = p;
   if (!company_id) throw new Error('company_id required');
   if (!message_type) throw new Error('message_type required');
   if (!body || !body.trim()) throw new Error('body required');
@@ -186,7 +186,7 @@ async function sendB2bEmail(p = {}) {
   // Cadence bookkeeping
   await sb.from('b2b_companies').update({
     last_outbound_at: sentAt,
-    next_action_date: nextActionDateAfterSend(message_type, new Date(sentAt)),
+    next_action_date: nextActionDateAfterSend(message_type, new Date(sentAt), next_touch_days ?? null),
     updated_at: sentAt,
   }).eq('id', company_id);
 

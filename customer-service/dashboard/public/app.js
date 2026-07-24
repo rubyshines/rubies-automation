@@ -5614,6 +5614,7 @@ function renderOutreachDetail(entry, draft) {
       <div class="outreach-subject"><span class="outreach-field-label">Subject</span>${esc(draft.subject || '(inherits thread subject)')}</div>
       <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
+      ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient">Advisor timing note: next touch in ~${s.next_touch_days} days (reason in its audit; overrides the standard cadence when this sends)</div>` : ''}
       ${outreachRecipientHtml()}
       <div class="btn-row btn-row-primary outreach-actions">
         <button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>

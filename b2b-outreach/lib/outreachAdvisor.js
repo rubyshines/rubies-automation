@@ -29,9 +29,10 @@ const OUTPUT_SCHEMA = {
     needs_review_reason: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'Why an operator should look closely (new relationship, unusual thread, uncertain fact) — or null when standard.' },
     open_commitments: { type: 'array', items: { type: 'string' }, description: "Every promise this email makes that requires follow-through (e.g. 'send tracking by Friday', 'ship 5 sample sets'). The org failure mode is OUR follow-through — this list feeds the queue." },
     facts_to_verify: { type: 'array', items: { type: 'string' }, description: "ONLY claims in the draft whose truth you cannot establish from the data you were given — and that the SYSTEM cannot check either. Anything from the operator's steer, the thread, the company record, or tool results is ground truth: never list it back for verification. Do not list claims derivable from our own data (order history, prices in your facts block, program terms). Qualifying examples: an external state that may have changed (a website listing being live, an arrangement still standing), a policy detail you inferred rather than were told, timezone math. Do NOT question whether a contact is current unless there is a staleness signal (bounce, departure auto-reply, or a year-plus silent thread). An EMPTY list is the normal, good outcome — most drafts should have zero." },
+    next_touch_days: { anyOf: [{ type: 'integer' }, { type: 'null' }], description: "Override the standard follow-up cadence ONLY when the thread gives a concrete reason the default timing is wrong: they named a timeline ('reach out in September', 'our Pride budget lands in May'), a rough patch followed by a comeback order (check in warmly SOONER than their order gap suggests), or a stated pause. Days from now until we should next touch this relationship; the reason must appear in audit. Null = standard cadence (the usual case)." },
     audit: { type: 'array', items: { type: 'string' }, description: 'Your reasoning steps.' },
   },
-  required: ['email_subject', 'email_body', 'message_type', 'confidence', 'needs_review_reason', 'open_commitments', 'facts_to_verify', 'audit'],
+  required: ['email_subject', 'email_body', 'message_type', 'confidence', 'needs_review_reason', 'open_commitments', 'facts_to_verify', 'next_touch_days', 'audit'],
   additionalProperties: false,
 };
 
@@ -129,6 +130,7 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
       needs_review_reason: out.needs_review_reason,
       open_commitments: out.open_commitments,
       facts_to_verify: out.facts_to_verify,
+      next_touch_days: out.next_touch_days ?? null,
       audit: out.audit,
     },
     queue_tier: queueEntry.tier,

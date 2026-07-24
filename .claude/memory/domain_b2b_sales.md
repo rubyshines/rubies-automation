@@ -41,6 +41,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 ## Key Decisions
 
+- **Reorder cadence is frequency-aligned, not flat (2026-07-24):** nudge threshold = 0.75 × the company's LATEST order interval, clamped 90-365d, computed by the daily sync (last interval beats median/mean because bursty histories lie in both directions — Transting: monthly cluster then a 402d gap). The advisor can override timing per-send via `next_touch_days` when the thread gives a concrete reason (stated timeline, rough-patch-then-comeback), bounded 7-365d. Math sets the default; thread judgment bends it; the operator sees the override before sending.
+
 - **Never manually parse CSV data** — always pass raw CSV to `parse_wholesale_input` tool.
 - **Order creation tool selection:** `create_wholesale_order` requires an existing Shopify customer ID — use it for established wholesale accounts. For one-off bulk or community orders where the customer may not be in the system yet, use `create_order` with `discount_percent: 50` — it finds or creates the customer automatically from email + name + address.
 - **Two-tier discovery:** Google Maps for breadth, then deep research for depth.

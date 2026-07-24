@@ -33,8 +33,13 @@ const NEXT_ACTION_DAYS = {
 
 const DEFAULT_NEXT_ACTION_DAYS = 30;
 
-function nextActionDateAfterSend(messageType, sentAt = new Date()) {
-  const days = NEXT_ACTION_DAYS[messageType] ?? DEFAULT_NEXT_ACTION_DAYS;
+function nextActionDateAfterSend(messageType, sentAt = new Date(), overrideDays = null) {
+  // The advisor may recommend timing from thread context ("reach back in
+  // September", a comeback after a rough patch). Bounded so a bad model value
+  // can't schedule absurdly (1 week to 1 year); null = the per-type table.
+  const days = Number.isInteger(overrideDays)
+    ? Math.min(365, Math.max(7, overrideDays))
+    : (NEXT_ACTION_DAYS[messageType] ?? DEFAULT_NEXT_ACTION_DAYS);
   const d = new Date(sentAt);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
@@ -132,8 +137,12 @@ function evaluateDue(company, ctx, now = new Date()) {
         return { message_type: 'first_order_checkin', reason: `first order delivered ${d}d ago` };
       }
     }
-    if (state === 'active' && ctx.lastOrderAt && daysSince(ctx.lastOrderAt, now) >= 90 && ctx.orderCount > 1) {
-      return { message_type: 'reorder_nudge', reason: `${daysSince(ctx.lastOrderAt, now)}d since last order` };
+    // Frequency-aligned: per-company threshold from the daily sync (0.75 ×
+    // their latest order interval, clamped 90-365d); 90d when unknown.
+    const reorderThreshold = company.metadata?.reorder_threshold_days || 90;
+    if (state === 'active' && ctx.lastOrderAt && daysSince(ctx.lastOrderAt, now) >= reorderThreshold && ctx.orderCount > 1) {
+      const rhythm = reorderThreshold !== 90 ? ` (their rhythm: ~${reorderThreshold}d)` : '';
+      return { message_type: 'reorder_nudge', reason: `${daysSince(ctx.lastOrderAt, now)}d since last order${rhythm}` };
     }
     if (state === 'dormant' && !ctx.newCollectionSinceDormant) {
       return { message_type: 'reactivation', reason: 'dormant 180d+, no new-collection event intervened' };

@@ -96,6 +96,29 @@ test('falls back to snippet when no text/plain part exists', () => {
   assert.equal(rows[0].body_text, 'snippet text');
 });
 
+// ── adaptive cadence ────────────────────────────────────────────────────────
+const { evaluateDue, nextActionDateAfterSend } = require('../../b2b-outreach/lib/cadence');
+
+test('reorder nudge respects per-company threshold from metadata', () => {
+  const now = new Date('2026-07-24T12:00:00Z');
+  const company = (threshold) => ({
+    relationship_type: 'wholesale', relationship_state: 'active',
+    metadata: threshold ? { reorder_threshold_days: threshold } : {},
+  });
+  const ctx = { lastOrderAt: '2026-04-23T00:00:00Z', orderCount: 5, hasPendingDraft: false, sentTypes: new Set(), lastTypeSentAt: () => null };
+  // 92d elapsed: default 90d fires; Transting's 302d does not
+  assert.equal(evaluateDue(company(null), ctx, now)?.message_type, 'reorder_nudge');
+  assert.equal(evaluateDue(company(302), ctx, now), null);
+});
+
+test('nextActionDateAfterSend prefers a bounded advisor override', () => {
+  const sent = new Date('2026-07-24T12:00:00Z');
+  assert.equal(nextActionDateAfterSend('reorder_nudge', sent), '2026-10-22');       // table: 90d
+  assert.equal(nextActionDateAfterSend('reorder_nudge', sent, 45), '2026-09-07');   // override
+  assert.equal(nextActionDateAfterSend('reorder_nudge', sent, 2), '2026-07-31');    // clamped to 7
+  assert.equal(nextActionDateAfterSend('reorder_nudge', sent, 9999), '2027-07-24'); // clamped to 365
+});
+
 // ── discoveredThreadStatus ──────────────────────────────────────────────────
 // History import must never resurrect ancient waiting-on-us rows.
 

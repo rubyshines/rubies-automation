@@ -1,6 +1,34 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { computeCompanyState, normalizeDomain } = require('../../b2b-outreach/sync/syncB2bCompanyState');
+const { computeCompanyState, reorderThresholdDays, normalizeDomain } = require('../../b2b-outreach/sync/syncB2bCompanyState');
+
+// ── reorderThresholdDays ────────────────────────────────────────────────────
+
+test('threshold follows the latest interval at 0.75x (Transting case)', () => {
+  const orders = [
+    { created_at: '2024-10-06T00:00:00Z' }, { created_at: '2025-01-04T00:00:00Z' },
+    { created_at: '2025-02-07T00:00:00Z' }, { created_at: '2025-03-17T00:00:00Z' },
+    { created_at: '2026-04-23T00:00:00Z' }, // 402d gap → 0.75x ≈ 302
+  ];
+  assert.equal(reorderThresholdDays(orders), 302);
+});
+
+test('threshold floors at 90 for fast rhythms and caps at 365', () => {
+  assert.equal(reorderThresholdDays([
+    { created_at: '2026-06-01T00:00:00Z' }, { created_at: '2026-07-01T00:00:00Z' },
+  ]), 90); // 30d interval → floor
+  assert.equal(reorderThresholdDays([
+    { created_at: '2023-01-01T00:00:00Z' }, { created_at: '2026-01-01T00:00:00Z' },
+  ]), 365); // 3y gap → cap
+});
+
+test('threshold is null under 2 orders and skips cancelled', () => {
+  assert.equal(reorderThresholdDays([{ created_at: '2026-01-01T00:00:00Z' }]), null);
+  assert.equal(reorderThresholdDays([
+    { created_at: '2026-01-01T00:00:00Z' },
+    { created_at: '2026-06-01T00:00:00Z', cancelled_at: '2026-06-02T00:00:00Z' },
+  ]), null);
+});
 
 // ── normalizeDomain ─────────────────────────────────────────────────────────
 

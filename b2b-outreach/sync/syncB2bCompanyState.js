@@ -21,6 +21,21 @@
  */
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 
+/**
+ * Frequency-aligned reorder threshold: 0.75 × the most recent order interval,
+ * clamped to [90, 365] days. The LAST interval (not median/mean) because
+ * bursty histories (monthly cluster then an annual rhythm) make averages lie
+ * in both directions. Null with fewer than 2 orders — cadence falls back to
+ * its 90d default. Pure.
+ */
+function reorderThresholdDays(orders) {
+  const valid = (orders || []).filter(o => !o.cancelled_at)
+    .map(o => new Date(o.created_at).getTime()).sort((a, b) => a - b);
+  if (valid.length < 2) return null;
+  const lastIntervalDays = (valid[valid.length - 1] - valid[valid.length - 2]) / 86400000;
+  return Math.min(365, Math.max(90, Math.round(lastIntervalDays * 0.75)));
+}
+
 /** "https://www.foo.org/x" → "foo.org". Pure. */
 function normalizeDomain(url) {
   if (!url) return null;
@@ -52,6 +67,14 @@ function computeCompanyState(company, orders, isDonationPartner) {
   if (nextLast && nextLast !== prevLast) upd.last_order_date = nextLast;
   if (totalSales !== Number(company.total_sales || 0)) upd.total_sales = totalSales;
 
+  const threshold = reorderThresholdDays(valid);
+  // Some sheet-imported rows carry metadata as a JSON string — parse, never discard.
+  let meta = company.metadata || {};
+  if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = { legacy_metadata: company.metadata }; } }
+  if (threshold !== (meta.reorder_threshold_days ?? null) && threshold !== null) {
+    upd.metadata = { ...meta, reorder_threshold_days: threshold };
+  }
+
   const isOrg = company.relationship_type === 'lgbtq_org';
   const flags = { ...(company.program_flags || {}) };
   let flagsChanged = false;
@@ -74,7 +97,7 @@ async function run() {
   const sb = getSupabaseClient();
 
   const companies = await fetchAllPaginated(() => sb.from('b2b_companies')
-    .select('id, name, website, relationship_type, relationship_state, program_flags, order_count, last_order_date, total_sales, general_email'));
+    .select('id, name, website, relationship_type, relationship_state, program_flags, order_count, last_order_date, total_sales, general_email, metadata'));
   const contacts = await fetchAllPaginated(() => sb.from('b2b_contacts')
     .select('company_id, email').not('company_id', 'is', null));
 
@@ -131,7 +154,7 @@ async function run() {
   };
 }
 
-module.exports = { run, computeCompanyState, normalizeDomain };
+module.exports = { run, computeCompanyState, reorderThresholdDays, normalizeDomain };
 
 if (require.main === module) {
   run().then(r => { console.log(JSON.stringify(r.sources)); process.exit(0); })
