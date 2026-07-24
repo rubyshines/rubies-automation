@@ -25,19 +25,49 @@ function encodeSubject(subject) {
   return `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
 }
 
-/** Build the RFC822 message, base64url-encoded for gmail.users.messages.send. */
+/**
+ * Plain text → minimal personal-looking HTML: escaped, URLs linkified, line
+ * breaks preserved, and the FIRST standalone "RUBIES" mention linked to the
+ * store (deterministic transformation — brand link without asking the
+ * advisor to write markup). Pure.
+ */
+function toHtmlBody(text) {
+  let html = String(text || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  html = html.replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => `<a href="${url}">${url}</a>`);
+  let linked = false;
+  html = html.replace(/\bRUBIES\b/g, (m) => {
+    if (linked) return m;
+    linked = true;
+    return `<a href="https://rubyshines.com">RUBIES</a>`;
+  });
+  return html.replace(/\r?\n/g, '<br>\r\n');
+}
+
+/**
+ * Build the RFC822 message, base64url-encoded for gmail.users.messages.send.
+ * multipart/alternative: the advisor's plain text verbatim + a minimal HTML
+ * part so links (incl. the first RUBIES mention) are clickable.
+ */
 function buildRawMessage({ to, subject, body, inReplyTo, references }) {
+  const boundary = `b2b-${Buffer.from(subject || 'm').toString('hex').slice(0, 12)}-${(body || '').length.toString(36)}`;
   const headers = [
     `From: Jamie Alexander <${FROM_EMAIL}>`,
     `To: ${to}`,
     `Subject: ${encodeSubject(subject)}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
-  const raw = headers.join('\r\n') + '\r\n\r\n' + body;
+  const raw = headers.join('\r\n') + '\r\n\r\n'
+    + `--${boundary}\r\n`
+    + 'Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
+    + body + '\r\n\r\n'
+    + `--${boundary}\r\n`
+    + 'Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
+    + `<div>${toHtmlBody(body)}</div>\r\n\r\n`
+    + `--${boundary}--\r\n`;
   return Buffer.from(raw, 'utf8').toString('base64url');
 }
 
@@ -193,4 +223,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, buildRawMessage, resolveRecipient, encodeSubject, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, resolveRecipient, encodeSubject, FROM_EMAIL, SEND_FLAG };

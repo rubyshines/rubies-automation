@@ -83,7 +83,39 @@ async function handleSend(input = {}) {
   }
 }
 
+async function handleAddProspect(input = {}) {
+  try {
+    const { addProspect } = require(path.join(B2B_LIB, 'addProspect'));
+    const res = await addProspect(getSupabaseClient(), input);
+    if (res.warning) return text(`⚠ ${res.warning}`);
+    return text(`${res.existed ? 'Updated' : 'Added'} '${res.id}'${res.draft_id ? ` — intro draft #${res.draft_id} is waiting in the Outreach queue (Tier 4)` : ' (no draft generated)'}.`);
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
 module.exports = [
+  {
+    name: 'b2b_add_prospect',
+    description: "The referred-prospect intake: 'someone recommended this org/store' → company record with referral provenance + optional contact + the channel's intro draft waiting in the Outreach queue. Use whenever Jamie names a new org, retailer, or affiliate to reach out to. Never auto-sends. Refuses to re-open companies marked lost.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Organization/store/person name.' },
+        channel: { type: 'string', description: "'lgbtq_org' (default) | 'wholesale' | 'affiliate'." },
+        website: { type: 'string', description: 'Website URL if known.' },
+        email: { type: 'string', description: 'Contact or general email if known.' },
+        contact_name: { type: 'string', description: 'Named contact person, if any.' },
+        referred_by: { type: 'string', description: "Who recommended them + their exact words/context. Provenance matters: it's what lets future drafts reference the referral honestly." },
+        blurb: { type: 'string', description: 'What the org does, in the referrer\'s words.' },
+        country: { type: 'string', description: 'Country, e.g. "United Kingdom".' },
+        draft: { type: 'boolean', description: 'Generate the intro draft immediately (default true).' },
+        steer: { type: 'string', description: 'Extra guidance for the intro draft.' },
+      },
+      required: ['name'],
+    },
+    handler: handleAddProspect,
+  },
   {
     name: 'b2b_queue',
     description: "Today's B2B outreach queue across all channels (retailers, LGBTQ+ orgs, affiliates), 6-tier priority: T1 they-replied, T2 time-sensitive signals, T3 healthy cadence, T4 prospect first-touch, T5 overdue, T6 cold revival.",
