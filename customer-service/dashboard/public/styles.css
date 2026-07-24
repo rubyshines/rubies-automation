@@ -5415,6 +5415,15 @@ main { height: calc(100vh - 56px); }
 .outreach-order-cancelled { opacity: 0.5; }
 .outreach-order-cancelled .outreach-order-total { text-decoration: line-through; }
 
+/* Recipient line under the draft (replaces the old two-phase preview) */
+.outreach-recipient {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+.outreach-preview-via { color: var(--text-tertiary); font-style: italic; }
+.outreach-send-error-inline { color: var(--red); font-weight: 600; }
+
 /* Facts-to-verify checklist */
 .outreach-facts {
   background: var(--surface-inset);

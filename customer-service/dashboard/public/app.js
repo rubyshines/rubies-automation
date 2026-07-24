@@ -5183,7 +5183,6 @@ let outreachQueue = [];
 let outreachSelectedId = null;   // company_id of the selected row
 let outreachDraft = null;        // full b2b_drafts row currently shown
 let outreachHistory = null;      // { threads: [...] } for the selected company (null = loading)
-let outreachSendPreview = null;  // phase-1 send preview (while confirming)
 
 const OUTREACH_FILTERS = [
   { value: '', label: 'All' },
@@ -5252,7 +5251,6 @@ async function selectOutreachEntry(companyId) {
   if (!entry) return;
   outreachSelectedId = companyId;
   outreachDraft = null;
-  outreachSendPreview = null;
   outreachHistory = null;
   renderOutreachQueue(); // refresh active highlight
 
@@ -5260,23 +5258,11 @@ async function selectOutreachEntry(companyId) {
   document.getElementById('outreach-placeholder').style.display = 'none';
   detailEl.style.display = 'block';
 
-  // Conversation history + orders load in parallel with the draft; the
-  // context block re-renders on arrival. The endpoint also runs Gmail thread
-  // discovery + manual-send reconcile, so first load can take a beat — the
-  // pane shows its own loading state meanwhile.
-  api(`/api/b2b/companies/${encodeURIComponent(companyId)}/threads`)
-    .then(h => {
-      if (outreachSelectedId !== companyId) return;
-      outreachHistory = h;
-      const ctxEl = document.getElementById('outreach-context');
-      if (ctxEl) ctxEl.innerHTML = outreachOrdersHtml() + outreachHistoryHtml();
-    })
-    .catch(() => {
-      if (outreachSelectedId !== companyId) return;
-      outreachHistory = { threads: [], error: true };
-      const ctxEl = document.getElementById('outreach-context');
-      if (ctxEl) ctxEl.innerHTML = outreachOrdersHtml() + outreachHistoryHtml();
-    });
+  // Conversation history + orders load in parallel with the draft. The
+  // response returns at DB speed; Gmail sync (thread discovery + manual-send
+  // reconcile) runs server-side in the background — when it was kicked off,
+  // re-fetch once shortly after to pick up newly-imported threads.
+  loadOutreachContext(companyId, true);
 
   if (!entry.draft) {
     renderOutreachDetail(entry, null);
@@ -5312,7 +5298,6 @@ function outreachAdvancePast(companyId) {
   const next = outreachQueue[idx + 1] || outreachQueue[idx - 1] || null;
   outreachQueue = outreachQueue.filter(e => e.company_id !== companyId);
   outreachDraft = null;
-  outreachSendPreview = null;
   renderOutreachQueue();
   if (next) {
     selectOutreachEntry(next.company_id);
@@ -5341,20 +5326,32 @@ function outreachHistoryHtml() {
     return `<div id="outreach-history" class="detail-section outreach-history">
       <div class="outreach-empty-note">No conversation yet — this will be the first touch.</div></div>`;
   }
+  // Every message shows an absolute ET date plus the relative age — history
+  // is unreadable without a real timeline.
+  const msgDate = (iso) => {
+    if (!iso) return '';
+    const abs = new Date(iso).toLocaleDateString('en-US', {
+      timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+    });
+    return `${esc(abs)} · ${esc(timeAgo(iso, 'short'))} ago`;
+  };
   const threadHtml = (t, open) => {
     const msgs = (t.messages || []).map(m => {
       const out = m.direction === 'outbound';
       const who = out ? 'Jamie' : esc(m.from_email || 'them');
       const badge = m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '';
       return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
-        <div class="msg-header">${who}${badge} · ${m.sent_at ? esc(timeAgo(m.sent_at, 'short')) + ' ago' : ''}</div>
+        <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
         <div class="msg-body">${esc(m.body_text || '(no text captured)')}</div>
       </div>`;
     }).join('');
+    const lastAt = t.last_message_at ? new Date(t.last_message_at).toLocaleDateString('en-US', {
+      timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+    }) : '';
     return `<details class="outreach-thread"${open ? ' open' : ''}>
       <summary>${esc(t.subject || t.thread_type || 'thread')}
         ${t.status === 'closed' ? '<span class="badge badge-muted">closed</span>' : ''}
-        <span class="outreach-thread-count">${(t.messages || []).length} messages</span>
+        <span class="outreach-thread-count">${(t.messages || []).length} messages${lastAt ? ' · ' + esc(lastAt) : ''}</span>
       </summary>
       <div class="outreach-thread-msgs">${msgs}</div>
     </details>`;
@@ -5363,6 +5360,26 @@ function outreachHistoryHtml() {
     <h3>Conversation</h3>
     ${threads.map((t, i) => threadHtml(t, i === 0)).join('')}
   </div>`;
+}
+
+async function loadOutreachContext(companyId, allowRefetch) {
+  let h;
+  try {
+    h = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/threads`);
+  } catch (_) {
+    h = { threads: [], error: true };
+  }
+  if (outreachSelectedId !== companyId) return;
+  outreachHistory = h;
+  const ctxEl = document.getElementById('outreach-context');
+  if (ctxEl) ctxEl.innerHTML = outreachOrdersHtml() + outreachHistoryHtml();
+  const recipEl = document.getElementById('outreach-recipient');
+  if (recipEl) recipEl.outerHTML = outreachRecipientHtml();
+  // One follow-up fetch after the background Gmail sync has had time to land.
+  // Cooldowns server-side guarantee the second response can't re-trigger it.
+  if (allowRefetch && h.gmail_sync === 'started') {
+    setTimeout(() => { if (outreachSelectedId === companyId) loadOutreachContext(companyId, false); }, 6000);
+  }
 }
 
 // Order history card — at-a-glance commerce context for companies that buy.
@@ -5511,8 +5528,9 @@ function renderOutreachDetail(entry, draft) {
       <div class="outreach-subject"><span class="outreach-field-label">Subject</span>${esc(draft.subject || '(inherits thread subject)')}</div>
       <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
+      ${outreachRecipientHtml()}
       <div class="btn-row btn-row-primary outreach-actions">
-        <button class="btn btn-primary" id="outreach-send-btn" onclick="outreachPreviewSend()">Send&hellip;</button>
+        <button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>
         <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
       </div>
       <div id="outreach-send-panel"></div>
@@ -5536,7 +5554,6 @@ async function regenerateOutreachDraft() {
       ? await api(`/api/b2b/drafts/${outreachDraft.id}/regenerate`, { method: 'POST', body: { steer } })
       : await api(`/api/b2b/companies/${encodeURIComponent(entry.company_id)}/draft`, { method: 'POST', body: { steer } });
     outreachDraft = draft;
-    outreachSendPreview = null;
     entry.draft = { id: draft.id, subject: draft.subject, snippet: (draft.body || '').replace(/\s+/g, ' ').slice(0, 140) };
     renderOutreachQueue();
     renderOutreachDetail(entry, draft);
@@ -5561,86 +5578,45 @@ async function dismissOutreachDraft() {
   outreachAdvancePast(companyId); // advance to the next company in the queue
 }
 
-// Phase 1: always preview first. The response includes gate_enabled so the
-// confirm button can state the b2b_send_enabled flag state up front.
-async function outreachPreviewSend() {
+// Quiet recipient line under the draft — the useful part of the old preview
+// step, shown up front so Send needs no confirmation round-trip.
+function outreachRecipientHtml() {
+  const r = outreachHistory?.recipient;
+  const threaded = !!outreachDraft?.thread_id;
+  const to = r
+    ? `${esc(r.email)}${r.name ? ` (${esc(r.name)})` : ''}${r.via === 'general_email' ? ' <span class="outreach-preview-via">via general inbox</span>' : ''}`
+    : (outreachHistory === null ? 'resolving&hellip;' : '<span class="outreach-send-error-inline">no known contact — add one before sending</span>');
+  return `<div id="outreach-recipient" class="outreach-recipient">
+    Sends to ${to} from jamie@rubyshines.com · ${threaded ? 'replies in the existing thread' : 'starts a new email'}
+  </div>`;
+}
+
+// One-click send, same rhythm as the CS advisor: click → sends → advance to
+// the next company; errors surface as toasts and re-enable the button.
+async function sendOutreachDraft() {
   if (!outreachDraft) return;
-  const panel = document.getElementById('outreach-send-panel');
-  panel.innerHTML = '<div class="outreach-loading">Building preview&hellip;</div>';
-  const editedBody = document.getElementById('outreach-draft-editor')?.value;
-  try {
-    outreachSendPreview = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, body: editedBody } });
-  } catch (err) {
-    panel.innerHTML = `<div class="outreach-send-error">Preview failed: ${esc(err.message)}</div>`;
-    return;
-  }
-  if (outreachSendPreview.ok === false) {
-    // e.g. no active contact / missing subject — a fixable data problem
-    panel.innerHTML = `<div class="outreach-send-error">${esc(outreachSendPreview.error || 'Preview failed')}</div>`;
-    outreachSendPreview = null;
-    return;
-  }
-  renderOutreachSendPanel();
-}
-
-function renderOutreachSendPanel() {
-  const p = outreachSendPreview;
-  const panel = document.getElementById('outreach-send-panel');
-  if (!p) { panel.innerHTML = ''; return; }
-  const gateNote = p.gate_enabled
-    ? '<div class="outreach-gate-note outreach-gate-on">Sending is LIVE &mdash; confirming emails this immediately.</div>'
-    : '<div class="outreach-gate-note">Sending is currently off (the <code>b2b_send_enabled</code> flag is disabled). This preview is exactly what would send. Going live is a Jamie decision in a cowork session.</div>';
-  panel.innerHTML = `
-    <div class="outreach-send-preview">
-      <div class="outreach-field-label">Preview &mdash; nothing sent yet</div>
-      <div class="outreach-preview-meta">
-        <div><span>To</span>${esc(p.to)}${p.to_name ? ` (${esc(p.to_name)})` : ''} <span class="outreach-preview-via">via ${esc(p.resolved_via)}</span></div>
-        <div><span>From</span>${esc(p.from)}</div>
-        <div><span>Subject</span>${esc(p.subject)}</div>
-        <div><span>Threading</span>${esc(p.threading)}</div>
-      </div>
-      ${gateNote}
-      <div class="btn-row">
-        <button class="btn ${p.gate_enabled ? 'btn-primary' : 'btn-secondary'}" id="outreach-confirm-btn" onclick="outreachConfirmSend()">
-          ${p.gate_enabled ? 'Confirm send' : 'Confirm send (gate off — will not send)'}
-        </button>
-        <button class="btn btn-ghost" onclick="cancelOutreachSend()">Cancel</button>
-      </div>
-      <div id="outreach-send-result"></div>
-    </div>`;
-}
-
-function cancelOutreachSend() {
-  outreachSendPreview = null;
-  const panel = document.getElementById('outreach-send-panel');
-  if (panel) panel.innerHTML = '';
-}
-
-async function outreachConfirmSend() {
-  if (!outreachDraft || !outreachSendPreview) return;
-  const btn = document.getElementById('outreach-confirm-btn');
-  const resultEl = document.getElementById('outreach-send-result');
-  const btnLabel = btn ? btn.textContent : '';
+  const btn = document.getElementById('outreach-send-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   const editedBody = document.getElementById('outreach-draft-editor')?.value;
   let res;
   try {
     res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true, body: editedBody } });
   } catch (err) {
-    resultEl.innerHTML = `<div class="outreach-send-error">Send failed: ${esc(err.message)}</div>`;
-    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+    showToast(`Send failed: ${err.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
     return;
   }
   if (res.phase === 'sent') {
     showToast(`Sent to ${res.to}`, 'success');
-    outreachAdvancePast(outreachSelectedId); // advance to the next company
+    outreachAdvancePast(outreachSelectedId);
   } else if (res.phase === 'blocked') {
-    // The gate is off by design — state it plainly, not as an error.
-    resultEl.innerHTML = `<div class="outreach-gate-note">${esc(res.error)}</div>`;
-    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+    // Gate off — plain statement, not an error.
+    document.getElementById('outreach-send-panel').innerHTML =
+      `<div class="outreach-gate-note">${esc(res.error)}</div>`;
+    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
   } else {
-    resultEl.innerHTML = `<div class="outreach-send-error">Not sent: ${esc(res.error || 'unknown result')}</div>`;
-    if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
+    showToast(`Not sent: ${res.error || 'unknown result'}`, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
   }
 }
 

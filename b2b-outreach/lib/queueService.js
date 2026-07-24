@@ -14,7 +14,7 @@ const { assembleQueue } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft } = require('./outreachAdvisor');
-const { sendB2bEmail, SEND_FLAG } = require('./sendB2bEmail');
+const { sendB2bEmail, resolveRecipient, SEND_FLAG } = require('./sendB2bEmail');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 
 /** One-line preview of a draft body for queue rows. Pure. */
@@ -214,58 +214,86 @@ async function getCompanyEmails(sb, companyId) {
 }
 
 /**
+ * Gmail sync (thread discovery + manual-send reconcile) runs in the
+ * BACKGROUND so the detail payload returns at DB speed. Per-company in-flight
+ * guard here; both steps carry their own 15-min cooldowns, so the client's
+ * one follow-up re-fetch is cheap and can't loop.
+ */
+const gmailSyncInFlight = new Set();
+function startCompanyGmailSync(sb, companyId, emails) {
+  if (gmailSyncInFlight.has(companyId)) return 'in_flight';
+  gmailSyncInFlight.add(companyId);
+  (async () => {
+    try {
+      await discoverCompanyThreads(sb, { companyId, emails });
+      await reconcileThreads(sb, { companyIds: [companyId] });
+    } catch (err) {
+      console.error(`[queueService] gmail sync (${companyId}) failed: ${err.message}`);
+    } finally {
+      gmailSyncInFlight.delete(companyId);
+    }
+  })();
+  return 'started';
+}
+
+/**
  * Full context for one company — the dashboard detail payload:
- *   threads   newest-first, each with messages oldest-first
- *   orders    recent Shopify orders matched via the company's known emails
- *   company   order_count / total_sales / last_order_date summary
- * Before reading, discovers Gmail threads the engine has never seen (pre-June
- * relationships) and reconciles open threads for manual sends. Both fail-soft.
+ *   threads    newest-first, each with messages oldest-first
+ *   orders     recent Shopify orders matched via the company's known emails
+ *   company    order_count / total_sales / last_order_date summary
+ *   recipient  where a send would go (primary contact, general_email fallback)
+ *   gmail_sync 'started' when a background Gmail sync kicked off — the client
+ *              re-fetches once shortly after to pick up newly-imported threads
+ * Returns immediately from the DB; Gmail work never blocks the response.
  */
 async function fetchCompanyThreads(sb, companyId) {
-  let emails = [];
-  try { emails = await getCompanyEmails(sb, companyId); } catch (err) {
-    console.error(`[queueService] emails lookup failed: ${err.message}`);
-  }
-  try {
-    await discoverCompanyThreads(sb, { companyId, emails });
-    await reconcileThreads(sb, { companyIds: [companyId] });
-  } catch (err) {
-    console.error(`[queueService] history reconcile skipped: ${err.message}`);
-  }
+  // Round 1 — independent lookups in parallel.
+  const [emails, threadsRes, companyRes, recipient] = await Promise.all([
+    getCompanyEmails(sb, companyId).catch(err => {
+      console.error(`[queueService] emails lookup failed: ${err.message}`);
+      return [];
+    }),
+    sb.from('b2b_threads')
+      .select('id, thread_type, subject, status, gmail_thread_id, created_at, last_message_at')
+      .eq('company_id', companyId)
+      .order('last_message_at', { ascending: false, nullsFirst: false }),
+    sb.from('b2b_companies')
+      .select('order_count, total_sales, last_order_date').eq('id', companyId).maybeSingle(),
+    resolveRecipient(sb, companyId).catch(() => null),
+  ]);
+  if (threadsRes.error) throw new Error(threadsRes.error.message);
+  const threads = threadsRes.data || [];
+  const gmailSync = emails.length ? startCompanyGmailSync(sb, companyId, emails) : 'skipped';
 
-  const { data: threads, error } = await sb.from('b2b_threads')
-    .select('id, thread_type, subject, status, gmail_thread_id, created_at, last_message_at')
-    .eq('company_id', companyId)
-    .order('last_message_at', { ascending: false, nullsFirst: false });
-  if (error) throw new Error(error.message);
+  // Round 2 — messages + orders in parallel (each depends on round 1).
+  const [messagesRes, ordersRes] = await Promise.all([
+    threads.length
+      ? sb.from('b2b_messages')
+        .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
+        .in('thread_id', threads.map(t => t.id))
+        .order('sent_at', { ascending: true })
+      : Promise.resolve({ data: [] }),
+    emails.length
+      ? sb.from('orders')
+        .select('shopify_order_id, order_number, created_at, total_price, shop_currency, financial_status, fulfillment_status, cancelled_at')
+        .in('customer_email', emails)
+        .order('created_at', { ascending: false })
+        .limit(8)
+      : Promise.resolve({ data: [] }),
+  ]);
+  if (messagesRes.error) throw new Error(messagesRes.error.message);
+  if (ordersRes.error) console.error(`[queueService] orders lookup failed: ${ordersRes.error.message}`);
 
-  let withMessages = [];
-  if (threads?.length) {
-    const { data: messages, error: mErr } = await sb.from('b2b_messages')
-      .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
-      .in('thread_id', threads.map(t => t.id))
-      .order('sent_at', { ascending: true });
-    if (mErr) throw new Error(mErr.message);
-    const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
-    for (const m of messages || []) byThread.get(m.thread_id)?.messages.push(m);
-    withMessages = [...byThread.values()];
-  }
+  const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
+  for (const m of messagesRes.data || []) byThread.get(m.thread_id)?.messages.push(m);
 
-  let orders = [];
-  if (emails.length) {
-    const { data: orderRows, error: oErr } = await sb.from('orders')
-      .select('shopify_order_id, order_number, created_at, total_price, shop_currency, financial_status, fulfillment_status, cancelled_at')
-      .in('customer_email', emails)
-      .order('created_at', { ascending: false })
-      .limit(8);
-    if (oErr) console.error(`[queueService] orders lookup failed: ${oErr.message}`);
-    else orders = orderRows || [];
-  }
-
-  const { data: company } = await sb.from('b2b_companies')
-    .select('order_count, total_sales, last_order_date').eq('id', companyId).maybeSingle();
-
-  return { threads: withMessages, orders, company: company || null };
+  return {
+    threads: [...byThread.values()],
+    orders: ordersRes.data || [],
+    company: companyRes.data || null,
+    recipient,
+    gmail_sync: gmailSync,
+  };
 }
 
 module.exports = {
