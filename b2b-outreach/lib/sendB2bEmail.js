@@ -25,22 +25,44 @@ function encodeSubject(subject) {
   return `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
 }
 
+// One signature convention everywhere — same source of truth as CS emails.
+const { SIGNATURE_NAME, SITE_URL, SITE_LABEL } = require('../../customer-service/lib/signatures');
+
+// Message types where the email is INTRODUCING the brand — only these get the
+// first-mention RUBIES link in the body. Established relationships know us.
+const INTRO_LINK_TYPES = new Set(['intro_outreach', 'intro_pitch', 'affiliate_intro', 'inbound_inquiry_response']);
+
 /**
- * Plain text → minimal personal-looking HTML: escaped, URLs linkified, line
- * breaks preserved, and the FIRST standalone "RUBIES" mention linked to the
- * store (deterministic transformation — brand link without asking the
- * advisor to write markup). Pure.
+ * Ensure the CS signature convention: "Jamie Alexander, RUBIES Founder" is
+ * followed by a rubyshines.com line (linked in the HTML part). Appended at
+ * send time when the advisor didn't write it, so both MIME parts agree. Pure.
  */
-function toHtmlBody(text) {
+function normalizeSignature(text) {
+  const body = String(text || '');
+  if (!body.includes(SIGNATURE_NAME)) return body;
+  const sigLineRe = new RegExp(`${SIGNATURE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\r?\\n(https?:\\/\\/)?(www\\.)?rubyshines\\.com)?`);
+  return body.replace(sigLineRe, (m, hasSite) => hasSite ? m : `${SIGNATURE_NAME}\n${SITE_LABEL}`);
+}
+
+/**
+ * Plain text → minimal personal-looking HTML: escaped, URLs + rubyshines.com
+ * linkified, line breaks preserved. When `introLink` (brand-introduction
+ * message types), the FIRST standalone body mention of "RUBIES" also links to
+ * the store — the signature's "RUBIES Founder" never counts. Pure.
+ */
+function toHtmlBody(text, { introLink = false } = {}) {
   let html = String(text || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   html = html.replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => `<a href="${url}">${url}</a>`);
-  let linked = false;
-  html = html.replace(/\bRUBIES\b/g, (m) => {
-    if (linked) return m;
-    linked = true;
-    return `<a href="https://rubyshines.com">RUBIES</a>`;
-  });
+  html = html.replace(/(^|[\s>])((www\.)?rubyshines\.com)(?![\w.\/])/g, (m, pre, dom) => `${pre}<a href="${SITE_URL}">${dom}</a>`);
+  if (introLink) {
+    let linked = false;
+    html = html.replace(/\bRUBIES\b(?! Founder)/g, (m) => {
+      if (linked) return m;
+      linked = true;
+      return `<a href="${SITE_URL}">RUBIES</a>`;
+    });
+  }
   return html.replace(/\r?\n/g, '<br>\r\n');
 }
 
@@ -49,7 +71,9 @@ function toHtmlBody(text) {
  * multipart/alternative: the advisor's plain text verbatim + a minimal HTML
  * part so links (incl. the first RUBIES mention) are clickable.
  */
-function buildRawMessage({ to, subject, body, inReplyTo, references }) {
+function buildRawMessage({ to, subject, body: rawBody, inReplyTo, references, message_type }) {
+  const body = normalizeSignature(rawBody);
+  const introLink = INTRO_LINK_TYPES.has(message_type);
   const boundary = `b2b-${Buffer.from(subject || 'm').toString('hex').slice(0, 12)}-${(body || '').length.toString(36)}`;
   const headers = [
     `From: Jamie Alexander <${FROM_EMAIL}>`,
@@ -66,7 +90,7 @@ function buildRawMessage({ to, subject, body, inReplyTo, references }) {
     + body + '\r\n\r\n'
     + `--${boundary}\r\n`
     + 'Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
-    + `<div>${toHtmlBody(body)}</div>\r\n\r\n`
+    + `<div>${toHtmlBody(body, { introLink })}</div>\r\n\r\n`
     + `--${boundary}--\r\n`;
   return Buffer.from(raw, 'utf8').toString('base64url');
 }
@@ -178,7 +202,8 @@ async function sendB2bEmail(p = {}) {
   // Send via Gmail API (gmail.modify scope covers send)
   const { getGmail } = require('../../gmail-management/lib/gmailClient');
   const gmail = await getGmail();
-  const raw = buildRawMessage({ to: recipient.email, subject, body, inReplyTo, references: inReplyTo });
+  const sentBody = normalizeSignature(body);
+  const raw = buildRawMessage({ to: recipient.email, subject, body: sentBody, inReplyTo, references: inReplyTo, message_type });
   const sendRes = await gmail.users.messages.send({
     userId: 'me',
     requestBody: { raw, ...(thread?.gmail_thread_id ? { threadId: thread.gmail_thread_id } : {}) },
@@ -208,7 +233,7 @@ async function sendB2bEmail(p = {}) {
     thread_id: threadRowId, company_id, direction: 'outbound', message_type,
     variant_id: variant_id || null, gmail_message_id: gmailMessageId,
     gmail_thread_id: gmailThreadId, in_reply_to: inReplyTo,
-    from_email: FROM_EMAIL, to_email: recipient.email, body_text: body,
+    from_email: FROM_EMAIL, to_email: recipient.email, body_text: sentBody,
     sent_at: sentAt, source: 'send_tool',
   });
   if (mErr) console.error(`[sendB2bEmail] b2b_messages insert failed (sent ok): ${mErr.message}`);
@@ -223,4 +248,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, resolveRecipient, encodeSubject, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, encodeSubject, FROM_EMAIL, SEND_FLAG };
