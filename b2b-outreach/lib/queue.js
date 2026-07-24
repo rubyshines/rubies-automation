@@ -15,6 +15,13 @@
  */
 const { evaluateDue, companyEligible } = require('./cadence');
 
+/** "5h" under two days, then "3d" — queue rows read in days, not raw hours. */
+function humanAge(date, now = new Date()) {
+  const hours = Math.round((now - new Date(date)) / 3600000);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
 const TIER_BY_TYPE = {
   // Tier 2 — time-sensitive
   post_samples_checkin: 2,
@@ -58,7 +65,7 @@ function computeQueueEntry(company, ctx, now = new Date()) {
     return {
       tier: 1,
       message_type: null, // advisor reads the thread and decides
-      reason: `replied ${Math.round((now - new Date(ctx.lastInboundAt)) / 3600000)}h ago — waiting on us`,
+      reason: `replied ${humanAge(ctx.lastInboundAt, now)} ago — waiting on us`,
       waiting_since: ctx.lastInboundAt,
       // Thread the reply — without this the draft stored thread_id null and
       // sendB2bEmail sent the reply as a brand-new email outside the thread.
@@ -114,4 +121,4 @@ function assembleQueue(items, now = new Date()) {
   });
 }
 
-module.exports = { computeQueueEntry, assembleQueue, TIER_BY_TYPE };
+module.exports = { computeQueueEntry, assembleQueue, humanAge, TIER_BY_TYPE };

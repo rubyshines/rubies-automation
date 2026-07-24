@@ -5182,6 +5182,7 @@ let outreachChannel = '';        // '' = all | wholesale | lgbtq_org | affiliate
 let outreachQueue = [];
 let outreachSelectedId = null;   // company_id of the selected row
 let outreachDraft = null;        // full b2b_drafts row currently shown
+let outreachHistory = null;      // { threads: [...] } for the selected company (null = loading)
 let outreachSendPreview = null;  // phase-1 send preview (while confirming)
 
 const OUTREACH_FILTERS = [
@@ -5252,11 +5253,29 @@ async function selectOutreachEntry(companyId) {
   outreachSelectedId = companyId;
   outreachDraft = null;
   outreachSendPreview = null;
+  outreachHistory = null;
   renderOutreachQueue(); // refresh active highlight
 
   const detailEl = document.getElementById('outreach-detail');
   document.getElementById('outreach-placeholder').style.display = 'none';
   detailEl.style.display = 'block';
+
+  // Conversation history loads in parallel with the draft; re-renders on
+  // arrival. The endpoint also reconciles manual Gmail sends, so first load
+  // can take a beat — the pane shows its own loading state meanwhile.
+  api(`/api/b2b/companies/${encodeURIComponent(companyId)}/threads`)
+    .then(h => {
+      if (outreachSelectedId !== companyId) return;
+      outreachHistory = h;
+      const historyEl = document.getElementById('outreach-history');
+      if (historyEl) historyEl.outerHTML = outreachHistoryHtml();
+    })
+    .catch(() => {
+      if (outreachSelectedId !== companyId) return;
+      outreachHistory = { threads: [], error: true };
+      const historyEl = document.getElementById('outreach-history');
+      if (historyEl) historyEl.outerHTML = outreachHistoryHtml();
+    });
 
   if (!entry.draft) {
     renderOutreachDetail(entry, null);
@@ -5303,6 +5322,46 @@ function outreachAdvancePast(companyId) {
   }
 }
 
+// Conversation history pane: threads newest-first, messages oldest-first.
+// Newest thread starts expanded; older threads collapse behind <details>.
+function outreachHistoryHtml() {
+  if (outreachHistory === null) {
+    return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+      <div class="outreach-loading">Loading conversation&hellip;</div></div>`;
+  }
+  const threads = outreachHistory.threads || [];
+  if (outreachHistory.error) {
+    return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+      <div class="outreach-empty-note">Could not load conversation history.</div></div>`;
+  }
+  if (!threads.length) {
+    return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+      <div class="outreach-empty-note">No conversation yet — this will be the first touch.</div></div>`;
+  }
+  const threadHtml = (t, open) => {
+    const msgs = (t.messages || []).map(m => {
+      const out = m.direction === 'outbound';
+      const who = out ? 'Jamie' : esc(m.from_email || 'them');
+      const badge = m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '';
+      return `<div class="outreach-msg outreach-msg-${out ? 'out' : 'in'}">
+        <div class="outreach-msg-meta"><strong>${who}</strong>${badge} · ${m.sent_at ? esc(timeAgo(m.sent_at, 'short')) : ''} ago</div>
+        <div class="outreach-msg-body">${esc(m.body_text || '(no text captured)')}</div>
+      </div>`;
+    }).join('');
+    return `<details class="outreach-thread"${open ? ' open' : ''}>
+      <summary>${esc(t.subject || t.thread_type || 'thread')}
+        ${t.status === 'closed' ? '<span class="badge badge-muted">closed</span>' : ''}
+        <span class="outreach-thread-count">${(t.messages || []).length} messages</span>
+      </summary>
+      ${msgs}
+    </details>`;
+  };
+  return `<div id="outreach-history" class="detail-section outreach-card outreach-history">
+    <div class="outreach-field-label">Conversation</div>
+    ${threads.map((t, i) => threadHtml(t, i === 0)).join('')}
+  </div>`;
+}
+
 function outreachListHtml(title, items, cls) {
   return `<div class="outreach-list ${cls}">
     <div class="outreach-field-label">${title}</div>
@@ -5334,7 +5393,7 @@ function renderOutreachDetail(entry, draft) {
     const what = entry.message_type
       ? `the <strong>${esc(entry.message_type.replace(/_/g, ' '))}</strong> message`
       : 'a reply (the advisor reads the thread and drafts Jamie’s response)';
-    el.innerHTML = header + `
+    el.innerHTML = header + outreachHistoryHtml() + `
       <div class="detail-section outreach-card">
         <div class="outreach-empty-note">No draft yet &mdash; generating will write ${what}.</div>
         ${steerBlock}
@@ -5345,7 +5404,7 @@ function renderOutreachDetail(entry, draft) {
   const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
 
-  el.innerHTML = header + `
+  el.innerHTML = header + outreachHistoryHtml() + `
     <div class="detail-section outreach-card">
       <h3>Draft #${draft.id}
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>

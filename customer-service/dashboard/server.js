@@ -2740,6 +2740,10 @@ async function apiB2bQueue(query) {
   return b2bQueueService.fetchQueueWithDrafts(getSupabaseClient(), { channel });
 }
 
+async function apiB2bCompanyThreads(companyId) {
+  return b2bQueueService.fetchCompanyThreads(getSupabaseClient(), companyId);
+}
+
 async function apiB2bGetDraft(id) {
   const { data, error } = await getSupabaseClient()
     .from('b2b_drafts').select('*').eq('id', id).maybeSingle();
@@ -3249,6 +3253,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/advisor-facts$/, handler: (body) => apiAddAdvisorFact(body) },
   { method: 'POST', pattern: /^\/api\/advisor-facts\/(\d+)\/decision$/, handler: (body, id) => apiDecideAdvisorFact(parseInt(id), body) },
   // B2B Outreach panel
+  { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/threads$/, handler: (_, id) => apiB2bCompanyThreads(decodeURIComponent(id)) },
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)$/, handler: (_, id) => apiB2bGetDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/regenerate$/, handler: (body, id) => apiB2bRegenerateDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },

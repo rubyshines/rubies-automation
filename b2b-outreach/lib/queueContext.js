@@ -14,6 +14,13 @@ async function buildContexts(sb, companies) {
       .in('company_id', ids)
       .order('sent_at', { ascending: true })
   ) : [];
+  // A closed thread is a concluded conversation: its inbound messages must not
+  // put the company back in Tier 1 ("waiting on us"). Outbound history still
+  // counts for cadence (sentTypes / lastOutboundAt) regardless of status.
+  const threads = ids.length ? await fetchAllPaginated(() =>
+    sb.from('b2b_threads').select('id, status').in('company_id', ids)
+  ) : [];
+  const closedThreadIds = new Set(threads.filter(t => t.status === 'closed').map(t => t.id));
   const drafts = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_drafts').select('company_id').eq('status', 'pending').in('company_id', ids)
       .order('id', { ascending: true })
@@ -37,6 +44,7 @@ async function buildContexts(sb, companies) {
     const ctx = byCompany.get(m.company_id);
     if (!ctx) continue;
     if (m.direction === 'inbound') {
+      if (closedThreadIds.has(m.thread_id)) continue;
       ctx.lastInboundAt = m.sent_at;
       // Carry the inbound's thread so Tier-1 reply drafts send IN the thread
       // (without it every reply went out as a brand-new email).

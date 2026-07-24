@@ -12,6 +12,7 @@
  */
 const { assembleQueue } = require('./queue');
 const { buildContexts } = require('./queueContext');
+const { reconcileThreads } = require('./manualSendReconcile');
 const { generateDraft } = require('./outreachAdvisor');
 const { sendB2bEmail, SEND_FLAG } = require('./sendB2bEmail');
 const { isFlagEnabled } = require('../../shared/systemFlags');
@@ -89,6 +90,14 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
 /** Queue + pending-draft id/snippet per company — the dashboard payload. */
 async function fetchQueueWithDrafts(sb, { channel } = {}) {
   const companies = await fetchCompanies(sb, { channel });
+  // Absorb any manual Gmail replies before computing "waiting on us" — the
+  // queue must reflect what actually happened in the inbox, not just what the
+  // send tool wrote. Fail-soft + per-thread cooldown inside.
+  try {
+    await reconcileThreads(sb, { companyIds: companies.map(c => c.id) });
+  } catch (err) {
+    console.error(`[queueService] reconcile skipped: ${err.message}`);
+  }
   const contexts = await buildContexts(sb, companies);
   const queue = assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) })));
 
@@ -159,12 +168,42 @@ async function sendDraftById(sb, { draft_id, confirmed } = {}) {
   return { ...res, draft_id };
 }
 
+/**
+ * Full conversation history for one company: threads newest-first, each with
+ * its messages oldest-first — the dashboard history pane payload. Reconciles
+ * the company's open threads first so the pane shows manual Gmail replies too.
+ */
+async function fetchCompanyThreads(sb, companyId) {
+  try {
+    await reconcileThreads(sb, { companyIds: [companyId] });
+  } catch (err) {
+    console.error(`[queueService] history reconcile skipped: ${err.message}`);
+  }
+  const { data: threads, error } = await sb.from('b2b_threads')
+    .select('id, thread_type, subject, status, gmail_thread_id, created_at, last_message_at')
+    .eq('company_id', companyId)
+    .order('last_message_at', { ascending: false, nullsFirst: false });
+  if (error) throw new Error(error.message);
+  if (!threads?.length) return { threads: [] };
+
+  const { data: messages, error: mErr } = await sb.from('b2b_messages')
+    .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
+    .in('thread_id', threads.map(t => t.id))
+    .order('sent_at', { ascending: true });
+  if (mErr) throw new Error(mErr.message);
+
+  const byThread = new Map(threads.map(t => [t.id, { ...t, messages: [] }]));
+  for (const m of messages || []) byThread.get(m.thread_id)?.messages.push(m);
+  return { threads: [...byThread.values()] };
+}
+
 module.exports = {
   draftSnippet,
   attachDrafts,
   mergePendingDraftEntries,
   fetchOutreachQueue,
   fetchQueueWithDrafts,
+  fetchCompanyThreads,
   generateDraftForCompany,
   sendDraftById,
 };
