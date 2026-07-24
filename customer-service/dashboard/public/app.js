@@ -5484,24 +5484,54 @@ function outreachOrdersHtml() {
 // Facts-to-verify checklist. Click a fact to mark it verified (persisted on
 // the draft's structured payload); all verified → the section collapses to a
 // quiet confirmation line.
-function outreachFactsHtml(draft) {
+function outreachFactsHtml(draft, forceOpen) {
   const s = (draft && draft.structured) || {};
   const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
   if (!facts.length) return '';
   const verified = new Set(Array.isArray(s.facts_verified) ? s.facts_verified : []);
-  if (facts.every((_, i) => verified.has(i))) {
+  if (!forceOpen && facts.every((_, i) => verified.has(i))) {
     return `<div id="outreach-facts" class="outreach-facts-done" onclick="reopenOutreachFacts()" title="Click to review">
       &#10003; All ${facts.length} fact${facts.length > 1 ? 's' : ''} verified</div>`;
   }
   const rows = facts.map((f, i) => `
-    <label class="outreach-fact${verified.has(i) ? ' outreach-fact-verified' : ''}">
-      <input type="checkbox" ${verified.has(i) ? 'checked' : ''} onchange="toggleOutreachFact(${i}, this.checked)">
-      <span>${esc(f)}</span>
-    </label>`).join('');
+    <div class="outreach-fact-row">
+      <label class="outreach-fact${verified.has(i) ? ' outreach-fact-verified' : ''}">
+        <input type="checkbox" ${verified.has(i) ? 'checked' : ''} onchange="toggleOutreachFact(${i}, this.checked)">
+        <span>${esc(f)}</span>
+      </label>
+      <button class="outreach-fact-fix" onclick="showOutreachFactFix(${i})" title="This fact is wrong — correct it and redraft">fix</button>
+      <div class="outreach-fact-fix-row" id="outreach-fact-fix-${i}" style="display:none">
+        <input type="text" id="outreach-fact-fix-input-${i}" class="steer-input"
+          placeholder="what is actually true?"
+          onkeydown="if(event.key==='Enter'){submitOutreachFactFix(${i})}">
+        <button class="btn btn-secondary" onclick="submitOutreachFactFix(${i})">Correct &amp; redraft</button>
+      </div>
+    </div>`).join('');
   return `<div id="outreach-facts" class="outreach-facts">
     <div class="outreach-field-label">Facts to verify before sending</div>
     ${rows}
   </div>`;
+}
+
+function showOutreachFactFix(index) {
+  const row = document.getElementById(`outreach-fact-fix-${index}`);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+  if (row.style.display === 'flex') document.getElementById(`outreach-fact-fix-input-${index}`)?.focus();
+}
+
+// A fact correction is a steer: regenerate the draft with the true fact.
+async function submitOutreachFactFix(index) {
+  const s = outreachDraft?.structured || {};
+  const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
+  const fact = facts[index];
+  const correction = (document.getElementById(`outreach-fact-fix-input-${index}`)?.value || '').trim();
+  if (!fact || !correction) return;
+  const steerEl = document.getElementById('outreach-steer');
+  if (steerEl) {
+    steerEl.value = `Fact correction: the draft's claim "${fact}" is wrong. The truth is: ${correction}. Redraft with the corrected fact; keep everything else that still holds.`;
+  }
+  await regenerateOutreachDraft();
 }
 
 async function toggleOutreachFact(index, verified) {
@@ -5523,18 +5553,7 @@ async function toggleOutreachFact(index, verified) {
 function reopenOutreachFacts() {
   const el = document.getElementById('outreach-facts');
   if (!el || !outreachDraft) return;
-  const s = outreachDraft.structured || {};
-  const facts = Array.isArray(s.facts_to_verify) ? s.facts_to_verify : [];
-  const verified = new Set(Array.isArray(s.facts_verified) ? s.facts_verified : []);
-  const rows = facts.map((f, i) => `
-    <label class="outreach-fact${verified.has(i) ? ' outreach-fact-verified' : ''}">
-      <input type="checkbox" ${verified.has(i) ? 'checked' : ''} onchange="toggleOutreachFact(${i}, this.checked)">
-      <span>${esc(f)}</span>
-    </label>`).join('');
-  el.outerHTML = `<div id="outreach-facts" class="outreach-facts">
-    <div class="outreach-field-label">Facts to verify before sending</div>
-    ${rows}
-  </div>`;
+  el.outerHTML = outreachFactsHtml(outreachDraft, true);
 }
 
 function outreachListHtml(title, items, cls) {

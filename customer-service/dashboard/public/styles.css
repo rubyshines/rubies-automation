@@ -5476,6 +5476,25 @@ main { height: calc(100vh - 56px); }
   cursor: pointer;
 }
 .outreach-fact input { margin-top: 3px; flex: 0 0 auto; }
+.outreach-fact-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.outreach-fact-row .outreach-fact { flex: 1 1 auto; }
+.outreach-fact-fix {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--teal);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 4px;
+}
+.outreach-fact-fix-row {
+  flex: 1 1 100%;
+  display: flex;
+  gap: 8px;
+  padding: 4px 0 6px 24px;
+}
+.outreach-fact-fix-row .steer-input { flex: 1; }
 .outreach-fact-verified span {
   text-decoration: line-through;
   color: var(--text-tertiary);

@@ -29,6 +29,7 @@ const TIER_BY_TYPE = {
   performance_checkin: 2, // when signal-driven; cadence form maps to 3 below
   price_change_notice: 2,
   event_donation_response: 1, // inbound-triggered; normally surfaces via Tier 1 anyway
+  inbound_inquiry_response: 1, // inbound-triggered (org/retailer wrote to us first)
   // Tier 3 — healthy cadence
   reorder_nudge: 3,
   new_collection: 3,
