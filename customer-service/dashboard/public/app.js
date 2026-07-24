@@ -5361,7 +5361,8 @@ function outreachHistoryHtml() {
     const msgs = (t.messages || []).map(m => {
       const out = m.direction === 'outbound';
       const who = out ? 'Jamie' : esc(m.from_email || 'them');
-      const badge = m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '';
+      const badge = (m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '')
+        + (m.message_type === 'auto_reply' ? ' <span class="badge badge-muted">auto-reply</span>' : '');
       return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
         <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
         <div class="msg-body">${esc(m.body_text || '(no text captured)')}</div>

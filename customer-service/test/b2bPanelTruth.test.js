@@ -96,6 +96,46 @@ test('falls back to snippet when no text/plain part exists', () => {
   assert.equal(rows[0].body_text, 'snippet text');
 });
 
+// ── auto-reply detection ────────────────────────────────────────────────────
+const { detectAutoReply } = require('../../b2b-outreach/lib/replyCorrelation');
+
+test('detectAutoReply catches the Mermaids-style body and classic markers', () => {
+  assert.ok(detectAutoReply({ subject: 'Re: Hi', body: "Thanks for getting in touch. We'll be back to you within 2 business days." }));
+  assert.ok(detectAutoReply({ subject: 'Automatic reply: Hi from RUBIES', body: '' }));
+  assert.ok(detectAutoReply({ subject: 'Re: Hi', body: 'I am out of office until Monday.' }));
+  assert.ok(detectAutoReply({ subject: '', body: 'This mailbox is not monitored.' }));
+});
+
+test('detectAutoReply leaves real replies alone', () => {
+  assert.ok(!detectAutoReply({ subject: 'Re: Hi from RUBIES', body: 'Thank you for reaching out! We would love to talk. Are you free Tuesday?' }));
+  assert.ok(!detectAutoReply({ subject: 'Re: order', body: 'Thanks Jamie! The invoice is paid.' }));
+});
+
+test('auto_reply inbound never sets the Tier-1 signal', () => {
+  // via queueContext behavior: computeQueueEntry with only an auto_reply has no lastInboundAt
+  const now = new Date('2026-07-24T22:00:00Z');
+  const entry = computeQueueEntry(
+    { id: 'org-x', relationship_state: 'in_contact' },
+    { lastInboundAt: null, lastOutboundAt: '2026-07-24T20:00:00Z', hasPendingDraft: false, sentTypes: new Set(), lastTypeSentAt: () => null },
+    now
+  );
+  assert.equal(entry, null);
+});
+
+test('reconciler flags Auto-Submitted messages as auto_reply', () => {
+  const rows = partitionThreadMessages([gmailMsg('m9', ['INBOX'], {
+    payload: {
+      mimeType: 'text/plain',
+      body: { data: Buffer.from('We are on holiday.').toString('base64url') },
+      headers: [
+        { name: 'From', value: 'org@x.org' }, { name: 'To', value: 'jamie@rubyshines.com' },
+        { name: 'Auto-Submitted', value: 'auto-replied' },
+      ],
+    },
+  })], new Set());
+  assert.equal(rows[0].message_type, 'auto_reply');
+});
+
 // ── adaptive cadence ────────────────────────────────────────────────────────
 const { evaluateDue, nextActionDateAfterSend } = require('../../b2b-outreach/lib/cadence');
 

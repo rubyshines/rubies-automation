@@ -45,6 +45,8 @@ async function buildContexts(sb, companies) {
     if (!ctx) continue;
     if (m.direction === 'inbound') {
       if (closedThreadIds.has(m.thread_id)) continue;
+      // Auto-responders are history, not a human waiting on us.
+      if (m.message_type === 'auto_reply') continue;
       ctx.lastInboundAt = m.sent_at;
       // Carry the inbound's thread so Tier-1 reply drafts send IN the thread
       // (without it every reply went out as a brand-new email).

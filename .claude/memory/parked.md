@@ -76,6 +76,12 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Plan: .claude/plans/b2b-outreach-system.md
 - Notes: The system itself is BUILT (2026-06-11) and LIVE (send enabled 2026-07-23) — see domain_b2b_sales.md. This entry now tracks only the deliberately unbuilt remainder from the design: (1) discovery pipeline fixes — aiClient.js port, Haiku pre-filter for the 3,537-row backlog, org routing fix (285 mis-dismissed orgs), scheduled cron; (2) affiliate onboarding flow (GoAffPro); (3) A/B variant evaluation loop; (4) wholesale→B2B rename (last, after everything is proven); (5) CS→outreach transfer tool (one-click move of a community_outreach Gorgias ticket into b2b_companies + thread — done manually for Uniting Pride 2026-07-23, worth automating when inbound org volume justifies it); (6) scheduling the daily cadence sweep (deliberate pull-mode decision — see initiative_b2b_expansion.md). The plan file remains the spec for these.
 
+## Audit sheet-imported B2B contact associations
+- Parked: 2026-07-24
+- Domains: b2b_sales, community
+- Type: idea
+- Notes: The Main Contacts sheet import created chimeric records — free-mail contacts attached to company rows by the old Gmail-scanning system's guesses (found: Kelly Harrington fused onto Zoe and Company — a VA retail customer on an RI shop; the lgbtq-gmail/yahoo/hotmail domain-grouped junk). Trustworthy pattern: contact email domain matches company domain. Audit sweep: flag companies whose contacts are free-mail AND whose order ship-to addresses mismatch the company address; review flagged rows before outreach touches them. Also import column-shift mess (Zoe's street address sat in the website field) — spot-fix as found.
+
 ## Backfill donation partners missing from b2b_companies
 - Parked: 2026-07-24
 - Domains: community, b2b_sales

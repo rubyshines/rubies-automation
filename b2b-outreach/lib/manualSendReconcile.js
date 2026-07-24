@@ -60,15 +60,26 @@ function header(msg, name) {
  * @returns rows ready for upsert (minus thread_id/company_id, added by caller)
  */
 function partitionThreadMessages(gmailMessages, knownIds) {
+  const { detectAutoReply } = require('./replyCorrelation');
   const rows = [];
   for (const m of gmailMessages || []) {
     const labels = m.labelIds || [];
     if (labels.includes('DRAFT')) continue;           // the historical poison — never ingest
     if (knownIds.has(m.id)) continue;
     const outbound = labels.includes('SENT');
+    // Auto-responders: protocol headers first (Auto-Submitted / X-Autoreply /
+    // Precedence), content fallback second. Labeled, kept in history, never
+    // a Tier-1 signal.
+    const autoSubmitted = (header(m, 'Auto-Submitted') || '').toLowerCase();
+    const isAuto = !outbound && (
+      (autoSubmitted && autoSubmitted !== 'no')
+      || !!header(m, 'X-Autoreply') || !!header(m, 'X-Autorespond')
+      || /^auto[_-]?repl/i.test(header(m, 'Precedence') || '')
+      || detectAutoReply({ subject: header(m, 'Subject'), body: extractPlainText(m.payload) || m.snippet })
+    );
     rows.push({
       direction: outbound ? 'outbound' : 'inbound',
-      message_type: null,
+      message_type: isAuto ? 'auto_reply' : null,
       gmail_message_id: m.id,
       gmail_thread_id: m.threadId,
       from_email: (header(m, 'From') || '').replace(/^.*<([^>]+)>.*$/, '$1') || null,

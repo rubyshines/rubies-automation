@@ -36,8 +36,21 @@ function looksLikeOrder(body = '') {
 }
 
 /**
+ * Conservative auto-responder detection (content layer — the gmail intake's
+ * is_auto_reply and protocol headers are the first line; this catches what
+ * they miss, e.g. Mermaids' "we'll be back to you within 2 business days").
+ * Deliberately narrow patterns: a mislabel in either direction is visible and
+ * recoverable (the message stays in history either way), so favor precision.
+ * Pure.
+ */
+function detectAutoReply({ subject, body }) {
+  const s = `${subject || ''}\n${body || ''}`;
+  return /\b(automatic reply|auto[- ]?repl(y|ied)|out of (the )?office|this (inbox|mailbox) is not monitored|do not reply to this (e-?mail|message)|we('|’)?ll (get|be) back to you within [^.\n]{0,30}(business |working )?days)\b/i.test(s);
+}
+
+/**
  * Correlate one inbound message. Returns
- * { matched, company_id?, thread_id?, duplicate?, contact_loss?, looks_like_order? }.
+ * { matched, company_id?, thread_id?, duplicate?, contact_loss?, looks_like_order?, auto_reply? }.
  */
 async function correlateInbound(msg) {
   const { gmail_message_id, gmail_thread_id, from_email, to_email, subject, body_text, received_at } = msg;
@@ -88,9 +101,13 @@ async function correlateInbound(msg) {
     }
   }
 
-  // 3. Idempotent message insert (UNIQUE gmail_message_id)
+  // 3. Idempotent message insert (UNIQUE gmail_message_id). Auto-responders
+  // are kept for history but labeled so they never create a Tier-1
+  // "waiting on us" (queueContext skips message_type='auto_reply').
+  const autoReply = detectAutoReply({ subject, body: body_text });
   const { error: mErr } = await sb.from('b2b_messages').insert({
     thread_id: threadId, company_id: companyId, direction: 'inbound',
+    message_type: autoReply ? 'auto_reply' : null,
     gmail_message_id, gmail_thread_id,
     from_email: sender, to_email: to_email || null,
     body_text: (body_text || '').slice(0, 20000),
@@ -117,4 +134,4 @@ async function correlateInbound(msg) {
   };
 }
 
-module.exports = { correlateInbound, detectContactLoss, looksLikeOrder };
+module.exports = { correlateInbound, detectContactLoss, looksLikeOrder, detectAutoReply };

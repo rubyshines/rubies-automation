@@ -16,6 +16,8 @@ Grow retailer partnerships and wholesale revenue.
 4. Tier 3 custom searches — not started
 
 ## Current Status
+**2026-07-24 (session 2): FIRST REAL SEND** — the Mermaids UK intro went out through the engine. Panel matured in one day: CS-aligned UX (sidebar company card + orders, editable draft, one-click send), fact-verify checklist with corrections, conversation history with Gmail thread discovery, deep links, frequency-aligned reorder cadence + advisor `next_touch_days` override, auto-responder guard, clickable-link HTML sends, `b2b_add_prospect` intake tool. Operating plan: opportunistic outreach first (stagger the UK sends; TGV + Uniting Pride replies pending), then B2B retailer outbound as the next phase.
+
 Active again after a month dormant. 2026-07-23/24 re-entry: queue triaged against Gmail ground truth (16 threads → 2 real items), `b2b_send_enabled` flipped ON (go-live), first real drafts staged (Transgender Victoria reply, Uniting Pride org onboarding). Panel hardened so it stays trustworthy: manual Gmail replies auto-reconcile into the engine, conversation history visible in the panel, company order/program state synced daily from Shopify. Next: work the warm queue (partners + existing retailers), then UK org outreach (first objective: establish UK donation partners — none exist today; partner-referred org list pending from Jamie).
 
 ## Decisions Made
