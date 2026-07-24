@@ -5385,7 +5385,13 @@ main { height: calc(100vh - 56px); }
   border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--surface-inset);
 }
-.outreach-msg-out { border-left-color: #c94f6d; }
+/* Jamie's messages carry the panel's "yours" colors (same pair as the active
+   queue row); theirs stay neutral. */
+.outreach-msg-out {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+.outreach-msg-out .outreach-msg-meta strong { color: var(--accent); }
 .outreach-msg-meta {
   font-size: 12px;
   color: var(--text-secondary);
