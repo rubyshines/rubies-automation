@@ -35,7 +35,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { seedOutboundDraft } = require('../../customer-service/lib/customerOutreach');
 const productCache = require('../../customer-service/lib/productCache');
 const { businessDaysSince, addBusinessDays, pastNextBusinessDay5pmPT } = require('../../shared/businessDays');
-const { fetchOrderByNumber } = require('./warehanceClient');
+const { fetchOrderByNumber, fetchSkuStockMany } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 const { formatPreOrderDate } = require('../../customer-service/lib/preOrderAttrs');
@@ -157,6 +157,35 @@ function filterToNotReadyToShip(candidates, warehanceOrders) {
     if (!whOrder) return false;
     return whOrder.ready_to_ship === false;
   });
+}
+
+// Re-verify every Shopify-flagged item against physical warehouse stock.
+// Shopify "available" is net of allocations, so an item whose unit(s) are
+// already allocated to THIS order reads 0 on the website while sitting at the
+// warehouse ready to ship. The ready_to_ship gate above is order-level and
+// can't tell WHICH item blocks the order — a mixed order (one allocated item +
+// one genuine backorder) passes the gate and the allocated item wears the
+// blame. Mirrors the check_unfulfilled_order rule (fulfillmentChecker.js): an
+// item is genuinely out of stock only when the warehouse physically lacks it
+// (on_hand < qty). Warehouse-covered items reclassify as in-stock and the
+// A/B/C case is recomputed; an order whose every leak turns out to be
+// allocated returns null (no outreach). SKUs with no warehouse data keep
+// their Shopify verdict.
+function reclassifyWithWarehouseStock(classification, stockBySku) {
+  const genuinelyOOS = (li) => {
+    const wh = stockBySku.get(li.sku);
+    if (!wh) return true; // no warehouse data — trust the Shopify signal
+    const qty = Number(li.quantity ?? 1) || 1;
+    return (wh.on_hand ?? 0) < qty;
+  };
+  const leaks = [];
+  const inStockOther = [...classification.inStockOther];
+  const oosOther = [];
+  for (const li of classification.leaks) (genuinelyOOS(li) ? leaks : inStockOther).push(li);
+  for (const li of classification.oosOther) (genuinelyOOS(li) ? oosOther : inStockOther).push(li);
+  if (!leaks.length) return null;
+  const caseLabel = oosOther.length > 0 ? 'C' : inStockOther.length > 0 ? 'B' : 'A';
+  return { case: caseLabel, leaks, inStockOther, oosOther };
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +533,27 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
     }
   }));
   const warehanceOrders = new Map(orderEntries);
-  const verified = filterToNotReadyToShip(fresh, warehanceOrders);
+  const notReady = filterToNotReadyToShip(fresh, warehanceOrders);
+
+  if (!notReady.length) return [];
+
+  // Per-item warehouse verification (see reclassifyWithWarehouseStock). If the
+  // stock lookup fails, skip outreach this run rather than risk false
+  // positives — same posture as the per-order lookup above.
+  let stockBySku;
+  try {
+    const flaggedSkus = notReady.flatMap(c =>
+      [...c.classification.leaks, ...c.classification.oosOther].map(li => li.sku));
+    stockBySku = await fetchSkuStockMany(flaggedSkus);
+  } catch (e) {
+    console.warn(`[unnotifiedPreOrder] Warehance stock lookup failed — skipping outreach this run: ${e.message}`);
+    return [];
+  }
+  const verified = [];
+  for (const c of notReady) {
+    const reclassified = reclassifyWithWarehouseStock(c.classification, stockBySku);
+    if (reclassified) verified.push({ ...c, classification: reclassified });
+  }
 
   if (!verified.length) return [];
 
@@ -646,6 +695,7 @@ module.exports = {
   detectAndDraftUnnotifiedPreOrders,
   classifyOrder,
   filterToNotReadyToShip,
+  reclassifyWithWarehouseStock,
   pastNextBusinessDay5pmPT,
   composeBody,
   pickAlternativesViaCompare,

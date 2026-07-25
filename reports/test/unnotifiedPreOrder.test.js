@@ -7,6 +7,7 @@ const {
   formatPreOrderDate,
   hasPreOrderAttr,
   filterToNotReadyToShip,
+  reclassifyWithWarehouseStock,
   pastNextBusinessDay5pmPT,
 } = require('../lib/unnotifiedPreOrder');
 
@@ -51,6 +52,74 @@ test('filterToNotReadyToShip keeps only not-ready orders from a mixed batch', ()
   const out = filterToNotReadyToShip(cands, orders);
   assert.equal(out.length, 1);
   assert.equal(out[0].order.order_number, '31169');
+});
+
+// ---------------------------------------------------------------------------
+// reclassifyWithWarehouseStock — per-item warehouse truth over Shopify signal
+// ---------------------------------------------------------------------------
+
+const stock = entries => new Map(entries.map(([sku, on_hand]) => [sku, { on_hand }]));
+
+test('reclassifyWithWarehouseStock — order #32601 regression: allocated leak drops the whole order', () => {
+  // Sky flagged as leak from Shopify available=0, but its unit is on hand at
+  // the warehouse allocated to this order. The genuine backorders (Sassys)
+  // carry Pre-order attrs so they're oosOther, not leaks. Result: no leaks
+  // left → null → no outreach.
+  const classification = {
+    case: 'C',
+    leaks: [{ sku: 'SKY2-BLK-M', quantity: 1 }],
+    inStockOther: [{ sku: 'SHS-BLK-M', quantity: 1 }],
+    oosOther: [{ sku: 'HLA-BLK-S', quantity: 1 }, { sku: 'HLA-BLK-M', quantity: 1 }],
+  };
+  const out = reclassifyWithWarehouseStock(classification, stock([
+    ['SKY2-BLK-M', 1], ['SHS-BLK-M', 23], ['HLA-BLK-S', 0], ['HLA-BLK-M', 0],
+  ]));
+  assert.equal(out, null);
+});
+
+test('reclassifyWithWarehouseStock — genuine leak survives, warehouse-covered other recomputes C to B', () => {
+  const classification = {
+    case: 'C',
+    leaks: [{ sku: 'LEAK-1', quantity: 1 }],
+    inStockOther: [],
+    oosOther: [{ sku: 'OTHER-1', quantity: 1 }],
+  };
+  const out = reclassifyWithWarehouseStock(classification, stock([['LEAK-1', 0], ['OTHER-1', 3]]));
+  assert.equal(out.case, 'B');
+  assert.equal(out.leaks.length, 1);
+  assert.equal(out.oosOther.length, 0);
+  assert.equal(out.inStockOther.length, 1);
+});
+
+test('reclassifyWithWarehouseStock — SKU with no warehouse data keeps its Shopify verdict', () => {
+  const classification = { case: 'A', leaks: [{ sku: 'UNKNOWN-1', quantity: 1 }], inStockOther: [], oosOther: [] };
+  const out = reclassifyWithWarehouseStock(classification, new Map());
+  assert.equal(out.case, 'A');
+  assert.equal(out.leaks.length, 1);
+});
+
+test('reclassifyWithWarehouseStock — null warehouse record (SKU not found) keeps Shopify verdict', () => {
+  // fetchSkuStockMany maps unfound SKUs to null, not missing keys.
+  const classification = { case: 'A', leaks: [{ sku: 'GONE-1', quantity: 1 }], inStockOther: [], oosOther: [] };
+  const out = reclassifyWithWarehouseStock(classification, new Map([['GONE-1', null]]));
+  assert.equal(out.case, 'A');
+});
+
+test('reclassifyWithWarehouseStock — on_hand must cover the full line quantity', () => {
+  const classification = { case: 'A', leaks: [{ sku: 'X-1', quantity: 2 }], inStockOther: [], oosOther: [] };
+  const out = reclassifyWithWarehouseStock(classification, stock([['X-1', 1]]));
+  assert.equal(out.case, 'A', '1 on hand cannot cover qty 2 — still a genuine leak');
+});
+
+test('reclassifyWithWarehouseStock — all leaks covered with an in-stock other returns null too', () => {
+  const classification = {
+    case: 'B',
+    leaks: [{ sku: 'ALLOC-1', quantity: 1 }],
+    inStockOther: [{ sku: 'IN-1', quantity: 1 }],
+    oosOther: [],
+  };
+  const out = reclassifyWithWarehouseStock(classification, stock([['ALLOC-1', 5], ['IN-1', 9]]));
+  assert.equal(out, null);
 });
 
 test('pastNextBusinessDay5pmPT — a Monday order is past deadline after Tuesday 5pm PT', () => {
