@@ -538,14 +538,18 @@ async function apiCloseDraft(id, body) {
 
   const { data: draft, error: fetchErr } = await supabase
     .from('cs_ai_drafts')
-    .select('gorgias_ticket_id')
+    .select('gorgias_ticket_id, ticket_id')
     .eq('id', id)
     .single();
   if (fetchErr) throw fetchErr;
 
-  // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
-  await gorgias.closeTicket(draft.gorgias_ticket_id);
-  await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+  // Close in Gorgias FIRST — if this fails, operation fails and ticket stays
+  // open. An unsent outreach draft has no Gorgias ticket yet (it's only
+  // created at send time), so there's nothing to close there — local only.
+  if (draft.gorgias_ticket_id) {
+    await gorgias.closeTicket(draft.gorgias_ticket_id);
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+  }
 
   // Update DB only after Gorgias succeeded
   const draftUpdate = {
@@ -564,7 +568,11 @@ async function apiCloseDraft(id, body) {
     feedback_notes: body.notes || null,
   });
 
-  await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+  if (draft.gorgias_ticket_id) {
+    await updateTicketStatus(supabase, draft.gorgias_ticket_id, 'closed');
+  } else if (draft.ticket_id) {
+    await updateTicketStatusById(supabase, draft.ticket_id, 'closed');
+  }
 
   return { success: true };
 }
@@ -2464,6 +2472,16 @@ async function apiGetCustomerContext(email, orderNumber) {
  * Called from existing draft endpoints to keep ticket state in sync.
  */
 async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {}) {
+  return updateTicketStatusCore(supabase, { column: 'gorgias_ticket_id', value: gorgiasTicketId }, status, extra);
+}
+
+// Same as updateTicketStatus but keyed by cs_tickets.id — for tickets that
+// have no Gorgias ticket (unsent outreach drafts create theirs at send time).
+async function updateTicketStatusById(supabase, csTicketId, status, extra = {}) {
+  return updateTicketStatusCore(supabase, { column: 'id', value: csTicketId }, status, extra);
+}
+
+async function updateTicketStatusCore(supabase, { column, value }, status, extra = {}) {
   const now = new Date().toISOString();
   const updates = { status, updated_at: now, ...extra };
   if (status === 'snoozed') updates.snoozed_at = now;
@@ -2475,7 +2493,7 @@ async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {})
   await supabase
     .from('cs_tickets')
     .update(updates)
-    .eq('gorgias_ticket_id', gorgiasTicketId);
+    .eq(column, value);
 
   // Note lifecycle: closing the conversation resolves the order's open
   // outreach note (the conversation ending IS the resolution). Operator
@@ -2485,13 +2503,13 @@ async function updateTicketStatus(supabase, gorgiasTicketId, status, extra = {})
       const { data: t } = await supabase
         .from('cs_tickets')
         .select('id, order_number')
-        .eq('gorgias_ticket_id', gorgiasTicketId)
+        .eq(column, value)
         .maybeSingle();
       if (t?.order_number) {
         await resolveOnTicketClose({ supabase, orderNumber: t.order_number, csTicketId: t.id });
       }
     } catch (err) {
-      console.warn(`[noteLifecycle] close hook failed for gorgias ticket ${gorgiasTicketId}: ${err.message}`);
+      console.warn(`[noteLifecycle] close hook failed for ticket ${column}=${value}: ${err.message}`);
     }
   }
 }
@@ -3301,21 +3319,32 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/close$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
     const { data: t } = await supabase.from('cs_tickets').select('active_draft_id, gorgias_ticket_id').eq('id', parseInt(id)).single();
-    if (t?.active_draft_id) return apiCloseDraft(t.active_draft_id, body);
-    // No active draft (e.g. snoozed ticket) — close directly
-    if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
-    // Close in Gorgias FIRST — if this fails, operation fails and ticket stays open
-    await gorgias.closeTicket(t.gorgias_ticket_id);
-    await gorgias.assignTicket(t.gorgias_ticket_id, null);
-    await updateTicketStatus(supabase, t.gorgias_ticket_id, 'closed');
+    if (!t) throw new Error('Ticket not found');
+    if (t.active_draft_id) return apiCloseDraft(t.active_draft_id, body);
+    // No active draft (e.g. snoozed ticket) — close directly.
+    // Close in Gorgias FIRST — if this fails, operation fails and ticket stays
+    // open. Outreach tickets with no Gorgias ticket (created at send time)
+    // close locally only.
+    if (t.gorgias_ticket_id) {
+      await gorgias.closeTicket(t.gorgias_ticket_id);
+      await gorgias.assignTicket(t.gorgias_ticket_id, null);
+      await updateTicketStatus(supabase, t.gorgias_ticket_id, 'closed');
+    } else {
+      await updateTicketStatusById(supabase, parseInt(id), 'closed');
+    }
     return { success: true };
   }},
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/snooze$/, handler: async (body, id) => {
     const supabase = getSupabaseClient();
     const { data: t } = await supabase.from('cs_tickets').select('gorgias_ticket_id, active_draft_id').eq('id', parseInt(id)).single();
-    if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
-    await gorgias.snoozeTicket(t.gorgias_ticket_id, 3);
-    await updateTicketStatus(supabase, t.gorgias_ticket_id, 'snoozed');
+    if (!t) throw new Error('Ticket not found');
+    // Outreach tickets with no Gorgias ticket (created at send time) snooze locally only.
+    if (t.gorgias_ticket_id) {
+      await gorgias.snoozeTicket(t.gorgias_ticket_id, 3);
+      await updateTicketStatus(supabase, t.gorgias_ticket_id, 'snoozed');
+    } else {
+      await updateTicketStatusById(supabase, parseInt(id), 'snoozed');
+    }
     if (body?.focus_time_seconds != null && t.active_draft_id) {
       await supabase.from('cs_ai_drafts')
         .update({ focus_time_seconds: Math.round(body.focus_time_seconds) })
@@ -3737,4 +3766,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
+module.exports = { apiSendDraft, apiCloseDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
