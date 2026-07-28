@@ -19,6 +19,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { publishDonationPartners } = require('../donationPartnersPublish');
 const { geocodeMailingAddress } = require('../geocoder');
 const { extractLogoUrl } = require('../logoExtractor');
+const { generateShortDescription } = require('../donationDescriptionShort');
 const fs = require('fs');
 const { readSurveyRows, findSurveyRowByName, ensureRubiesReturnsPrefix } = require('../donationPartnerSurvey');
 const { rehostImageOnShopify, rehostImageFromFile, isShopifyCdnUrl } = require('../shopifyFileUpload');
@@ -36,7 +37,7 @@ function expandHome(p) {
   return p;
 }
 
-const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, size_range, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
+const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, description_short, size_range, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
 
 /**
  * Normalize a website URL down to its bare apex-ish domain so we can compare
@@ -149,6 +150,22 @@ async function deriveCreatePayload(params, { logs }) {
   // logo URL (or a local file path) on the confirm call.
   const logo_url = params.logo_url || null;
 
+  // CS advisor emails use a 1-2 sentence description; the full org-written
+  // text stays on the website. Auto-generate the short version (Opus — it's
+  // customer-facing) unless the operator supplied one. Fail-soft: routing
+  // falls back to the full description while description_short is null.
+  let description_short = params.description_short || null;
+  if (!description_short && params.description) {
+    try {
+      logs.push('Generating short description for CS emails (Opus)...');
+      description_short = await generateShortDescription({ name: params.name, description: params.description });
+      if (description_short) logs.push(`  → "${description_short}"`);
+      else logs.push('  → generation returned nothing; CS emails will fall back to the full description.');
+    } catch (e) {
+      logs.push(`  → generation failed (${e.message}); CS emails will fall back to the full description.`);
+    }
+  }
+
   return {
     name: params.name,
     country_code,
@@ -157,6 +174,7 @@ async function deriveCreatePayload(params, { logs }) {
     address: params.address || deriveLegacyAddress(params.mailing_address, params.name),
     mailing_address: params.mailing_address,
     description: params.description || null,
+    description_short,
     size_range: params.size_range || null,
     logo_url,
     website_url: params.website_url || null,
@@ -185,7 +203,9 @@ function renderPreview(row, logs, opts = {}) {
   lines.push('');
   lines.push(`**Mailing address:**\n\`\`\`\n${row.mailing_address}\n\`\`\``);
   lines.push('');
-  lines.push(`**Description:**\n> ${(row.description || '—').replace(/\n/g, '\n> ')}`);
+  lines.push(`**Description (website):**\n> ${(row.description || '—').replace(/\n/g, '\n> ')}`);
+  lines.push('');
+  lines.push(`**Short description (CS emails):**\n> ${(row.description_short || '— none; CS emails will use the full description').replace(/\n/g, '\n> ')}`);
   lines.push('');
   if (row.logo_url) {
     lines.push(`**Logo:** ${row.logo_url}`);
@@ -280,7 +300,7 @@ async function handleUpdate(params) {
   const supabase = getSupabaseClient();
 
   const allowed = ['name', 'country_code', 'region', 'city', 'address', 'mailing_address',
-    'description', 'size_range', 'logo_url', 'website_url', 'latitude', 'longitude', 'active'];
+    'description', 'description_short', 'size_range', 'logo_url', 'website_url', 'latitude', 'longitude', 'active'];
   const patch = { updated_at: new Date().toISOString() };
   for (const k of allowed) {
     if (params[k] !== undefined) patch[k] = params[k];
@@ -320,7 +340,12 @@ async function handleUpdate(params) {
   if (!data || data.length === 0) return { content: [{ type: 'text', text: 'No row matched.' }], isError: true };
 
   const header = rehostLogs.length ? rehostLogs.join('\n') + '\n\n' : '';
-  return { content: [{ type: 'text', text: `${header}Updated ${data.length} partner(s):\n\n${data.map(fmtPartner).join('\n\n')}\n\nRun donation_partner_publish to push to the website.` }], _structured: { partners: data } };
+  // Changing the full description does NOT regenerate the short one (an
+  // operator-tuned short version must never be silently overwritten).
+  const staleShortNote = patch.description && patch.description_short === undefined
+    ? '\n\nNote: `description` changed but `description_short` was not — review whether the short version (used in CS emails) is still accurate. Regenerate via scripts/backfillDonationShortDescriptions.js or pass description_short explicitly.'
+    : '';
+  return { content: [{ type: 'text', text: `${header}Updated ${data.length} partner(s):\n\n${data.map(fmtPartner).join('\n\n')}\n\nRun donation_partner_publish to push to the website.${staleShortNote}` }], _structured: { partners: data } };
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +538,7 @@ async function handleListSubmissions({ status } = {}) {
 // create_from_survey
 // ---------------------------------------------------------------------------
 
-async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, mailing_address, description, size_range }) {
+async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, mailing_address, description, description_short, size_range }) {
   if (!name && !sheet_row) {
     return { content: [{ type: 'text', text: 'Provide either name or sheet_row to pick a row from the survey.' }], isError: true };
   }
@@ -555,12 +580,13 @@ async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, ma
     name: row.name,
     mailing_address: mailing_address || row.mailing_address,
     description: description || row.description,
+    description_short: description_short || undefined, // undefined → create() auto-generates via Opus
     size_range: size_range || row.size_range,
     website_url: row.website,
     logo_url: logo_url || undefined, // undefined → create() falls back to Haiku
     confirmed: confirmed === true,
     _previewHeading: `## Preview — ingest from survey row ${row.sheet_row} (NOT YET SAVED)`,
-    _confirmHint: `To save, call \`donation_partner_create_from_survey\` again with \`{ name: "${row.name}", confirmed: true }\` (include \`logo_url\` / \`mailing_address\` overrides if you want to change anything in this preview).`,
+    _confirmHint: `To save, call \`donation_partner_create_from_survey\` again with \`{ name: "${row.name}", confirmed: true }\` (include \`logo_url\` / \`mailing_address\` / \`description_short\` overrides if you want to change anything in this preview — the short description regenerates on confirm unless you pass the previewed text explicitly).`,
   });
 }
 
@@ -575,7 +601,8 @@ const partnerFieldsSchema = {
   city: { type: 'string', description: 'City (auto-derived from mailing_address if omitted)' },
   address: { type: 'string', description: 'Legacy single-line street address. Optional; donation_partner_publish uses mailing_address.' },
   mailing_address: { type: 'string', description: 'Multi-line mailing block as shown on the donation page (e.g. "RUBIES Returns\\nc/o ORG\\nstreet\\ncity, state\\nzip").' },
-  description: { type: 'string', description: 'Public-facing description of the org' },
+  description: { type: 'string', description: 'Full public-facing description of the org (shown on the website donation page)' },
+  description_short: { type: 'string', description: '1-2 sentence version used in CS advisor emails. Auto-generated from description (Opus) when omitted on create; pass explicitly to override.' },
   size_range: { type: 'string', description: 'Sizes accepted, e.g. "Youth sizes 4-8, Adult XS - 4X"' },
   logo_url: { type: 'string', description: 'Public CDN URL of the org logo. If omitted and website_url is set, auto-extracted via Haiku.' },
   website_url: { type: 'string', description: 'Org\'s external website (used as the source for auto logo extraction).' },
@@ -682,7 +709,8 @@ module.exports = [
         confirmed: { type: 'boolean', description: 'Set true to actually save the record. Default false → returns a preview only.' },
         logo_url: { type: 'string', description: 'Optional manual logo URL override. Use this when Haiku\'s extracted logo is wrong (e.g. white-on-white, a favicon, or a partner logo).' },
         mailing_address: { type: 'string', description: 'Optional override for the multi-line "RUBIES Returns / c/o ORG / ..." block. Use this when the org\'s submitted address needs cleanup.' },
-        description: { type: 'string', description: 'Optional override for the public-facing description.' },
+        description: { type: 'string', description: 'Optional override for the full public-facing description (website).' },
+        description_short: { type: 'string', description: 'Optional override for the short 1-2 sentence description used in CS advisor emails. Omit to auto-generate from the description.' },
         size_range: { type: 'string', description: 'Optional override for the size range string.' },
       },
     },

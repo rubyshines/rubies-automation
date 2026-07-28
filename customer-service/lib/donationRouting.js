@@ -159,7 +159,7 @@ async function prescribeDonationRouting(intake, context) {
   try {
     const { data } = await supabase
       .from('donation_partners')
-      .select('id, name, region, city, address, mailing_address, description, donations_routed, latitude, longitude')
+      .select('id, name, region, city, address, mailing_address, description, description_short, donations_routed, latitude, longitude')
       .eq('country_code', country)
       .eq('active', true);
     partners = data || [];
@@ -202,10 +202,12 @@ async function prescribeDonationRouting(intake, context) {
       '',
       addressBlock,
       '',
-      // Partner descriptions are authored as standalone sentences (and some run
-      // multiple paragraphs), so present each as written rather than splicing it
-      // after "They ..." — that produced mangled openings like "They we have bins".
-      (partner.description || '').trim(),
+      // Emails use the short 1-2 sentence version; the full org-written
+      // description (which can run multiple paragraphs) stays on the website.
+      // Both are authored as standalone sentences, so present as written rather
+      // than splicing after "They ..." — that produced mangled openings like
+      // "They we have bins".
+      (partner.description_short || partner.description || '').trim(),
       '',
       washReminder,
       '',

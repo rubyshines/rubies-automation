@@ -10,16 +10,27 @@ CREATE TABLE IF NOT EXISTS donation_partners (
   country_code  text NOT NULL,  -- ISO alpha-2 (US, CA, CH, AU, etc.)
   region        text,           -- state/province/canton
   city          text,
-  address       text,
-  description   text,
+  address       text,           -- legacy single-line address (publish + routing prefer mailing_address)
+  mailing_address text,         -- multi-line "RUBIES Returns / c/o ORG / ..." block shown on the donation page
+  description   text,           -- org's full self-written description (website)
+  description_short text,       -- 1-2 sentence version used in CS advisor emails
+  size_range    text,           -- e.g. "Youth sizes 4-8, Adult XS - 4X"
+  logo_url      text,           -- always on cdn.shopify.com (re-hosted on save)
+  website_url   text,
+  latitude      double precision,
+  longitude     double precision,
   active        boolean NOT NULL DEFAULT true,
-  donations_routed integer NOT NULL DEFAULT 0,  -- counter for load-balancing
+  donations_routed integer NOT NULL DEFAULT 0,  -- lifetime counter (impact reporting; routing uses donation_routings)
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_donation_partners_country ON donation_partners(country_code);
 CREATE INDEX IF NOT EXISTS idx_donation_partners_active ON donation_partners(active);
+
+-- Migration for existing databases (2026-07-28): CS emails use a short
+-- description; the website keeps the full one.
+ALTER TABLE donation_partners ADD COLUMN IF NOT EXISTS description_short text;
 
 -- 2. Donation Routings — log of which partner was recommended to which customer
 CREATE TABLE IF NOT EXISTS donation_routings (
