@@ -117,10 +117,43 @@ One command runs candidate + control and reports accuracy, latency, and cost aga
 
 **Early measured signal (small samples, n=1–3 scenarios):** Opus 5 ran **13–26% faster** but **9–45% more expensive** per scenario. Same $/token, so that is pure token volume. This is the sharpest risk to the acceptance criteria: the latency bar looks achievable, the cost bar does not, and anything that fixes accuracy by adding thinking tokens makes the cost gap worse.
 
-### Phase 2 — Clean the gate
-The suite is only trustworthy if a green run means something.
-- `knowledgeFacts` — fails on 4.8 today ("does not name both real adult colors (Black, Pink)"). Diagnose: stale catalog assertion vs genuine grounding failure.
-- `commitmentCalibration` — hangs (>240s, killed). It replays real Gorgias tickets; likely a network fetch with no timeout. Fix the hang; consider whether replaying live tickets belongs in a pinned suite at all given the order-state-drift rule.
+### Full-suite measurement (2026-07-28, `--full-control`, all 25 scenarios both arms)
+
+The representative run. **Opus 5 fails all three acceptance criteria.**
+
+| | Opus 4.8 | Opus 5 | |
+|---|---|---|---|
+| Accuracy | 25/25 baseline | 20/25 | ✗ |
+| Latency, median API call | 7.6s | 9.3s (+22.5%) | ✗ |
+| Latency, p90 | 12.9s | 18.2s | ✗ |
+| Cost per scenario | $0.1745 | $0.2011 (+15.3%) | ✗ |
+
+**Correction to the earlier small-sample reading:** the failing-subset runs showed Opus 5 13–26% *faster*. That was an artifact of measuring only scenarios where it was behaving pathologically. On the full suite Opus 5 is **slower**, not faster. Never quote latency or cost from a failure-only subset.
+
+**Signal vs noise across every run today.** Only two scenarios regress consistently; most single-run "failures" are variance:
+
+| scenario | Opus 5 | Opus 4.8 | read |
+|---|---|---|---|
+| `donationToolCall` | FAIL, FAIL | PASS | **consistent regression** |
+| `refundNoAmount` | FAIL, FAIL, FAIL | PASS, PASS | **consistent regression** |
+| `wrongOrderPreorderLink` | FAIL ×3 | PASS, FAIL | Opus 5 always fails; 4.8 flaky |
+| `kbSearchGrounding` | FAIL, PASS, PASS | PASS | noise |
+| `noApologyForThirdParty` | PASS, FAIL | PASS | noise |
+| `knowledgeFacts` | FAIL, PASS | FAIL, FAIL | **pre-existing 4.8 bug** |
+| `noMirroring` | 2/3 | 2/3 | flaky on both |
+| `commitmentCalibration` | TIMEOUT | TIMEOUT | structural |
+
+**The real Opus 5 defect is one thing, and it is reproducible:** on refund tickets the advisor produces plausible customer-facing prose while `action_type` comes back `null` — no money-moving action staged. Both consistent regressions are this. It matches the "one move per message" literalism hypothesis and is exactly the class operator review does not catch.
+
+**`knowledgeFacts` is a 4.8 bug, not an Opus 5 one.** Verified against the catalog: Black and Pink are genuinely the only Sky colours with adult-size stock (Navy/UNI have none), so the assertion is correct and the advisor is wrong. We have been carrying this.
+
+### Phase 2 — Clean the gate — **now the top priority, ahead of any model decision**
+
+Flakiness is the blocking problem. At least five scenarios flip between runs on an unchanged model, which means the suite cannot currently support *any* adopt/reject call — this one or the next. Fix this before spending on prompt work or further model runs.
+
+- **Flakiness itself.** Advisor drafts are irreducibly stochastic (`temperature` is not settable on Opus 4.8/5 — removed from the API), so the gate must be statistical, not binary. Options: require k-of-n passes per scenario; tighten over-specific assertions (several match on exact phrasing where any equivalent phrasing should pass); or split assertions so one brittle check cannot fail an otherwise-correct draft. Prefer loosening assertions first — a test that fails on valid output is a bad test, not a flaky model.
+- `knowledgeFacts` — **diagnosed**: the assertion is correct (catalog verified), the advisor genuinely fails to name both adult colours. A real 4.8 grounding bug to fix on its own merits.
+- `commitmentCalibration` — **diagnosed**: not a hang. It makes three sequential advisor calls plus Gorgias fetches in one file, so it is ~3× a normal scenario and exceeds a 240s timeout under concurrency. Split into three scenario files (matching suite convention), which also isolates which case failed. Extract the shared `ticketToInput` helper (also used by `exchangeMoney`).
 
 ### Phase 3 — Exhaust config levers (bounded, ~$5, one run)
 Before touching the prompt, rule out configuration:
