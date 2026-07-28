@@ -4,11 +4,13 @@ description: Qualify Opus 5 for the CS advisor, fix the prompt gaps it exposed, 
 type: project
 domain: cs
 done_when: >
-  (1) scripts/modelSwapEval.js exists and runs candidate-vs-incumbent with a control arm from one command;
+  (1) scripts/modelSwapEval.js exists and runs candidate-vs-incumbent with a control arm from one command,
+  reporting accuracy AND latency AND cost per scenario;
   (2) all 25 scenarios in customer-service/test/scenarios/ pass on claude-opus-4-8 (including the two
   currently-failing ones), so the suite is a trustworthy gate;
-  (3) a documented adopt-or-reject decision for claude-opus-5 is recorded here with the eval numbers behind it,
-  and MODELS.OPUS matches that decision.
+  (3) a documented adopt-or-reject decision for claude-opus-5 is recorded here with the eval numbers behind
+  it, and MODELS.OPUS matches that decision. Adopt ONLY if all three founder acceptance criteria hold —
+  see "Acceptance criteria" below.
 originSessionId: e3e9ccad-b2e9-4080-9615-eb2f0616bc47
 ---
 
@@ -20,6 +22,31 @@ Two separate motivations to finish this properly:
 
 1. **Deprecation is inevitable.** Opus 4.8 has no announced retirement date (Opus 4.1 retires 2026-08-05), so there is runway — but we currently have no repeatable way to qualify a replacement model. The 2026-07-28 evaluation was hand-rolled shell. That is the real gap.
 2. **Opus 5 exposed genuine prompt gaps** that exist on 4.8 too. Fixing them improves the advisor regardless of which model we run.
+
+## Acceptance criteria (founder, 2026-07-28)
+
+Opus 5 is adopted only if **all three** hold against the Opus 4.8 incumbent. Any one failing is a reject.
+
+| Dimension | Bar | Measured by |
+|---|---|---|
+| Accuracy | same or better | All 25 scenarios pass; no regression vs the 4.8 control arm |
+| Latency | same or faster | Median + p90 wall-clock per draft, both arms, same run |
+| Cost | same or cheaper | `ai_calls` cost per draft, both arms (same $5/$25 rate, so this is a token-volume question) |
+
+Consequences for the plan:
+
+- **The harness must measure all three, not just pass/fail.** Accuracy alone is insufficient; a config that fixes accuracy by inflating thinking tokens fails the cost bar and a slower config fails the latency bar.
+- **This is why `xhigh` is diagnostic-only.** Raising effort spends more thinking tokens at $25/MTok on a 1–2 call loop that cannot recoup it by shortening. It can tell us *why* tool use dropped; it cannot be the shipped answer.
+- **Adaptive thinking is on probation for the same reason.** It fixed `kbSearchGrounding` but adds thinking tokens and latency. If the prompt fix (Phase 4) achieves the same result at `thinking: disabled`, that is the preferred config on all three axes.
+- Opus 5's headline advantage is that it should be *faster* at equal price. If it cannot beat 4.8 on latency once configured for correct behaviour, the main reason to migrate now evaporates — and we wait for the next model, having banked the harness and the prompt fixes.
+
+## Phase 0 result (2026-07-28): resolved, no action needed
+
+The "Hi Kyle," draft was **not** a guardrail violation. The customer signed their own message ("Thanks, Kyle"), and the advisor prompt explicitly permits a name that the customer introduced or signed (`aiAdvisor.js` line ~1363). Opus 5 was compliant; 4.8's bare "Hi," was merely more conservative.
+
+Confirmed while checking: `contextBuilder` does place the Shopify profile name (`firstName`/`lastName`, `name_set_via: "shopify"`) in advisor context. That is intentional — `orderUtils` needs it to build shipping addresses and `customer_profile_update` needs it — and usage is rule-gated rather than the data being withheld. No change made.
+
+Lesson worth keeping: a diff between two models' drafts is not by itself evidence of a regression. Verify against the rule before escalating.
 
 ## Evidence from the 2026-07-28 evaluation
 
@@ -33,6 +60,8 @@ Method: run all 25 pinned scenarios against the candidate, then re-run every fai
 | wrongOrderPreorderLink | PASS | FAIL — `order_modification` not `warehouse_hold` | FAIL — invented order composition |
 | knowledgeFacts | FAIL | FAIL | not run |
 | commitmentCalibration | TIMEOUT | TIMEOUT | not run |
+
+> ⚠️ **This table is single-run and therefore provisional.** Phase 1 established that advisor scenarios are non-deterministic (see below). `noMirroring` passed Opus 5 in this run and failed a later one; on `--repeat 3` it scored 2/3 on **both** arms — flaky, not a regression. **Every row above must be re-validated with `--repeat 3` before any adopt/reject decision.** The split-brain finding is still qualitatively real (the draft text was read directly), but its frequency is unmeasured.
 
 Config was matched on the first Opus 5 arm (both thinking-off, `max_tokens` 4096, effort default) — so this is **not** a config artifact. Drafts were inspected directly; it is **not** a parser/format artifact either (contrast with the 2026-07-17 Sonnet 5 harness bug, where `action_type` null WAS a harness fault — that possibility was checked and ruled out here by reading the raw drafts).
 
@@ -58,8 +87,7 @@ Per Anthropic's migration guide, Opus 5 follows instructions more literally and 
 
 Ordered cheap → expensive. Each phase is independently valuable.
 
-### Phase 0 — Verify the name source (do first, blocks nothing else)
-Trace where "Kyle" came from on the `refundNoAmount` anchor ticket: customer-typed signature, Gorgias contact record, or Shopify profile. If profile-sourced, this is a live guardrail gap on 4.8 and gets fixed immediately as its own change, independent of the migration.
+### Phase 0 — Verify the name source — **DONE 2026-07-28**, no violation (see Phase 0 result above)
 
 ### Phase 1 — Productize the swap harness
 Build `scripts/modelSwapEval.js` replacing the throwaway shell from 2026-07-28. Requirements:
@@ -67,10 +95,27 @@ Build `scripts/modelSwapEval.js` replacing the throwaway shell from 2026-07-28. 
 - **Auto-runs the control arm** on every candidate failure — this is the piece that makes results interpretable.
 - Per-scenario hard timeout (a hung scenario must not block the suite — `commitmentCalibration` hung >10 min and buffered every other result).
 - Writes per-scenario results to disk incrementally so a killed run keeps partial results.
-- Prints a candidate-vs-control table.
+- **Captures latency and cost per scenario, not just pass/fail** — required by the acceptance criteria. Source: `ai_calls` rows (joined on the run window) and/or the `_timing` block the advisor already records.
+- Prints a candidate-vs-control table across all three dimensions.
 - Follows the CLI-flag convention (`--candidate <model>`), not env vars.
 
 This is the durable asset: it turns every future model migration from a scramble into a single command.
+
+### Phase 1 result (2026-07-28): **DONE** — `scripts/modelSwapEval.js`
+
+One command runs candidate + control and reports accuracy, latency, and cost against the acceptance criteria. Design notes worth keeping:
+
+- **Model override via an eval-only preload** (`scripts/lib/modelSwapShim.js`, injected with `NODE_OPTIONS=--require`), NOT an env var read inside `aiPricing.js`. Nothing in the production path reads `MODEL_SWAP_EVAL_MODEL`, so a stray env var in a Railway runtime cannot change which model serves customers. This is the direct lesson from the shadow-eval leaks.
+- **Control arm is automatic** on every candidate failure — the step that separates regressions from pre-existing failures and drift.
+- **Cost and latency come from `ai_calls`**, measured per arm, not estimated.
+- Per-scenario hard timeout; results stream to `temp-analysis-data/model-swap-<ts>/` (gitignored) so a killed run keeps partial results.
+
+**Key discovery — the scenarios are non-deterministic.** The same scenario, same model, can pass one run and fail the next. `noMirroring` scored 2/3 on both Opus 5 and Opus 4.8. Consequences:
+- `--repeat <n>` added; a scenario passes only if ALL runs pass, and mixed results report as `FLAKY` rather than being silently read as pass or fail.
+- **Use `--repeat 3` minimum before trusting any regression call.** Single-run output now prints an explicit warning.
+- This retroactively undermines the single-run evidence table above, and it means the "clean gate" in Phase 2 must mean *consistently* green, not green once.
+
+**Early measured signal (small samples, n=1–3 scenarios):** Opus 5 ran **13–26% faster** but **9–45% more expensive** per scenario. Same $/token, so that is pure token volume. This is the sharpest risk to the acceptance criteria: the latency bar looks achievable, the cost bar does not, and anything that fixes accuracy by adding thinking tokens makes the cost gap worse.
 
 ### Phase 2 — Clean the gate
 The suite is only trustworthy if a green run means something.

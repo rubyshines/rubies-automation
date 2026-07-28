@@ -35,3 +35,6 @@ scripts/_*.js
 .claude/projects/
 .ngrok/
 reports/output/
+
+# Local analysis output — contains customer draft text, never commit
+temp-analysis-data/
