@@ -32,12 +32,20 @@ const MSG = `Hi,
 I'm trying to place a new order and my card keeps getting declined at checkout, three times now. Nothing is wrong with my card, I used it this morning. This is really frustrating. Can you fix whatever is wrong with your checkout?`;
 
 const APOLOGY_PATTERNS = [/\bsorry\b/i, /\bapolog/i, /\bmy bad\b/i];
+// The draft must attribute the decline to an external party rather than owning
+// it. Match on WHO is named, not on one exact phrasing — these patterns were
+// previously too narrow and rejected valid drafts: "Card approvals are handled
+// by the payment network and your issuing bank rather than our checkout" states
+// the boundary perfectly but matched nothing, because the list only accepted
+// "payment processor/provider/gateway" (2026-07-28, project_opus5_migration).
 const BOUNDARY_PATTERNS = [
   /out of (our|rubies'?s?) control/i,
   /(don'?t|do not|no) control over (whether )?(the )?payment/i,
-  /payment (processor|provider|gateway)/i,
-  /(declined?|decision) (comes from|is made by|by) (your|the) (bank|card)/i,
-  /unfortunately/i,
+  // The external party, however it is named.
+  /payment (processor|provider|gateway|network|system)/i,
+  /(issuing|your|the) bank/i,
+  /card (issuer|network|company)/i,
+  /(declined?|decision|approvals?) (comes? from|is made by|are (made|handled) by|by|handled by) /i,
 ];
 const WORKAROUND_PATTERNS = [
   /paypal/i,

@@ -147,6 +147,26 @@ The representative run. **Opus 5 fails all three acceptance criteria.**
 
 **`knowledgeFacts` is a 4.8 bug, not an Opus 5 one.** Verified against the catalog: Black and Pink are genuinely the only Sky colours with adult-size stock (Navy/UNI have none), so the assertion is correct and the advisor is wrong. We have been carrying this.
 
+### Phase 2a finding (2026-07-28): the suite is mostly RIGHT — the advisor is genuinely inconsistent
+
+Investigated each flaky scenario individually rather than loosening assertions in bulk. **Only one of five was a bad test.** The rest catch real run-to-run variance in the advisor, on Opus 4.8 as well as Opus 5:
+
+| scenario | verdict | evidence |
+|---|---|---|
+| `noApologyForThirdParty` | **bad test — FIXED** | Draft said "Card approvals are handled by the payment network and your issuing bank rather than our checkout" — states the boundary perfectly, but patterns only accepted "payment processor/provider/gateway". Broadened to match *who* is named; also removed a `/unfortunately/i` pattern that would pass any draft containing the word. 4/4 green after. |
+| `noMirroring` | test correct, model inconsistent | Failing draft opened "I hear you loud and clear, you paid extra for expedited and it didn't get to you" — genuine mirroring. Passing runs go straight to new information. ~1/3 failure rate on BOTH models. |
+| `kbSearchGrounding` | test correct, model failed | Failing draft was "Let me look into this and get back to you" with `tools: []` — deflected without searching the KB. |
+| `knowledgeFacts` | test correct, advisor wrong | Catalog verified: Black and Pink really are the only Sky colours with adult-size stock. |
+| `wrongOrderPreorderLink` | test correct, model inconsistent | Same input yields `warehouse_hold` on one run and `order_modification` on the next — on Opus 4.8. |
+
+**Do not "de-flake" by loosening assertions.** Four of five would have hidden real defects. The correct response to genuine model variance is a statistical gate (`--repeat`, already built), not weaker tests.
+
+### ⚠️ Production exposure found while doing this (Opus 4.8, independent of any migration)
+
+`wrongOrderPreorderLink` inconsistency is not cosmetic. The governing policy is that ANY change to an unfulfilled order freezes it with a warehouse hold. The backstop that guarantees the hold lands — `reconcilePendingHolds` in [holdReconcile.js](../../customer-service/lib/holdReconcile.js) — selects drafts with `action_type IN ('warehouse_hold','cancellation')`. When the advisor emits `order_modification` instead, **no hold is proposed and the backstop never fires**, leaving the order free to ship with the wrong items before an operator executes the change.
+
+So the advisor intermittently drops the protective hold on unshipped-order edits, in production, today. Frequency unmeasured — measure with `--repeat 5` on this scenario before deciding the fix. This likely deserves priority over the Opus 5 question.
+
 ### Phase 2 — Clean the gate — **now the top priority, ahead of any model decision**
 
 Flakiness is the blocking problem. At least five scenarios flip between runs on an unchanged model, which means the suite cannot currently support *any* adopt/reject call — this one or the next. Fix this before spending on prompt work or further model runs.
