@@ -19,6 +19,10 @@
  * change here rather than a grep-and-replace across the codebase.
  */
 const MODELS = {
+  // Opus 5 was evaluated 2026-07-28 and NOT adopted — the pinned scenario suite
+  // caught 4 action-classification/grounding regressions against a 4.8 control
+  // (see project_cs_efficiency.md). Do not flip this to claude-opus-5 without
+  // re-running customer-service/test/scenarios/ against a 4.8 baseline.
   OPUS:   'claude-opus-4-8',
   SONNET: 'claude-sonnet-4-6',
   // Next-gen Sonnet, under shadow evaluation as an advisor/operator candidate
@@ -36,7 +40,8 @@ const RATES = {
   // 2026 Console bill ($260.34 billed vs $273.91 ledger-computed at these
   // rates — 5% agreement; the old rates computed $607 for the same month).
   'claude-fable-5':            { input: 10,   output: 50,  cache_read: 1.0,  cache_create: 12.5 },
-  'claude-opus-4-8':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 },
+  'claude-opus-5':             { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 },
+  'claude-opus-4-8':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
   'claude-opus-4-7':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
   'claude-opus-4-6':           { input: 5,    output: 25,  cache_read: 0.5,  cache_create: 6.25 }, // legacy
   // Sonnet 5 launch pricing: intro $2/$10 through 2026-08-31, then $3/$15.

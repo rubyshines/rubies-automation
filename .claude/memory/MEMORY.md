@@ -34,6 +34,7 @@
 
 ## Active Projects
 - [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, shadow model eval infrastructure and verdicts
+- [Opus 5 Migration](project_opus5_migration.md) — qualify Opus 5 for the advisor, fix the prompt gaps it exposed, build a reusable model-swap eval
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system

@@ -210,6 +210,22 @@ Re-run with the fixed harness (flag re-enabled 2026-07-17T14:15Z; use that as th
 - **Operator: not viable**, again (mean 2.62, n=21, 19% rated 1) — consistent with the 07-17 fair arm and both 2026-04 verdicts.
 - **Decision (2026-07-23): stay on Opus for everything.** `cs_diagnostics` flipped false same day (verdict recorded in the flag note). Run cost ~$25-27 over 6 days. Infrastructure preserved — next candidate model is a flag flip + model-constant change; follow the eval-start checklist above.
 
+## Opus 5 evaluated and REJECTED for the advisor (2026-07-28)
+
+Opus 5 shipped (same $5/$25 rate as 4.8, same tokenizer, faster, `speed:"fast"` available). Intent was a straight `MODELS.OPUS` flip, skipping the shadow eval on the reasoning that a same-tier/same-price upgrade is already covered by operator review + the closeness judge + one-line rollback. **The pinned scenario suite caught what that reasoning would have shipped.**
+
+**Method (new, cheap, and now the standard for same-tier model swaps):** run `customer-service/test/scenarios/` against the candidate, then run every failure against the incumbent as a control. Two arms × ~30 live drafts ≈ $8 and ~30 minutes — vs ~$40 and 10 days for a shadow eval. The control arm is the load-bearing part: it separates real regressions from order-state drift and pre-existing failures, which the raw candidate numbers cannot.
+
+**Result — 4 genuine regressions** (Opus 5 fail / 4.8 pass): `donationToolCall` and `refundNoAmount` (advisor never took the refund path, `action_type === null`), `kbSearchGrounding` (skipped the KB search), `wrongOrderPreorderLink` (returned `order_modification` where the unshipped-order policy requires `warehouse_hold`). `knowledgeFacts` and `commitmentCalibration` failed on BOTH arms — pre-existing, unrelated to Opus 5 (see What's Left).
+
+**Second arm — adaptive thinking + `max_tokens` 16000** (Opus 5 defaults to adaptive when `thinking` is omitted; ≤4.8 ran thinking-off): recovers `kbSearchGrounding` only. The three action-classification failures persist, and `wrongOrderPreorderLink` degrades further — the draft *invented order composition*, claiming a pre-order item on a single-item order. A grounding failure on customer-facing text is worse than the misclassification it replaced.
+
+**Root cause (per Anthropic's migration guide, matching the observed failures):** Opus 5 follows instructions more literally and reaches for tools less often than 4.8. The advisor prompt was tuned over months against Opus 4.x priors, so rules that worked by implication on 4.8 no longer fire. This is prompt work, not a config flip.
+
+**Decision: stay on `claude-opus-4-8`.** The `claude-opus-5` RATES row is kept (correct whenever we do adopt; inert until then). Adoption requires advisor-prompt work targeting action-classification and tool-use triggering, re-validated against a 4.8 control — worth doing for the latency win and `speed:"fast"`, but as its own project, not a flip.
+
+**Generalizes:** "same tier + same price + strong downstream review" is NOT sufficient reason to skip pre-deploy validation. Operator review catches bad *prose*; it does not reliably catch a wrong `action_type`, which drives real money/warehouse operations. The scenario suite is the cheap gate that does.
+
 ## Shadow eval cost leak + gate inversion (2026-05-27)
 
 Investigating a jump to ~$15/day in CS API spend, a per-day reconstruction from `_timing` token fields (the `ai_calls` observability table, now described in domain_tech.md, was built right after and supersedes this manual method) over a 14-day window found the spend was dominated by the shadow eval that was supposed to be off since Apr 30:

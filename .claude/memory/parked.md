@@ -205,13 +205,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
   create_exchange_order) when an address is needed but the stripped body
   doesn't contain one.
 
-## Advisor classification overridden by closing-message tone
-- Parked: 2026-04-15
-- Last touched: 2026-04-15
-- Type: bug
-- Domains: cs
-- Notes: Final-message tone (e.g. "thanks!") can override operational message_type, causing refund/exchange tickets to classify as positive_feedback or general_inquiry. Observed on ticket id=7 — advisor saw customer's closing gratitude and lost earlier exchange/refund context. Fix belongs in advisor prompt (classification should reflect operational purpose, not conversational closing tone).
-
 ## Remove legacy walkTree/prescribe functions from sizingEngine.js
 - Parked: 2026-04-15
 - Last touched: 2026-04-15
