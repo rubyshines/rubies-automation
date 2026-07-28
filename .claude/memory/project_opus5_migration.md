@@ -165,7 +165,13 @@ Investigated each flaky scenario individually rather than loosening assertions i
 
 `wrongOrderPreorderLink` inconsistency is not cosmetic. The governing policy is that ANY change to an unfulfilled order freezes it with a warehouse hold. The backstop that guarantees the hold lands — `reconcilePendingHolds` in [holdReconcile.js](../../customer-service/lib/holdReconcile.js) — selects drafts with `action_type IN ('warehouse_hold','cancellation')`. When the advisor emits `order_modification` instead, **no hold is proposed and the backstop never fires**, leaving the order free to ship with the wrong items before an operator executes the change.
 
-So the advisor intermittently drops the protective hold on unshipped-order edits, in production, today. Frequency unmeasured — measure with `--repeat 5` on this scenario before deciding the fix. This likely deserves priority over the Opus 5 question.
+So the advisor intermittently drops the protective hold on unshipped-order edits, in production, today.
+
+**Measured and FIXED 2026-07-28.** Rate on Opus 4.8 was 1/5 in one sample and 3/5 in another — wide variance, call it roughly 20–60% on this steered-redirect case. Root cause was prompt ambiguity, not model error: the section is titled "Address Changes & Order Edits" and contains two adjacent action types — item modifications → `warehouse_hold`, same-country address change → `order_modification`. With both presented as live options in one block, the model reached for the wrong one under variance.
+
+Fix: a scoping statement at the top of the section stating that `order_modification` is reserved for exactly one case (same-country address change) and everything else is `warehouse_hold`. Result 0/6 hold-drops, adjacent scenarios (`holdOnUnshippedModify`, `changeThenCancelHold`) still green.
+
+**A first attempt at this fix backfired and is worth remembering.** It included an extra clause — "including when they point you at a different order than the one loaded in context" — intended to cover the steered case. It fixed the hold-drop (0/10) but drove a *different* failure from 0/5 to 4/6: the reply began inventing the other order's composition. Naming the other order invited the model to reason about contents it had not loaded. The minimal version (scoping statement only) fixed the hold-drop with composition-invention at 1/6, indistinguishable from baseline. Lesson, consistent with the existing "don't overfit fixes" rule: add the smallest rule that resolves the ambiguity, and measure the *other* assertions before and after — a prompt fix that repairs one failure while creating another is easy to miss if you only watch the metric you were targeting.
 
 ### Phase 2 — Clean the gate — **now the top priority, ahead of any model decision**
 

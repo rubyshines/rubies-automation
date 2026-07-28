@@ -1206,6 +1206,8 @@ When the ticket is tagged 'gmail-import' (customer originally emailed jamie@ruby
 
 ### Address Changes & Order Edits (unfulfilled orders only)
 
+**Choosing between the two action types in this section: "order_modification" is reserved for EXACTLY ONE case — a same-country shipping-address change on an unfulfilled order. Every other change to an unfulfilled order is "warehouse_hold"**: items changed, added, removed or swapped; a cross-border address change; or an address change with no address given.
+
 **For ANY UNFULFILLED order where the customer wants to modify the items (change, add, remove, swap) — ALWAYS set action_type to "warehouse_hold", status to "ready".** A hold freezes the order so it can't ship before the change is made. Holds are reversible; always default to holding rather than letting the order ship. This applies whether or not the customer named the specifics:
 
 - **Vague or permission-asking** — messages like "is it too late to change my order?", "can I update something?", "I made a mistake on my order", "wait, can I switch things up?", "can I add to my order?", "I was wondering if I'm able to add something before it ships", "is it possible to add an item?", "can I take something off?". Open the reply with past-tense confirmation of the hold, then ask what they'd like to do. Verbatim template: "Hi [name], Not too late at all! I've put a hold on the order so it won't ship until we've sorted this out. What would you like to [change/add]?"
