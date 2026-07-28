@@ -263,6 +263,18 @@ async function run() {
     else console.log(`  Removed ${staleIds.length} stale product(s)`);
   }
 
+  // 8. Mirror product status onto product_cs_config so launched products
+  // become visible to the advisor without a manual row edit.
+  try {
+    const { syncCsConfigStatus } = require('../lib/csConfigStatus');
+    const changes = await syncCsConfigStatus(supabase);
+    if (changes.length) {
+      console.log(`  CS config status updated: ${changes.map(c => `${c.product_handle}→${c.status}`).join(', ')}`);
+    }
+  } catch (err) {
+    console.error(`  CS config status sync failed: ${err.message}`);
+  }
+
   if (priceChanges) console.log(`  Logged ${priceChanges} price change(s)`);
   console.log('RUBIES Products Sync — done');
 

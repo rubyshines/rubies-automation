@@ -65,6 +65,20 @@ async function handle(topic, payload) {
   }
 
   console.log(`[shopify-products] Upserted "${payload.title}" with ${variantRows.length} variants`);
+
+  // Mirror product status onto product_cs_config (launch flips a product
+  // ACTIVE here first), then refresh this process's advisor config maps.
+  try {
+    const { syncCsConfigStatus } = require('../../customer-service/lib/csConfigStatus');
+    const changes = await syncCsConfigStatus(supabase);
+    if (changes.length) {
+      console.log(`[shopify-products] CS config status updated: ${changes.map(c => `${c.product_handle}→${c.status}`).join(', ')}`);
+      const { initCsConfig } = require('../../customer-service/lib/sizingEngine');
+      await initCsConfig();
+    }
+  } catch (err) {
+    console.warn(`[shopify-products] CS config status sync failed: ${err.message}`);
+  }
 }
 
 module.exports = { handle };

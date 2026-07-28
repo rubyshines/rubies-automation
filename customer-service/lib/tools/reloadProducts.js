@@ -88,6 +88,12 @@ const tools = [
       await loadProducts();
       const count = getProducts().length;
 
+      // loadProducts' sync also reconciled product_cs_config.status; refresh
+      // this process's advisor config maps (nicknames/keywords) to match, so a
+      // just-launched product is recognizable without a server restart.
+      const { initCsConfig } = require('../sizingEngine');
+      await initCsConfig();
+
       // Update knowledge base in background (don't block the response)
       let kbMsg = '';
       try {
