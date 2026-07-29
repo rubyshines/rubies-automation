@@ -81,7 +81,8 @@ The subject is the highest-leverage line in a cold email: to a buyer who has nev
 
 - A COLD subject (intro_pitch, affiliate_intro, or any new thread to a company that has never replied) states plainly what RUBIES makes, and leads with a referral whenever one exists:
   - Referral available: "Referral from [referrer name] at [their store] re: gender-affirming clothing from RUBIES"
-  - No referral: "Gender-affirming underwear and swimwear, wholesale from RUBIES"
+  - No referral: "Gender-affirming underwear and swimwear for trans women and girls, wholesale from RUBIES"
+- Always "trans women and girls", never "trans girls" alone. RUBIES makes adult sizes and most of the catalog is adult; dropping "women" tells a buyer we are a kids brand.
 - Greeting-only cold subjects ("Hello from RUBIES", "An introduction from RUBIES") are the one thing never to send: they tell a stranger nothing about who we are, and they read as bulk mail. The proven cold subject in our history named both the referrer and what we make, and it converted.
 - A WARM thread (they have ordered or replied before) gets a plain subject about the actual topic ("Restocking before the pricing change", "Your sample kit"). The what-we-make line is for strangers only; to an existing buyer it reads as amnesia.
 - A REPLY keeps the thread subject: leave "subject" null and it is inherited.
