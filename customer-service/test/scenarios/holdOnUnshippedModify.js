@@ -34,6 +34,7 @@ require('dotenv').config();
 const gorgias = require('../../import/gorgiasClient');
 const { aiAdvisor } = require('../../lib/aiAdvisor');
 const { getOrderByNumber } = require('../../lib/shopify');
+const { getSupabaseClient } = require('../../../shared/supabaseClient');
 
 const TICKET_ID = process.argv[2] || '103643280';
 const ORDER_NUMBER = process.argv[3] || '31618';
@@ -73,7 +74,31 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
 
   console.log(`Customer: ${customerEmail}`);
   console.log('Running advisor...');
-  const result = await aiAdvisor({ customer_email: customerEmail, issue_description: parts.join('\n\n') });
+
+  // Feed the resolved intake_state back in, the way the dashboard's regen path
+  // does (apiRefreshDraft passes `intake: draft.intake_state`). Without this the
+  // scenario only ever exercises a FIRST pass, where the "unshipped → hold" rule
+  // has no competing signal. On a regen the state says message_type "exchange"
+  // with fully resolved items, and that is the input shape that actually broke:
+  // 3/3 green here while the live regen produced a return-and-donate block.
+  const supabase = getSupabaseClient();
+  const { data: priorDraft } = await supabase
+    .from('cs_ai_drafts')
+    .select('intake_state')
+    .eq('gorgias_ticket_id', Number(TICKET_ID))
+    .not('intake_state', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (priorDraft?.intake_state) {
+    console.log(`Replaying with stored intake_state (message_type=${priorDraft.intake_state.message_type}, intent=${priorDraft.intake_state.customer_intent})`);
+  }
+
+  const result = await aiAdvisor({
+    customer_email: customerEmail,
+    issue_description: parts.join('\n\n'),
+    intake: priorDraft?.intake_state || undefined,
+  });
   const s = result?._structured || {};
   const actionType = s.action_type || null;
 
@@ -97,8 +122,15 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
     if (isSpecific) {
       // The composed customer email lives on _structured (buildCompatibleStructured
       // attaches it); the outer result only carries the markdown summary.
-      const reply = String(s._composedResponse || '');
-      if (!reply) { fail('advisor returned no composed reply to assert against'); }
+      const composed = String(s._composedResponse || '');
+      if (!composed) { fail('advisor returned no composed reply to assert against'); }
+      // The model sometimes prefixes planning narration ("This is an unfulfilled
+      // order edit, so it's a warehouse hold...") before the greeting. The prompt
+      // forbids that separately; these assertions are about the CUSTOMER copy, so
+      // scope them from the greeting on, or an internal word like "hold" appearing
+      // only in the model's own reasoning reads as a false failure.
+      const greet = composed.search(/^(Hi|Hey|Hello|Hola)\b/m);
+      const reply = greet >= 0 ? composed.slice(greet) : composed;
       if (/\b(I've|I have)\s+(swapped|added|removed|changed|updated)/i.test(reply)) {
         pass('states the change as already made (past tense)');
       } else {
@@ -113,6 +145,23 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
         fail(`specific-branch reply promises a later confirmation instead of reporting a completed change: ${JSON.stringify(reply.slice(0, 200))}`);
       } else {
         pass('no redundant "confirmation to follow" promise');
+      }
+
+      // Nothing has shipped, so there is nothing to send back. Item
+      // classification labels a colour swap message_type "exchange", and on the
+      // dashboard's REGEN path that label is fed back in as intake_state — which
+      // is how a pre-ship swap once produced a full return-and-donate address
+      // block for an order the customer had never received (2026-07-29).
+      const donation = result?._structured?.prescription?.donation;
+      if (donation) {
+        fail(`donation routing fired on an UNFULFILLED order — nothing has shipped, so there is nothing to donate: ${JSON.stringify(donation)}`);
+      } else {
+        pass('no donation routing on an unshipped order');
+      }
+      if (/items you are returning|RUBIES Returns|please wash any items|send the items/i.test(reply)) {
+        fail(`reply asks the customer to mail back an order that has not shipped: ${JSON.stringify(reply.slice(0, 300))}`);
+      } else {
+        pass('does not ask the customer to return an unshipped order');
       }
     }
   } else if (actionType === 'order_modification' || actionType === 'cancellation' || actionType === null) {
