@@ -8,6 +8,12 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Outreach browse surfaces: first page only, and relationship_state needs cleaning
+- Parked: 2026-07-29
+- Domains: b2b_sales, community
+- Type: idea
+- Notes: Two deferred bits from the 2026-07-29 browse/search build. (1) **Paging** — the Companies directory caps at 50 rows and the Activity feed at 60; `fetchActivity` already returns a `next_before` cursor that nothing consumes, and the directory has no cursor at all. Both say what they dropped rather than truncating silently, so this only bites once volume grows past a screen or two. (2) **`relationship_state` cleanup** — see the domain Key Decision: `in_contact` is carried by 180 companies of which 172 are untouched imports, and nothing ever writes `dormant`, so the `reactivation` / `affiliate_reactivation` cadence branches are unreachable. The directory derives its stage filter instead of trusting the column, which makes the UI honest but leaves the data wrong for anything else that reads it. Fix is a backfill pass (imported-and-never-contacted -> a real prospect state) plus deciding what should set `dormant` and when.
+
 ## Advisor drops the exchange action when the customer confirms ("yes please")
 - Parked: 2026-07-29
 - Last touched: 2026-07-29
