@@ -4,6 +4,10 @@
  *
  * Tools:
  *   b2b_queue        — today's outreach queue (6-tier, locked decision #6)
+ *   b2b_search       — find any company (incl. ones with nothing due) by name,
+ *                      email, domain, contact, or thread subject
+ *   b2b_activity     — recent messages across all companies, newest first
+ *   b2b_reopen_thread— reopen a concluded thread + draft the follow-up in it
  *   b2b_draft        — generate/regenerate the advisor draft for a company
  *                      (optional steer), or list pending drafts
  *   send_b2b_email   — two-phase send; phase 2 HARD-GATED on b2b_send_enabled
@@ -83,6 +87,74 @@ async function handleSend(input = {}) {
   }
 }
 
+// Eastern Time everywhere an operator reads a date.
+function etDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+  });
+}
+
+async function handleSearch(input = {}) {
+  try {
+    const { searchCompanies } = require(path.join(B2B_LIB, 'queueService'));
+    const res = await searchCompanies(getSupabaseClient(), {
+      q: input.q, status: input.status || 'all', channel: input.channel, limit: input.limit || 25,
+    });
+    if (!res.companies.length) {
+      return text(res.query ? `No companies match "${res.query}".` : 'No companies found.');
+    }
+    const lines = res.companies.map(c => {
+      const state = [c.relationship_state, c.thread_status === 'never' ? 'never contacted' : `${c.threads_open} open / ${c.threads_closed} closed`]
+        .filter(Boolean).join(', ');
+      const last = c.last_message_at ? ` — last activity ${etDate(c.last_message_at)}` : '';
+      const why = c.matched_on ? ` [${c.matched_on}]` : '';
+      const draft = c.has_pending_draft ? ' · DRAFT PENDING' : '';
+      return `**${c.name}** (${c.id}) · ${c.relationship_type} · ${state}${last}${why}${draft}`;
+    });
+    const shown = res.companies.length < res.total ? ` (showing ${res.companies.length} of ${res.total})` : '';
+    return text(`Companies${res.query ? ` matching "${res.query}"` : ''}${shown}:\n${lines.join('\n')}`);
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
+async function handleActivity(input = {}) {
+  try {
+    const { fetchActivity } = require(path.join(B2B_LIB, 'queueService'));
+    const res = await fetchActivity(getSupabaseClient(), {
+      direction: input.direction, channel: input.channel, limit: input.limit || 25,
+    });
+    if (!res.messages.length) return text('No outreach messages on record.');
+    const lines = res.messages.map(m => {
+      const arrow = m.direction === 'outbound' ? '→' : '←';
+      const via = m.source === 'manual_send' ? ' (sent from Gmail)' : m.source === 'gmail_backfill' ? ' (backfilled)' : '';
+      return `${etDate(m.sent_at)} ${arrow} **${m.company_name}** — ${m.message_type || 'message'}${via}${m.thread_subject ? ` — "${m.thread_subject}"` : ''}`;
+    });
+    const syncing = res.gmail_sync === 'started'
+      ? '\n\n(Gmail reconcile is running — messages sent by hand in the last few minutes may not be listed yet.)' : '';
+    return text(`Outreach activity, newest first:\n${lines.join('\n')}${syncing}`);
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
+async function handleReopen(input = {}) {
+  try {
+    const { reopenThread } = require(path.join(B2B_LIB, 'queueService'));
+    const res = await reopenThread(getSupabaseClient(), {
+      thread_id: input.thread_id, steer: input.steer, message_type: input.message_type,
+    });
+    if (res.existing_draft_id) {
+      return text(`Thread #${res.thread.id} ("${res.thread.subject}") reopened. ${res.thread.company_id} already had pending draft #${res.existing_draft_id} — review that one rather than drafting over it.`);
+    }
+    const d = res.draft;
+    return text(`Thread #${res.thread.id} ("${res.thread.subject}") reopened and follow-up draft #${d.draft_id} written on it (${d.message_type}, confidence ${d.confidence}).\n\nSubject: ${d.email_subject}\n\n${d.email_body}\n\nIt will send inside the existing thread. Review in the Outreach panel or send with send_b2b_email.`);
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
 async function handleAddProspect(input = {}) {
   try {
     const { addProspect } = require(path.join(B2B_LIB, 'addProspect'));
@@ -127,6 +199,47 @@ module.exports = [
       },
     },
     handler: handleQueue,
+  },
+  {
+    name: 'b2b_search',
+    description: "Find a B2B company (retailer, LGBTQ+ org, affiliate) by name, id, website, email address, contact name, or thread subject — including companies with nothing due, which never appear in b2b_queue. Use whenever Jamie names a company or asks about one by email. Also browses by conversation state: status:'inactive' lists relationships whose threads are all concluded, 'never' lists prospects never written to.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: { type: 'string', description: 'Search term: company name, slug, domain, email address, contact name, or thread subject. Omit to browse all.' },
+        status: { type: 'string', description: "Conversation state: 'all' (default) | 'open' (a live thread) | 'inactive' (all threads concluded) | 'never' (no thread yet) | 'lost' (operator-closed relationship)." },
+        channel: { type: 'string', description: "Filter: 'wholesale' | 'lgbtq_org' | 'affiliate'. Omit for all." },
+        limit: { type: 'number', description: 'Max companies to show (default 25).' },
+      },
+    },
+    handler: handleSearch,
+  },
+  {
+    name: 'b2b_activity',
+    description: "Recent B2B outreach messages across every company, newest first — what was sent and what came back. Use for 'what did we send this week', 'has anyone replied', or catching up after time away. Covers engine sends AND emails Jamie sent by hand from Gmail (most outbound is manual).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        direction: { type: 'string', description: "'outbound' (what we sent) | 'inbound' (what came back). Omit for both." },
+        channel: { type: 'string', description: "Filter: 'wholesale' | 'lgbtq_org' | 'affiliate'. Omit for all." },
+        limit: { type: 'number', description: 'Max messages (default 25).' },
+      },
+    },
+    handler: handleActivity,
+  },
+  {
+    name: 'b2b_reopen_thread',
+    description: 'Reopen a concluded outreach thread and draft the follow-up inside it, so the email lands in the existing conversation instead of starting a new one. Use when Jamie wants to pick an old conversation back up. Never auto-sends.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        thread_id: { type: 'number', description: 'b2b_threads id to reopen (find it with b2b_search, then the company detail).' },
+        steer: { type: 'string', description: "What the follow-up should say or reference (final authority on intent)." },
+        message_type: { type: 'string', description: 'Force a catalog message type. Omit to let the advisor read the thread and decide.' },
+      },
+      required: ['thread_id'],
+    },
+    handler: handleReopen,
   },
   {
     name: 'b2b_draft',

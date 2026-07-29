@@ -411,7 +411,7 @@ function switchTab(tab) {
     // Clear any stale ticket hash so a refresh restores Outreach, not the
     // prior ticket — but keep an #outreach-<id> deep link intact.
     if (location.hash && !location.hash.startsWith('#outreach-')) history.replaceState(null, '', location.pathname + location.search);
-    loadOutreachQueue();
+    loadOutreachSidebar();
     return;
   }
   outreachPanel.style.display = 'none';
@@ -5183,64 +5183,342 @@ async function setAutoactionFlag(key, enabled) {
 // never as an error.
 // ---------------------------------------------------------------------------
 
+// The sidebar answers three different questions and each needs its own list.
+// The queue only ever shows what is DUE, which left every other company — the
+// one you spoke to in March, the prospect you never wrote to — unreachable.
+//   queue     what needs action        (6-tier, the original view)
+//   activity  what just happened       (message-level, newest first)
+//   companies where's that company     (searchable directory of all of them)
+let outreachMode = 'queue';
 let outreachChannel = '';        // '' = all | wholesale | lgbtq_org | affiliate
 let outreachQueue = [];
+let outreachDirectory = [];      // company rows from /api/b2b/companies
+let outreachActivity = [];       // message rows from /api/b2b/activity
+let outreachDirTotal = 0;
+let outreachSearchQ = '';
+let outreachDirStatus = 'all';   // conversation state: all|open|inactive|never|lost
+let outreachActivityDir = '';    // '' = both | outbound | inbound
+let outreachActivitySyncing = false;
 let outreachSelectedId = null;   // company_id of the selected row
 let outreachDraft = null;        // full b2b_drafts row currently shown
 let outreachHistory = null;      // { threads: [...] } for the selected company (null = loading)
 let pendingOutreachRestore = null; // company_id from an #outreach-<id> deep link, applied after queue load
+// Detail rendering needs an entry for the selected company. Queue rows are
+// entries already; directory and activity rows get one synthesized, so every
+// surface can open the same detail pane.
+let outreachEntries = new Map();
 
+const OUTREACH_MODES = [
+  { value: 'queue', label: 'Queue', hint: 'what needs action today' },
+  { value: 'activity', label: 'Activity', hint: 'what was sent and what came back' },
+  { value: 'companies', label: 'Companies', hint: 'search every company' },
+];
 const OUTREACH_FILTERS = [
   { value: '', label: 'All' },
   { value: 'wholesale', label: 'Retailer' },
   { value: 'lgbtq_org', label: 'Org' },
   { value: 'affiliate', label: 'Affiliate' },
 ];
+const OUTREACH_DIR_STATUSES = [
+  { value: 'all', label: 'All' },
+  { value: 'open', label: 'Live' },
+  { value: 'inactive', label: 'Closed' },
+  { value: 'never', label: 'Untouched' },
+  { value: 'lost', label: 'Lost' },
+];
+const OUTREACH_ACTIVITY_DIRS = [
+  { value: '', label: 'All' },
+  { value: 'outbound', label: 'Sent' },
+  { value: 'inbound', label: 'Received' },
+];
 const OUTREACH_CHANNEL_LABELS = { wholesale: 'retailer', lgbtq_org: 'org', affiliate: 'affiliate' };
 
+function switchOutreachMode(mode) {
+  if (outreachMode === mode) return;
+  outreachMode = mode;
+  loadOutreachSidebar();
+}
+
+function loadOutreachSidebar() {
+  if (outreachMode === 'activity') return loadOutreachActivity();
+  if (outreachMode === 'companies') return loadOutreachDirectory();
+  return loadOutreachQueue();
+}
+
+// Every list feeds the same map, so selection works identically from all three.
+function rememberOutreachEntries(entries) {
+  for (const e of entries) outreachEntries.set(e.company_id, e);
+}
+
 async function loadOutreachQueue(isSilentRefresh) {
-  const container = document.getElementById('outreach-queue-list');
   let payload;
   try {
     const url = outreachChannel ? `/api/b2b/queue?channel=${encodeURIComponent(outreachChannel)}` : '/api/b2b/queue';
     payload = await api(url);
   } catch (err) {
-    if (!isSilentRefresh) container.innerHTML = outreachFilterHtml() + `<div class="outreach-loading">Failed to load queue: ${esc(err.message)}</div>`;
+    if (!isSilentRefresh) renderOutreachSidebar(`Failed to load queue: ${esc(err.message)}`);
     return;
   }
   outreachQueue = Array.isArray(payload) ? payload : (payload.entries || []);
-  renderOutreachQueue();
+  rememberOutreachEntries(outreachQueue);
+  renderOutreachSidebar();
   // Deep link: restore #outreach-<company_id> selection once the queue exists.
   if (pendingOutreachRestore) {
     const target = pendingOutreachRestore;
     pendingOutreachRestore = null;
-    if (outreachQueue.some(e => e.company_id === target)) selectOutreachEntry(target);
+    restoreOutreachCompany(target);
   }
   // The server kicked a background Gmail reconcile — refresh once after it
   // lands so freshly-absorbed manual replies clear their rows.
   if (!isSilentRefresh && payload.gmail_sync === 'started') {
-    setTimeout(() => { if (currentTab === 'outreach') loadOutreachQueue(true); }, 7000);
+    setTimeout(() => { if (currentTab === 'outreach' && outreachMode === 'queue') loadOutreachQueue(true); }, 7000);
   }
+}
+
+// A shared #outreach-<id> link should open the company whether or not it
+// happens to be in today's queue — before the directory existed, deep links to
+// anything idle silently did nothing.
+async function restoreOutreachCompany(companyId) {
+  if (outreachEntries.has(companyId)) return selectOutreachEntry(companyId);
+  try {
+    const res = await api(`/api/b2b/companies?q=${encodeURIComponent(companyId)}&limit=5`);
+    const match = (res.companies || []).find(c => c.id === companyId);
+    if (!match) return;
+    rememberOutreachEntries([entryFromCompany(match)]);
+    selectOutreachEntry(companyId);
+  } catch (_) { /* deep link to a company that no longer exists — leave the queue up */ }
+}
+
+// Directory rows carry no tier — nothing is "due" about them. The subtitle
+// says what the relationship actually looks like instead.
+function outreachCompanySubtitle(c) {
+  if (c.thread_status === 'never') return 'never contacted';
+  const parts = [];
+  if (c.threads_open) parts.push(`${c.threads_open} live thread${c.threads_open > 1 ? 's' : ''}`);
+  if (c.threads_closed) parts.push(`${c.threads_closed} closed`);
+  if (c.last_message_at) parts.push(`last activity ${timeAgo(c.last_message_at, 'short')} ago`);
+  return parts.join(' · ');
+}
+
+function entryFromCompany(c) {
+  return {
+    company_id: c.id,
+    company_name: c.name,
+    channel: c.relationship_type,
+    tier: null,
+    message_type: null,
+    reason: outreachCompanySubtitle(c),
+  };
+}
+
+async function loadOutreachDirectory(isSearchRefresh) {
+  const params = new URLSearchParams();
+  if (outreachSearchQ) params.set('q', outreachSearchQ);
+  if (outreachDirStatus !== 'all') params.set('status', outreachDirStatus);
+  if (outreachChannel) params.set('channel', outreachChannel);
+  let payload;
+  try {
+    payload = await api(`/api/b2b/companies?${params}`);
+  } catch (err) {
+    if (isSearchRefresh) renderOutreachList(`Search failed: ${esc(err.message)}`);
+    else renderOutreachSidebar(`Failed to load companies: ${esc(err.message)}`);
+    return;
+  }
+  outreachDirectory = payload.companies || [];
+  outreachDirTotal = payload.total || 0;
+  rememberOutreachEntries(outreachDirectory.map(entryFromCompany));
+  // Search re-renders only the list: rewriting the whole sidebar would destroy
+  // the input node mid-keystroke and drop focus.
+  if (isSearchRefresh) renderOutreachList(); else renderOutreachSidebar();
+}
+
+let outreachSearchTimer = null;
+function onOutreachSearch(value) {
+  outreachSearchQ = value;
+  clearTimeout(outreachSearchTimer);
+  outreachSearchTimer = setTimeout(() => loadOutreachDirectory(true), 220);
+}
+
+async function loadOutreachActivity() {
+  const params = new URLSearchParams();
+  if (outreachActivityDir) params.set('direction', outreachActivityDir);
+  if (outreachChannel) params.set('channel', outreachChannel);
+  params.set('limit', '60');
+  let payload;
+  try {
+    payload = await api(`/api/b2b/activity?${params}`);
+  } catch (err) {
+    renderOutreachSidebar(`Failed to load activity: ${esc(err.message)}`);
+    return;
+  }
+  outreachActivity = payload.messages || [];
+  outreachActivitySyncing = payload.gmail_sync === 'started';
+  rememberOutreachEntries(outreachActivity.map(m => ({
+    company_id: m.company_id,
+    company_name: m.company_name,
+    channel: m.channel,
+    tier: null,
+    message_type: null,
+    reason: m.thread_subject || 'from the activity feed',
+  })));
+  renderOutreachSidebar();
+  // Most outbound mail is sent by hand from Gmail, so the tail of this feed is
+  // exactly what the reconcile is still fetching. Refresh once it has landed.
+  if (outreachActivitySyncing) {
+    setTimeout(() => { if (currentTab === 'outreach' && outreachMode === 'activity') loadOutreachActivity(); }, 7000);
+  }
+}
+
+function outreachModeHtml() {
+  return `<div class="outreach-mode-row">` + OUTREACH_MODES.map(m =>
+    `<button class="outreach-mode ${outreachMode === m.value ? 'active' : ''}" title="${esc(m.hint)}"
+       onclick="switchOutreachMode('${m.value}')">${m.label}</button>`
+  ).join('') + `</div>`;
+}
+
+function outreachChipsHtml(options, active, handler) {
+  return `<div class="queue-filter-row">` + options.map(o =>
+    `<button class="filter-chip ${active === o.value ? 'active' : ''}" onclick="${handler}('${o.value}')">${o.label}</button>`
+  ).join('') + `</div>`;
+}
+
+function outreachFilterHtml() {
+  return outreachChipsHtml(OUTREACH_FILTERS, outreachChannel, 'setOutreachChannel');
 }
 
 function setOutreachChannel(channel) {
   outreachChannel = channel;
-  loadOutreachQueue();
+  loadOutreachSidebar();
 }
 
-function outreachFilterHtml() {
-  return `<div class="queue-filter-row">` + OUTREACH_FILTERS.map(f =>
-    `<button class="filter-chip ${outreachChannel === f.value ? 'active' : ''}" onclick="setOutreachChannel('${f.value}')">${f.label}</button>`
-  ).join('') + `</div>`;
+function setOutreachDirStatus(status) {
+  outreachDirStatus = status;
+  loadOutreachDirectory();
 }
 
-function renderOutreachQueue() {
+function setOutreachActivityDir(dir) {
+  outreachActivityDir = dir;
+  loadOutreachActivity();
+}
+
+function outreachControlsHtml() {
+  if (outreachMode === 'companies') {
+    return `<div class="outreach-search-row">
+        <input type="search" id="outreach-search" class="outreach-search" placeholder="Search name, email, domain, contact&hellip;"
+          value="${esc(outreachSearchQ)}" oninput="onOutreachSearch(this.value)" autocomplete="off">
+      </div>`
+      + outreachChipsHtml(OUTREACH_DIR_STATUSES, outreachDirStatus, 'setOutreachDirStatus')
+      + outreachFilterHtml();
+  }
+  if (outreachMode === 'activity') {
+    return outreachChipsHtml(OUTREACH_ACTIVITY_DIRS, outreachActivityDir, 'setOutreachActivityDir')
+      + outreachFilterHtml();
+  }
+  return outreachFilterHtml();
+}
+
+function renderOutreachSidebar(errorHtml) {
   const container = document.getElementById('outreach-queue-list');
-  if (!outreachQueue.length) {
-    container.innerHTML = outreachFilterHtml() + '<div class="outreach-loading">Outreach queue is empty &mdash; nothing due today.</div>';
+  const hadFocus = document.activeElement?.id === 'outreach-search';
+  container.innerHTML = outreachModeHtml() + outreachControlsHtml()
+    + `<div id="outreach-list"></div>`;
+  renderOutreachList(errorHtml);
+  if (hadFocus) {
+    const input = document.getElementById('outreach-search');
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+}
+
+// Backwards-compatible alias — plenty of call sites just want the list redrawn
+// (selection highlight, optimistic row removal) without refetching.
+function renderOutreachQueue() {
+  if (document.getElementById('outreach-list')) renderOutreachList();
+  else renderOutreachSidebar();
+}
+
+function renderOutreachList(errorHtml) {
+  const el = document.getElementById('outreach-list');
+  if (!el) return;
+  if (errorHtml) { el.innerHTML = `<div class="outreach-loading">${errorHtml}</div>`; return; }
+
+  if (outreachMode === 'companies') {
+    if (!outreachDirectory.length) {
+      el.innerHTML = `<div class="outreach-loading">${outreachSearchQ
+        ? `No companies match &ldquo;${esc(outreachSearchQ)}&rdquo;.`
+        : 'No companies match this filter.'}</div>`;
+      return;
+    }
+    const more = outreachDirTotal > outreachDirectory.length
+      ? `<div class="outreach-list-note">Showing ${outreachDirectory.length} of ${outreachDirTotal} &mdash; narrow the search to see the rest.</div>`
+      : '';
+    el.innerHTML = outreachDirectory.map(outreachCompanyRowHtml).join('') + more;
     return;
   }
-  container.innerHTML = outreachFilterHtml() + outreachQueue.map(outreachRowHtml).join('');
+
+  if (outreachMode === 'activity') {
+    if (!outreachActivity.length) {
+      el.innerHTML = '<div class="outreach-loading">No messages on record for this filter.</div>';
+      return;
+    }
+    const syncing = outreachActivitySyncing
+      ? `<div class="outreach-list-note">Checking Gmail &mdash; anything you sent by hand in the last few minutes may not be listed yet.</div>`
+      : '';
+    el.innerHTML = syncing + outreachActivity.map(outreachActivityRowHtml).join('');
+    return;
+  }
+
+  if (!outreachQueue.length) {
+    el.innerHTML = '<div class="outreach-loading">Outreach queue is empty &mdash; nothing due today.</div>';
+    return;
+  }
+  el.innerHTML = outreachQueue.map(outreachRowHtml).join('');
+}
+
+function outreachCompanyRowHtml(c) {
+  const channelLabel = OUTREACH_CHANNEL_LABELS[c.relationship_type] || c.relationship_type || '?';
+  const stateBadge = c.relationship_state === 'lost'
+    ? '<span class="badge badge-muted">lost</span>'
+    : (c.relationship_state ? `<span class="badge badge-muted">${esc(c.relationship_state.replace(/_/g, ' '))}</span>` : '');
+  return `
+  <div class="queue-item outreach-row ${c.id === outreachSelectedId ? 'active' : ''}"
+       data-company-id="${esc(c.id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="queue-item-name">${esc(c.name)}</span>
+        <span class="outreach-channel-chip outreach-channel-${esc(c.relationship_type)}">${esc(channelLabel)}</span>
+      </div>
+      <div class="outreach-row-reason">${esc(outreachCompanySubtitle(c))}</div>
+      <div class="queue-item-row2">
+        ${stateBadge}
+        ${c.has_pending_draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
+      </div>
+      ${c.matched_on ? `<div class="outreach-row-snippet">${esc(c.matched_on)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function outreachActivityRowHtml(m) {
+  const out = m.direction === 'outbound';
+  const channelLabel = OUTREACH_CHANNEL_LABELS[m.channel] || m.channel || '';
+  const when = new Date(m.sent_at).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric',
+  });
+  const via = m.source === 'manual_send' ? '<span class="badge badge-muted">from Gmail</span>'
+    : m.source === 'gmail_backfill' ? '<span class="badge badge-muted">backfill</span>' : '';
+  return `
+  <div class="queue-item outreach-row outreach-activity-row ${m.company_id === outreachSelectedId ? 'active' : ''}"
+       data-company-id="${esc(m.company_id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="outreach-dir ${out ? 'outreach-dir-out' : 'outreach-dir-in'}">${out ? '&rarr;' : '&larr;'}</span>
+        <span class="queue-item-name">${esc(m.company_name)}</span>
+        ${channelLabel ? `<span class="outreach-channel-chip outreach-channel-${esc(m.channel)}">${esc(channelLabel)}</span>` : ''}
+      </div>
+      <div class="outreach-row-reason">${esc(when)} &middot; ${esc((m.message_type || 'message').replace(/_/g, ' '))} ${via}</div>
+      ${m.thread_subject ? `<div class="queue-item-row2"><span class="outreach-activity-subject">${esc(m.thread_subject)}</span></div>` : ''}
+      ${m.snippet ? `<div class="outreach-row-snippet">${esc(m.snippet)}</div>` : ''}
+    </div>
+  </div>`;
 }
 
 function outreachRowHtml(e) {
@@ -5266,7 +5544,7 @@ function outreachRowHtml(e) {
 }
 
 async function selectOutreachEntry(companyId) {
-  const entry = outreachQueue.find(e => e.company_id === companyId);
+  const entry = outreachEntries.get(companyId);
   if (!entry) return;
   outreachSelectedId = companyId;
   outreachDraft = null;
@@ -5301,13 +5579,23 @@ async function selectOutreachEntry(companyId) {
   }
 }
 
-// j/k cycling between companies in the outreach queue (mirrors navigateTicket).
+// The company_ids of whatever list is currently on screen, in display order.
+// Activity lists a company once per message, so it dedupes — j/k should step
+// between companies, not re-open the same one for each of its emails.
+function currentOutreachIds() {
+  if (outreachMode === 'companies') return outreachDirectory.map(c => c.id);
+  if (outreachMode === 'activity') return [...new Set(outreachActivity.map(m => m.company_id))];
+  return outreachQueue.map(e => e.company_id);
+}
+
+// j/k cycling between companies in the active list (mirrors navigateTicket).
 function navigateOutreach(direction) {
-  if (!outreachSelectedId || !outreachQueue.length) return;
-  const idx = outreachQueue.findIndex(e => e.company_id === outreachSelectedId);
+  const ids = currentOutreachIds();
+  if (!outreachSelectedId || !ids.length) return;
+  const idx = ids.indexOf(outreachSelectedId);
   if (idx === -1) return;
   const nextIdx = idx + direction;
-  if (nextIdx >= 0 && nextIdx < outreachQueue.length) selectOutreachEntry(outreachQueue[nextIdx].company_id);
+  if (nextIdx >= 0 && nextIdx < ids.length) selectOutreachEntry(ids[nextIdx]);
 }
 
 // Drop the acted-on company and move selection to the next one, so you can rip
@@ -5315,10 +5603,19 @@ function navigateOutreach(direction) {
 // or dismiss (mirrors swimwearAdvancePast). Local/optimistic — the queue isn't
 // auto-polled, so there's nothing to resurrect the removed row.
 function outreachAdvancePast(companyId) {
+  outreachDraft = null;
+  // Only the queue is a worklist you burn down. In the directory and the
+  // activity feed the row is a fact about the company, not a task — dropping it
+  // on send would make the company you just wrote to vanish from the search you
+  // used to find it. Stay put and refresh instead.
+  if (outreachMode !== 'queue') {
+    loadOutreachSidebar();
+    if (outreachSelectedId === companyId) loadOutreachContext(companyId, false);
+    return;
+  }
   const idx = outreachQueue.findIndex(e => e.company_id === companyId);
   const next = outreachQueue[idx + 1] || outreachQueue[idx - 1] || null;
   outreachQueue = outreachQueue.filter(e => e.company_id !== companyId);
-  outreachDraft = null;
   renderOutreachQueue();
   if (next) {
     selectOutreachEntry(next.company_id);
@@ -5371,18 +5668,66 @@ function outreachHistoryHtml() {
     const lastAt = t.last_message_at ? new Date(t.last_message_at).toLocaleDateString('en-US', {
       timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
     }) : '';
+    // Closed is not terminal — it means "concluded, stop counting it". Reopening
+    // drafts the follow-up INSIDE the thread, so it reaches them as a reply to
+    // the conversation they remember rather than a cold new email.
+    const actions = t.status === 'closed'
+      ? `<div class="outreach-thread-actions">
+          <button class="btn btn-secondary" onclick="reopenOutreachThread(${t.id}, this)">Reopen &amp; follow up</button>
+          <span class="outreach-thread-action-note">Drafts a follow-up inside this thread.</span>
+        </div>`
+      : `<div class="outreach-thread-actions">
+          <button class="btn btn-ghost" onclick="closeOutreachThread(${t.id})">Close thread</button>
+          <span class="outreach-thread-action-note">Marks it concluded so it stops surfacing as waiting on us.</span>
+        </div>`;
     return `<details class="outreach-thread"${open ? ' open' : ''}>
       <summary>${esc(t.subject || t.thread_type || 'thread')}
         ${t.status === 'closed' ? '<span class="badge badge-muted">closed</span>' : ''}
         <span class="outreach-thread-count">${(t.messages || []).length} messages${lastAt ? ' · ' + esc(lastAt) : ''}</span>
       </summary>
       <div class="outreach-thread-msgs">${msgs}</div>
+      ${actions}
     </details>`;
   };
   return `<div id="outreach-history" class="detail-section outreach-history">
     <h3>Conversation</h3>
     ${threads.map((t, i) => threadHtml(t, i === 0)).join('')}
   </div>`;
+}
+
+// Reopen writes an Opus draft, so it takes a few seconds — say so rather than
+// leaving a dead button. The draft lands threaded on the reopened conversation.
+async function reopenOutreachThread(threadId, btn) {
+  const companyId = outreachSelectedId;
+  if (btn) { btn.disabled = true; btn.textContent = 'Drafting…'; }
+  let res;
+  try {
+    res = await api(`/api/b2b/threads/${threadId}/reopen`, { method: 'POST', body: {} });
+  } catch (err) {
+    showToast(`Reopen failed: ${err.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Reopen & follow up'; }
+    return;
+  }
+  if (outreachSelectedId !== companyId) return; // moved on while it drafted
+  showToast(res.reused_existing_draft
+    ? 'Thread reopened — this company already had a draft waiting'
+    : `Thread reopened, follow-up draft #${res.draft?.id} ready`, 'success');
+  if (res.draft) outreachDraft = res.draft;
+  const entry = outreachEntries.get(companyId);
+  await loadOutreachContext(companyId, false);
+  if (entry) renderOutreachDetail(entry, outreachDraft);
+}
+
+async function closeOutreachThread(threadId) {
+  const companyId = outreachSelectedId;
+  try {
+    await api(`/api/b2b/threads/${threadId}/status`, { method: 'POST', body: { status: 'closed' } });
+  } catch (err) {
+    showToast(`Could not close: ${err.message}`, 'error');
+    return;
+  }
+  showToast('Thread closed', 'success');
+  if (outreachSelectedId === companyId) await loadOutreachContext(companyId, false);
 }
 
 async function loadOutreachContext(companyId, allowRefetch) {
@@ -5394,10 +5739,18 @@ async function loadOutreachContext(companyId, allowRefetch) {
   }
   if (outreachSelectedId !== companyId) return;
   outreachHistory = h;
-  const ctxEl = document.getElementById('outreach-context');
-  if (ctxEl) ctxEl.innerHTML = outreachHistoryHtml();
-  const recipEl = document.getElementById('outreach-recipient');
-  if (recipEl) recipEl.outerHTML = outreachRecipientHtml();
+  // Reached from the directory or activity feed there was no queue row to tell
+  // us a draft was waiting — the detail payload does. Render the whole detail
+  // rather than showing "no draft yet" on top of one that exists.
+  if (!outreachDraft && h.pending_draft && outreachEntries.has(companyId)) {
+    outreachDraft = h.pending_draft;
+    renderOutreachDetail(outreachEntries.get(companyId), outreachDraft);
+  } else {
+    const ctxEl = document.getElementById('outreach-context');
+    if (ctxEl) ctxEl.innerHTML = outreachHistoryHtml();
+    const recipEl = document.getElementById('outreach-recipient');
+    if (recipEl) recipEl.outerHTML = outreachRecipientHtml();
+  }
   renderOutreachSidebarContext();
   // One follow-up fetch after the background Gmail sync has had time to land.
   // Cooldowns server-side guarantee the second response can't re-trigger it.
@@ -5415,11 +5768,14 @@ function showOutreachQueue() {
 }
 
 function renderOutreachSidebarContext() {
-  const entry = outreachQueue.find(e => e.company_id === outreachSelectedId);
+  const entry = outreachEntries.get(outreachSelectedId);
   if (!entry) return;
   document.getElementById('outreach-sidebar-queue').style.display = 'none';
   document.getElementById('outreach-sidebar-context').style.display = '';
-  document.getElementById('outreach-back-count').textContent = `${outreachQueue.length} in queue`;
+  const backLabel = outreachMode === 'companies' ? `${outreachDirectory.length} companies`
+    : outreachMode === 'activity' ? `${outreachActivity.length} messages`
+    : `${outreachQueue.length} in queue`;
+  document.getElementById('outreach-back-count').textContent = backLabel;
 
   const h = outreachHistory;
   const c = h?.company;
@@ -5593,10 +5949,12 @@ function renderOutreachDetail(entry, draft) {
   const s = (draft && draft.structured) || {};
   const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '?';
 
+  // Directory and activity rows carry no tier — nothing is due about them, and
+  // a fake "T3" would read as a cadence decision the engine never made.
   const header = `
     <div class="outreach-detail-head">
       <h2>${esc(entry.company_name)}</h2>
-      <span class="outreach-tier outreach-tier-${entry.tier}">T${entry.tier}</span>
+      ${entry.tier ? `<span class="outreach-tier outreach-tier-${entry.tier}">T${entry.tier}</span>` : ''}
       <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
     </div>
     <div class="outreach-detail-sub">${esc(entry.reason || '')}</div>`;
@@ -5612,7 +5970,9 @@ function renderOutreachDetail(entry, draft) {
   if (!draft) {
     const what = entry.message_type
       ? `the <strong>${esc(entry.message_type.replace(/_/g, ' '))}</strong> message`
-      : 'a reply (the advisor reads the thread and drafts Jamie’s response)';
+      : entry.tier
+        ? 'a reply (the advisor reads the thread and drafts Jamie’s response)'
+        : 'a message (nothing is due — the advisor reads the history and decides what makes sense to send now)';
     el.innerHTML = header + `<div id="outreach-context">${outreachHistoryHtml()}</div>` + `
       <div class="detail-section">
         <h3>AI Draft</h3>
@@ -5658,16 +6018,19 @@ function renderOutreachDetail(entry, draft) {
 }
 
 async function regenerateOutreachDraft() {
-  const entry = outreachQueue.find(e => e.company_id === outreachSelectedId);
+  const entry = outreachEntries.get(outreachSelectedId);
   if (!entry) return;
   const steer = (document.getElementById('outreach-steer')?.value || '').trim();
   const btn = document.getElementById('outreach-regenerate-btn');
   const hadDraft = !!outreachDraft;
   if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
   try {
+    // `force` covers the company reached from the directory with nothing due:
+    // the operator clicking draft IS the trigger, so the server shouldn't
+    // refuse the way it does for the unprompted cadence sweep.
     const draft = hadDraft
       ? await api(`/api/b2b/drafts/${outreachDraft.id}/regenerate`, { method: 'POST', body: { steer } })
-      : await api(`/api/b2b/companies/${encodeURIComponent(entry.company_id)}/draft`, { method: 'POST', body: { steer } });
+      : await api(`/api/b2b/companies/${encodeURIComponent(entry.company_id)}/draft`, { method: 'POST', body: { steer, force: true } });
     outreachDraft = draft;
     entry.draft = { id: draft.id, subject: draft.subject, snippet: (draft.body || '').replace(/\s+/g, ' ').slice(0, 140) };
     renderOutreachQueue();

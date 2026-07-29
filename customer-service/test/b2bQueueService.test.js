@@ -1,6 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { draftSnippet, attachDrafts, mergePendingDraftEntries } = require('../../b2b-outreach/lib/queueService');
+const {
+  draftSnippet, attachDrafts, mergePendingDraftEntries,
+  sanitizeSearchTerm, rollupThreads, companyThreadStatus, matchReason,
+} = require('../../b2b-outreach/lib/queueService');
 
 // ── draftSnippet ────────────────────────────────────────────────────────────
 
@@ -109,4 +112,90 @@ test('mergePendingDraftEntries ignores drafts whose company is out of scope (cha
     companiesById,
   );
   assert.deepEqual(out, []);
+});
+
+// ── sanitizeSearchTerm ──────────────────────────────────────────────────────
+// These characters are PostgREST filter syntax, not search input. Left in, a
+// term containing one corrupts the .or() query rather than failing loudly.
+
+test('sanitizeSearchTerm strips PostgREST filter metacharacters', () => {
+  assert.equal(sanitizeSearchTerm('Zoe, and Company'), 'Zoe and Company');
+  assert.equal(sanitizeSearchTerm('shop (uk)'), 'shop uk');
+  assert.equal(sanitizeSearchTerm('a*b%c"d\\e'), 'a b c d e');
+});
+
+test('sanitizeSearchTerm keeps characters that are real in emails and domains', () => {
+  assert.equal(sanitizeSearchTerm('jane.doe+shop@example.co.uk'), 'jane.doe+shop@example.co.uk');
+  assert.equal(sanitizeSearchTerm('early-to-bed'), 'early-to-bed');
+});
+
+test('sanitizeSearchTerm collapses whitespace and trims', () => {
+  assert.equal(sanitizeSearchTerm('  trans   pride  '), 'trans pride');
+  assert.equal(sanitizeSearchTerm(null), '');
+  assert.equal(sanitizeSearchTerm(undefined), '');
+});
+
+// ── rollupThreads / companyThreadStatus ─────────────────────────────────────
+
+test('rollupThreads counts open vs closed and keeps the latest activity', () => {
+  const out = rollupThreads([
+    { company_id: 'a', status: 'closed', last_message_at: '2026-03-01T00:00:00Z' },
+    { company_id: 'a', status: 'open', last_message_at: '2026-07-01T00:00:00Z' },
+    { company_id: 'a', status: 'closed', last_message_at: '2026-05-01T00:00:00Z' },
+    { company_id: 'b', status: 'closed', last_message_at: '2026-01-01T00:00:00Z' },
+  ]);
+  assert.deepEqual(out.get('a'), { open: 1, closed: 2, last_message_at: '2026-07-01T00:00:00Z' });
+  assert.deepEqual(out.get('b'), { open: 0, closed: 1, last_message_at: '2026-01-01T00:00:00Z' });
+});
+
+test('rollupThreads treats an unknown status as open, never dropping a thread', () => {
+  const out = rollupThreads([{ company_id: 'a', status: null, last_message_at: null }]);
+  assert.equal(out.get('a').open, 1);
+});
+
+test('rollupThreads handles empty input', () => {
+  assert.equal(rollupThreads([]).size, 0);
+  assert.equal(rollupThreads(null).size, 0);
+});
+
+test('companyThreadStatus distinguishes never / open / inactive', () => {
+  assert.equal(companyThreadStatus(undefined), 'never');
+  assert.equal(companyThreadStatus({ open: 0, closed: 0 }), 'never');
+  assert.equal(companyThreadStatus({ open: 1, closed: 4 }), 'open');
+  assert.equal(companyThreadStatus({ open: 0, closed: 3 }), 'inactive');
+});
+
+// ── matchReason ─────────────────────────────────────────────────────────────
+// Searching an email is useless if the row only echoes the company name back:
+// the operator needs to see WHICH contact carried that address.
+
+const company = {
+  id: 'early-to-bed', name: 'Early to Bed', website: 'https://early2bed.com',
+  general_email: 'hello@early2bed.com',
+};
+const contacts = [{ email: 'jane@early2bed.com', full_name: 'Jane Doe' }];
+const threads = [{ subject: 'Purchase Order #11580' }];
+
+test('matchReason stays quiet when the company name already explains the hit', () => {
+  assert.equal(matchReason(company, contacts, threads, 'early to bed'), null);
+});
+
+test('matchReason names the contact behind an email or person match', () => {
+  assert.equal(matchReason(company, contacts, threads, 'jane@early2bed.com'), 'contact: Jane Doe <jane@early2bed.com>');
+  assert.equal(matchReason(company, contacts, threads, 'jane doe'), 'contact: Jane Doe <jane@early2bed.com>');
+});
+
+test('matchReason falls back through general email, site, thread subject, id', () => {
+  assert.equal(matchReason(company, [], [], 'hello@'), 'email: hello@early2bed.com');
+  // A domain search hits the general email too; naming the address is the more
+  // useful answer, so email is checked before website.
+  assert.equal(matchReason(company, [], [], 'early2bed.com'), 'email: hello@early2bed.com');
+  assert.equal(matchReason({ ...company, general_email: null }, [], [], 'early2bed.com'), 'site: early2bed.com');
+  assert.equal(matchReason(company, [], threads, '11580'), 'thread: Purchase Order #11580');
+  assert.equal(matchReason({ id: 'uk-mermaids', name: 'Mermaids' }, [], [], 'uk-'), 'id: uk-mermaids');
+});
+
+test('matchReason is case-insensitive and null for an empty query', () => {
+  assert.equal(matchReason(company, contacts, threads, 'JANE@EARLY2BED.COM'), 'contact: Jane Doe <jane@early2bed.com>');
+  assert.equal(matchReason(company, contacts, threads, ''), null);
 });

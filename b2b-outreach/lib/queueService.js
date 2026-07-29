@@ -3,9 +3,18 @@
  * (the MCP console tools and the dashboard Outreach panel). Both surfaces
  * are thin wrappers over these functions so they can never drift apart.
  *
+ * The panel asks three different questions, and each has a function here:
+ *   "what needs action?"    → fetchQueueWithDrafts   (the 6-tier queue)
+ *   "what just happened?"   → fetchActivity          (message-level feed)
+ *   "where's that company?" → searchCompanies        (searchable directory)
+ *
  *   fetchOutreachQueue       — companies → contexts → assembleQueue
  *   attachDrafts             — pure: join pending-draft id/snippet onto entries
  *   fetchQueueWithDrafts     — the dashboard queue payload
+ *   searchCompanies          — directory search across name/email/subject
+ *   fetchActivity            — reverse-chronological message feed
+ *   setThreadStatus          — open ↔ closed
+ *   reopenThread             — reopen a concluded thread + draft the follow-up
  *   generateDraftForCompany  — queue-entry resolution + generateDraft
  *   sendDraftById            — load a pending draft → sendB2bEmail (two-phase,
  *                              gate pass-through); marks the draft sent
@@ -95,16 +104,26 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
  * just landed clear their rows.
  */
 let queueReconcileInFlight = false;
+/**
+ * Kick the manual-send reconcile in the background, at most one at a time.
+ * Returns 'started' when this call launched it, 'recent' when one was already
+ * running. Shared by the queue and the activity feed: BOTH surfaces claim to
+ * show current reality, and most outbound mail is sent by hand from Gmail
+ * (source='manual_send'), so a surface that doesn't kick this silently
+ * under-reports the operator's own recent sends.
+ */
+function startReconcile(sb, companyIds) {
+  if (queueReconcileInFlight) return 'recent';
+  queueReconcileInFlight = true;
+  reconcileThreads(sb, { companyIds })
+    .catch(err => console.error(`[queueService] reconcile failed: ${err.message}`))
+    .finally(() => { queueReconcileInFlight = false; });
+  return 'started';
+}
+
 async function fetchQueueWithDrafts(sb, { channel } = {}) {
   const companies = await fetchCompanies(sb, { channel });
-  let gmailSync = 'recent';
-  if (!queueReconcileInFlight) {
-    queueReconcileInFlight = true;
-    gmailSync = 'started';
-    reconcileThreads(sb, { companyIds: companies.map(c => c.id) })
-      .catch(err => console.error(`[queueService] reconcile failed: ${err.message}`))
-      .finally(() => { queueReconcileInFlight = false; });
-  }
+  const gmailSync = startReconcile(sb, companies.map(c => c.id));
   const contexts = await buildContexts(sb, companies);
   const queue = assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) })));
 
@@ -120,22 +139,314 @@ async function fetchQueueWithDrafts(sb, { channel } = {}) {
   return { entries: attachDrafts(merged, drafts), gmail_sync: gmailSync };
 }
 
+// ── Directory search ───────────────────────────────────────────────────────
+// The queue only ever surfaces what is DUE. Everything else — the company you
+// spoke to in March, the prospect you never wrote to — was unreachable from the
+// panel. These functions are the browse half.
+
+/**
+ * Strip characters that would break a PostgREST `.or()` filter string. Pure.
+ * Commas separate conditions and parens group them, so a raw search term
+ * containing either corrupts the query rather than failing loudly. `*` is
+ * PostgREST's ilike wildcard and `\`/`"` escape its values. None of these carry
+ * meaning in a company name or an email address, so dropping them is lossless
+ * in practice and keeps the filter injection-free.
+ */
+function sanitizeSearchTerm(q) {
+  return String(q || '').replace(/[,()"\\*%]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Per-company thread rollup: counts + latest activity. Pure. */
+function rollupThreads(threads) {
+  const by = new Map();
+  for (const t of threads || []) {
+    const r = by.get(t.company_id) || { open: 0, closed: 0, last_message_at: null };
+    if (t.status === 'closed') r.closed++; else r.open++;
+    if (t.last_message_at && (!r.last_message_at || t.last_message_at > r.last_message_at)) {
+      r.last_message_at = t.last_message_at;
+    }
+    by.set(t.company_id, r);
+  }
+  return by;
+}
+
+/**
+ * The company's conversation state, which is what the directory filters on.
+ * Pure. 'never' = no thread on record (a prospect we have not written to),
+ * 'open' = at least one live thread, 'inactive' = every thread concluded.
+ */
+function companyThreadStatus(rollup) {
+  if (!rollup || (!rollup.open && !rollup.closed)) return 'never';
+  return rollup.open > 0 ? 'open' : 'inactive';
+}
+
+/**
+ * Why this company matched the search — shown on the row. Pure.
+ * Searching an email address is useless if the result only echoes the company
+ * name back: the operator needs to see WHICH contact carried that address.
+ */
+function matchReason(company, contacts, threads, q) {
+  const needle = (q || '').toLowerCase();
+  if (!needle) return null;
+  const has = (v) => v && String(v).toLowerCase().includes(needle);
+  if (has(company.name)) return null; // the name is already the row title
+  const contact = (contacts || []).find(c => has(c.email) || has(c.full_name));
+  if (contact) return `contact: ${contact.full_name ? `${contact.full_name} <${contact.email}>` : contact.email}`;
+  if (has(company.general_email)) return `email: ${company.general_email}`;
+  if (has(company.website)) return `site: ${String(company.website).replace(/^https?:\/\/(www\.)?/, '')}`;
+  const thread = (threads || []).find(t => has(t.subject));
+  if (thread) return `thread: ${thread.subject}`;
+  if (has(company.id)) return `id: ${company.id}`;
+  return null;
+}
+
+const DIRECTORY_STATUSES = ['all', 'open', 'inactive', 'never', 'lost'];
+
+/**
+ * Framing for a draft the operator asked for out of the blue (a company picked
+ * from the directory with nothing due). Without it the advisor falls back to
+ * "they are waiting on a reply from us" — false here, and it shows in the copy.
+ */
+const OPERATOR_INITIATED_HINT = 'Jamie has picked this company out deliberately — nothing is due on the cadence. Read the relationship history and write the message that actually makes sense to send them right now. They are NOT waiting on a reply from us, so do not write as though they are.';
+
+/**
+ * Searchable company directory — the panel's "where's that company?" surface.
+ *
+ * `q` matches company name / id / website / general email, contact email and
+ * name, and thread subject. Matching spans three tables, which PostgREST
+ * cannot express as one OR, so the id sets are gathered in parallel and merged.
+ *
+ * `status` filters on conversation state (see companyThreadStatus), plus
+ * 'lost' for operator-closed relationships. Lost companies are NOT hidden from
+ * the other filters — searching a name and silently getting nothing back
+ * because the row was marked lost is worse than seeing it with its badge.
+ *
+ * Sorted by last activity (newest first, never-contacted last), so with no
+ * query it reads as a recency-ordered archive.
+ */
+async function searchCompanies(sb, { q, status = 'all', channel, limit = 50 } = {}) {
+  const term = sanitizeSearchTerm(q);
+  const like = `%${term}%`;
+
+  let matchedIds = null; // null = no query, take everything
+  if (term) {
+    const [companyRes, contactRes, threadRes] = await Promise.all([
+      sb.from('b2b_companies').select('id')
+        .or(`name.ilike.${like},id.ilike.${like},website.ilike.${like},general_email.ilike.${like}`),
+      sb.from('b2b_contacts').select('company_id').or(`email.ilike.${like},full_name.ilike.${like}`),
+      sb.from('b2b_threads').select('company_id').ilike('subject', like),
+    ]);
+    if (companyRes.error) throw new Error(companyRes.error.message);
+    matchedIds = new Set([
+      ...(companyRes.data || []).map(r => r.id),
+      ...(contactRes.error ? [] : (contactRes.data || []).map(r => r.company_id)),
+      ...(threadRes.error ? [] : (threadRes.data || []).map(r => r.company_id)),
+    ]);
+    if (!matchedIds.size) return { companies: [], total: 0, query: term };
+  }
+
+  let cq = sb.from('b2b_companies')
+    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until');
+  if (channel) cq = cq.eq('relationship_type', channel);
+  if (matchedIds) cq = cq.in('id', [...matchedIds]);
+  const { data: companies, error } = await cq;
+  if (error) throw new Error(error.message);
+  if (!companies?.length) return { companies: [], total: 0, query: term };
+
+  const ids = companies.map(c => c.id);
+  const [threadsRes, contactsRes, draftsRes] = await Promise.all([
+    sb.from('b2b_threads').select('id, company_id, status, subject, last_message_at').in('company_id', ids),
+    sb.from('b2b_contacts').select('company_id, email, full_name, is_primary').in('company_id', ids).eq('is_active', true),
+    sb.from('b2b_drafts').select('id, company_id').eq('status', 'pending').in('company_id', ids),
+  ]);
+  const threads = threadsRes.error ? [] : (threadsRes.data || []);
+  const contacts = contactsRes.error ? [] : (contactsRes.data || []);
+  const pending = new Set(draftsRes.error ? [] : (draftsRes.data || []).map(d => d.company_id));
+
+  const rollups = rollupThreads(threads);
+  const contactsBy = new Map();
+  for (const c of contacts) contactsBy.set(c.company_id, [...(contactsBy.get(c.company_id) || []), c]);
+  const threadsBy = new Map();
+  for (const t of threads) threadsBy.set(t.company_id, [...(threadsBy.get(t.company_id) || []), t]);
+
+  let rows = companies.map(c => {
+    const rollup = rollups.get(c.id) || { open: 0, closed: 0, last_message_at: null };
+    return {
+      ...c,
+      thread_status: companyThreadStatus(rollup),
+      threads_open: rollup.open,
+      threads_closed: rollup.closed,
+      last_message_at: rollup.last_message_at,
+      has_pending_draft: pending.has(c.id),
+      contact_count: (contactsBy.get(c.id) || []).length,
+      matched_on: matchReason(c, contactsBy.get(c.id), threadsBy.get(c.id), term),
+    };
+  });
+
+  if (status && status !== 'all') {
+    rows = status === 'lost'
+      ? rows.filter(r => r.relationship_state === 'lost')
+      : rows.filter(r => r.thread_status === status);
+  }
+
+  rows.sort((a, b) => {
+    if (!a.last_message_at && !b.last_message_at) return (a.name || '').localeCompare(b.name || '');
+    if (!a.last_message_at) return 1;
+    if (!b.last_message_at) return -1;
+    return b.last_message_at.localeCompare(a.last_message_at);
+  });
+
+  return { companies: rows.slice(0, limit), total: rows.length, query: term };
+}
+
+// ── Activity feed ──────────────────────────────────────────────────────────
+
+/**
+ * Reverse-chronological message feed across every company — "what went out
+ * recently?", which the company directory answers badly (one row per company
+ * collapses a day's sends, and hides which way each message went).
+ *
+ * `before` is a sent_at cursor for paging. Kicks the same background reconcile
+ * as the queue, and reports it, so the feed can say it is still catching up
+ * rather than presenting a stale tail as complete.
+ */
+async function fetchActivity(sb, { direction, channel, limit = 50, before } = {}) {
+  let companyFilter = null;
+  if (channel) {
+    const { data, error } = await sb.from('b2b_companies').select('id').eq('relationship_type', channel);
+    if (error) throw new Error(error.message);
+    companyFilter = (data || []).map(c => c.id);
+    if (!companyFilter.length) return { messages: [], gmail_sync: 'skipped' };
+  }
+
+  let q = sb.from('b2b_messages')
+    // Messages carry no subject of their own — it lives on the thread.
+    .select('id, company_id, thread_id, direction, message_type, source, body_text, from_email, to_email, sent_at')
+    .order('sent_at', { ascending: false })
+    .limit(Math.min(limit, 200));
+  if (direction) q = q.eq('direction', direction);
+  if (companyFilter) q = q.in('company_id', companyFilter);
+  if (before) q = q.lt('sent_at', before);
+  const { data: messages, error } = await q;
+  if (error) throw new Error(error.message);
+  if (!messages?.length) return { messages: [], gmail_sync: 'recent' };
+
+  const ids = [...new Set(messages.map(m => m.company_id).filter(Boolean))];
+  const [companiesRes, threadsRes] = await Promise.all([
+    sb.from('b2b_companies').select('id, name, relationship_type, relationship_state').in('id', ids),
+    sb.from('b2b_threads').select('id, subject, status').in('id', [...new Set(messages.map(m => m.thread_id).filter(Boolean))]),
+  ]);
+  const companyBy = new Map((companiesRes.error ? [] : companiesRes.data || []).map(c => [c.id, c]));
+  const threadBy = new Map((threadsRes.error ? [] : threadsRes.data || []).map(t => [t.id, t]));
+
+  const rows = messages.map(m => {
+    const c = companyBy.get(m.company_id);
+    const t = threadBy.get(m.thread_id);
+    return {
+      ...m,
+      company_name: c?.name || m.company_id,
+      channel: c?.relationship_type || null,
+      thread_subject: t?.subject || null,
+      thread_status: t?.status || null,
+      snippet: draftSnippet(m.body_text, 160),
+    };
+  });
+
+  return {
+    messages: rows,
+    next_before: rows.length >= Math.min(limit, 200) ? rows[rows.length - 1].sent_at : null,
+    gmail_sync: startReconcile(sb, ids),
+  };
+}
+
+// ── Thread status ──────────────────────────────────────────────────────────
+
+/**
+ * Flip a thread between 'open' and 'closed'.
+ *
+ * Status is load-bearing in exactly one place: queueContext ignores inbound
+ * messages on CLOSED threads, so a closed conversation can never put its
+ * company back in Tier 1. Closing is therefore how the operator says "this one
+ * is concluded, stop counting it"; reopening puts it back in play.
+ */
+async function setThreadStatus(sb, { thread_id, status } = {}) {
+  if (!thread_id) throw new Error('thread_id required');
+  if (status !== 'open' && status !== 'closed') throw new Error(`status must be 'open' or 'closed' (got '${status}')`);
+  const { data, error } = await sb.from('b2b_threads')
+    .update({ status }).eq('id', thread_id)
+    .select('id, company_id, subject, status, last_message_at').maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`thread #${thread_id} not found`);
+  return data;
+}
+
+/**
+ * Reopen a concluded thread and draft the follow-up on it.
+ *
+ * Threading matters: without the thread_id the follow-up leaves as a brand-new
+ * email and the recipient loses the conversation it belongs to. The advisor is
+ * told plainly that this is an operator-initiated revival — the default
+ * no-message_type framing is "they are waiting on a reply from us", which is
+ * false here and would produce a reply to a message that never came.
+ *
+ * Returns { thread, draft }. A company that already has a pending draft keeps
+ * it (one-pending-per-company is a unique index) and `draft` comes back null
+ * with `existing_draft_id` set, so the caller can just open it.
+ */
+async function reopenThread(sb, { thread_id, steer, message_type } = {}) {
+  const thread = await setThreadStatus(sb, { thread_id, status: 'open' });
+
+  const { data: existing, error } = await sb.from('b2b_drafts')
+    .select('id').eq('company_id', thread.company_id).eq('status', 'pending').maybeSingle();
+  if (error) throw new Error(error.message);
+  if (existing) return { thread, draft: null, existing_draft_id: existing.id };
+
+  const result = await generateDraftForCompany(sb, {
+    company_id: thread.company_id,
+    thread_id: thread.id,
+    steer,
+    message_type,
+    task_hint: 'Jamie is reopening this concluded conversation to follow up. Read the thread, pick up whatever was actually left hanging (or the last real thing that happened), and draft a natural follow-up from him. They are NOT waiting on a reply from us, so do not write as though they are.',
+    reason: `operator reopened "${thread.subject || 'thread'}" to follow up`,
+  });
+  return { thread, draft: result, existing_draft_id: null };
+}
+
 /**
  * Resolve the company's current queue entry and generate (or regenerate with
  * steer) its draft. Falls back to a forced message_type when nothing is due.
  * Returns generateDraft's result, or null when nothing is due and no
  * message_type was forced.
+ *
+ * `thread_id` / `task_hint` / `reason` / `force` are the operator-initiated
+ * path (a reopened thread, a directory row with nothing due): they pin the
+ * draft to an existing conversation and tell the advisor why it is being
+ * asked. `task_hint` only reaches the prompt when there is no message_type —
+ * a typed cadence message already carries its own locked framing.
  */
-async function generateDraftForCompany(sb, { company_id, steer, message_type } = {}) {
+async function generateDraftForCompany(sb, { company_id, steer, message_type, thread_id, task_hint, reason, force } = {}) {
   const { data: company, error } = await sb.from('b2b_companies').select('*').eq('id', company_id).maybeSingle();
   if (error || !company) throw new Error(error?.message || `company '${company_id}' not found`);
 
   const contexts = await buildContexts(sb, [company]);
   let [entry] = assembleQueue([{ company, ctx: { ...contexts.get(company.id), hasPendingDraft: false } }]);
-  if (!entry && message_type) {
-    entry = { tier: 3, message_type, reason: 'operator-requested draft', company_id: company.id };
+  // Nothing due is not a refusal when the operator asked: reopening a thread or
+  // picking a company out of the directory IS the trigger. Cadence only decides
+  // what we reach out about unprompted.
+  if (!entry && (message_type || thread_id || task_hint || force)) {
+    entry = {
+      tier: 3,
+      message_type: message_type || null,
+      reason: reason || 'operator-requested draft',
+      task_hint: task_hint || OPERATOR_INITIATED_HINT,
+      company_id: company.id,
+    };
   }
   if (!entry) return null;
+  // The operator's explicit target wins over whatever cadence inferred.
+  if (thread_id) entry = { ...entry, thread_id };
+  if (task_hint) entry = { ...entry, task_hint };
+  if (reason) entry = { ...entry, reason };
 
   return generateDraft({ company_id: company.id, queueEntry: entry, steer });
 }
@@ -270,7 +581,7 @@ function startCompanyGmailSync(sb, companyId, emails) {
  */
 async function fetchCompanyThreads(sb, companyId) {
   // Round 1 — independent lookups in parallel.
-  const [emails, threadsRes, companyRes, recipient, contactsRes] = await Promise.all([
+  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes] = await Promise.all([
     getCompanyEmails(sb, companyId).catch(err => {
       console.error(`[queueService] emails lookup failed: ${err.message}`);
       return [];
@@ -285,6 +596,10 @@ async function fetchCompanyThreads(sb, companyId) {
       .select('email, full_name, role, title, is_primary, is_active')
       .eq('company_id', companyId).eq('is_active', true)
       .order('is_primary', { ascending: false }),
+    // The queue payload carries pending drafts, but the directory and activity
+    // feed reach companies the queue never listed — without this a company with
+    // a draft waiting would open looking like it had none.
+    sb.from('b2b_drafts').select('*').eq('company_id', companyId).eq('status', 'pending').maybeSingle(),
   ]);
   if (threadsRes.error) throw new Error(threadsRes.error.message);
   const threads = threadsRes.data || [];
@@ -331,6 +646,7 @@ async function fetchCompanyThreads(sb, companyId) {
     orders: ordersRes.data || [],
     company,
     contacts: contactsRes.error ? [] : (contactsRes.data || []),
+    pending_draft: draftRes.error ? null : (draftRes.data || null),
     logo_url: logoUrl,
     recipient,
     gmail_sync: gmailSync,
@@ -348,4 +664,14 @@ module.exports = {
   sendDraftById,
   mergeFactVerification,
   setFactVerified,
+  // directory / activity / thread state
+  sanitizeSearchTerm,
+  rollupThreads,
+  companyThreadStatus,
+  matchReason,
+  searchCompanies,
+  fetchActivity,
+  setThreadStatus,
+  reopenThread,
+  DIRECTORY_STATUSES,
 };

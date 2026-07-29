@@ -87,9 +87,14 @@ function renderContext({ company, contacts, messages }, queueEntry, steer) {
   lines.push('');
   lines.push('## Your task');
   lines.push(`Queue tier ${queueEntry.tier}: ${queueEntry.reason}`);
+  // Three framings, and picking the wrong one shows in the copy. A typed
+  // message has a locked opener; an operator-initiated revival carries its own
+  // hint; the bare fallback is Tier 1, where they really are waiting on us.
   lines.push(queueEntry.message_type
     ? `Draft the **${queueEntry.message_type}** message for this company, using its locked opener adapted to this relationship's specifics.`
-    : `They are waiting on a reply from us. Read the thread and draft Jamie's response.`);
+    : queueEntry.task_hint
+      ? queueEntry.task_hint
+      : `They are waiting on a reply from us. Read the thread and draft Jamie's response.`);
   if (steer) lines.push(`\nOPERATOR STEER (final authority on intent): ${steer}`);
   return lines.join('\n');
 }

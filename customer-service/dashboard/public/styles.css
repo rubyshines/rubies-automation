@@ -5297,6 +5297,82 @@ main { height: calc(100vh - 56px); }
   -webkit-box-orient: vertical;
 }
 
+/* Sidebar mode switch: queue (what's due) / activity (what happened) /
+   companies (search everything). */
+.outreach-mode-row {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 0;
+}
+.outreach-mode {
+  flex: 1;
+  padding: 7px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.outreach-mode:hover { color: var(--text-primary); }
+.outreach-mode.active {
+  color: var(--teal);
+  border-bottom-color: var(--teal);
+}
+
+.outreach-search-row { padding: 8px 10px 0; }
+.outreach-search {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-input, #fff);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.outreach-search:focus {
+  outline: none;
+  border-color: var(--teal);
+}
+
+.outreach-list-note {
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* Activity feed rows */
+.outreach-dir {
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.outreach-dir-out { color: var(--teal); }
+.outreach-dir-in { color: var(--text-secondary); }
+.outreach-activity-subject {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Reopen / close, at the foot of an expanded thread */
+.outreach-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0 4px;
+}
+.outreach-thread-action-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 /* Detail */
 .outreach-detail-head {
   display: flex;

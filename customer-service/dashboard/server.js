@@ -2762,6 +2762,49 @@ async function apiB2bCompanyThreads(companyId) {
   return b2bQueueService.fetchCompanyThreads(getSupabaseClient(), companyId);
 }
 
+// Directory: every company, searchable — the panel's browse surface, as
+// opposed to the queue's "what's due today".
+async function apiB2bCompanies(query) {
+  return b2bQueueService.searchCompanies(getSupabaseClient(), {
+    q: query.get('q') || '',
+    status: query.get('status') || 'all',
+    channel: query.get('channel') || null,
+    limit: parseInt(query.get('limit')) || 50,
+  });
+}
+
+// Activity: what actually happened, newest first, across all companies.
+async function apiB2bActivity(query) {
+  return b2bQueueService.fetchActivity(getSupabaseClient(), {
+    direction: query.get('direction') || null,
+    channel: query.get('channel') || null,
+    limit: parseInt(query.get('limit')) || 50,
+    before: query.get('before') || null,
+  });
+}
+
+async function apiB2bThreadStatus(id, body = {}) {
+  return b2bQueueService.setThreadStatus(getSupabaseClient(), {
+    thread_id: parseInt(id), status: body.status,
+  });
+}
+
+// Reopen a concluded thread AND draft the follow-up on it, so the reply lands
+// inside the existing conversation instead of starting a new one.
+async function apiB2bThreadReopen(id, body = {}) {
+  const res = await b2bQueueService.reopenThread(getSupabaseClient(), {
+    thread_id: parseInt(id),
+    steer: (body.steer || '').trim() || undefined,
+    message_type: body.message_type || undefined,
+  });
+  const draftId = res.draft?.draft_id || res.existing_draft_id;
+  return {
+    thread: res.thread,
+    reused_existing_draft: !!res.existing_draft_id,
+    draft: draftId ? await apiB2bGetDraft(draftId) : null,
+  };
+}
+
 async function apiB2bGetDraft(id) {
   const { data, error } = await getSupabaseClient()
     .from('b2b_drafts').select('*').eq('id', id).maybeSingle();
@@ -2799,6 +2842,10 @@ async function apiB2bGenerateDraft(companyId, body = {}) {
     company_id: companyId,
     steer,
     message_type: body.message_type || undefined,
+    thread_id: body.thread_id || undefined,
+    // The directory surfaces companies with nothing due; clicking draft there
+    // IS the trigger, so the panel says so explicitly rather than getting a 400.
+    force: !!body.force,
   });
   if (!result) {
     const err = new Error(`${companyId} has nothing due — nothing to draft`);
@@ -3252,6 +3299,8 @@ const routes = {
   'GET /api/autoaction-config': () => apiGetAutoactionConfig(),
   'GET /api/advisor-facts': () => apiGetAdvisorFacts(),
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');
@@ -3286,6 +3335,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },
   // Free Swimwear panel
   { method: 'GET', pattern: /^\/api\/swimwear\/(\d+)$/, handler: (_, id) => apiSwimwearGet(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/approve$/, handler: (body, id) => apiSwimwearApprove(parseInt(id), body) },
