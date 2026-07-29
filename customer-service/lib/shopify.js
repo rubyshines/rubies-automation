@@ -1556,6 +1556,172 @@ async function addCodeToPriceRule(priceRuleId, code) {
   return json.discount_code;
 }
 
+/**
+ * Look up a single discount code by its exact code string.
+ *
+ * `codeDiscountNodeByCode` is the only EXACT lookup Shopify offers — the
+ * `codeDiscountNodes(query: "code:X")` search is fuzzy and happily returns
+ * unrelated discounts, so it must never be used to resolve a code we are
+ * about to revoke.
+ *
+ * Returns the PARENT discount (the node) plus the redeem code's own id.
+ * These are different objects and the distinction is the whole point of
+ * revocation: one discount can own thousands of codes (e.g. the 1,228-code
+ * FREESWIMWEAR pool, the Klaviyo birthday pools), so deleting the node would
+ * invalidate every customer's code. `redeemCodeId` addresses exactly one.
+ *
+ * @param {string} code
+ * @returns {Promise<null|{
+ *   discountGid: string, redeemCodeId: string|null, code: string,
+ *   type: string, title: string, status: string, summary: string|null,
+ *   startsAt: string|null, endsAt: string|null, usageLimit: number|null,
+ *   codeUsageCount: number|null, discountUsageCount: number|null,
+ *   codesCount: number|null }>}
+ */
+async function findDiscountCodeByCode(code) {
+  const data = await shopifyGraphQL(`
+    query($code: String!) {
+      codeDiscountNodeByCode(code: $code) {
+        id
+        codeDiscount {
+          __typename
+          ... on DiscountCodeBasic {
+            title status summary startsAt endsAt usageLimit asyncUsageCount
+            codesCount { count }
+          }
+          ... on DiscountCodeBxgy {
+            title status summary startsAt endsAt usageLimit asyncUsageCount
+            codesCount { count }
+          }
+          ... on DiscountCodeFreeShipping {
+            title status summary startsAt endsAt usageLimit asyncUsageCount
+            codesCount { count }
+          }
+          ... on DiscountCodeApp {
+            title status startsAt endsAt usageLimit asyncUsageCount
+            codesCount { count }
+          }
+        }
+      }
+    }
+  `, { code });
+
+  const node = data.codeDiscountNodeByCode;
+  if (!node || !node.codeDiscount) return null;
+  const d = node.codeDiscount;
+
+  const redeem = await findRedeemCode(node.id, code);
+
+  return {
+    discountGid: node.id,
+    redeemCodeId: redeem ? redeem.id : null,
+    code: redeem ? redeem.code : code,
+    type: d.__typename,
+    title: d.title || null,
+    status: d.status || null,
+    summary: d.summary || null,
+    startsAt: d.startsAt || null,
+    endsAt: d.endsAt || null,
+    usageLimit: d.usageLimit != null ? d.usageLimit : null,
+    codeUsageCount: redeem ? redeem.asyncUsageCount : null,
+    discountUsageCount: d.asyncUsageCount != null ? d.asyncUsageCount : null,
+    codesCount: d.codesCount ? d.codesCount.count : null,
+  };
+}
+
+/**
+ * Resolve one redeem code (the individual code row) to its id within a
+ * discount node. The `codes(query:)` filter takes the RAW code string —
+ * prefixing it with `code:` turns it into an unfiltered listing (verified
+ * live against the FREESWIMWEAR pool), so the raw string is passed and the
+ * result is exact-matched client-side before anything is returned.
+ *
+ * @param {string} discountGid - gid://shopify/DiscountCodeNode/...
+ * @param {string} code
+ * @returns {Promise<null|{id:string, code:string, asyncUsageCount:number}>}
+ */
+async function findRedeemCode(discountGid, code) {
+  const data = await shopifyGraphQL(`
+    query($id: ID!, $q: String!) {
+      codeDiscountNode(id: $id) {
+        codeDiscount {
+          ... on DiscountCodeBasic { codes(first: 20, query: $q) { nodes { id code asyncUsageCount } } }
+          ... on DiscountCodeBxgy { codes(first: 20, query: $q) { nodes { id code asyncUsageCount } } }
+          ... on DiscountCodeFreeShipping { codes(first: 20, query: $q) { nodes { id code asyncUsageCount } } }
+          ... on DiscountCodeApp { codes(first: 20, query: $q) { nodes { id code asyncUsageCount } } }
+        }
+      }
+    }
+  `, { id: discountGid, q: code });
+
+  const nodes = data.codeDiscountNode?.codeDiscount?.codes?.nodes || [];
+  const wanted = code.trim().toLowerCase();
+  return nodes.find(n => (n.code || '').trim().toLowerCase() === wanted) || null;
+}
+
+/**
+ * Delete specific redeem codes from a discount, leaving every sibling code on
+ * that discount untouched.
+ *
+ * Deliberately passes ONLY `ids` — the mutation also accepts a `search`
+ * string, which would delete every code matching a fuzzy query. That is a
+ * mass-destruction footgun on a 1,228-code pool and must never be used here.
+ *
+ * The mutation is asynchronous (returns a Job), so callers that need
+ * certainty should re-query with findRedeemCode() rather than trusting the
+ * job handle.
+ *
+ * @param {string} discountGid
+ * @param {string[]} redeemCodeIds
+ * @returns {Promise<{jobId:string|null, done:boolean}>}
+ */
+async function deleteRedeemCodes(discountGid, redeemCodeIds) {
+  if (!Array.isArray(redeemCodeIds) || redeemCodeIds.length === 0) {
+    throw new Error('deleteRedeemCodes requires at least one redeem code id.');
+  }
+  const data = await shopifyGraphQL(`
+    mutation($discountId: ID!, $ids: [ID!]) {
+      discountCodeRedeemCodeBulkDelete(discountId: $discountId, ids: $ids) {
+        job { id done }
+        userErrors { field message }
+      }
+    }
+  `, { discountId: discountGid, ids: redeemCodeIds });
+  const job = data.discountCodeRedeemCodeBulkDelete?.job;
+  return { jobId: job ? job.id : null, done: job ? !!job.done : false };
+}
+
+/**
+ * Deactivate a whole code discount. Used when the discount owns exactly one
+ * code — there, the code IS the discount, so removing the code row would
+ * leave a codeless discount behind. Deactivation is immediate and reversible
+ * (re-activate in admin), which is the right default for a comp we may have
+ * killed by mistake.
+ *
+ * @param {string} discountGid
+ * @returns {Promise<{id:string, status:string|null}>}
+ */
+async function deactivateDiscountCode(discountGid) {
+  const data = await shopifyGraphQL(`
+    mutation($id: ID!) {
+      discountCodeDeactivate(id: $id) {
+        codeDiscountNode {
+          id
+          codeDiscount {
+            ... on DiscountCodeBasic { status }
+            ... on DiscountCodeBxgy { status }
+            ... on DiscountCodeFreeShipping { status }
+            ... on DiscountCodeApp { status }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `, { id: discountGid });
+  const node = data.discountCodeDeactivate?.codeDiscountNode;
+  return { id: node?.id || discountGid, status: node?.codeDiscount?.status || null };
+}
+
 // --- Product creation ---
 
 /**
@@ -2086,6 +2252,10 @@ module.exports = {
   findDiscountNodeByTitle,
   randomDiscountCode,
   addCodeToPriceRule,
+  findDiscountCodeByCode,
+  findRedeemCode,
+  deleteRedeemCodes,
+  deactivateDiscountCode,
   normalizeOrderNumber,
   calculateRefund,
   createRefund,

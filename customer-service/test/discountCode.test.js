@@ -1,5 +1,5 @@
 /**
- * Tests for the create_discount_code MCP tool.
+ * Tests for the create_discount_code and revoke_discount_code MCP tools.
  *
  * Run: node --test customer-service/test/discountCode.test.js
  */
@@ -18,6 +18,15 @@ let existingBuckets = {}; // title -> node returned by findDiscountNodeByTitle
 let findCalls = [];
 let mockProducts = [];
 let randomCallCount = 0;
+
+// --- revoke_discount_code stub state ---
+let lookupResult = null;      // what findDiscountCodeByCode resolves to
+let lookupError = null;       // set to an Error to simulate a failed lookup
+let deleteCalls = [];
+let deactivateCalls = [];
+// findRedeemCode is only called by the post-delete verification poll. Each
+// entry is consumed per call, so a test can simulate "still present, then gone".
+let redeemCodeLookups = [];
 
 const defaultCreateImpl = async (input) => {
   return {
@@ -48,6 +57,22 @@ require.cache[shopifyPath] = {
       // Distinct codes across retries so the assertion can verify a fresh code
       return `DEADBEEF${String(randomCallCount).padStart(2, '0')}`;
     },
+    findDiscountCodeByCode: async () => {
+      if (lookupError) throw lookupError;
+      return lookupResult;
+    },
+    findRedeemCode: async (discountGid, code) => {
+      deleteCalls.push({ verify: code });
+      return redeemCodeLookups.length ? redeemCodeLookups.shift() : null;
+    },
+    deleteRedeemCodes: async (discountGid, ids) => {
+      deleteCalls.push({ discountGid, ids });
+      return { jobId: 'gid://shopify/Job/1', done: false };
+    },
+    deactivateDiscountCode: async (gid) => {
+      deactivateCalls.push(gid);
+      return { id: gid, status: 'EXPIRED' };
+    },
     getAdminUrl: (gid) => {
       const numericId = gid.split('/').pop();
       if (gid.includes('/DiscountCodeNode/')) {
@@ -67,6 +92,7 @@ require.cache[productCachePath] = {
 
 const tools = require('../lib/tools/discountCode');
 const tool = tools.find(t => t.name === 'create_discount_code');
+const revokeTool = tools.find(t => t.name === 'revoke_discount_code');
 
 beforeEach(() => {
   createCalls = [];
@@ -77,7 +103,54 @@ beforeEach(() => {
   findCalls = [];
   mockProducts = [];
   randomCallCount = 0;
+  lookupResult = null;
+  lookupError = null;
+  deleteCalls = [];
+  deactivateCalls = [];
+  redeemCodeLookups = [];
 });
+
+// A code sitting in a large shared pool (e.g. the bulk birthday "free AJs"
+// discount) — the case where deleting the parent discount would break
+// everyone else's code.
+function poolCode(overrides = {}) {
+  return {
+    discountGid: 'gid://shopify/DiscountCodeNode/672906215509',
+    redeemCodeId: 'gid://shopify/DiscountRedeemCode/4595137413205',
+    code: 'FREEAJS-1OSRJP2O',
+    type: 'DiscountCodeBasic',
+    title: 'Birthday Free AJs',
+    status: 'ACTIVE',
+    summary: '$32 off AJ SHAPING UNDERWEAR',
+    startsAt: '2026-01-01T00:00:00Z',
+    endsAt: null,
+    usageLimit: 1,
+    codeUsageCount: 0,
+    discountUsageCount: 663,
+    codesCount: 1228,
+    ...overrides,
+  };
+}
+
+// A one-off free-product comp: the discount owns exactly one code.
+function soloCode(overrides = {}) {
+  return {
+    discountGid: 'gid://shopify/DiscountCodeNode/1717548613910',
+    redeemCodeId: 'gid://shopify/DiscountRedeemCode/999',
+    code: '1CEB84F9C9',
+    type: 'DiscountCodeBasic',
+    title: 'Free SASSY NO-TUCK SHAPING UNDERWEAR',
+    status: 'ACTIVE',
+    summary: '$32 off SASSY NO-TUCK SHAPING UNDERWEAR',
+    startsAt: '2026-07-29T00:00:00Z',
+    endsAt: null,
+    usageLimit: 1,
+    codeUsageCount: 0,
+    discountUsageCount: 0,
+    codesCount: 1,
+    ...overrides,
+  };
+}
 
 describe('create_discount_code — percent mode, bucket missing', () => {
   it('default 10% creates the "Thank You 10" bucket with the first code', async () => {
@@ -313,5 +386,133 @@ describe('create_discount_code — collision retry (bucket creation path)', () =
     const res = await tool.handler({ mode: 'percent', percent_off: 10 });
     assert.equal(attempt, 3);
     assert.equal(res.isError, true);
+  });
+});
+
+describe('revoke_discount_code — lookup / preview (phase 1)', () => {
+  it('reports the parent discount and the sibling codes that stay valid', async () => {
+    lookupResult = poolCode();
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O' });
+    const text = res.content[0].text;
+    assert.match(text, /Discount Code Lookup/);
+    assert.match(text, /FREEAJS-1OSRJP2O/);
+    assert.match(text, /Birthday Free AJs/);
+    assert.match(text, /1227 belong to other customers/);
+    assert.match(text, /Delete only `FREEAJS-1OSRJP2O`/);
+    assert.match(text, /Leave the other 1227 code\(s\) on that discount working/);
+    // Phase 1 never mutates
+    assert.equal(deleteCalls.length, 0);
+    assert.equal(deactivateCalls.length, 0);
+  });
+
+  it('says a single-code discount will be deactivated instead of code-deleted', async () => {
+    lookupResult = soloCode();
+    const res = await revokeTool.handler({ code: '1CEB84F9C9' });
+    const text = res.content[0].text;
+    assert.match(text, /this code IS the discount/);
+    assert.match(text, /Deactivate the discount "Free SASSY NO-TUCK SHAPING UNDERWEAR"/);
+    assert.equal(deactivateCalls.length, 0);
+  });
+
+  it('diagnoses an expired code', async () => {
+    lookupResult = poolCode({ status: 'EXPIRED', endsAt: '2026-06-30T04:00:00Z' });
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O' });
+    assert.match(res.content[0].text, /Why it may not be working/);
+    assert.match(res.content[0].text, /Expired on .*ET/);
+  });
+
+  it('diagnoses a code that is already spent against its usage limit', async () => {
+    lookupResult = poolCode({ codeUsageCount: 1, usageLimit: 1 });
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O' });
+    const text = res.content[0].text;
+    assert.match(text, /Already redeemed 1 time\(s\) against a limit of 1/);
+    assert.match(text, /Not undo the 1 order\(s\) already placed/);
+  });
+
+  it('diagnoses a scheduled code that has not started', async () => {
+    lookupResult = poolCode({ status: 'SCHEDULED', startsAt: '2026-12-01T05:00:00Z' });
+    assert.match((await revokeTool.handler({ code: 'X' })).content[0].text, /Not active yet — starts/);
+  });
+
+  it('explains a miss without guessing at a similar code', async () => {
+    lookupResult = null;
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O' });
+    const text = res.content[0].text;
+    assert.match(text, /No discount code `FREEAJS-1OSRJP2O` exists in Shopify/);
+    assert.match(text, /Transcription slip/);
+    assert.equal(deleteCalls.length, 0);
+  });
+
+  it('requires a code', async () => {
+    const res = await revokeTool.handler({ code: '   ' });
+    assert.equal(res.isError, true);
+  });
+
+  it('surfaces a lookup failure as an error instead of revoking blind', async () => {
+    lookupError = new Error('Shopify API error (500)');
+    const res = await revokeTool.handler({ code: 'ABC', confirmed: true });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /Discount lookup failed/);
+    assert.equal(deleteCalls.length, 0);
+    assert.equal(deactivateCalls.length, 0);
+  });
+});
+
+describe('revoke_discount_code — execution (phase 2)', () => {
+  it('deletes only the one redeem code from a shared pool', async () => {
+    lookupResult = poolCode();
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O', confirmed: true });
+    const mutation = deleteCalls.find(c => c.ids);
+    assert.deepEqual(mutation.ids, ['gid://shopify/DiscountRedeemCode/4595137413205']);
+    assert.equal(mutation.discountGid, 'gid://shopify/DiscountCodeNode/672906215509');
+    assert.equal(deactivateCalls.length, 0, 'must never touch the parent discount');
+    const text = res.content[0].text;
+    assert.match(text, /Discount Code Revoked/);
+    assert.match(text, /the other 1227 code\(s\) on that discount still work/);
+  });
+
+  it('deactivates the discount when it owns exactly one code', async () => {
+    lookupResult = soloCode();
+    const res = await revokeTool.handler({ code: '1CEB84F9C9', confirmed: true });
+    assert.deepEqual(deactivateCalls, ['gid://shopify/DiscountCodeNode/1717548613910']);
+    assert.equal(deleteCalls.filter(c => c.ids).length, 0);
+    const text = res.content[0].text;
+    assert.match(text, /Discount Code Revoked/);
+    assert.match(text, /no longer redeemable/);
+    assert.match(text, /never redeemed/);
+  });
+
+  it('notes prior redemptions rather than implying the order was reversed', async () => {
+    lookupResult = soloCode({ codeUsageCount: 1 });
+    const res = await revokeTool.handler({ code: '1CEB84F9C9', confirmed: true });
+    assert.match(res.content[0].text, /already been used 1 time\(s\)\. Those orders stand\./);
+  });
+
+  it('verifies removal after the async delete rather than trusting the job', async () => {
+    lookupResult = poolCode();
+    // Present on the first poll, gone on the second.
+    redeemCodeLookups = [{ id: 'gid://shopify/DiscountRedeemCode/4595137413205', code: 'FREEAJS-1OSRJP2O' }];
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O', confirmed: true });
+    assert.equal(deleteCalls.filter(c => c.verify).length, 2, 'polls until the code is gone');
+    assert.match(res.content[0].text, /Discount Code Revoked/);
+  });
+
+  it('reports an in-flight deletion honestly when it has not landed', async () => {
+    lookupResult = poolCode();
+    const stillThere = { id: 'gid://shopify/DiscountRedeemCode/4595137413205', code: 'FREEAJS-1OSRJP2O' };
+    redeemCodeLookups = [stillThere, stillThere, stillThere, stillThere, stillThere];
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O', confirmed: true });
+    const text = res.content[0].text;
+    assert.match(text, /Revocation Submitted/);
+    assert.match(text, /had not finished when checked/);
+  });
+
+  it('refuses to act when the individual code row cannot be resolved', async () => {
+    lookupResult = poolCode({ redeemCodeId: null });
+    const res = await revokeTool.handler({ code: 'FREEAJS-1OSRJP2O', confirmed: true });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /could not resolve/);
+    assert.equal(deleteCalls.filter(c => c.ids).length, 0);
+    assert.equal(deactivateCalls.length, 0);
   });
 });

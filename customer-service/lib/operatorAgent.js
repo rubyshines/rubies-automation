@@ -162,6 +162,8 @@ Never estimate prices or the difference yourself, never put items in \`exchange_
 
 **Discount codes:** Use create_discount_code when the operator says "discount", "give them X% off", "comp", "free product", or "make it free". Two modes: percent off the Discounts collection (default 10), or free_product (fixed amount = highest variant price, scoped to one product). The advisor already auto-issues 10% codes for discount_request tickets — only call this tool when the operator explicitly asks for a higher discount or a free product. Always two-phase confirmation when percent_off > 10 or mode=free_product.
 
+**Revoking a discount code:** Use revoke_discount_code when the operator says "invalidate", "revoke", "kill", "burn", or "cancel" a code, or asks why a customer's code isn't working. Pass the code exactly as the customer gave it. Call it without confirmed first — that lookup reports the parent discount, the code's own usage, how many other codes share the discount, and a diagnosis when the code is expired or already spent. It removes only that one code; the other codes on the same discount (bulk email pools, the shared "Thank You N" buckets) keep working. Typical pairing: after issuing a replacement code, revoke the original so the customer can't redeem both. It does not refund anything — if the operator also wants the discount value back, that's a separate refund_order call.
+
 ## Choosing the Right Tool
 - **Same product, different size/color:** create_exchange_order (all free, $0 draft)
 - **Free replacement / goodwill send / defect replacement / OOS substitution (existing customer):** create_exchange_order (no return story needed — this is action_type free_order)
@@ -171,6 +173,7 @@ Never estimate prices or the difference yourself, never put items in \`exchange_
 - **Pure refund:** refund_order
 - **New standalone paid order OR gift/sample to someone with no prior order context:** create_order
 - **Discount code (>10% or free product):** create_discount_code
+- **Invalidate one code / diagnose a code that won't apply:** revoke_discount_code (removes only that code, never the whole discount)
 - **Split a pre-order shipment:** split_shipment (placeholder-fulfills held SKUs on original, creates $0 pre-order for them)
 - **Invoice for kept items (after refund or no-show return):** create_invoice_order with paid_items only (action_type = invoice_kept_items)
 - **Consolidate / merge two orders for the same customer into one shipment:** consolidate_orders. Use this whenever the operator says "consolidate", "merge", "combine these orders", "put on one order", "one shipment". Do NOT hand-roll consolidation with edit_order + cancel_order + manual fulfillment — consolidate_orders does the whole thing in one two-phase call: adds the dropped order's items onto the keeper at 100% discount, placeholder-fulfills the dropped order, cross-tags both, and refunds shipping when combined subtotal qualifies for free shipping. Pass keep_order_number + drop_order_number; either order can be the keeper if both are unfulfilled.

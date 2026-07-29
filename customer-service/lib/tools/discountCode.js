@@ -40,6 +40,10 @@ const {
   addCodeToPriceRule,
   randomDiscountCode,
   getAdminUrl,
+  findDiscountCodeByCode,
+  findRedeemCode,
+  deleteRedeemCodes,
+  deactivateDiscountCode,
 } = require('../shopify');
 const { searchProducts } = require('../productCache');
 
@@ -182,6 +186,85 @@ function createdResponse({ code, discountGid, summary }) {
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
 
+// --- Revocation -------------------------------------------------------------
+
+function fmtET(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  }) + ' ET';
+}
+
+/**
+ * Human-readable reasons a code might not be working, derived from the
+ * discount's own state. This is the "why was my code invalid?" half of the
+ * operator's job — the same lookup that powers revocation answers it, so the
+ * preview always reports it.
+ */
+function diagnose(found) {
+  const notes = [];
+  if (found.status === 'EXPIRED') notes.push(`Expired${found.endsAt ? ` on ${fmtET(found.endsAt)}` : ''}.`);
+  if (found.status === 'SCHEDULED') notes.push(`Not active yet — starts ${fmtET(found.startsAt) || 'later'}.`);
+  if (found.usageLimit != null && found.codeUsageCount != null && found.codeUsageCount >= found.usageLimit) {
+    notes.push(`Already redeemed ${found.codeUsageCount} time(s) against a limit of ${found.usageLimit} — the code is spent.`);
+  }
+  return notes;
+}
+
+function describeCode(found) {
+  const lines = [
+    `**Code:** \`${found.code}\``,
+    `**Discount:** ${found.title || '(untitled)'}${found.summary ? ` — ${found.summary}` : ''}`,
+    `**Status:** ${found.status}${found.endsAt ? ` · ends ${fmtET(found.endsAt)}` : ' · no end date'}`,
+  ];
+  if (found.codeUsageCount != null) {
+    lines.push(`**This code's usage:** ${found.codeUsageCount}${found.usageLimit != null ? ` of ${found.usageLimit} allowed` : ''}`);
+  }
+  lines.push(found.codesCount === 1
+    ? `**Codes on this discount:** 1 (this code IS the discount)`
+    : `**Codes on this discount:** ${found.codesCount} (${found.codesCount - 1} belong to other customers)`);
+  return lines;
+}
+
+function notFoundResponse(code) {
+  return {
+    content: [{
+      type: 'text',
+      text: [
+        `**No discount code \`${code}\` exists in Shopify.**`,
+        '',
+        'Possible reasons:',
+        '- Transcription slip — discount codes mix `0`/`O` and `1`/`I`/`l`. Check the customer\'s original email rather than a retyped version.',
+        '- The code was already deleted or revoked.',
+        '- It belongs to another system (a gift card, a Smile reward, or a partner platform), not a Shopify discount.',
+        '',
+        'The lookup is exact, so a near-miss returns nothing rather than guessing at a similar code.',
+      ].join('\n'),
+    }],
+  };
+}
+
+// Backoff for confirming an async deletion: check immediately (Shopify usually
+// completes a single-code delete before the mutation response lands), then back
+// off to ~5s total before reporting it as still in flight.
+const REMOVAL_BACKOFF_MS = [0, 300, 700, 1500, 2500];
+
+/**
+ * After the async bulk delete, confirm the code is actually gone rather than
+ * trusting the Job handle — a Job id says the work was queued, not that the
+ * customer can no longer redeem the code.
+ */
+async function waitForRemoval(discountGid, code) {
+  for (const delay of REMOVAL_BACKOFF_MS) {
+    if (delay) await new Promise(r => setTimeout(r, delay));
+    const still = await findRedeemCode(discountGid, code);
+    if (!still) return true;
+  }
+  return false;
+}
+
 const tools = [
   {
     name: 'create_discount_code',
@@ -312,6 +395,116 @@ const tools = [
         `_To confirm, call create_discount_code again with confirmed=true and _discount_data=${JSON.stringify(_discount_data)}._`,
       ];
       return { content: [{ type: 'text', text: lines.join('\n') }] };
+    },
+  },
+  {
+    name: 'revoke_discount_code',
+    description: 'Invalidate ONE specific discount code, or inspect a code to explain why it is not working. Call WITHOUT confirmed to look the code up: returns the parent discount, status, how many times that code has been used, how many other codes share the discount, and a diagnosis when the code is expired/scheduled/already-redeemed. Call WITH confirmed=true to revoke it. Revoking removes only the customer\'s own code — every other code on the same discount keeps working, which matters because one discount can own thousands of codes (bulk birthday/free-swimwear pools, the shared "Thank You N" comp buckets). When the discount owns exactly one code (a one-off free-product comp) the discount itself is deactivated instead, since there the code IS the discount. Use this after re-issuing a replacement code so the customer cannot redeem both, or when a code was sent in error. Does not refund anything — if the code was already redeemed, revoking will not undo that order.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: {
+          type: 'string',
+          description: 'The exact discount code string as the customer has it (e.g. "FREEAJS-1OSRJP2O"). Matched exactly — no fuzzy search.',
+        },
+        confirmed: {
+          type: 'boolean',
+          description: 'Set true to execute the revocation (phase 2). Omit for the lookup + preview (phase 1).',
+        },
+      },
+      required: ['code'],
+    },
+    handler: async (input) => {
+      const code = (input.code || '').trim();
+      if (!code) {
+        return { content: [{ type: 'text', text: 'code is required.' }], isError: true };
+      }
+
+      let found;
+      try {
+        found = await findDiscountCodeByCode(code);
+      } catch (err) {
+        return { content: [{ type: 'text', text: `Discount lookup failed: ${err.message}` }], isError: true };
+      }
+      if (!found) return notFoundResponse(code);
+
+      const adminUrl = getAdminUrl(found.discountGid);
+      const singleCode = found.codesCount === 1;
+      const notes = diagnose(found);
+
+      // --- Phase 1: lookup + preview ---
+      if (!input.confirmed) {
+        const lines = ['**Discount Code Lookup**', '', ...describeCode(found)];
+        if (notes.length) {
+          lines.push('', '**Why it may not be working:**', ...notes.map(n => `- ${n}`));
+        }
+        lines.push('', '**Revoking would:**');
+        if (singleCode) {
+          lines.push(`- Deactivate the discount "${found.title}" — this code is its only code. Reversible from admin.`);
+        } else {
+          lines.push(`- Delete only \`${found.code}\` from "${found.title}".`);
+          lines.push(`- Leave the other ${found.codesCount - 1} code(s) on that discount working. This is NOT reversible.`);
+        }
+        if (found.codeUsageCount > 0) {
+          lines.push(`- ⚠️ Not undo the ${found.codeUsageCount} order(s) already placed with this code — revoking only blocks future use.`);
+        }
+        lines.push('', adminUrl, '', '_To revoke, call revoke_discount_code again with confirmed=true._');
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      }
+
+      // --- Phase 2: confirmed revocation ---
+      try {
+        if (singleCode) {
+          const result = await deactivateDiscountCode(found.discountGid);
+          return {
+            content: [{
+              type: 'text',
+              text: [
+                '**Discount Code Revoked**',
+                '',
+                `**Code:** \`${found.code}\` — no longer redeemable.`,
+                `**How:** deactivated the discount "${found.title}" (this code was its only code). Status is now ${result.status || 'inactive'}.`,
+                found.codeUsageCount > 0
+                  ? `**Note:** the code had already been used ${found.codeUsageCount} time(s). Those orders stand.`
+                  : '**Note:** the code was never redeemed.',
+                '',
+                adminUrl,
+              ].join('\n'),
+            }],
+          };
+        }
+
+        if (!found.redeemCodeId) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Found the discount "${found.title}" but could not resolve \`${code}\` to its individual code row, so nothing was changed. Revoking without that id would risk affecting the other ${found.codesCount - 1} codes. Remove this one code from the discount in Shopify admin instead: ${adminUrl}`,
+            }],
+            isError: true,
+          };
+        }
+
+        await deleteRedeemCodes(found.discountGid, [found.redeemCodeId]);
+        const gone = await waitForRemoval(found.discountGid, found.code);
+
+        const lines = [
+          gone ? '**Discount Code Revoked**' : '**Revocation Submitted**',
+          '',
+          `**Code:** \`${found.code}\``,
+          `**Removed from:** ${found.title}`,
+          `**Untouched:** the other ${found.codesCount - 1} code(s) on that discount still work.`,
+        ];
+        if (found.codeUsageCount > 0) {
+          lines.push(`**Note:** the code had already been used ${found.codeUsageCount} time(s). Those orders stand.`);
+        }
+        if (!gone) {
+          lines.push('', '⚠️ Shopify processes code deletion asynchronously and it had not finished when checked. It normally lands within a few seconds — re-run this tool without confirmed to verify.');
+        }
+        lines.push('', adminUrl);
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
+      } catch (err) {
+        return { content: [{ type: 'text', text: `Failed to revoke \`${code}\`: ${err.message}` }], isError: true };
+      }
     },
   },
 ];
