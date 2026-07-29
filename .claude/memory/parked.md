@@ -8,6 +8,31 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Advisor mirrors the customer's complaint back at them (~1 in 3 drafts)
+- Parked: 2026-07-29
+- Domains: cs
+- Type: bug
+- Priority: high
+- Notes: On Opus 4.8 in production. `noMirroring` scenario scores 2/3 across repeated runs (same rate on Opus 5, so it is not model-specific). The advisor opens by restating what the customer just wrote — e.g. "I hear you loud and clear, you paid extra for expedited and it didn't get to you" — instead of leading with new information. The rule exists in the prompt; it drifts. Reproduce: `node customer-service/test/scenarios/noMirroring.js` 5–6 times and count. Fix per the 2026-07-28 hold-fix technique: find the prompt ambiguity, add the smallest scoping rule, and re-measure EVERY assertion (see feedback_technical_rules.md — the first hold fix repaired its target and broke a neighbour).
+
+## Advisor can't reliably name the Sky adult colourways
+- Parked: 2026-07-29
+- Domains: cs
+- Type: bug
+- Notes: `knowledgeFacts` fails on Opus 4.8 — asked which colours the Sky one-piece comes in for adults, the draft does not name both Black and Pink. Assertion verified correct 2026-07-28 against `product_variants`: Black and Pink are the only Sky colourways with adult (letter-size) stock; Navy and UNI have none. So the test is right and the advisor is wrong — a grounding/tool-use gap, not stale test data. Worth checking whether it is failing to call the catalog tool at all (the adjacent `kbSearchGrounding` failure mode was deflection with `tools: []`).
+
+## Split commitmentCalibration into three scenario files
+- Parked: 2026-07-29
+- Domains: cs
+- Type: refactor
+- Notes: It makes three sequential advisor calls plus Gorgias fetches in one file, so it runs ~3× a normal scenario and blows a 240s timeout under concurrency (looks like a hang, isn't). Split into one file per case (ambiguous-refund, needed-by-date, stalled-transit) so failures isolate and the suite parallelises; extract the shared `ticketToInput` helper, also used by `exchangeMoney`. Also reconsider whether replaying live Gorgias tickets belongs in a pinned suite given the order-state-drift rule — two of the three cases already self-skip when their shipments have since delivered.
+
+## Revisit Opus 5 (or the next model) for the advisor — REJECTED 2026-07-29
+- Parked: 2026-07-29
+- Domains: cs, tech
+- Type: decision (closed, revisit on trigger)
+- Notes: Evaluated and rejected. Measured on the full pinned suite, both arms, via `scripts/modelSwapEval.js`: accuracy 20/25 vs 25/25, latency +22.5% (9.3s vs 7.6s median), cost +15.3% ($0.2011 vs $0.1745/scenario) — fails all three founder acceptance criteria (same-or-better accuracy, same-or-faster, same-or-cheaper). Decisive point: cost and latency are token-volume properties of the model on our workload, so prompt work cannot close them; even a perfect accuracy fix leaves two criteria failing. Opus 4.8 has no announced retirement date (Opus 4.1 retires 2026-08-05). The `claude-opus-5` RATES row is already in `shared/aiPricing.js` and `MODELS.OPUS` carries a warning comment. **Resume when:** a retirement date is announced for Opus 4.8, or a new model ships — then run `node scripts/modelSwapEval.js --candidate <model> --repeat 3` (one command, ~$30–50, ~40 min) and decide on the numbers. **Opus-5-specific defect to re-test if we ever adopt:** on refund tickets it produced plausible customer-facing prose with `action_type: null`, staging no refund — reproducible on `donationToolCall` and `refundNoAmount`, consistent across every run, while both pass on 4.8. Suspected cause is the "one move per message" rule (RESPONSE LENGTH & REGISTER, shipped 2026-07-20) being followed more literally than 4.8 does.
+
 ## Forgot-discount-code tool: refund equivalent + disable the code
 - Parked: 2026-07-17
 - Domains: cs

@@ -134,6 +134,14 @@ For one-off Supabase queries, run `node scripts/sb.js "<expression>"` from the p
 - At conversation start, check done_when conditions. If met, ask Jamie about cleanup.
 - Prefer conditions verifiable by reading code/files over date-based expiry.
 
+## A prompt fix isn't validated until you re-measure the assertions you were NOT targeting
+
+When changing the advisor prompt to fix one failure, run the scenario enough times to get a rate (5–6 runs — variance is wide) and compare **every** assertion before and after, not just the one you set out to fix. A prompt change shifts behaviour globally, so it can repair the target metric while quietly breaking a neighbour.
+
+**Why:** 2026-07-28, fixing the dropped `warehouse_hold` on unshipped-order edits. The first attempt added a clause naming the steered order to cover that case. It fixed the target completely (0/10 hold-drops against a 20–60% baseline) — and drove a *different* assertion, "reply invents order composition," from 0/5 to 4/6: naming the other order invited the model to reason about contents it had not loaded. Watching only the target metric would have traded a hold bug for a hallucination in customer-facing text. The minimal version (scoping statement only, no mention of the other order) fixed the hold-drop with the neighbour at 1/6, indistinguishable from baseline.
+
+**How to apply:** prefer the smallest rule that removes the ambiguity — adding detail to "cover" a case often hands the model new material to act on. Capture the full pass/fail line-up per run, not just the headline. If a fix seems to need more specificity than one scoping sentence, that's a signal the prompt structure is wrong, not that the rule needs more words.
+
 ## Positive prompt rules stick; negative ones drift
 
 When you need an LLM behavior to be reliable, frame it as a positive instruction with a verbatim template ("Open with: ..."). Negative instructions ("DO NOT open with sorry") are followed unreliably.
