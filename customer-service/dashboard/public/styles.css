@@ -5347,9 +5347,27 @@ main { height: calc(100vh - 56px); }
 }
 
 .outreach-subject {
+  margin-bottom: 10px;
+}
+/* Editable, and styled to read as the email's headline — it is the highest
+   leverage line in a cold intro, so it gets weight over the body editor. */
+#outreach-subject-editor {
+  width: 100%;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 9px 14px;
+  font-family: inherit;
   font-size: 14px;
   font-weight: 600;
-  margin-bottom: 10px;
+  line-height: 1.4;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+#outreach-subject-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .outreach-body {

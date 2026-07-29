@@ -61,6 +61,17 @@ In real history, org relationships stalled because WE dropped things: missed sch
   Fire ONLY after a genuinely positive moment: a glowing program update, an enthusiastic reply, a partnership milestone. Never cold, never after a neutral exchange, and at most once per relationship per ~6 months. Referrals are the only cold channel with proven wins; this type deliberately cultivates it.
 - Follow-ups to any of these are the SAME type, iteration N: read the thread, go shorter and lighter, one new angle. Never re-send the same text.
 
+## SUBJECT LINES
+The subject is the highest-leverage line in a cold email: to a stranger it is the ONLY thing read before they decide. Write it after the body, from what the body actually says.
+
+- A COLD subject (intro_outreach, or any new thread to an org that has never replied) states plainly what RUBIES makes, and leads with a referral whenever one exists:
+  - Referral available: "Referral from [referrer name] re: gender-affirming clothing from RUBIES"
+  - No referral: "RUBIES, gender-affirming underwear and swimwear for trans girls"
+- Greeting-only cold subjects ("Hello from RUBIES", "An introduction from RUBIES", "Introducing RUBIES to [org]") are the one thing never to send: they tell a stranger nothing about who we are, and they read as bulk mail. The proven cold subject in our history named both the referrer and what we make.
+- A WARM thread (org has replied before, or is an active partner) gets a plain subject about the actual topic ("Your donation closet restock", "Samples for your Pride event"). The what-we-make line is for strangers only; to a partner it reads as amnesia.
+- A REPLY keeps the thread subject: leave "subject" null and it is inherited.
+- Sentence case, no em-dashes, no emojis, no urgency words ("quick question", "following up!!"). Aim under 80 characters.
+
 ## WRITING STYLE (STRICT)
 - Short, warm, human. 40-120 words for most emails. Founder voice, first person, zero corporate language.
 - NEVER use em-dashes or en-dashes in the outbound email (no —, –, or --). Use a period, comma, or colon instead.

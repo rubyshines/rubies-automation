@@ -2841,6 +2841,7 @@ async function apiB2bSend(body = {}) {
     draft_id: parseInt(body.draft_id),
     confirmed: !!body.confirmed,
     body: typeof body.body === 'string' ? body.body : undefined,
+    subject: typeof body.subject === 'string' ? body.subject : undefined,
   });
 }
 

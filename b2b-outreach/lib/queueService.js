@@ -146,12 +146,16 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type } =
  * the gate plainly before confirming). Phase 2 passes through preview/
  * blocked/sent; on 'sent' the draft row is marked sent.
  *
- * `body` optionally overrides the stored draft body (the operator edited it
- * in the panel). The AI's original stays in b2b_drafts.body — the sent text
- * lives on the b2b_messages row — and operator_edited is set when they
- * differ, which is the edit-rate training signal.
+ * `body` and `subject` optionally override the stored draft (the operator
+ * edited them in the panel). The AI's originals stay in b2b_drafts — the sent
+ * text lives on the b2b_messages row — and operator_edited is set when either
+ * differs, which is the edit-rate training signal.
+ *
+ * A blank subject override is NOT an empty subject: it falls back to the
+ * draft's, and a reply whose draft subject is null still inherits the thread
+ * subject downstream in sendB2bEmail.
  */
-async function sendDraftById(sb, { draft_id, confirmed, body } = {}) {
+async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
   if (!draft_id) throw new Error('draft_id required');
   const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', draft_id).maybeSingle();
   if (error) throw new Error(error.message);
@@ -159,14 +163,15 @@ async function sendDraftById(sb, { draft_id, confirmed, body } = {}) {
   if (draft.status !== 'pending') throw new Error(`draft #${draft_id} is '${draft.status}' — only pending drafts can be sent`);
 
   const sendBody = (typeof body === 'string' && body.trim()) ? body : draft.body;
-  const edited = sendBody !== draft.body;
+  const sendSubject = (typeof subject === 'string' && subject.trim()) ? subject.trim() : draft.subject;
+  const edited = sendBody !== draft.body || sendSubject !== draft.subject;
 
   const res = await sendB2bEmail({
     company_id: draft.company_id,
     thread_id: draft.thread_id || undefined,
     message_type: draft.message_type,
     variant_id: draft.variant_id || undefined,
-    subject: draft.subject || undefined,
+    subject: sendSubject || undefined,
     body: sendBody,
     confirmed: !!confirmed,
     next_touch_days: draft.structured?.next_touch_days ?? null,

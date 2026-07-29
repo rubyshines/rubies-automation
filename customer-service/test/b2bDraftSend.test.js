@@ -22,13 +22,13 @@ const DRAFT = {
 };
 
 /** Minimal chainable fake for the two query shapes sendDraftById uses. */
-function fakeSb() {
+function fakeSb(draft = DRAFT) {
   const updates = [];
   const sb = {
     updates,
     from(table) {
       return {
-        select() { return { eq() { return { maybeSingle: async () => ({ data: { ...DRAFT }, error: null }) }; } }; },
+        select() { return { eq() { return { maybeSingle: async () => ({ data: { ...draft }, error: null }) }; } }; },
         update(fields) { updates.push({ table, fields }); return { eq: async () => ({ error: null }) }; },
       };
     },
@@ -57,6 +57,47 @@ test('blank/whitespace override falls back to the stored body', async () => {
   const sb = fakeSb();
   await sendDraftById(sb, { draft_id: 9, confirmed: true, body: '   ' });
   assert.equal(lastSendArgs.body, 'AI original body');
+  assert.equal(sb.updates[0].fields.operator_edited, false);
+});
+
+test('unedited send uses the stored subject', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, { draft_id: 9, confirmed: true });
+  assert.equal(lastSendArgs.subject, 'Hello');
+  assert.equal(sb.updates[0].fields.operator_edited, false);
+});
+
+test('edited subject is sent verbatim and counts as an operator edit', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, {
+    draft_id: 9, confirmed: true,
+    subject: 'RUBIES, gender-affirming underwear and swimwear for trans girls',
+  });
+  assert.equal(lastSendArgs.subject, 'RUBIES, gender-affirming underwear and swimwear for trans girls');
+  assert.equal(lastSendArgs.body, 'AI original body'); // body untouched
+  assert.equal(sb.updates[0].fields.operator_edited, true);
+  assert.equal(sb.updates[0].fields.subject, undefined); // AI original never overwritten
+});
+
+test('edited subject is trimmed', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, { draft_id: 9, confirmed: true, subject: '  Referral from Searah  ' });
+  assert.equal(lastSendArgs.subject, 'Referral from Searah');
+});
+
+test('blank/whitespace subject override falls back to the stored subject', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, { draft_id: 9, confirmed: true, subject: '   ' });
+  assert.equal(lastSendArgs.subject, 'Hello');
+  assert.equal(sb.updates[0].fields.operator_edited, false);
+});
+
+// A reply draft carries no subject of its own; the panel field is empty and
+// must stay empty so sendB2bEmail inherits the thread subject downstream.
+test('reply draft with no subject passes undefined so the thread subject is inherited', async () => {
+  const sb = fakeSb({ ...DRAFT, subject: null });
+  await sendDraftById(sb, { draft_id: 9, confirmed: true, subject: '' });
+  assert.equal(lastSendArgs.subject, undefined);
   assert.equal(sb.updates[0].fields.operator_edited, false);
 });
 

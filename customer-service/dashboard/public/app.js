@@ -5633,7 +5633,10 @@ function renderOutreachDetail(entry, draft) {
       </h3>
       ${s.needs_review_reason ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
       ${steerBlock}
-      <div class="outreach-subject"><span class="outreach-field-label">Subject</span>${esc(draft.subject || '(inherits thread subject)')}</div>
+      <div class="outreach-subject">
+        <span class="outreach-field-label">Subject</span>
+        <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)">
+      </div>
       <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
       ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient">Advisor timing note: next touch in ~${s.next_touch_days} days (reason in its audit; overrides the standard cadence when this sends)</div>` : ''}
@@ -5645,10 +5648,13 @@ function renderOutreachDetail(entry, draft) {
       <div id="outreach-send-panel"></div>
     </div>`;
 
-  // Set the body via .value (not innerHTML) and size it to content.
+  // Set body + subject via .value (not innerHTML) and size the body to content.
+  // A blank subject is left blank rather than prefilled: for replies the draft
+  // carries no subject and the thread's is inherited at send time.
   const editor = document.getElementById('outreach-draft-editor');
   editor.value = draft.body || '';
   autoExpandTextarea(editor);
+  document.getElementById('outreach-subject-editor').value = draft.subject || '';
 }
 
 async function regenerateOutreachDraft() {
@@ -5707,9 +5713,10 @@ async function sendOutreachDraft() {
   const btn = document.getElementById('outreach-send-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   const editedBody = document.getElementById('outreach-draft-editor')?.value;
+  const editedSubject = document.getElementById('outreach-subject-editor')?.value;
   let res;
   try {
-    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true, body: editedBody } });
+    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true, body: editedBody, subject: editedSubject } });
   } catch (err) {
     showToast(`Send failed: ${err.message}`, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
