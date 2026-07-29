@@ -84,6 +84,13 @@ CREATE TABLE IF NOT EXISTS b2b_drafts (
   advisor          TEXT,                     -- 'b2b_sales_advisor' | 'b2b_community_advisor'
   status           TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'sent' | 'dismissed' | 'superseded'
   operator_edited  BOOLEAN DEFAULT FALSE,
+  -- What actually went out, stamped at send time. `subject`/`body` above stay
+  -- the AI's originals, so the pair on this row IS the edit: what the advisor
+  -- wrote vs what Jamie sent. Mirrors cs_ai_drafts.draft_response/sent_response.
+  -- The boolean above only says THAT it changed; these say HOW, which is what
+  -- a later accuracy pass needs. Null on an unsent draft.
+  sent_subject     TEXT,
+  sent_body        TEXT,
   operator_steer   TEXT,
   generated_at     TIMESTAMPTZ DEFAULT NOW(),
   sent_at          TIMESTAMPTZ,

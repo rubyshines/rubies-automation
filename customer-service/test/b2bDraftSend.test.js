@@ -79,6 +79,34 @@ test('edited subject is sent verbatim and counts as an operator edit', async () 
   assert.equal(sb.updates[0].fields.subject, undefined); // AI original never overwritten
 });
 
+test('the sent subject and body are stored next to the AI originals', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, {
+    draft_id: 9, confirmed: true,
+    subject: 'Referral from Sierra re: gender-affirming clothing from RUBIES',
+    body: 'Jamie rewrote this',
+  });
+  const f = sb.updates[0].fields;
+  assert.equal(f.sent_subject, 'Referral from Sierra re: gender-affirming clothing from RUBIES');
+  assert.equal(f.sent_body, 'Jamie rewrote this');
+  assert.equal(f.subject, undefined); // AI originals never overwritten
+  assert.equal(f.body, undefined);
+});
+
+test('an unedited send still records what went out, so every sent draft has the pair', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, { draft_id: 9, confirmed: true });
+  assert.equal(sb.updates[0].fields.sent_subject, 'Hello');
+  assert.equal(sb.updates[0].fields.sent_body, 'AI original body');
+  assert.equal(sb.updates[0].fields.operator_edited, false);
+});
+
+test('a reply with no subject records null rather than a guessed thread subject', async () => {
+  const sb = fakeSb({ ...DRAFT, subject: null });
+  await sendDraftById(sb, { draft_id: 9, confirmed: true, subject: '' });
+  assert.equal(sb.updates[0].fields.sent_subject, null);
+});
+
 test('edited subject is trimmed', async () => {
   const sb = fakeSb();
   await sendDraftById(sb, { draft_id: 9, confirmed: true, subject: '  Referral from Searah  ' });

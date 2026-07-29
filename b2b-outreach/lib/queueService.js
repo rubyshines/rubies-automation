@@ -181,8 +181,17 @@ async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
     res.gate_enabled = await isFlagEnabled(SEND_FLAG);
   }
   if (res.phase === 'sent') {
+    // Store what actually went out alongside the AI's original. The boolean
+    // says THAT it was edited; this pair says HOW, which is the only form a
+    // later accuracy pass can learn from. sendSubject/sendBody are the
+    // operator's text, deliberately pre-signature-normalization — that
+    // transform is ours, and folding it in here would read as an operator
+    // edit that never happened.
     const { error: uErr } = await sb.from('b2b_drafts')
-      .update({ status: 'sent', sent_at: res.sent_at, operator_edited: edited })
+      .update({
+        status: 'sent', sent_at: res.sent_at, operator_edited: edited,
+        sent_subject: sendSubject || null, sent_body: sendBody,
+      })
       .eq('id', draft_id);
     if (uErr) console.error(`[queueService] draft #${draft_id} sent but status update failed: ${uErr.message}`);
   }
