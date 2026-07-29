@@ -14,14 +14,27 @@
  *   AND no `Pre-order` customAttribute on the line item
  *   AND line item is unfulfilled
  *
+ * Timing: an order becomes a candidate MIN_ORDER_AGE_MINUTES after it was
+ * placed. Warehance allocates within minutes when stock exists (measured
+ * 2026-07-29 across all 115 open orders: the youngest was already
+ * ready_to_ship at 16 minutes, and not one order was unallocated while the
+ * warehouse held stock for it). So "still unallocated after an hour" IS the
+ * shortage signal, and waiting longer only delays an email the customer needs
+ * as early as possible. This replaced a next-business-day-5pm-PT gate that was
+ * built around the once-daily report cron and held outreach for up to two days.
+ *
  * For each affected order we compose a per-case A/B/C draft (mirrors Naomi
  * outreach taxonomy) and seed it into CS Advisor via seedOutboundDraft().
  * Jamie reviews and sends from the dashboard. Idempotent via the
  * order_alert_notes table.
  *
  * Entry points:
+ *   sweepUnnotifiedPreOrders(opts)
+ *     - self-contained; loads its own candidates from the order mirror. Runs
+ *       on the always-on webhook server every SWEEP_MS. This is the only
+ *       writer — the daily report reads the notes it leaves behind.
  *   detectAndDraftUnnotifiedPreOrders(supabase, unfulfilledResults, opts)
- *     - cron-callable; returns { drafted, skipped }.
+ *     - takes pre-loaded results (used by the sweep and by tests).
  *   CLI: node reports/lib/unnotifiedPreOrder.js [--write]
  *     - default: dry-run print only; --write actually seeds drafts.
  */
@@ -34,7 +47,12 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { seedOutboundDraft } = require('../../customer-service/lib/customerOutreach');
 const productCache = require('../../customer-service/lib/productCache');
-const { businessDaysSince, addBusinessDays, pastNextBusinessDay5pmPT } = require('../../shared/businessDays');
+const {
+  businessDaysSince,
+  addBusinessDays,
+  olderThanMinutes,
+  UNALLOCATED_SHORTAGE_MINUTES,
+} = require('../../shared/businessDays');
 const { fetchOrderByNumber, fetchSkuStockMany } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
@@ -52,6 +70,28 @@ const SIGNOFF = 'Take care,\nJamie Alexander\nRUBIES Founder';
 // Orders older than this with no existing notes get skipped — they predate
 // the auto-drafter and likely need human review rather than fresh outreach.
 const STALENESS_DAYS = 14;
+// How long an order must sit before "still unallocated" counts as a shortage
+// rather than normal warehouse ingestion + allocation lag. Shared with the
+// daily order report's severity gate so the two can't drift apart.
+const MIN_ORDER_AGE_MINUTES = UNALLOCATED_SHORTAGE_MINUTES;
+// Sweep cadence on the webhook server. Well under MIN_ORDER_AGE_MINUTES so a
+// candidate is picked up within a few minutes of becoming eligible.
+const SWEEP_MS = 10 * 60 * 1000;
+// Bound the mirror query — anything past STALENESS_DAYS is filtered out anyway.
+const SWEEP_LOOKBACK_DAYS = STALENESS_DAYS;
+
+const PRE_ORDER_TAG_RE = /pre-?order/i;
+
+// Shopify order-level pre-order tag. Belt-and-braces over the per-line-item
+// `Pre-order` customAttribute: the attribute is the precise signal (it says
+// WHICH item was sold as a pre-order), but if it is ever missing from the
+// mirror while the order carries the tag, the customer was still told. Skipping
+// is the safe direction — a missed leak is a quiet follow-up, a wrong leak
+// email tells a pre-order customer their order has a problem it doesn't have.
+function isPreOrderByTags(tags) {
+  if (!Array.isArray(tags)) return false;
+  return tags.some(t => PRE_ORDER_TAG_RE.test(String(t)));
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -150,12 +190,22 @@ function classifyOrder(lineItems, variantStateBySku) {
 // (ready_to_ship === false). This is the authoritative per-order signal from the
 // warehouse: an order in_progress or fully allocated will have ready_to_ship true
 // and should not receive outreach. Orders not found in Warehance are skipped.
+//
+// A cancelled or already-fulfilled order also reports ready_to_ship === false,
+// so those are excluded explicitly. The mirror's open/closed state drifts (the
+// order sync only pulls open orders, so a missed fulfillment webhook never
+// self-heals), which means a shipped order can still look unfulfilled upstream
+// of here — Warehance is the arbiter, and it says so in not_ready_to_ship_types.
 function filterToNotReadyToShip(candidates, warehanceOrders) {
   return candidates.filter(c => {
     const orderNum = String(c.order.order_number).replace('#', '');
     const whOrder = warehanceOrders.get(orderNum);
     if (!whOrder) return false;
-    return whOrder.ready_to_ship === false;
+    if (whOrder.ready_to_ship !== false) return false;
+    if (whOrder.cancelled) return false;
+    const types = whOrder.not_ready_to_ship_types || {};
+    if (types.order_cancelled || types.order_is_already_fulfilled) return false;
+    return true;
   });
 }
 
@@ -165,18 +215,32 @@ function filterToNotReadyToShip(candidates, warehanceOrders) {
 // warehouse ready to ship. The ready_to_ship gate above is order-level and
 // can't tell WHICH item blocks the order — a mixed order (one allocated item +
 // one genuine backorder) passes the gate and the allocated item wears the
-// blame. Mirrors the check_unfulfilled_order rule (fulfillmentChecker.js): an
-// item is genuinely out of stock only when the warehouse physically lacks it
-// (on_hand < qty). Warehouse-covered items reclassify as in-stock and the
-// A/B/C case is recomputed; an order whose every leak turns out to be
-// allocated returns null (no outreach). SKUs with no warehouse data keep
-// their Shopify verdict.
+// blame. Warehouse-covered items reclassify as in-stock and the A/B/C case is
+// recomputed; an order whose every leak turns out to be allocated returns null
+// (no outreach). SKUs with no warehouse data keep their Shopify verdict.
+//
+// The test is `available < qty AND backordered > 0`, and it needs both halves:
+//
+//   available alone is wrong — a unit allocated to THIS order makes available
+//   read 0, which is the #32601 case (Sky on hand and allocated to the order,
+//   other items genuinely backordered). Blaming Sky there emails the customer
+//   about an item that was about to ship.
+//
+//   on_hand alone (the previous test) is wrong the other way — it can't see
+//   that the unit on the shelf is spoken for by a DIFFERENT order, which is
+//   the #32715 case (on_hand 1, allocated 1, available 0, backordered 1). That
+//   silently dropped 6 of 111 open orders when measured 2026-07-29.
+//
+// backordered separates them: Warehance only records backordered demand it
+// cannot meet, so an item already allocated to this order is never backordered.
+// Measured against Warehance's own ready_to_ship verdict across all 111
+// non-held open orders, this test agrees on every one.
 function reclassifyWithWarehouseStock(classification, stockBySku) {
   const genuinelyOOS = (li) => {
     const wh = stockBySku.get(li.sku);
     if (!wh) return true; // no warehouse data — trust the Shopify signal
     const qty = Number(li.quantity ?? 1) || 1;
-    return (wh.on_hand ?? 0) < qty;
+    return (wh.available ?? 0) < qty && (wh.backordered ?? 0) > 0;
   };
   const leaks = [];
   const inStockOther = [...classification.inStockOther];
@@ -500,9 +564,11 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
     const o = r.order;
     // Skip orders older than STALENESS_DAYS (predate the auto-drafter).
     if (o.created_at && new Date(o.created_at).getTime() < staleCutoff) continue;
-    // Skip orders not yet past their shipping deadline (next business day 5pm PT).
-    // An order that's still within its window is expected to ship normally.
-    if (o.created_at && !pastNextBusinessDay5pmPT(o.created_at)) continue;
+    // Skip orders too fresh to distinguish a shortage from allocation lag
+    // (and orders with no usable created_at — olderThanMinutes fails closed).
+    if (!olderThanMinutes(o.created_at, MIN_ORDER_AGE_MINUTES)) continue;
+    // Skip orders Shopify tagged as pre-orders — the customer was told.
+    if (isPreOrderByTags(o.tags)) continue;
     const classification = classifyOrder(o.order_line_items || [], variantStateBySku);
     if (!classification) continue;
     candidates.push({ order: o, classification });
@@ -656,6 +722,55 @@ async function detectAndDraftUnnotifiedPreOrders(supabase, unfulfilledResults, {
 }
 
 // ---------------------------------------------------------------------------
+// Sweep — self-contained candidate loading for the always-on webhook server
+// ---------------------------------------------------------------------------
+
+/**
+ * Load recent unfulfilled orders straight from the mirror, in the
+ * `[{ order }]` shape detectUnnotifiedPreOrders expects.
+ *
+ * Deliberately NOT checkUnfulfilledOrders(): that path also runs batched
+ * Shopify GraphQL calls (with sleeps between batches), an inventory-snapshot
+ * join and a notes pass to build the daily report, which is far too heavy to
+ * run every SWEEP_MS. Everything the drafter needs it re-derives from live
+ * sources anyway — Warehance for order and per-SKU truth, product_variants for
+ * inventory, order_alert_notes for idempotence. Mirror staleness is safe here
+ * because it can only over-supply candidates, and every one is re-verified
+ * against live Warehance before a draft is seeded.
+ */
+async function loadRecentUnfulfilledOrders(supabase, { lookbackDays = SWEEP_LOOKBACK_DAYS } = {}) {
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+  const results = [];
+  const PAGE = 500;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('order_number, created_at, customer_email, tags, fulfillment_status, cancelled_at, order_line_items(sku, title, variant_title, quantity, unit_price, custom_attributes)')
+      .gte('created_at', since)
+      .is('cancelled_at', null)
+      .neq('fulfillment_status', 'FULFILLED')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`orders lookup failed: ${error.message}`);
+    for (const o of (data || [])) results.push({ order: o });
+    if (!data || data.length < PAGE) break;
+  }
+  return results;
+}
+
+/**
+ * One sweep tick: find unnotified pre-order leaks among recent unfulfilled
+ * orders and seed drafts for them. Idempotent (order_alert_notes) and normally
+ * a no-op — a leak is rare. Safe to call on a timer.
+ */
+async function sweepUnnotifiedPreOrders({ write = true, supabase = null } = {}) {
+  const sb = supabase || getSupabaseClient();
+  const candidates = await loadRecentUnfulfilledOrders(sb);
+  if (!candidates.length) return { drafted: [], skipped: 0 };
+  return detectAndDraftUnnotifiedPreOrders(sb, candidates, { write });
+}
+
+// ---------------------------------------------------------------------------
 // Standalone CLI
 // ---------------------------------------------------------------------------
 
@@ -693,10 +808,15 @@ if (require.main === module) {
 module.exports = {
   detectUnnotifiedPreOrders,
   detectAndDraftUnnotifiedPreOrders,
+  sweepUnnotifiedPreOrders,
+  loadRecentUnfulfilledOrders,
   classifyOrder,
   filterToNotReadyToShip,
   reclassifyWithWarehouseStock,
-  pastNextBusinessDay5pmPT,
+  isPreOrderByTags,
+  olderThanMinutes,
+  MIN_ORDER_AGE_MINUTES,
+  SWEEP_MS,
   composeBody,
   pickAlternativesViaCompare,
   findEquivalentSwap,

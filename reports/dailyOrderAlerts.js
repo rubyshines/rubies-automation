@@ -34,7 +34,6 @@ const { getSupabaseClient } = require('../shared/supabaseClient');
 const { getSendgridClient } = require('../shared/sendgridClient');
 const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
-const { detectAndDraftUnnotifiedPreOrders } = require('./lib/unnotifiedPreOrder');
 const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
 const { reconcileNotes } = require('../customer-service/lib/noteLifecycle');
 const { listRegistry } = require('../promotions/discounts');
@@ -664,40 +663,13 @@ async function run() {
     checkShippingDelays({ showResolved: opts.showResolved }),
   ]);
 
-  // Unnotified pre-orders → seed pending drafts in CS Advisor and refresh
-  // r.note on affected results so they bucket as "Drafted in CS Advisor (auto)"
-  // rather than Attention.
-  if (!opts.shippingOnly) {
-    try {
-      const { drafted } = await detectAndDraftUnnotifiedPreOrders(supabase, unfulfilled.results, { write: true });
-      const sentCount = drafted.filter(d => d.status === 'drafted').length;
-      if (sentCount > 0) {
-        const justDrafted = drafted.filter(d => d.status === 'drafted').map(d => parseInt(d.order_number, 10));
-        const { data: freshNotes } = await supabase
-          .from('order_alert_notes')
-          .select('order_number, note, author, resolved, created_at')
-          .in('order_number', justDrafted)
-          .eq('resolved', false)
-          .order('created_at', { ascending: false });
-        const byOrder = new Map();
-        for (const n of (freshNotes || [])) {
-          if (!byOrder.has(n.order_number)) byOrder.set(n.order_number, n);
-        }
-        for (const r of unfulfilled.results) {
-          const n = byOrder.get(r.order.order_number);
-          if (n) r.note = n;
-        }
-        console.log(`  [unnotifiedPreOrder] ${sentCount} unnotified pre-order draft(s) seeded into CS Advisor`);
-      }
-      const failed = drafted.filter(d => d.status === 'failed');
-      for (const f of failed) {
-        unfulfilled.errors.push(`Unnotified pre-order draft for #${f.order_number}: ${f.error}`);
-      }
-    } catch (err) {
-      console.warn(`  [unnotifiedPreOrder] error: ${err.message}`);
-      unfulfilled.errors.push(`Unnotified pre-order detection: ${err.message}`);
-    }
-  }
+  // Unnotified pre-order drafts are seeded by the sweep on the always-on
+  // webhook server (every SWEEP_MS, ~an hour after the order is placed) rather
+  // than here — a once-daily cron could not act on a minutes-scale signal, and
+  // keeping a single writer avoids two callers racing the read-then-seed. This
+  // report reads the `author='auto'` notes that sweep leaves behind, so drafted
+  // orders still bucket as "Drafted in CS Advisor (auto)" via the normal note
+  // pass in checkUnfulfilledOrders(). See reports/lib/unnotifiedPreOrder.js.
 
   // Console output
   if (opts.json) {

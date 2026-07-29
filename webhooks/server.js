@@ -195,6 +195,36 @@ const holdSweepTimer = setInterval(async () => {
 }, HOLD_SWEEP_MS);
 holdSweepTimer.unref(); // don't keep the process alive for the timer alone
 
+// Unnotified pre-order outreach: a customer can buy an out-of-stock "continue
+// selling" variant without ever being told it's a pre-order. Warehance
+// allocates within minutes when stock exists, so an order still unallocated an
+// hour after purchase is a genuine shortage and the customer should hear about
+// it that hour — not on the next daily report. This sweep is the ONLY writer of
+// those drafts (the daily report just reads the notes it leaves), so there is
+// no second caller to race on the read-then-seed. Normally a no-op: leaks are
+// rare. See reports/lib/unnotifiedPreOrder.js.
+const { sweepUnnotifiedPreOrders, SWEEP_MS: PREORDER_SWEEP_MS } = require('../reports/lib/unnotifiedPreOrder');
+let preOrderSweepRunning = false;
+const preOrderSweepTimer = setInterval(async () => {
+  if (preOrderSweepRunning) return; // never overlap a slow sweep with the next tick
+  preOrderSweepRunning = true;
+  try {
+    const { drafted } = await sweepUnnotifiedPreOrders({ write: true });
+    const seeded = drafted.filter(d => d.status === 'drafted');
+    for (const d of seeded) {
+      console.log(`[unnotified-preorder] drafted #${d.order_number} (Case ${d.case}) → cs_ticket ${d.cs_ticket_id}`);
+    }
+    for (const d of drafted.filter(d => d.status === 'failed')) {
+      console.error(`[unnotified-preorder] seed FAILED for #${d.order_number}: ${d.error}`);
+    }
+  } catch (e) {
+    console.error(`[unnotified-preorder] sweep error: ${e.message}`);
+  } finally {
+    preOrderSweepRunning = false;
+  }
+}, PREORDER_SWEEP_MS);
+preOrderSweepTimer.unref();
+
 // Graceful shutdown
 function shutdown(signal) {
   console.log(`[webhook] ${signal} received, shutting down...`);
