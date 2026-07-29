@@ -8,12 +8,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
-## Advisor mirrors the customer's complaint back at them (~1 in 3 drafts)
+## Advisor drops the exchange action when the customer confirms ("yes please")
 - Parked: 2026-07-29
+- Last touched: 2026-07-29
 - Domains: cs
 - Type: bug
 - Priority: high
-- Notes: On Opus 4.8 in production. `noMirroring` scenario scores 2/3 across repeated runs (same rate on Opus 5, so it is not model-specific). The advisor opens by restating what the customer just wrote — e.g. "I hear you loud and clear, you paid extra for expedited and it didn't get to you" — instead of leading with new information. The rule exists in the prompt; it drifts. Reproduce: `node customer-service/test/scenarios/noMirroring.js` 5–6 times and count. Fix per the 2026-07-28 hold-fix technique: find the prompt ambiguity, add the smallest scoping rule, and re-measure EVERY assertion (see feedback_technical_rules.md — the first hold fix repaired its target and broke a neighbour).
+- Notes: On Opus 4.8 in production, **~40–60% of runs**. This is the `noMirroring` scenario's *second* test, not the mirroring one — measured 2026-07-29, the mirroring assertions passed 7/7 on 4.8 and only the turn-2 check fails. (An earlier note here mischaracterised this as a mirroring bug; mirroring was the *Opus 5* failure mode.) Repro: `node customer-service/test/scenarios/noMirroring.js` — turn 1 asks to exchange a too-small bra, turn 2 is "Great, yes please go ahead with that!". On failure the draft is the donation-info block alone with `action_type: null`, so nothing is staged for the operator; on success it is "Done! Your Brooke in size L will ship tomorrow." with the action set. Same visible signature as the Opus 5 refund defect (donation prose, no action), though a fix targeting that hypothesis did NOT help — see below.
+- Attempted and reverted 2026-07-29: added "Donation info is an attachment to an action, never a message on its own…" to the "When to mention DONATION" section, on the theory that the section presents donation info as its own deliverable rather than subordinate to the action. Result: 5/8 failing vs 3/7 baseline — no benefit, possibly worse, all inside the noise band. Reverted, not shipped.
+- **Methodology warning for whoever picks this up:** this scenario's variance is ~40–60%, so n=8 cannot distinguish a moderate effect from noise. Budget n≥20 per arm (~35 min, ~$10 at 3 advisor calls per run), or find a cheaper single-call repro of the same confirm-drops-action behaviour first. Also: check `node --check` after any prompt edit and assert on **exit code**, not just the absence of "✗" — a syntax error inside the template literal produces neither, and silently reads as a pass (cost an entire batch of false results on 2026-07-29).
 
 ## Advisor can't reliably name the Sky adult colourways
 - Parked: 2026-07-29
