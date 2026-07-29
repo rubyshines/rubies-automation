@@ -57,7 +57,7 @@ const { fetchOrderByNumber, fetchSkuStockMany } = require('./warehanceClient');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 const { formatPreOrderDate } = require('../../customer-service/lib/preOrderAttrs');
-const { normalizeSize, NUMERIC_TO_LETTER_UPPER, getVariantColor } = require('../../customer-service/lib/sizeUtils');
+const { normalizeSize, NUMERIC_TO_LETTER_UPPER, getVariantColor, extractSizeFromSku } = require('../../customer-service/lib/sizeUtils');
 
 const DELAY_ACKNOWLEDGE_DAYS = 3;
 const MAX_ALTERNATIVES = 2;
@@ -415,21 +415,28 @@ async function loadVariantStateBySku(supabase, skus) {
 
 // Extract the customer-ordered size from a RUBIES SKU. Format is
 // <product>-<color>-<size> (or <product>-<size> for size-only items).
-function skuSize(sku) {
-  const parts = String(sku || '').split('-');
-  if (parts.length >= 2) return parts[parts.length - 1];
-  return null;
-}
-
 // Resolve a leak's nickname, size, and color by walking the product cache.
-// Returns { nickname, size, color } or null if we can't classify the SKU.
+// Returns { nickname, size, displaySize, color } or null if we can't classify
+// the SKU.
+//
+// `size` is the raw SKU segment and is what SKU construction and catalog
+// lookups need. `displaySize` is the customer-facing label and is the ONLY one
+// that may appear in an email: RUBIES plus sizes are always written 1X/2X/3X/4X,
+// never XL/2XL, which is how the variant titles read on the site and on the
+// order. SKUs spell the same size XL, so anything rendering the raw segment
+// tells the customer a size name we do not use (2026-07-29: a swap bullet
+// offered "the Mia in Pink, size XL" on an order whose own line said 1X).
+// extractSizeFromSku is the shared normalizer the rest of the codebase already
+// routes through — contextBuilder feeds the advisor its `normalized` value,
+// which is why advisor-written prose gets this right.
 function leakHandle(leakSku) {
   const variant = productCache.getVariantBySku(leakSku);
   if (!variant) return null;
   const nickname = getProductNickname(variant.productTitle);
   if (!nickname || nickname === 'item') return null;
   const color = getVariantColor({ selectedOptions: variant.options || [] });
-  return { nickname, size: skuSize(leakSku), color };
+  const { raw, normalized } = extractSizeFromSku(leakSku);
+  return { nickname, size: raw, displaySize: normalized || raw, color };
 }
 
 /** Adult letter → youth numeric equivalent (inverse of NUMERIC_TO_LETTER_UPPER). */
@@ -453,7 +460,7 @@ function equivalentSize(size) {
 async function findEquivalentSwap(leakSku) {
   const meta = leakHandle(leakSku);
   if (!meta) return null;
-  const { nickname, size, color } = meta;
+  const { nickname, size, displaySize, color } = meta;
   if (!size || !color) return null;
   const eqSize = equivalentSize(size);
   if (!eqSize) return null;
@@ -481,10 +488,10 @@ async function findEquivalentSwap(leakSku) {
     toSku: target.sku,
     nickname,
     color: colorHit.color,
-    fromSize: size,
+    fromSize: displaySize,
     toSize: eqSize,
     chart,
-    rendered: `the ${nickname} in ${colorHit.color}, size ${eqSize} (our ${chart} size with the same fit as ${size})`,
+    rendered: `the ${nickname} in ${colorHit.color}, size ${eqSize} (our ${chart} size with the same fit as ${displaySize})`,
   };
 }
 
@@ -496,7 +503,7 @@ async function findEquivalentSwap(leakSku) {
 async function pickAlternativesViaCompare(leakSku) {
   const meta = leakHandle(leakSku);
   if (!meta) return [];
-  const { nickname, size } = meta;
+  const { nickname, size, displaySize } = meta;
   if (!size) return [];
 
   const rendered = [];
@@ -515,14 +522,15 @@ async function pickAlternativesViaCompare(leakSku) {
   if (!comparison || comparison.error) return rendered;
 
   // Tier 1: same product, in-stock sibling colors at the customer's size.
+  // Rendered with displaySize, never the raw SKU segment — see leakHandle.
   for (const c of (comparison.source?.available_colors || [])) {
     if (rendered.length >= MAX_ALTERNATIVES) break;
-    rendered.push(`the ${nickname} in ${c.color}, size ${size}`);
+    rendered.push(`the ${nickname} in ${c.color}, size ${displaySize}`);
   }
   // Tier 2: different products in same category, same size, with stock.
   for (const alt of (comparison.alternatives || [])) {
     if (rendered.length >= MAX_ALTERNATIVES) break;
-    rendered.push(`the ${alt.product}, size ${size}`);
+    rendered.push(`the ${alt.product}, size ${displaySize}`);
   }
   return rendered;
 }

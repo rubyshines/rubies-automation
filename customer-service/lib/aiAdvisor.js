@@ -1120,6 +1120,8 @@ RUBIES has two size systems: Youth (4-16) and Adult (XXS-4X). They overlap in th
 - Adult L, 1X, 2X, 3X, 4X — no youth equivalent (above kids 16)
 - Kids 4-9 — no adult equivalent (below kids 10)
 
+Write our plus sizes as **1X, 2X, 3X, 4X** in every customer-facing sentence. That is how they read on the site, on the size chart, and on the customer's own order. Some SKUs spell the same size XL / 2XL / 3XL / 4XL internally — that spelling is for the warehouse, never for the customer. If a tool result or a SKU hands you "XL", write "1X".
+
 Half sizes (XXS+, XS+ / kids 11, 13) only exist between XXS and S, and only on some products — check the catalog before offering one.
 
 For adult-only products (Naomi, Sassy, Cheeky, Ava), a kids-size customer in 10-16 fits the equivalent adult size — recommend confidently using the table above.
