@@ -1484,9 +1484,48 @@ function stripInternalThinking(text) {
 // Post-generation validation — catch obvious hallucinations
 // ---------------------------------------------------------------------------
 
+/**
+ * First line of the customer-facing email. Matched at the start of a line so a
+ * mid-sentence "hi" can't trigger it.
+ */
+const GREETING_RE = /^(Hi|Hey|Hello|Hola)\b/m;
+
+/**
+ * Strip planning narration that landed ahead of the greeting.
+ *
+ * The prompt already forbids narrating your own thinking inside the reply, but
+ * it is a negative rule and negative rules drift: measured over 396 drafts
+ * since 2026-07-01, 3.8% still opened with reasoning like "Charlie S Black is
+ * in stock (159). Creating the exchange." before "Hi ...". Every one was model
+ * reasoning; none were legitimate copy. Operators caught all 15 (0 were sent),
+ * so this costs review time rather than reaching customers — but it is one
+ * missed glance away from a customer reading our internal deliberation, and a
+ * deterministic strip is the cheaper fix than another DO NOT clause.
+ *
+ * Conservative by construction: only fires when a greeting exists at the start
+ * of a later line, and only removes what precedes it. A reply with no greeting
+ * (route-to-human placeholders, some outbound formats) is left untouched.
+ * Exported for testing.
+ */
+function stripPreGreetingNarration(text) {
+  if (!text) return { text, stripped: null };
+  const m = GREETING_RE.exec(text);
+  if (!m || m.index === 0) return { text, stripped: null };
+  const stripped = text.slice(0, m.index).trim();
+  if (!stripped) return { text: text.slice(m.index), stripped: null };
+  return { text: text.slice(m.index), stripped };
+}
+
 function validateResponse(composedResponse, toolsCalled, audit, opts = {}) {
   const warnings = [];
   let corrected = composedResponse;
+
+  // Planning narration before the greeting — see stripPreGreetingNarration.
+  const preGreeting = stripPreGreetingNarration(corrected);
+  if (preGreeting.stripped) {
+    corrected = preGreeting.text;
+    warnings.push(`NARRATION_FIX: Stripped ${preGreeting.stripped.length} chars of planning narration before the greeting (${JSON.stringify(preGreeting.stripped.slice(0, 120))})`);
+  }
 
   // Skip the donation-address strip when the advisor is intentionally echoing
   // a shipping address back to the customer (order_modification flow). In that
@@ -2421,4 +2460,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured };
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration };
