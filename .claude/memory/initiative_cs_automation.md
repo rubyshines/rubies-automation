@@ -3,7 +3,7 @@ name: CS Automation
 description: AI advisor reducing Jamie's CS time, currently human-in-the-loop, moving toward autonomy
 type: project
 domains: [cs]
-last_updated: 2026-07-23
+last_updated: 2026-07-29
 originSessionId: 5fa69c00-27d5-40ef-9c88-8f188fbf3c12
 ---
 ## Goal
@@ -17,6 +17,7 @@ Reduce Jamie's ~1hr/day CS time using AI advisor.
 ## Current Status
 Active. AI drafts responses, Jamie reviews and approves via ops dashboard. ~$0.39/draft, ~$0.60/ticket. 95% action accuracy on 198 held-out conversations. SSE streaming deployed (perceived latency ~1-2s). Efficiency project running — prompt caching deployed but minimal impact at current volume.
 
+- 2026-07-29: **`revoke_discount_code` shipped** — operator tool to invalidate one customer's discount code without touching the other codes on the same discount (our comp/bulk discounts are code pools; the birthday "Free AJs" one holds 10,000). Its lookup phase also answers "why isn't this code working". Closes the burn-the-code half of the forgot-discount-code idea; the refund-the-equivalent half stays parked.
 - 2026-07-23 (later): **Steer & Send shadow shipped** (Jamie's proposal this session: one-click steer that also executes+sends, judge-gated). Data said not yet for live mode (32% of steered sends still meaningfully edited, ~14% factual/action), so the shadow phase IS the product for now: every steered regen gets a would_send verdict (deterministic never-list/action checks + Opus correctness verifier, `steer_send_shadow` table, `steersend_shadow` flag, digest dry-run line vs judge). Go/no-go evidence accumulates alongside the auto-send shadow; read both at the ~Sept re-review. Cost ~1.5 verifier calls/day.
 - 2026-07-23: Two eval verdicts. **Sonnet 5 shadow eval concluded: not viable** (advisor primary mean 2.33 on 58 unique tickets with a verified-healthy harness; operator 2.62 — both in the pre-registered not-viable band; staying on Opus, `cs_diagnostics` off, details in project_cs_efficiency.md). **Auto-send graduation review ran: closing does NOT graduate** — only 9 shadow-marked drafts in 6 weeks (thank-you closer absorbs pure thanks upstream), and 3 of 8 judged would-have-erred (sizing factual error, over-explained fit, unverified policy claim) — all three the "draft added content Jamie removed" verbosity pattern; 2 of 3 predate the 07-20 verbosity fix. Shadow stays on (costs ~nothing); re-review ~Sept on post-07-20 data only.
 - 2026-07-20: Verbosity regression fixed (plan approved 07-18). Post-voice-rules edit assessment showed 27/30 founder edits were deletions (avg −30 words) — the model stacked voice rules per draft. Shipped: "one move per message" governing register rule + explanation gating (shaping template only for shaping-doesn't-work; plain fit complaints get a size/measurement move), numeric word-count targets removed, exchange-template tracking clause dropped, generic "the item(s)" in return/donation asks. New pinned scenario shapingExplanationGating.js. (A deterministic apology-flag banner also shipped, then was removed 07-22 as noise — Jamie watches for misplaced sorries manually.) Re-check edit shape ~07-27; the ~07-25 accuracy sweep reads this too.
@@ -30,7 +31,7 @@ Active. AI drafts responses, Jamie reviews and approves via ops dashboard. ~$0.3
 
 1. **Auto-send graduation re-review ~Sept** — ran 07-23: not ready (3/8 would-have-erred; see status bullet). Re-run on post-07-20 (verbosity-fix) shadow drafts only; also reconsider whether a higher-volume low-stakes category beats closing as the first graduation target.
 2. **KB watch week → accuracy sweep ~07-25** — advisor changed heavily this month (apologies fault-scoped, 17 voice rules, KB search tool w/ `advisor_kb_search` kill switch); let drafts accumulate under the stable config, watch daily factual_correction rate vs ~6% baseline, then run the change-driven sweep (also reads KB-tool impact). Context going in: 7d judge divergence is 40% vs 36% 30d (6 high-severity last week) — the sweep decides whether that's real drift from the July changes or noise. **Expanded scope (Jamie 2026-07-23): include an operator-action accuracy baseline** — rerun the May one-off operator-action eval method (ground truth = what the sent prose says was done; `actions[]` is incomplete) over the ~297 executed actions since 05-27 (104 exchange, 62 refund, 37 hold, 35 order-mod, rest long tail) and report an absolute operator accuracy number alongside draft quality. This becomes the recurring operator baseline, refreshed each sweep.
-3. **Forgot-discount-code operator tool** (parked entry) — refund equivalent + burn code + surface why a code failed.
+3. **Forgot-discount-code operator tool** (parked entry) — burn-code + why-it-failed shipped 07-29 as `revoke_discount_code`; refunding the discount equivalent in the same step is the remaining piece.
 4. ~~Sonnet 5 shadow eval~~ — concluded 07-23, not viable, eval off (see status bullet).
 
 ## Decisions Made

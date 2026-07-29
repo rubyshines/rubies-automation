@@ -33,11 +33,12 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: decision (closed, revisit on trigger)
 - Notes: Evaluated and rejected. Measured on the full pinned suite, both arms, via `scripts/modelSwapEval.js`: accuracy 20/25 vs 25/25, latency +22.5% (9.3s vs 7.6s median), cost +15.3% ($0.2011 vs $0.1745/scenario) — fails all three founder acceptance criteria (same-or-better accuracy, same-or-faster, same-or-cheaper). Decisive point: cost and latency are token-volume properties of the model on our workload, so prompt work cannot close them; even a perfect accuracy fix leaves two criteria failing. Opus 4.8 has no announced retirement date (Opus 4.1 retires 2026-08-05). The `claude-opus-5` RATES row is already in `shared/aiPricing.js` and `MODELS.OPUS` carries a warning comment. **Resume when:** a retirement date is announced for Opus 4.8, or a new model ships — then run `node scripts/modelSwapEval.js --candidate <model> --repeat 3` (one command, ~$30–50, ~40 min) and decide on the numbers. **Opus-5-specific defect to re-test if we ever adopt:** on refund tickets it produced plausible customer-facing prose with `action_type: null`, staging no refund — reproducible on `donationToolCall` and `refundNoAmount`, consistent across every run, while both pass on 4.8. Suspected cause is the "one move per message" rule (RESPONSE LENGTH & REGISTER, shipped 2026-07-20) being followed more literally than 4.8 does.
 
-## Forgot-discount-code tool: refund equivalent + disable the code
+## Forgot-discount-code tool: refund the discount equivalent
 - Parked: 2026-07-17
+- Last touched: 2026-07-29
 - Domains: cs
 - Type: idea
-- Notes: Jamie (facts review): customers forget to apply a code and ask after the fact; we refund the equivalent but eat the processing fee, and invalid-code complaints need manual investigation. Wanted: an operator tool that refunds the discount equivalent on an order AND disables/burns the customer's code in one step (plus surfaces why a code was invalid). Fact about the current manual process is loaded in kb_candidates.
+- Notes: Jamie (facts review): customers forget to apply a code and ask after the fact; we refund the equivalent but eat the processing fee, and invalid-code complaints need manual investigation. Fact about the current manual process is loaded in kb_candidates. **DONE 2026-07-29: the burn-the-code and why-was-it-invalid halves** — `revoke_discount_code` kills one code without touching its pool siblings, and its lookup phase reports status / this code's usage vs limit / expiry as the invalid-code diagnosis. Remaining scope: refunding the discount equivalent on the order in the same step (today that's a separate `refund_order` call with a hand-computed amount).
 
 ## Corpus-harvest leftovers (small, founder-side)
 - Parked: 2026-07-18
