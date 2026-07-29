@@ -93,15 +93,26 @@ function partitionThreadMessages(gmailMessages, knownIds) {
 }
 
 /**
- * Reconcile open, Gmail-correlated threads for a set of companies (or all).
+ * Reconcile Gmail-correlated threads for a set of companies (or all).
  * Fail-soft by design: any Gmail/API error logs and moves on — the queue must
  * render even when Gmail is unreachable.
+ *
+ * `includeClosed` decides which half of the job this call is doing:
+ *   false (default) — the queue-wide sweep. Only open threads matter there:
+ *     a concluded conversation cannot change what is due, and re-fetching every
+ *     closed thread on every queue load would be a Gmail call per thread.
+ *   true — a targeted, one-company sync behind the panel's detail view. There
+ *     the goal is a COMPLETE conversation, and status says nothing about
+ *     completeness. Closed threads were silently unrepairable before this:
+ *     a thread created from an inbound email is closed by
+ *     discoveredThreadStatus as soon as it goes stale, and from then on the
+ *     operator's own replies could never be imported into it.
  */
-async function reconcileThreads(sb, { companyIds = null, force = false } = {}) {
+async function reconcileThreads(sb, { companyIds = null, force = false, includeClosed = false } = {}) {
   let q = sb.from('b2b_threads')
     .select('id, company_id, gmail_thread_id, last_message_at')
-    .eq('status', 'open')
     .not('gmail_thread_id', 'is', null);
+  if (!includeClosed) q = q.eq('status', 'open');
   if (companyIds?.length) q = q.in('company_id', companyIds);
   const { data: threads, error } = await q;
   if (error) throw new Error(`thread fetch: ${error.message}`);
@@ -209,13 +220,18 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
   if (!found.length) return { discovered: 0 };
 
   const { data: existing, error } = await sb.from('b2b_threads')
-    .select('gmail_thread_id').in('gmail_thread_id', found.map(t => t.id));
+    .select('id, gmail_thread_id, status').in('gmail_thread_id', found.map(t => t.id));
   if (error) throw new Error(`existing threads: ${error.message}`);
-  const known = new Set((existing || []).map(t => t.gmail_thread_id));
+  const known = new Map((existing || []).map(t => [t.gmail_thread_id, t]));
 
   let discovered = 0;
+  let repaired = 0;
   for (const t of found) {
-    if (known.has(t.id)) continue;
+    // A known thread is NOT necessarily a complete one. Threads created by an
+    // inbound pubsub event hold only the messages pubsub delivered — skipping
+    // them here is what left the operator's own replies missing from the panel
+    // for months. Re-read them and let the gmail_message_id upsert dedupe.
+    const existingThread = known.get(t.id);
     let resp;
     try {
       resp = await gmail.users.threads.get({ userId: 'me', id: t.id, format: 'full' });
@@ -228,22 +244,32 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
     const last = rows[rows.length - 1];
     const subject = header(resp.data.messages?.[0] || {}, 'Subject') || '(no subject)';
 
-    const { data: thread, error: tErr } = await sb.from('b2b_threads')
-      .upsert({
-        company_id: companyId, thread_type: 'other', subject,
-        gmail_thread_id: t.id, status: discoveredThreadStatus(last),
-        last_message_at: last.sent_at,
-      }, { onConflict: 'gmail_thread_id' })
-      .select('id').single();
-    if (tErr) { console.error(`[discover] thread insert ${t.id}: ${tErr.message}`); continue; }
+    let threadId;
+    if (existingThread) {
+      // Repair only. Never re-derive status here: the operator may have just
+      // closed or reopened this thread by hand, and discoveredThreadStatus
+      // would silently overrule that.
+      threadId = existingThread.id;
+      if (last.sent_at) await sb.from('b2b_threads').update({ last_message_at: last.sent_at }).eq('id', threadId);
+    } else {
+      const { data: thread, error: tErr } = await sb.from('b2b_threads')
+        .upsert({
+          company_id: companyId, thread_type: 'other', subject,
+          gmail_thread_id: t.id, status: discoveredThreadStatus(last),
+          last_message_at: last.sent_at,
+        }, { onConflict: 'gmail_thread_id' })
+        .select('id').single();
+      if (tErr) { console.error(`[discover] thread insert ${t.id}: ${tErr.message}`); continue; }
+      threadId = thread.id;
+    }
 
     const { error: mErr } = await sb.from('b2b_messages')
-      .upsert(rows.map(r => ({ ...r, thread_id: thread.id, company_id: companyId })),
+      .upsert(rows.map(r => ({ ...r, thread_id: threadId, company_id: companyId })),
         { onConflict: 'gmail_message_id', ignoreDuplicates: true });
     if (mErr) { console.error(`[discover] messages ${t.id}: ${mErr.message}`); continue; }
-    discovered++;
+    if (existingThread) repaired++; else discovered++;
   }
-  return { discovered };
+  return { discovered, repaired };
 }
 
 module.exports = { reconcileThreads, discoverCompanyThreads, discoveredThreadStatus, partitionThreadMessages, extractPlainText };

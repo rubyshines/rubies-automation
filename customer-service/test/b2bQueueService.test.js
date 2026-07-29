@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   draftSnippet, attachDrafts, mergePendingDraftEntries,
-  sanitizeSearchTerm, rollupThreads, companyThreadStatus, matchReason,
+  sanitizeSearchTerm, rollupThreads, companyThreadStatus, companyStage, matchReason,
 } = require('../../b2b-outreach/lib/queueService');
 
 // ── draftSnippet ────────────────────────────────────────────────────────────
@@ -198,4 +198,29 @@ test('matchReason falls back through general email, site, thread subject, id', (
 test('matchReason is case-insensitive and null for an empty query', () => {
   assert.equal(matchReason(company, contacts, threads, 'JANE@EARLY2BED.COM'), 'contact: Jane Doe <jane@early2bed.com>');
   assert.equal(matchReason(company, contacts, threads, ''), null);
+});
+
+// ── companyStage ────────────────────────────────────────────────────────────
+// Relationship stage ONLY. Conversation state is a separate, composable filter:
+// folding them together hid an active retailer with 13 concluded threads under
+// `active`, which is exactly the company the closed-thread view exists to find.
+
+test('companyStage reads relationship_state and nothing else', () => {
+  assert.equal(companyStage({ relationship_state: 'active' }), 'active');
+  assert.equal(companyStage({ relationship_state: 'lost' }), 'lost');
+});
+
+test('companyStage calls in_contact a lead — it cannot mean live contact', () => {
+  // 180 companies carry in_contact; 172 have never had a conversation.
+  assert.equal(companyStage({ relationship_state: 'in_contact' }), 'lead');
+  assert.equal(companyStage({}), 'lead');
+  assert.equal(companyStage({ relationship_state: null }), 'lead');
+});
+
+test('companyStage is independent of conversation history', () => {
+  // The regression that motivated the split: an account whose threads all ended
+  // is still an account, and companyThreadStatus is what says it went quiet.
+  const account = { relationship_state: 'active' };
+  assert.equal(companyStage(account), 'active');
+  assert.equal(companyThreadStatus({ open: 0, closed: 13 }), 'inactive');
 });

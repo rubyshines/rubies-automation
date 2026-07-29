@@ -181,6 +181,33 @@ function companyThreadStatus(rollup) {
 }
 
 /**
+ * Where a company sits in the relationship flow. Pure — and deliberately
+ * INDEPENDENT of conversation state, which is its own filter.
+ *
+ * Folding the two together was a mistake worth recording: an active retailer
+ * with thirteen concluded threads is both "an account" and "gone quiet", and
+ * collapsing them into one chip hid it under `active` — exactly the company the
+ * closed-thread view exists to surface. Kept separate, the two compose, and
+ * "active accounts whose conversations have all ended" is one click.
+ *
+ * 'lead' covers in_contact and null. relationship_state cannot distinguish a
+ * real lead from an untouched import — 180 companies carry 'in_contact' and 172
+ * have never had a conversation — so as a RELATIONSHIP stage "lead" is the
+ * honest label, and the conversation filter says whether anyone has written.
+ *
+ * Nothing ever writes 'dormant' (syncB2bCompanyState says so explicitly), so
+ * there is no dormant stage — it would always be empty.
+ */
+function companyStage(company) {
+  if (company.relationship_state === 'lost') return 'lost';
+  if (company.relationship_state === 'active') return 'active';
+  return 'lead';
+}
+
+const DIRECTORY_STAGES = ['all', 'active', 'lead', 'lost'];
+const DIRECTORY_STATUSES = ['all', 'open', 'inactive', 'never'];
+
+/**
  * Why this company matched the search — shown on the row. Pure.
  * Searching an email address is useless if the result only echoes the company
  * name back: the operator needs to see WHICH contact carried that address.
@@ -200,8 +227,6 @@ function matchReason(company, contacts, threads, q) {
   return null;
 }
 
-const DIRECTORY_STATUSES = ['all', 'open', 'inactive', 'never', 'lost'];
-
 /**
  * Framing for a draft the operator asked for out of the blue (a company picked
  * from the directory with nothing due). Without it the advisor falls back to
@@ -216,15 +241,17 @@ const OPERATOR_INITIATED_HINT = 'Jamie has picked this company out deliberately 
  * name, and thread subject. Matching spans three tables, which PostgREST
  * cannot express as one OR, so the id sets are gathered in parallel and merged.
  *
- * `status` filters on conversation state (see companyThreadStatus), plus
- * 'lost' for operator-closed relationships. Lost companies are NOT hidden from
- * the other filters — searching a name and silently getting nothing back
- * because the row was marked lost is worse than seeing it with its badge.
+ * `stage` (relationship: active/lead/lost) and `status` (conversation:
+ * open/inactive/never) are independent and compose.
  *
  * Sorted by last activity (newest first, never-contacted last), so with no
- * query it reads as a recency-ordered archive.
+ * query it reads as a recency-ordered archive. The default is deliberately
+ * 'all': this surface exists for LOOKUP, and defaulting to a stage would mean
+ * searching a cold prospect returns nothing while the company sits right
+ * there. For the same reason the caller is expected to drop back to 'all' when
+ * a search term is typed.
  */
-async function searchCompanies(sb, { q, status = 'all', channel, limit = 50 } = {}) {
+async function searchCompanies(sb, { q, stage = 'all', status = 'all', channel, limit = 50 } = {}) {
   const term = sanitizeSearchTerm(q);
   const like = `%${term}%`;
 
@@ -273,6 +300,7 @@ async function searchCompanies(sb, { q, status = 'all', channel, limit = 50 } = 
     const rollup = rollups.get(c.id) || { open: 0, closed: 0, last_message_at: null };
     return {
       ...c,
+      stage: companyStage(c),
       thread_status: companyThreadStatus(rollup),
       threads_open: rollup.open,
       threads_closed: rollup.closed,
@@ -283,11 +311,10 @@ async function searchCompanies(sb, { q, status = 'all', channel, limit = 50 } = 
     };
   });
 
-  if (status && status !== 'all') {
-    rows = status === 'lost'
-      ? rows.filter(r => r.relationship_state === 'lost')
-      : rows.filter(r => r.thread_status === status);
-  }
+  // Two independent axes, composed: stage = the relationship, status = the
+  // conversation. "active + inactive" is the live account that has gone quiet.
+  if (stage && stage !== 'all') rows = rows.filter(r => r.stage === stage);
+  if (status && status !== 'all') rows = rows.filter(r => r.thread_status === status);
 
   rows.sort((a, b) => {
     if (!a.last_message_at && !b.last_message_at) return (a.name || '').localeCompare(b.name || '');
@@ -559,7 +586,10 @@ function startCompanyGmailSync(sb, companyId, emails) {
   (async () => {
     try {
       await discoverCompanyThreads(sb, { companyId, emails });
-      await reconcileThreads(sb, { companyIds: [companyId] });
+      // includeClosed: this is the one-company view, where the operator is
+      // reading the actual conversation. A concluded thread still has to be
+      // COMPLETE — the queue-wide sweep is the one that can afford to skip it.
+      await reconcileThreads(sb, { companyIds: [companyId], includeClosed: true });
     } catch (err) {
       console.error(`[queueService] gmail sync (${companyId}) failed: ${err.message}`);
     } finally {
@@ -668,6 +698,8 @@ module.exports = {
   sanitizeSearchTerm,
   rollupThreads,
   companyThreadStatus,
+  companyStage,
+  DIRECTORY_STAGES,
   matchReason,
   searchCompanies,
   fetchActivity,

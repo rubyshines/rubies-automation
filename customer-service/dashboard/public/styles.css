@@ -5729,3 +5729,8 @@ main { height: calc(100vh - 56px); }
   font: inherit; font-size: 12px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 6px;
 }
 #facts-add .autosend-row { gap: 6px; }
+
+/* Flow-stage badges in the company directory. Active and lost are the two that
+   change how you read a row, so only those get colour. */
+.outreach-stage-active { background: var(--teal-soft); color: var(--teal); }
+.outreach-stage-lost { background: #f3f4f6; color: #9ca3af; text-decoration: line-through; }

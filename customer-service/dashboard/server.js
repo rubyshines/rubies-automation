@@ -2767,7 +2767,8 @@ async function apiB2bCompanyThreads(companyId) {
 async function apiB2bCompanies(query) {
   return b2bQueueService.searchCompanies(getSupabaseClient(), {
     q: query.get('q') || '',
-    status: query.get('status') || 'all',
+    stage: query.get('stage') || 'all',
+    status: query.get('status') || null, // pre-stage param, still honoured
     channel: query.get('channel') || null,
     limit: parseInt(query.get('limit')) || 50,
   });

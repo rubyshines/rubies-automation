@@ -5196,7 +5196,8 @@ let outreachDirectory = [];      // company rows from /api/b2b/companies
 let outreachActivity = [];       // message rows from /api/b2b/activity
 let outreachDirTotal = 0;
 let outreachSearchQ = '';
-let outreachDirStatus = 'all';   // conversation state: all|open|inactive|never|lost
+let outreachDirStage = 'all';    // relationship: all|active|lead|lost
+let outreachDirStatus = 'all';   // conversation: all|open|inactive|never
 let outreachActivityDir = '';    // '' = both | outbound | inbound
 let outreachActivitySyncing = false;
 let outreachSelectedId = null;   // company_id of the selected row
@@ -5219,13 +5220,26 @@ const OUTREACH_FILTERS = [
   { value: 'lgbtq_org', label: 'Org' },
   { value: 'affiliate', label: 'Affiliate' },
 ];
-const OUTREACH_DIR_STATUSES = [
+// Where a company sits in the flow. Derived server-side from relationship_state
+// AND real conversation history — relationship_state alone can't express this,
+// since 'in_contact' is carried by 180 companies of which 172 have never had a
+// conversation. There is no 'dormant' chip because nothing ever writes that state.
+// Two independent axes. Relationship stage answers "is this an account or a
+// prospect"; conversation answers "is anything live". They compose — Active +
+// Closed is the account that has gone quiet, which one merged row hid.
+const OUTREACH_DIR_STAGES = [
   { value: 'all', label: 'All' },
-  { value: 'open', label: 'Live' },
-  { value: 'inactive', label: 'Closed' },
-  { value: 'never', label: 'Untouched' },
+  { value: 'active', label: 'Accounts' },
+  { value: 'lead', label: 'Leads' },
   { value: 'lost', label: 'Lost' },
 ];
+const OUTREACH_DIR_STATUSES = [
+  { value: 'all', label: 'Any' },
+  { value: 'open', label: 'Talking' },
+  { value: 'inactive', label: 'Closed' },
+  { value: 'never', label: 'Untouched' },
+];
+const OUTREACH_STAGE_LABELS = { active: 'account', lead: 'lead', lost: 'lost' };
 const OUTREACH_ACTIVITY_DIRS = [
   { value: '', label: 'All' },
   { value: 'outbound', label: 'Sent' },
@@ -5314,6 +5328,7 @@ function entryFromCompany(c) {
 async function loadOutreachDirectory(isSearchRefresh) {
   const params = new URLSearchParams();
   if (outreachSearchQ) params.set('q', outreachSearchQ);
+  if (outreachDirStage !== 'all') params.set('stage', outreachDirStage);
   if (outreachDirStatus !== 'all') params.set('status', outreachDirStatus);
   if (outreachChannel) params.set('channel', outreachChannel);
   let payload;
@@ -5335,8 +5350,15 @@ async function loadOutreachDirectory(isSearchRefresh) {
 let outreachSearchTimer = null;
 function onOutreachSearch(value) {
   outreachSearchQ = value;
+  // Searching is a lookup act. If a stage chip stayed active it could hide the
+  // exact company being typed — a silent miss with no hint the row exists.
+  const resetStage = !!value && (outreachDirStage !== 'all' || outreachDirStatus !== 'all');
+  if (resetStage) { outreachDirStage = 'all'; outreachDirStatus = 'all'; }
   clearTimeout(outreachSearchTimer);
-  outreachSearchTimer = setTimeout(() => loadOutreachDirectory(true), 220);
+  // Normally repaint just the list, so the input keeps focus and caret. When a
+  // chip had to reset, the chips have to repaint too — the fuller render
+  // restores focus itself.
+  outreachSearchTimer = setTimeout(() => loadOutreachDirectory(!resetStage), 220);
 }
 
 async function loadOutreachActivity() {
@@ -5391,6 +5413,11 @@ function setOutreachChannel(channel) {
   loadOutreachSidebar();
 }
 
+function setOutreachDirStage(stage) {
+  outreachDirStage = stage;
+  loadOutreachDirectory();
+}
+
 function setOutreachDirStatus(status) {
   outreachDirStatus = status;
   loadOutreachDirectory();
@@ -5407,6 +5434,7 @@ function outreachControlsHtml() {
         <input type="search" id="outreach-search" class="outreach-search" placeholder="Search name, email, domain, contact&hellip;"
           value="${esc(outreachSearchQ)}" oninput="onOutreachSearch(this.value)" autocomplete="off">
       </div>`
+      + outreachChipsHtml(OUTREACH_DIR_STAGES, outreachDirStage, 'setOutreachDirStage')
       + outreachChipsHtml(OUTREACH_DIR_STATUSES, outreachDirStatus, 'setOutreachDirStatus')
       + outreachFilterHtml();
   }
@@ -5476,9 +5504,9 @@ function renderOutreachList(errorHtml) {
 
 function outreachCompanyRowHtml(c) {
   const channelLabel = OUTREACH_CHANNEL_LABELS[c.relationship_type] || c.relationship_type || '?';
-  const stateBadge = c.relationship_state === 'lost'
-    ? '<span class="badge badge-muted">lost</span>'
-    : (c.relationship_state ? `<span class="badge badge-muted">${esc(c.relationship_state.replace(/_/g, ' '))}</span>` : '');
+  const stageBadge = c.stage
+    ? `<span class="badge badge-muted outreach-stage-${esc(c.stage)}">${esc(OUTREACH_STAGE_LABELS[c.stage] || c.stage)}</span>`
+    : '';
   return `
   <div class="queue-item outreach-row ${c.id === outreachSelectedId ? 'active' : ''}"
        data-company-id="${esc(c.id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
@@ -5489,7 +5517,7 @@ function outreachCompanyRowHtml(c) {
       </div>
       <div class="outreach-row-reason">${esc(outreachCompanySubtitle(c))}</div>
       <div class="queue-item-row2">
-        ${stateBadge}
+        ${stageBadge}
         ${c.has_pending_draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
       </div>
       ${c.matched_on ? `<div class="outreach-row-snippet">${esc(c.matched_on)}</div>` : ''}
