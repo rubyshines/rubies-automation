@@ -3767,4 +3767,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, apiCloseDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
+module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
