@@ -71,6 +71,19 @@ const VARIANTS = {
     price: 36,
     options: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: '14' }],
   },
+  // Plus size: the SKU segment spells it XL, the customer's order says 1X.
+  'MIA-BLK-XL': {
+    sku: 'MIA-BLK-XL',
+    productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
+    options: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: '1X' }],
+  },
+  'MIA-BLK-2XL': {
+    sku: 'MIA-BLK-2XL',
+    productTitle: 'MIA HALTER BIKINI TOP',
+    price: 42,
+    options: [{ name: 'Color', value: 'Black' }, { name: 'Size', value: '2X' }],
+  },
 };
 
 // Per-test compare_products responses keyed by requested size, plus a call log.
@@ -258,6 +271,42 @@ describe('pickAlternativesViaCompare', () => {
   it('returns [] for an unknown SKU', async () => {
     const alts = await pickAlternativesViaCompare('NOPE-XXX-S');
     assert.deepEqual(alts, []);
+  });
+
+  // RUBIES plus sizes are always written 1X/2X/3X/4X to a customer. SKUs spell
+  // the same size XL/2XL for the warehouse. Rendering the raw SKU segment
+  // offered "the Mia in Pink, size XL" on an order whose own line read 1X
+  // (2026-07-29).
+  it('renders plus sizes as 1X, never the SKU spelling XL', async () => {
+    compareResponses['1X'] = {
+      source: { available_colors: [{ color: 'Pink', inventory: 12 }] },
+      alternatives: [{ product: 'Queeny' }],
+    };
+    compareResponses['XL'] = compareResponses['1X'];
+    const alts = await pickAlternativesViaCompare('MIA-BLK-XL');
+    assert.deepEqual(alts, ['the Mia in Pink, size 1X', 'the Queeny, size 1X']);
+    for (const a of alts) {
+      assert.doesNotMatch(a, /\bXL\b/, `plus size leaked the SKU spelling: ${a}`);
+    }
+  });
+
+  it('renders 2XL SKUs as 2X', async () => {
+    compareResponses['2X'] = {
+      source: { available_colors: [{ color: 'Pink', inventory: 4 }] },
+      alternatives: [],
+    };
+    compareResponses['2XL'] = compareResponses['2X'];
+    const alts = await pickAlternativesViaCompare('MIA-BLK-2XL');
+    assert.deepEqual(alts, ['the Mia in Pink, size 2X']);
+  });
+
+  it('leaves non-plus sizes untouched', async () => {
+    compareResponses['L'] = {
+      source: { available_colors: [{ color: 'Pink', inventory: 5 }] },
+      alternatives: [],
+    };
+    const alts = await pickAlternativesViaCompare('MIA-BLK-L');
+    assert.deepEqual(alts, ['the Mia in Pink, size L']);
   });
 });
 
