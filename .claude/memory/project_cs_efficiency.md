@@ -216,7 +216,11 @@ Opus 5 shipped (same $5/$25 rate as 4.8, same tokenizer, faster, `speed:"fast"` 
 
 **Method (new, cheap, and now the standard for same-tier model swaps):** run `customer-service/test/scenarios/` against the candidate, then run every failure against the incumbent as a control. Two arms × ~30 live drafts ≈ $8 and ~30 minutes — vs ~$40 and 10 days for a shadow eval. The control arm is the load-bearing part: it separates real regressions from order-state drift and pre-existing failures, which the raw candidate numbers cannot.
 
-**Result (full suite, both arms, `--full-control`):** accuracy 20/25 vs 25/25, latency **+22.5%** (9.3s vs 7.6s median), cost **+15.3%** ($0.2011 vs $0.1745 per scenario). Fails all three founder acceptance criteria — same-or-better accuracy, same-or-faster, same-or-cheaper.
+**Result (full suite, both arms, `--full-control`):** accuracy 20/25 vs 25/25, latency **+22.5%** (9.3s vs 7.6s median), cost **+15.3%** ($0.2011 vs $0.1745 per scenario).
+
+**⚠️ The cost and latency figures above are confounded — do not quote them as Opus 5's baseline.** The advisor omits the `thinking` parameter, which means no thinking on Opus 4.8 but **adaptive thinking ON for Opus 5** (a documented default change). That run compared a thinking-enabled model against a thinking-disabled one and attributed the delta to the model. The rejection still holds, but on the configuration trade-off rather than on these numbers: with thinking disabled (matched to 4.8) Opus 5 gave 4 accuracy failures; with adaptive it gave 3 but cost and latency rose. Turning thinking down costs accuracy, turning it up costs money and speed, and no middle setting satisfies all three criteria. Accuracy is the firmer leg — it failed in both configurations. Detail and resume trigger in the `parked.md` entry.
+
+**Generalises to every future model eval: match the thinking and effort configuration, not just the model id.** Defaults differ between model generations, so "same inputs" is not "same configuration" — the same class of silent mismatch that invalidated the 2026-07-17 Sonnet 5 shadow arm. `scripts/modelSwapEval.js` overrides only `MODELS.OPUS` and does NOT normalise `thinking`, so the caller must pin it explicitly on both arms.
 
 **Two measurement lessons, both learned the expensive way:**
 - **Never quote latency or cost from a failure-only subset.** Early runs over the failing scenarios alone showed Opus 5 13–26% *faster*; that was an artifact of measuring it while it was flailing. On the representative full suite it is slower.
