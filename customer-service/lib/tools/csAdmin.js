@@ -6,6 +6,7 @@
 
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { embed } = require('../embeddings');
+const { signOff, signOffHtml } = require('../signatures');
 
 // ---------------------------------------------------------------------------
 // Tool: cs_log_conversation
@@ -416,9 +417,7 @@ I wanted to follow up on your inquiry in case my initial response and follow up 
 
 ${originalResponse}
 
-Talk soon,
-Jamie Alexander
-RUBIES Founder`;
+${signOff('Talk soon,')}`;
 
   const escapedResponse = (originalResponse || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -429,7 +428,7 @@ RUBIES Founder`;
 <blockquote style="border-left: 3px solid #ccc; padding-left: 12px; margin: 16px 0; color: #555;">
 ${escapedResponse}
 </blockquote>
-<p>Talk soon,<br>Jamie Alexander<br>RUBIES Founder</p>`;
+${signOffHtml('Talk soon,')}`;
 
   return { subject: 'Follow up from your RUBIES inquiry', text, html };
 }
@@ -528,11 +527,12 @@ async function processAutoFollowUps({ dry_run = false } = {}) {
 
         // Send follow-up via Gorgias
         const greeting = draft.customer_name ? `Hi ${draft.customer_name}` : 'Hi there';
-        const followUpText = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.\n\nTalk soon,\nJamie Alexander, RUBIES Founder`;
+        const followUpBody = `${greeting}, just checking in! Did you have any questions about the exchange? Happy to help if so.`;
+        const followUpText = `${followUpBody}\n\n${signOff('Talk soon,')}`;
 
         const replyResult = await gorgias.createTicketReply(ticket.gorgias_ticket_id, {
           body_text: followUpText,
-          body_html: `<p>${followUpText.replace(/\n/g, '<br>')}</p>`,
+          body_html: `<p>${followUpBody}</p>${signOffHtml('Talk soon,')}`,
         });
 
         // Create audit draft record. gorgias_message_id NULL, not 0 — a

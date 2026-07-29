@@ -58,6 +58,7 @@ const { initCsConfig, getProductNickname } = require('../../customer-service/lib
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 const { formatPreOrderDate } = require('../../customer-service/lib/preOrderAttrs');
 const { normalizeSize, NUMERIC_TO_LETTER_UPPER, getVariantColor, extractSizeFromSku } = require('../../customer-service/lib/sizeUtils');
+const { SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
 
 const DELAY_ACKNOWLEDGE_DAYS = 3;
 const MAX_ALTERNATIVES = 2;
@@ -66,7 +67,10 @@ const NOTE_PREFIX = '[auto-draft] Unnotified pre-order outreach drafted';
 const SUBJECT = 'ACTION required on your recent RUBIES order';
 // Swap-done drafts require no customer action, so no ACTION-required subject.
 const SUBJECT_SWAPPED = 'Good news about your recent RUBIES order';
-const SIGNOFF = 'Take care,\nJamie Alexander\nRUBIES Founder';
+// These drafts are seeded into the dashboard and sent through the normal draft
+// send path (autoLinkProducts turns the markdown link into a real <a>), so the
+// markdown signature form is the correct one here — same as the advisor's.
+const SIGNOFF = `Take care,\n\n${SIGNATURE_BLOCK_MD}`;
 // Orders older than this with no existing notes get skipped — they predate
 // the auto-drafter and likely need human review rather than fresh outreach.
 const STALENESS_DAYS = 14;

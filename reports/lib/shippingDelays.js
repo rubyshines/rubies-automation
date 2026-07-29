@@ -12,6 +12,7 @@ const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getSendgridClient } = require('../../shared/sendgridClient');
 const { businessDaysSince: sharedBusinessDaysSince } = require('../../shared/businessDays');
 const { refreshOrderDelivery } = require('../../customer-service/lib/tracking/refreshDelivery');
+const { signOff } = require('../../customer-service/lib/signatures');
 
 const SHOPIFY_STORE = 'rubies-active-wear';
 
@@ -156,9 +157,7 @@ If you receive a notice from your local post office or customs authority asking 
 
 ${trackingLink ? `You can track your package here: ${trackingLink}\n\n` : ''}If you have any questions, just reply to this email.
 
-Thanks,
-Jamie Alexander
-RUBIES Founder`;
+${signOff('Thanks,')}`;
 
   try {
     await sgMail.send({

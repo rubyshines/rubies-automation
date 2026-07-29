@@ -52,4 +52,44 @@ describe('signatures', () => {
     assert.match(ADVOCACY_PS.peer_parent, /other families/);
     assert.match(ADVOCACY_PS.peer_self, /others in our community/);
   });
+
+  // Guard for the 2026-07-29 dropped-signature bug. reports/lib/
+  // unnotifiedPreOrder.js carried its own `'Take care,\nJamie Alexander\n
+  // RUBIES Founder'` constant that predated this module, so every pre-order
+  // outreach email went out with the name split over two lines and no site
+  // link — 7 of the 10 outbound drafts in the ten days before it was found.
+  // Two other senders had drifted the same way. The invariant is that every
+  // customer-facing sign-off resolves from this module, so a stale copy can
+  // never drift again.
+  it('no outbound sender hardcodes a signature instead of importing this module', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const root = path.join(__dirname, '..', '..');
+
+    // Senders that compose customer-facing CS email bodies.
+    const senders = [
+      'reports/lib/unnotifiedPreOrder.js',
+      'reports/lib/shippingDelays.js',
+      'customer-service/lib/tools/csAdmin.js',
+      'customer-service/lib/followUp.js',
+      'customer-service/lib/composeOutboundDraft.js',
+      'customer-service/lib/merchandising/preOrderLifecycle.js',
+    ];
+
+    // The name split across lines (plain or <br>) is the stale shape — the
+    // canonical form keeps "Jamie Alexander, RUBIES Founder" on one line.
+    const SPLIT_NAME = /Jamie Alexander(\\n|<br>|\n)\s*RUBIES Founder/;
+
+    for (const rel of senders) {
+      const src = fs.readFileSync(path.join(root, rel), 'utf8');
+      assert.ok(
+        !SPLIT_NAME.test(src),
+        `${rel} hardcodes a split-name signature — import from lib/signatures.js instead`,
+      );
+      assert.ok(
+        /require\(.*signatures'\)/.test(src),
+        `${rel} composes customer email but does not import lib/signatures.js`,
+      );
+    }
+  });
 });
