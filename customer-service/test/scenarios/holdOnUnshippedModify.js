@@ -13,7 +13,14 @@
  * shipping, to swap a specific item (Pink size 10 → AJ Black 12) and be charged
  * the difference. Pre-fix the advisor returned order_modification with NO hold.
  *
- * Asserts: action_type === 'warehouse_hold'.
+ * Asserts: action_type === 'warehouse_hold', and — for the SPECIFIC branch,
+ * where the customer named the product+size — that the reply states the change
+ * as already made and never narrates the hold. The operator runs the staged
+ * change before the reply goes out (Execute & Send), so past tense is true by
+ * the time the customer reads it, and the hold is internal plumbing. Before
+ * 2026-07-29 the prompt's verbatim shape was "I've put a hold on your order so
+ * it won't ship, and I'll swap ... You'll get a confirmation once it's done",
+ * which narrated the plumbing and hedged the change into the future.
  *
  * NOTE ON DRIFT: this is a LIVE regen and the advisor reads live order state.
  * Once the order is modified/fulfilled/cancelled the modify path no longer
@@ -78,10 +85,35 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
   if (actionType === 'warehouse_hold') {
     pass('item-modify on an unshipped order routed to warehouse_hold (order frozen before ship)');
     // The specific-request branch should also stage the change for the operator.
-    if (s.operator_action_summary && /aj/i.test(s.operator_action_summary)) {
+    const isSpecific = !!(s.operator_action_summary && /swap|add|remove|change/i.test(s.operator_action_summary));
+    if (s.operator_action_summary && /aj|swap/i.test(s.operator_action_summary)) {
       pass('operator_action_summary stages the specific swap for the operator');
     } else {
       console.log('  (note) operator_action_summary did not name the swap — fine for vague requests');
+    }
+
+    // Prose shape — only meaningful on the SPECIFIC branch. A vague request has
+    // no change to report yet and legitimately opens with the hold.
+    if (isSpecific) {
+      // The composed customer email lives on _structured (buildCompatibleStructured
+      // attaches it); the outer result only carries the markdown summary.
+      const reply = String(s._composedResponse || '');
+      if (!reply) { fail('advisor returned no composed reply to assert against'); }
+      if (/\b(I've|I have)\s+(swapped|added|removed|changed|updated)/i.test(reply)) {
+        pass('states the change as already made (past tense)');
+      } else {
+        fail(`specific-branch reply did not state the change in past tense: ${JSON.stringify(reply.slice(0, 200))}`);
+      }
+      if (/\bhold\b/i.test(reply)) {
+        fail(`specific-branch reply narrates the internal hold to the customer: ${JSON.stringify(reply.slice(0, 200))}`);
+      } else {
+        pass('does not narrate the internal hold');
+      }
+      if (/you'll get a confirmation|once it's done|will be confirmed/i.test(reply)) {
+        fail(`specific-branch reply promises a later confirmation instead of reporting a completed change: ${JSON.stringify(reply.slice(0, 200))}`);
+      } else {
+        pass('no redundant "confirmation to follow" promise');
+      }
     }
   } else if (actionType === 'order_modification' || actionType === 'cancellation' || actionType === null) {
     skip(`advisor returned ${JSON.stringify(actionType)} — anchor order has likely drifted (already modified/fulfilled/closed). Re-run against a fresh unshipped-modify ticket: node customer-service/test/scenarios/holdOnUnshippedModify.js <ticketId>`);
