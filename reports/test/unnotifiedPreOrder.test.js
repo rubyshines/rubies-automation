@@ -8,7 +8,9 @@ const {
   hasPreOrderAttr,
   filterToNotReadyToShip,
   reclassifyWithWarehouseStock,
-  pastNextBusinessDay5pmPT,
+  isPreOrderByTags,
+  olderThanMinutes,
+  MIN_ORDER_AGE_MINUTES,
 } = require('../lib/unnotifiedPreOrder');
 
 // Build a candidate in the shape detectUnnotifiedPreOrders produces.
@@ -54,17 +56,48 @@ test('filterToNotReadyToShip keeps only not-ready orders from a mixed batch', ()
   assert.equal(out[0].order.order_number, '31169');
 });
 
+test('filterToNotReadyToShip drops an order Warehance reports as already fulfilled', () => {
+  // The mirror's open/closed state drifts, so a shipped order can still reach
+  // here looking unfulfilled. Warehance reports ready_to_ship false for a
+  // fulfilled order too, so the reason codes are what separate them.
+  const cands = [candidate('A', [{ sku: 'GAF-BLK-S' }], '31169')];
+  const out = filterToNotReadyToShip(cands, new Map([['31169', {
+    ready_to_ship: false,
+    not_ready_to_ship_types: { order_is_already_fulfilled: true },
+  }]]));
+  assert.equal(out.length, 0);
+});
+
+test('filterToNotReadyToShip drops a cancelled order', () => {
+  const cands = [candidate('A', [{ sku: 'GAF-BLK-S' }], '31169')];
+  const out = filterToNotReadyToShip(cands, new Map([['31169', {
+    ready_to_ship: false, cancelled: true,
+  }]]));
+  assert.equal(out.length, 0);
+});
+
+test('filterToNotReadyToShip keeps a genuinely unallocated order', () => {
+  const cands = [candidate('A', [{ sku: 'GAF-BLK-S' }], '31169')];
+  const out = filterToNotReadyToShip(cands, new Map([['31169', {
+    ready_to_ship: false,
+    not_ready_to_ship_types: { has_unallocated_products: true },
+  }]]));
+  assert.equal(out.length, 1);
+});
+
 // ---------------------------------------------------------------------------
 // reclassifyWithWarehouseStock — per-item warehouse truth over Shopify signal
 // ---------------------------------------------------------------------------
 
-const stock = entries => new Map(entries.map(([sku, on_hand]) => [sku, { on_hand }]));
+// available = on_hand - allocated; backordered = demand the warehouse can't meet.
+const stock = entries => new Map(entries.map(([sku, on_hand, allocated = 0, backordered = 0]) =>
+  [sku, { on_hand, allocated, available: on_hand - allocated, backordered }]));
 
-test('reclassifyWithWarehouseStock — order #32601 regression: allocated leak drops the whole order', () => {
+test('reclassifyWithWarehouseStock — order #32601 regression: leak allocated to THIS order drops the whole order', () => {
   // Sky flagged as leak from Shopify available=0, but its unit is on hand at
-  // the warehouse allocated to this order. The genuine backorders (Sassys)
-  // carry Pre-order attrs so they're oosOther, not leaks. Result: no leaks
-  // left → null → no outreach.
+  // the warehouse allocated to this order — so it is not backordered. The
+  // genuine backorders (Sassys) carry Pre-order attrs so they're oosOther, not
+  // leaks. Result: no leaks left → null → no outreach.
   const classification = {
     case: 'C',
     leaks: [{ sku: 'SKY2-BLK-M', quantity: 1 }],
@@ -72,9 +105,26 @@ test('reclassifyWithWarehouseStock — order #32601 regression: allocated leak d
     oosOther: [{ sku: 'HLA-BLK-S', quantity: 1 }, { sku: 'HLA-BLK-M', quantity: 1 }],
   };
   const out = reclassifyWithWarehouseStock(classification, stock([
-    ['SKY2-BLK-M', 1], ['SHS-BLK-M', 23], ['HLA-BLK-S', 0], ['HLA-BLK-M', 0],
+    ['SKY2-BLK-M', 1, 1, 0], ['SHS-BLK-M', 23, 0, 0], ['HLA-BLK-S', 0, 0, 2], ['HLA-BLK-M', 0, 0, 2],
   ]));
   assert.equal(out, null);
+});
+
+test('reclassifyWithWarehouseStock — order #32715 regression: the on-hand unit is allocated to ANOTHER order', () => {
+  // on_hand 1 covers the line quantity, so the old `on_hand < qty` test cleared
+  // this and no outreach was ever drafted. But that unit is spoken for by a
+  // different order (allocated 1, available 0) and this order's demand is
+  // backordered — a genuine leak that must reach the customer.
+  const classification = {
+    case: 'A',
+    leaks: [{ sku: 'SKY2-BLK-M', quantity: 1 }],
+    inStockOther: [],
+    oosOther: [],
+  };
+  const out = reclassifyWithWarehouseStock(classification, stock([['SKY2-BLK-M', 1, 1, 1]]));
+  assert.equal(out.case, 'A');
+  assert.equal(out.leaks.length, 1);
+  assert.equal(out.leaks[0].sku, 'SKY2-BLK-M');
 });
 
 test('reclassifyWithWarehouseStock — genuine leak survives, warehouse-covered other recomputes C to B', () => {
@@ -84,7 +134,7 @@ test('reclassifyWithWarehouseStock — genuine leak survives, warehouse-covered 
     inStockOther: [],
     oosOther: [{ sku: 'OTHER-1', quantity: 1 }],
   };
-  const out = reclassifyWithWarehouseStock(classification, stock([['LEAK-1', 0], ['OTHER-1', 3]]));
+  const out = reclassifyWithWarehouseStock(classification, stock([['LEAK-1', 0, 0, 1], ['OTHER-1', 3, 0, 0]]));
   assert.equal(out.case, 'B');
   assert.equal(out.leaks.length, 1);
   assert.equal(out.oosOther.length, 0);
@@ -105,10 +155,18 @@ test('reclassifyWithWarehouseStock — null warehouse record (SKU not found) kee
   assert.equal(out.case, 'A');
 });
 
-test('reclassifyWithWarehouseStock — on_hand must cover the full line quantity', () => {
+test('reclassifyWithWarehouseStock — available must cover the full line quantity', () => {
   const classification = { case: 'A', leaks: [{ sku: 'X-1', quantity: 2 }], inStockOther: [], oosOther: [] };
-  const out = reclassifyWithWarehouseStock(classification, stock([['X-1', 1]]));
-  assert.equal(out.case, 'A', '1 on hand cannot cover qty 2 — still a genuine leak');
+  const out = reclassifyWithWarehouseStock(classification, stock([['X-1', 1, 0, 1]]));
+  assert.equal(out.case, 'A', '1 available cannot cover qty 2 — still a genuine leak');
+});
+
+test('reclassifyWithWarehouseStock — nothing available but nothing backordered is not a leak', () => {
+  // Warehance records backordered demand it cannot meet. No backorder means
+  // this order is not the one going short, so we must not blame this item.
+  const classification = { case: 'A', leaks: [{ sku: 'X-1', quantity: 1 }], inStockOther: [], oosOther: [] };
+  const out = reclassifyWithWarehouseStock(classification, stock([['X-1', 4, 4, 0]]));
+  assert.equal(out, null);
 });
 
 test('reclassifyWithWarehouseStock — all leaks covered with an in-stock other returns null too', () => {
@@ -118,33 +176,41 @@ test('reclassifyWithWarehouseStock — all leaks covered with an in-stock other 
     inStockOther: [{ sku: 'IN-1', quantity: 1 }],
     oosOther: [],
   };
-  const out = reclassifyWithWarehouseStock(classification, stock([['ALLOC-1', 5], ['IN-1', 9]]));
+  const out = reclassifyWithWarehouseStock(classification, stock([['ALLOC-1', 5, 0, 0], ['IN-1', 9, 0, 0]]));
   assert.equal(out, null);
 });
 
-test('pastNextBusinessDay5pmPT — a Monday order is past deadline after Tuesday 5pm PT', () => {
-  // Monday 2026-06-01 at 9am PT → deadline is Tuesday 2026-06-02 at 5pm PT.
-  const orderDate = '2026-06-01T16:00:00Z'; // 9am PT (UTC-7 in June)
-  // Tuesday 5pm PT = Tuesday 2026-06-02T17:00-07:00 = 2026-06-03T00:00Z
-  // So just before deadline (June 2 at 4:59pm PT): should be false
-  // Just after deadline (June 2 at 5:01pm PT): should be true
-  // We can't mock Date.now(), so just verify the function parses correctly
-  // by checking a very old order is always past deadline.
-  const veryOldOrder = '2026-01-01T00:00:00Z';
-  assert.equal(pastNextBusinessDay5pmPT(veryOldOrder), true, 'old order always past deadline');
+// ---------------------------------------------------------------------------
+// Candidate gates — order age and the Shopify pre-order tag
+// ---------------------------------------------------------------------------
+
+test('olderThanMinutes — an order placed now has not aged past the gate', () => {
+  assert.equal(olderThanMinutes(new Date().toISOString(), MIN_ORDER_AGE_MINUTES), false);
 });
 
-test('pastNextBusinessDay5pmPT — a Friday order skips weekend (deadline Monday 5pm PT)', () => {
-  // If placed on a Friday, next business day is Monday (skip Sat + Sun).
-  // Jan 2 2026 is a Friday; its Monday deadline was Jan 5 2026 5pm PT — long past.
-  const fridayOrder = '2026-01-02T18:00:00Z'; // Friday Jan 2 at 10am PT (PST, UTC-8)
-  assert.equal(pastNextBusinessDay5pmPT(fridayOrder), true, 'Friday order past Monday deadline');
+test('olderThanMinutes — an order placed two hours ago is past a 60 minute gate', () => {
+  const twoHoursAgo = new Date(Date.now() - 120 * 60 * 1000).toISOString();
+  assert.equal(olderThanMinutes(twoHoursAgo, MIN_ORDER_AGE_MINUTES), true);
 });
 
-test('pastNextBusinessDay5pmPT — a fresh order placed today is not yet past deadline', () => {
-  // An order placed right now will have a deadline of tomorrow (next biz day) 5pm PT.
-  // So it should return false.
-  assert.equal(pastNextBusinessDay5pmPT(new Date().toISOString()), false, 'order placed now is not past deadline');
+test('olderThanMinutes — exactly at the boundary counts as aged', () => {
+  const exactly = new Date(Date.now() - MIN_ORDER_AGE_MINUTES * 60 * 1000).toISOString();
+  assert.equal(olderThanMinutes(exactly, MIN_ORDER_AGE_MINUTES), true);
+});
+
+test('olderThanMinutes — an unparseable date never passes the gate', () => {
+  assert.equal(olderThanMinutes('not a date', MIN_ORDER_AGE_MINUTES), false);
+  assert.equal(olderThanMinutes(null, MIN_ORDER_AGE_MINUTES), false);
+});
+
+test('isPreOrderByTags matches the Shopify pre-order tag in either spelling', () => {
+  assert.equal(isPreOrderByTags(['Pre-Order']), true);
+  assert.equal(isPreOrderByTags(['preorder']), true);
+  assert.equal(isPreOrderByTags(['CS_AIOD', 'pre-order-july']), true);
+  assert.equal(isPreOrderByTags(['CS_AIOD', 'RUBIES-30JUNSY5XLASYNE2025DC']), false);
+  assert.equal(isPreOrderByTags([]), false);
+  assert.equal(isPreOrderByTags(null), false);
+  assert.equal(isPreOrderByTags('pre-order'), false, 'a bare string is not the mirror shape');
 });
 
 test('formatPreOrderDate buckets days into beginning/middle/end of month', () => {

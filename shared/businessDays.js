@@ -183,6 +183,33 @@ function pastNextBusinessDay5pmPT(orderDateStr) {
   return Date.now() > deadline.getTime();
 }
 
+/**
+ * How long an order must sit before "the warehouse still hasn't allocated it"
+ * means a genuine stock shortage rather than normal ingestion + allocation lag.
+ *
+ * Measured 2026-07-29 across all 115 open Warehance orders: the youngest was
+ * already ready_to_ship at 16 minutes, and not one order was unallocated while
+ * the warehouse held stock for it. Shared policy — the unnotified-pre-order
+ * drafter uses it to decide when to write to a customer, and the daily order
+ * report uses it to decide when an awaiting-stock order stops being "too early
+ * to worry about" and starts being something the automation should already
+ * have handled. They must not drift apart.
+ */
+const UNALLOCATED_SHORTAGE_MINUTES = 60;
+
+/**
+ * Whether `createdAt` is at least `minutes` old. Fails closed on a missing or
+ * unparseable date — nothing downstream should act on an order whose age we
+ * can't establish. Note new Date(null) is epoch 0, not NaN, so nullish has to
+ * be rejected before the finite check.
+ */
+function olderThanMinutes(createdAt, minutes) {
+  if (createdAt === null || createdAt === undefined) return false;
+  const t = new Date(createdAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t >= minutes * 60 * 1000;
+}
+
 module.exports = {
   isBusinessDay,
   businessDaysBetween,
@@ -190,4 +217,6 @@ module.exports = {
   addBusinessDays,
   getUSHolidays,
   pastNextBusinessDay5pmPT,
+  olderThanMinutes,
+  UNALLOCATED_SHORTAGE_MINUTES,
 };

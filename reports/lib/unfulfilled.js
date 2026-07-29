@@ -9,7 +9,11 @@
  */
 
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
-const { businessDaysSince: sharedBusinessDaysSince, pastNextBusinessDay5pmPT } = require('../../shared/businessDays');
+const {
+  businessDaysSince: sharedBusinessDaysSince,
+  olderThanMinutes,
+  UNALLOCATED_SHORTAGE_MINUTES,
+} = require('../../shared/businessDays');
 const { fetchUnfulfilledOrders, getHoldReasons, warehanceOrderUrl, cancelOrder } = require('./warehanceClient');
 const { resolveAddressHolds } = require('./addressHoldResolver');
 
@@ -140,6 +144,20 @@ function classifyPreOrder(order, propsMap) {
 // Phase 3: Inventory check
 // ---------------------------------------------------------------------------
 
+// Both sides of this lookup have to agree on ID shape, and they didn't:
+// `inventory_snapshots.variant_id` stores the full `gid://shopify/ProductVariant/<n>`,
+// but the query stripped the ids down to the bare number first, so `.in()`
+// matched nothing and the map came back empty on every run. The out-of-stock
+// branch in classifyOrder and the whole "Stock Issues" email section are
+// downstream of this map, so both were silently dead — orders waiting on stock
+// fell through to Warehance's raw not_ready_to_ship_types labels instead of
+// being called out as awaiting_stock. Query on both shapes (cheap, and it
+// survives a future change to how ids are stored) and key the map on the bare
+// number, which is the form every caller looks up with.
+function bareVariantId(v) {
+  return String(v).replace(/.*\//, '');
+}
+
 async function getInventoryMap(supabase, variantIds) {
   if (!variantIds.length) return new Map();
 
@@ -152,19 +170,19 @@ async function getInventoryMap(supabase, variantIds) {
   if (!latestRow?.length) return new Map();
   const latestDate = latestRow[0].date;
 
-  const cleanIds = variantIds.map(v => String(v).replace(/.*\//, ''));
+  const lookupIds = [...new Set(variantIds.flatMap(v => [String(v), bareVariantId(v)]))];
 
   const { data, error } = await supabase
     .from('inventory_snapshots')
     .select('variant_id, inventory_quantity, sku, product_handle')
     .eq('date', latestDate)
-    .in('variant_id', cleanIds);
+    .in('variant_id', lookupIds);
 
   if (error) return new Map();
 
   const map = new Map();
   for (const row of (data || [])) {
-    map.set(String(row.variant_id), row);
+    map.set(bareVariantId(row.variant_id), row);
   }
   return { map, snapshotDate: latestDate };
 }
@@ -241,11 +259,15 @@ function classifyOrder(order, whOrder, inventoryInfo, bd) {
     }
   }
   if (oosItems.length > 0) {
-    // Stay quiet until the next-business-day 5pm PT window passes — the
-    // unnotified-pre-order drafter runs in that window and will auto-create a
-    // draft. Only escalate to urgent after that deadline so we don't surface
-    // noise before the automation has had its chance.
-    const severity = pastNextBusinessDay5pmPT(order.created_at) ? 'urgent' : 'normal';
+    // Stay quiet until the unnotified-pre-order drafter has had its chance —
+    // it sweeps once an order is UNALLOCATED_SHORTAGE_MINUTES old and, when it
+    // drafts, leaves an author='auto' note that buckets the order into
+    // "Drafted in CS Advisor" instead of here. So an awaiting-stock order that
+    // is still bare after that window is one the automation did NOT pick up,
+    // which is exactly what deserves attention. This used to wait for
+    // next-business-day 5pm PT, matching the drafter's old once-daily timing;
+    // the two gates share a constant now so they cannot drift apart.
+    const severity = olderThanMinutes(order.created_at, UNALLOCATED_SHORTAGE_MINUTES) ? 'urgent' : 'normal';
     return { reason: 'awaiting_stock', severity, detail: oosItems.join('; ') };
   }
 
@@ -501,4 +523,4 @@ async function checkUnfulfilledOrders() {
   return { results, summary, errors, stockIssues };
 }
 
-module.exports = { checkUnfulfilledOrders };
+module.exports = { checkUnfulfilledOrders, getInventoryMap, bareVariantId, classifyOrder };
