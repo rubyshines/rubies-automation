@@ -21,6 +21,21 @@
  *       size options with deltas or a measurement ask
  *   (c) "a little tight around the waist"   → high confidence → confirm the
  *       adjacent size (1X); NO two-size menu, NO measurement ask, NO template
+ *   (d) "fits fine but doesn't shape, I need more compression" → template
+ *       PRESENT + measurement ask, and NO stronger-product pitch
+ *
+ * (d) added 2026-07-30 for the third fit-status state, which the original rule
+ * left unspecified. A customer who says the fit is FINE gives no direction to
+ * size toward, so the sizing move is unavailable — but the "NO fit direction
+ * given" clause read as excluding them, and the advisor went product-shopping
+ * instead (live ticket #110340700: pitched the out-of-stock Naomi gaff and
+ * offered a refund; Jamie hand-wrote the template). Grounding over 808
+ * advisor-era tickets found this is the ONLY miss in four months and confirmed
+ * the neighbouring cases are handled correctly — in particular #107899064,
+ * where the customer said "loose around waist and hip AND it didn't compress",
+ * Jamie deleted the advisor's shaping explanation and sent a plain size-down
+ * with deltas. So a stated loose/tight direction must keep winning over the
+ * compression wording, which is why (b) and (c) are load-bearing here.
  *
  * Order-independent and side-effect-free: neither message names a target
  * size, so the advisor answers with the template or sizing help rather than
@@ -50,6 +65,15 @@ The Charlie underwear I ordered is too tight around the waist. What can we do?`;
 const LITTLE_TIGHT_MSG = `Hi,
 
 The Charlie underwear I got is a little tight around the waist. Could we do something about that?`;
+
+// (d) Fit reported as FINE + shaping questioned + customer names the fix they
+// think they need. No fit direction to size toward, so the template is the move.
+const FIT_FINE_SHAPING_MSG = `Hi Jamie,
+
+The waist fits good but it doesn't shape the way I was expecting. I think I need something with more compression. Thanks so much for your help.`;
+
+// A stronger-shaping product pitched before the fit is verified.
+const PRODUCT_PITCH_PATTERNS = [/\bnaomi\b/i, /\bgaff\b/i];
 
 // Distinctive phrases from the shaping-expectations template.
 const TEMPLATE_PATTERNS = [
@@ -153,6 +177,31 @@ function templateHits(draft) {
     pass('(c) no measurement ask ("a little tight" is clear enough)');
   else
     fail('(c) asked for a measurement on a high-confidence qualified complaint');
+
+  console.log('\n=== (d) "fits fine but doesn\'t shape / need more compression" → template, no product pitch ===\n');
+  const rd = await aiAdvisor({ customer_email: CUSTOMER_EMAIL, issue_description: FIT_FINE_SHAPING_MSG });
+  const dd = (rd?._structured?._composedResponse || '').trim();
+  console.log('draft: ' + dd.replace(/\n+/g, ' ').slice(0, 400) + '\n');
+
+  if (!dd) { fail('(d) no draft produced'); return; }
+
+  const hitsD = templateHits(dd);
+  if (hitsD.length >= 2)
+    pass(`(d) shaping-expectations explanation present (matched: ${hitsD.join(', ')})`);
+  else
+    fail(`(d) "fit is fine but it doesn't shape" did not get the template (matched only: ${hitsD.join(', ') || 'none'})`);
+
+  // "It fits" is a comfort report, not a measurement — still verify the size.
+  if (/measurement|measure\b/i.test(dd))
+    pass('(d) still asks for the measurements despite the customer saying it fits');
+  else
+    fail('(d) took "the waist fits good" as verified sizing and skipped the measurement ask');
+
+  const pitched = PRODUCT_PITCH_PATTERNS.find(re => re.test(dd));
+  if (!pitched)
+    pass('(d) no stronger-product pitch before the fit is verified');
+  else
+    fail(`(d) pitched a stronger-shaping product before verifying the size (matched: ${pitched})`);
 
   console.log('\n' + (process.exitCode === 1 ? 'FAILED — see above' : 'PASSED'));
 })().catch(e => { console.error(e); process.exit(1); });
