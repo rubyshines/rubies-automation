@@ -4290,90 +4290,16 @@ function parseHandoffTemplate(text) {
   return Object.keys(result).length ? result : null;
 }
 
-/** Check if a customer message is the Gorgias order form output */
-function isOrderFormOutput(text) {
-  if (!text) return false;
-  const lower = text.toLowerCase();
-  // Plural ("selected items:") and singular ("selected item:") variants both occur
-  return (lower.includes('order number:') && /selected items?:/.test(lower))
-    || (/selected items?:/.test(lower) && lower.includes('total:'))
-    || /^#\d+\s*[-–]\s*\$[\d,.]+\s*[-–]/.test(text.trim());
-}
-
-/**
- * Help-center contact form template — single customer message with a `-----` divider
- * separating the customer's free-text question from a metadata block (Order: / Item names: / etc.).
- * Distinct from the chat order-form output (which is its own message).
- */
-function isHelpCenterForm(text) {
-  if (!text) return false;
-  if (!/\n\s*-{5,}\s*\n/.test(text)) return false;
-  return /(?:^|\n)\s*(?:Order|Order number|Item names|Order placed|Shipping address)\s*:/i.test(text);
-}
-
-/** Split a help-center form body into { question, metadata } strings. */
-function splitHelpCenterForm(text) {
-  const m = text.match(/\n\s*-{5,}\s*\n/);
-  if (!m) return { question: text.trim(), metadata: '' };
-  const before = text.slice(0, m.index).trim();
-  const after = text.slice(m.index + m[0].length).trim();
-  const labelRe = /(?:^|\n)\s*(?:Order|Order number|Item names|Order placed|Shipping address|Tracking number|Fulfillment|Total)\s*:/i;
-  const beforeIsMeta = labelRe.test(before);
-  const afterIsMeta = labelRe.test(after);
-  if (afterIsMeta && !beforeIsMeta) return { question: before, metadata: after };
-  if (beforeIsMeta && !afterIsMeta) return { question: after, metadata: before };
-  // Both or neither look like metadata — default to "metadata is on the longer side"
-  return before.length >= after.length ? { question: after, metadata: before } : { question: before, metadata: after };
-}
-
-const PRODUCT_NICKNAMES = {
-  'CHARLIE': 'Charlie', 'AJ': 'AJ', 'SERENA': 'Serena', 'RUBY': 'Ruby',
-  'BROOKE': 'Brooke', 'AVA': 'Ava', 'CHEEKY': 'Cheeky', 'SASSY': 'Sassy',
-  'FLO': 'Flo', 'BIKINI': 'Bikini', 'SKY': 'Sky', 'STELLA': 'Stella',
-  'MIA': 'Mia', 'NAOMI': 'Naomi',
-};
-
-function pickNickname(rawName) {
-  const upper = rawName.toUpperCase();
-  for (const [key, nick] of Object.entries(PRODUCT_NICKNAMES)) {
-    if (upper.includes(key)) return nick;
-  }
-  return rawName;
-}
-
-/** Parse "PRODUCT - VARIANT" into { name, variant } using nicknames. */
-function parseProductVariant(raw, qty = '1') {
-  const rest = raw.trim();
-  const variantMatch = rest.match(/[-–]\s*([^-–]+)$/);
-  const variant = variantMatch ? variantMatch[1].trim() : '';
-  return { qty, name: pickNickname(rest), variant };
-}
-
-/**
- * Parse order form text into compact item lines.
- * Handles two templates:
- *  - Chat order form: "1x THE BROOKE SHAPING BRA - Sandstone / 2X" lines
- *  - Help-center form: "Item names: A - X, B - Y, C - Z" comma-separated
- *  - Help-center return form: "Items requested for return: 1x A - X"
- */
-function parseOrderFormItems(text) {
-  if (!text) return [];
-
-  // Help-center "Item names:" comma-separated list (no qty prefix)
-  const itemNamesMatch = text.match(/Item names?\s*:\s*([\s\S]*?)(?=\n\s*[A-Z][^:\n]*:|$)/i);
-  if (itemNamesMatch && !/\d+x\s+/i.test(itemNamesMatch[1])) {
-    return itemNamesMatch[1].trim().split(/,\s*/).filter(Boolean).map(p => parseProductVariant(p));
-  }
-
-  // "Items requested for return: 1x ... 1x ..." or chat "1x A - X" lines
-  const itemLines = text.match(/\d+x\s+[^\n]+/gi) || [];
-  return itemLines.map(line => {
-    const qtyMatch = line.match(/^(\d+)x\s+/i);
-    const qty = qtyMatch ? qtyMatch[1] : '1';
-    const rest = line.replace(/^\d+x\s+/i, '').trim();
-    return parseProductVariant(rest, qty);
-  });
-}
+// Intake-card text parsers live in intakeParse.js so they can be unit tested
+// (app.js is browser-only and has no test harness). Loaded as a plain script
+// before this one; see index.html.
+const {
+  isOrderFormOutput,
+  isHelpCenterForm,
+  splitHelpCenterForm,
+  splitContactFormSubject,
+  parseOrderFormItems,
+} = window.intakeParse;
 
 /**
  * Render a unified intake summary card.
@@ -4382,12 +4308,13 @@ function parseOrderFormItems(text) {
  *
  * @param {Object} opts
  * @param {'chat'|'email'} opts.channel - Intake channel
+ * @param {string} opts.subject - Contact-form subject line, if the message had one
  * @param {string[]} opts.customerWords - Verbatim customer messages
  * @param {Array} opts.orderItems - Parsed order form items [{qty, name, variant}]
  * @param {string} opts.timestamp - ISO timestamp of first customer message
  */
-function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attachments, intent }) {
-  if (!customerWords.length && !orderItems.length && !(attachments || []).length) return '';
+function renderIntakeCard({ channel, subject, customerWords, orderItems, timestamp, attachments, intent }) {
+  if (!customerWords.length && !orderItems.length && !(attachments || []).length && !subject) return '';
 
   const channelLabel = channel === 'chat' ? 'via chat' : channel === 'facebook-messenger' ? 'via Facebook' : 'via email';
   const time = timestamp ? timeAgo(timestamp, 'long') : '';
@@ -4402,6 +4329,12 @@ function renderIntakeCard({ channel, customerWords, orderItems, timestamp, attac
     ${intentLabel ? `<span class="intake-intent intake-intent--${intent}">${intentLabel}</span>` : ''}
     ${time ? `<span class="intake-time">${time}</span>` : ''}
   </div>`;
+
+  // Contact-form subject. Usually a category chip ("Product Question"), but
+  // customers type their own — and sometimes the whole request lives here.
+  if (subject) {
+    html += `<div class="intake-subject">${esc(subject)}</div>`;
+  }
 
   // Customer's words
   if (customerWords.length) {
@@ -4743,6 +4676,7 @@ function renderConversation(messages, ticket) {
       const firstMsg = messages[0];
       const rawBody = (firstMsg.body || '').trim();
       let body = rawBody;
+      let subject = '';
       let orderItems = [];
       if (isHelpCenterForm(rawBody)) {
         // Help-center / chat form: "I'd like to edit my order ----- Order: #... Item names: ...".
@@ -4753,17 +4687,27 @@ function renderConversation(messages, ticket) {
         const split = splitHelpCenterForm(rawBody);
         body = split.question;
         orderItems = parseOrderFormItems(split.metadata);
-      } else {
-        // Contact form boilerplate header (e.g. "Product Question\n---\nActual message")
-        body = rawBody.replace(/^[^\n]+\n-{3,}\n/s, '').trim();
+      } else if (!firstMsg.body_html) {
+        // Chat-widget/contact-form capture: "<subject>\n-----\n<message>".
+        // This used to blind-strip the first line as boilerplate, which is right
+        // when the subject is a category chip ("Product Question") and WRONG
+        // whenever the customer typed their own — ticket 2890 asked about UK
+        // delivery in the subject and the operator was shown only the body, a
+        // bare "No". Render both instead of guessing which half is real.
+        // Only when there's no body_html: the html is the full raw message, so
+        // rendering the subject alongside it would duplicate the subject line.
+        const split = splitContactFormSubject(rawBody);
+        subject = split.subject;
+        body = split.body;
       }
-      if (body || orderItems.length) {
+      if (body || subject || orderItems.length) {
         const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
         const cleaned = cleanMessageBody(rawHtml);
         const processed = collapseQuotedContent(cleaned);
         const intent = extractFormIntent([firstMsg]);
         parts.push(renderIntakeCard({
           channel: firstChannel,
+          subject,
           customerWords: body ? [processed] : [],
           orderItems,
           intent,
