@@ -38,7 +38,7 @@ require.cache[require.resolve('../../shared/supabaseClient')] = {
   },
 };
 
-const { prescribeDonationRouting, PROOF_ASK_TEXT } = require('../lib/donationRouting');
+const { prescribeDonationRouting, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR } = require('../lib/donationRouting');
 
 const intakeOf = (n) => ({ items: Array.from({ length: n }, () => ({ issue: 'close_fit_tight' })) });
 const ctx = (extra = {}) => ({
@@ -53,8 +53,38 @@ test('single item + includeProofAsk routes to a partner with the ask', async () 
   const r = await prescribeDonationRouting(intakeOf(1), ctx({ includeProofAsk: true }));
   assert.strictEqual(r.type, 'partner');
   assert.strictEqual(r.proof_ask, true);
+  assert.ok(r.response_text.includes(PROOF_ASK_TEXT_SINGULAR));
+  assert.ok(r.response_text.indexOf(PROOF_ASK_TEXT_SINGULAR) > r.response_text.indexOf('Please wash'));
+});
+
+// One garment coming back reads wrong in the plural copy. Partner routing is
+// normally multi-item, but a single item lands here via the proof ask or when
+// the customer accepts the partner offer.
+test('single-item partner text is singular throughout', async () => {
+  partnersResult = PARTNERS;
+  const r = await prescribeDonationRouting(intakeOf(1), ctx({ includeProofAsk: true }));
+  assert.ok(r.response_text.includes('can you please send the item you are returning to:'));
+  assert.ok(!r.response_text.includes('the items you are returning'));
+  assert.ok(r.response_text.includes('Please wash the item if it has been worn or tried on before it is returned.'));
+  // The worn-vs-new-with-tags distinction survives the singular rewrite.
+  assert.ok(r.response_text.includes('If it is still new with tags it can be sent as is.'));
+  assert.ok(!r.response_text.includes(PROOF_ASK_TEXT));
+});
+
+test('single item + customerRequestedPartner is singular too', async () => {
+  partnersResult = PARTNERS;
+  const r = await prescribeDonationRouting(intakeOf(1), ctx({ customerRequestedPartner: true }));
+  assert.strictEqual(r.type, 'partner');
+  assert.ok(r.response_text.includes('can you please send the item you are returning to:'));
+  assert.ok(!r.response_text.includes('the items you are returning'));
+});
+
+test('multi-item partner text keeps the plural copy', async () => {
+  partnersResult = PARTNERS;
+  const r = await prescribeDonationRouting(intakeOf(3), ctx({ includeProofAsk: true }));
+  assert.ok(r.response_text.includes('can you please send the items you are returning to:'));
+  assert.ok(r.response_text.includes('Please wash any items that have been worn or tried on before they are returned.'));
   assert.ok(r.response_text.includes(PROOF_ASK_TEXT));
-  assert.ok(r.response_text.indexOf(PROOF_ASK_TEXT) > r.response_text.indexOf('Please wash'));
 });
 
 test('single item without proof ask keeps the local_single default', async () => {

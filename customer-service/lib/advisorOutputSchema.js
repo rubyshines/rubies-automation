@@ -114,7 +114,10 @@ const ADVISOR_OUTPUT_SCHEMA = {
         additionalProperties: false,
       },
     },
-    donation_needed: { type: 'boolean' },
+    donation_needed: {
+      type: 'boolean',
+      description: 'True only when THIS message gives donation info (a just-created exchange, a just-processed refund, or a direct answer to where-do-I-send-it-back). False while you are still asking the customer for anything — the donation section belongs in the message that confirms the order, not the one that asks a question.',
+    },
     customer_name: { anyOf: [{ type: 'string' }, { type: 'null' }] },
     forwarded_sender_email: {
       anyOf: [{ type: 'string' }, { type: 'null' }],
@@ -264,7 +267,7 @@ const LEGACY_STRUCTURED_TEMPLATE = `After handling the conversation, you MUST en
   "customer_profile_update": "null OR { new_email, new_first_name, new_last_name } — REQUIRED when action_type is customer_profile_update.",
   "discount_code": "null OR { mode: 'percent'|'free_product', percent_off?: number, product_query?: string } — from the advisor path always { mode: 'percent', percent_off: 10 }.",
   "items": [{ "product": "...", "current_size": "...", "resolved_size": "... or null", "resolved_color": "... or null", "resolved_product": "... or null", "issue": "close_fit_tight|close_fit_loose|doesnt_fit|way_off|defect|...", "state": "CONFIRMED|AWAITING_DECISION|NEEDS_MEASUREMENT|REFUND_CONFIRMED|ROUTE_TO_HUMAN" }],
-  "donation_needed": true,
+  "donation_needed": "true only when THIS message gives donation info (a just-created exchange, a just-processed refund, or a direct answer to where-do-I-send-it-back); false while you are still asking the customer for anything",
   "customer_name": "name or null",
   "customer_pronouns": "they/them|she/her|he/him",
   "buying_for": "self|third_party",

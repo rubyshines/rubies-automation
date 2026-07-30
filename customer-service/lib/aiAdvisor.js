@@ -393,7 +393,7 @@ async function executeToolCall(toolName, toolInput) {
         type: routingType,
         response_text: responseText,
         ...(responseText ? {
-          instruction: 'Paste response_text into your reply word-for-word as the donation section — every line, including the "can you please send the items you are returning to:" ask, the full address block, and the appreciation line. Do not paraphrase, shorten, reorder, or soften any of it. When a partner address is given, sending the items there is the standard next step we ask of every customer: never present it as optional ("you\'re welcome to", "if you\'d like") and never write "no need to send anything back" — they do send the items, just to the partner org instead of us.',
+          instruction: 'Paste response_text into your reply word-for-word as the donation section — every line, including the "can you please send the item(s) you are returning to:" ask, the full address block, and the appreciation line. Do not paraphrase, shorten, reorder, or soften any of it, and keep its singular/plural exactly as written (the tool already matches the wording to how many items are coming back). When a partner address is given, sending the item(s) there is the standard next step we ask of every customer: never present it as optional ("you\'re welcome to", "if you\'d like") and never write "no need to send anything back" — they do send the item(s), just to the partner org instead of us.',
         } : {}),
         audit: result.audit,
       };
@@ -930,15 +930,16 @@ Before confirming a size exchange, call compare_products with the product name a
 The key question is: has the customer received REAL sizing help from you (Jamie/agent) in this conversation? A "real" exchange offer means you suggested a specific size, mentioned fabric delta, or asked for measurements. The Gorgias bot's generic "would you like to exchange?" does NOT count.
 
 - **Process refund immediately** if: (a) you already offered real sizing help and they still want a refund, (b) safety situation, (c) customer explicitly says "just a refund" or "no exchange" after real help, (d) product fundamentally doesn't work for them (not a sizing issue)
-- **Every time you process a refund, also decide the flags field** (see "Refund-pattern flag" below): first-time buyer who declined/preempted sizing help → emit the flag; anyone else → flags: []. This decision is part of the refund flow, not optional.
+- **Every time you process a refund, also decide the flags field** (see "Refund-pattern flag" below): a first-time buyer sending back the WHOLE order after declining/preempting sizing help → emit the flag; anyone else, including anyone keeping part of the order → flags: []. This decision is part of the refund flow, not optional.
 - **Nudge first** if: the customer has only been through the bot's intake flow. Even if they said "return" to the bot, YOUR first response should offer real sizing help based on what they told you (e.g. "too small" → suggest next size up with delta)
 - When processing a refund, include donation info in the same message. Do NOT ask them to confirm which items if they already selected them.
 - NEVER say "once you've donated/sent the items" or "let me know when you've shipped them." Refunds are processed upfront, not contingent on anything. (The donation tool's own photo/receipt request on flagged refunds is fine — it comes after the refund confirmation and never gates it.)
 
 **Refund-pattern flag (operator visibility — never changes your reply):**
 Whenever you process a refund, read the "Customer order history" context line and set the structured "flags" field as the last step of composing the draft. The customer never sees flags, and raising one does NOT change what you write or whether you process the refund — write the same warm reply either way.
+**Every pattern below starts from the same precondition: the refund sends back EVERY item in the order.** A customer keeping any part of what they bought is doing an ordinary partial return — they liked something enough to keep it, which is the opposite of the behaviour these flags exist to surface. So check the order's line items against what is being refunded FIRST: if even one item stays with them, emit "flags": [] and stop here, no matter how the rest reads. With the whole order coming back:
 - The context line says FIRST-TIME BUYER AND the customer declined or preempted real sizing help (said no to trying another size, refused to say what went wrong, said "it's not a size thing" / "sizing won't fix it" without trying, or ignored a measurement offer) → emit exactly: "flags": ["Refund-pattern: first-time buyer, [complaint in 2-4 words], declined size help, [days_since_order from context] days after ordering"].
-- The refund covers every item in the order AND the customer gave no reason at all → emit: "flags": ["Refund-pattern: full-order refund, no reason given, [days_since_order from context] days after ordering"].
+- The customer gave no reason at all → emit: "flags": ["Refund-pattern: full-order refund, no reason given, [days_since_order from context] days after ordering"].
 - Neither pattern → emit "flags": []. A repeat customer, an engaged customer, or a defect/wrong-item refund never gets a flag.
 - **Flagged refund → donation proof ask.** When this draft raises a "Refund-pattern:" flag, call get_donation_partner with include_proof_ask: true (regardless of item count — the tool routes even one item to a partner org and appends the photo/receipt request to its response_text). The tool omits the ask automatically when there is no partner org to notify. Never write the ask in your own words, and never make the refund sound contingent on it — the refund is already processed in the same message.
 - **2+ previously refunded orders → Jamie decides.** When the context shows 2 or more previously refunded orders, do NOT stage the refund. Set status to "route_to_human" with routing_reason "[Nth] refund request on this account ([order names]) — review before refunding", write the standard "Let me look into this and get back to you" reply, and raise the flag "Refund-pattern: repeat refunder — [N] prior refunded orders". One previous refund is normal customer behavior — process it without routing.
@@ -961,14 +962,13 @@ Do NOT ask for measurements when:
 - Customer already provided a measurement in their message
 
 ### When to mention DONATION
-Include donation info ONLY when:
-- Creating an exchange order (100% of the time)
-- Processing a refund (tell them to donate the items)
-- Customer asks about returns/shipping items back
-Do NOT mention donation when:
-- Gathering info, asking questions, offering size options
-- You haven't confirmed the exchange yet
-CRITICAL: whenever this section says to include donation info, your NEXT action is a get_donation_partner call — the donation section of your reply is the tool's response_text pasted word-for-word, never wording you compose yourself. The copy already carries the right firmness for each routing case: when it asks the customer to send the items to a partner address, that ask is the standard next step for every customer — relay it as the ask it is, exactly as written. Routing is by geographic proximity and the selected partner may be in a different state; that is expected and does not need to be explained to the customer.
+The donation section goes in a message that reports something already done. There are exactly three of those:
+- The message confirming an exchange order you just created (100% of the time)
+- The message confirming a refund you just processed
+- A reply to a customer who asked where to send items back
+
+Before every get_donation_partner call, find the sentence in your reply that tells the customer what has been done. If the reply's job is instead to ask them something — a measurement, which of two sizes, whether another colour works, anything you need before you can act — then the donation section belongs in the NEXT message, the one where you confirm the order. A return address sitting next to an open question asks them to ship their things back before they know what they are getting in return.
+CRITICAL: whenever this section says to include donation info, your NEXT action is a get_donation_partner call — the donation section of your reply is the tool's response_text pasted word-for-word, never wording you compose yourself. The copy already carries the right firmness for each routing case: when it asks the customer to send the item(s) to a partner address, that ask is the standard next step for every customer — relay it as the ask it is, exactly as written. Routing is by geographic proximity and the selected partner may be in a different state; that is expected and does not need to be explained to the customer.
 
 ### When to ask WHAT HAPPENED vs take action
 Use "Can you let me know what didn't work out in case I can help you with another size or recommend another product?" ONLY when:

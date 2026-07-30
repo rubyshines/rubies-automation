@@ -106,6 +106,7 @@ function pickWeightedByLoad(candidates, getLoad, rng = Math.random) {
 // refund-pattern-flagged refunds (wording locked by Jamie 2026-07-23). The
 // refund is never contingent on it — it signals the donation is noticed.
 const PROOF_ASK_TEXT = "When you've dropped them off, can you send over a photo with the receipt so I can let the org know to expect the donation?";
+const PROOF_ASK_TEXT_SINGULAR = "When you've dropped it off, can you send over a photo with the receipt so I can let the org know to expect the donation?";
 
 async function prescribeDonationRouting(intake, context) {
   const customerRequestedPartner = !!context.customerRequestedPartner;
@@ -165,6 +166,8 @@ async function prescribeDonationRouting(intake, context) {
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
 
+  const singleItem = itemCount <= 1;
+
   function formatDonationText(partner, washReminder, proofAsk) {
     // Prefer the canonical mailing_address from the partner registry (multi-line
     // "RUBIES Returns / c/o ..." block published to the website). Fall back to
@@ -195,10 +198,15 @@ async function prescribeDonationRouting(intake, context) {
 
     // Jamie's canonical partner-address wording (matches his sent replies) —
     // fuller than the shared programExplanation used for local-donation cases.
+    // Partner routing normally means several items, but a single item lands here
+    // too (customer accepted the partner offer, or a flagged refund forced the
+    // proof ask), and plural copy reads wrong when they are sending one garment.
     const lines = [
       'We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs.',
       '',
-      'With this in mind can you please send the items you are returning to:',
+      singleItem
+        ? 'With this in mind can you please send the item you are returning to:'
+        : 'With this in mind can you please send the items you are returning to:',
       '',
       addressBlock,
       '',
@@ -220,7 +228,11 @@ async function prescribeDonationRouting(intake, context) {
   }
 
   const programExplanation = 'We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs.';
-  const washReminder = 'Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is.';
+  // Both variants keep the worn/tried-on vs new-with-tags distinction — dropping
+  // it prompts the customer to ask whether a new item needs washing.
+  const washReminder = singleItem
+    ? 'Please wash the item if it has been worn or tried on before it is returned. If it is still new with tags it can be sent as is.'
+    : 'Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is.';
 
   if (partners.length === 0) {
     return {
@@ -279,7 +291,11 @@ async function prescribeDonationRouting(intake, context) {
     type: 'partner',
     partner,
     proof_ask: includeProofAsk,
-    response_text: formatDonationText(partner, washReminder, includeProofAsk ? PROOF_ASK_TEXT : null),
+    response_text: formatDonationText(
+      partner,
+      washReminder,
+      includeProofAsk ? (singleItem ? PROOF_ASK_TEXT_SINGULAR : PROOF_ASK_TEXT) : null,
+    ),
     audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${includeProofAsk ? ', proof ask included' : ''}`,
   };
 }
@@ -325,4 +341,4 @@ async function logDonationRouting({ customer_email, order_number, partner_id, it
   }
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, PROOF_ASK_TEXT };
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR };

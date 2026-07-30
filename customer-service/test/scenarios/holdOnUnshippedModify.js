@@ -158,7 +158,7 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
       } else {
         pass('no donation routing on an unshipped order');
       }
-      if (/items you are returning|RUBIES Returns|please wash any items|send the items/i.test(reply)) {
+      if (/items? you are returning|RUBIES Returns|please wash (any items|the item)|send the items?\b/i.test(reply)) {
         fail(`reply asks the customer to mail back an order that has not shipped: ${JSON.stringify(reply.slice(0, 300))}`);
       } else {
         pass('does not ask the customer to return an unshipped order');
