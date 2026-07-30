@@ -11,19 +11,31 @@
  * knew what they were getting in return. Rare in production (4 of ~1,800 drafts
  * since April) but the rule was negative-framed, so it drifts; this pins it.
  *
- * Two arms against the same FULFILLED 3-item order (dallen3214@gmail.com,
- * #32591 — Ruby M, Mia L, AJ M), both inventory-independent:
+ * Three arms against the same FULFILLED 3-item order (dallen3214@gmail.com,
+ * #32591 — Ruby M, Mia L, AJ M), all inventory-independent:
  *   (a) "all three are too tight", no target size → the advisor must ask
  *       (measurement or size options). NO donation routing, NO return address.
  *   (b) reason given + wants everything refunded → the refund trigger fires
  *       normally: donation routing runs and the partner address block appears.
+ *   (c) bare "where do I ship it back?", no reason → nudge-first wins, so the
+ *       address waits AND the advisor says nothing about return logistics in
+ *       its own words.
  *
- * Arm (b) is the control — the gate must not over-suppress. (It deliberately
- * states a reason and declines a size swap: a bare "I'd like to return this,
- * where do I ship it?" hits the nudge-first rule and correctly gets a question
- * back with no address, so it can't tell over-suppression from correct
- * behaviour. Verified on the incumbent prompt 2026-07-30.) Side-effect-free:
- * the advisor's tools are all read-only, so nothing is executed either way.
+ * Arm (b) is the control — the gate must not over-suppress; it deliberately
+ * states a reason and declines a size swap, since arm (c)'s shape correctly
+ * gets a question back instead.
+ *
+ * Arm (c) pins a second defect found while building this file: on the
+ * nudge-first path the advisor skipped get_donation_partner (correctly — it is
+ * not the moment) but then improvised the policy anyway — "all RUBIES returns
+ * are donated rather than shipped back to us, so there's nothing to send our
+ * way". That is wrong (we do want the items, at a partner org) and it is the
+ * exact "no need to send anything back" phrasing the tool instruction bans.
+ * Reproduced on the pre-fix prompt, so it is drift on anti-hallucination rule
+ * 1, whose scope now names return-logistics claims explicitly.
+ *
+ * Side-effect-free: the advisor's tools are all read-only, so nothing is
+ * executed on any arm.
  *
  * Run: node customer-service/test/scenarios/donationTimingGate.js
  */
@@ -45,6 +57,23 @@ I got my order last week and all three pieces are too tight on the bum. It's the
 const RETURN_QUESTION_MSG = `Hi,
 
 I tried all three pieces and the fabric just isn't right for me. It's not a size thing, I don't want to try another size. Please refund the whole order. Where should I ship everything to?`;
+
+// (c) Bare return request, no reason — nudge-first applies, so the address
+// waits and nothing about return logistics belongs in the reply.
+const BARE_RETURN_MSG = `Hi,
+
+I'd like to send my order back. Where should I ship the items to?`;
+
+// Improvised return-policy prose: the model describing what happens to returned
+// items instead of relaying the tool. "Nothing to send back" is also flatly
+// wrong — the items do go somewhere, just to a partner org.
+const IMPROVISED_POLICY_PATTERNS = [
+  /nothing (needs to )?(come|send|be sent)/i,
+  /no need to send/i,
+  /don'?t need to send/i,
+  /returns are donated/i,
+  /rather than (being )?shipped back/i,
+];
 
 // Anything that tells the customer to mail their things somewhere.
 const RETURN_BLOCK_PATTERNS = [
@@ -99,6 +128,31 @@ function returnHits(draft) {
 
   if (sb.prescription?.donation) pass('(b) donation routing fired');
   else fail('(b) donation routing did not fire on a settled refund');
+
+  console.log('\n=== (c) bare return request → nudge first, no improvised policy ===\n');
+  const rc = await aiAdvisor({ customer_email: CUSTOMER_EMAIL, issue_description: BARE_RETURN_MSG });
+  const sc = rc?._structured || {};
+  const dc = (sc._composedResponse || '').trim();
+  console.log('draft: ' + dc.replace(/\n+/g, ' ').slice(0, 500));
+  console.log('status: ' + sc.status + ' | action_type: ' + (sc.action_type || '(none)') + '\n');
+
+  if (!dc) { fail('(c) no draft produced'); return; }
+
+  const settledC = sc.action_type === 'refund'
+    || (sc.prescription?.items || []).some(i => i.state === 'REFUND_CONFIRMED');
+  if (!settledC) pass('(c) nudge-first held — no refund staged on a reasonless return request');
+  else fail(`(c) refund staged without offering sizing help first (action_type ${sc.action_type})`);
+
+  const improvised = IMPROVISED_POLICY_PATTERNS.filter(re => re.test(dc));
+  if (improvised.length === 0) pass('(c) no improvised return-policy prose');
+  else fail(`(c) advisor wrote return policy in its own words (matched: ${improvised.join(', ')})`);
+
+  const hitsC = returnHits(dc);
+  if (hitsC.length === 0) pass('(c) address withheld while nudging');
+  else fail(`(c) handed over the return address instead of nudging first (matched: ${hitsC.join(', ')})`);
+
+  if (!sc.prescription?.donation) pass('(c) donation routing did not fire');
+  else fail(`(c) donation routing fired on the nudge-first path: ${JSON.stringify(sc.prescription.donation)}`);
 
   console.log('\n' + (process.exitCode === 1 ? 'FAILED — see above' : 'PASSED'));
 })().catch(e => { console.error(e); process.exit(1); });
