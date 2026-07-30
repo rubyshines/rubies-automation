@@ -1693,6 +1693,16 @@ main { height: calc(100vh - 56px); }
   margin-left: auto;
 }
 
+/* Contact-form subject line. Often just a category ("Product Question"), so it
+   reads as a heading above the message rather than competing with it. */
+.intake-subject {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
 .intake-words {
   display: flex;
   flex-direction: column;
