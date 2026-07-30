@@ -266,3 +266,14 @@ When writing any sheet (Google Sheets, exported xlsx) that has subtotals or gran
 **Why:** The founder edits quantities directly in these sheets (e.g. the inventory-projections review tab, the production-order draft tab). A hardcoded total goes stale the instant a cell is edited and silently misleads. A formula recalculates and stays trustworthy. Read-back is unaffected — `values.get` returns the computed value by default, so parsers still see numbers.
 
 **How to apply:** Track each group's data-row range as you build the rows, write `=SUM(<col><first>:<col><last>)` in the total cell, and sum subtotal cells (not a range that would double-count them) for the grand total. Use `USER_ENTERED`, not `RAW`. Applies to every sheet a human will edit.
+
+## Validate advisor changes on the input shape production actually sends
+
+A pinned scenario that calls `aiAdvisor` with raw concatenated customer text and no intake is exercising a FIRST pass. The dashboard's regen (`apiRefreshDraft`) sends a different shape: `intake: draft.intake_state` fed back, plus an `issue_description` built as `[CONVERSATION HISTORY]` (which includes our own prior agent replies) + `[LATEST CUSTOMER MESSAGE]`, plus `preContext`. A scenario can be green on the first shape while the live path is broken.
+
+**Why:** 2026-07-29. A prompt change went out on 3/3 green from `holdOnUnshippedModify`. The next live regen of a pre-ship colour swap produced a full return-and-donate block — partner address, wash instructions — for an order the customer had never received, and flipped `action_type` from `warehouse_hold` to `exchange`, which also drops the hold that keeps the order from shipping before the swap. On a first pass "unshipped → hold" has no competing signal; on a regen the fed-back `intake_state` says `message_type: exchange` with fully resolved items, and that is the input that actually broke. The scenario never sent it.
+
+**How to apply:**
+- Before calling a prompt change validated, ask which caller produces the drafts you care about and reproduce that caller's arguments. Most operator-visible CS drafts are regens, so a second-pass assertion is worth more than a first-pass one.
+- Always run a control arm on the prior prompt, not just the new one. That is what showed the donation misfire predated the change rather than being caused by it — without a control the fix gets credited or blamed for behaviour it never touched.
+- Beware measuring your own harness. Replaying one ticket repeatedly can produce a "failure rate" that is an artifact of that ticket's state: a 3/4 donation-miss turned out to be the model correctly declining to repeat donation info its own conversation history already contained, while production ran 99/100. Check the rate over real rows before treating a probe number as a defect.
