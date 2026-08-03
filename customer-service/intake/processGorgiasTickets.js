@@ -326,12 +326,28 @@ const HELP_CENTER_BUTTON_LABELS = new Set([
   'go back', 'no', 'yes',
 ]);
 
+// A help-center message is one of two shapes:
+//   FLOW transcript  — plain text, one `> `-prefixed line per customer choice
+//                      or free-text entry, interleaved with bot copy.
+//   Contact form     — the customer's own message, whose `body_text` carries
+//                      literal HTML (`<br>`) rather than plain text.
+// Both land here, so the `>` test has to tell a flow marker from a tag closer.
+// Measured across every help-center message we have stored (57 messages): all
+// 189 flow markers sit at line start, no flow body contains markup, and every
+// `>` that is NOT at line start is an HTML tag closer. Matching `>` anywhere
+// therefore read the `>` of `<br>` as a marker and discarded everything before
+// it — the customer's greeting, or on a single-paragraph message (whose only
+// `<br>` is the trailing one) the entire message.
 function cleanHelpCenterBody(body) {
   if (!body) return body;
-  // `>` markers can appear at line start OR inline after bot copy on the
-  // same line, so match each `>` segment up to the next newline.
+  // Normalise markup FIRST, so a tag's `>` can never be mistaken for a marker
+  // and the stored body renders as text instead of showing literal "<br>".
+  // Gated on a real tag so plain prose ("between <14 and >16") is never mangled.
+  const text = /<(?:br|p|div|span|a|ul|ol|li|strong|em|b|i|table|tr|td|h[1-6])\b[^>]*>/i.test(body)
+    ? gorgias.stripHtml(body).trim()
+    : body;
   const keep = [];
-  for (const match of body.matchAll(/>\s*([^\n]+)/g)) {
+  for (const match of text.matchAll(/^[ \t]*>[ \t]*([^\n]+)/gm)) {
     const text = match[1].trim();
     if (!text) continue;
     const lower = text.toLowerCase();
@@ -344,9 +360,10 @@ function cleanHelpCenterBody(body) {
     keep.push(text);
   }
   const cleaned = keep.join('\n').trim();
-  // If no `>` markers found, the message isn't a bot-guided flow —
-  // return the original body so direct customer messages aren't lost.
-  return cleaned || body;
+  // No line-start markers → not a bot-guided flow, so this is the customer's
+  // own message. Return the markup-normalised text (not the raw body) so a
+  // contact-form submission still comes out as readable plain text.
+  return cleaned || text;
 }
 
 // ---------------------------------------------------------------------------
