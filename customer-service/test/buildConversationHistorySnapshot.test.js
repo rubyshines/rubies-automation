@@ -276,3 +276,81 @@ describe('buildConversationHistorySnapshot', () => {
     assert.equal(byId.get(12).length, 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Help-center bodies: flow transcript vs contact form
+//
+// Both shapes arrive on channel 'help-center'. The flow transcript marks the
+// customer's input with `> ` at line start; the contact form sends the
+// customer's own prose with literal HTML in body_text. Telling them apart by
+// "does a `>` appear anywhere" read the `>` of `<br>` as a flow marker and
+// discarded everything before it. Bodies below are real shapes from production.
+// ---------------------------------------------------------------------------
+
+// `meta.origin` is load-bearing: flow transcripts carry origin='flow', which
+// routes extractCleanBody around the email-reply-parser (it would otherwise
+// treat the `> ` customer lines as a quoted chain and delete them).
+const hcMessage = (bodyText, meta = {}) => ({
+  id: 99,
+  from_agent: false,
+  channel: 'help-center',
+  via: 'contact_form',
+  meta,
+  created_datetime: '2026-08-03T16:57:26+00:00',
+  body_text: bodyText,
+  body_html: bodyText,
+  stripped_text: null,
+  stripped_html: '',
+});
+
+describe('buildConversationHistorySnapshot — help-center bodies', () => {
+  it('keeps a single-paragraph contact form whose only <br> is trailing', () => {
+    // Ticket 2980: the entire message sat before the first `>`, so the stored
+    // body became "<br>" and the operator saw nothing.
+    const [snap] = buildConversationHistorySnapshot([hcMessage(
+      'I think you must have mislabelled two packages.  I received 2 black size 2x '
+      + 'shaping bras instead of my order #32683.  How do I return these and get my '
+      + 'correct order?<br><br>'
+    )]);
+    assert.match(snap.body, /^I think you must have mislabelled two packages\./);
+    assert.ok(snap.body.includes('#32683'), 'order number was dropped');
+    assert.ok(snap.body.includes('How do I return these'), 'closing question was dropped');
+    assert.ok(!/<br\s*\/?>/i.test(snap.body), 'raw <br> markup left in the stored body');
+  });
+
+  it('keeps the greeting that precedes the first <br>', () => {
+    const [snap] = buildConversationHistorySnapshot([hcMessage(
+      'Hi Jaime and Ruby,<br>my name is Ari Heart. I run a program for parents of trans kids.'
+    )]);
+    assert.match(snap.body, /^Hi Jaime and Ruby,/);
+    assert.ok(snap.body.includes('Ari Heart'));
+  });
+
+  it('does not treat a bare > in prose as a flow marker', () => {
+    const [snap] = buildConversationHistorySnapshot([hcMessage(
+      'She measures between <14 and >16 on your chart. Which size should I order?'
+    )]);
+    assert.ok(snap.body.includes('Which size should I order?'));
+    assert.ok(snap.body.includes('14'), 'angle-bracketed prose was mangled');
+  });
+
+  it('still extracts customer input from a flow transcript', () => {
+    // Flow markers sit at line start; bot copy between them is dropped, and the
+    // button labels / order picks / variant lines stay filtered out.
+    const [snap] = buildConversationHistorySnapshot([hcMessage(
+      '> Change my order before it ships\n'
+      + 'We usually start processing new orders at 7 AM EST.\n'
+      + 'Please select the order you would like to change.\n'
+      + '> #29681 - $201.60 - March 29, 2026 (CDT)\n'
+      + '> THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM - Black / M\n'
+      + '> Please can you change my size to a large\n'
+      + '> No',
+      { origin: 'flow' }
+    )]);
+    assert.equal(snap.body, 'Change my order before it ships\nPlease can you change my size to a large');
+    assert.ok(!snap.body.includes('We usually start processing'), 'bot copy leaked in');
+    assert.ok(!snap.body.includes('#29681'), 'order pick leaked in');
+    assert.ok(!snap.body.includes('BIKINI BOTTOM'), 'variant label leaked in');
+    assert.ok(!/\bNo\b/.test(snap.body), 'button label leaked in');
+  });
+});
