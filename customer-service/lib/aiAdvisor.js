@@ -766,6 +766,13 @@ KB results marked FOUNDER DISCRETION or WHOLESALE ONLY are routing guidance for 
 `;
 }
 
+// Eval-only hook for A/B-ing prompt variants. Deliberately NOT an env var:
+// same reasoning as the model override (see aiPricing.js) — no production
+// runtime should be flippable into an experimental prompt by a stray variable.
+// A caller must reach in and set it explicitly, which only eval scripts do.
+let _promptTransform = null;
+function setPromptTransform(fn) { _promptTransform = fn; }
+
 function buildSystemPrompt(toneSamples, orderContext, opts = {}) {
   let orderSection = '';
   if (orderContext) {
@@ -1433,7 +1440,7 @@ ${STRUCTURED_OUTPUT_PROMPT_NOTE}`;
   const dateSection = `\n## TODAY\nToday is ${etDate} (ET). Use this for any relative-day statement. An order or exchange created today ships the next business day — when stating when it ships, say exactly: "${shipDayWord}".\n`;
   const dynamicPart = dateSection + orderSection + advocacySection;
 
-  return { staticPart, dynamicPart };
+  return { staticPart: _promptTransform ? _promptTransform(staticPart) : staticPart, dynamicPart };
 }
 
 // ---------------------------------------------------------------------------
@@ -2462,4 +2469,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration };
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration, setPromptTransform };
