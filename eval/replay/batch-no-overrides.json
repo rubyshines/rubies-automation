@@ -1,0 +1,270 @@
+{
+ "variant": "no-overrides",
+ "model": "claude-opus-4-8",
+ "cases": [
+  {
+   "draft_id": 1376,
+   "turn": 1,
+   "needed_steer": false,
+   "jamie_words": 117,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi Tina, Thanks for reaching out, and no need to apologize! The sizing can definitely be confusing the first time. One thing I want to flag before I set anything up: youth size 12 is actually the exact same fit as adult XS, just labeled differently in the two size systems. So an exchange from youth 12 to adult XS wouldn't change the fit at all. Since she's very thin and tall, can you tell me a bit more about how these are fitting? If they're loose, I can look at a smaller size, and if it's the length you're worried about I can help there too. If you can send me her waist measurement around the belly and just under the belly button, I can double check the right size for her. Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 140,
+      "status": "needs_info",
+      "action": null
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi Tina, Thanks for reaching out, and I'm glad she's excited! Just so you know, our youth size 12 and our adult XS are actually the exact same fit, just labeled differently between the two size charts. So swapping from a 12 to an XS wouldn't change the fit at all. If she found the 12 a bit off, I'm happy to help get the sizing right. Could you send me her waist measurement around the belly and just under the belly button? Once I have that I can double check the best size for her. Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 103,
+      "status": "needs_info",
+      "action": null
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 3003,
+   "turn": 1,
+   "needed_steer": false,
+   "jamie_words": 100,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi, No problem, I've created your exchange for the AJ in Black size 12. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 92,
+      "status": "action_needed",
+      "action": "exchange"
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi, No problem, I've created your exchange for the AJ in size 12. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 91,
+      "status": "action_needed",
+      "action": "exchange"
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1379,
+   "turn": 1,
+   "needed_steer": false,
+   "jamie_words": 53,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi, Thanks, done. The Sassy has been refunded to your original payment method, so you're all set there. I'm getting the Charlie shipped out to you right away. You'll get a tracking email once it's on its way. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 45,
+      "status": "route_to_human",
+      "action": null
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi, That's all set. I refunded the Sassy in size M and the Charlie has shipped to you. You'll get tracking on that once it's on its way if you haven't already. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 39,
+      "status": "ready",
+      "action": null
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1556,
+   "turn": 2,
+   "needed_steer": false,
+   "jamie_words": 49,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi Kim, Done! I've split your shipment so the AJ items ship now, and the Sassy in Black / M will follow once it's back in stock. You'll get separate tracking for each. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com) P.S. The best way you can help RUBIES is by spreading the word to others in our community.",
+      "words": 58,
+      "status": "action_needed",
+      "action": "split_shipment"
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi Kim, I've split your shipment so both AJ styles (all 5 pairs) will ship now. The Sassy in Black / M will follow once it's back in stock, target end of July. You'll get separate tracking for each. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 46,
+      "status": "action_needed",
+      "action": "split_shipment"
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1767,
+   "turn": 2,
+   "needed_steer": false,
+   "jamie_words": 78,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi, No problem, I've processed your refund to your original payment method. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o Massachusetts Transgender Political Coalition P.O. Box 960784, Boston, MA 02196 Massachusetts Transgender Political Coalition runs the G.E.A.R. program, providing trans and non-binary people with free gender-affirming clothing, products, and resources. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 132,
+      "status": "action_needed",
+      "action": "refund"
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi, No problem, I've processed your refund to your original payment method. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o OUT MetroWest 160 Hollis St Framingham, MA 01702 OUT MetroWest offers free gender-affirming clothing and gear for youth to take what they need. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 125,
+      "status": "action_needed",
+      "action": "refund"
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1405,
+   "turn": 4,
+   "needed_steer": false,
+   "jamie_words": 99,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi Sarah, No problem, I've created your exchange for 1 pair of the Serena in size 16, Pink. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 96,
+      "status": "action_needed",
+      "action": "exchange"
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi Sarah, No problem, I've created your exchange for one pair of the Serena in size 16, Pink. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 96,
+      "status": "action_needed",
+      "action": "exchange"
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1814,
+   "turn": 2,
+   "needed_steer": false,
+   "jamie_words": 38,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi, I've swapped the Mia top from Unicorn to Black in size 6 on your order. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 23,
+      "status": "action_needed",
+      "action": "warehouse_hold"
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi, No problem, I've created your exchange for the Mia in Black size 6. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate the Unicorn top locally. If you don't have someone or a local org in mind, I can send you the info for one of our partner LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 94,
+      "status": "action_needed",
+      "action": "exchange"
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1367,
+   "turn": 3,
+   "needed_steer": false,
+   "jamie_words": 69,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi Ilana, Got your number, thank you. I'll add you on WhatsApp so we can connect during your July visit. Not a problem at all about Sophie's age. Have her write to me at care@rubyshines.com and we'll take good care of her. Looking forward to another dinner together. Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 55,
+      "status": "ready",
+      "action": null
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi Ilana, Thanks so much, I've saved your number and will add you on WhatsApp so we can connect July 19 to 25. That's absolutely fine, age isn't an issue at all. Have Sophie write to me at care@rubyshines.com whenever she's ready and we'll make sure she gets something that makes her feel seen and special. Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 63,
+      "status": "ready",
+      "action": null
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1770,
+   "turn": 3,
+   "needed_steer": true,
+   "jamie_words": 83,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi, Yes, the exchange is for all three Ruby bottoms in size 6, one size down from the 7 (about 1\" less around the waist). It'll ship tomorrow. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 35,
+      "status": "ready",
+      "action": null
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi, Yes, the exchange is for the Ruby bottoms in size 6, one size down from the 7. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 25,
+      "status": "ready",
+      "action": null
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1529,
+   "turn": 3,
+   "needed_steer": false,
+   "jamie_words": 66,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi, The Mia in adult S Black is out of stock, but size 14 is the exact same fit and it's available in Black. Would you like me to send that instead? Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 39,
+      "status": "needs_info",
+      "action": null
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi, The only snag is the Mia in Black size S just went out of stock. Size S is available in Pink, though, if you're open to that. Otherwise I can send you the XS in Black, which would have 4\" less around the bikini band than your M instead of the 2\" less the S has. Which would you prefer? Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 68,
+      "status": "needs_info",
+      "action": null
+     }
+    ]
+   }
+  },
+  {
+   "draft_id": 1461,
+   "turn": 4,
+   "needed_steer": false,
+   "jamie_words": 79,
+   "arms": {
+    "control": [
+     {
+      "draft": "Hi Rebecca, Thanks for letting me know, and for being patient while we worked through this. Since these don't work for you, I've processed your refund to your original payment method. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o OUT MetroWest 160 Hollis St Framingham, MA 01702 OUT MetroWest offers free gender-affirming clothing and gear for youth to take what they need. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. I hope you will give RUBIES a try again in the future. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 156,
+      "status": "action_needed",
+      "action": "refund"
+     }
+    ],
+    "no-overrides": [
+     {
+      "draft": "Hi Rebecca, Thanks for explaining. Since these don't work for your situation, I've processed your refund to your original payment method. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o LGBT Center of Raleigh 128 East Cabarrus Street Raleigh, NC 27601 The LGBT Center of Raleigh runs a free gender-affirming clothing closet. They welcome donations of all kinds to share with community members looking for a safer, more affirming space to shop and try on clothing and accessories. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. I hope you will give RUBIES a try again in the future. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+      "words": 171,
+      "status": "action_needed",
+      "action": "refund"
+     }
+    ]
+   }
+  }
+ ]
+}
