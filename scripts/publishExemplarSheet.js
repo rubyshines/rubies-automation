@@ -71,6 +71,23 @@ function situationOf(reply) {
   return 'other';
 }
 
+// Anything whose correctness depends on facts that move. These replies were
+// written up to a year ago; the voice is still Jamie's but the content may no
+// longer be true, and an exemplar teaches content as well as shape. Jamie read
+// all 30 of the first batch and rejected none, which says the corpus is clean
+// on VOICE — this filter is what lets the set grow past what he can read,
+// because staleness is the failure mode his eyes were actually catching.
+const STALE = [
+  /\$\s?\d/,                                  // prices and refund amounts
+  /\b\d{1,2}\s?% ?(off|discount)/i,           // discount levels
+  /\b(60|30|90)[- ]day/i,                     // policy windows
+  /\b\d{1,5}\s+[A-Z][a-z]+\s+(St|Street|Ave|Avenue|Rd|Road|Blvd|Way|Court|Square)\b/, // addresses
+  /\b(20\d\d)\b/,                             // hard dates
+  /\bcoupon|promo code|welcome code\b/i,
+  /\b(covid|black friday|cyber monday|holiday cut ?off)\b/i,
+];
+const isStale = t => STALE.some(re => re.test(t));
+
 /**
  * Cover every situation rather than sampling proportionally: the point is to
  * show the advisor one good example of each thing it gets wrong, not to
@@ -79,6 +96,7 @@ function situationOf(reply) {
 function select(candidates, perSituation) {
   const pool = candidates.filter(x =>
     !/donat/i.test(x.jamie) &&        // tool-provided copy, not his voice
+    !isStale(x.jamie) &&
     x.words >= 8 && x.words <= 130 &&
     x.customer.length > 25);
 
@@ -177,11 +195,20 @@ async function main() {
   }
 
   const candidates = JSON.parse(fs.readFileSync(CANDIDATES, 'utf8'));
-  const rows = select(candidates, parseInt(arg('per-situation', '3'), 10));
+  const rows = select(candidates, parseInt(arg('per-situation', '8'), 10));
+
+  // Everything not taught to the model is held out to test it. Same customer
+  // messages, same situations, with Jamie's real reply as the reference — so
+  // V2 can be scored against writing it has never seen, which is the only way
+  // to tell learning from memorisation.
+  const taught = new Set(rows.map(r => r.jamie));
+  const holdout = candidates.filter(x => !taught.has(x.jamie) && x.customer.length > 25);
+  const holdoutPath = path.resolve(__dirname, '../eval/exemplar-holdout.json');
+  fs.writeFileSync(holdoutPath, JSON.stringify(holdout, null, 1));
 
   const counts = {};
   for (const r of rows) counts[r.situation] = (counts[r.situation] || 0) + 1;
-  console.log(`${candidates.length} candidates -> ${rows.length} selected`);
+  console.log(`${candidates.length} candidates -> ${rows.length} taught, ${holdout.length} held out for eval`);
   console.log(JSON.stringify(counts, null, 1));
 
   if (hasFlag('dry-run')) {
