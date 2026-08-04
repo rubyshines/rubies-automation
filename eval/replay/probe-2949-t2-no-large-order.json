@@ -1,0 +1,88 @@
+{
+ "ticket": 2949,
+ "turn": 2,
+ "variant": "no-large-order",
+ "model": "claude-opus-4-8",
+ "reference": {
+  "advisor_first_draft": "Hi, Just to confirm, are you looking to exchange all five items (the 3 AJ, the Ruby, and the Charlie) from a L down to an M? Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+  "advisor_after_steer": "Hi, Thanks for the measurement. Since 34\" comes out right at the top of the large but it was too loose on her, I've created your exchange for all five items (the AJ, Ruby, and Charlie) in size M, Black. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o BAGLY - Boston Alliance of LGBTQ Youth 28 Court Square Boston, MA 02108 BAGLY (Boston Alliance of LGBTQ Youth) provides clothing, shoes, and gender-affirming wear, offering individual sizing help so folks can safely and affordably access the clothing they need to be authentically themselves. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+  "jamie_sent": "Hi, Thanks for the measurement. I've created your exchange for all five items (the AJ, Ruby, and Charlie) in size M, Black. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o BAGLY - Boston Alliance of LGBTQ Youth 28 Court Square Boston, MA 02108 BAGLY (Boston Alliance of LGBTQ Youth) provides clothing, shoes, and gender-affirming wear, offering individual sizing help so folks can safely and affordably access the clothing they need to be authentically themselves. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+  "was_edited": true,
+  "needed_a_steer": true,
+  "action_type": "exchange",
+  "advisor_status": "ready"
+ },
+ "results": {
+  "control": [
+   {
+    "draft": "Hi, No problem, I've created your exchange for all five items in size M (3x AJ, 1x Ruby, 1x Charlie, all Black). They'll ship tomorrow. Just a heads up that the chart does put a 34\" waist at a large, so the medium will be a snugger fit. Since you found the large way too loose that should be the right move, and we can always exchange again if it's not quite right. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o OUT MetroWest 160 Hollis St Framingham, MA 01702 OUT MetroWest offers free gender-affirming clothing and gear for youth to take what they need. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+    "status": "action_needed",
+    "action_type": "exchange",
+    "tools": [
+     "lookup_size_chart",
+     "compare_products",
+     "get_donation_partner"
+    ],
+    "ms": 29900
+   },
+   {
+    "draft": "Hi, Thanks for that. One thing I want to flag: a 34\" waist actually lines up with the L on our size chart, so I want to make sure the M won't end up too tight in the other direction. If the L was way too loose everywhere (waist and legs), sizing down to the M makes sense and I'm happy to set that up. Just to confirm, are you looking to exchange all 5 items (the 3 AJ, the Ruby, and the Charlie) from L down to M? Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+    "status": "needs_info",
+    "action_type": null,
+    "tools": [
+     "lookup_size_chart",
+     "get_adjacent_sizes"
+    ],
+    "ms": 22350
+   },
+   {
+    "draft": "Hi, Just to confirm, are you looking to exchange all five items (the 3 AJ, the Ruby, and the Charlie) from a L down to a M? Talk soon, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+    "status": "needs_info",
+    "action_type": null,
+    "tools": [
+     "lookup_size_chart"
+    ],
+    "ms": 27202
+   }
+  ],
+  "no-large-order": [
+   {
+    "draft": "Hi, Thanks for confirming. The 34\" waist does come out to a large on our chart, but since it was way too loose we can go down to the medium. I've created your exchange for the 3 AJ, the Ruby, and the Charlie all in size M Black. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o Massachusetts Transgender Political Coalition P.O. Box 960784, Boston, MA 02196 Massachusetts Transgender Political Coalition runs the G.E.A.R. program, providing trans and non-binary people with free gender-affirming clothing, products, and resources. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+    "status": "action_needed",
+    "action_type": "exchange",
+    "tools": [
+     "lookup_size_chart",
+     "compare_products",
+     "compare_products",
+     "compare_products",
+     "get_donation_partner"
+    ],
+    "ms": 29731
+   },
+   {
+    "draft": "Hi Jamie, Thanks for the measurement. Since the L was way too loose, the M is the right call. I've created your exchange for the AJ, Ruby, and Charlie all in size M. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o OUT MetroWest 160 Hollis St Framingham, MA 01702 OUT MetroWest offers free gender-affirming clothing and gear for youth to take what they need. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+    "status": "action_needed",
+    "action_type": "exchange",
+    "tools": [
+     "lookup_size_chart",
+     "compare_products",
+     "get_donation_partner"
+    ],
+    "ms": 28320
+   },
+   {
+    "draft": "Hi, No problem, I've created your exchange for the 3 AJ, the Ruby, and the Charlie all in size M Black. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o OUT MetroWest 160 Hollis St Framingham, MA 01702 OUT MetroWest offers free gender-affirming clothing and gear for youth to take what they need. Please wash any items that have been worn or tried on before they are returned. Anything still new with tags can be sent as is. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)",
+    "status": "action_needed",
+    "action_type": "exchange",
+    "tools": [
+     "lookup_size_chart",
+     "compare_products",
+     "compare_products",
+     "compare_products",
+     "get_donation_partner"
+    ],
+    "ms": 28343
+   }
+  ]
+ }
+}
