@@ -189,6 +189,15 @@
   "words": 123
  },
  {
+  "conversation_id": "gorgias:45370081",
+  "category": "exchange_return",
+  "created_at": "2025-09-05T12:31:15.699841+00:00",
+  "reply_index": 3,
+  "customer": "Yes, I tried them on and they were too big too.",
+  "jamie": "Ok great, I removed the hold! Jamie Alexander, RUBIES Founder",
+  "words": 10
+ },
+ {
   "conversation_id": "gorgias:45436096",
   "category": "exchange_return",
   "created_at": "2025-09-04T12:19:23.772207+00:00",
@@ -421,15 +430,6 @@
   "customer": "Hi, We would like a refund on the bra. I was under the impression from the description that this bra was for girls without breast tissue and this bra is just like any bra in the store with pads that are curved for existing breasts. Happy to send it back unworn. She did not try it on as I don't want to upset her since we have not been able to find a bra for a flat chest. Thank you! Holly Puckett, Realtor United Real Estate 317-414-5186 hollyepuckett@gmail.com 1425 E 86th St, Indianapolis, IN 46240",
   "jamie": "Hi Holly, This Brooke Bra was designed for people with no or limited breast development. The cup sizes are small but still large enough to accommodate additional padding. Is it possible that the bra size is off. Can you send me the measurement around the chest where a bikini band sits so I can help select a size? Some people find by adding chest shaping pads they can achieve the right effect with the Brooke Bra. https://rubyshines.com/products/shaping_chest-pads?_pos=1&_sid=0e3b71e61&_ss=r . We also have a new seamless bra on pre-order coming out end of October with molded cups that might be better - https://rubyshines.com/products/the-ava-seamless-shaping-bra . We could also exchange for that if you would like, once we confirm sizing. Talk soon, Jamie Alexander, RUBIES Founder",
   "words": 122
- },
- {
-  "conversation_id": "gorgias:46325103",
-  "category": "exchange_return",
-  "created_at": "2025-09-08T13:54:17.424163+00:00",
-  "reply_index": 2,
-  "customer": "Hello, Would it be possible to exchange for more underwear? I thought I was ordering a bra that had a pad for flat chested people, like a mastectomy pad does. Any air space in a pad just folds and wrinkles on a flat chest. Thanks you, Holly Holly Puckett, Realtor United Real Estate 317-414-5186 hollyepuckett@gmail.com 1425 E 86th St, Indianapolis, IN 46240",
-  "jamie": "Hi Holly, I think you will find the new seamless bras can hold their ship without fully filling the cup but I mentioned you can always purchase additional padding to find the right fit. These pads are quite substantial and can also be used with the bra: https://rubyshines.com/products/magical-shaping-chest-pads . If you would like I'd be happy to send you some of these pads for free as I see you have been a great customer over the years. I can also swap the bra you have for another pair of size 12 underwear. Just let me know if you want the AJs or Charlies and what colour you would like. Talk soon, Jamie Alexander, RUBIES Founder",
-  "words": 115
  },
  {
   "conversation_id": "gorgias:46325103",
@@ -1672,6 +1672,24 @@
   "customer": "Change my order before it ships | Order Items | Order number: #26809 Selected items: 1x THE CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR - Black / 12 1x THE BROOKE SHAPING BRA - Black / 10 1x THE BROOKE SHAPING BRA - Sandstone / 10 1x Tip Total: $106.54 Order Created: 10/5/2025, 10:21:25 AM Shipping address: Toronto | I want to add another item | Order No. #26809",
   "jamie": "Hi, I put your order on hold while we sort this out. Let me know what you would like to add and I can send over an invoice for the difference. Talk soon, Jamie Alexander, RUBIES Founder",
   "words": 37
+ },
+ {
+  "conversation_id": "gorgias:52820750",
+  "category": "order_status",
+  "created_at": "2025-10-06T15:02:19.145192+00:00",
+  "reply_index": 2,
+  "customer": "Thank you! I want to add the MAGICAL SHAPING GEL CHEST PADS. This is size small. Dana Seitler Professor of English Director, Bonham Centre for Sexual Diversity Studies Faculty Lead, Queer and Trans Research Lab University of Toronto 15 King's College Circle, University College rm 249 Toronto, ON M5S 3H7",
+  "jamie": "Ok great. I updated the order and sent over an invoice for the difference. I removed the shipping fee from the order since it is now eligible for free shipping. Can you please let me know when you have taken care of the invoice and then I been remove the hold on the order. Talk soon, Jamie, Jamie Alexander, RUBIES Founder",
+  "words": 61
+ },
+ {
+  "conversation_id": "gorgias:52820750",
+  "category": "order_status",
+  "created_at": "2025-10-06T22:15:18.338643+00:00",
+  "reply_index": 3,
+  "customer": "Thank you! I just paid. Dana Seitler",
+  "jamie": "Ok thanks. I removed the hold. Your order should ship tomorrow.",
+  "words": 11
  },
  {
   "conversation_id": "gorgias:52888338",
@@ -4104,15 +4122,6 @@
   "words": 54
  },
  {
-  "conversation_id": "gorgias:67308515",
-  "category": "order_status",
-  "created_at": "2025-12-12T12:23:31.857453+00:00",
-  "reply_index": 1,
-  "customer": "Hello! I just posted an order for the SKY NO-TUCK SHAPING ONE-PIECE, and I didn't realize it had already set a delivery address that isn't in-line with where I live! Is there any way I could fix this? Many thanks, Lara",
-  "jamie": "Hi, Can you let me know the correct address. I have put your order on hold until we sort this out. Talk soon, Jamie Alexander, RUBIES Founder",
-  "words": 27
- },
- {
   "conversation_id": "gorgias:67402524",
   "category": "exchange_return",
   "created_at": "2025-12-12T12:26:47.817425+00:00",
@@ -5474,15 +5483,6 @@
  {
   "conversation_id": "gorgias:75114919",
   "category": "order_status",
-  "created_at": "2026-01-17T02:18:24.737078+00:00",
-  "reply_index": 1,
-  "customer": "Change my order before it ships | Order Items | Order number: #28453 Selected item: 2x THE AJ NO-TUCK SHAPING UNDERWEAR - Black / L Total: $28.00 Order Created: 1/16/2026, 11:38:40 AM Shipping address: Omaha | Cancel",
-  "jamie": "Hi, Let me know what change you want to make. I have put your order on hold until we sort it out. Talk soon, Jamie Alexander, RUBIES Founder",
-  "words": 28
- },
- {
-  "conversation_id": "gorgias:75114919",
-  "category": "order_status",
   "created_at": "2026-01-17T14:12:32.020059+00:00",
   "reply_index": 2,
   "customer": "Hi, I would actually like to cancel the order if possible. I forgot about a bill, and this order isn’t in the budget.",
@@ -6167,11 +6167,11 @@
  {
   "conversation_id": "gorgias:82596856",
   "category": "order_status",
-  "created_at": "2026-02-11T13:22:13.193515+00:00",
-  "reply_index": 1,
-  "customer": "Hello, I made a purchase just now through Google pay and I unfortunately did not realize it had the wrong address and email address attached to my Google pay! I missed the order number, but the email it is associated with is tanny.tsang@wsp.com . Please let me know what my next steps are, please and thank you! Cheers, Ming",
-  "jamie": "Hi, Thanks so much for your order. I put your order on hold and can update the address once you send it over. Talk soon, Jamie Alexander, RUBIES Founder",
-  "words": 29
+  "created_at": "2026-02-11T16:14:15.88313+00:00",
+  "reply_index": 2,
+  "customer": "Hi Jamie, Thank you so much! I’m really excited for the order. The email will be kmtsang323@gmail.com Address will be 8868 Yonge street, unit 312E Package is for Ming Please let me know if I may provide any other information! Best, Ming",
+  "jamie": "Hi Ming, Ok great - I updated the address and removed the hold and updated your email address. Have a great day. Take care, Jamie Alexander, RUBIES Founder",
+  "words": 28
  },
  {
   "conversation_id": "gorgias:82884333",
@@ -6262,15 +6262,6 @@
   "customer": "Order number: #28731 Selected items: 1x THE SKY NO-TUCK SHAPING ONE-PIECE - Unicorn / 9 1x THE RUBY NO-TUCK SHAPING BIKINI BOTTOM - Pink / 9 1x THE RUBY NO-TUCK SHAPING BIKINI BOTTOM - Unicorn / 9 Total: $147.00 Order Created: 2/5/2026, 9:07:43 PM Shipping address: JBMDL | For the one piece suit, the legs are too tight and the top was too loose. I’d probably exchange for a larger size but since the top is already loose, I don’t think it would fit correctly. For the two bikini bottoms, the leg holes are too tight. The 10’s we ordered fit better. | A return at this time.",
   "jamie": "No problem. I sent over a refund. We have moved to a model where all RUBIES returns will be donated. We are working with LGBTQ+ organizations that accept donations for distribution in their gender affirming clothing programs. With this in mind can you please send the items you are returning to: RUBIES Returns c/o LGBT Center of Raleigh 128 East Cabarrus Street Raleigh, NC 27601 Please wash any items that have been worn or tried on before they are returned. Your return will be greatly appreciated by someone in our community. Take care, Jamie Alexander, RUBIES Founder",
   "words": 97
- },
- {
-  "conversation_id": "gorgias:83586231",
-  "category": "exchange_return",
-  "created_at": "2026-02-15T23:21:21.964779+00:00",
-  "reply_index": 2,
-  "customer": "Absolutely - thank you! A good news story to share with you is that our daughter/family attend Harbor Camps (an east coast summer camp for trans kids/families) during the summer and we (along with other families) frequently exchange Rubies as our kiddos get bigger and outgrow them. ❤️❤️❤️ The camp does a clothing exchange during family weekends and we always bring our Rubies that Ariel has outgrown. Thank you for your products. They make Ariel so much more comfortable in her body. -Dannielle Carroll-Wakem Sent from my iPhone | My contact info if you need it in the future is this email address and cell 708-408-5497. Dannielle Sent from my iPhone",
-  "jamie": "Hi Dannielle, I am so glad that Ariel feels more comfortable in her RUBIES. Thanks for sharing the info about Harbor Camps. That gave me an idea - I wonder if the camp would be interested in organizing a discount buy of RUBIES for the camp. If you think they would be interested feel free to connect me to someone at the camp. Also - feel free to hold on to the returns for the camp instead of sending them to the LGBT Center in Raleigh. Take care, Jamie Alexander, RUBIES Founder",
-  "words": 92
  },
  {
   "conversation_id": "gorgias:83602901",
@@ -6424,6 +6415,15 @@
   "customer": "am i able to return it for free if i dont end up liking it?",
   "jamie": "Hi, Yes you can try all RUBIES and if anything doesn’t work out we make exchanges or returns very easy. I am wondering since this is your first order, did you use the size guide? If not I would recommend you do to make sure the fit is right. All our bottoms are meant to worn comfortably. Not too tight or too loose. Talk soon, Jamie Alexander, RUBIES Founder",
   "words": 69
+ },
+ {
+  "conversation_id": "gorgias:84086037",
+  "category": "order_status",
+  "created_at": "2026-02-18T14:57:31.593802+00:00",
+  "reply_index": 3,
+  "customer": "i did use the size guide. we can continue the order. thanks!",
+  "jamie": "OK great. I will remove the hold. Fingers crossed the order works out! If not just reach out again and I will sort ya out. Take care, Jamie Alexander, RUBIES Founder",
+  "words": 31
  },
  {
   "conversation_id": "gorgias:84086037",

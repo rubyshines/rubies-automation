@@ -88,6 +88,23 @@ const STALE = [
 ];
 const isStale = t => STALE.some(re => re.test(t));
 
+// Replies whose behaviour a founder ruling has since overturned. Distinct from
+// STALE: nothing here has gone out of date, Jamie has simply decided he no
+// longer wants it. Worth keeping separate because it is the standing proof
+// that the pre-March corpus is not automatically right — it is clean of the
+// "couldn't be bothered to edit" problem, but it is still a year of habits,
+// some of which he has since ruled against.
+//
+// 2026-08-04: announcing a hold REMOVAL. Placing a hold is reassurance and
+// gets said; lifting it is warehouse plumbing and does not. Four approved
+// exemplars did it, and left in they would have taught the model the exact
+// thing he flagged on tolerance item #20.
+const OVERRULED = [
+  /\b(removed|remove|lifted|lifting|releas\w*)\s+the\s+hold\b/i,
+  /\bhold\s+(is|has been)\s+(lifted|removed|released)\b/i,
+];
+const isOverruled = t => OVERRULED.some(re => re.test(t));
+
 /**
  * Cover every situation rather than sampling proportionally: the point is to
  * show the advisor one good example of each thing it gets wrong, not to
@@ -97,6 +114,7 @@ function select(candidates, perSituation) {
   const pool = candidates.filter(x =>
     !/donat/i.test(x.jamie) &&        // tool-provided copy, not his voice
     !isStale(x.jamie) &&
+    !isOverruled(x.jamie) &&
     x.words >= 8 && x.words <= 130 &&
     x.customer.length > 25);
 
