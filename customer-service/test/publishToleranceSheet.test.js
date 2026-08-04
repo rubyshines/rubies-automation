@@ -61,11 +61,24 @@ test('whitespace-only differences still count as unedited', () => {
   assert.ok(isEligible(draft({ draft_response: 'hi  there\n\n' , sent_response: 'hi there' }), '2026-06-01'));
 });
 
-test('outbound composers are excluded from the sample', () => {
-  // Outreach seeds write into the same table (and into operator_steer), so
-  // they pollute both this sample and any steer analysis run off it.
+test('only advisor-written drafts are eligible — everything else is not the advisor', () => {
+  // cs_ai_drafts holds every outbound message, not just advisor drafts.
   assert.ok(!isEligible(draft({ message_type: 'proactive_outreach' }), '2026-06-01'));
   assert.ok(!isEligible(draft({ source: 'operator_outreach' }), '2026-06-01'));
+  // Templated follow-up nudges: ~97% byte-identical and ALL at turn 4+, so
+  // including them invented a 71% unedited rate in that bucket.
+  assert.ok(!isEligible(draft({ source: 'auto_follow_up' }), '2026-06-01'));
+  // Jamie composing from scratch — stored into BOTH draft_response and
+  // sent_response, so it reads as a flawless advisor draft. This is the one
+  // that reached the founder review sheet and he recognised his own writing.
+  assert.ok(!isEligible(draft({ source: 'operator_reply' }), '2026-06-01'));
+});
+
+test('source filtering fails closed on unknown values', () => {
+  // A blacklist shipped first and leaked. Any source nobody has vetted must
+  // be excluded until someone deliberately adds it to the whitelist.
+  assert.ok(!isEligible(draft({ source: 'some_future_sender' }), '2026-06-01'));
+  assert.ok(!isEligible(draft({ source: null }), '2026-06-01'));
 });
 
 test('empty drafts and out-of-window drafts are excluded', () => {

@@ -46,11 +46,17 @@ const HISTORY_FROM = '2026-03-01';    // far enough back to compute turn ordinal
 const DEFAULT_PER_BUCKET = 10;
 const BUCKETS = ['1', '2', '3', '4+'];
 
-// Drafts that were never an inbound advisor reply — outbound composers seed
-// operator_steer too, so they'd otherwise pollute both the sample and any
-// steer analysis run off the same table.
+// WHITELIST, not a blacklist. cs_ai_drafts holds every outbound message, only
+// some of which the advisor wrote: 'auto_follow_up' is the templated "just
+// following up" nudge (97% byte-identical, and every single one lands at turn
+// 4+), 'operator_reply' is Jamie composing from scratch (stored into BOTH
+// draft_response and sent_response, so it reads as a perfect advisor draft),
+// 'operator_outreach' is the outbound composer. A blacklist shipped first and
+// leaked operator_reply into the founder review sheet — he spotted his own
+// writing being attributed to the advisor. Fail closed: new source values are
+// excluded until someone deliberately adds them.
+const ELIGIBLE_SOURCES = new Set(['poller']);
 const EXCLUDED_TYPES = new Set(['proactive_outreach']);
-const EXCLUDED_SOURCES = new Set(['operator_outreach']);
 
 const DECISION_NOTE =
   'BLANK = you would have sent this as-is.\n' +
@@ -95,8 +101,8 @@ const bucketOf = ordinal => (ordinal >= 4 ? '4+' : String(ordinal));
 
 function isEligible(d, sinceIso) {
   if (d.created_at < sinceIso) return false;
+  if (!ELIGIBLE_SOURCES.has(d.source)) return false;
   if (EXCLUDED_TYPES.has(d.message_type)) return false;
-  if (EXCLUDED_SOURCES.has(d.source)) return false;
   if (d.draft_kind && d.draft_kind !== 'advisor_draft') return false;
   const draft = norm(d.draft_response);
   if (!draft) return false;
@@ -184,8 +190,12 @@ async function fetchSentDrafts(sb) {
 // Sheet I/O
 // ---------------------------------------------------------------------------
 
-const HEADER = ['#', 'Turn', 'Type', 'Customer said', 'What we sent (unedited)', 'Would you have written it differently?'];
-const DECISION_COL = 5;
+// 'Draft' is the cs_ai_drafts id. It exists so a flagged row can be traced
+// back to its draft without grepping sent_response, and so a re-publish can
+// carry the founder's decisions forward instead of wiping them.
+const HEADER = ['#', 'Draft', 'Turn', 'Type', 'Customer said', 'What we sent (unedited)', 'Would you have written it differently?'];
+const DECISION_COL = 6;
+const SENT_COL = 5;
 
 async function ensureTab(sheets, spreadsheetId, title) {
   const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
@@ -201,16 +211,53 @@ async function ensureTab(sheets, spreadsheetId, title) {
   return res.data.replies[0].addSheet.properties.sheetId;
 }
 
-async function publish(sheets, spreadsheetId, rows) {
+/**
+ * Existing decisions, so a re-publish never destroys review work. Keyed by
+ * draft id where the sheet has one, and additionally by the sent text so a
+ * sheet published before the id column existed still migrates cleanly.
+ */
+async function readExistingDecisions(sheets, spreadsheetId) {
+  const byId = new Map();
+  const byText = new Map();
+  let res;
+  try {
+    res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${TAB}'` });
+  } catch {
+    return { byId, byText };            // tab does not exist yet
+  }
+  const [header, ...rows] = res.data.values || [];
+  if (!header) return { byId, byText };
+  // Pre-id sheets had the decision one column to the left.
+  const hadId = header[1] === 'Draft';
+  const dCol = hadId ? DECISION_COL : DECISION_COL - 1;
+  const sCol = hadId ? SENT_COL : SENT_COL - 1;
+  for (const r of rows) {
+    const decision = norm(r[dCol]);
+    if (!decision) continue;
+    if (hadId && r[1]) byId.set(String(r[1]), decision);
+    if (r[sCol]) byText.set(norm(r[sCol]).slice(0, 200), decision);
+  }
+  return { byId, byText };
+}
+
+async function publish(sheets, spreadsheetId, rows, prior = { byId: new Map(), byText: new Map() }) {
   const sheetId = await ensureTab(sheets, spreadsheetId, TAB);
-  const values = rows.map((d, i) => ([
-    i + 1,
-    d.turn_ordinal >= 4 ? '4+' : d.turn_ordinal,
-    d.message_type || 'uncategorized',
-    clip(lastCustomerMessage(d), 900),
-    clip(norm(d.draft_response), 4000),
-    '',
-  ]));
+  let carried = 0;
+  const values = rows.map((d, i) => {
+    const sent = clip(norm(d.draft_response), 4000);
+    const decision = prior.byId.get(String(d.id)) || prior.byText.get(norm(d.draft_response).slice(0, 200)) || '';
+    if (decision) carried++;
+    return [
+      i + 1,
+      d.id,
+      d.turn_ordinal >= 4 ? '4+' : d.turn_ordinal,
+      d.message_type || 'uncategorized',
+      clip(lastCustomerMessage(d), 900),
+      sent,
+      decision,
+    ];
+  });
+  publish.carried = carried;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -219,7 +266,7 @@ async function publish(sheets, spreadsheetId, rows) {
     requestBody: { values: [HEADER, ...values] },
   });
 
-  const widths = [40, 55, 130, 380, 560, 300];
+  const widths = [40, 60, 55, 130, 380, 560, 300];
   const requests = [
     { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
     {
@@ -251,7 +298,7 @@ async function publish(sheets, spreadsheetId, rows) {
       fields: 'pixelSize',
     },
   }));
-  for (const c of [3, 4]) {
+  for (const c of [4, 5]) {
     requests.push({
       repeatCell: {
         range: { sheetId, startRowIndex: 1, endRowIndex: values.length + 1, startColumnIndex: c, endColumnIndex: c + 1 },
@@ -271,12 +318,12 @@ async function readBack(sheets, spreadsheetId) {
   const totals = {};
   const flagged = [];
   for (const r of rows) {
-    const turn = r[1];
+    const turn = r[2];
     if (!turn) continue;
     const t = totals[turn] = totals[turn] || { n: 0, differently: 0 };
     t.n++;
     const decision = norm(r[DECISION_COL]);
-    if (decision) { t.differently++; flagged.push({ n: r[0], turn, type: r[2], decision }); }
+    if (decision) { t.differently++; flagged.push({ n: r[0], draft_id: r[1], turn, type: r[3], decision }); }
   }
   return { totals, flagged };
 }
@@ -328,8 +375,9 @@ async function main() {
   }
 
   const sheets = await getSheetsClient();
-  const n = await publish(sheets, spreadsheetId, rows);
-  console.log(`\nPublished ${n} rows to "${TAB}"`);
+  const prior = await readExistingDecisions(sheets, spreadsheetId);
+  const n = await publish(sheets, spreadsheetId, rows, prior);
+  console.log(`\nPublished ${n} rows to "${TAB}" (carried ${publish.carried} existing decision(s) forward)`);
   console.log(`https://docs.google.com/spreadsheets/d/${spreadsheetId}`);
 }
 
