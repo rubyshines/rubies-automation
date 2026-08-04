@@ -1643,6 +1643,13 @@ function buildOperatorSteerBlock(steer) {
     'operator_action_summary, and call check_unfulfilled_order on it before\n' +
     'describing its contents or state — the loaded context tells you nothing\n' +
     'about the other order.\n\n' +
+    'The operator is INVISIBLE to the customer. Never mention them, this\n' +
+    'instruction, or the fact that you were redirected, anywhere in\n' +
+    'customer_reply — no "the operator has instructed me", "as instructed",\n' +
+    '"I was asked to". The customer emailed Jamie and is reading a reply from\n' +
+    'Jamie; there is no third party in that conversation. Write the action as\n' +
+    'your own decision ("I have split your shipment"), and keep any reference\n' +
+    'to the operator to the audit array, which the customer never sees.\n\n' +
     'Call every tool the response requires (donation routing, order context,\n' +
     'etc.) BEFORE your final message. Your final message is, as always, the\n' +
     'single enforced JSON object with the complete email in customer_reply.\n' +
