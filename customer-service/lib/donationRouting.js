@@ -1,44 +1,46 @@
 /**
  * Donation Routing — geographic partner matching for RUBIES returns.
  *
- * Routes returned items to the closest LGBTQ+ partner org based on
- * customer address (Google Maps geocoding + haversine distance).
- * Load-balanced among the 3 closest partners by item volume over a
- * trailing window, picked weighted-random so no nearby partner goes
- * dark while a newly added one catches up.
+ * Routes returned items to a nearby LGBTQ+ partner org based on customer
+ * address (Google Maps geocoding + haversine distance), closest-first:
+ * a partner in the same city or metro wins, then one in the same
+ * state/province, and only failing both does the box spread across the
+ * 3 closest nationally. Every tier picks weighted-random by item volume
+ * over a trailing window, so no nearby partner goes dark while a newly
+ * added one catches up.
  */
 
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
+const { geocode } = require('./geocoder');
 
 // Trailing window for load balancing. Lifetime counts made every newly added
 // partner monopolize its region until it caught up (Montgomery blacked out
 // Raleigh for two weeks in June 2026); a window keeps the comparison current.
 const LOAD_WINDOW_DAYS = 90;
 
+// How far "same city or nearby city" reaches. 50 km covers a metro and its
+// commuter band (Framingham is local to a Boston customer) without stretching
+// to the next city over (Kingston is not local to Toronto).
+const LOCAL_RADIUS_KM = 50;
+
 // ---------------------------------------------------------------------------
 // Geocoding & distance
 // ---------------------------------------------------------------------------
 
+/**
+ * Geocode a Shopify-shaped address object. Returns lat/lng plus the structured
+ * city/region, which come back as Google long names ("Massachusetts",
+ * "Ontario") — the same convention partner rows were geocoded under at ingest,
+ * so region strings compare cleanly on both sides. Null on any failure:
+ * routing then degrades to load balancing rather than erroring.
+ */
 async function geocodeAddress(address) {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (!apiKey) return null;
-
   const parts = [address.address1, address.city, address.province, address.zip, address.country].filter(Boolean);
-  const query = encodeURIComponent(parts.join(', '));
-
   try {
-    const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${apiKey}`
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
-    if (data.status === 'OK' && data.results.length > 0) {
-      const loc = data.results[0].geometry.location;
-      return { lat: loc.lat, lng: loc.lng };
-    }
-  } catch (e) { /* geocoding failed */ }
-
-  return null;
+    return await geocode(parts.join(', '));
+  } catch (e) {
+    return null; // no API key, HTTP error, malformed response
+  }
 }
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
@@ -96,6 +98,83 @@ function pickWeightedByLoad(candidates, getLoad, rng = Math.random) {
     if (r <= 0) return candidates[i];
   }
   return candidates[candidates.length - 1];
+}
+
+// ---------------------------------------------------------------------------
+// Tiered geographic selection
+// ---------------------------------------------------------------------------
+
+function samePlace(a, b) {
+  if (!a || !b) return false;
+  return a.trim().toLowerCase().replace(/\s+/g, ' ') === b.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Pick a partner for a geocoded customer, closest-first:
+ *
+ *   1. local     — within LOCAL_RADIUS_KM, or an exact city + region match
+ *                  (the string match also covers a partner row that has no
+ *                  coordinates yet).
+ *   2. in-state  — only when the nearest partner overall is ALREADY in the
+ *                  customer's state/province. That guard is the point: a bare
+ *                  "same state wins" rule would ship a far-northern-California
+ *                  box past Oregon down to Los Angeles. This tier never
+ *                  overrides distance, it only stops the weighted-random pick
+ *                  from crossing a state line when the in-state partner was
+ *                  the closest thing anyway. Coordinate-less partners sit this
+ *                  tier out (they can't be ranked); they can still win tier 1.
+ *   3. regional  — the closest 3 nationally, the long-standing spread rule.
+ *
+ * Each tier still picks weighted-random by trailing-window load, so a metro or
+ * province holding several partners keeps sharing flow between them.
+ *
+ * Returns null when no partner has coordinates and no city matches, leaving the
+ * caller's country-wide load-balanced pick in place.
+ */
+function selectByProximity(partners, place, getLoad, rng) {
+  const withDistance = partners
+    .filter(p => p.latitude && p.longitude)
+    .map(p => ({
+      ...p,
+      distance_km: haversineDistance(place.lat, place.lng, p.latitude, p.longitude),
+    }))
+    .sort((a, b) => a.distance_km - b.distance_km);
+
+  // Tier 1 — local. Distance-ranked entries go in first so a partner that is
+  // both within the radius and an exact city match keeps its distance and is
+  // counted once (a duplicate would double its weight in the pick).
+  const local = new Map();
+  for (const p of withDistance) {
+    if (p.distance_km <= LOCAL_RADIUS_KM) local.set(p.id, p);
+  }
+  for (const p of partners) {
+    if (!local.has(p.id) && samePlace(p.city, place.city) && samePlace(p.region, place.region)) {
+      local.set(p.id, p);
+    }
+  }
+  if (local.size > 0) {
+    const partner = pickWeightedByLoad([...local.values()], getLoad, rng);
+    const proximity = partner.distance_km === undefined
+      ? 'same city'
+      : `${Math.round(partner.distance_km)} km`;
+    return { partner, method: `local (${proximity} — ${[partner.city, partner.region].filter(Boolean).join(', ')})` };
+  }
+
+  // Tier 2 — same state/province, gated on the nearest partner being in it.
+  const nearest = withDistance[0];
+  if (nearest && samePlace(nearest.region, place.region)) {
+    const inState = withDistance.filter(p => samePlace(p.region, place.region));
+    const partner = pickWeightedByLoad(inState, getLoad, rng);
+    return { partner, method: `in-state (${partner.region} — ${Math.round(partner.distance_km)} km)` };
+  }
+
+  // Tier 3 — national spread across the closest 3.
+  if (withDistance.length > 0) {
+    const partner = pickWeightedByLoad(withDistance.slice(0, 3), getLoad, rng);
+    return { partner, method: `geographic (${Math.round(partner.distance_km)} km away)` };
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,9 +331,10 @@ async function prescribeDonationRouting(intake, context) {
     };
   }
 
-  // Multiple items — find the closest partners by geographic proximity, then
-  // pick weighted-random by recent item volume (trailing window from the
-  // donation_routings log, NOT the lifetime counter — see fetchRecentPartnerLoads).
+  // Multiple items — pick geographically (local, then in-state, then the
+  // closest 3 nationally), weighted-random by recent item volume within
+  // whichever tier fires (trailing window from the donation_routings log, NOT
+  // the lifetime counter — see fetchRecentPartnerLoads).
   const loads = await fetchRecentPartnerLoads(supabase, partners);
   const getLoad = p => loads.get(p.id) || 0;
   const rng = context._rng || Math.random;
@@ -265,20 +345,12 @@ async function prescribeDonationRouting(intake, context) {
   const customerAddress = context.customer?.defaultAddress;
   if (customerAddress) {
     try {
-      const customerCoords = await geocodeAddress(customerAddress);
-      if (customerCoords) {
-        const withDistance = partners
-          .filter(p => p.latitude && p.longitude)
-          .map(p => ({
-            ...p,
-            distance_km: haversineDistance(customerCoords.lat, customerCoords.lng, p.latitude, p.longitude),
-          }))
-          .sort((a, b) => a.distance_km - b.distance_km);
-
-        if (withDistance.length > 0) {
-          const closest3 = withDistance.slice(0, 3);
-          partner = pickWeightedByLoad(closest3, getLoad, rng);
-          routingMethod = `geographic (${Math.round(partner.distance_km)} km away)`;
+      const place = await geocodeAddress(customerAddress);
+      if (place) {
+        const selected = selectByProximity(partners, place, getLoad, rng);
+        if (selected) {
+          partner = selected.partner;
+          routingMethod = selected.method;
         }
       }
     } catch (e) {
@@ -341,4 +413,4 @@ async function logDonationRouting({ customer_email, order_number, partner_id, it
   }
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR };
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, selectByProximity, LOCAL_RADIUS_KM, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR };
