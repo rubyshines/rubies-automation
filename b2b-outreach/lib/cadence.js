@@ -19,6 +19,11 @@ const NEXT_ACTION_DAYS = {
   // back on the Tier-5 overdue list next season rather than dropping it
   // silently — quiet, but still on the books.
   followup_2: 180,
+  // Replying to a decline. Without an entry this inherits the 30-day default
+  // and Tier 5 resurfaces an org that just said no, a month later, as an
+  // overdue follow-up. They answered and the answer was no: go quiet for a
+  // season, keep them on the books.
+  reply_close: 180,
   purchase_pitch: 7,
   donation_closet_pitch: 7,
   price_change_notice: 7,
@@ -167,10 +172,15 @@ function evaluateDue(company, ctx, now = new Date()) {
   // behind a reorder nudge.
   const firstTouch = FIRST_TOUCH_TYPES.find(t => sent.has(t));
   const firstTouchAt = firstTouch ? lastSent(firstTouch) : null;
-  // Tier 1 already claims anyone whose newest message is inbound, so reaching
-  // here with an inbound at all means they answered and we answered back — a
-  // live conversation, not a silence to chase.
-  const answered = ctx.lastInboundAt && firstTouchAt && new Date(ctx.lastInboundAt) > new Date(firstTouchAt);
+  // The ladder chases SILENCE, so any genuine human reply ever ends it — not
+  // just one newer than our last send. The timestamp comparison this replaces
+  // was wrong in the case that matters most: an org declines, we send a
+  // graceful close, and our close is now newer than their reply, so the ladder
+  // would resume and chase someone who already said no. (Made concrete when a
+  // Tier-1 close came back labelled `intro_outreach` — a first-touch type —
+  // which re-armed the whole sequence.) Auto-replies are already excluded from
+  // lastInboundAt upstream, so a vacation responder still counts as silence.
+  const answered = !!ctx.lastInboundAt;
 
   if (!firstTouch) {
     // The imports created duplicate rows per org (BAGLY exists twice: an active

@@ -264,3 +264,27 @@ test('the sibling guard suppresses only the opener, not ongoing cadence', () => 
   }), NOW);
   assert.equal(due.message_type, 'community_checkin');
 });
+
+test('a decline ends the ladder even when our close is the newest message', () => {
+  // TransActual: they declined, we sent a graceful close, and the advisor
+  // labelled that close `intro_outreach` — a first-touch type. Under the old
+  // timestamp comparison our close was newer than their reply, so the ladder
+  // re-armed and would have chased an org that had just said no.
+  const c = org({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
+  const ctx = freshCtx({
+    sentTypes: new Set(['intro_outreach']),
+    lastTypeSentAt: () => '2026-06-05T00:00:00Z', // our close, newer than their reply
+    lastInboundAt: '2026-06-02T00:00:00Z',        // their decline
+  });
+  assert.equal(evaluateDue(c, ctx, NOW), null);
+});
+
+test('one human reply retires the ladder permanently', () => {
+  const c = org({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
+  const replied = freshCtx({
+    sentTypes: new Set(['intro_outreach', 'followup_1']),
+    lastTypeSentAt: () => '2026-05-20T00:00:00Z',
+    lastInboundAt: '2026-05-21T00:00:00Z',
+  });
+  assert.equal(evaluateDue(c, replied, NOW), null, 'followup_2 must not fire after they engaged');
+});

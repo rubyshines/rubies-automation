@@ -24,15 +24,28 @@ const OUTPUT_SCHEMA = {
   properties: {
     email_subject: { type: 'string', description: 'Subject line. For replies, keep the existing thread subject with Re: prefix.' },
     email_body: { type: 'string', description: "The complete email exactly as Jamie would send it — greeting line, body, warm sign-off, 'Jamie Alexander, RUBIES Founder'. Plain text. No em dashes." },
-    message_type: { type: 'string', description: 'The catalog message type this draft implements (e.g. community_checkin, reorder_nudge, purchase_pitch). For Tier-1 replies, the type that best describes your response.' },
+    message_type: { type: 'string', description: "The catalog message type this draft implements (e.g. community_checkin, reorder_nudge, donation_closet_pitch). For a Tier-1 reply, the type that best describes YOUR RESPONSE — and never a first-touch type (intro_pitch, intro_outreach, affiliate_intro, re_approach), because a reply is by definition not a first touch. Labelling a reply as a first touch restarts the no-reply follow-up sequence against someone who already wrote back. When replying to a decline or a close, use 'reply_close'." },
     confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
     needs_review_reason: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'Why an operator should look closely (new relationship, unusual thread, uncertain fact) — or null when standard.' },
     open_commitments: { type: 'array', items: { type: 'string' }, description: "Every promise this email makes that requires follow-through (e.g. 'send tracking by Friday', 'ship 5 sample sets'). The org failure mode is OUR follow-through — this list feeds the queue." },
     facts_to_verify: { type: 'array', items: { type: 'string' }, description: "ONLY claims in the draft whose truth you cannot establish from the data you were given — and that the SYSTEM cannot check either. Anything from the operator's steer, the thread, the company record, or tool results is ground truth: never list it back for verification. Do not list claims derivable from our own data (order history, prices in your facts block, program terms). Qualifying examples: an external state that may have changed (a website listing being live, an arrangement still standing), a policy detail you inferred rather than were told, timezone math. Do NOT question whether a contact is current unless there is a staleness signal (bounce, departure auto-reply, or a year-plus silent thread). An EMPTY list is the normal, good outcome — most drafts should have zero." },
     next_touch_days: { anyOf: [{ type: 'integer' }, { type: 'null' }], description: "Override the standard follow-up cadence ONLY when the thread gives a concrete reason the default timing is wrong: they named a timeline ('reach out in September', 'our Pride budget lands in May'), a rough patch followed by a comeback order (check in warmly SOONER than their order gap suggests), or a stated pause. Days from now until we should next touch this relationship; the reason must appear in audit. Null = standard cadence (the usual case)." },
+    referrals: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'The org, store, or person they pointed us to, exactly as they named it.' },
+          context: { type: 'string', description: "Their own words about why — this becomes the referral provenance on the new record, and it is what makes a future intro to them honest ('AJ at TransActual suggested I get in touch')." },
+        },
+        required: ['name', 'context'],
+        additionalProperties: false,
+      },
+      description: "Anyone THEY pointed us toward in this thread — a sister org, another shop, a person to talk to. A referral is the strongest cold opener we have, so it must not be left buried in prose. Empty array is the normal case; only list a genuine hand-off, not any org mentioned in passing.",
+    },
     audit: { type: 'array', items: { type: 'string' }, description: 'Your reasoning steps.' },
   },
-  required: ['email_subject', 'email_body', 'message_type', 'confidence', 'needs_review_reason', 'open_commitments', 'facts_to_verify', 'next_touch_days', 'audit'],
+  required: ['email_subject', 'email_body', 'message_type', 'confidence', 'needs_review_reason', 'open_commitments', 'facts_to_verify', 'referrals', 'next_touch_days', 'audit'],
   additionalProperties: false,
 };
 
