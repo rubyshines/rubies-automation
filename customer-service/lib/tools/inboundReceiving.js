@@ -11,7 +11,8 @@
 
 const {
   readOrderTabs, recordManualOrder, amendOrder,
-  createInboundShipmentFromPackingList, recordProductionLots, reconcileProductionOrder,
+  createInboundShipmentFromPackingList, createInboundShipmentFromItems,
+  updateInboundShipmentMeta, recordProductionLots, reconcileProductionOrder,
   writeReconciliationSheet, uploadInboundToWarehance, pollInboundReceiving,
 } = require('../merchandising/inboundReceiving');
 
@@ -93,23 +94,31 @@ async function handleAmend({ order_ref, tabs, items }) {
   ].filter(Boolean).join('\n'));
 }
 
-async function handleReceive({ packing_list_path, order_ref, transfer_number, ship_date, expected_arrival, warehouse, remap, flag, write_sheet }) {
-  if (!packing_list_path) return err('`packing_list_path` (path to the supplier .xlsx) is required.');
-  const r = await createInboundShipmentFromPackingList({
-    packingListPath: packing_list_path, orderRef: order_ref, transferNumber: transfer_number,
-    shipDate: ship_date, expectedArrival: expected_arrival, warehouse, remap, flag,
-  });
+async function handleReceive({ packing_list_path, items, order_ref, transfer_number, carrier, tracking_number, ship_date, expected_arrival, warehouse, remap, flag, write_sheet }) {
+  if (!packing_list_path && !(Array.isArray(items) && items.length)) {
+    return err('provide `packing_list_path` (the supplier .xlsx) or `items` ([{sku, qty}]) for a small consignment.');
+  }
+  const common = {
+    orderRef: order_ref, transferNumber: transfer_number, carrier, trackingNumber: tracking_number,
+    shipDate: ship_date, expectedArrival: expected_arrival, warehouse, flag,
+  };
+  const r = packing_list_path
+    ? await createInboundShipmentFromPackingList({ ...common, packingListPath: packing_list_path, remap })
+    : await createInboundShipmentFromItems({ ...common, items });
   const p = r.packing;
   const out = [
     `## Inbound shipment recorded — ${r.transfer_number}`,
     `**Inbound ID:** ${r.inbound_shipment_id}${r.order ? ` · **Order:** ${r.order.production_code} (#${r.order.id})` : ' · (not linked to an order)'}`,
-    `**Packing:** ${p.units.toLocaleString()} units · ${p.sku_count} SKUs · ${p.cartons} cartons · ${p.cbm} CBM · ${p.gross_weight_kg} kg gross`,
+    p
+      ? `**Packing:** ${p.units.toLocaleString()} units · ${p.sku_count} SKUs · ${p.cartons} cartons · ${p.cbm} CBM · ${p.gross_weight_kg} kg gross`
+      : `**Shipment:** ${r.total_units.toLocaleString()} units · ${r.canonical_sku_count} SKUs (entered directly, no packing list)`,
     `Canonical SKUs: ${r.canonical_sku_count} (${r.remapped.length} size-alias remaps applied)`,
   ];
+  if (carrier || tracking_number) out.push(`🚚 **${carrier || 'Carrier'}**${tracking_number ? ` · tracking \`${tracking_number}\`` : ''}`);
   if (r.prefix_remapped && r.prefix_remapped.length) out.push(`🔁 **${r.prefix_remapped.length} prefix correction(s)** applied: ${r.prefix_remapped.map((x) => `${x.from}→${x.to}`).join(', ')}`);
   if (r.lots && r.lots.flagged) out.push(`🎨 **${r.lots.flagged} flagged lot(s)** recorded (${flag && flag.marker ? flag.marker : 'flagged'}${flag && flag.quality ? ` · ${flag.quality}` : ''}) + ${r.lots.standard} standard.`);
   if (r.unknown.length) out.push(`⚠️ **${r.unknown.length} unknown SKU(s)** (no catalog match — review): ${r.unknown.map((u) => `${u.sku}=${u.qty}`).join(', ')}`);
-  if (r.parse_warnings.length) out.push('⚠️ ' + r.parse_warnings.join('\n⚠️ '));
+  if (r.parse_warnings && r.parse_warnings.length) out.push('⚠️ ' + r.parse_warnings.join('\n⚠️ '));
   if (r.reconciliation) out.push('\n' + reconcileBlock(r.reconciliation));
 
   // Write the founder-facing reconcile tab to the 2026 Production Numbers sheet (default
@@ -143,12 +152,15 @@ async function handleReconcile({ order_ref }) {
   return ok('## ' + reconcileBlock(rc));
 }
 
-async function handleUpload({ inbound_shipment_id, client_id }) {
+async function handleUpload({ inbound_shipment_id, client_id, force }) {
   if (!inbound_shipment_id) return err('`inbound_shipment_id` is required.');
-  const r = await uploadInboundToWarehance(inbound_shipment_id, { clientId: client_id });
+  let r;
+  try {
+    r = await uploadInboundToWarehance(inbound_shipment_id, { clientId: client_id, force });
+  } catch (e) { return err(e.message); }
   return ok([
     `## Uploaded inbound ${inbound_shipment_id} to Warehance`,
-    `**Warehance inbound ID:** ${r.warehance_inbound_id} · ${r.uploaded} line(s) sent`,
+    `**Warehance inbound ID:** ${r.warehance_inbound_id} · ref \`${r.transfer_number}\` · ${r.uploaded} line(s) sent${r.tracking_number ? ` · tracking \`${r.tracking_number}\`` : ''}`,
     r.unresolved.length ? `⚠️ ${r.unresolved.length} SKU(s) not found in Warehance (skipped): ${r.unresolved.join(', ')}` : '',
   ].filter(Boolean).join('\n'));
 }
@@ -198,13 +210,16 @@ module.exports = [
   },
   {
     name: 'receive_shipment',
-    description: "Parse a supplier packing/shipping list (.xlsx) into an inbound shipment: maps supplier SKU codes to catalog SKUs (e.g. Kali's '1X' -> 'XL', validated against the catalog), writes inbound_shipments + items, sets qty_produced on matched order lines, and returns the 3-way ordered/produced/received reconciliation. Flags unknown SKUs (no catalog match) for review. Link it to the order it fulfills via `order_ref`.",
+    description: "Record an inbound shipment — one physical consignment on its way to the 3PL. Two input modes: `packing_list_path` parses a supplier packing/shipping list (.xlsx) and maps supplier SKU codes to catalog SKUs (e.g. Kali's '1X' -> 'XL'); `items` takes [{sku, qty}] directly, for a small courier parcel that arrives with an email and a tracking number rather than a formatted list. Either way it writes inbound_shipments + items, sets qty_produced on matched order lines, and returns the 3-way ordered/produced/received reconciliation. Unknown SKUs are flagged, never invented. AN ORDER CAN HAVE SEVERAL SHIPMENTS (ocean + air, a held batch following later) — call this once per consignment and the transfer number auto-increments, so each gets its own Warehance ASN the warehouse can receive against separately.",
     inputSchema: {
       type: 'object',
       properties: {
         packing_list_path: { type: 'string', description: 'Path to the supplier packing-list .xlsx (e.g. in ~/Downloads).' },
+        items: { type: 'array', description: 'Explicit shipment lines, as an alternative to a packing list. Use for small consignments where no .xlsx exists.', items: { type: 'object', properties: { sku: { type: 'string' }, qty: { type: 'number' } }, required: ['sku', 'qty'] } },
         order_ref: { type: 'string', description: 'production_code or order id this delivery fulfills. Reconciliation needs this.' },
-        transfer_number: { type: 'string', description: 'Unique shipment reference. Defaults to the order production_code. Used as the Warehance reference.' },
+        transfer_number: { type: 'string', description: "Unique shipment reference, used as the Warehance reference. Defaults to the next free number for the order: the bare production_code for the first shipment, then '<code>-2', '<code>-3' for later ones." },
+        carrier: { type: 'string', description: "How this consignment travels, e.g. 'UPS', 'Ocean/CLH'." },
+        tracking_number: { type: 'string', description: 'Carrier tracking number. Sent to Warehance with the ASN.' },
         ship_date: { type: 'string', description: 'YYYY-MM-DD' },
         expected_arrival: { type: 'string', description: 'YYYY-MM-DD' },
         warehouse: { type: 'string', description: "Destination warehouse name. Default 'Nitro Logistics AMU'." },
@@ -226,9 +241,47 @@ module.exports = [
           required: ['skus'],
         },
       },
-      required: ['packing_list_path'],
     },
     handler: handleReceive,
+  },
+  {
+    name: 'update_inbound_shipment',
+    description: "Update an inbound shipment's travel details — carrier, tracking number, ship date, expected arrival, actual arrival — and push tracking + dates to the live Warehance ASN if it has already been uploaded. Use when a shipment's tracking comes through after it was recorded, or when the freight forwarder reports a new arrival date. NOTE: Warehance can only update the shipment HEADER; the SKU lines on an ASN cannot be changed and an ASN cannot be deleted. To correct what is ON a shipment, record a new one and have the warehouse disregard the old.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        inbound_shipment_id: { type: 'number', description: 'The local inbound_shipments id.' },
+        carrier: { type: 'string', description: "e.g. 'UPS', 'Ocean/CLH'" },
+        tracking_number: { type: 'string' },
+        tracking_url: { type: 'string', description: 'Optional tracking URL, passed to Warehance only.' },
+        ship_date: { type: 'string', description: 'YYYY-MM-DD' },
+        expected_arrival: { type: 'string', description: 'YYYY-MM-DD' },
+        actual_arrival: { type: 'string', description: 'YYYY-MM-DD the goods actually landed.' },
+        status: { type: 'string', description: 'draft / uploaded / in_transit / receiving / received / in_inventory' },
+      },
+      required: ['inbound_shipment_id'],
+    },
+    handler: async (args) => {
+      if (!args.inbound_shipment_id) return err('`inbound_shipment_id` is required.');
+      try {
+        const r = await updateInboundShipmentMeta({
+          inboundShipmentId: args.inbound_shipment_id,
+          carrier: args.carrier, trackingNumber: args.tracking_number, trackingUrl: args.tracking_url,
+          shipDate: args.ship_date, expectedArrival: args.expected_arrival,
+          actualArrival: args.actual_arrival, status: args.status,
+        });
+        const u = r.updated;
+        const lines = [
+          `## Updated inbound ${r.inbound_shipment_id} — ${r.transfer_number}`,
+          `Carrier: **${u.carrier || '—'}** · Tracking: **${u.tracking_number || '—'}** · Status: **${u.status}**`,
+          `Ship ${u.ship_date || '—'} · Expected ${u.estimated_arrival_date || '—'} · Arrived ${u.actual_arrival_date || '—'}`,
+        ];
+        if (!r.warehance_inbound_id) lines.push('_Not yet in Warehance — run `upload_inbound_to_warehance` to create the ASN._');
+        else if (r.remote.attempted && r.remote.ok) lines.push(`✅ Warehance ASN ${r.warehance_inbound_id} updated (${r.remote.fields.join(', ')}).`);
+        else if (r.remote.attempted) lines.push(`⚠️ Local record updated, but the Warehance push failed: ${r.remote.error}`);
+        return ok(lines.join('\n'));
+      } catch (e) { return err(e.message); }
+    },
   },
   {
     name: 'record_production_lots',
@@ -264,12 +317,13 @@ module.exports = [
   },
   {
     name: 'upload_inbound_to_warehance',
-    description: 'POST an inbound shipment to Warehance (Nitro) as an ASN. Resolves each catalog SKU to its Warehance product id, sends the shipment with the production code as the reference number, and stores the returned Warehance inbound id. Pass `inbound_shipment_id` (from receive_shipment).',
+    description: 'POST an inbound shipment to Warehance (Nitro) as an ASN. Resolves each catalog SKU to its Warehance product id, sends the shipment with the transfer number as the reference and its tracking number, and stores the returned Warehance inbound id. Pass `inbound_shipment_id` (from receive_shipment). Refuses to re-post a shipment that already has an ASN, because Warehance cannot delete one and the duplicate would be receivable — use `update_inbound_shipment` for dates and tracking instead.',
     inputSchema: {
       type: 'object',
       properties: {
         inbound_shipment_id: { type: 'number', description: 'The local inbound_shipments id.' },
         client_id: { type: 'number', description: 'Warehance client id (required only for organization-level API keys).' },
+        force: { type: 'boolean', description: 'Post a second ASN even though this shipment already has one. Rarely correct — the old ASN cannot be deleted.' },
       },
       required: ['inbound_shipment_id'],
     },

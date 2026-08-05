@@ -68,8 +68,10 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Per-shipment reconcile tab + multi-shipment hardening
 - Parked: 2026-07-03
+- Last touched: 2026-08-05
 - Domains: logistics, inventory
 - Type: idea (planned)
+- **DONE 2026-08-05: the transfer-number half.** `receive_shipment` now allocates `<code>`, `<code>-2`, … per consignment (shipment 1 keeps the bare code, whose reference is already live in Warehance), takes carrier + tracking, and accepts explicit `items` for a courier parcel with no packing list. Remaining here: the per-shipment reconcile tab, the `qty_produced` sum-across-shipments, and the seed-from-held helper.
 - Notes: Extend the receiving reconcile (see domain_logistics Key Decisions) so each distinct inbound shipment of an order gets its own scoped "Shipment — <transfer>" tab (SKU | Ordered | This Shipment | Cumulative | Remaining | Flag | Note; + OUTSTANDING and FABRIC/QUALITY blocks). Jamie chose scoped-per-shipment over per-shipment columns. A pure `buildShipmentRows` was drafted then reverted (unwired) — re-derive from the design here. Also harden multi-shipment: auto-number `transfer_number` (`<code>-1/-2`) so a second shipment can't overwrite the first, and make the `qty_produced` mirror sum across shipments (reconcile already uses lots, so it's cosmetic). Plus a `seed_order_from_held`/next-order helper that starts a replacement order from an order's held lots. Use when the order actually splits into ocean+air / a later batch arrives.
 
 ## Production order revision history

@@ -253,19 +253,39 @@ async function resolveWarehouseId(name) {
  * @param {{product_id:number, ordered:number}[]} p.items
  * @param {string} [p.referenceNumber]
  * @param {string} [p.trackingNumber]
+ * @param {string} [p.trackingUrl]
  * @param {string} [p.shipDate] - ISO 8601
  * @param {string} [p.expectedDate] - ISO 8601
  * @param {number} [p.clientId] - required for organization-level API keys
  * @returns {Promise<{id:number}>} the created shipment id
  */
-async function createInboundShipment({ warehouseId, items, referenceNumber, trackingNumber, shipDate, expectedDate, clientId }) {
+async function createInboundShipment({ warehouseId, items, referenceNumber, trackingNumber, trackingUrl, shipDate, expectedDate, clientId }) {
   const body = { warehouse_id: warehouseId, items };
   if (referenceNumber) body.reference_number = referenceNumber;
   if (trackingNumber) body.tracking_number = trackingNumber;
+  if (trackingUrl) body.tracking_url = trackingUrl;
   if (shipDate) body.ship_date = shipDate;
   if (expectedDate) body.expected_date = expectedDate;
   if (clientId != null) body.client_id = clientId;
   const json = await apiPost('/inbound-shipments', body);
+  return json.data || json;
+}
+
+/**
+ * Update an existing inbound shipment (ASN) in place.
+ *
+ * IMPORTANT: Warehance's PATCH covers only the shipment HEADER — reference_number,
+ * expected_date, ship_date, tracking_number, tracking_url, status, closed, closed_date,
+ * warehouse_notes, internal_notes, tags. **Line items cannot be changed after creation,
+ * and there is no DELETE endpoint.** So correcting what is ON a shipment means closing
+ * the old ASN (`{closed: true}`) and posting a replacement.
+ *
+ * @param {string|number} id - the Warehance inbound shipment id
+ * @param {object} patch - any subset of the header fields above
+ */
+async function updateInboundShipment(id, patch) {
+  if (!id) throw new Error('updateInboundShipment: id is required');
+  const json = await apiPatch(`/inbound-shipments/${id}`, patch);
   return json.data || json;
 }
 
@@ -327,6 +347,7 @@ module.exports = {
   fetchWarehouses,
   resolveWarehouseId,
   createInboundShipment,
+  updateInboundShipment,
   listInboundShipments,
   fetchInboundShipmentByReference,
   fetchUnfulfilledOrders,
