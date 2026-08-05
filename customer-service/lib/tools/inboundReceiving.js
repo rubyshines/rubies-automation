@@ -15,6 +15,7 @@ const {
   updateInboundShipmentMeta, recordProductionLots, reconcileProductionOrder,
   writeReconciliationSheet, uploadInboundToWarehance, pollInboundReceiving,
 } = require('../merchandising/inboundReceiving');
+const { describeEstimate } = require('../merchandising/transitEstimate');
 
 function anomalyBlock(a) {
   if (!a) return '';
@@ -94,17 +95,25 @@ async function handleAmend({ order_ref, tabs, items }) {
   ].filter(Boolean).join('\n'));
 }
 
-async function handleReceive({ packing_list_path, items, order_ref, transfer_number, carrier, tracking_number, ship_date, expected_arrival, warehouse, remap, flag, write_sheet }) {
+async function handleReceive({ packing_list_path, items, order_ref, transfer_number, carrier, tracking_number, ship_date, expected_arrival, transit_days, warehouse, remap, flag, write_sheet }) {
   if (!packing_list_path && !(Array.isArray(items) && items.length)) {
     return err('provide `packing_list_path` (the supplier .xlsx) or `items` ([{sku, qty}]) for a small consignment.');
   }
   const common = {
     orderRef: order_ref, transferNumber: transfer_number, carrier, trackingNumber: tracking_number,
-    shipDate: ship_date, expectedArrival: expected_arrival, warehouse, flag,
+    shipDate: ship_date, expectedArrival: expected_arrival, transitDays: transit_days, warehouse, flag,
   };
-  const r = packing_list_path
-    ? await createInboundShipmentFromPackingList({ ...common, packingListPath: packing_list_path, remap })
-    : await createInboundShipmentFromItems({ ...common, items });
+  let r;
+  try {
+    r = packing_list_path
+      ? await createInboundShipmentFromPackingList({ ...common, packingListPath: packing_list_path, remap })
+      : await createInboundShipmentFromItems({ ...common, items });
+  } catch (e) {
+    // A missing arrival date is a question for the operator, not a failure — nothing was
+    // written, so ask and call again rather than recording a blank Warehance dates as
+    // 0001-01-01 and the warehouse cannot plan receiving around it.
+    return err(e.message);
+  }
   const p = r.packing;
   const out = [
     `## Inbound shipment recorded — ${r.transfer_number}`,
@@ -115,6 +124,9 @@ async function handleReceive({ packing_list_path, items, order_ref, transfer_num
     `Canonical SKUs: ${r.canonical_sku_count} (${r.remapped.length} size-alias remaps applied)`,
   ];
   if (carrier || tracking_number) out.push(`🚚 **${carrier || 'Carrier'}**${tracking_number ? ` · tracking \`${tracking_number}\`` : ''}`);
+  const etaNote = describeEstimate(r.eta);
+  if (etaNote) out.push(`📅 Expected arrival ${etaNote}`);
+  else if (r.eta) out.push(`📅 Expected arrival **${r.eta.expectedArrival}**`);
   if (r.prefix_remapped && r.prefix_remapped.length) out.push(`🔁 **${r.prefix_remapped.length} prefix correction(s)** applied: ${r.prefix_remapped.map((x) => `${x.from}→${x.to}`).join(', ')}`);
   if (r.lots && r.lots.flagged) out.push(`🎨 **${r.lots.flagged} flagged lot(s)** recorded (${flag && flag.marker ? flag.marker : 'flagged'}${flag && flag.quality ? ` · ${flag.quality}` : ''}) + ${r.lots.standard} standard.`);
   if (r.unknown.length) out.push(`⚠️ **${r.unknown.length} unknown SKU(s)** (no catalog match — review): ${r.unknown.map((u) => `${u.sku}=${u.qty}`).join(', ')}`);
@@ -210,7 +222,7 @@ module.exports = [
   },
   {
     name: 'receive_shipment',
-    description: "Record an inbound shipment — one physical consignment on its way to the 3PL. Two input modes: `packing_list_path` parses a supplier packing/shipping list (.xlsx) and maps supplier SKU codes to catalog SKUs (e.g. Kali's '1X' -> 'XL'); `items` takes [{sku, qty}] directly, for a small courier parcel that arrives with an email and a tracking number rather than a formatted list. Either way it writes inbound_shipments + items, sets qty_produced on matched order lines, and returns the 3-way ordered/produced/received reconciliation. Unknown SKUs are flagged, never invented. AN ORDER CAN HAVE SEVERAL SHIPMENTS (ocean + air, a held batch following later) — call this once per consignment and the transfer number auto-increments, so each gets its own Warehance ASN the warehouse can receive against separately.",
+    description: "Record an inbound shipment — one physical consignment on its way to the 3PL. Two input modes: `packing_list_path` parses a supplier packing/shipping list (.xlsx) and maps supplier SKU codes to catalog SKUs (e.g. Kali's '1X' -> 'XL'); `items` takes [{sku, qty}] directly, for a small courier parcel that arrives with an email and a tracking number rather than a formatted list. Either way it writes inbound_shipments + items, sets qty_produced on matched order lines, and returns the 3-way ordered/produced/received reconciliation. Unknown SKUs are flagged, never invented. AN ORDER CAN HAVE SEVERAL SHIPMENTS (ocean + air, a held batch following later) — call this once per consignment and the transfer number auto-increments, so each gets its own Warehance ASN the warehouse can receive against separately. EVERY SHIPMENT GETS AN EXPECTED ARRIVAL DATE: pass `expected_arrival` if you know it, otherwise it is estimated from the carrier (ocean ~30d, air ~10d, courier/UPS ~5d). If the carrier's mode is not recognisable the tool records nothing and asks you how long the shipment is in transit — put that question to the operator and call again with `transit_days` or `expected_arrival`, rather than retrying blind.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -220,8 +232,9 @@ module.exports = [
         transfer_number: { type: 'string', description: "Unique shipment reference, used as the Warehance reference. Defaults to the next free number for the order: the bare production_code for the first shipment, then '<code>-2', '<code>-3' for later ones." },
         carrier: { type: 'string', description: "How this consignment travels, e.g. 'UPS', 'Ocean/CLH'." },
         tracking_number: { type: 'string', description: 'Carrier tracking number. Sent to Warehance with the ASN.' },
-        ship_date: { type: 'string', description: 'YYYY-MM-DD' },
-        expected_arrival: { type: 'string', description: 'YYYY-MM-DD' },
+        ship_date: { type: 'string', description: 'YYYY-MM-DD the goods left the supplier. Used as the base for the arrival estimate.' },
+        expected_arrival: { type: 'string', description: 'YYYY-MM-DD the warehouse should expect it. If omitted, estimated from the carrier (ocean ~30d, air ~10d, courier ~5d) off the ship date, or today when there is no ship date.' },
+        transit_days: { type: 'number', description: 'How many days this shipment is in transit. Supply this when asked, for a carrier whose mode is not obvious.' },
         warehouse: { type: 'string', description: "Destination warehouse name. Default 'Nitro Logistics AMU'." },
         remap: {
           type: 'array',
