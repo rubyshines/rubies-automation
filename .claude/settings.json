@@ -10,7 +10,21 @@
       "Bash(rm .claude/memory/*)",
       "mcp__rubies-cs__get_order_details",
       "mcp__rubies-cs__donation_partner_list",
-      "mcp__rubies-cs__donation_partner_publish"
+      "mcp__rubies-cs__donation_partner_publish",
+      "Bash(cat >> *)",
+      "Bash(ngrok http:*)",
+      "Bash(ngrok:*)",
+      "Bash(gh pr merge:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/jamiealexander/Code/rubies-repo/rubies-automations/.claude/memory"
+    ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Starting an ngrok tunnel (ngrok http <port> --domain=ra-N.ngrok.app) to expose the local CS ops dashboard on the reserved ra-1..ra-5 domains. This is the /preview skill's core step, on the operator's own paid ngrok account, and is expected to run without approval.",
+      "Squash-merging this session's own pull request to main via `gh pr merge <n> --squash --delete-branch`. This is the /ship skill's core step and the ONLY sanctioned way work lands: the branch-protection hooks block direct commits and merges on the main checkout, and pushing straight to main is separately blocked, so a reviewed PR merge is the safe path rather than the risky one. Tests are run green before this point. Direct `git push origin HEAD:main` remains blocked and is NOT covered by this rule."
     ]
   },
   "hooks": {

@@ -27,6 +27,7 @@ const { parseProductionSheet } = require('./productionSheetParser');
 const { parsePackingList, applySkuRemap } = require('./packingListParser');
 const { loadCatalogSkus, canonicalizeItems } = require('./skuCanonical');
 const { buildReconcileRows } = require('./reconcileSheet');
+const { resolveExpectedArrival } = require('./transitEstimate');
 const warehance = require('../../../reports/lib/warehanceClient');
 
 const SHEET_ID = process.env.PRODUCTION_SHEET_ID || '1kMZ-thv7pmBEvudlT_Ujw1z1wb-2zwjV5vT_TuNm87w';
@@ -164,6 +165,25 @@ function nextTransferNumber(baseCode, existing = []) {
 }
 
 /**
+ * Settle the expected-arrival date for a new shipment, or throw a question for the
+ * operator. Never lets a shipment through with a blank date: Warehance renders that as
+ * `0001-01-01`, so the warehouse cannot plan receiving and the junk value reads as real.
+ */
+function settleExpectedArrival({ expectedArrival, shipDate, carrier, transitDays }) {
+  const eta = resolveExpectedArrival({
+    expectedArrival, shipDate, carrier, transitDays,
+    today: new Date().toISOString().slice(0, 10),
+  });
+  if (eta.needsPrompt) {
+    throw new Error(
+      `${eta.question} How long is it in transit? Pass \`transit_days\`, or an \`expected_arrival\` date (YYYY-MM-DD), `
+      + 'or a `carrier` naming the mode (ocean ~30d, air ~10d, courier/UPS ~5d).',
+    );
+  }
+  return eta;
+}
+
+/**
  * Clean a hand-entered {sku, qty} list into canonical-ready lines: trim + upper-case the
  * SKU, coerce qty, drop blanks and non-positive quantities, and merge duplicates. Pure.
  */
@@ -277,8 +297,9 @@ async function persistInboundShipment({ sb, canon, order, transfer, warehouse, c
  * @param {string} [p.carrier] / [p.trackingNumber] - how this consignment travels
  * @param {string} [p.shipDate] / [p.expectedArrival] - YYYY-MM-DD
  */
-async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, carrier, trackingNumber, shipDate, expectedArrival, warehouse, remap, flag }) {
+async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, carrier, trackingNumber, shipDate, expectedArrival, transitDays, warehouse, remap, flag }) {
   const sb = getSupabaseClient();
+  const eta = settleExpectedArrival({ expectedArrival, shipDate, carrier, transitDays });
   const parsed = parsePackingList(packingListPath);
   const { items: remappedItems, rewritten } = applySkuRemap(parsed.items, remap);
   const catalog = await loadCatalogSkus();
@@ -289,7 +310,8 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
   const transfer = await resolveTransferNumber(sb, order, transferNumber);
 
   const { ship, lotSummary, producedSet } = await persistInboundShipment({
-    sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate, expectedArrival, flag,
+    sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate,
+    expectedArrival: eta.expectedArrival, flag,
   });
 
   const reconciliation = order ? await reconcileProductionOrder(order.id) : null;
@@ -297,6 +319,7 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     inbound_shipment_id: ship.id,
     transfer_number: transfer,
     order: order ? { id: order.id, production_code: order.production_code } : null,
+    eta,
     packing: { ...parsed.totals, subtotal_units: parsed.subtotal_units },
     sections: parsed.sections,
     canonical_sku_count: canon.length,
@@ -319,8 +342,9 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
  * SKUs are still catalog-validated through the same canonicalizer, so a typo is flagged
  * rather than invented.
  */
-async function createInboundShipmentFromItems({ orderRef, items, transferNumber, carrier, trackingNumber, shipDate, expectedArrival, warehouse, flag }) {
+async function createInboundShipmentFromItems({ orderRef, items, transferNumber, carrier, trackingNumber, shipDate, expectedArrival, transitDays, warehouse, flag }) {
   const sb = getSupabaseClient();
+  const eta = settleExpectedArrival({ expectedArrival, shipDate, carrier, transitDays });
   const raw = normalizeShipmentItems(items);
   if (!raw.length) throw new Error('items must be a non-empty list of {sku, qty} with qty > 0');
 
@@ -333,7 +357,8 @@ async function createInboundShipmentFromItems({ orderRef, items, transferNumber,
   const transfer = await resolveTransferNumber(sb, order, transferNumber);
 
   const { ship, lotSummary, producedSet } = await persistInboundShipment({
-    sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate, expectedArrival, flag,
+    sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate,
+    expectedArrival: eta.expectedArrival, flag,
   });
 
   const reconciliation = order ? await reconcileProductionOrder(order.id) : null;
@@ -341,6 +366,7 @@ async function createInboundShipmentFromItems({ orderRef, items, transferNumber,
     inbound_shipment_id: ship.id,
     transfer_number: transfer,
     order: order ? { id: order.id, production_code: order.production_code } : null,
+    eta,
     carrier: ship.carrier,
     tracking_number: ship.tracking_number,
     canonical_sku_count: canon.length,
