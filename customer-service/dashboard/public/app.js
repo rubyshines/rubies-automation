@@ -4301,6 +4301,12 @@ const {
   parseOrderFormItems,
 } = window.intakeParse;
 
+// Same arrangement for the html-vs-plain-text choice on a customer message —
+// see messageBody.js for why the two representations disagree.
+const {
+  pickRichestBody,
+} = window.messageBody;
+
 /**
  * Render a unified intake summary card.
  * Consolidates bot handoff, order selection, and customer words into one card.
@@ -4378,28 +4384,6 @@ function proxyAttachmentUrl(url) {
   return match ? `/api/attachment/${match[1]}` : url;
 }
 
-/**
- * Cut a plain-text body at the first quoted-reply header so we measure/keep only
- * what the customer actually wrote this turn. Handles Outlook ("From: ... Sent:"),
- * Apple/Gmail ("On ... wrote:"), and "Original Message" / "Forwarded message" blocks.
- */
-function plainTextBeforeQuote(text) {
-  if (!text) return '';
-  const markers = [
-    /\bFrom:\s[\s\S]*?\bSent:\s/i,            // Outlook reply header
-    /On\s.{10,80}\swrote:/i,                  // Apple Mail / Gmail
-    /-{2,}\s*Original Message\s*-{2,}/i,
-    /-{5,}\s*Forwarded message/i,
-    /Begin forwarded message:/i,
-  ];
-  let cut = text.length;
-  for (const re of markers) {
-    const m = text.match(re);
-    if (m && m.index < cut) cut = m.index;
-  }
-  return text.slice(0, cut).trim();
-}
-
 // Tags removed entirely, content and all — they execute code or load resources.
 const SANITIZE_DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'svg', 'math', 'noscript', 'template', 'title', 'head', 'audio', 'video', 'button', 'input', 'textarea', 'select']);
 // Formatting tags we keep. Anything not here and not dropped is unwrapped (children preserved, tag discarded).
@@ -4465,31 +4449,6 @@ function sanitizeHtml(html) {
   };
   walk(doc.body);
   return doc.body.innerHTML;
-}
-
-/**
- * Choose what to render for a message body. Normally body_html wins (it preserves
- * formatting). But some mail clients (notably Outlook) send a multipart email whose
- * text/html part holds only a fragment of the reply (e.g. just "Absolutely!") while
- * the full message lives in text/plain. Gorgias stores both, so preferring body_html
- * unconditionally hides the real content from the operator (and from anyone sanity-
- * checking an AI draft that DID read the full plain-text body). When the HTML's visible
- * text is substantially shorter than what the customer wrote in plain text (measured
- * before any quoted reply), fall back to the plain-text body.
- */
-function pickRichestBody(m) {
-  const html = m.body_html;
-  if (!html) return esc(m.body || '').replace(/\n/g, '<br>');
-  const htmlText = html
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&[a-z#0-9]+;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const plain = plainTextBeforeQuote(m.body || '');
-  if (plain.length > 40 && htmlText.length < plain.length * 0.6) {
-    return esc(plain).replace(/\n/g, '<br>');
-  }
-  return html;
 }
 
 function renderMessageBubble(m, ticket) {

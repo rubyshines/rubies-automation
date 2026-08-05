@@ -248,27 +248,25 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Domains: marketing, product_design
 - Notes: GA4 view→ATC for THE BROOKE SHAPING BRA went 13.46% → 6.61% PRE→POST. Only product showing real PDP-level friction (most products' ATC rate IMPROVED post-pricing). Worth investigating: price display ($42 new vs $39 old), hero image, copy, stock-out variants. Single-product issue — not part of the broader pricing analysis.
 
-## Watch: customer signature/address missing from advisor view (Gorgias stripped_html)
+## Watch: does extractCleanBody's reply-parser path drop customer content?
 - Parked: 2026-04-27
-- Last touched: 2026-04-27
+- Last touched: 2026-08-05
 - Type: bug-watch
 - Domains: cs
-- Notes: As of 2026-04-27 (commit 108f16a), intake stores Gorgias's `stripped_html`
-  for customer messages — trusting Gorgias to separate new content from quoted
-  reply chains. The Apr 23 swap to `body_html` was reverted because re-deriving
-  this client-side broke on email links inside "On … wrote:" lines and template
-  markers nested in quoted blocks. Open question: does Gorgias's stripped_html
-  ever cut customer sign-offs that contain shipping addresses (e.g. customer
-  types "Please ship to 123 Main St" right above their name)? If a future bug
-  report says "the advisor missed an address the customer clearly typed" or
-  "exchange shipping address was wrong" or "refund went to old address despite
-  customer providing new one in email", check the raw `body_html`/`body_text`
-  via `gorgias.getTicketMessages(ticketId)` against the stored
-  `conversation_history[].body` for that ticket. If the raw has the address
-  and the stored doesn't, this is the cause — implement option B from the
-  2026-04-27 conversation: lazy raw-fetch in the specific tool (refund_order,
-  create_exchange_order) when an address is needed but the stripped body
-  doesn't contain one.
+- Notes: The 2026-04-27 form of this watch asked whether Gorgias's `stripped_html`
+  cuts customer sign-offs carrying shipping addresses. Answered 2026-08-05: yes,
+  it cuts trailing lines. But it only ever fed `body_html` (the operator's view),
+  never the advisor — `conversation_history[].body` comes from `body_text`, so
+  the advisor always had the full text. The operator half is fixed (Key Decision
+  in domain_cs.md). What stays open is the narrower version: `extractCleanBody`
+  runs email-reply-parser on the raw body and, when the library strips something,
+  writes the parsed text to `body` and nulls `body_html` — and `body` IS what the
+  advisor reads. If a future report says "the advisor missed an address the
+  customer clearly typed" or "exchange shipping address was wrong", compare raw
+  `body_text` from `gorgias.getTicketMessages(ticketId)` against the stored
+  `conversation_history[].body`. If the raw has it and the stored doesn't, the
+  reply-parser ate it — fix is a lazy raw-fetch in the tool that needs the
+  address (refund_order, create_exchange_order), not a change to the shared parser.
 
 ## Remove legacy walkTree/prescribe functions from sizingEngine.js
 - Parked: 2026-04-15
