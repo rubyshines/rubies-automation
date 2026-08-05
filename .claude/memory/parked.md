@@ -8,6 +8,12 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Default an inbound shipment's expected arrival instead of leaving it blank
+- Parked: 2026-08-05
+- Domains: logistics, inventory
+- Type: idea
+- Notes: A shipment recorded without `expected_arrival` reaches Warehance as `0001-01-01`, which is worse than a rough estimate — the warehouse can't plan receiving and the date reads as junk in both systems. Jamie's suggestion (2026-08-05, on the Kali container): default it to roughly 30 days after pickup. It wants a per-mode figure rather than one constant — ocean ex-China runs ~30 days to the warehouse door while a courier parcel is 3-5 — so the default should key off carrier/mode, and possibly the supplier's `lead_time_days`. Open question: write the estimate at `receive_shipment` time, or keep the column null and only synthesize one at ASN upload. Either way prefer a visible estimate the operator can correct with `update_inbound_shipment` over a silent blank.
+
 ## Outreach browse surfaces: first page only, and relationship_state needs cleaning
 - Parked: 2026-07-29
 - Domains: b2b_sales, community
