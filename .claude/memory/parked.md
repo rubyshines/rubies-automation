@@ -8,6 +8,28 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Merge duplicate company rows (same org, two records)
+- Parked: 2026-08-05
+- Domains: b2b_sales, community
+- Type: bug
+- Priority: high
+- Notes: The imports created two rows for the same org on seven domains: BAGLY (active donation partner + bare row), Hugh Lane (three rows), Oasis Youth Center, Skipping Stone, OUT MetroWest, TransFamily Support Service, Self Serve Toys. Each carries a different contact address, so both would receive outreach. Cadence now suppresses the cold opener when a same-domain sibling is already engaged (`ctx.hasEngagedSibling`), which removes the immediate hazard — but the data is still duplicated, order/thread history is split across rows, and the panel shows both. Real fix: merge on domain, keeping the richest row, moving contacts and threads onto it, marking the other `lost` with a triage_reason. Related: the sheet-import contact-association audit entry below.
+
+## Dormancy is never derived, so `reactivation` cannot fire
+- Parked: 2026-08-05
+- Domains: b2b_sales
+- Type: bug
+- Priority: medium
+- Notes: `reactivation` gates on `relationship_state === 'dormant'`, but nothing writes that value — `syncB2bCompanyState` promotes and never demotes, and the "derived at queue time" dormancy the design assumed was never built. The branch has been unreachable since it was written; it is kept (with a comment saying so) because the revival behaviour is wanted. Fix: derive dormancy in the queue from `last_order_date` vs the company's reorder threshold, rather than storing a state that goes stale. The sibling case `affiliate_reactivation` was deleted outright 2026-08-05 for the same reason plus no attribution feed.
+
+## B2B lead supply — remaining plan phases (vetting UI, enrichment, send rate)
+- Parked: 2026-08-05
+- Domains: b2b_sales, community, tech
+- Type: idea (planned)
+- Priority: high
+- Plan: .claude/plans/b2b-lead-supply-and-vetting.md
+- Notes: Phases 0, 1 and 3 shipped 2026-08-05. Remaining: (2) **vetting UI** — the panel needs keep/drop/snooze controls so the 41 sheet retailers can be triaged; `b2b_triage` and `vetted_at` exist, only the UI is missing, and until it lands those 41 stay invisible because `re_approach` requires `vetted_at`. (4) **CenterLink enrichment** — ~120 org rows are a name slug plus an email; websites are now derived from contact domains, so `b2b-discovery/lib/researcher.js` can run over them, auto-dropping dead sites and non-orgs, survivors becoming vetted prospects. (5) **send rate + sender reputation** — a daily cap enforced in `sendB2bEmail` (not a prompt), pre-send email verification (bounce rate is what actually burns reputation), and the open decision on whether cold B2B keeps riding rubyshines.com alongside Klaviyo customer mail or moves to a separate sending domain. The plan file holds the full spec.
+
 ## Outreach browse surfaces: first page only, and relationship_state needs cleaning
 - Parked: 2026-07-29
 - Domains: b2b_sales, community

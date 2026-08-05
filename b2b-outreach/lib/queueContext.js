@@ -6,6 +6,66 @@
  */
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
+/** "https://www.foo.org/x" → "foo.org". Pure. */
+function companyDomain(website) {
+  if (!website) return null;
+  const m = String(website).toLowerCase().match(/^(?:https?:\/\/)?(?:www\.)?([^/:?#\s]+)/);
+  return m && m[1].includes('.') ? m[1] : null;
+}
+
+/**
+ * Which of these companies have a SIBLING row on the same domain that already
+ * has a relationship? The imports created duplicate rows per org — BAGLY exists
+ * twice, once as an active donation partner and once as a bare CenterLink row
+ * with a different address. Without this, Tier 4 would send a cold "let me
+ * introduce RUBIES" to an org we already partner with, at their info@ address.
+ *
+ * Queried by domain rather than derived from the passed-in list, because
+ * generateDraftForCompany builds context for a SINGLE company — a guard that
+ * only worked on the full-queue path would be bypassed by the draft button.
+ */
+async function findEngagedSiblings(sb, companies) {
+  const domains = [...new Set((companies || []).map(c => companyDomain(c.website)).filter(Boolean))];
+  if (!domains.length) return new Set();
+
+  const rows = [];
+  for (let i = 0; i < domains.length; i += 100) {
+    const chunk = domains.slice(i, i + 100);
+    const ors = chunk.map(d => `website.ilike.%${d}%`).join(',');
+    const { data, error } = await sb.from('b2b_companies')
+      .select('id, website, relationship_state, last_outbound_at, order_count').or(ors);
+    if (error) throw new Error(`sibling lookup: ${error.message}`);
+    rows.push(...(data || []));
+  }
+
+  // A sibling counts as "engaged" if a relationship exists in any form.
+  const engagedDomains = new Set();
+  const byDomain = new Map();
+  for (const r of rows) {
+    const d = companyDomain(r.website);
+    if (!d) continue;
+    if (!byDomain.has(d)) byDomain.set(d, []);
+    byDomain.get(d).push(r);
+  }
+  const withEngaged = new Set();
+  for (const [d, group] of byDomain) {
+    if (group.some(r => r.relationship_state === 'active' || r.last_outbound_at || (r.order_count || 0) > 0)) {
+      engagedDomains.add(d);
+    }
+  }
+  for (const c of companies || []) {
+    const d = companyDomain(c.website);
+    if (!d || !engagedDomains.has(d)) continue;
+    // Only a DIFFERENT row's engagement suppresses this one; a company is not
+    // its own sibling.
+    const others = (byDomain.get(d) || []).filter(r => r.id !== c.id);
+    if (others.some(r => r.relationship_state === 'active' || r.last_outbound_at || (r.order_count || 0) > 0)) {
+      withEngaged.add(c.id);
+    }
+  }
+  return withEngaged;
+}
+
 async function buildContexts(sb, companies) {
   const ids = (companies || []).map(c => c.id);
   const messages = ids.length ? await fetchAllPaginated(() =>
@@ -26,6 +86,7 @@ async function buildContexts(sb, companies) {
       .order('id', { ascending: true })
   ) : [];
   const pendingSet = new Set(drafts.map(d => d.company_id));
+  const engagedSiblings = await findEngagedSiblings(sb, companies);
 
   const byCompany = new Map();
   for (const c of companies || []) {
@@ -38,8 +99,20 @@ async function buildContexts(sb, companies) {
       lastOrderAt: c.last_order_date || null,
       orderCount: c.order_count || 0,
       lastTypeSent: new Map(),
+      // Written by syncB2bCompanyState from the orders mirror.
+      firstOrderFulfilledAt: c.first_order_fulfilled_at || null,
+      // Filled from message history below: the reply that opened the
+      // sample-feedback window.
+      postSamplesReplyAt: null,
+      // A duplicate row for this same org already has a relationship — never
+      // cold-intro them again on a second address.
+      hasEngagedSibling: engagedSiblings.has(c.id),
     });
   }
+  // Messages are ordered oldest-first, so the newest outbound post_samples_checkin
+  // is whatever the loop last recorded; an inbound after it is the reply that
+  // opens the sample_feedback_request window.
+  const lastCheckinAt = new Map();
   for (const m of messages) {
     const ctx = byCompany.get(m.company_id);
     if (!ctx) continue;
@@ -47,6 +120,10 @@ async function buildContexts(sb, companies) {
       if (closedThreadIds.has(m.thread_id)) continue;
       // Auto-responders are history, not a human waiting on us.
       if (m.message_type === 'auto_reply') continue;
+      const checkinAt = lastCheckinAt.get(m.company_id);
+      if (checkinAt && new Date(m.sent_at) > new Date(checkinAt) && !ctx.postSamplesReplyAt) {
+        ctx.postSamplesReplyAt = m.sent_at;
+      }
       ctx.lastInboundAt = m.sent_at;
       // Carry the inbound's thread so Tier-1 reply drafts send IN the thread
       // (without it every reply went out as a brand-new email).
@@ -56,6 +133,7 @@ async function buildContexts(sb, companies) {
       if (m.message_type) {
         ctx.sentTypes.add(m.message_type);
         ctx.lastTypeSent.set(m.message_type, m.sent_at);
+        if (m.message_type === 'post_samples_checkin') lastCheckinAt.set(m.company_id, m.sent_at);
       }
     }
   }
@@ -66,4 +144,4 @@ async function buildContexts(sb, companies) {
   return byCompany;
 }
 
-module.exports = { buildContexts };
+module.exports = { buildContexts, findEngagedSiblings, companyDomain };
