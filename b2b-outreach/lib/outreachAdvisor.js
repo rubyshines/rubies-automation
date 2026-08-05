@@ -59,6 +59,59 @@ async function buildCompanyContext(sb, companyId) {
   return { company, contacts, messages };
 }
 
+/** Sheet-imported rows stored metadata as a JSON string. Tolerate both. Pure. */
+function readMetadata(meta) {
+  if (typeof meta === 'string') {
+    try { const p = JSON.parse(meta); return (p && typeof p === 'object' && !Array.isArray(p)) ? p : {}; } catch { return {}; }
+  }
+  return (meta && typeof meta === 'object' && !Array.isArray(meta)) ? meta : {};
+}
+
+// What an org told us in the donation-partner survey. These are THEIR words
+// about their own needs — the single most useful thing for a first email, and
+// invisible to the advisor until now because metadata was never rendered.
+const SURVEY_FIELDS = [
+  ['programs', 'Programs they run'],
+  ['is_lgbtq_center', 'LGBTQ+ center'],
+  ['age_ranges', 'Age ranges served'],
+  ['donation_age_range', 'Age range for donations'],
+  ['size_ranges', 'Sizes they said they need'],
+  ['quantity', 'Volume they indicated'],
+  ['product_suggestions', 'Products they asked about'],
+  ['contact_person_title', 'Contact and role, as they gave it'],
+  ['program_url', 'Program page'],
+];
+
+// Prior outreach from the old Gmail-scanning system. Drives re_approach: how
+// many times we already asked, and how long ago, changes what a new email can
+// honestly say.
+const HISTORY_FIELDS = [
+  ['campaign', 'Prior campaign'],
+  ['initial_reach_out', 'First contacted'],
+  ['last_reach_out', 'Last contacted'],
+  ['no_response_count', 'Times we asked with no reply'],
+];
+
+/** Render the useful halves of company.metadata. Pure; returns [] when empty. */
+function renderMetadataFacts(metadata) {
+  const meta = readMetadata(metadata);
+  const lines = [];
+  const survey = SURVEY_FIELDS
+    .filter(([k]) => meta[k] !== undefined && meta[k] !== null && meta[k] !== '')
+    .map(([k, label]) => `- ${label}: ${meta[k]}`);
+  if (survey.length) {
+    lines.push('', '## What they told us (their own words, from our partner survey)',
+      'Use these to make the email specific to this org. Do NOT recite them back as a list.', ...survey);
+  }
+  const history = HISTORY_FIELDS
+    .filter(([k]) => meta[k] !== undefined && meta[k] !== null && meta[k] !== '')
+    .map(([k, label]) => `- ${label}: ${meta[k]}`);
+  if (history.length) {
+    lines.push('', '## Prior outreach on record (before this system)', ...history);
+  }
+  return lines;
+}
+
 function renderContext({ company, contacts, messages }, queueEntry, steer) {
   const lines = [];
   lines.push(`## Company`);
@@ -68,6 +121,7 @@ function renderContext({ company, contacts, messages }, queueEntry, steer) {
   if (company.ai_summary) lines.push(`Relationship summary: ${company.ai_summary}`);
   if (company.order_count) lines.push(`Orders: ${company.order_count} (total $${company.total_sales || 0}, last ${company.last_order_date || '—'})`);
   if (company.program_flags && Object.keys(company.program_flags).length) lines.push(`Programs: ${JSON.stringify(company.program_flags)}`);
+  lines.push(...renderMetadataFacts(company.metadata));
   lines.push('');
   lines.push('## Contacts');
   for (const c of contacts) {
@@ -148,4 +202,4 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   return { draft_id: row.id, advisor: advisor.name, ...out };
 }
 
-module.exports = { generateDraft, buildCompanyContext, renderContext, pickAdvisor, OUTPUT_SCHEMA };
+module.exports = { generateDraft, buildCompanyContext, renderContext, renderMetadataFacts, pickAdvisor, OUTPUT_SCHEMA };

@@ -35,18 +35,20 @@ const TIER_BY_TYPE = {
   new_collection: 3,
   community_checkin: 3,
   donation_closet_pitch: 3,
-  purchase_pitch: 3,
-  affiliate_invite: 3,
   content_prompt: 3,
   sample_feedback_request: 3,
   referral_ask: 3,
-  // Tier 4 — prospect first-touch
+  // Tier 4 — prospect first-touch and the follow-up ladder hanging off it.
+  // Follow-ups share the tier: chasing a reply to an intro we already sent is
+  // the same work as the intro, and must not sort below fresh first-touches.
   intro_pitch: 4,
   intro_outreach: 4,
   affiliate_intro: 4,
+  re_approach: 4,
+  followup_1: 4,
+  followup_2: 4,
   // Tier 6 — revival
   reactivation: 6,
-  affiliate_reactivation: 6,
 };
 
 /**

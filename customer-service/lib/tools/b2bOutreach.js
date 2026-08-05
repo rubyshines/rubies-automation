@@ -166,7 +166,37 @@ async function handleAddProspect(input = {}) {
   }
 }
 
+async function handleTriage(input = {}) {
+  try {
+    const { triageCompany } = require(path.join(B2B_LIB, 'triage'));
+    const res = await triageCompany(getSupabaseClient(), input);
+    const detail = {
+      keep: `admitted to the outreach queue (vetted ${res.vetted_at})`,
+      drop: `marked lost — ${res.triage_reason}`,
+      snooze: `snoozed until ${res.snoozed_until}`,
+    }[input.action];
+    return text(`**${res.name}** (${res.company_id}) — ${detail}. No draft generated.`);
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
 module.exports = [
+  {
+    name: 'b2b_triage',
+    description: "Vet a company for outreach WITHOUT generating a draft: keep (admit it to the Tier-4 first-touch queue), drop (mark lost with a reason), or snooze (out of the queue until a date). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted — cohort by cohort rather than all at once.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'b2b_companies id.' },
+        action: { type: 'string', description: "'keep' | 'drop' | 'snooze'." },
+        reason: { type: 'string', description: 'Why. Required on drop so the decision is not re-litigated later; optional otherwise.' },
+        until: { type: 'string', description: 'Snooze only: YYYY-MM-DD, must be in the future.' },
+      },
+      required: ['company_id', 'action'],
+    },
+    handler: handleTriage,
+  },
   {
     name: 'b2b_add_prospect',
     description: "The referred-prospect intake: 'someone recommended this org/store' → company record with referral provenance + optional contact + the channel's intro draft waiting in the Outreach queue. Use whenever Jamie names a new org, retailer, or affiliate to reach out to. Never auto-sends. Refuses to re-open companies marked lost.",

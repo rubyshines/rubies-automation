@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { computeCompanyState, reorderThresholdDays, normalizeDomain } = require('../../b2b-outreach/sync/syncB2bCompanyState');
+const { computeCompanyState, reorderThresholdDays, normalizeDomain, isSampleOrder } = require('../../b2b-outreach/sync/syncB2bCompanyState');
 
 // ── reorderThresholdDays ────────────────────────────────────────────────────
 
@@ -117,4 +117,70 @@ test('last_order_date never regresses to null when orders vanish from match set'
   // order_count/total_sales correct to 0 but the date is left alone
   assert.equal(upd.order_count, 0);
   assert.equal(upd.last_order_date, undefined);
+});
+
+// ── $0 sample orders are a samples event, not revenue ───────────────────────
+
+const sampleOrder = (created_at, tags = ['sample kit reach out']) => ({ created_at, total_price: 0, cancelled_at: null, tags });
+
+test('isSampleOrder needs both $0 and a sample tag', () => {
+  assert.equal(isSampleOrder(sampleOrder('2025-11-04T00:00:00Z')), true);
+  assert.equal(isSampleOrder(sampleOrder('2026-03-18T00:00:00Z', ['cs-mcp', 'she-bop', 'wholesale-samples'])), true);
+  assert.equal(isSampleOrder({ total_price: 0, tags: 'sample kit reach out' }), true, 'comma-string tags');
+  assert.equal(isSampleOrder({ total_price: 605, tags: ['wholesale-samples'] }), false, 'paid order is a purchase');
+  assert.equal(isSampleOrder({ total_price: 0, tags: ['gift'] }), false, 'untagged $0 is not a samples event');
+  assert.equal(isSampleOrder({ total_price: 0 }), false);
+});
+
+test('a $0 sample kit is not a purchase and never promotes to active', () => {
+  const upd = computeCompanyState(retailer(), [sampleOrder('2025-11-04T00:00:00Z')], false);
+  assert.equal(upd.order_count, undefined, 'stays 0 — no write');
+  assert.equal(upd.total_sales, undefined, 'stays $0 — no write');
+  assert.equal(upd.relationship_state, undefined, 'sample recipient is not a customer');
+  assert.equal(upd.samples_shipped_at, '2025-11-04T00:00:00Z');
+});
+
+test('the 14 mis-promoted retailers correct to 0 orders on re-sync', () => {
+  const upd = computeCompanyState(retailer({
+    order_count: 1, total_sales: 0, last_order_date: '2025-11-04', relationship_state: 'active',
+  }), [sampleOrder('2025-11-04T00:00:00Z')], false);
+  assert.equal(upd.order_count, 0);
+  assert.equal(upd.last_order_date, undefined, 'stale date is repairB2bSampleStates.js\'s job, not the sync\'s');
+});
+
+test('samples and purchases coexist — only the purchase counts', () => {
+  const upd = computeCompanyState(retailer(), [
+    sampleOrder('2025-11-04T00:00:00Z'),
+    order('2026-05-15T04:00:47Z', 605),
+  ], false);
+  assert.equal(upd.order_count, 1);
+  assert.equal(upd.total_sales, 605);
+  assert.equal(upd.last_order_date, '2026-05-15');
+  assert.equal(upd.relationship_state, 'active');
+  assert.equal(upd.samples_shipped_at, '2025-11-04T00:00:00Z');
+});
+
+test('samples_shipped_at is never overwritten once set', () => {
+  const upd = computeCompanyState(retailer({ samples_shipped_at: '2025-10-01T00:00:00Z' }), [sampleOrder('2025-11-04T00:00:00Z')], false);
+  assert.equal(upd, null, 'real fulfillment data outranks the inference');
+});
+
+test('earliest sample order wins when several were sent', () => {
+  const upd = computeCompanyState(retailer(), [
+    sampleOrder('2026-03-18T00:00:00Z'), sampleOrder('2025-11-04T00:00:00Z'),
+  ], false);
+  assert.equal(upd.samples_shipped_at, '2025-11-04T00:00:00Z');
+});
+
+test('reorder threshold ignores $0 samples (two samples are not a rhythm)', () => {
+  const upd = computeCompanyState(retailer(), [
+    sampleOrder('2025-11-04T00:00:00Z'), sampleOrder('2026-03-18T00:00:00Z'),
+  ], false);
+  assert.equal(upd.metadata, undefined, 'no reorder_threshold_days from sample cadence');
+});
+
+test('org sent samples gets no purchases flag and no active promotion', () => {
+  const upd = computeCompanyState(org(), [sampleOrder('2026-03-18T00:00:00Z')], false);
+  assert.equal(upd.program_flags, undefined);
+  assert.equal(upd.relationship_state, undefined);
 });

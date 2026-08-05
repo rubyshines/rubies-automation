@@ -9,8 +9,10 @@
  * Daily (as a daily-sync-all sub-pipeline, after Orders) this:
  *   1. Matches Shopify orders (Supabase `orders` mirror) to companies via all
  *      known emails (b2b_contacts + general_email), non-cancelled only.
- *   2. Updates order_count / last_order_date / total_sales when drifted.
- *   3. Promotes relationship_state in_contact → active on first order
+ *   2. Updates order_count / last_order_date / total_sales when drifted, counting
+ *      PURCHASES only — $0 sample-kit orders are a samples event, not revenue,
+ *      and populate samples_shipped_at instead.
+ *   3. Promotes relationship_state in_contact → active on first purchase
  *      (retailers/affiliates) — never touches 'lost', never downgrades.
  *   4. Marks org program_flags: donation_closet for companies matching an
  *      active donation_partners row (by website domain, name fallback);
@@ -43,21 +45,44 @@ function normalizeDomain(url) {
   return m ? m[1] : null;
 }
 
+/** Order tags arrive as an array or a comma string depending on the mirror. Pure. */
+function orderTags(order) {
+  const t = order?.tags;
+  if (Array.isArray(t)) return t.map(x => String(x).toLowerCase());
+  if (typeof t === 'string') return t.split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+  return [];
+}
+
+/**
+ * A $0 order is not a purchase. Sample kits go out as $0 Shopify orders (tagged
+ * `sample kit reach out`, `wholesale-samples`), and counting them as revenue
+ * promoted 14 sample recipients to 'active' as if they were customers — while
+ * samples_shipped_at stayed null, so the samples cadence never fired for anyone.
+ * Price is the test for "is this a purchase"; the tag identifies which $0 orders
+ * were specifically a samples event. Pure.
+ */
+function isSampleOrder(order) {
+  return Number(order?.total_price || 0) === 0 && orderTags(order).some(t => t.includes('sample'));
+}
+
 /**
  * Compute the field updates a company needs, or null when in sync. Pure.
  * @param company  b2b_companies row
- * @param orders   matched orders [{ created_at, total_price, cancelled_at, financial_status }]
+ * @param orders   matched orders [{ created_at, total_price, cancelled_at, financial_status, tags }]
  * @param isDonationPartner  company matches an active donation_partners row
  */
 function computeCompanyState(company, orders, isDonationPartner) {
   const valid = (orders || []).filter(o => !o.cancelled_at);
+  // Purchases drive order_count / revenue / cadence; $0 orders never do.
+  const purchases = valid.filter(o => Number(o.total_price || 0) > 0);
+  const samples = valid.filter(isSampleOrder);
   const upd = {};
 
-  const orderCount = valid.length;
+  const orderCount = purchases.length;
   const lastOrderAt = orderCount
-    ? valid.map(o => o.created_at).sort().pop()
+    ? purchases.map(o => o.created_at).sort().pop()
     : null;
-  const totalSales = Math.round(valid.reduce((s, o) => s + (Number(o.total_price) || 0), 0) * 100) / 100;
+  const totalSales = Math.round(purchases.reduce((s, o) => s + (Number(o.total_price) || 0), 0) * 100) / 100;
 
   if (orderCount !== (company.order_count || 0)) upd.order_count = orderCount;
   // last_order_date is a DATE column — compare and write at day granularity,
@@ -65,9 +90,26 @@ function computeCompanyState(company, orders, isDonationPartner) {
   const prevLast = company.last_order_date ? String(company.last_order_date).slice(0, 10) : null;
   const nextLast = lastOrderAt ? new Date(lastOrderAt).toISOString().slice(0, 10) : null;
   if (nextLast && nextLast !== prevLast) upd.last_order_date = nextLast;
+  // Deliberately NOT cleared when nextLast is null: a transient email-match
+  // failure must not wipe a real order date. Dates left behind by the old
+  // $0-counts-as-a-purchase behaviour are corrected by repairB2bSampleStates.js.
   if (totalSales !== Number(company.total_sales || 0)) upd.total_sales = totalSales;
 
-  const threshold = reorderThresholdDays(valid);
+  // Earliest sample order is the samples event. Never overwrite a value already
+  // on file — real fulfillment data and operator edits outrank this inference.
+  if (samples.length && !company.samples_shipped_at) {
+    upd.samples_shipped_at = samples.map(o => o.created_at).sort()[0];
+  }
+
+  // When their first paid order shipped — feeds first_order_checkin. Taken from
+  // the earliest purchase BY ORDER DATE (not the earliest fulfillment), so a
+  // late-shipping first order still reports its own ship date.
+  const firstPurchase = purchases.slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
+  if (firstPurchase?.fulfilled_at && firstPurchase.fulfilled_at !== company.first_order_fulfilled_at) {
+    upd.first_order_fulfilled_at = firstPurchase.fulfilled_at;
+  }
+
+  const threshold = reorderThresholdDays(purchases);
   // Some sheet-imported rows carry metadata as a JSON string — parse, never discard.
   let meta = company.metadata || {};
   if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = { legacy_metadata: company.metadata }; } }
@@ -93,11 +135,15 @@ function computeCompanyState(company, orders, isDonationPartner) {
   return Object.keys(upd).length ? upd : null;
 }
 
-async function run() {
-  const sb = getSupabaseClient();
+const COMPANY_COLUMNS = 'id, name, website, relationship_type, relationship_state, program_flags, order_count, last_order_date, total_sales, general_email, metadata, samples_shipped_at, first_order_fulfilled_at, vetted_at';
 
-  const companies = await fetchAllPaginated(() => sb.from('b2b_companies')
-    .select('id, name, website, relationship_type, relationship_state, program_flags, order_count, last_order_date, total_sales, general_email, metadata'));
+/**
+ * Match the orders mirror to companies via every known email (contacts +
+ * general_email). Shared with the one-off repair scripts so "which orders
+ * belong to this company" has exactly one implementation.
+ * @returns { companies, ordersByCompany: Map<company_id, orders[]> }
+ */
+async function matchOrdersToCompanies(sb, companies) {
   const contacts = await fetchAllPaginated(() => sb.from('b2b_contacts')
     .select('company_id, email').not('company_id', 'is', null));
 
@@ -113,13 +159,21 @@ async function run() {
   for (let i = 0; i < allEmails.length; i += 200) {
     const chunk = allEmails.slice(i, i + 200);
     const rows = await fetchAllPaginated(() => sb.from('orders')
-      .select('customer_email, created_at, total_price, cancelled_at, financial_status')
+      .select('customer_email, created_at, total_price, cancelled_at, financial_status, tags, fulfilled_at')
       .in('customer_email', chunk));
     for (const o of rows) {
       const cid = emailToCompany.get((o.customer_email || '').toLowerCase());
       if (cid) ordersByCompany.get(cid).push(o);
     }
   }
+  return ordersByCompany;
+}
+
+async function run() {
+  const sb = getSupabaseClient();
+
+  const companies = await fetchAllPaginated(() => sb.from('b2b_companies').select(COMPANY_COLUMNS));
+  const ordersByCompany = await matchOrdersToCompanies(sb, companies);
 
   const { data: partners, error: pErr } = await sb.from('donation_partners')
     .select('name, website_url').eq('active', true);
@@ -154,7 +208,10 @@ async function run() {
   };
 }
 
-module.exports = { run, computeCompanyState, reorderThresholdDays, normalizeDomain };
+module.exports = {
+  run, computeCompanyState, reorderThresholdDays, normalizeDomain,
+  isSampleOrder, orderTags, matchOrdersToCompanies, COMPANY_COLUMNS,
+};
 
 if (require.main === module) {
   run().then(r => { console.log(JSON.stringify(r.sources)); process.exit(0); })
