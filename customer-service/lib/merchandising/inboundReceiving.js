@@ -137,29 +137,60 @@ async function amendOrder({ orderRef, items }) {
   return { order_id: order.id, production_code: order.production_code, added: inserts.length, increased: changes.length, changes, inserts: inserts.map((i) => ({ sku: i.sku, qty: i.qty_ordered })) };
 }
 
-// --- Inbound shipment from a packing list -----------------------------------
+// --- Inbound shipments ------------------------------------------------------
 
 /**
- * Parse a supplier packing list, canonicalize SKUs, persist the inbound shipment, and
- * set qty_produced on the matched order lines. Idempotent on transfer_number.
- * @param {object} p
- * @param {string} p.packingListPath - path to the supplier .xlsx
- * @param {string|number} [p.orderRef] - production_code or order id this delivery fulfills
- * @param {string} [p.transferNumber] - unique shipment ref (defaults to <production_code>)
- * @param {string} [p.shipDate] / [p.expectedArrival] - YYYY-MM-DD
+ * Pick the transfer number for a NEW shipment of an order. An order ships in more than
+ * one physical consignment often enough (ocean + air, a held batch following later) that
+ * defaulting every shipment to the bare production_code collides on the UNIQUE index and
+ * silently overwrites the first one.
+ *
+ * The first shipment keeps the bare code (that is the Warehance reference already in use
+ * and renaming it remotely would break receiving); subsequent ones get `-2`, `-3`, …
+ * Pure given `existing`, so it is unit-testable.
+ *
+ * @param {string} baseCode - the order's production_code
+ * @param {string[]} existing - transfer_numbers already recorded for that order
  */
-async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, shipDate, expectedArrival, warehouse, remap, flag }) {
-  const sb = getSupabaseClient();
-  const parsed = parsePackingList(packingListPath);
-  const { items: remappedItems, rewritten } = applySkuRemap(parsed.items, remap);
-  const catalog = await loadCatalogSkus();
-  const { items: canon, remapped, unknown } = canonicalizeItems(remappedItems, catalog);
+function nextTransferNumber(baseCode, existing = []) {
+  if (!baseCode) throw new Error('nextTransferNumber: baseCode is required');
+  const used = new Set(existing.map((t) => String(t).toUpperCase()));
+  if (!used.has(String(baseCode).toUpperCase())) return baseCode;
+  for (let n = 2; n < 100; n++) {
+    const candidate = `${baseCode}-${n}`;
+    if (!used.has(candidate.toUpperCase())) return candidate;
+  }
+  throw new Error(`Could not allocate a transfer number for ${baseCode} (100 collisions)`);
+}
 
-  const order = orderRef != null ? await resolveOrder(orderRef) : null;
-  if (orderRef != null && !order) throw new Error(`order "${orderRef}" not found`);
-  const transfer = transferNumber || (order ? order.production_code : null);
-  if (!transfer) throw new Error('transferNumber is required when no order is linked');
+/**
+ * Clean a hand-entered {sku, qty} list into canonical-ready lines: trim + upper-case the
+ * SKU, coerce qty, drop blanks and non-positive quantities, and merge duplicates. Pure.
+ */
+function normalizeShipmentItems(items) {
+  const cleaned = (items || [])
+    .map((it) => ({ sku: String((it && it.sku) || '').trim().toUpperCase(), qty: Number(it && it.qty) }))
+    .filter((it) => it.sku && Number.isFinite(it.qty) && it.qty > 0);
+  return mergeBySku(cleaned);
+}
 
+// Resolve the transfer number to use, reading the order's existing shipments when one
+// wasn't given explicitly.
+async function resolveTransferNumber(sb, order, transferNumber) {
+  if (transferNumber) return transferNumber;
+  if (!order || !order.production_code) {
+    throw new Error('transferNumber is required when the order has no production_code (or no order is linked)');
+  }
+  const { data } = await sb.from('inbound_shipments').select('transfer_number').eq('production_order_id', order.id);
+  return nextTransferNumber(order.production_code, (data || []).map((r) => r.transfer_number));
+}
+
+/**
+ * Persist canonical {sku, qty} lines as an inbound shipment: header upsert by
+ * transfer_number, idempotent line replacement, ship-lots, and the qty_produced mirror.
+ * Shared by the packing-list and explicit-items entry points so both behave identically.
+ */
+async function persistInboundShipment({ sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate, expectedArrival, flag }) {
   // Idempotent header upsert by transfer_number.
   const header = {
     production_order_id: order ? order.id : null,
@@ -170,6 +201,10 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     estimated_arrival_date: expectedArrival || null,
     updated_at: new Date().toISOString(),
   };
+  // Only overwrite carrier/tracking when supplied, so a re-run without them doesn't wipe
+  // details captured by a later update_inbound_shipment call.
+  if (carrier !== undefined) header.carrier = carrier || null;
+  if (trackingNumber !== undefined) header.tracking_number = trackingNumber || null;
   const { data: ship, error: hErr } = await sb.from('inbound_shipments')
     .upsert(header, { onConflict: 'transfer_number' }).select('*').single();
   if (hErr) throw new Error(`upsert inbound_shipments: ${hErr.message}`);
@@ -228,6 +263,35 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     }
   }
 
+  return { ship, lotSummary, producedSet };
+}
+
+/**
+ * Parse a supplier packing list, canonicalize SKUs, persist the inbound shipment, and
+ * set qty_produced on the matched order lines. Idempotent on transfer_number.
+ * @param {object} p
+ * @param {string} p.packingListPath - path to the supplier .xlsx
+ * @param {string|number} [p.orderRef] - production_code or order id this delivery fulfills
+ * @param {string} [p.transferNumber] - unique shipment ref (defaults to the next free
+ *   number for the order: the bare production_code, then -2, -3, …)
+ * @param {string} [p.carrier] / [p.trackingNumber] - how this consignment travels
+ * @param {string} [p.shipDate] / [p.expectedArrival] - YYYY-MM-DD
+ */
+async function createInboundShipmentFromPackingList({ packingListPath, orderRef, transferNumber, carrier, trackingNumber, shipDate, expectedArrival, warehouse, remap, flag }) {
+  const sb = getSupabaseClient();
+  const parsed = parsePackingList(packingListPath);
+  const { items: remappedItems, rewritten } = applySkuRemap(parsed.items, remap);
+  const catalog = await loadCatalogSkus();
+  const { items: canon, remapped, unknown } = canonicalizeItems(remappedItems, catalog);
+
+  const order = orderRef != null ? await resolveOrder(orderRef) : null;
+  if (orderRef != null && !order) throw new Error(`order "${orderRef}" not found`);
+  const transfer = await resolveTransferNumber(sb, order, transferNumber);
+
+  const { ship, lotSummary, producedSet } = await persistInboundShipment({
+    sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate, expectedArrival, flag,
+  });
+
   const reconciliation = order ? await reconcileProductionOrder(order.id) : null;
   return {
     inbound_shipment_id: ship.id,
@@ -244,6 +308,101 @@ async function createInboundShipmentFromPackingList({ packingListPath, orderRef,
     parse_warnings: parsed.warnings,
     reconciliation,
   };
+}
+
+/**
+ * Record an inbound shipment from explicit {sku, qty} lines instead of a packing-list
+ * .xlsx. Small consignments (a courier parcel of accessories, a held batch following the
+ * main container) arrive with an email and a tracking number, not a formatted packing
+ * list, and fabricating a spreadsheet just to record three lines is friction.
+ *
+ * SKUs are still catalog-validated through the same canonicalizer, so a typo is flagged
+ * rather than invented.
+ */
+async function createInboundShipmentFromItems({ orderRef, items, transferNumber, carrier, trackingNumber, shipDate, expectedArrival, warehouse, flag }) {
+  const sb = getSupabaseClient();
+  const raw = normalizeShipmentItems(items);
+  if (!raw.length) throw new Error('items must be a non-empty list of {sku, qty} with qty > 0');
+
+  const catalog = await loadCatalogSkus();
+  const { items: canon, remapped, unknown } = canonicalizeItems(raw, catalog);
+  if (!canon.length) throw new Error(`no SKU matched the catalog (unknown: ${unknown.map((u) => u.sku).join(', ')})`);
+
+  const order = orderRef != null ? await resolveOrder(orderRef) : null;
+  if (orderRef != null && !order) throw new Error(`order "${orderRef}" not found`);
+  const transfer = await resolveTransferNumber(sb, order, transferNumber);
+
+  const { ship, lotSummary, producedSet } = await persistInboundShipment({
+    sb, canon, order, transfer, warehouse, carrier, trackingNumber, shipDate, expectedArrival, flag,
+  });
+
+  const reconciliation = order ? await reconcileProductionOrder(order.id) : null;
+  return {
+    inbound_shipment_id: ship.id,
+    transfer_number: transfer,
+    order: order ? { id: order.id, production_code: order.production_code } : null,
+    carrier: ship.carrier,
+    tracking_number: ship.tracking_number,
+    canonical_sku_count: canon.length,
+    total_units: canon.reduce((a, b) => a + b.qty, 0),
+    lots: lotSummary,
+    remapped,
+    unknown,
+    qty_produced_set: producedSet,
+    reconciliation,
+  };
+}
+
+/**
+ * Update an inbound shipment's travel details — carrier, tracking, and the ship /
+ * expected / actual arrival dates — and push the ones Warehance holds to the live ASN.
+ *
+ * Warehance's PATCH is header-only (see warehanceClient.updateInboundShipment), which is
+ * exactly what this covers. Changing what is ON a shipment is not an update: close the
+ * ASN and post a replacement.
+ */
+async function updateInboundShipmentMeta({
+  inboundShipmentId, carrier, trackingNumber, trackingUrl,
+  shipDate, expectedArrival, actualArrival, status, syncRemote = true,
+}) {
+  const sb = getSupabaseClient();
+  const { data: ship, error } = await sb.from('inbound_shipments').select('*').eq('id', inboundShipmentId).single();
+  if (error) throw new Error(`load inbound: ${error.message}`);
+
+  const patch = { updated_at: new Date().toISOString() };
+  if (carrier !== undefined) patch.carrier = carrier || null;
+  if (trackingNumber !== undefined) patch.tracking_number = trackingNumber || null;
+  if (shipDate !== undefined) patch.ship_date = shipDate || null;
+  if (expectedArrival !== undefined) patch.estimated_arrival_date = expectedArrival || null;
+  if (actualArrival !== undefined) patch.actual_arrival_date = actualArrival || null;
+  if (status !== undefined) patch.status = status;
+
+  const { data: updated, error: uErr } = await sb.from('inbound_shipments').update(patch).eq('id', ship.id).select('*').single();
+  if (uErr) throw new Error(`update inbound: ${uErr.message}`);
+
+  // Mirror to Warehance when the ASN is already live there. Fail-soft: the local record
+  // is the source of truth and must not be rolled back by a remote hiccup.
+  let remote = { attempted: false };
+  if (syncRemote && ship.warehance_inbound_id) {
+    const body = {};
+    if (trackingNumber !== undefined) body.tracking_number = trackingNumber || '';
+    if (trackingUrl !== undefined) body.tracking_url = trackingUrl || '';
+    if (shipDate !== undefined) body.ship_date = shipDate ? new Date(shipDate).toISOString() : null;
+    if (expectedArrival !== undefined) body.expected_date = expectedArrival ? new Date(expectedArrival).toISOString() : null;
+    if (Object.keys(body).length) {
+      remote.attempted = true;
+      try {
+        await warehance.updateInboundShipment(ship.warehance_inbound_id, body);
+        remote.ok = true;
+        remote.fields = Object.keys(body);
+      } catch (e) {
+        remote.ok = false;
+        remote.error = e.message;
+      }
+    }
+  }
+
+  return { inbound_shipment_id: ship.id, transfer_number: ship.transfer_number, warehance_inbound_id: ship.warehance_inbound_id, updated, remote };
 }
 
 // Record hold_storage / remake_next_run lots (produced-but-not-shipped units from a
@@ -436,10 +595,15 @@ async function writeReconciliationSheet({ orderRef, spreadsheetId, today }) {
  * POST the inbound shipment to Warehance. Resolves each catalog SKU to a Warehance
  * product_id, sends the ASN, and stores the returned warehance_inbound_id.
  */
-async function uploadInboundToWarehance(inboundShipmentId, { clientId } = {}) {
+async function uploadInboundToWarehance(inboundShipmentId, { clientId, force = false } = {}) {
   const sb = getSupabaseClient();
   const { data: ship, error } = await sb.from('inbound_shipments').select('*').eq('id', inboundShipmentId).single();
   if (error) throw new Error(`load inbound: ${error.message}`);
+  // Warehance has no DELETE for inbound shipments, so a duplicate POST leaves a phantom
+  // ASN the warehouse can receive against. Refuse unless explicitly forced.
+  if (ship.warehance_inbound_id && !force) {
+    throw new Error(`inbound ${ship.id} (${ship.transfer_number}) is already in Warehance as ASN ${ship.warehance_inbound_id}. Warehance cannot delete an ASN — use update_inbound_shipment for dates/tracking, or pass force to post a second one deliberately.`);
+  }
   const { data: items } = await sb.from('inbound_shipment_items').select('sku, qty').eq('inbound_shipment_id', ship.id);
   if (!items || !items.length) throw new Error('inbound shipment has no items');
 
@@ -458,6 +622,7 @@ async function uploadInboundToWarehance(inboundShipmentId, { clientId } = {}) {
     warehouseId,
     items: resolved.map(({ product_id, ordered }) => ({ product_id, ordered })),
     referenceNumber: ship.transfer_number,
+    trackingNumber: ship.tracking_number || undefined,
     shipDate: ship.ship_date ? new Date(ship.ship_date).toISOString() : undefined,
     expectedDate: ship.estimated_arrival_date ? new Date(ship.estimated_arrival_date).toISOString() : undefined,
     clientId,
@@ -469,7 +634,7 @@ async function uploadInboundToWarehance(inboundShipmentId, { clientId } = {}) {
     uploaded_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq('id', ship.id);
 
-  return { inbound_shipment_id: ship.id, warehance_inbound_id: whId, uploaded: resolved.length, unresolved };
+  return { inbound_shipment_id: ship.id, transfer_number: ship.transfer_number, warehance_inbound_id: whId, uploaded: resolved.length, unresolved, tracking_number: ship.tracking_number || null };
 }
 
 /**
@@ -526,6 +691,10 @@ module.exports = {
   recordManualOrder,
   amendOrder,
   createInboundShipmentFromPackingList,
+  createInboundShipmentFromItems,
+  updateInboundShipmentMeta,
+  nextTransferNumber,
+  normalizeShipmentItems,
   recordProductionLots,
   reconcileProductionOrder,
   writeReconciliationSheet,
