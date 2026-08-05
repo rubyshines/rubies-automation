@@ -35,13 +35,15 @@
  * because retrieval requires knowing to look). search_knowledge is asserted
  * only as the fallback when the reply goes beyond what the facts carry.
  *
- * Known flake, ~1 in 3 on case B: the reply phrases the gel pads as "sold in
- * single sizes". Measured 3/3 wrong before the fact fixes, 1/3 after, with the
- * foam set correct 6/6 and the real difference named 3/3. The assertion is
- * deliberately NOT loosened to let that phrasing through — it is the tail of
- * the exact claim this scenario exists to catch, and a scenario that stops
- * catching its own defect is worth nothing. Run it at --repeat 3 and read
- * mixed results as FLAKY, not as either outcome.
+ * The tail of that same defect was a "sold in single sizes" phrasing that sat
+ * at 2/6 after the first round of fact fixes. The cause was ASYMMETRY, not a
+ * missing prohibition: fact #2 gave the foam set a precise structure and
+ * nothing gave the gel pads one, so the model filled the gap opposite it with
+ * an invented contrast. A fact forbidding the phrasing measured 2/6 — exactly
+ * the same as no fact at all, the negative-rule failure mode. Giving the gel
+ * pads their own structure sentence ("come as one complete set", symmetric
+ * with the foam's "three pairs") took it to 0/6. Keep both halves of that
+ * symmetry if these facts are ever edited.
  *
  * Both cases are synthetic pre-purchase questions with NO order context, so
  * neither depends on any order's live fulfillment state. Run:
