@@ -17,6 +17,7 @@ const { MODELS } = require('../../shared/aiPricing');
 const { runToolLoop } = require('./runToolLoop');
 const { buildContext, normalizeEmail } = require('./contextBuilder');
 const { SIGNATURE_BLOCK_MD, ADVOCACY_PS } = require('./signatures');
+const { containReply, GREETING_RE } = require('./replyContainment');
 const {
   normalizeSize,
   getSizeList,
@@ -1496,11 +1497,10 @@ function stripInternalThinking(text) {
 // Post-generation validation — catch obvious hallucinations
 // ---------------------------------------------------------------------------
 
-/**
- * First line of the customer-facing email. Matched at the start of a line so a
- * mid-sentence "hi" can't trigger it.
- */
-const GREETING_RE = /^(Hi|Hey|Hello|Hola)\b/m;
+// First line of the customer-facing email. Lives in replyContainment.js so the
+// prefix strip below and the containment guard share one list — this used to be
+// a local /^(Hi|Hey|Hello|Hola)\b/, and a draft opening "Bonjour," carried its
+// stock-check notes past both guards to a customer on 2026-08-02.
 
 /**
  * Strip planning narration that landed ahead of the greeting.
@@ -2060,6 +2060,17 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   const validation = validateResponse(composedResponse, toolsCalled, audit, { expectsCustomerAddress });
   composedResponse = validation.corrected;
 
+  // Last line of defense before a customer reads this: the advisor sometimes
+  // leaves a discarded attempt and its first-person aside in the same text
+  // block. The two strips above are prefix rules and structurally cannot catch
+  // it — see replyContainment.js. Runs on the composed reply only, cuts by
+  // verbatim anchors, and keeps the original on every failure.
+  const containment = await containReply(composedResponse, {
+    ticket_id, draft_id, customer_email,
+  });
+  composedResponse = containment.text;
+  if (containment.warning) audit.push(containment.warning);
+
   // Build compatible _structured output
   const structured = buildCompatibleStructured(parsedStructured, composedResponse, {
     customer_email,
@@ -2068,6 +2079,15 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
     audit,
     donationRouting: donationRoutingSink.routing || null,
   });
+
+  // A leak means the draft was either cut or is known to still contain
+  // reasoning. Either way the operator has to actually read this one, so raise
+  // the ⚠️ banner rather than leaving it in the audit trail nobody opens —
+  // every leak we have on record was sent without anyone noticing it.
+  if (containment.leaked && structured?.prescription) {
+    if (!Array.isArray(structured.prescription.flags)) structured.prescription.flags = [];
+    structured.prescription.flags.push(containment.warning);
+  }
 
   // Build markdown summary
   let md = `## Hybrid CS Advisor\n\n`;
