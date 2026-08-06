@@ -67,31 +67,91 @@ function toHtmlBody(text, { introLink = false } = {}) {
 }
 
 /**
- * Build the RFC822 message, base64url-encoded for gmail.users.messages.send.
- * multipart/alternative: the advisor's plain text verbatim + a minimal HTML
- * part so links (incl. the first RUBIES mention) are clickable.
+ * RFC 2047 encode a filename if it has non-ASCII, so an org name with an
+ * accent doesn't produce a mangled attachment name. Pure.
  */
-function buildRawMessage({ to, subject, body: rawBody, inReplyTo, references, message_type }) {
+function encodeFilename(name) {
+  const s = String(name || 'attachment');
+  if (/^[\x20-\x7e]*$/.test(s)) return `"${s.replace(/"/g, '')}"`;
+  return `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
+}
+
+/** One or many addresses → a header value. Drops blanks and dedupes. Pure. */
+function addressList(v) {
+  const list = (Array.isArray(v) ? v : [v])
+    .flatMap(x => String(x || '').split(','))
+    .map(x => x.trim())
+    .filter(Boolean);
+  return [...new Set(list.map(x => x.toLowerCase()))]
+    .map(lower => list.find(x => x.toLowerCase() === lower))
+    .join(', ');
+}
+
+/**
+ * Build the RFC822 message, base64url-encoded for gmail.users.messages.send.
+ *
+ * Without attachments: multipart/alternative (plain + HTML).
+ * With attachments: multipart/mixed wrapping that alternative part, then one
+ * base64 part per file — the standard nesting, so clients still show the HTML
+ * body rather than treating everything as a file list.
+ *
+ * @param to          one address, or several (array or comma string)
+ * @param cc          copied recipients, same shape
+ * @param attachments [{ filename, mimeType, content: Buffer }]
+ */
+function buildRawMessage({ to, cc, subject, body: rawBody, inReplyTo, references, message_type, attachments = [] }) {
   const body = normalizeSignature(rawBody);
   const introLink = INTRO_LINK_TYPES.has(message_type);
-  const boundary = `b2b-${Buffer.from(subject || 'm').toString('hex').slice(0, 12)}-${(body || '').length.toString(36)}`;
+  const seed = `${Buffer.from(subject || 'm').toString('hex').slice(0, 12)}-${(body || '').length.toString(36)}`;
+  const altBoundary = `b2b-alt-${seed}`;
+  const mixedBoundary = `b2b-mix-${seed}`;
+  const hasFiles = Array.isArray(attachments) && attachments.length > 0;
+  const ccLine = addressList(cc);
+
   const headers = [
     `From: Jamie Alexander <${FROM_EMAIL}>`,
-    `To: ${to}`,
+    `To: ${addressList(to)}`,
+  ];
+  // Org threads routinely carry a second person (a colleague who handles
+  // ordering, a director copied for sign-off). Replying to only the sender
+  // silently drops them from a conversation they were part of.
+  if (ccLine) headers.push(`Cc: ${ccLine}`);
+  headers.push(
     `Subject: ${encodeSubject(subject)}`,
     'MIME-Version: 1.0',
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-  ];
+    hasFiles
+      ? `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`
+      : `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+  );
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
-  const raw = headers.join('\r\n') + '\r\n\r\n'
-    + `--${boundary}\r\n`
+
+  const alternative = `--${altBoundary}\r\n`
     + 'Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
     + body + '\r\n\r\n'
-    + `--${boundary}\r\n`
+    + `--${altBoundary}\r\n`
     + 'Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
     + `<div>${toHtmlBody(body, { introLink })}</div>\r\n\r\n`
-    + `--${boundary}--\r\n`;
+    + `--${altBoundary}--\r\n`;
+
+  let raw = headers.join('\r\n') + '\r\n\r\n';
+  if (!hasFiles) {
+    raw += alternative;
+  } else {
+    raw += `--${mixedBoundary}\r\n`
+      + `Content-Type: multipart/alternative; boundary="${altBoundary}"\r\n\r\n`
+      + alternative + '\r\n';
+    for (const a of attachments) {
+      const b64 = Buffer.isBuffer(a.content) ? a.content.toString('base64') : Buffer.from(a.content || '').toString('base64');
+      raw += `--${mixedBoundary}\r\n`
+        + `Content-Type: ${a.mimeType || 'application/octet-stream'}; name=${encodeFilename(a.filename)}\r\n`
+        + `Content-Disposition: attachment; filename=${encodeFilename(a.filename)}\r\n`
+        + 'Content-Transfer-Encoding: base64\r\n\r\n'
+        // 76-char lines per RFC 2045; some servers reject longer ones.
+        + (b64.match(/.{1,76}/g) || []).join('\r\n') + '\r\n\r\n';
+    }
+    raw += `--${mixedBoundary}--\r\n`;
+  }
   return Buffer.from(raw, 'utf8').toString('base64url');
 }
 
@@ -159,7 +219,7 @@ async function resolveDelivery(sb, companyId) {
  *                     subject?, body, confirmed? }
  */
 async function sendB2bEmail(p = {}) {
-  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days } = p;
+  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc } = p;
   if (!company_id) throw new Error('company_id required');
   if (!message_type) throw new Error('message_type required');
   if (!body || !body.trim()) throw new Error('body required');
@@ -255,7 +315,7 @@ async function sendB2bEmail(p = {}) {
   const { getGmail } = require('../../gmail-management/lib/gmailClient');
   const gmail = await getGmail();
   const sentBody = normalizeSignature(body);
-  const raw = buildRawMessage({ to: recipient.email, subject, body: sentBody, inReplyTo, references: inReplyTo, message_type });
+  const raw = buildRawMessage({ to: recipient.email, cc, subject, body: sentBody, inReplyTo, references: inReplyTo, message_type, attachments });
   const sendRes = await gmail.users.messages.send({
     userId: 'me',
     requestBody: { raw, ...(thread?.gmail_thread_id ? { threadId: thread.gmail_thread_id } : {}) },
@@ -300,4 +360,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, encodeSubject, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, FROM_EMAIL, SEND_FLAG };

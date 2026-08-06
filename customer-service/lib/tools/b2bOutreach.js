@@ -189,7 +189,56 @@ async function handleTriage(input = {}) {
   }
 }
 
+async function handleAgreement(input = {}) {
+  try {
+    const { renderAgreementPdf } = require(path.join(B2B_LIB, 'donationAgreement'));
+    const sb = getSupabaseClient();
+
+    // Country decides the discount, so prefer the company record over anything
+    // typed in — a wrong rate here is a wrong contract.
+    let country = input.country || null;
+    let orgName = input.org_name || null;
+    if (input.company_id) {
+      const { data: c, error } = await sb.from('b2b_companies')
+        .select('name, country').eq('id', input.company_id).maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!c) throw new Error(`company '${input.company_id}' not found`);
+      orgName = orgName || c.name;
+      country = country || c.country;
+    }
+    if (!orgName) throw new Error('org_name or company_id required');
+
+    const { filename, buffer, discountPercent } = await renderAgreementPdf({ orgName, country });
+
+    const fs = require('fs');
+    const os = require('os');
+    const outPath = path.join(input.out_dir || os.tmpdir(), filename);
+    fs.writeFileSync(outPath, buffer);
+
+    const rateNote = discountPercent === 50
+      ? 'US/Australia rate'
+      : `international rate (country: ${country || 'unknown — defaulted to the conservative rate'})`;
+    return text(`Generated **${filename}** — ${discountPercent}% discount, ${rateNote}.\n\nSaved to: ${outPath}\n\nPre-signed by Jamie; the counter-signature line is blank for the partner. Attach it alongside the Onboarding Survey: https://forms.gle/1Hq93BSiPrhJkgfB8`);
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
 module.exports = [
+  {
+    name: 'donation_partner_agreement',
+    description: "Generate the RUBIES LGBTQ+ Organization Donation Program Partnership Agreement as a pre-signed PDF for one org. Deterministic — same clause wording every time; the only variables are the org name and the discount rate, which is set by country (US/Australia 50%, everywhere else 30%). Pass company_id to take the name and country from the company record (preferred — a wrong country means a wrong contract), or org_name + country directly. Returns the file path, ready to attach to the onboarding email alongside the survey link.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'b2b_companies id — name and country are read from the record.' },
+        org_name: { type: 'string', description: 'Org name as it should read in the agreement. Overrides the company record.' },
+        country: { type: 'string', description: 'Overrides the company record. Drives the discount rate.' },
+        out_dir: { type: 'string', description: 'Directory to write the PDF into (defaults to the system temp dir).' },
+      },
+    },
+    handler: handleAgreement,
+  },
   {
     name: 'b2b_triage',
     description: "Vet a company for outreach WITHOUT generating a draft: keep (admit it to the Tier-4 first-touch queue), drop (mark lost with a reason), or snooze (out of the queue until a date). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted — cohort by cohort rather than all at once.",
