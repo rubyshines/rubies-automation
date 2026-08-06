@@ -5648,6 +5648,34 @@ main { height: calc(100vh - 56px); }
 .outreach-facts li::marker { color: var(--yellow); }
 .outreach-commitments li::marker { color: var(--teal); }
 
+/* Advisor reasoning — collapsed by default so it never competes with the
+   draft, but one click away when a steer did something unexpected. */
+.outreach-reasoning {
+  margin: 10px 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.outreach-reasoning > summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+  font-weight: 500;
+  padding: 4px 0;
+}
+.outreach-reasoning > summary:hover { color: var(--text-primary); }
+.outreach-reasoning-steer {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--teal);
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.02));
+  line-height: 1.5;
+}
+.outreach-reasoning-steps {
+  margin: 4px 0 0 18px;
+  line-height: 1.6;
+}
+.outreach-reasoning-steps li { margin-bottom: 4px; }
+
 .outreach-steer-row { margin: 14px 0 12px; }
 .outreach-empty-note {
   font-size: 13px;

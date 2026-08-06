@@ -5866,6 +5866,29 @@ function reopenOutreachFacts() {
   el.outerHTML = outreachFactsHtml(outreachDraft, true);
 }
 
+/**
+ * The advisor's own reasoning for this draft, collapsed by default.
+ *
+ * `audit` has always been generated and stored and never shown, so there was no
+ * way to see WHY a draft said what it said — or, after a steer, whether the
+ * advisor actually took the redirection. The steer that produced this draft is
+ * shown alongside it, because reasoning without the instruction that shaped it
+ * only tells half the story.
+ *
+ * (The CS advisor streams a live trace; B2B drafting is a single schema-bound
+ * call, not a stream, so this is the stored version rather than a live one.)
+ */
+function outreachReasoningHtml(draft) {
+  const steps = Array.isArray(draft?.structured?.audit) ? draft.structured.audit.filter(Boolean) : [];
+  const steer = draft?.operator_steer;
+  if (!steps.length && !steer) return '';
+  return `<details class="outreach-reasoning">
+    <summary>Advisor reasoning${steer ? ' &amp; your steer' : ''}</summary>
+    ${steer ? `<div class="outreach-reasoning-steer"><span class="outreach-field-label">You steered</span>${esc(steer)}</div>` : ''}
+    ${steps.length ? `<ol class="outreach-reasoning-steps">${steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
+  </details>`;
+}
+
 function outreachListHtml(title, items, cls) {
   return `<div class="outreach-list ${cls}">
     <div class="outreach-field-label">${title}</div>
@@ -5950,6 +5973,7 @@ function renderOutreachDetail(entry, draft) {
         <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)">
       </div>
       <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
+      ${outreachReasoningHtml(draft)}
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
       ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient">Advisor timing note: next touch in ~${s.next_touch_days} days (reason in its audit; overrides the standard cadence when this sends)</div>` : ''}
       ${outreachRecipientHtml()}
