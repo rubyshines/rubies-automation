@@ -2518,9 +2518,17 @@ async function updateTicketStatusCore(supabase, { column, value }, status, extra
 // have gone out, in shadow) without operator review".
 const AUTO_SEND_PATHS = ['autosend', 'autosend_shadow'];
 
+const TICKET_TABS = ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed'];
+
 async function apiGetTickets(query) {
   const supabase = getSupabaseClient();
-  const tab = query.get('tab') || 'new';
+  // An unrecognized tab used to fall through the switch below with NO status
+  // filter, answering with the 50 oldest tickets of all time instead of an
+  // error or an empty list. Normalize to the same default an absent tab gets,
+  // so a stray value can never dump an arbitrary cross-status list into the
+  // queue.
+  const requested = query.get('tab');
+  const tab = TICKET_TABS.includes(requested) ? requested : 'new';
   const limit = parseInt(query.get('limit') || '50', 10);
   const autoOnly = tab === 'closed' && query.get('auto') === '1';
 
@@ -3492,6 +3500,9 @@ async function handleRequest(req, res) {
   // ── Auth endpoints ──
   if (pathname.startsWith('/auth/')) {
     res.setHeader('Content-Type', 'application/json');
+    // Session state is never reusable — a heuristically cached /auth/status
+    // would answer for a session that has since expired.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
 
     if (pathname === '/auth/google' && req.method === 'POST') {
       try {
@@ -3608,6 +3619,12 @@ async function handleRequest(req, res) {
   // API routes
   if (pathname.startsWith('/api/')) {
     res.setHeader('Content-Type', 'application/json');
+    // These responses carry no validators and no expiry, so Safari/WebKit
+    // applies HEURISTIC freshness and will serve a months-old queue from the
+    // HTTP cache on first paint (the service worker skips /api/, so this cache
+    // is the only layer). Same failure this file already guards against for
+    // JS/CSS below — live data must never be reusable.
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
 
     try {
       // Static routes

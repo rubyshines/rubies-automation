@@ -131,7 +131,7 @@ document.addEventListener('keydown', _onUserActivity);
 
 async function checkAuth() {
   try {
-    const res = await fetch('/auth/status');
+    const res = await fetch('/auth/status', { cache: 'no-store' });
     const data = await res.json();
     if (!data.authenticated) {
       window.location.href = '/login.html';
@@ -271,7 +271,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     switchTab(savedTab);
   }
 
-  loadTicketQueue()
+  // Only queue tabs may load the queue. The non-queue panels own the sidebar
+  // themselves, and `/api/tickets?tab=adhoc|outreach|swimwear` matches no case
+  // in the server's tab switch, so it comes back UNFILTERED — the 50
+  // oldest tickets of all time, any status. Those rows used to be painted into
+  // the hidden queue container at startup and then sat there until the first
+  // time a real queue tab was opened, where they flashed as a list of
+  // long-closed phantom tickets before the true list landed.
+  const initialQueueLoad = NON_QUEUE_TABS.includes(currentTab)
+    ? Promise.resolve()
+    : loadTicketQueue();
+  initialQueueLoad
     .then(async () => {
       if (pendingTicketRestore) {
         selectTicket(parseInt(pendingTicketRestore[1]));
@@ -453,6 +463,10 @@ function switchTab(tab) {
 
   localStorage.setItem('activeTab', tab);
   // Leave search mode when switching tabs (clears the box + restores tab queue).
+  // Killing the debounce matters: a search keystroke from a fraction of a
+  // second ago would otherwise fire after the switch and repaint the queue
+  // with results for a tab you've left.
+  clearTimeout(_searchDebounce);
   if (searchActive || document.getElementById('queue-search-input')?.value) {
     const input = document.getElementById('queue-search-input');
     if (input) input.value = '';
@@ -500,20 +514,41 @@ document.addEventListener('click', (e) => {
 // Queue
 // ---------------------------------------------------------------------------
 
+// Which tab's rows are painted into #queue-items right now, and a sequence
+// number for the in-flight loads. Together they stop the queue from ever
+// showing rows that aren't the current tab's live data: the container is
+// blanked before a fetch that will change tabs (otherwise the tab you just
+// LEFT stays on screen for the length of the request and reads as a list of
+// phantom tickets that then vanish), and a response that lost the race to a
+// newer load is discarded instead of painted.
+let _renderedQueueTab = null;
+let _queueLoadSeq = 0;
+
 async function loadTicketQueue() {
+  const tab = currentTab;
+  const seq = ++_queueLoadSeq;
+  const container = document.getElementById('queue-items');
+  // Only on a tab change / first paint — blanking on every 30s poll would make
+  // the queue blink.
+  if (container && _renderedQueueTab !== tab) {
+    container.innerHTML = '';
+    _renderedQueueTab = tab;
+  }
   try {
-    const autoParam = currentTab === 'closed' && closedAutoOnly ? '&auto=1' : '';
-    const tickets = await api(`/api/tickets?tab=${currentTab}${autoParam}`);
-    const container = document.getElementById('queue-items');
+    const autoParam = tab === 'closed' && closedAutoOnly ? '&auto=1' : '';
+    const tickets = await api(`/api/tickets?tab=${tab}${autoParam}`);
+    // A newer load (tab switch, search, filter toggle) started while this one
+    // was in flight — it owns the container now.
+    if (seq !== _queueLoadSeq) return;
 
     // Detect new tickets and send desktop notification (only for new/followup tabs)
-    if (['new', 'followup'].includes(currentTab) && knownTicketIds.size > 0) {
+    if (['new', 'followup'].includes(tab) && knownTicketIds.size > 0) {
       const newTickets = tickets.filter(t => !knownTicketIds.has(t.id));
       if (newTickets.length > 0) {
         notifyNewDrafts(newTickets);
       }
     }
-    if (['new', 'followup'].includes(currentTab)) {
+    if (['new', 'followup'].includes(tab)) {
       knownTicketIds = new Set(tickets.map(t => t.id));
     }
 
@@ -541,13 +576,13 @@ async function loadTicketQueue() {
     const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
     const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
     // Closed tab gets a filter row (the "AUTO only" chip) above the cards
-    const filterHtml = currentTab === 'closed' ? closedAutoFilterHtml() : '';
+    const filterHtml = tab === 'closed' ? closedAutoFilterHtml() : '';
     if (!visibleTickets.length) {
-      const emptyLabel = currentTab === 'closed' && closedAutoOnly ? 'No auto-sent tickets' : (emptyLabels[currentTab] || 'No tickets');
+      const emptyLabel = tab === 'closed' && closedAutoOnly ? 'No auto-sent tickets' : (emptyLabels[tab] || 'No tickets');
       container.innerHTML = filterHtml + `<div style="padding:20px;text-align:center;color:var(--text-tertiary)">${emptyLabel}</div>`;
       // Update detail placeholder when queue is empty
       if (!currentTicketId) {
-        document.getElementById('detail-placeholder').textContent = allClearLabels[currentTab] || 'All clear';
+        document.getElementById('detail-placeholder').textContent = allClearLabels[tab] || 'All clear';
       }
       return;
     }
@@ -675,6 +710,11 @@ function onSearchInput(value) {
 async function runSearch(term) {
   searchActive = true;
   const container = document.getElementById('queue-items');
+  // Search owns the container from here: invalidate any in-flight tab load so
+  // it can't paint over the results, and mark the painted tab as "not a tab"
+  // so leaving search blanks before repainting the queue.
+  _queueLoadSeq++;
+  _renderedQueueTab = null;
   try {
     const tickets = await api(`/api/tickets/search?q=${encodeURIComponent(term)}`);
     currentQueueTicketIds = tickets.map(t => t.id);
@@ -3772,6 +3812,11 @@ async function api(url, opts = {}) {
   const method = opts.method || 'GET';
   const res = await fetch(url, {
     method,
+    // Bypass the HTTP cache on the request itself, not just via the response
+    // header — a client whose cache is ALREADY holding a stale queue would
+    // otherwise paint it once more before the fresh copy lands. Same reason
+    // the service worker passes no-store for the app shell.
+    cache: 'no-store',
     headers: opts.body ? { 'Content-Type': 'application/json' } : {},
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
