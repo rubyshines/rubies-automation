@@ -5,6 +5,7 @@
  * cadence.evaluateDue / queue.computeQueueEntry consume.
  */
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
+const { deliveryMode } = require('./sendB2bEmail');
 
 /** "https://www.foo.org/x" → "foo.org". Pure. */
 function companyDomain(website) {
@@ -88,6 +89,16 @@ async function buildContexts(sb, companies) {
   const pendingSet = new Set(drafts.map(d => d.company_id));
   const engagedSiblings = await findEngagedSiblings(sb, companies);
 
+  // How each company is reachable, resolved in bulk. Same pure decision the
+  // send path uses per-company, so the panel can never offer a Send button for
+  // a company sendB2bEmail would refuse.
+  const activeContactCompanies = new Set();
+  if (ids.length) {
+    const contactRows = await fetchAllPaginated(() => sb.from('b2b_contacts')
+      .select('company_id').eq('is_active', true).in('company_id', ids));
+    for (const c of contactRows) activeContactCompanies.add(c.company_id);
+  }
+
   const byCompany = new Map();
   for (const c of companies || []) {
     byCompany.set(c.id, {
@@ -107,6 +118,12 @@ async function buildContexts(sb, companies) {
       // A duplicate row for this same org already has a relationship — never
       // cold-intro them again on a second address.
       hasEngagedSibling: engagedSiblings.has(c.id),
+      // 'email' | 'form' | 'none' — how this company can be reached.
+      delivery: deliveryMode({
+        hasContact: activeContactCompanies.has(c.id),
+        generalEmail: c.general_email,
+        contactFormUrl: c.contact_form_url,
+      }),
     });
   }
   // Messages are ordered oldest-first, so the newest outbound post_samples_checkin

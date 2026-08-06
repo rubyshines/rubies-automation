@@ -23,6 +23,7 @@ async function addProspect(sb, {
   name, channel = 'lgbtq_org', entity_type = 'company',
   website = null, email = null, contact_name = null,
   referred_by = null, blurb = null, country = null,
+  contact_form_url = null,
   draft = true, steer = null,
 } = {}) {
   if (!name?.trim()) throw new Error('name is required');
@@ -31,7 +32,7 @@ async function addProspect(sb, {
   if (!id) throw new Error('name produced an empty slug');
 
   const { data: existing } = await sb.from('b2b_companies')
-    .select('id, relationship_state, metadata').eq('id', id).maybeSingle();
+    .select('id, relationship_state, metadata, vetted_at').eq('id', id).maybeSingle();
 
   const meta = {
     ...(existing?.metadata || {}),
@@ -43,10 +44,18 @@ async function addProspect(sb, {
     id, name: name.trim(),
     relationship_type: channel, entity_type,
     // Never resurrect an explicitly closed relationship by re-adding it.
-    relationship_state: existing?.relationship_state === 'lost' ? 'lost' : (existing?.relationship_state || 'in_contact'),
+    // A brand-new referral is a `prospect`: never approached. It was landing in
+    // `in_contact` because this path predates that state, which left it outside
+    // Tier-4 first-touch entirely — visible only while its draft was pending,
+    // and gone from the queue the moment that draft was dismissed.
+    relationship_state: existing?.relationship_state === 'lost' ? 'lost' : (existing?.relationship_state || 'prospect'),
+    // An operator adding a named referral IS the vetting decision, so stamp the
+    // Tier-4 admission gate here rather than making them triage their own
+    // deliberate act. Preserved if already set.
+    vetted_at: existing?.vetted_at || new Date().toISOString(),
     status: 'qualified_lead',
     temperature: referred_by ? 'warm' : 'cold',
-    website, general_email: email, country,
+    website, general_email: email, country, contact_form_url,
     source: 'referral',
     metadata: meta,
   }, { onConflict: 'id' });
@@ -64,6 +73,20 @@ async function addProspect(sb, {
     if (cErr) throw new Error(`contact upsert: ${cErr.message}`);
   }
 
+  // A draft we have no way to deliver is a queue row that looks like work and
+  // isn't. Drafting is fine for a form company (the operator submits it by
+  // hand); it is not fine when we have no address AND no form.
+  const { resolveDelivery } = require('./sendB2bEmail');
+  const delivery = await resolveDelivery(sb, id);
+  if (draft && delivery.mode === 'none') {
+    return {
+      id,
+      existed: !!existing,
+      draft_id: null,
+      warning: `'${id}' saved with its referral provenance, but has no email and no contact form — no draft generated. Add a way to reach them, then draft.`,
+    };
+  }
+
   let draftResult = null;
   if (draft) {
     const referralSteer = [
@@ -78,7 +101,13 @@ async function addProspect(sb, {
     });
   }
 
-  return { id, existed: !!existing, draft_id: draftResult?.draft_id || null };
+  return {
+    id,
+    existed: !!existing,
+    draft_id: draftResult?.draft_id || null,
+    delivery: delivery.mode,
+    ...(delivery.mode === 'form' ? { form_url: delivery.url } : {}),
+  };
 }
 
 module.exports = { addProspect, slugify, INTRO_BY_CHANNEL };

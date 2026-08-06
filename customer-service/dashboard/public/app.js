@@ -5468,6 +5468,7 @@ function outreachRowHtml(e) {
       <div class="queue-item-row2">
         <span class="category-badge ${e.message_type ? 'category-general' : 'category-order'}">${esc(typeLabel)}</span>
         ${e.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
+        ${e.delivery === 'form' ? '<span class="badge badge-muted" title="No published email — submit via their contact form">form</span>' : ''}
       </div>
       ${e.draft?.snippet ? `<div class="outreach-row-snippet">${esc(e.draft.snippet)}</div>` : ''}
     </div>
@@ -5872,9 +5873,11 @@ function outreachListHtml(title, items, cls) {
   </div>`;
 }
 
-// Detail layout mirrors the CS advisor ticket view: conversation on top,
-// then "AI Draft" — steer row ABOVE an editable white draft box — then
-// actions. Facts sit between the conversation and the draft as a checklist.
+// Detail layout: the DRAFT comes first — facts checklist, steer row, editable
+// box, actions — and the conversation history sits below it. The draft is what
+// you act on, and on a long thread it was scrolling out of reach behind the
+// history. (This deliberately diverges from the CS advisor ticket view, where
+// conversation-on-top is right because the ticket IS the conversation.)
 function renderOutreachDetail(entry, draft) {
   const el = document.getElementById('outreach-detail');
   const s = (draft && draft.structured) || {};
@@ -5904,18 +5907,36 @@ function renderOutreachDetail(entry, draft) {
       : entry.tier
         ? 'a reply (the advisor reads the thread and drafts Jamie’s response)'
         : 'a message (nothing is due — the advisor reads the history and decides what makes sense to send now)';
-    el.innerHTML = header + `<div id="outreach-context">${outreachHistoryHtml()}</div>` + `
+    // The empty state is the panel's front door, not a placeholder: drafts are
+    // generated on demand, so every company starts here and comes back here
+    // after each send. So it gets a real composer — write it yourself when you
+    // already know the words, or hit ↻ to have the advisor write it.
+    el.innerHTML = header + `
       <div class="detail-section">
-        <h3>AI Draft</h3>
-        <div class="outreach-empty-note">No draft yet &mdash; the &#8635; button will write ${what}.</div>
+        <h3>Draft</h3>
+        <div class="outreach-empty-note">Write it yourself below, or &#8635; to have the advisor write ${what}.</div>
         ${steerBlock}
-      </div>`;
+        <div class="outreach-subject">
+          <span class="outreach-field-label">Subject</span>
+          <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)">
+        </div>
+        <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"
+          placeholder="Type your message here, then Send."></textarea>
+        ${outreachRecipientHtml()}
+        <div class="btn-row btn-row-primary outreach-actions">
+          ${outreachHistory?.delivery?.mode === 'form'
+            ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
+               <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
+            : `<button class="btn btn-primary" id="outreach-compose-send-btn" onclick="sendComposedDraft()">Send</button>`}
+        </div>
+        <div id="outreach-send-panel"></div>
+      </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
     return;
   }
 
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
 
-  el.innerHTML = header + `<div id="outreach-context">${outreachHistoryHtml()}</div>` + outreachFactsHtml(draft) + `
+  el.innerHTML = header + outreachFactsHtml(draft) + `
     <div class="detail-section">
       <h3>AI Draft
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>
@@ -5933,11 +5954,16 @@ function renderOutreachDetail(entry, draft) {
       ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient">Advisor timing note: next touch in ~${s.next_touch_days} days (reason in its audit; overrides the standard cadence when this sends)</div>` : ''}
       ${outreachRecipientHtml()}
       <div class="btn-row btn-row-primary outreach-actions">
-        <button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>
+        ${outreachHistory?.delivery?.mode === 'form'
+          // No Send button at all: sendB2bEmail would refuse this company, so
+          // offering one would just produce an error on click.
+          ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
+             <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
+          : `<button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>`}
         <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
       </div>
       <div id="outreach-send-panel"></div>
-    </div>`;
+    </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
 
   // Set body + subject via .value (not innerHTML) and size the body to content.
   // A blank subject is left blank rather than prefilled: for replies the draft
@@ -5991,13 +6017,76 @@ async function dismissOutreachDraft() {
 // step, shown up front so Send needs no confirmation round-trip.
 function outreachRecipientHtml() {
   const r = outreachHistory?.recipient;
+  const delivery = outreachHistory?.delivery;
   const threaded = !!outreachDraft?.thread_id;
+
+  // Form companies publish no address. Say where this goes and who submits it,
+  // rather than showing a "Sends to" line that would be a lie.
+  if (delivery?.mode === 'form') {
+    return `<div id="outreach-recipient" class="outreach-recipient">
+      No published email address. Submit this through their contact form:
+      <a href="${esc(delivery.url)}" target="_blank" rel="noopener">${esc(delivery.url)}</a>
+    </div>`;
+  }
+
   const to = r
     ? `${esc(r.email)}${r.name ? ` (${esc(r.name)})` : ''}${r.via === 'general_email' ? ' <span class="outreach-preview-via">via general inbox</span>' : ''}`
     : (outreachHistory === null ? 'resolving&hellip;' : '<span class="outreach-send-error-inline">no known contact — add one before sending</span>');
   return `<div id="outreach-recipient" class="outreach-recipient">
     Sends to ${to} from jamie@rubyshines.com · ${threaded ? 'replies in the existing thread' : 'starts a new email'}
   </div>`;
+}
+
+/**
+ * Send an email the operator typed into the empty state. Stores it as a draft
+ * first so it goes down the SAME send path as an AI draft — one path means
+ * thread bookkeeping, cadence dates and the b2b_messages row can't drift.
+ */
+async function sendComposedDraft() {
+  const body = document.getElementById('outreach-draft-editor')?.value || '';
+  const subject = document.getElementById('outreach-subject-editor')?.value || '';
+  if (!body.trim()) { showToast('Nothing to send — write a message first', 'error'); return; }
+
+  const btn = document.getElementById('outreach-compose-send-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const composed = await api(`/api/b2b/companies/${encodeURIComponent(outreachSelectedId)}/compose`, {
+      method: 'POST', body: { body, subject },
+    });
+    const res = await api('/api/b2b/send', {
+      method: 'POST', body: { draft_id: composed.draft_id, confirmed: true, body, subject },
+    });
+    if (res.phase === 'sent') {
+      showToast(`Sent to ${res.to}`, 'success');
+      outreachAdvancePast(outreachSelectedId);
+      return;
+    }
+    if (res.phase === 'blocked') {
+      document.getElementById('outreach-send-panel').innerHTML =
+        `<div class="outreach-empty-note">${esc(res.error)}</div>`;
+    } else {
+      showToast(res.error || 'Not sent', 'error');
+    }
+  } catch (err) {
+    showToast(`Send failed: ${err.message}`, 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+}
+
+/**
+ * Copy the draft (as edited) to the clipboard for pasting into a contact form.
+ * Reads the textarea rather than the stored draft so operator edits go with it.
+ */
+async function copyOutreachDraft() {
+  const body = document.getElementById('outreach-draft-editor')?.value || '';
+  const subject = document.getElementById('outreach-subject-editor')?.value || '';
+  const text = subject ? `${subject}\n\n${body}` : body;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Draft copied — paste it into their form', 'success');
+  } catch {
+    showToast('Could not copy automatically — select the text and copy it', 'error');
+  }
 }
 
 // One-click send, same rhythm as the CS advisor: click → sends → advance to

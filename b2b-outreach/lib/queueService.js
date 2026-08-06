@@ -23,7 +23,7 @@ const { assembleQueue } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft } = require('./outreachAdvisor');
-const { sendB2bEmail, resolveRecipient, SEND_FLAG } = require('./sendB2bEmail');
+const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG } = require('./sendB2bEmail');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 
 /** One-line preview of a draft body for queue rows. Pure. */
@@ -479,6 +479,68 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type, th
 }
 
 /**
+ * Store an email the OPERATOR wrote, as a pending draft, so it sends through
+ * exactly the same path as an AI draft.
+ *
+ * The empty state is the panel's front door, not an edge case: drafts are
+ * generated on demand, so every company starts with no draft and returns to
+ * none after each send. Requiring a ~$0.07 Opus call before you can type a
+ * two-line reply you already know the words to is backwards. This gives the
+ * box something to attach to, and keeps ONE send path (thread bookkeeping,
+ * cadence dates, b2b_messages) rather than a second one that would drift.
+ *
+ * `advisor: null` is the training signal that matters: it distinguishes "Jamie
+ * wrote this himself" from "Jamie edited the AI's draft", which a bare
+ * operator_edited boolean cannot.
+ */
+function composeDraftRow({ company_id, body, subject, message_type, thread_id, entry } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  if (!body || !body.trim()) throw new Error('body required — nothing to send');
+  return {
+    company_id,
+    // Inherit the thread so a hand-written reply lands in the conversation
+    // rather than starting a detached one.
+    thread_id: thread_id || entry?.thread_id || null,
+    // Cadence keys off message_type for next_action_date and the follow-up
+    // ladder, so a hand-written message adopts whatever the queue says is due
+    // here. Neutral fallback when nothing is (reaching out unprompted).
+    message_type: message_type || entry?.message_type || 'operator_message',
+    subject: subject?.trim() || null,
+    body: body.trim(),
+    structured: {},
+    queue_tier: entry?.tier || null,
+    queue_reason: entry?.reason || 'written by the operator',
+    // The training signal: null advisor means a human wrote it from scratch,
+    // which a bare operator_edited boolean could never distinguish from an
+    // edited AI draft.
+    advisor: null,
+    operator_steer: null,
+  };
+}
+
+async function composeDraft(sb, { company_id, body, subject, message_type, thread_id } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  if (!body || !body.trim()) throw new Error('body required — nothing to send');
+
+  const { data: company, error: cErr } = await sb.from('b2b_companies')
+    .select('*').eq('id', company_id).maybeSingle();
+  if (cErr) throw new Error(cErr.message);
+  if (!company) throw new Error(`company '${company_id}' not found`);
+
+  const contexts = await buildContexts(sb, [company]);
+  const [entry] = assembleQueue([{ company, ctx: { ...contexts.get(company.id), hasPendingDraft: false } }]);
+  const draftRow = composeDraftRow({ company_id, body, subject, message_type, thread_id, entry });
+
+  await sb.from('b2b_drafts').update({ status: 'superseded' })
+    .eq('company_id', company_id).eq('status', 'pending');
+
+  const { data: row, error } = await sb.from('b2b_drafts').insert(draftRow).select('id').single();
+  if (error) throw new Error(`b2b_drafts insert: ${error.message}`);
+
+  return { draft_id: row.id, company_id, message_type: draftRow.message_type };
+}
+
+/**
  * Two-phase send of a stored draft. Phase 1 returns sendB2bEmail's preview
  * plus `gate_enabled` (the b2b_send_enabled flag state, so the UI can show
  * the gate plainly before confirming). Phase 2 passes through preview/
@@ -621,7 +683,7 @@ async function fetchCompanyThreads(sb, companyId) {
       .eq('company_id', companyId)
       .order('last_message_at', { ascending: false, nullsFirst: false }),
     sb.from('b2b_companies').select('*').eq('id', companyId).maybeSingle(),
-    resolveRecipient(sb, companyId).catch(() => null),
+    resolveDelivery(sb, companyId).catch(() => null),
     sb.from('b2b_contacts')
       .select('email, full_name, role, title, is_primary, is_active')
       .eq('company_id', companyId).eq('is_active', true)
@@ -678,7 +740,11 @@ async function fetchCompanyThreads(sb, companyId) {
     contacts: contactsRes.error ? [] : (contactsRes.data || []),
     pending_draft: draftRes.error ? null : (draftRes.data || null),
     logo_url: logoUrl,
-    recipient,
+    // `recipient` keeps its old shape for email companies so nothing downstream
+    // has to special-case the common path; `delivery` carries the mode so the
+    // panel knows whether a Send button is even honest here.
+    recipient: recipient?.mode === 'email' ? recipient : null,
+    delivery: recipient || { mode: 'none' },
     gmail_sync: gmailSync,
   };
 }
@@ -691,6 +757,8 @@ module.exports = {
   fetchQueueWithDrafts,
   fetchCompanyThreads,
   generateDraftForCompany,
+  composeDraft,
+  composeDraftRow,
   sendDraftById,
   mergeFactVerification,
   setFactVerified,

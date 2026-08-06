@@ -114,6 +114,46 @@ async function resolveRecipient(sb, companyId) {
 }
 
 /**
+ * The delivery decision itself, as a pure function so the send path (one
+ * company, authoritative) and the queue build (all companies, bulk) can never
+ * disagree about how a company is reachable. Pure.
+ */
+function deliveryMode({ hasContact, generalEmail, contactFormUrl }) {
+  if (hasContact || generalEmail) return 'email';
+  if (contactFormUrl) return 'form';
+  return 'none';
+}
+
+/**
+ * How we can actually reach this company. DERIVED, never stored: an email on
+ * file always wins, so adding a contact later silently upgrades a form company
+ * to email without anything needing to be un-flagged.
+ *
+ *   { mode: 'email', email, name, via }  — normal send
+ *   { mode: 'form', url }                — no address published; the operator
+ *                                          submits the draft through their form
+ *   { mode: 'none' }                     — unreachable; nothing should draft
+ *
+ * Small orgs often publish only a form, and a form is usually the channel they
+ * actually monitor. Guessing `info@` instead would risk a bounce against
+ * rubyshines.com, the same sending reputation Klaviyo depends on.
+ */
+async function resolveDelivery(sb, companyId) {
+  const recipient = await resolveRecipient(sb, companyId);
+  const { data: company, error } = await sb.from('b2b_companies')
+    .select('contact_form_url').eq('id', companyId).maybeSingle();
+  if (error) throw new Error(`company lookup: ${error.message}`);
+
+  const mode = deliveryMode({
+    hasContact: !!recipient,
+    contactFormUrl: company?.contact_form_url,
+  });
+  if (mode === 'email') return { mode, ...recipient };
+  if (mode === 'form') return { mode, url: company.contact_form_url };
+  return { mode: 'none' };
+}
+
+/**
  * sendB2bEmail — see module doc.
  * @param {object} p { company_id, thread_id?, message_type, variant_id?,
  *                     subject?, body, confirmed? }
@@ -125,10 +165,22 @@ async function sendB2bEmail(p = {}) {
   if (!body || !body.trim()) throw new Error('body required');
 
   const sb = getSupabaseClient();
-  const recipient = await resolveRecipient(sb, company_id);
-  if (!recipient) {
-    return { ok: false, error: `No active contact or general_email for ${company_id} — fix the contact record first.` };
+  const delivery = await resolveDelivery(sb, company_id);
+  // Fail closed before the gate, not at the Gmail call: this company publishes
+  // no address, so there is nothing to send TO. The draft is still good — it
+  // goes through their form, by hand, from the panel.
+  if (delivery.mode === 'form') {
+    return {
+      ok: false,
+      phase: 'manual',
+      form_url: delivery.url,
+      error: `${company_id} publishes no email address, only a contact form. Submit the draft at ${delivery.url} — the panel has a copy button. Nothing was sent.`,
+    };
   }
+  if (delivery.mode === 'none') {
+    return { ok: false, error: `No active contact, general_email, or contact form for ${company_id} — fix the contact record first.` };
+  }
+  const recipient = delivery;
 
   // Thread context (reply headers + subject inheritance)
   let thread = null;
@@ -248,4 +300,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, encodeSubject, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, encodeSubject, FROM_EMAIL, SEND_FLAG };

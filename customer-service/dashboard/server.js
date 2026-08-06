@@ -2836,6 +2836,18 @@ async function apiB2bRegenerateDraft(id, body = {}) {
 // Generate a draft for a queue row that doesn't have one yet (the queue
 // computes what's due; the row click is the trigger). Same shared lib path
 // as the b2b_draft console tool.
+// Store an email the operator typed themselves as a pending draft, so it sends
+// down the same path as an AI one. No model call.
+async function apiB2bComposeDraft(companyId, body = {}) {
+  return b2bQueueService.composeDraft(getSupabaseClient(), {
+    company_id: companyId,
+    body: body.body,
+    subject: body.subject,
+    message_type: body.message_type || undefined,
+    thread_id: body.thread_id || undefined,
+  });
+}
+
 async function apiB2bGenerateDraft(companyId, body = {}) {
   const sb = getSupabaseClient();
   const steer = (body.steer || '').trim() || undefined;
@@ -3335,6 +3347,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },
