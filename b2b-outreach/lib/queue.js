@@ -115,12 +115,29 @@ function assembleQueue(items, now = new Date()) {
   const out = [];
   for (const { company, ctx } of items) {
     const entry = computeQueueEntry(company, ctx, now);
-    if (entry) out.push({ company_id: company.id, company_name: company.name, channel: company.relationship_type, ...entry });
+    if (entry) {
+      out.push({
+        company_id: company.id,
+        company_name: company.name,
+        channel: company.relationship_type,
+        // Delivery channel never affects TIER — priority is signal-based, and
+        // how we reach someone is not why they are urgent. It only breaks ties
+        // within a tier (below) and tells the panel which controls to render.
+        delivery: ctx.delivery || 'email',
+        ...entry,
+      });
+    }
   }
   return out.sort((a, b) => {
     if (a.tier !== b.tier) return a.tier - b.tier;
+    // A real person waiting outranks tidiness: Tier 1 stays oldest-first.
     if (a.tier === 1) return new Date(a.waiting_since) - new Date(b.waiting_since);
-    return 0;
+    // Elsewhere, one-click sends first and form submissions last within the
+    // tier. Same priority, but the manual ones cluster so they can be worked in
+    // a single browser pass instead of breaking rhythm at random.
+    const aManual = a.delivery === 'form' ? 1 : 0;
+    const bManual = b.delivery === 'form' ? 1 : 0;
+    return aManual - bManual;
   });
 }
 

@@ -160,7 +160,15 @@ async function handleAddProspect(input = {}) {
     const { addProspect } = require(path.join(B2B_LIB, 'addProspect'));
     const res = await addProspect(getSupabaseClient(), input);
     if (res.warning) return text(`⚠ ${res.warning}`);
-    return text(`${res.existed ? 'Updated' : 'Added'} '${res.id}'${res.draft_id ? ` — intro draft #${res.draft_id} is waiting in the Outreach queue (Tier 4)` : ' (no draft generated)'}.`);
+    const draftNote = res.draft_id
+      ? ` — intro draft #${res.draft_id} is waiting in the Outreach queue (Tier 4)`
+      : ' (no draft generated)';
+    // Say plainly that this one cannot be sent from the panel, so nobody hunts
+    // for a Send button that is deliberately absent.
+    const formNote = res.delivery === 'form'
+      ? `\n\nNo email published — submit the draft through their form: ${res.form_url}`
+      : '';
+    return text(`${res.existed ? 'Updated' : 'Added'} '${res.id}'${draftNote}.${formNote}`);
   } catch (err) {
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
   }
@@ -207,6 +215,7 @@ module.exports = [
         channel: { type: 'string', description: "'lgbtq_org' (default) | 'wholesale' | 'affiliate'." },
         website: { type: 'string', description: 'Website URL if known.' },
         email: { type: 'string', description: 'Contact or general email if known.' },
+        contact_form_url: { type: 'string', description: "Their contact-form URL, for orgs that publish no email address. Use this instead of guessing info@ — a guessed address risks a bounce against our sending reputation, and a form is usually the channel a small org actually monitors. The draft is still written; the panel shows it as copy-paste text plus this link." },
         contact_name: { type: 'string', description: 'Named contact person, if any.' },
         referred_by: { type: 'string', description: "Who recommended them + their exact words/context. Provenance matters: it's what lets future drafts reference the referral honestly." },
         blurb: { type: 'string', description: 'What the org does, in the referrer\'s words.' },

@@ -8,6 +8,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Advisor drafts a form submission as if it were an email
+- Parked: 2026-08-06
+- Domains: b2b_sales, community
+- Type: idea
+- Priority: low
+- Notes: Form-contact companies get a normal email draft — "Hi [name]," plus the full signature block — which reads slightly odd pasted into a form that already has separate name and email fields. Deliberately left alone until a real one has been sent: it may need nothing, or it may want a shorter form-shaped variant that drops the greeting and signature. The advisor is not told the delivery channel today; `queueEntry` would be the place to pass it. Revisit after the first Genderswap submission.
+
 ## Merge duplicate company rows (same org, two records)
 - Parked: 2026-08-05
 - Domains: b2b_sales, community
