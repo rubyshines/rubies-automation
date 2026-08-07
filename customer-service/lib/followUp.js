@@ -13,6 +13,7 @@
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getAiBotUserId, buildConversationHistorySnapshot } = require('../intake/processGorgiasTickets');
 const { signOff, signOffHtml } = require('./signatures');
+const { autoLinkProducts, escapeHtml, markdownToPlainText } = require('./autoLinker');
 
 const DEFAULT_SNOOZE_DAYS = 3;
 
@@ -43,22 +44,26 @@ async function refreshConversationSnapshot(gorgias, supabase, gorgiasTicketId) {
 function buildPersonalFollowUpEmail(customerName, originalResponse) {
   const greeting = customerName ? `Hi ${customerName}` : 'Hi there';
 
+  // The quoted reply is stored as the advisor wrote it, which is markdown —
+  // the signature's site link and any product links. Every other send path
+  // renders that markdown; this one used to quote it verbatim, so customers
+  // read a literal "[rubyshines.com](https://rubyshines.com)" in the quote
+  // (2026-08-06). Render it here the same way the dashboard does.
+  const quotedText = markdownToPlainText(originalResponse);
+  const quotedHtml = autoLinkProducts(escapeHtml(originalResponse));
+
   const text = `${greeting},
 
 I wanted to follow up on your inquiry in case my initial response and follow up ended up in your spam folder. This is what I wrote:
 
-${originalResponse}
+${quotedText}
 
 ${signOff('Talk soon,')}`;
-
-  const escapedResponse = (originalResponse || '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\n/g, '<br>');
 
   const html = `<p>${greeting},</p>
 <p>I wanted to follow up on your inquiry in case my initial response and follow up ended up in your spam folder. This is what I wrote:</p>
 <blockquote style="border-left: 3px solid #ccc; padding-left: 12px; margin: 16px 0; color: #555;">
-${escapedResponse}
+${quotedHtml}
 </blockquote>
 ${signOffHtml('Talk soon,')}`;
 

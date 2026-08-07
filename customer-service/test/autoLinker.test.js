@@ -1,4 +1,4 @@
-const { autoLinkProducts } = require('../lib/autoLinker');
+const { autoLinkProducts, escapeHtml, markdownToPlainText } = require('../lib/autoLinker');
 
 let passed = 0;
 let failed = 0;
@@ -129,6 +129,100 @@ test('Single asterisk is left alone (not bold)',
   'Try size M* (close to L).',
   ['<p>Try size M* (close to L).</p>'],
   ['<strong>', '</strong>'],
+);
+
+// --- Plain-text flattening (text/plain half of an email) ---
+
+function testPlain(name, input, expectContains, expectNotContains) {
+  const result = markdownToPlainText(input);
+  const errors = [];
+  for (const expected of (expectContains || [])) {
+    if (!result.includes(expected)) errors.push(`  MISSING: ${expected}`);
+  }
+  for (const notExpected of (expectNotContains || [])) {
+    if (result.includes(notExpected)) errors.push(`  UNWANTED: ${notExpected}`);
+  }
+  if (errors.length) {
+    failed++;
+    console.log(`FAIL: ${name}`);
+    console.log(`  Input:  "${input}"`);
+    console.log(`  Output: "${result}"`);
+    errors.forEach(e => console.log(e));
+  } else {
+    passed++;
+    console.log(`PASS: ${name}`);
+  }
+}
+
+testPlain('Signature link collapses to the label it repeats',
+  'Jamie Alexander, RUBIES Founder\n[rubyshines.com](https://rubyshines.com)',
+  ['Jamie Alexander, RUBIES Founder\nrubyshines.com'],
+  ['](', 'https://'],
+);
+
+testPlain('Trailing slash and www still count as the same target',
+  '[rubyshines.com](https://www.rubyshines.com/)',
+  ['rubyshines.com'],
+  ['('],
+);
+
+testPlain('A label that is not the URL keeps the address',
+  'Try the [AJ](https://rubyshines.com/products/the-aj-shaping-underwear) in a size L.',
+  ['AJ (https://rubyshines.com/products/the-aj-shaping-underwear) in a size L'],
+  ['['],
+);
+
+testPlain('Bold markers are dropped',
+  '**Split the shipment.** I can ship the Chest Pads now.',
+  ['Split the shipment. I can ship the Chest Pads now.'],
+  ['**'],
+);
+
+testPlain('Plain text passes through untouched',
+  'The AJ in Medium was a bit tight.',
+  ['The AJ in Medium was a bit tight.'],
+);
+
+testPlain('Empty string', '', []);
+
+// --- Escaping (runs before autoLinkProducts on quoted reply text) ---
+
+function testEscapeThenLink(name, input, expectContains, expectNotContains) {
+  const result = autoLinkProducts(escapeHtml(input));
+  const errors = [];
+  for (const expected of (expectContains || [])) {
+    if (!result.includes(expected)) errors.push(`  MISSING: ${expected}`);
+  }
+  for (const notExpected of (expectNotContains || [])) {
+    if (result.includes(notExpected)) errors.push(`  UNWANTED: ${notExpected}`);
+  }
+  if (errors.length) {
+    failed++;
+    console.log(`FAIL: ${name}`);
+    console.log(`  Input:  "${input}"`);
+    console.log(`  Output: "${result}"`);
+    errors.forEach(e => console.log(e));
+  } else {
+    passed++;
+    console.log(`PASS: ${name}`);
+  }
+}
+
+testEscapeThenLink('Escaping leaves markdown links convertible',
+  'See the [size guide](https://rubyshines.com/pages/size-guide).',
+  ['<a href="https://rubyshines.com/pages/size-guide"', '>size guide</a>'],
+  ['］', ']('],
+);
+
+testEscapeThenLink('Markup in the quoted text stays inert',
+  'Sizes < 30 fit best <b>here</b>',
+  ['Sizes &lt; 30', '&lt;b&gt;here&lt;/b&gt;'],
+  ['<b>'],
+);
+
+testEscapeThenLink('Ampersand in a URL escapes to the entity an href wants',
+  '[link](https://rubyshines.com/a?x=1&y=2)',
+  ['href="https://rubyshines.com/a?x=1&amp;y=2"'],
 );
 
 // --- Summary ---
