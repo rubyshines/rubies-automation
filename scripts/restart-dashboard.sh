@@ -22,7 +22,8 @@ PORT="$PORT" nohup node customer-service/dashboard/server.js > "$LOG" 2>&1 &
 for _ in $(seq 1 20); do
   sleep 1
   if curl -sf -o /dev/null "http://localhost:${PORT}/health"; then
-    n="$(pgrep -cf 'customer-service/dashboard/server.js' || echo 0)"
+    # BSD pgrep (macOS) has no -c; count lines instead so this works on both.
+    n="$(pgrep -f 'customer-service/dashboard/server.js' | wc -l | tr -d ' ')"
     echo "dashboard up on ${PORT} (${n} process) — $(curl -s "http://localhost:${PORT}/health" | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"]["short"])')"
     [ "$n" -eq 1 ] || echo "WARNING: ${n} server processes running — expected 1"
     exit 0
