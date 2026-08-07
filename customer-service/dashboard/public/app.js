@@ -3609,6 +3609,18 @@ async function loadStats() {
     if (followupActionable > 0) parts.push(`${followupActionable} follow-up${followupActionable > 1 ? 's' : ''}`);
     document.getElementById('stat-attention').textContent = parts.length ? parts.join(', ') : 'All clear';
 
+    // Away mode banner — visible only while the out-of-office ack is sending.
+    // It expires on its own, so this is a status indicator, not a chore.
+    const awayBanner = document.getElementById('away-banner');
+    if (awayBanner) {
+      if (s.away_mode?.active) {
+        awayBanner.textContent = `Away mode is ON. First-contact customers get an out-of-office reply. Switches itself off ${s.away_mode.until_label}.`;
+        awayBanner.hidden = false;
+      } else {
+        awayBanner.hidden = true;
+      }
+    }
+
     // Set a tab's number on both the top nav and the mobile bottom nav, but skip
     // the active queue tab — loadTicketQueue owns it (so tombstoned/optimistic
     // removals are reflected and the number matches the rendered list exactly).

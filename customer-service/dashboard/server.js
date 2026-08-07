@@ -2672,6 +2672,18 @@ async function apiGetTicketStats() {
       .eq('status', 'open').eq('has_agent_reply', true).is('active_draft_id', null),
   ]);
 
+  // Away mode rides on the stats poll the dashboard already runs, so the banner
+  // needs no extra endpoint or timer. Fail-soft: no flag row, no banner.
+  let away = null;
+  try {
+    const { getFlag } = require('../../shared/systemFlags');
+    const { AWAY_FLAG, formatEastern } = require('../lib/awayMode');
+    const flag = await getFlag(AWAY_FLAG);
+    if (flag?.active) {
+      away = { active: true, until: flag.expires_at, until_label: formatEastern(flag.expires_at) };
+    }
+  } catch (_) { /* banner is cosmetic — never fail the stats call for it */ }
+
   return {
     new: newResult.count || 0,
     followup: followupResult.count || 0,
@@ -2680,6 +2692,7 @@ async function apiGetTicketStats() {
     snoozed: snoozedResult.count || 0,
     new_in_progress: newGenResult.count || 0,
     followup_in_progress: followupGenResult.count || 0,
+    away_mode: away,
   };
 }
 

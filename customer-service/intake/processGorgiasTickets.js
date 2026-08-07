@@ -29,6 +29,7 @@ const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankY
 const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 const { transplantContinuation, buildTransplantMessages } = require('../lib/ticketContinuation');
 const { attachmentOnlyPlaceholder, fetchImagesAsBlocks } = require('../lib/attachmentImages');
+const { isAwayModeActive, isFirstContact, sendAwayAck } = require('../lib/awayMode');
 
 // Pull a clean text body off a Gorgias message. Gorgias's own stripper is
 // English-biased — for non-English replies (Danish "Den ... skrev :", etc.) it
@@ -1252,6 +1253,45 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
 
     console.log(`[intake] Auto-closed business outreach: ticket ${ticketId}`);
     return { drafted: true, outreach: true };
+  }
+
+  // === Away mode: first-contact out-of-office acknowledgment ===
+  // Sits here, after the draft is committed and after business_outreach has
+  // been disposed of, for two reasons: the customer is only acknowledged once
+  // there is a real draft waiting for the operator, and vendor/sales spam
+  // (classified by the advisor above) never draws a reply that confirms a live
+  // human reads this address. Additive by design — the ticket stays open and
+  // the draft stays pending, because the customer still needs a real answer.
+  // Fail-soft: an ack failure must never cost us the draft that already exists.
+  try {
+    if (isFirstContact(messages) && await isAwayModeActive()) {
+      const ack = await sendAwayAck({
+        supabase,
+        gorgias,
+        ticketId,
+        ticketRowId: ticketRow.id,
+      });
+      if (ack.sent) {
+        console.log(`[intake] Away-mode ack sent for ticket ${ticketId}`);
+        conversationHistory.push({
+          id: null,
+          sender: 'agent',
+          is_bot: true,
+          body: ack.body,
+          created_at: new Date().toISOString(),
+          channel: 'email',
+        });
+        // Without this the dashboard shows the ticket as untouched and the
+        // operator can't tell whether the customer was told anything (the
+        // 2026-07-08 follow-up lesson).
+        await supabase.from('cs_tickets').update({
+          conversation_history: conversationHistory,
+          updated_at: new Date().toISOString(),
+        }).eq('id', ticketRow.id);
+      }
+    }
+  } catch (err) {
+    console.warn(`[intake] Away-mode ack failed for ticket ${ticketId}: ${err.message}`);
   }
 
   // Assign to AI Bot in Gorgias

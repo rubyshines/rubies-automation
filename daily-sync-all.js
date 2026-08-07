@@ -179,6 +179,13 @@ const PIPELINES = [
     run: () => require('./lib/steerSendShadow').run(),
   },
   {
+    name: 'Away Mode',
+    // States that the out-of-office ack is sending and when it switches itself
+    // off (visibility behind the dashboard banner), plus how many customers
+    // were acknowledged. Section absent when off and nothing was acked.
+    run: () => require('./lib/awayModeReport').run(),
+  },
+  {
     name: 'Refund-pattern Watch',
     // Trailing-week refund-pattern flags (donation-return honor-system probes)
     // + route_to_human routing reasons (recurring bogus reasons = prompt gaps).
@@ -621,6 +628,28 @@ function buildSteerSendShadowHtml(results) {
     </div>`;
 }
 
+// Away mode: on/off state with its self-expiry instant, plus acks sent.
+// Hidden when off and nothing was acknowledged in the window.
+function buildAwayModeHtml(results) {
+  const task = results.find(r => r.name === 'Away Mode');
+  const m = task?.result?.sources?.away_mode;
+  if (!m || m.skipped || (!m.active && !m.acked_count)) return '';
+  const acked = m.acked_count
+    ? `<strong>${m.acked_count}</strong> customer(s) acknowledged in the last ${m.window_days}d.`
+    : '';
+  if (!m.active) {
+    return `
+    <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
+      Away mode is off. ${acked}
+    </div>`;
+  }
+  return `
+    <div style="background:#fff4e5;border:1px solid #f0c48a;border-radius:6px;padding:10px 12px;margin:12px 0 0;color:#7a4a00;">
+      <strong>Away mode is ON</strong> — first-contact customers get an out-of-office reply${m.return_phrase ? ` saying you are back ${esc(m.return_phrase)}` : ''}.<br>
+      It switches itself off ${esc(m.until_label)}. ${acked}
+    </div>`;
+}
+
 // Refund-pattern watch: trailing-week advisor "Refund-pattern:" flags and
 // route_to_human routing reasons. Hidden while both are empty.
 function buildRefundPatternHtml(results) {
@@ -775,6 +804,9 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
   // --- Steer & Send shadow dry-run line ---
   const steerSendShadowHtml = buildSteerSendShadowHtml(results);
 
+  // --- Away mode state + acks sent ---
+  const awayModeHtml = buildAwayModeHtml(results);
+
   // --- Refund-pattern flags + routing reasons ---
   const refundPatternHtml = buildRefundPatternHtml(results);
 
@@ -790,6 +822,7 @@ async function sendSummaryEmail(overallStatus, results, totalRows, overallDurati
       <p style="color:#6b7280;margin-top:0;font-size:13px;">${results.length} pipelines &middot; ${totalRows} rows &middot; ${formatDuration(overallDuration)}${gorgiasRetries ? ` &middot; ${gorgiasRetries} Gorgias retr${gorgiasRetries === 1 ? 'y' : 'ies'}` : ''}</p>
 
       ${decisionQueueHtml}
+      ${awayModeHtml}
       ${driftHtml}
       ${deadLetterHtml}
       ${errorsHtml}

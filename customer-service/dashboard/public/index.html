@@ -63,6 +63,10 @@
     <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
   </header>
 
+  <!-- Away mode: shown only while the out-of-office ack is actively sending.
+       Populated by loadStats() from /api/tickets/stats. -->
+  <div id="away-banner" class="away-banner" hidden></div>
+
   <main>
     <!-- Tickets panel (split: list + detail) — shared by all 4 ticket tabs -->
     <div id="panel-tickets" class="panel">
