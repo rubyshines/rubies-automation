@@ -219,13 +219,18 @@ async function resolveDelivery(sb, companyId) {
  *                     subject?, body, confirmed? }
  */
 async function sendB2bEmail(p = {}) {
-  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc } = p;
+  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override } = p;
   if (!company_id) throw new Error('company_id required');
   if (!message_type) throw new Error('message_type required');
   if (!body || !body.trim()) throw new Error('body required');
 
   const sb = getSupabaseClient();
-  const delivery = await resolveDelivery(sb, company_id);
+  // An explicit To wins over the resolved contact: the operator may be
+  // answering a person who is not the primary contact, or correcting a bad
+  // record from the panel without editing the contact first.
+  const delivery = to_override
+    ? { mode: 'email', email: addressList(to_override), name: null, via: 'operator' }
+    : await resolveDelivery(sb, company_id);
   // Fail closed before the gate, not at the Gmail call: this company publishes
   // no address, so there is nothing to send TO. The draft is still good — it
   // goes through their form, by hand, from the panel.
