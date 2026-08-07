@@ -5946,9 +5946,9 @@ function outreachAttachmentsHtml(draft) {
   const specs = Array.isArray(draft?.structured?.attachments) ? draft.structured.attachments : [];
   const org = outreachHistory?.company?.name || 'this organization';
   const rows = specs.map(a => a.kind === 'partner_agreement'
-    ? `<li>&#128206; Partnership agreement &mdash; ${esc(a.org_name || org)}
+    ? `<li>&#128206; <a href="/api/b2b/drafts/${draft.id}/attachment" target="_blank" rel="noopener">Partnership agreement &mdash; ${esc(a.org_name || org)}</a>
          <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(a.kind)}')">remove</button></li>`
-    : `<li>&#128206; ${esc(a.filename || a.kind)}
+    : `<li>&#128206; <a href="/api/b2b/drafts/${draft.id}/attachment" target="_blank" rel="noopener">${esc(a.filename || a.kind)}</a>
          <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(a.kind)}')">remove</button></li>`);
 
   return `<div class="outreach-list outreach-attachments">
@@ -6140,8 +6140,6 @@ function outreachRecipientHtml() {
   const delivery = outreachHistory?.delivery;
   const threaded = !!outreachDraft?.thread_id;
 
-  // Form companies publish no address. Say where this goes and who submits it,
-  // rather than showing a "Sends to" line that would be a lie.
   if (delivery?.mode === 'form') {
     return `<div id="outreach-recipient" class="outreach-recipient">
       No published email address. Submit this through their contact form:
@@ -6149,48 +6147,42 @@ function outreachRecipientHtml() {
     </div>`;
   }
 
-  const to = r
-    ? `${esc(r.email)}${r.name ? ` (${esc(r.name)})` : ''}${r.via === 'general_email' ? ' <span class="outreach-preview-via">via general inbox</span>' : ''}`
-    : (outreachHistory === null ? 'resolving&hellip;' : '<span class="outreach-send-error-inline">no known contact — add one before sending</span>');
+  // Editable, and always visible. Seeing exactly who this goes to is the last
+  // check before sending — and the resolved contact is sometimes not the person
+  // you are actually answering.
+  const toValue = outreachDraft?.structured?.to || r?.email || '';
+  const ccValue = outreachDraft?.structured?.cc || '';
+  const via = !outreachDraft?.structured?.to && r?.via === 'general_email'
+    ? ' <span class="outreach-preview-via">general inbox</span>' : '';
+
   return `<div id="outreach-recipient" class="outreach-recipient">
-    Sends to ${to} from jamie@rubyshines.com · ${threaded ? 'replies in the existing thread' : 'starts a new email'}
+    <div class="outreach-recipient-row">
+      <span class="outreach-field-label">To</span>
+      <input type="text" id="outreach-to-editor" value="${esc(toValue)}"
+        placeholder="recipient@org.org" onchange="saveOutreachRecipients()">${via}
+    </div>
+    <div class="outreach-recipient-row">
+      <span class="outreach-field-label">Cc</span>
+      <input type="text" id="outreach-cc-editor" value="${esc(ccValue)}"
+        placeholder="(none) — comma separated" onchange="saveOutreachRecipients()">
+    </div>
+    <div class="outreach-recipient-note">
+      from jamie@rubyshines.com &middot; ${threaded ? 'replies in the existing thread' : 'starts a new email'}
+    </div>
   </div>`;
 }
 
-/**
- * Send an email the operator typed into the empty state. Stores it as a draft
- * first so it goes down the SAME send path as an AI draft — one path means
- * thread bookkeeping, cadence dates and the b2b_messages row can't drift.
- */
-async function sendComposedDraft() {
-  const body = document.getElementById('outreach-draft-editor')?.value || '';
-  const subject = document.getElementById('outreach-subject-editor')?.value || '';
-  if (!body.trim()) { showToast('Nothing to send — write a message first', 'error'); return; }
-
-  const btn = document.getElementById('outreach-compose-send-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+/** Persist edited To/Cc onto the draft so the send path uses them. */
+async function saveOutreachRecipients() {
+  if (!outreachDraft) return;
+  const to = document.getElementById('outreach-to-editor')?.value ?? '';
+  const cc = document.getElementById('outreach-cc-editor')?.value ?? '';
   try {
-    const composed = await api(`/api/b2b/companies/${encodeURIComponent(outreachSelectedId)}/compose`, {
-      method: 'POST', body: { body, subject },
-    });
-    const res = await api('/api/b2b/send', {
-      method: 'POST', body: { draft_id: composed.draft_id, confirmed: true, body, subject },
-    });
-    if (res.phase === 'sent') {
-      showToast(`Sent to ${res.to}`, 'success');
-      outreachAdvancePast(outreachSelectedId);
-      return;
-    }
-    if (res.phase === 'blocked') {
-      document.getElementById('outreach-send-panel').innerHTML =
-        `<div class="outreach-empty-note">${esc(res.error)}</div>`;
-    } else {
-      showToast(res.error || 'Not sent', 'error');
-    }
+    await api(`/api/b2b/drafts/${outreachDraft.id}/recipients`, { method: 'POST', body: { to, cc } });
+    outreachDraft.structured = { ...(outreachDraft.structured || {}), to: to.trim() || undefined, cc: cc.trim() || undefined };
   } catch (err) {
-    showToast(`Send failed: ${err.message}`, 'error');
+    showToast(`Could not save recipients: ${err.message}`, 'error');
   }
-  if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
 }
 
 /**

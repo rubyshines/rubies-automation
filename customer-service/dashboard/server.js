@@ -2848,6 +2848,27 @@ async function apiB2bRegenerateDraft(id, body = {}) {
 // down the same path as an AI one. No model call.
 // Attach / detach a file spec on a pending draft. Bytes are never stored; the
 // document is rendered at send time.
+// Stream a draft's attachment so the operator can read it before sending.
+// Rendered on demand from the same code the send path uses, so what you see is
+// exactly what goes out — not a preview that could drift from the real file.
+async function apiB2bAttachmentPreview(id, kind) {
+  const sb = getSupabaseClient();
+  const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!draft) throw new Error(`draft #${id} not found`);
+  const { resolveDraftAttachments } = require('../../b2b-outreach/lib/draftAttachments');
+  const files = await resolveDraftAttachments(sb, draft);
+  const file = files.find(f => !kind || f.filename.toLowerCase().includes('agreement')) || files[0];
+  if (!file) throw new Error('no attachment on this draft');
+  return { __raw: true, contentType: file.mimeType, filename: file.filename, body: file.content };
+}
+
+async function apiB2bSetRecipients(id, body = {}) {
+  return b2bQueueService.setDraftRecipients(getSupabaseClient(), {
+    draft_id: id, to: body.to, cc: body.cc,
+  });
+}
+
 async function apiB2bDraftAttach(id, body = {}) {
   const { attachToDraft, detachFromDraft } = require('../../b2b-outreach/lib/draftAttachments');
   const sb = getSupabaseClient();
@@ -3366,6 +3387,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attach$/, handler: (body, id) => apiB2bDraftAttach(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/recipients$/, handler: (body, id) => apiB2bSetRecipients(parseInt(id), body) },
+  { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id) => apiB2bAttachmentPreview(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
@@ -3765,6 +3788,18 @@ async function handleRequest(req, res) {
             body = await readBody(req);
           }
           const result = await route.handler(body, match[1], req);
+          // A handler may return a file rather than JSON (attachment preview).
+          // Inline disposition so the browser renders the PDF in a tab instead
+          // of downloading it — the point is to read it before sending.
+          if (result && result.__raw) {
+            res.writeHead(200, {
+              'Content-Type': result.contentType || 'application/octet-stream',
+              'Content-Disposition': `inline; filename="${String(result.filename || 'file').replace(/"/g, '')}"`,
+              'Content-Length': result.body.length,
+            });
+            res.end(result.body);
+            return;
+          }
           res.writeHead(200);
           res.end(JSON.stringify(result));
           return;

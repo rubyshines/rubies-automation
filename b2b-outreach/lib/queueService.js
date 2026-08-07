@@ -474,6 +474,11 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type, th
   if (thread_id) entry = { ...entry, thread_id };
   if (task_hint) entry = { ...entry, task_hint };
   if (reason) entry = { ...entry, reason };
+  // message_type was only ever a fallback for "nothing due", so forcing a type
+  // on a company that DID have something due was silently ignored — and the
+  // type is not cosmetic: it sets next_action_date and drives the follow-up
+  // ladder. An explicit type is an instruction, not a suggestion.
+  if (message_type) entry = { ...entry, message_type, forced_message_type: true };
 
   return generateDraft({ company_id: company.id, queueEntry: entry, steer });
 }
@@ -584,6 +589,7 @@ async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
     next_touch_days: draft.structured?.next_touch_days ?? null,
     attachments,
     cc: draft.structured?.cc ?? undefined,
+    to_override: draft.structured?.to ?? undefined,
   });
 
   if (res.phase === 'preview') {
@@ -616,6 +622,28 @@ function mergeFactVerification(structured, index, verified) {
   const set = new Set(Array.isArray(s.facts_verified) ? s.facts_verified : []);
   if (verified) set.add(index); else set.delete(index);
   return { ...s, facts_verified: [...set].sort((a, b) => a - b) };
+}
+
+/**
+ * Persist edited recipients on a pending draft. Stored on `structured`
+ * alongside the attachment specs, so the send path reads one place.
+ * Empty string clears an override and falls back to the resolved contact.
+ */
+async function setDraftRecipients(sb, { draft_id, to, cc } = {}) {
+  if (!draft_id) throw new Error('draft_id required');
+  const { data: draft, error } = await sb.from('b2b_drafts')
+    .select('id, structured, status').eq('id', draft_id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!draft) throw new Error(`draft #${draft_id} not found`);
+  if (draft.status !== 'pending') throw new Error(`draft #${draft_id} is '${draft.status}' — only pending drafts can be changed`);
+
+  const structured = { ...(draft.structured || {}) };
+  if (to !== undefined) { if (String(to).trim()) structured.to = String(to).trim(); else delete structured.to; }
+  if (cc !== undefined) { if (String(cc).trim()) structured.cc = String(cc).trim(); else delete structured.cc; }
+
+  const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', draft_id);
+  if (uErr) throw new Error(uErr.message);
+  return { draft_id, to: structured.to || null, cc: structured.cc || null };
 }
 
 /** Persist a fact-verification toggle on a pending draft. */
@@ -771,6 +799,7 @@ module.exports = {
   sendDraftById,
   mergeFactVerification,
   setFactVerified,
+  setDraftRecipients,
   // directory / activity / thread state
   sanitizeSearchTerm,
   rollupThreads,

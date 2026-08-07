@@ -5791,3 +5791,19 @@ main { height: calc(100vh - 56px); }
   text-decoration: underline;
 }
 .outreach-attach-remove:hover { color: var(--red, #c0392b); }
+
+/* To/Cc are editable and always shown — seeing exactly who an email goes to is
+   the last check before sending. */
+.outreach-recipient-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.outreach-recipient-row .outreach-field-label { min-width: 26px; margin: 0; }
+.outreach-recipient-row input {
+  flex: 1;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input, #fff);
+  color: var(--text-primary);
+}
+.outreach-recipient-note { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.outreach-attachments a { color: var(--teal); text-decoration: underline; }

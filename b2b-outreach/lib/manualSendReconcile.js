@@ -59,13 +59,39 @@ function header(msg, name) {
  * @param knownIds      Set of gmail_message_id already in b2b_messages
  * @returns rows ready for upsert (minus thread_id/company_id, added by caller)
  */
-function partitionThreadMessages(gmailMessages, knownIds) {
+/** Every email address in a header value (To/Cc can hold several). Pure. */
+function addressesIn(headerValue) {
+  return (String(headerValue || '').match(/[\w.+-]+@[\w.-]+\.\w+/g) || []).map(a => a.toLowerCase());
+}
+
+/**
+ * Is this company actually a party to this message?
+ *
+ * Gmail threads on subject, so two unrelated conversations that happen to share
+ * one merge into a single thread. Jamie sent "agreement and next steps" to both
+ * Trans Closet of the Hudson Valley and Transformation Closet (Nova Scotia), and
+ * Gmail filed them together — importing the thread wholesale put nine of another
+ * org's messages onto Trans Closet's record, which the advisor then drafted from.
+ *
+ * So membership is decided per MESSAGE, not per thread. With no known addresses
+ * we keep everything rather than silently dropping history. Pure.
+ */
+function messageInvolves(m, companyEmails) {
+  if (!companyEmails || !companyEmails.size) return true;
+  const parties = ['From', 'To', 'Cc', 'Bcc', 'Reply-To', 'Delivered-To']
+    .flatMap(h => addressesIn(header(m, h)));
+  return parties.some(a => companyEmails.has(a));
+}
+
+function partitionThreadMessages(gmailMessages, knownIds, companyEmails = null) {
   const { detectAutoReply } = require('./replyCorrelation');
   const rows = [];
   for (const m of gmailMessages || []) {
     const labels = m.labelIds || [];
     if (labels.includes('DRAFT')) continue;           // the historical poison — never ingest
     if (knownIds.has(m.id)) continue;
+    // Another correspondent's message that Gmail merged in on a shared subject.
+    if (!messageInvolves(m, companyEmails)) continue;
     const outbound = labels.includes('SENT');
     // Auto-responders: protocol headers first (Auto-Submitted / X-Autoreply /
     // Precedence), content fallback second. Labeled, kept in history, never
@@ -82,8 +108,8 @@ function partitionThreadMessages(gmailMessages, knownIds) {
       message_type: isAuto ? 'auto_reply' : null,
       gmail_message_id: m.id,
       gmail_thread_id: m.threadId,
-      from_email: (header(m, 'From') || '').replace(/^.*<([^>]+)>.*$/, '$1') || null,
-      to_email: (header(m, 'To') || '').replace(/^.*<([^>]+)>.*$/, '$1') || null,
+      from_email: addressesIn(header(m, 'From'))[0] || null,
+      to_email: addressesIn(header(m, 'To')).join(', ') || null,
       body_text: extractPlainText(m.payload) || m.snippet || null,
       sent_at: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : null,
       source: outbound ? 'manual_send' : 'gmail_backfill',
@@ -134,6 +160,23 @@ async function reconcileThreads(sb, { companyIds = null, force = false, includeC
       .in('thread_id', due.map(t => t.id)));
   const knownIds = new Set(knownRows.map(r => r.gmail_message_id).filter(Boolean));
 
+  // Every address we know for each company, so a message that Gmail merged in
+  // from an unrelated correspondent can be recognised and skipped.
+  const dueCompanyIds = [...new Set(due.map(t => t.company_id).filter(Boolean))];
+  const emailsByCompany = new Map(dueCompanyIds.map(id => [id, new Set()]));
+  if (dueCompanyIds.length) {
+    const contactRows = await fetchAllPaginated(() => sb.from('b2b_contacts')
+      .select('company_id, email').in('company_id', dueCompanyIds));
+    for (const c of contactRows) {
+      if (c.email) emailsByCompany.get(c.company_id)?.add(c.email.toLowerCase());
+    }
+    const { data: companyRows } = await sb.from('b2b_companies')
+      .select('id, general_email').in('id', dueCompanyIds);
+    for (const c of companyRows || []) {
+      if (c.general_email) emailsByCompany.get(c.id)?.add(c.general_email.toLowerCase());
+    }
+  }
+
   let inserted = 0;
   for (const t of due) {
     lastReconciled.set(t.gmail_thread_id, now);
@@ -144,7 +187,7 @@ async function reconcileThreads(sb, { companyIds = null, force = false, includeC
       console.error(`[reconcile] thread ${t.gmail_thread_id} fetch failed: ${err.message}`);
       continue;
     }
-    const rows = partitionThreadMessages(resp.data?.messages, knownIds)
+    const rows = partitionThreadMessages(resp.data?.messages, knownIds, emailsByCompany.get(t.company_id))
       .map(r => ({ ...r, thread_id: t.id, company_id: t.company_id }));
     if (!rows.length) continue;
 
@@ -208,6 +251,10 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
     return { discovered: 0, error: 'gmail_unavailable' };
   }
 
+  // Gmail's search is thread-level and subject-driven, so a thread can come
+  // back on a shared subject alone; the per-message filter below is what keeps
+  // another org's replies off this company's record.
+  const companyEmailSet = new Set(emails.map(e => String(e).toLowerCase()));
   const q = '{' + emails.map(e => `from:${e} to:${e}`).join(' ') + '}';
   let listing;
   try {
@@ -239,7 +286,7 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
       console.error(`[discover] thread ${t.id} fetch failed: ${err.message}`);
       continue;
     }
-    const rows = partitionThreadMessages(resp.data?.messages, new Set());
+    const rows = partitionThreadMessages(resp.data?.messages, new Set(), companyEmailSet);
     if (!rows.length) continue;
     const last = rows[rows.length - 1];
     const subject = header(resp.data.messages?.[0] || {}, 'Subject') || '(no subject)';
@@ -272,4 +319,4 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
   return { discovered, repaired };
 }
 
-module.exports = { reconcileThreads, discoverCompanyThreads, discoveredThreadStatus, partitionThreadMessages, extractPlainText };
+module.exports = { reconcileThreads, discoverCompanyThreads, discoveredThreadStatus, partitionThreadMessages, messageInvolves, addressesIn, extractPlainText };

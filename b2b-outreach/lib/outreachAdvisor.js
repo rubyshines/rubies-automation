@@ -193,7 +193,12 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   const { data: row, error } = await sb.from('b2b_drafts').insert({
     company_id,
     thread_id: queueEntry.thread_id || null,
-    message_type: out.message_type || queueEntry.message_type || 'reply',
+    // A forced type is the operator's instruction and outranks the advisor's
+    // own label — it decides next_action_date and the follow-up ladder, so
+    // letting the model relabel it silently changes when we chase.
+    message_type: queueEntry.forced_message_type
+      ? queueEntry.message_type
+      : (out.message_type || queueEntry.message_type || 'reply'),
     variant_id: variant_id || null,
     subject: out.email_subject,
     body: out.email_body,
