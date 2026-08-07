@@ -5934,6 +5934,56 @@ function outreachReasoningHtml(draft) {
   </details>`;
 }
 
+/**
+ * Files that will go out with this draft, plus the one-click way to add the
+ * partnership agreement.
+ *
+ * Shown even when empty, because the failure this prevents is silent: a draft
+ * whose body says "I have attached the agreement" sending with nothing on it.
+ * Seeing the attachment row is how you catch that before hitting Send.
+ */
+function outreachAttachmentsHtml(draft) {
+  const specs = Array.isArray(draft?.structured?.attachments) ? draft.structured.attachments : [];
+  const org = outreachHistory?.company?.name || 'this organization';
+  const rows = specs.map(a => a.kind === 'partner_agreement'
+    ? `<li>&#128206; Partnership agreement &mdash; ${esc(a.org_name || org)}
+         <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(a.kind)}')">remove</button></li>`
+    : `<li>&#128206; ${esc(a.filename || a.kind)}
+         <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(a.kind)}')">remove</button></li>`);
+
+  return `<div class="outreach-list outreach-attachments">
+    <div class="outreach-field-label">Attachments</div>
+    ${rows.length
+      ? `<ul>${rows.join('')}</ul>`
+      : '<div class="outreach-empty-note">None. Generated fresh when you send.</div>'}
+    ${specs.some(a => a.kind === 'partner_agreement') ? '' :
+      `<button class="btn btn-ghost" onclick="attachPartnerAgreement()">Attach partnership agreement</button>`}
+  </div>`;
+}
+
+/** Attach the partnership agreement to the open draft. */
+async function attachPartnerAgreement() {
+  if (!outreachDraft) return;
+  try {
+    await api(`/api/b2b/drafts/${outreachDraft.id}/attach`, { method: 'POST', body: { kind: 'partner_agreement' } });
+    showToast('Agreement attached — rendered when you send', 'success');
+    await selectOutreachEntry(outreachSelectedId);
+  } catch (err) {
+    showToast(`Could not attach: ${err.message}`, 'error');
+  }
+}
+
+async function detachOutreachFile(kind) {
+  if (!outreachDraft) return;
+  try {
+    await api(`/api/b2b/drafts/${outreachDraft.id}/attach`, { method: 'POST', body: { kind, remove: true } });
+    showToast('Attachment removed', 'success');
+    await selectOutreachEntry(outreachSelectedId);
+  } catch (err) {
+    showToast(`Could not remove: ${err.message}`, 'error');
+  }
+}
+
 function outreachListHtml(title, items, cls) {
   return `<div class="outreach-list ${cls}">
     <div class="outreach-field-label">${title}</div>
@@ -6018,6 +6068,7 @@ function renderOutreachDetail(entry, draft) {
         <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)">
       </div>
       <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
+      ${outreachAttachmentsHtml(draft)}
       ${outreachReasoningHtml(draft)}
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
       ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient">Advisor timing note: next touch in ~${s.next_touch_days} days (reason in its audit; overrides the standard cadence when this sends)</div>` : ''}

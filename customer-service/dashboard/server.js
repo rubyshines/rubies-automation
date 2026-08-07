@@ -2846,6 +2846,17 @@ async function apiB2bRegenerateDraft(id, body = {}) {
 // as the b2b_draft console tool.
 // Store an email the operator typed themselves as a pending draft, so it sends
 // down the same path as an AI one. No model call.
+// Attach / detach a file spec on a pending draft. Bytes are never stored; the
+// document is rendered at send time.
+async function apiB2bDraftAttach(id, body = {}) {
+  const { attachToDraft, detachFromDraft } = require('../../b2b-outreach/lib/draftAttachments');
+  const sb = getSupabaseClient();
+  const kind = body.kind || 'partner_agreement';
+  return body.remove
+    ? detachFromDraft(sb, { draft_id: id, kind })
+    : attachToDraft(sb, { draft_id: id, kind, org_name: body.org_name, country: body.country });
+}
+
 async function apiB2bComposeDraft(companyId, body = {}) {
   return b2bQueueService.composeDraft(getSupabaseClient(), {
     company_id: companyId,
@@ -3354,6 +3365,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/regenerate$/, handler: (body, id) => apiB2bRegenerateDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attach$/, handler: (body, id) => apiB2bDraftAttach(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
