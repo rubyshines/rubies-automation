@@ -76,3 +76,19 @@ test('a forced type overrides the advisor label, because it sets the cadence clo
   assert.notEqual(NEXT_ACTION_DAYS.reply_close, NEXT_ACTION_DAYS.intro_outreach,
     'the two types schedule the next touch very differently, so the label matters');
 });
+
+// ── test send ───────────────────────────────────────────────────────────────
+
+test('a test send is addressed to us and never to the company', () => {
+  const { buildRawMessage, FROM_EMAIL } = require('../../b2b-outreach/lib/sendB2bEmail');
+  const raw = Buffer.from(buildRawMessage({
+    to: FROM_EMAIL, subject: '[TEST] Re: agreement and next steps', body: 'Hi Callum,',
+    attachments: [{ filename: 'agreement.pdf', mimeType: 'application/pdf', content: Buffer.from('x') }],
+  }), 'base64url').toString('utf8');
+  const head = raw.split('\r\n\r\n')[0];
+  assert.ok(head.includes(`To: ${FROM_EMAIL}`));
+  assert.ok(head.includes('[TEST]'), 'flagged in the subject so it is obvious in the inbox');
+  assert.ok(!head.includes('Cc:'), 'a test never copies the real recipients');
+  assert.ok(!head.includes('In-Reply-To'), 'a test never attaches to the real thread');
+  assert.ok(raw.includes('filename="agreement.pdf"'), 'but it does carry the real attachments');
+});
