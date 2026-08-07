@@ -224,7 +224,49 @@ async function handleAgreement(input = {}) {
   }
 }
 
+async function handleDraftAttach(input = {}) {
+  try {
+    const { attachToDraft, detachFromDraft, describeAttachment } = require(path.join(B2B_LIB, 'draftAttachments'));
+    const sb = getSupabaseClient();
+    const kind = input.kind || 'partner_agreement';
+
+    if (input.remove) {
+      const res = await detachFromDraft(sb, { draft_id: input.draft_id, kind });
+      return text(`Removed **${kind}** from draft #${res.draft_id}. ${res.attachments.length} attachment(s) remain.`);
+    }
+
+    const res = await attachToDraft(sb, {
+      draft_id: input.draft_id, kind, org_name: input.org_name, country: input.country,
+    });
+    const { data: d } = await sb.from('b2b_drafts').select('company_id').eq('id', res.draft_id).maybeSingle();
+    const { data: company } = await sb.from('b2b_companies').select('name, country').eq('id', d.company_id).maybeSingle();
+    const lines = res.attachments.map(a => {
+      const { filename, note } = describeAttachment(a, company);
+      return `- ${filename} (${note})`;
+    });
+    return text(`Draft #${res.draft_id} will send with:\n${lines.join('\n')}\n\nRendered fresh at send time, so it can never go out with a stale name or discount.`);
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
 module.exports = [
+  {
+    name: 'b2b_draft_attach',
+    description: "Attach a file to a pending B2B draft so it goes out with the email — or remove one with remove:true. Currently supports kind 'partner_agreement': the LGBTQ+ Organization Donation Program agreement for that draft's company. The draft stores a spec, not bytes, and the document is rendered fresh at send time, so an agreement can never be sent with a stale org name or the wrong discount. Attaching the same kind twice replaces rather than duplicates.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        draft_id: { type: 'number', description: 'b2b_drafts id (must be pending).' },
+        kind: { type: 'string', description: "'partner_agreement' (default)." },
+        org_name: { type: 'string', description: "Override the org name printed in the agreement. Defaults to the company's name." },
+        country: { type: 'string', description: 'Override the country that sets the discount. Defaults to the company record.' },
+        remove: { type: 'boolean', description: 'Remove this kind from the draft instead of attaching it.' },
+      },
+      required: ['draft_id'],
+    },
+    handler: handleDraftAttach,
+  },
   {
     name: 'donation_partner_agreement',
     description: "Generate the RUBIES LGBTQ+ Organization Donation Program Partnership Agreement as a pre-signed PDF for one org. Deterministic — same clause wording every time; the only variables are the org name and the discount rate, which is set by country (US/Australia 50%, everywhere else 30%). Pass company_id to take the name and country from the company record (preferred — a wrong country means a wrong contract), or org_name + country directly. Returns the file path, ready to attach to the onboarding email alongside the survey link.",

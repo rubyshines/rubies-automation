@@ -566,6 +566,13 @@ async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
   const sendSubject = (typeof subject === 'string' && subject.trim()) ? subject.trim() : draft.subject;
   const edited = sendBody !== draft.body || sendSubject !== draft.subject;
 
+  // Resolved at SEND time, not when the operator attached it: generation is
+  // deterministic, so a fresh render can never be stale, and a body promising
+  // "I have attached the agreement" can never go out without one — an unknown
+  // spec throws here rather than sending a broken promise.
+  const { resolveDraftAttachments } = require('./draftAttachments');
+  const attachments = await resolveDraftAttachments(sb, draft);
+
   const res = await sendB2bEmail({
     company_id: draft.company_id,
     thread_id: draft.thread_id || undefined,
@@ -575,6 +582,8 @@ async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
     body: sendBody,
     confirmed: !!confirmed,
     next_touch_days: draft.structured?.next_touch_days ?? null,
+    attachments,
+    cc: draft.structured?.cc ?? undefined,
   });
 
   if (res.phase === 'preview') {

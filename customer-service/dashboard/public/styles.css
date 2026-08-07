@@ -5772,3 +5772,22 @@ main { height: calc(100vh - 56px); }
    change how you read a row, so only those get colour. */
 .outreach-stage-active { background: var(--teal-soft); color: var(--teal); }
 .outreach-stage-lost { background: #f3f4f6; color: #9ca3af; text-decoration: line-through; }
+
+/* Draft attachments — shown even when empty, so a body promising "I have
+   attached the agreement" can't be sent with nothing on it unnoticed. */
+.outreach-attachments ul { list-style: none; margin: 4px 0 8px; padding: 0; }
+.outreach-attachments li {
+  font-size: 12px;
+  color: var(--text-primary);
+  padding: 4px 0;
+}
+.outreach-attach-remove {
+  background: none;
+  border: none;
+  padding: 0 0 0 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.outreach-attach-remove:hover { color: var(--red, #c0392b); }
