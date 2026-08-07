@@ -2863,6 +2863,14 @@ async function apiB2bAttachmentPreview(id, kind) {
   return { __raw: true, contentType: file.mimeType, filename: file.filename, body: file.content };
 }
 
+// Send the real email to ourselves only. No side effects on the company.
+async function apiB2bTestSend(id, body = {}) {
+  return b2bQueueService.sendDraftById(getSupabaseClient(), {
+    draft_id: id, confirmed: true, test_send: true,
+    body: body.body, subject: body.subject,
+  });
+}
+
 async function apiB2bSetRecipients(id, body = {}) {
   return b2bQueueService.setDraftRecipients(getSupabaseClient(), {
     draft_id: id, to: body.to, cc: body.cc,
@@ -3388,6 +3396,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attach$/, handler: (body, id) => apiB2bDraftAttach(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/recipients$/, handler: (body, id) => apiB2bSetRecipients(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/test-send$/, handler: (body, id) => apiB2bTestSend(parseInt(id), body) },
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id) => apiB2bAttachmentPreview(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },

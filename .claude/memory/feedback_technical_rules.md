@@ -106,6 +106,14 @@ Every code change that touches deterministic logic must land with tests — new 
 - **Stubbing pattern:** For tool handlers that import `shopify`/`productCache`, stub via `require.cache[require.resolve('../lib/shopify')] = { ..., exports: { ... } }` before requiring the module under test. See [resolveLineItems.test.js](../../customer-service/test/resolveLineItems.test.js) as the reference.
 - **Run before committing:** `node --test customer-service/test/*.test.js` — all must pass.
 
+## Restart the dashboard by command match, never by port
+
+Use `scripts/restart-dashboard.sh`. `lsof -ti:3847 | xargs kill -9` only kills whatever currently holds the socket — a server that failed to bind, or one started from a worktree, keeps running invisibly. Several competing processes produce "failed to fetch" in the browser with nothing useful in any single log, and the symptom looks exactly like a code bug in whatever you just shipped.
+
+**Why:** 2026-08-07, three orphaned dashboard processes accumulated across a session of repeated restarts. One had crashed; the browser hit it and reported a fetch failure, which cost a real debugging detour into freshly-shipped endpoints that turned out to be fine.
+
+**How to apply:** `pkill -f "customer-service/dashboard/server.js"`, wait for it to actually exit, start one, then verify BOTH that `/health` responds and that exactly one process matches. The script does all of that and warns when the count is not 1.
+
 ## Dry-run flags use CLI args, not env vars
 
 **Why:** When a script defaults to print-only and needs an opt-in to execute, env vars (`LIVE=1`, `DRY_RUN=false`) leak between sessions, aren't visible in the command you ran, and make it easy to misfire by forgetting to unset.

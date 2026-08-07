@@ -219,7 +219,7 @@ async function resolveDelivery(sb, companyId) {
  *                     subject?, body, confirmed? }
  */
 async function sendB2bEmail(p = {}) {
-  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override } = p;
+  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override, test_send } = p;
   if (!company_id) throw new Error('company_id required');
   if (!message_type) throw new Error('message_type required');
   if (!body || !body.trim()) throw new Error('body required');
@@ -305,6 +305,42 @@ async function sendB2bEmail(p = {}) {
   };
 
   if (!confirmed) return preview;
+
+  // ---- TEST SEND -----------------------------------------------------------
+  // The real email — same body, same HTML, same attachments — addressed to
+  // ourselves, so it can be read in a mail client before a partner sees it.
+  //
+  // It writes NOTHING: no thread, no b2b_messages row, no cadence dates, no
+  // draft status change. A test that left a footprint on the relationship
+  // record would be worse than no test at all.
+  //
+  // Deliberately NOT behind the send gate: the gate exists to stop mail
+  // reaching organizations, and this can only reach jamie@rubyshines.com. That
+  // is exactly the check you want available BEFORE go-live.
+  if (test_send) {
+    const { getGmail: getTestGmail } = require('../../gmail-management/lib/gmailClient');
+    const testGmail = await getTestGmail();
+    const testBody = normalizeSignature(body);
+    const raw = buildRawMessage({
+      to: FROM_EMAIL,
+      subject: `[TEST] ${subject || '(no subject)'}`,
+      body: testBody,
+      message_type,
+      attachments,
+      // No threading: a test must not attach itself to the real conversation.
+    });
+    const res = await testGmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+    return {
+      ok: true,
+      phase: 'test_sent',
+      to: FROM_EMAIL,
+      gmail_message_id: res.data.id,
+      would_send_to: recipient?.email || null,
+      would_cc: addressList(cc) || null,
+      attachments: (attachments || []).map(a => a.filename),
+      note: 'Sent to you only. Nothing was recorded against the company, and the draft is still pending.',
+    };
+  }
 
   // ---- PHASE 2: the gate ---------------------------------------------------
   if (!(await isFlagEnabled(SEND_FLAG))) {

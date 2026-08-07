@@ -560,7 +560,7 @@ async function composeDraft(sb, { company_id, body, subject, message_type, threa
  * draft's, and a reply whose draft subject is null still inherits the thread
  * subject downstream in sendB2bEmail.
  */
-async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
+async function sendDraftById(sb, { draft_id, confirmed, body, subject, test_send } = {}) {
   if (!draft_id) throw new Error('draft_id required');
   const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', draft_id).maybeSingle();
   if (error) throw new Error(error.message);
@@ -590,11 +590,14 @@ async function sendDraftById(sb, { draft_id, confirmed, body, subject } = {}) {
     attachments,
     cc: draft.structured?.cc ?? undefined,
     to_override: draft.structured?.to ?? undefined,
+    test_send: !!test_send,
   });
 
   if (res.phase === 'preview') {
     res.gate_enabled = await isFlagEnabled(SEND_FLAG);
   }
+  // A test send leaves the draft pending on purpose — it is a look, not a send.
+  if (res.phase === 'test_sent') return { ...res, draft_id };
   if (res.phase === 'sent') {
     // Store what actually went out alongside the AI's original. The boolean
     // says THAT it was edited; this pair says HOW, which is the only form a

@@ -6080,6 +6080,8 @@ function renderOutreachDetail(entry, draft) {
           ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
              <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
           : `<button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>`}
+        <button class="btn btn-ghost" id="outreach-test-btn" onclick="testSendOutreachDraft()"
+          title="Sends the real email to you only. Nothing is recorded against the company.">Test send to me</button>
         <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
       </div>
       <div id="outreach-send-panel"></div>
@@ -6170,6 +6172,29 @@ function outreachRecipientHtml() {
       from jamie@rubyshines.com &middot; ${threaded ? 'replies in the existing thread' : 'starts a new email'}
     </div>
   </div>`;
+}
+
+/**
+ * Send the real email to jamie@rubyshines.com only — same body, same HTML, same
+ * attachments — so it can be read in a mail client before a partner sees it.
+ * Nothing is recorded against the company and the draft stays pending.
+ */
+async function testSendOutreachDraft() {
+  if (!outreachDraft) return;
+  const btn = document.getElementById('outreach-test-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending test…'; }
+  try {
+    // Send what is ON SCREEN, not what is stored — otherwise you test a draft
+    // you have already edited past.
+    const body = document.getElementById('outreach-draft-editor')?.value || undefined;
+    const subject = document.getElementById('outreach-subject-editor')?.value || undefined;
+    const res = await api(`/api/b2b/drafts/${outreachDraft.id}/test-send`, { method: 'POST', body: { body, subject } });
+    const files = res.attachments?.length ? ` with ${res.attachments.length} attachment(s)` : '';
+    showToast(`Test sent to ${res.to}${files} — check your inbox`, 'success');
+  } catch (err) {
+    showToast(`Test send failed: ${err.message}`, 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Test send to me'; }
 }
 
 /** Persist edited To/Cc onto the draft so the send path uses them. */
