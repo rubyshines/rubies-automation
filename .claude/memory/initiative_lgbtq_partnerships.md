@@ -6,7 +6,7 @@ metadata:
   type: project
   domains: 
     - community
-  last_updated: 2026-07-24
+  last_updated: 2026-08-10
   originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -23,7 +23,7 @@ Expand LGBTQ+ org partnerships. Get orgs to purchase using their inclusion/donat
 Active programs running. As of 2026-05-28, rubies-automations is the SSOT for donation partners — Supabase `donation_partners` table feeds CS routing AND publishes a static JSON asset to the theme. New submissions flow through `donation_partner_create_from_survey` in the ad-hoc operator console (preview-confirm, auto-geocode, auto-extract logo, Shopify-CDN re-host, auto-merge + deploy). All 14 active partner logos are on cdn.shopify.com.
 
 ## UK Expansion (2026-07-24)
-Started via the outreach engine's referred-prospect intake. First objective: establish the UK donation partner network (none exist; 30% purchase tier). Five active prospects: **Mermaids** (intro SENT 2026-07-24 — the engine's first real send; auto-reply received, human reply pending; referred by Arianna Bernucci, who has the personal history with them — NOT Jamie's story), TransActual + Not A Phase (Arianna), The Clare Project + Trans Pride Brighton (customer donation thread; TPB has a formal partner programme). AllSorts Youth Project: declined via a customer — marked lost, do not outreach. Drafts #15-#18 pending in the Outreach queue, to send staggered. Uniting Pride (Illinois) Zoom-first onboarding draft #11 also pending.
+Started via the outreach engine's referred-prospect intake. First objective: establish the UK donation partner network (none exist; 30% purchase tier). Five active prospects: **Mermaids** (intro SENT 2026-07-24 — the engine's first real send; auto-reply received, human reply pending; referred by Arianna Bernucci, who has the personal history with them — NOT Jamie's story), TransActual + Not A Phase (Arianna), The Clare Project + Trans Pride Brighton (customer donation thread; TPB has a formal partner programme). AllSorts Youth Project: declined via a customer — marked lost, do not outreach. Drafts #15-#18 pending in the Outreach queue, to send staggered. Uniting Pride (Illinois) call-first onboarding draft #11 also pending.
 
 ## Decisions Made
 - 2026-05-28 — Partner registry is the SSOT in rubies-automations. Theme reads a published JSON asset (`assets/donation-partners.json`); no more hand-edited section blocks. Updates flow only via MCP tools.

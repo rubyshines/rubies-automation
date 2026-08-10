@@ -240,3 +240,9 @@ Thread IDs are `email_messages.gmail_thread_id` from the historical findings (§
 3. **`referral_ask`: LOCKED as a new message type, all tracks** — entry added to the catalog SSOT (b2b-outreach-system.md). Add to both advisor prompts: fire only after genuinely positive moments, never cold, ≤1 per relationship per ~6 months.
 4. **new_collection auto-send eligibility: unchanged** (already locked, decision #13 — auto-send eligible for healthy relationships; edit-rate data can demote later).
 5. **Call scheduling (community advisor): prose time proposals with explicit timezone math as the v1 default.** Jamie wants to see it run before considering a scheduling link — revisit after the first live org threads.
+
+## Live-training additions (2026-07-24, from Jamie's first draft reviews) — materialized in both prompt files
+
+1. **New message type `inbound_inquiry_response` (both advisors, Tier 1).** When the org/retailer wrote to US first: NO self-introduction, NO founder story, NO brand pitch (they found us). Thank them for their work in ONE short generic clause — never recite their own details back at them (their counties/programs/service area parroted from their email reads as surveillance, not warmth). 60-100 words, keep the thread subject, move to the next concrete step (orgs: the call-first onboarding call on Google Meet, with the partner-discount line only if their inquiry mentioned budget; retailers: terms/samples/call). Community advisor carries Jamie's verbatim template (from his Uniting Pride edit).
+2. **Tagline ban in B2B prose (both advisors).** "Every girl deserves to shine" is customer-facing copy; in partnership email it reads as cheese. Never in org/B2B drafts.
+3. Source incident: draft #9 (Uniting Pride) applied the cold intro_outreach template to an inbound inquiry because no inbound type existed.
