@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * Qualify a prompt variant on the pinned scenario suite — the gate the lean
- * prompt has to clear before it can ship.
+ * Qualify a prompt variant on the pinned scenario suite — the gate any prompt
+ * change should clear before it ships. (Built for the lean prompt, which was
+ * dropped 2026-08-10; the gate is variant-agnostic and outlived it.)
  *
- * The thing this exists to catch is NOT "did lean fix what we aimed at". The
- * 2x2 already answered that. It is the opposite failure, and this project has
- * lived it: on 2026-07-28 a prompt fix landed the target metric perfectly
+ * The thing this exists to catch is NOT "did the change fix what we aimed at" —
+ * whatever measured that already answered it. It is the opposite failure, and
+ * this project has lived it: on 2026-07-28 a prompt fix landed the target
+ * metric perfectly
  * (0/10 dropped holds against a 20-60% baseline) while driving a completely
  * different assertion — "reply invents order composition" — from 0/5 to 4/6.
  * Watching only the target would have traded a hold bug for a hallucination in
@@ -23,9 +25,13 @@
  * an unchanged model, so a single run cannot tell a regression from variance.
  *
  * Usage:
- *   node scripts/promptSwapEval.js --variant=lean --repeat=3
- *   node scripts/promptSwapEval.js --variant=lean --repeat=1 --only=noMirroring,refundNoAmount
+ *   node scripts/promptSwapEval.js --variant=no-overrides --repeat=3
+ *   node scripts/promptSwapEval.js --variant=no-overrides --repeat=1 --only=noMirroring,refundNoAmount
  *   node scripts/promptSwapEval.js --report        # free, re-reads the saved run
+ *
+ * --variant is required and must name a variant registered in promptVariants.js.
+ * There is deliberately no default: the arm under test is the whole point, and a
+ * default silently measures something nobody asked about.
  */
 
 const path = require('path');
@@ -171,7 +177,11 @@ async function main() {
     return report(JSON.parse(fs.readFileSync(OUT, 'utf8')));
   }
 
-  const variant = arg('variant', 'lean');
+  const variant = arg('variant', '');
+  if (!variant) {
+    const { VARIANTS } = require('./promptVariants');
+    throw new Error(`--variant is required (registered: ${Object.keys(VARIANTS).filter(v => v !== 'control').join(', ')})`);
+  }
   const repeat = parseInt(arg('repeat', '3'), 10);
   const timeout = parseInt(arg('timeout', '300'), 10);
   const concurrency = parseInt(arg('concurrency', '4'), 10);

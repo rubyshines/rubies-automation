@@ -191,16 +191,31 @@ Opus 5 only loses on the current prompt, its regressions were prompt artifacts.
   not hostage to the model question.
 - Abandon both if lean beats current on neither.
 
-## Phase 0 — the lean prompt ✓ (2026-08-04)
+## Phase 0 — the lean prompt (built 2026-08-04, DROPPED 2026-08-10)
 
-`eval/leanPrompt.js`, wired as the `lean` variant in `promptVariants.js`. It is a
-**mechanical transform over the shipped prompt**, never a hand-written second
-prompt — otherwise the gap between the arms could be anything. It asserts on
-every anchor it expects, so a future prompt edit that moves a heading throws
-instead of silently changing the experiment. Guarded by
-`customer-service/test/leanPrompt.test.js` (7 tests; full suite 1746/1746 green).
+**Jamie's call, 2026-08-10: drop the lean approach.** It produced no winner in the
+2x2 and there is no reason to keep carrying it. Deleted with it: `eval/leanPrompt.js`,
+`customer-service/test/leanPrompt.test.js`, the `lean` entry in `promptVariants.js`,
+and the partial prompt-swap run (`eval/prompt-swap-results.json` plus its logs — one
+scenario, one run, never finished). `scripts/run2x2.js` lost its prompt axis and is
+now a two-arm model comparison. Recover any of it from git history at `1d2c352` if
+the question ever reopens.
 
-What it does:
+**What survived and why:** `scripts/promptSwapEval.js` and `scripts/lib/promptVariantShim.js`
+are variant-agnostic — they gate ANY prompt change against the pinned suite per
+assertion, which is the check that catches a fix trading one bug for another. The
+content judge, `run2x2.js` and `eval/cases2x2.js` are untouched: they measure drafts,
+not prompts.
+
+**Keep the description below.** It is the record of what was actually tested, and it
+is what stops someone re-running this experiment believing it was about prompt size.
+
+It was a **mechanical transform over the shipped prompt**, never a hand-written second
+prompt — otherwise the gap between the arms could be anything. It asserted on every
+anchor it expected, so a prompt edit that moved a heading would throw rather than
+silently change the experiment.
+
+What it did:
 - **Cuts** `RESPONSE LENGTH & REGISTER` (2.1k t) → a 0.9k compressed core keeping
   only the founder rulings an exemplar cannot carry (one-move, the apology gate,
   one-question, no-restating, performed-empathy, the 08-04 struck wordings).
@@ -216,11 +231,13 @@ What it does:
   pre-advisor from-scratch writing, and each carries the customer message, so
   they teach the act-vs-ask decision the body-only samples cannot.
 
-**Honest limitation, flagged before Phase 2 runs:** lean is not smaller. Static
-prompt 31.0k t → 33.4k t; the RULES surface falls 28.4k → 25.5k (−10%) and 7.9k
-of exemplars go in. `Key Business Rules` is 42% of the prompt and is untouched
-because it is policy. So the 2x2 tests **examples instead of descriptions**, not
-"fewer tokens". If lean loses, "the prompt is too big" remains untested.
+**Honest limitation, flagged before Phase 2 ran, and the reason dropping lean
+settles less than it looks like:** lean was not smaller. Static prompt 31.0k t →
+33.4k t; the RULES surface fell 28.4k → 25.5k (−10%) while 7.9k of exemplars went
+in. `Key Business Rules` is 42% of the prompt and was untouched because it is
+policy. So the 2x2 tested **examples instead of descriptions**, NOT "fewer tokens" —
+and lean losing therefore leaves "the prompt is too big" still untested. If that
+hypothesis is ever worth testing, it needs a different variant, not this one.
 
 ## Phase 1 — the content judge ✓ (2026-08-04)
 
@@ -315,26 +332,21 @@ representative traffic.
 
 ## Next
 
-Read this list, NOT the older plan it replaces. Lean is not shipping on the
-strength of the 2x2, and every founder-audit prompt fix is already on main
-(verified by diff, 2026-08-10). Nothing in this project is waiting on a merge.
+Read this list, NOT the older plan it replaces. Every founder-audit prompt fix is
+already on main (verified by diff, 2026-08-10) and nothing here is waiting on a
+merge. **The lean prompt is dropped** — see the Phase 0 section for what that
+means and what was deleted with it.
 
-1. **Decide whether the sequential lean trial is still alive.** Phase 2's plan was
-   three weeks of clean edit-rate baseline on the current prompt, then three on
-   lean. It was never protected: ~20 commits landed on main after 08-04, several
-   touching the advisor prompt (pad facts, product-comparison grounding, the
-   reasoning-leak strip, out-of-office). The baseline window is already
-   contaminated — restart it under a prompt freeze, or drop the trial.
-2. **Fix the tone-sample contradiction** (see below). Small, and it is teaching
+1. **Fix the tone-sample contradiction** (see below). Small, and it is teaching
    against a shipped rule right now.
-3. **Keep fixing rules on 4.8** regardless of the model question. Next up is the
-   shipping stall: 14% of shipping drafts route to human, and Jamie replaced the
-   "let me look into this" stall 14 times out of 16 with concrete recourse.
-4. **The untouched categories carry the worst numbers** — shipping 68% edit rate,
+2. **Keep fixing rules on 4.8.** Next up is the shipping stall: 14% of shipping
+   drafts route to human, and Jamie replaced the "let me look into this" stall 14
+   times out of 16 with concrete recourse.
+3. **The untouched categories carry the worst numbers** — shipping 68% edit rate,
    general_inquiry 65%, sizing 57%, against exchange 49% / refund 33%, the only two
    ever worked. Over half of shipping and general_inquiry drafts are discarded and
    rewritten wholesale, which is a content defect, not a verbosity one.
-5. **Deferred:** revealed-preference sweep across the 66 audited rules (verify each
+4. **Deferred:** revealed-preference sweep across the 66 audited rules (verify each
    hit by reading — a naive presence/absence cut produced a wrong conclusion once);
    tolerance sheets for shipping and sizing; refund policy gates as a tool (no
    measured failure, so only if the map shows real conflicts).

@@ -1,23 +1,29 @@
 #!/usr/bin/env node
 
 /**
- * The 2x2: {Opus 4.8, Opus 5} x {current prompt, lean prompt}.
+ * Judge-scored model comparison over 20 replayed real cases.
  *
- * The July rejection of Opus 5 is not trustworthy — it ran against a prompt
- * tuned to 4.8 for months, on a scenario suite documented as flaky on both
- * models, first pass only. The diagnostic here is the INTERACTION: if Opus 5
- * only loses on the current prompt, its regressions were prompt artifacts
- * rather than model regressions, and the July verdict was measuring the wrong
- * thing.
+ * It ran once as a genuine 2x2 — {Opus 4.8, Opus 5} x {current prompt, lean
+ * prompt} — on 2026-08-04. The prompt axis is gone: lean produced no winner and
+ * was dropped 2026-08-10, so what remains is the model axis on the shipped
+ * prompt. The filename is kept because memory points at it by name; see ARMS
+ * below for how to add an axis back.
+ *
+ * This is not the same instrument as scripts/modelSwapEval.js, and both are
+ * worth having. modelSwapEval scores a candidate against the pinned SCENARIO
+ * suite (assertions written in advance, pass/fail). This scores real replayed
+ * tickets with the content judge, which is what produced the numbers the Opus 5
+ * verdict rests on — so a like-for-like re-run at deprecation time means this
+ * script, on the same 20 cases.
  *
  * Design choices that are load-bearing:
  *
  * - ARMS ARE INTERLEAVED PER CASE, not run one after another. Replay reads
  *   TODAY's order state, so a July ticket sees today's fulfillment. That drift
- *   is acceptable ONLY while it is shared: running all four arms on a case
- *   back to back keeps it a common confound instead of a differential one.
- *   Running arm A this hour and arm D next hour would silently attribute a
- *   shipped order to a prompt.
+ *   is acceptable ONLY while it is shared: running every arm on a case back to
+ *   back keeps it a common confound instead of a differential one. Running arm
+ *   A this hour and arm B next hour would silently attribute a shipped order to
+ *   the model.
  *
  * - THREE REPEATS, and no conclusion from fewer. The same scenario flips pass
  *   to fail on an unchanged model; temperature is not settable. This project
@@ -25,7 +31,7 @@
  *   like a clean win (5/21 vs 9/21) and runs 2 and 3 came back dead even.
  *
  * - THE JUDGE MODEL IS PINNED and never follows the arm. The scoring
- *   instrument has to be the same instrument in all four cells, or the
+ *   instrument has to be the same instrument in every cell, or the
  *   comparison measures the judge.
  *
  * - STEER IS NEVER REPLAYED. The defect is what the advisor writes unprompted;
@@ -71,22 +77,24 @@ const words = t => norm(t).split(/\s+/).filter(Boolean).length;
 // override are module-level globals, so two arms running concurrently inside
 // one process would race — arm A's prompt transform could serve arm B's call
 // and the result would be silently, unfalsifiably wrong. A child process per
-// shard gives each its own module state. Each shard owns whole CASES, so all
-// four arms of a case still run back to back and order-state drift stays a
-// shared confound.
+// shard gives each its own module state. Each shard owns whole CASES, so every
+// arm of a case still runs back to back and order-state drift stays a shared
+// confound.
 //
 // Worth the trouble: a draft takes ~3 minutes, of which only ~25s is the API.
 // The rest is context building against Shopify, which is I/O and parallelises
-// cleanly. Serial, 240 drafts is ~12 hours; at 6 shards it is under two.
+// cleanly. Serial, the 120 drafts of a 2-arm x 3-repeat run is ~6 hours; at 6
+// shards it is about one. (The original 4-arm run was 240 drafts, ~12 hours.)
 const SHARD = arg('shard', '');
 const OUT = path.resolve(__dirname, SHARD ? `../eval/2x2-results.shard${SHARD.split('/')[0]}.json` : '../eval/2x2-results.json');
 const SHARD_GLOB = n => path.resolve(__dirname, `../eval/2x2-results.shard${n}.json`);
 
+// One axis now: the model. The prompt axis was the lean variant, dropped
+// 2026-08-10 after the 2x2 returned no winner for it. Adding an arm back is a
+// one-line change — give it a `variant` name registered in promptVariants.js.
 const ARMS = [
-  { id: '4.8/current', model: BASELINE_MODEL, variant: 'control' },
-  { id: '4.8/lean', model: BASELINE_MODEL, variant: 'lean' },
-  { id: 'o5/current', model: CANDIDATE_MODEL, variant: 'control' },
-  { id: 'o5/lean', model: CANDIDATE_MODEL, variant: 'lean' },
+  { id: 'baseline', model: BASELINE_MODEL, variant: 'control' },
+  { id: 'candidate', model: CANDIDATE_MODEL, variant: 'control' },
 ];
 
 const GROUPS = ['act_vs_ask', 'padding', 'wholesale_rewrite'];
@@ -221,7 +229,7 @@ async function draftAll(repeat) {
   let n = 0;
   for (const [id, turn] of turns) {
     for (let run = 1; run <= repeat; run++) {
-      // All four arms back to back on this case, so order-state drift stays
+      // Every arm back to back on this case, so order-state drift stays
       // a shared confound rather than a differential one.
       for (const arm of ARMS) {
         n++;
