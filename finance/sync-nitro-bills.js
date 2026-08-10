@@ -12,28 +12,18 @@
 
 if (!process.env.SUPABASE_URL) require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
+const {
+  fetchCompletedBills,
+  fetchBillLineItems,
+  parseCsv,
+} = require('../reports/lib/warehanceClient');
 
 const API_KEY = process.env.WAREHANCE_API_KEY;
-const BASE = process.env.WAREHANCE_API_URL || 'https://api.staging.warehance.com/v1';
 const BATCH_SIZE = 200;
 
 if (!API_KEY && require.main === module) {
   console.error('Missing WAREHANCE_API_KEY in .env');
   process.exit(1);
-}
-
-async function apiFetch(path) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'X-API-KEY': API_KEY },
-  });
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
-  return res.json();
-}
-
-async function downloadCsv(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`CSV download ${res.status}`);
-  return res.text();
 }
 
 function parseOrderNumber(raw) {
@@ -56,44 +46,11 @@ function getZone(countryCode) {
   return 'ddu';
 }
 
-function parseCsv(text) {
-  const lines = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') { inQuotes = !inQuotes; current += ch; }
-    else if (ch === '\n' && !inQuotes) { lines.push(current); current = ''; }
-    else { current += ch; }
-  }
-  if (current.trim()) lines.push(current);
-
-  if (lines.length < 2) return [];
-  const headers = splitCsvLine(lines[0]);
-  return lines.slice(1).filter(l => l.trim()).map(line => {
-    const vals = splitCsvLine(line);
-    const obj = {};
-    headers.forEach((h, i) => obj[h] = (vals[i] || '').trim());
-    return obj;
-  });
-}
-
-function splitCsvLine(line) {
-  const result = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { inQuotes = !inQuotes; }
-    else if (ch === ',' && !inQuotes) { result.push(current); current = ''; }
-    else { current += ch; }
-  }
-  result.push(current);
-  return result;
-}
-
 function parseBillCsv(csvText) {
-  const rows = parseCsv(csvText);
+  return groupBillRowsByOrder(parseCsv(csvText));
+}
+
+function groupBillRowsByOrder(rows) {
   const orders = {};
 
   for (const row of rows) {
@@ -198,8 +155,7 @@ async function main() {
 
   // Fetch all bills
   console.log('Fetching bills from Warehance API...');
-  const { data } = await apiFetch('/bills?limit=50');
-  const bills = data.bills.filter(b => b.generation_status === 'Completed');
+  const bills = await fetchCompletedBills();
   console.log(`Found ${bills.length} completed bills`);
 
   const allOrders = {};
@@ -208,8 +164,7 @@ async function main() {
     const period = bill.bill_name.match(/\d{4}-\d{2}-\d{2}/)?.[0] || bill.bill_name;
     process.stdout.write(`  ${period}: $${bill.total_charge_amount.toLocaleString()} — downloading CSV...`);
 
-    const csvText = await downloadCsv(bill.line_item_details_csv_url);
-    const orders = parseBillCsv(csvText);
+    const orders = groupBillRowsByOrder(await fetchBillLineItems(bill));
     const count = Object.keys(orders).length;
 
     // Merge into allOrders (an order could span bills if returns come later)

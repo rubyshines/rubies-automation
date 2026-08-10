@@ -1,11 +1,22 @@
 /**
  * Import Passport shipping invoices from Excel into Supabase
- * Usage: node finance/importPassportInvoices.js [path-to-xlsx]
+ *
+ * Usage: node finance/importPassportInvoices.js [path-to-xlsx] [--force] [--skip-audit]
+ *
+ * Every import is audited before anything is written (see lib/passportInvoiceAudit.js).
+ * A blocking finding aborts the import so a billing error can't be absorbed into
+ * landed-margin numbers unnoticed. --force imports anyway; --skip-audit skips the
+ * checks entirely.
  */
 
 if (!process.env.SUPABASE_URL) require('dotenv').config();
 const XLSX = require('xlsx');
 const { getSupabaseClient, upsert } = require('../shared/supabaseClient');
+const {
+  auditPassportInvoices,
+  fetchNitroBillLineItems,
+  formatAuditReport,
+} = require('./lib/passportInvoiceAudit');
 
 const DEFAULT_PATH = '/Users/jamiealexander/Downloads/New Master Passport Invoice File.xlsx';
 
@@ -15,7 +26,7 @@ function excelDateToISO(serial) {
   return d.toISOString().substring(0, 10);
 }
 
-async function importPassportInvoices(filePath) {
+async function importPassportInvoices(filePath, { force = false, skipAudit = false } = {}) {
   const supabase = getSupabaseClient();
 
   console.log('Reading:', filePath);
@@ -47,6 +58,24 @@ async function importPassportInvoices(filePath) {
   })).filter(r => r.ship_date && r.tracking_id);
 
   console.log('Valid rows:', rows.length);
+
+  // Audit BEFORE writing — a billing error absorbed into passport_invoices is
+  // invisible afterwards, because landed-margin aggregates bury it in variance.
+  if (!skipAudit) {
+    console.log('\nAuditing invoices...');
+    const billLineItems = await fetchNitroBillLineItems();
+    const audit = auditPassportInvoices(rows, { billLineItems });
+    console.log(formatAuditReport(audit));
+
+    if (!audit.ok && !force) {
+      const err = new Error(
+        `Passport audit found ${audit.blocking.length} blocking discrepancy(ies) `
+        + `totalling $${audit.exposure.toFixed(2)}. Nothing was imported.`);
+      err.auditFailed = true;
+      throw err;
+    }
+    if (!audit.ok) console.log('\n--force: importing despite blocking findings.\n');
+  }
 
   // Upsert in batches of 200
   const batchSize = 200;
@@ -103,5 +132,20 @@ async function importPassportInvoices(filePath) {
   await generateReport();
 }
 
-const filePath = process.argv[2] || DEFAULT_PATH;
-importPassportInvoices(filePath).catch(console.error);
+module.exports = { importPassportInvoices };
+
+if (require.main === module) {
+  const args = process.argv.slice(2);
+  const filePath = args.find(a => !a.startsWith('--')) || DEFAULT_PATH;
+  const options = {
+    force: args.includes('--force'),
+    skipAudit: args.includes('--skip-audit'),
+  };
+
+  importPassportInvoices(filePath, options).catch(err => {
+    // An audit block is a decision point, not a crash — the report above already
+    // explains it. Exit non-zero so a scripted caller doesn't treat it as success.
+    console.error(err.auditFailed ? `\n${err.message}` : err);
+    process.exitCode = 1;
+  });
+}

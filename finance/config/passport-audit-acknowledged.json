@@ -1,0 +1,10 @@
+{
+  "_readme": [
+    "Passport invoices whose audit findings have been investigated and settled.",
+    "Listing one here downgrades its findings from blocking to a note — it does not",
+    "hide them. Add an entry only after the discrepancy is resolved with Nitro:",
+    "either credited back, or confirmed as a file-only error we were never charged for.",
+    "Shape: { invoice_number, invoice_date, reason, acknowledged_on }"
+  ],
+  "acknowledged": []
+}

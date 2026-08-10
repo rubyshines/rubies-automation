@@ -340,6 +340,62 @@ async function fetchSkuStockMany(skus) {
   return map;
 }
 
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+/** Split one CSV line, respecting quoted fields. */
+function splitCsvLine(line) {
+  const out = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (ch === ',' && !inQuotes) { out.push(current); current = ''; }
+    else current += ch;
+  }
+  out.push(current);
+  return out;
+}
+
+/** Parse a CSV document into an array of header-keyed objects. */
+function parseCsv(text) {
+  const lines = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') { inQuotes = !inQuotes; current += ch; }
+    else if (ch === '\n' && !inQuotes) { lines.push(current); current = ''; }
+    else current += ch;
+  }
+  if (current.trim()) lines.push(current);
+  if (lines.length < 2) return [];
+
+  const headers = splitCsvLine(lines[0]);
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = splitCsvLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
+    return obj;
+  });
+}
+
+/** Every bill Warehance has finished generating, oldest first. */
+async function fetchCompletedBills() {
+  const json = await apiFetch('/bills?limit=50');
+  return (json.data?.bills || []).filter(b => b.generation_status === 'Completed');
+}
+
+/** Download and parse one bill's line-item detail CSV. */
+async function fetchBillLineItems(bill) {
+  if (!bill?.line_item_details_csv_url) return [];
+  const res = await fetch(bill.line_item_details_csv_url);
+  if (!res.ok) throw new Error(`Warehance bill CSV download ${res.status} for ${bill.bill_name}`);
+  return parseCsv(await res.text());
+}
+
 module.exports = {
   apiFetch,
   apiPatch,
@@ -364,4 +420,8 @@ module.exports = {
   warehanceOrderUrl,
   fetchSkuStock,
   fetchSkuStockMany,
+  fetchCompletedBills,
+  fetchBillLineItems,
+  parseCsv,
+  splitCsvLine,
 };
