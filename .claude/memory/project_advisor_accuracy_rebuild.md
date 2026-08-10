@@ -341,12 +341,11 @@ strength of the 2x2, and every founder-audit prompt fix is already on main
 
 ## Open question — `ai_calls` may be under-reporting cost
 
-The 2x2's own token accounting (summed from Anthropic's `usage` on every round)
-puts the run's drafting at **$29.24**. The `ai_calls` ledger, over the same
-window and with a matching row count (555 rows vs 535 recorded rounds), puts it
-at **$17.31**. Row counts reconcile; cost per row does not. This is bigger than
-this project — `ai_calls` is the source for the daily digest's per-component
-spend, so if it under-reports, every cost number Jamie sees is low. Not chased.
+The 2x2 measured a 41% gap between its own token accounting ($29.24) and the
+`ai_calls` ledger ($17.31) over the same window, with row counts reconciling —
+so the discrepancy is cost per row, not missing rows. Bigger than this project,
+so it now lives in `parked.md` ("`ai_calls` may be under-reporting AI spend")
+with the suspects and a first diagnostic step.
 
 ## Harness bug worth not repeating
 

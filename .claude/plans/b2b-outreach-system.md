@@ -1,8 +1,8 @@
-# Unified B2B Outreach & Prospect System — Design-in-Progress
+# Unified B2B Outreach & Prospect System — Design Record + Remainder Spec
 
-**Status:** Active design session. Decisions below are locked. Design areas below are still open — work through them in order before any implementation.
+**Status:** Build shipped 2026-06-11 (queue, cadence engine, both advisors, `b2b_drafts`/`b2b_threads`/`b2b_messages`, send tool gated by `b2b_send_enabled`, Gmail reply correlation, dashboard Outreach panel). For what's built, the code is the source of truth — see `b2b-outreach/` and domain_b2b_sales.md. This file remains the spec ONLY for the unbuilt remainder: discovery pipeline fixes (Design #2: aiClient port, Haiku pre-filter, org routing fix, cron), affiliate onboarding flow, A/B variant evaluation loop (Design #7), and the wholesale→B2B rename (Design #9). The message-type catalog and trigger tables below are the reference if drafts drift from the locked openers.
 
-**Last updated:** 2026-06-04 (session with Jamie)
+**Last updated:** 2026-07-22 (demoted from active design SSOT after build; design locked 2026-06-04)
 
 ---
 
