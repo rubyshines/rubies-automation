@@ -9,3 +9,12 @@ _smoke.json
 batches/
 control-batches/
 regen/
+
+# Judge calibration runs quote customer-facing draft sentences verbatim, which
+# can include customer names. The numbers and the reasoning live in the project
+# file; the raw runs stay local and are reproducible from the sheet + Supabase.
+judge-calibration*.json
+2x2-results*.json
+judge-blind-check.json
+judge-blind-check*.json
+2x2-results*.json

@@ -1,0 +1,305 @@
+{
+ "at": "2026-08-05T01:46:09.457Z",
+ "rows": [
+  {
+   "id": 1726,
+   "type": "general_inquiry",
+   "would_rewrite": true,
+   "reasons": [
+    "padding"
+   ],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [
+    "unrequested_offer: Any interest in exchanging for our Brooke Bra?"
+   ],
+   "ungrounded": []
+  },
+  {
+   "id": 1532,
+   "type": "general_inquiry",
+   "would_rewrite": true,
+   "reasons": [
+    "act",
+    "padding",
+    "grounding"
+   ],
+   "act": "ASKED_UNNECESSARILY",
+   "unrequested": [
+    "redundant_procedure: I need to fix a bug in the site and I'll let you know when its resolved."
+   ],
+   "ungrounded": [
+    "I need to fix a bug in the site and I'll let you know when its resolved."
+   ]
+  },
+  {
+   "id": 2924,
+   "type": "refund",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 1485,
+   "type": "sizing_inquiry",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2413,
+   "type": "exchange",
+   "would_rewrite": true,
+   "reasons": [
+    "padding"
+   ],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [
+    "redundant_procedure: We donate all returns so you can also send the ones she outgrew and they will be"
+   ],
+   "ungrounded": []
+  },
+  {
+   "id": 2406,
+   "type": "refund",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2779,
+   "type": "exchange",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2439,
+   "type": "shipping",
+   "would_rewrite": true,
+   "reasons": [
+    "act",
+    "grounding"
+   ],
+   "act": "ACTED_PREMATURELY",
+   "unrequested": [],
+   "ungrounded": [
+    "I have reached out to the carrier to find out what's is happening with this orde"
+   ]
+  },
+  {
+   "id": 2944,
+   "type": "general_inquiry",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 1643,
+   "type": "shipping",
+   "would_rewrite": true,
+   "reasons": [
+    "padding",
+    "grounding"
+   ],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [
+    "hedge_or_meta: not sure what happened here and am checking in with my warehouse.",
+    "invented_warmth: Hope your kiddo can still enjoy the waterpark."
+   ],
+   "ungrounded": [
+    "I have sent over another package to ship overnight so it should arrive before th",
+    "You can either keep or donate locally the other package that is set to arrive on"
+   ]
+  },
+  {
+   "id": 2433,
+   "type": "exchange",
+   "would_rewrite": true,
+   "reasons": [
+    "act"
+   ],
+   "act": "ASKED_UNNECESSARILY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2909,
+   "type": "community_outreach",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 1962,
+   "type": "shipping",
+   "would_rewrite": true,
+   "reasons": [
+    "grounding"
+   ],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": [
+    "I believe if you ship expedited it can go to a pickup point as it ships via FedE"
+   ]
+  },
+  {
+   "id": 2527,
+   "type": "refund",
+   "would_rewrite": true,
+   "reasons": [
+    "padding",
+    "grounding"
+   ],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [
+    "redundant_procedure: Please send it to the same location I sent you in the other email."
+   ],
+   "ungrounded": [
+    "Please send it to the same location I sent you in the other email."
+   ]
+  },
+  {
+   "id": 2684,
+   "type": "exchange",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2621,
+   "type": "general_inquiry",
+   "would_rewrite": true,
+   "reasons": [
+    "act",
+    "padding"
+   ],
+   "act": "ACTED_PREMATURELY",
+   "unrequested": [
+    "redundant_procedure: I will investigate and get aback to you."
+   ],
+   "ungrounded": []
+  },
+  {
+   "id": 3056,
+   "type": "exchange",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2600,
+   "type": "exchange",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2409,
+   "type": "sizing_inquiry",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2628,
+   "type": "general_inquiry",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ACTED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2921,
+   "type": "exchange",
+   "would_rewrite": false,
+   "reasons": [],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [],
+   "ungrounded": []
+  },
+  {
+   "id": 2430,
+   "type": "general_inquiry",
+   "would_rewrite": true,
+   "reasons": [
+    "padding",
+    "grounding"
+   ],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [
+    "unrequested_offer: Sock Drawer heroes do carry some of our products but I don't think the Cheeky bi",
+    "unrequested_offer: It's worth trying it out as we offer exchanges or refunds."
+   ],
+   "ungrounded": [
+    "Sock Drawer heroes do carry some of our products but I don't think the Cheeky bi"
+   ]
+  },
+  {
+   "id": 2836,
+   "type": "exchange",
+   "would_rewrite": true,
+   "reasons": [
+    "padding",
+    "grounding"
+   ],
+   "act": "ASKED_CORRECTLY",
+   "unrequested": [
+    "unrequested_offer: You could also swap it for something else if you don’t think it will work."
+   ],
+   "ungrounded": [
+    "The size up will have more room for the thighs but it will also have 2” my fabri"
+   ]
+  },
+  {
+   "id": 2802,
+   "type": "general_inquiry",
+   "would_rewrite": true,
+   "reasons": [
+    "act",
+    "grounding"
+   ],
+   "act": "ACTED_PREMATURELY",
+   "unrequested": [],
+   "ungrounded": [
+    "sent over a refund for the difference"
+   ]
+  },
+  {
+   "id": 2713,
+   "type": "shipping",
+   "would_rewrite": true,
+   "reasons": [
+    "padding",
+    "grounding"
+   ],
+   "unrequested": [
+    "unrequested_offer: We are committed to keeping the sandstone Sassy in stock.",
+    "invented_warmth: You were the one that inspired this decision!"
+   ],
+   "ungrounded": [
+    "We are committed to keeping the sandstone Sassy in stock. You were the one that "
+   ]
+  }
+ ]
+}

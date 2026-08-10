@@ -56,6 +56,10 @@ const VARIANTS = {
 
   // The wider fossil-layer cut, still leaving every policy-bearing scenario.
   'no-overrides': p => cutAll(p, OVERRIDE_BLOCKS).prompt,
+
+  // Arm B of the 2x2: register lectures out, 78 of Jamie's own replies in.
+  // Required lazily — leanPrompt requires this module back for OVERRIDE_BLOCKS.
+  lean: p => require('../eval/leanPrompt').leanTransform(p),
 };
 
 function apply(name) {

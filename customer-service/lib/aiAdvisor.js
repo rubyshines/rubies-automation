@@ -2499,4 +2499,7 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
   }
 }
 
-module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration, setPromptTransform };
+// buildSystemPrompt is exported for the eval harness only — prompt variants are
+// string transforms over the static part, so measuring and diffing them needs
+// the assembled prompt. No production caller uses it.
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration, setPromptTransform, buildSystemPrompt };

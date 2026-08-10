@@ -1,0 +1,31 @@
+=== Test 1: No mirroring of customer complaint details ===
+
+[DecisionTree] Loaded 25 products from product_cs_config
+[context] Supabase data for skarlovnika@gmail.com is 9370min old — falling back to Shopify
+[context] skarlovnika@gmail.com resolved via shopify (2 orders)
+draft: Hi, You're right to be frustrated, and I'm sorry. Looking at the tracking, this order actually got returned to sender back on June 15, so it never reached you and has been sitting on our end since. That's on us for not catching it and getting a new one out to you. Before I reship, can you confirm the address to use? The order was going to 6251 Salem Cir, Apartment 1003, Fort Worth, Texas, 76132. I
+status: needs_info
+first body line: You're right to be frustrated, and I'm sorry. Looking at the tracking, this order actually got returned to sender back on June 15, so it never reached
+
+  ✓ draft does not restate the customer's complaint back at them
+  ✓ first body sentence does not open with a restatement
+
+=== Test 2: Turn-2 confirmation does not repeat turn-1 sizing delta ===
+
+Running turn 1 (sizing exchange request)...
+[context] Supabase data for skarlovnika@gmail.com is 9371min old — falling back to Shopify
+[context] skarlovnika@gmail.com resolved via shopify (2 orders)
+[ProductCache] Loaded 29 products from Supabase (synced 2026-08-04T22:20:56.885Z)
+turn 1 draft: Hi, The L will have 2" more fabric around the bra band than the M you have. I've created your exchange for the Brooke in size L. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to
+  (turn 1 did not mention a sizing delta — turn 2 repeat test is moot)
+
+Running turn 2 (customer confirms)...
+[context] Supabase data for skarlovnika@gmail.com is 9371min old — falling back to Shopify
+[context] skarlovnika@gmail.com resolved via shopify (2 orders)
+turn 2 draft: Hi, The L will have 2" more fabric around the bra band than the M you have. I've created your exchange for the Brooke in size L. It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate it locally. If you don't have someone or a local org in mind, I can sen
+status: action_needed
+
+  ✓ (sizing delta not in turn 1 — repetition test skipped)
+  ✓ turn-2 draft confirms the action
+
+PASSED

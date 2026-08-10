@@ -1,0 +1,31 @@
+=== Test 1: No mirroring of customer complaint details ===
+
+[DecisionTree] Loaded 25 products from product_cs_config
+[context] Supabase data for skarlovnika@gmail.com is 9369min old — falling back to Shopify
+[context] skarlovnika@gmail.com resolved via shopify (2 orders)
+draft: Hi, Thanks for reaching out. I want to make sure I'm looking at the right shipment. The tracking on order #30757 actually shows it was returned to sender back on June 15, so that doesn't match what you're describing about a package in transit right now with expedited shipping before Thursday. Can you let me know the order number for the package you paid expedited shipping on, or the email you used
+status: needs_info
+first body line: Thanks for reaching out. I want to make sure I'm looking at the right shipment. The tracking on order #30757 actually shows it was returned to sender 
+
+  ✓ draft does not restate the customer's complaint back at them
+  ✓ first body sentence does not open with a restatement
+
+=== Test 2: Turn-2 confirmation does not repeat turn-1 sizing delta ===
+
+Running turn 1 (sizing exchange request)...
+[context] Supabase data for skarlovnika@gmail.com is 9370min old — falling back to Shopify
+[context] skarlovnika@gmail.com resolved via shopify (2 orders)
+[ProductCache] Loaded 29 products from Supabase (synced 2026-08-04T22:20:56.885Z)
+turn 1 draft: Hi, No problem, I've created your exchange for the Brooke in size L (Black). It'll ship tomorrow. We have moved to a model where all RUBIES returns will be donated to organizations that run gender-affirming programs. Since you only have one item to return, feel free to donate it locally. If you don'
+  (turn 1 did not mention a sizing delta — turn 2 repeat test is moot)
+
+Running turn 2 (customer confirms)...
+[context] Supabase data for skarlovnika@gmail.com is 9370min old — falling back to Shopify
+[context] skarlovnika@gmail.com resolved via shopify (2 orders)
+turn 2 draft: Hi, You're all set, it'll ship tomorrow. Take care, Jamie Alexander, RUBIES Founder [rubyshines.com](https://rubyshines.com)
+status: ready
+
+  ✓ (sizing delta not in turn 1 — repetition test skipped)
+  ✗ turn-2 draft does not confirm the exchange — status: ready, action: null
+
+FAILED — see above
