@@ -18,6 +18,7 @@ const { runToolLoop } = require('./runToolLoop');
 const { buildContext, normalizeEmail } = require('./contextBuilder');
 const { SIGNATURE_BLOCK_MD, ADVOCACY_PS } = require('./signatures');
 const { containReply, GREETING_RE } = require('./replyContainment');
+const { checkSelectionCoverage } = require('./selectionCoverage');
 const {
   normalizeSize,
   getSizeList,
@@ -1403,8 +1404,10 @@ If the customer bought MULTIPLE sizes of the SAME product on one order (e.g., AJ
 - If the order has BOTH tops AND bottoms with sizing issues, ask for BOTH waist AND chest measurements (don't just ask for one).
 - Accessories (gift cards, pins, etc.) cannot be sized or exchanged. Any issue with an accessory = refund.
 
-### intake.items must cover every exchange your draft mentions
-The operator's action panel is built from the structured items array. Every product the draft says is being exchanged needs its own CONFIRMED entry — one per distinct (product, target_size, target_product) action. If a prior agent message proposed a product swap and the customer accepted, set resolved_product to the new product on that entry; otherwise leave it null. Missing entries cause the operator to ship the wrong items.
+### The structured items array must cover every item the action touches
+The operator's action panel is built from the structured items array, so an item missing there is an item the action never happens to. Every product the draft says is being exchanged needs its own CONFIRMED entry — one per distinct (product, target_size, target_product) action. If a prior agent message proposed a product swap and the customer accepted, set resolved_product to the new product on that entry; otherwise leave it null. Missing entries cause the operator to ship the wrong items.
+
+**When the customer picked items in a bot flow, that selection list IS the scope of the action** — for refunds exactly as much as exchanges. Work down the list line by line and give every line its own entry in items and its own mention in operator_action_summary, including any line that sits outside the group your prose names: a reply that reads "the bottoms" still refunds the one-piece when the customer selected it. Never summarise the list into a product family or a body group and act on the summary. Count the same way for the item_count you pass to get_donation_partner — total units across every selected line.
 
 ### Product Knowledge
 
@@ -2323,6 +2326,22 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   if (containment.leaked && structured?.prescription) {
     if (!Array.isArray(structured.prescription.flags)) structured.prescription.flags = [];
     structured.prescription.flags.push(containment.warning);
+  }
+
+  // When the customer picked items in the Gorgias return flow, that list is the
+  // scope of the action. The prompt says so, but the model occasionally
+  // relabels the list as a product family and stages an action one item short —
+  // rare enough that the scenario suite cannot separate it from noise, so the
+  // operator gets a banner. Visibility only: a deliberately narrower action is
+  // legitimate, and nothing here edits the draft.
+  const coverage = checkSelectionCoverage(issue_description, structured, composedResponse);
+  if (coverage.flag) {
+    // structured.audit is built by spread, so append to it rather than `audit`.
+    if (Array.isArray(structured?.audit)) structured.audit.push(coverage.flag);
+    if (structured?.prescription) {
+      if (!Array.isArray(structured.prescription.flags)) structured.prescription.flags = [];
+      structured.prescription.flags.push(coverage.flag);
+    }
   }
 
   // Build markdown summary
