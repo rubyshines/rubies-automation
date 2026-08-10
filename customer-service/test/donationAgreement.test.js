@@ -195,3 +195,33 @@ test('cc survives alongside attachments and threading', () => {
   assert.ok(head.includes('In-Reply-To: <x@mail>'));
   assert.ok(head.includes('multipart/mixed'));
 });
+
+// ── URL linkifying ──────────────────────────────────────────────────────────
+
+const { toHtmlBody } = require('../../b2b-outreach/lib/sendB2bEmail');
+
+test('a URL ending a sentence does not swallow the full stop', () => {
+  // The onboarding survey link went out as ".../1Hq93BSiPrhJkgfB8." — Gmail
+  // renders the href verbatim, so the partner got a dead link.
+  const html = toHtmlBody('here is the survey: https://forms.gle/1Hq93BSiPrhJkgfB8.');
+  assert.ok(html.includes('href="https://forms.gle/1Hq93BSiPrhJkgfB8"'), 'href is clean');
+  assert.ok(!html.includes('1Hq93BSiPrhJkgfB8."'), 'the period is not inside the href');
+  assert.ok(html.endsWith('.'), 'but the sentence keeps its full stop');
+});
+
+test('other trailing sentence punctuation is handled too', () => {
+  for (const [text, punct] of [['see https://a.org/x,', ','], ['now https://a.org/x!', '!'], ['really https://a.org/x?', '?'], ['note https://a.org/x;', ';']]) {
+    const html = toHtmlBody(text);
+    assert.ok(html.includes('href="https://a.org/x"'), text);
+    assert.ok(html.endsWith(punct), text);
+  }
+});
+
+test('punctuation inside a URL is preserved', () => {
+  const html = toHtmlBody('open https://a.org/path?q=1&x=2 now');
+  assert.ok(html.includes('href="https://a.org/path?q=1&amp;x=2"'));
+});
+
+test('a bare domain mid-sentence still links', () => {
+  assert.ok(toHtmlBody('visit rubyshines.com today').includes('<a href='));
+});
