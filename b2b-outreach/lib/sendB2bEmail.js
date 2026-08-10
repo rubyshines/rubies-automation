@@ -53,7 +53,16 @@ function normalizeSignature(text) {
 function toHtmlBody(text, { introLink = false } = {}) {
   let html = String(text || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  html = html.replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => `<a href="${url}">${url}</a>`);
+  html = html.replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => {
+    // A URL that ends a sentence must not swallow the full stop. Gmail renders
+    // the href verbatim, so "…/1Hq93BSiPrhJkgfB8." is a dead link — which is
+    // exactly what happened to the onboarding survey link in a partner email.
+    // Trailing sentence punctuation is put back OUTSIDE the anchor.
+    const m = url.match(/^(.*?)([.,;:!?]+)$/);
+    const href = m ? m[1] : url;
+    const trailing = m ? m[2] : '';
+    return `<a href="${href}">${href}</a>${trailing}`;
+  });
   html = html.replace(/(^|[\s>])((www\.)?rubyshines\.com)(?![\w.\/])/g, (m, pre, dom) => `${pre}<a href="${SITE_URL}">${dom}</a>`);
   if (introLink) {
     let linked = false;
