@@ -57,6 +57,9 @@ function loadAllOperatorTools() {
     require('./tools/b2bOutreach'),
     require('./tools/emailStudio'),
     require('./tools/preOrderLifecycle'),
+    // Reaching this from the ad hoc console on mobile is the reason away_mode
+    // is a tool at all — it gets switched on while walking out the door.
+    require('./tools/awayMode'),
   ];
 
   const tools = [];

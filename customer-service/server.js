@@ -71,6 +71,7 @@ const freeSwimwearTools = require('./lib/tools/freeSwimwear');
 const discountTools = require('./lib/tools/discounts');
 const emailStudioTools = require('./lib/tools/emailStudio');
 const irapStatusReportTools = require('./lib/tools/irapStatusReport');
+const awayModeTools = require('./lib/tools/awayMode');
 
 const allTools = [
   ...customerLookupTools,
@@ -128,6 +129,7 @@ const allTools = [
   ...discountTools,
   ...emailStudioTools,
   ...irapStatusReportTools,
+  ...awayModeTools,
 ];
 
 /**
