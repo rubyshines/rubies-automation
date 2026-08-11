@@ -36,9 +36,11 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Queue reasons from empty history — thread discovery never runs on the queue build
 - Parked: 2026-08-06
+- Last touched: 2026-08-11
 - Domains: b2b_sales, community, tech
 - Type: bug
 - Priority: high
+- **2026-08-11:** still unfixed structurally, but the 18 active donation partners were discovered by hand (74 threads imported), so that cohort now reasons from real history. Confirms the diagnosis at scale: 13 of the 18 had zero messages and would have drafted from an empty record. Two had no importable history for a second reason — the only address on file was not the one we actually corresponded with (MassTPC: survey gave `programs@`, every thread is with `mg@`). So the queue-build fix needs to run discovery across ALL of a company's known addresses, not just the primary.
 - Notes: `discoverCompanyThreads` runs only in `fetchCompanyThreads` (the per-company detail pane), never during the queue build — `reconcileThreads` only refreshes threads that already exist. So a company nobody has clicked has zero `b2b_messages`, and cadence reasons from an empty record. Concrete case: Trans Closet of the Hudson Valley wrote in Aug 2026 and sat at Tier 3 `community_checkin` ("back_to_school window, no prior outbound") instead of Tier 1 "waiting on us"; running discovery by hand imported 12 messages back to Jun 2025 and it flipped to Tier 1 immediately. Compounding design flaw: `community_checkin` treats `lastOutboundAt IS NULL` as infinitely overdue, but null means either "genuinely never contacted" or "no data imported yet" and the engine cannot tell those apart. Fix the data, not the rule: run bounded discovery for companies with zero messages during the queue build (or a nightly pass), so cadence reasons from facts. Until then any newly-added company shows a plausible-but-wrong tier until someone opens it.
 
 ## Merge duplicate company rows (same org, two records)
@@ -181,11 +183,13 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Type: idea
 - Notes: The Main Contacts sheet import created chimeric records — free-mail contacts attached to company rows by the old Gmail-scanning system's guesses (found: Kelly Harrington fused onto Zoe and Company — a VA retail customer on an RI shop; the lgbtq-gmail/yahoo/hotmail domain-grouped junk). Trustworthy pattern: contact email domain matches company domain. Audit sweep: flag companies whose contacts are free-mail AND whose order ship-to addresses mismatch the company address; review flagged rows before outreach touches them. Also import column-shift mess (Zoe's street address sat in the website field) — spot-fix as found.
 
-## Backfill donation partners missing from b2b_companies
-- Parked: 2026-07-24
+## Remove the name fallback from syncB2bCompanyState's partner matching
+- Parked: 2026-08-11
+- Last touched: 2026-08-11
 - Domains: community, b2b_sales
-- Type: idea
-- Notes: `syncB2bCompanyState` flags org companies matching active donation_partners (by website domain, name fallback), but some of the 18 active partners have no b2b_companies row at all (candidates spotted: RISE @ LA LGBT Center, Trans Healthkit Projekt, Yellow House, Carleton GSRC — verify by diffing registry vs companies). Until they exist, the outreach engine can't run community cadence for them. Small backfill: create rows + contacts from the partner registry/survey sheet, set program_flags.donation_closet, relationship_state active.
+- Type: bug
+- Priority: medium
+- Notes: `syncB2bCompanyState` matches org companies to active donation_partners by website domain **with a name fallback**, and the name fallback is what fused Trans Healthkit Projekt (Hagen) onto Transhealth (Northampton MA) — two unrelated orgs on one record, so the German partner's advisor context carried an American clinic's 2022 thread. The advisor's own matching was changed to domain-only 2026-08-11 (`fetchDonationRouting`), but the sync still carries the fallback and is what sets `program_flags.donation_closet`. Fix: domain-only there too, and let an unmatched partner stay unmatched rather than guess. Same class as the per-message thread-membership bug. Supersedes the old "Backfill donation partners missing from b2b_companies" entry, which is done: RISE @ LA LGBT Center and Trans Healthkit Projekt were the two genuinely missing rows and both now exist with contacts and imported history; Yellow House and Carleton GSRC turned out to have rows already.
 
 ## Advisor rule 7 promises a restock date `compare_products` cannot return
 - Parked: 2026-05-27

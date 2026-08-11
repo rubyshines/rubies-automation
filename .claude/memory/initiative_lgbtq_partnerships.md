@@ -6,7 +6,7 @@ metadata:
   type: project
   domains: 
     - community
-  last_updated: 2026-08-10
+  last_updated: 2026-08-11
   originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -24,6 +24,14 @@ Active programs running. As of 2026-05-28, rubies-automations is the SSOT for do
 
 ## UK Expansion (2026-07-24)
 Started via the outreach engine's referred-prospect intake. First objective: establish the UK donation partner network (none exist; 30% purchase tier). Five active prospects: **Mermaids** (intro SENT 2026-07-24 — the engine's first real send; auto-reply received, human reply pending; referred by Arianna Bernucci, who has the personal history with them — NOT Jamie's story), TransActual + Not A Phase (Arianna), The Clare Project + Trans Pride Brighton (customer donation thread; TPB has a formal partner programme). AllSorts Youth Project: declined via a customer — marked lost, do not outreach. Drafts #15-#18 pending in the Outreach queue, to send staggered. Uniting Pride (Illinois) call-first onboarding draft #11 also pending.
+
+## Partner Re-Engagement Round (2026-08-11)
+First check-in sweep across all 18 active partners. Drafts written and grounded in real
+history: `.claude/plans/org-checkin-2026-08.md`. Sends are manual, none gone out yet.
+- Most partners had genuinely gone quiet: 12 of 18 last heard from us between Dec 2024 and Nov 2025, while donations kept flowing the whole time. Our three highest-volume partners (MassTPC 15 packages, BAGLY 13, Raleigh 13) were among them.
+- Six are not check-ins but things WE owe: an unanswered asset request, an unanswered second program at a partner org, a promised meeting, a promised follow-up, an unfinished listing rename, an unacknowledged contact handoff. Consistent with the "the org failure mode is ours" read already in the advisor prompt.
+- Contact churn confirmed as the standing risk: Oasis handed off in June, Carleton's is a student post that turns over yearly, Valid USA's contact left the state and the org is renaming to Reach Pluto.
+- Engine can now draft these itself (donation facts + discount rate in advisor context). Next: send the 18, then decide whether the seasonal `community_checkin` cadence should run in push mode for partners.
 
 ## Decisions Made
 - 2026-05-28 — Partner registry is the SSOT in rubies-automations. Theme reads a published JSON asset (`assets/donation-partners.json`); no more hand-edited section blocks. Updates flow only via MCP tools.
