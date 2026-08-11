@@ -1629,9 +1629,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           recommendation = 'Flo Dance Underwear';
           link = getProductUrl('Flo') || '';
         } else {
-          // Adult underwear: check config for additional style-switch targets
-          const configTargets = Object.values(_activeProducts)
-            .filter(p => p.styleSwitch?.isTarget && p.styleSwitch.forCategories?.includes('underwear_bottom'));
+          // Adult underwear. The style-switch targets also live on
+          // product_cs_config.style_switch (which compare_products surfaces to
+          // the advisor); this branch stays hardcoded on purpose — changing
+          // which product it names changes customer-facing recommendations and
+          // needs a scenario run, so it is not a drive-by edit.
           recommendation = 'Sassy';
           link = getProductUrl('Sassy') || '';
         }

@@ -181,7 +181,7 @@ const TOOLS = [
   },
   {
     name: 'compare_products',
-    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, and inventory for a specific size. Use this when an item is out of stock and you need to suggest a swap, or when a customer asks how products differ. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
+    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, inventory for a specific size, and `style_switch_options` — the styles in that category cut with a larger leg opening, for a customer whose waist size is right but whose legs or thighs feel tight. Use this when an item is out of stock and you need to suggest a swap, when a customer asks how products differ, and whenever you are about to say one style is cut higher or lower than another: state only what this returns, never a remembered comparison. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
     input_schema: {
       type: 'object',
       properties: {
@@ -645,6 +645,7 @@ async function executeToolCall(toolName, toolInput) {
             fit_description: p.fit_description,
             best_for: p.best_for,
             comparison_notes: p.comparison_notes,
+            style_switch_note: styleSwitchNote(config, category),
             size,
             inventory_in_size: sizeInventory,
           });
@@ -654,6 +655,7 @@ async function executeToolCall(toolName, toolInput) {
             fit_description: p.fit_description,
             best_for: p.best_for,
             comparison_notes: p.comparison_notes,
+            style_switch_note: styleSwitchNote(config, category),
             available_sizes: allSizes,
             total_inventory: p.total_inventory,
           });
@@ -676,6 +678,15 @@ async function executeToolCall(toolName, toolInput) {
         })).filter(c => c.inventory > 0);
       }
 
+      // Which styles in this category are the "fit is off, switch style" targets
+      // (today: the wider leg openings). Sourced from product_cs_config.style_switch
+      // so one row edit updates every consumer — this used to be prose in
+      // advisor_facts, one hand-written fact per product pair.
+      const styleSwitchOptions = Object.values(_activeProducts)
+        .filter(c => c.category === category && c.styleSwitch?.isTarget
+          && (!c.styleSwitch.forCategories || c.styleSwitch.forCategories.includes(category)))
+        .map(c => ({ product: c.nickname, note: c.styleSwitch.note }));
+
       return {
         source: {
           product: sourceConfig.nickname,
@@ -683,9 +694,11 @@ async function executeToolCall(toolName, toolInput) {
           fit_description: sourceProduct?.fit_description,
           best_for: sourceProduct?.best_for,
           comparison_notes: sourceProduct?.comparison_notes,
+          style_switch_note: styleSwitchNote(sourceConfig, category),
           ...(size ? { size, total_inventory: sourceInventory, available_colors: sourceColorInventory } : {}),
         },
         alternatives,
+        style_switch_options: styleSwitchOptions,
       };
     }
 
@@ -809,6 +822,18 @@ async function executeToolCall(toolName, toolInput) {
  * Facts are curated one-sentence statements Jamie approved in the dashboard
  * (see advisor-facts-schema.sql); grouped by category for scanability.
  */
+/**
+ * The product_cs_config.style_switch note, when the product is a switch target
+ * for this category. `forCategories` scopes a target to where it applies (the
+ * Flo is a youth underwear answer, not a swim one).
+ */
+function styleSwitchNote(config, category) {
+  const ss = config?.styleSwitch;
+  if (!ss?.isTarget) return null;
+  if (ss.forCategories && !ss.forCategories.includes(category)) return null;
+  return ss.note || null;
+}
+
 function buildFactsBlock(facts) {
   if (!facts?.length) return '';
   const byCategory = {};
@@ -2579,4 +2604,4 @@ Respond as JSON: { "tone": { "rating": "...", "direction": "...", "note": "..." 
 // buildSystemPrompt is exported for the eval harness only — prompt variants are
 // string transforms over the static part, so measuring and diffing them needs
 // the assembled prompt. No production caller uses it.
-module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration, setPromptTransform, buildSystemPrompt };
+module.exports = { aiAdvisor, executeToolCall, buildFactsBlock, buildCompatibleStructured, stripPreGreetingNarration, setPromptTransform, buildSystemPrompt, styleSwitchNote };

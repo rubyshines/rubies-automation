@@ -572,6 +572,13 @@ function buildAdvisorEditRateHtml(results) {
 // trailing window (identical+cosmetic = "as good as drafted"). Supersedes raw
 // edit-rate as the quality headline; also surfaces draft_may_be_right cases
 // (the judge thinks the AI draft beat what was sent — review-worthy either way).
+// tool_gap is model-written prose landing in an HTML email — escape it.
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function buildClosenessJudgeHtml(results) {
   const task = results.find(r => r.name === 'Closeness Judge');
   const m = task?.result?.sources?.closeness_judge;
@@ -586,11 +593,21 @@ function buildClosenessJudgeHtml(results) {
   const high = m.high_severity
     ? ` <span style="color:#b45309;font-weight:bold;">(${m.high_severity} high-severity)</span>`
     : '';
+  // Corrections the judge attributed to a missing tool answer rather than to
+  // operator-only knowledge. These are the queue of data/tool fixes that used
+  // to disappear into advisor_facts as one-off prose.
+  const gaps = (m.tool_gaps || []);
+  const gapHtml = gaps.length
+    ? `<div style="margin-top:4px;color:#0f766e;">&#128295; ${m.tool_gap_count} correction(s) a tool should have answered:<ul style="margin:2px 0 0;padding-left:18px;">${
+        gaps.map(g => `<li>${escapeHtml(g.tool_gap)} <span style="color:#9ca3af;">(draft ${g.draft_id})</span></li>`).join('')
+      }</ul></div>`
+    : '';
   return `
     <div style="margin:12px 0 0;font-size:12px;color:#6b7280;">
       Judge (last ${m.window_days}d, ${m.judged} judged): <strong>${m.divergence_rate_pct}%</strong> substantive divergence${high}<br>
       <span style="color:#9ca3af;">${breakdown} · today: ${m.today?.judged ?? 0} judged${m.today?.failed ? `, ${m.today.failed} failed` : ''}</span>
       ${flaggedHtml}
+      ${gapHtml}
     </div>`;
 }
 

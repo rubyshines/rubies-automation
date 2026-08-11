@@ -8,6 +8,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Drive sizingEngine's style-switch recommendation from config instead of hardcoded names
+- Parked: 2026-08-11
+- Domains: cs
+- Type: idea
+- Priority: low
+- Notes: `sizingEngine.js` style_switch branch hardcodes Cheeky (swim) / Flo (kids) / Sassy (adult underwear). `product_cs_config.style_switch` now marks all four targets including the Naomi, and `compare_products` surfaces them, so both could be driven from one source. Left alone deliberately in the 2026-08-11 change: it decides which product a customer is told to switch to, so it is a customer-facing recommendation change needing a scenario run at `--repeat 3`, not a drive-by edit. A dead `configTargets` computation that read the config and discarded it was removed at the same time, so nothing there looks live that isn't.
+
 ## `edit_order` tells the operator an address-edited order can ship when it still can't
 - Parked: 2026-08-11
 - Type: bug
