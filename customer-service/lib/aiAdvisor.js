@@ -192,6 +192,43 @@ const TOOLS = [
     },
   },
   {
+    name: 'exchange_price_check',
+    description: 'Decide how a NON-straight-swap exchange settles: the customer is returning items and getting DIFFERENT ones (different product, different item count, added items), so the values may not match. Read-only, creates nothing. Returns one verdict — refund / waive / invoice / even — and the exact thing to tell the customer. Call it BEFORE writing any exchange reply where the items differ, and follow the verdict. Do NOT call it for a straight swap (same product, different size or colour): those are always free. You have no other way to know what an exchange costs, so never guess the outcome without this.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        return_order_number: { type: 'string', description: 'Order the items are coming back from (e.g. "#29649").' },
+        return_items: {
+          type: 'array',
+          description: 'Items the customer is giving up, matched to that order by SKU.',
+          items: {
+            type: 'object',
+            properties: { sku: { type: 'string' }, quantity: { type: 'number' } },
+            required: ['sku', 'quantity'],
+          },
+        },
+        new_items: {
+          type: 'array',
+          description: 'Items the customer wants instead. Prefer sku; query + target_size also work.',
+          items: {
+            type: 'object',
+            properties: {
+              sku: { type: 'string' },
+              target_size: { type: 'string' },
+              query: { type: 'string' },
+              quantity: { type: 'number' },
+            },
+          },
+        },
+        customer_asked_to_pay: {
+          type: 'boolean',
+          description: 'TRUE when the customer themselves asked to be charged the difference ("charge me the difference", "I don\'t want it for free", "happy to pay extra"). A customer who insists on paying gets to, so this changes the verdict. Leave false when they only acknowledged that the new item costs more, and false when the operator (not the customer) raised it.',
+        },
+      },
+      required: ['return_order_number', 'return_items', 'new_items'],
+    },
+  },
+  {
     name: 'check_unfulfilled_order',
     description: 'Investigate why an unfulfilled order hasn\'t shipped. Checks each item against WAREHOUSE stock (Warehance — the source of truth for what can actually ship), pre-order tags, warehouse holds, order age in business days, and partial fulfillment. Issue types: "out_of_stock" = the warehouse physically lacks the item (a real blocker); "allocated" = the website shows 0 but the item is on hand at the warehouse reserved for this order — it CAN ship and is NOT a blocker. Call this when a customer asks about a delayed or unshipped order, and to determine which items of an existing order can ship now (e.g. before proposing a split).',
     input_schema: {
@@ -652,6 +689,39 @@ async function executeToolCall(toolName, toolInput) {
       };
     }
 
+    // Deliberately narrower than the operator agent's `exchange_difference`,
+    // which returns the full priced plan. The advisor gets the VERDICT and the
+    // sentence, never the figures: its standing rule is that it must not state
+    // a dollar amount, and the cheapest way to keep that true is to never hand
+    // it one. Same underlying computation, so the reply and the operator
+    // agent's later execution cannot disagree.
+    case 'exchange_price_check': {
+      const { return_order_number, return_items, new_items, customer_asked_to_pay } = toolInput;
+      const { planExchangeDifference } = require('./tools/exchangeDifference');
+      const { settleExchange } = require('./exchangeMath');
+      // Fail closed, in the tool result rather than as another prompt rule: a
+      // failed price check must not leave the model free to guess an outcome.
+      const FALLBACK = 'Say NOTHING about money in the reply — no invoice, no "free", no "don\'t worry about the difference" — and end operator_action_summary with "settle via exchange_difference" so the operator prices it at execution time.';
+      try {
+        const planned = await planExchangeDifference({ return_order_number, return_items, new_items });
+        if (planned.error) return { error: planned.error, what_to_tell_the_customer: FALLBACK };
+        const settlement = settleExchange({
+          net: planned.plan.net,
+          itemsIdentical: planned.itemsIdentical,
+          customerAskedToPay: !!customer_asked_to_pay,
+        });
+        const GUIDANCE = {
+          refund: 'The customer is owed money. Tell them the difference goes back to their original payment method. State no amount. End operator_action_summary with "refund the difference via exchange_difference".',
+          waive: 'The difference is small enough that we cover it. Tell them not to worry about the price difference, so they know it was a favour and not an oversight. State no amount, and do not call it a free exchange. End operator_action_summary with "settle via exchange_difference".',
+          invoice: 'The difference is large enough to charge. Tell them you have sent an invoice for the difference. State no amount. End operator_action_summary with "invoice the difference".',
+          even: 'The values match, or this is a straight swap. Say nothing about money at all. End operator_action_summary with "settle via exchange_difference".',
+        };
+        return { settlement, what_to_tell_the_customer: GUIDANCE[settlement] };
+      } catch (e) {
+        return { error: e.message, what_to_tell_the_customer: FALLBACK };
+      }
+    }
+
     case 'check_unfulfilled_order': {
       const { order_number } = toolInput;
       const { getOrderByNumber } = require('./shopify');
@@ -1092,9 +1162,16 @@ Triggers: customer says they signed up for the email but never got the welcome c
 ### Exchanges — Money (what "free" means)
 Exchanges never charge for shipping or restocking, and the customer donates the old items instead of shipping them back. Whether the ITEMS cost anything depends on what they're swapping to:
 - **Straight swap (same product, different size/color): free.** $0 exchange order, never invoiced, even if the new size has a different list price. Say "exchanges are free" only in this case.
-- **Different product (or a mix that changes the value): the price difference is settled.** If the new items cost more, tell the customer you'll send an invoice for the difference and end operator_action_summary with "invoice the difference". If the new items cost less, the difference is refunded to their original payment method — say so. Verbatim shape for an upcharge: "I've set up your exchange for [items] and sent an invoice for the difference." NEVER compute or state the dollar amount — the exchange_difference tool calculates it at execution time.
-- **Exchange + new purchases together: one combined order.** When the customer wants to exchange items AND buy additional items, offer to handle it in one order: replacements free, new items invoiced. Never tell them to place a separate order on the site — combining is a capability we have and customers prefer it.
+- **Different product (or a mix that changes the value): call exchange_price_check and do what it says.** You cannot see prices, so you cannot know how an exchange settles — guessing is how customers get told "free" on something we then invoice. Call exchange_price_check with the returned items and the new ones, and follow its verdict verbatim:
+  - **refund** — the difference goes back to their original payment method. Say so; end operator_action_summary with "refund the difference via exchange_difference".
+  - **waive** — we're covering it. Say "don't worry about the price difference" so they know it was a favour, not an oversight. Don't call it a free exchange; end the summary with "settle via exchange_difference".
+  - **invoice** — say "I've set up your exchange for [items] and sent an invoice for the difference"; end the summary with "invoice the difference".
+  - **even** — say nothing about money; end the summary with "settle via exchange_difference".
+  NEVER state or compute the dollar amount in any of the four cases. When the customer themselves asked to be charged, pass customer_asked_to_pay=true and the verdict comes back "invoice" — that is how you honour the ask, not by overriding the verdict yourself.
+- **Adding to an order is not an exchange: it gets invoiced.** When nothing is coming back and the customer is simply getting more or pricier goods on an existing order — adding an item, upgrading shipping, swapping up on an unshipped order — the difference is invoiced. Say you've sent an invoice for the difference and end operator_action_summary with "invoice the difference". The slide-it rule above applies only where a returned garment is being credited against the new one.
+- **Exchange + new purchases together: one combined order.** When the customer wants to exchange items AND buy additional items, offer to handle it in one order: replacements settled by exchange_difference, the added purchases invoiced. Never tell them to place a separate order on the site — combining is a capability we have and customers prefer it.
 - **Invoice on a held order:** the hold stays until the invoice is paid. Tell the customer the order ships once they've paid the invoice.
+- **The settlement words in operator_action_summary are reserved for straight swaps.** Write "$0", "free", "no invoice", "no charge" or "no price difference" in that field ONLY when every replacement is the same product in a different size or colour. On any other exchange — different product, different item count, added items — the summary names the swap and ends with "settle via exchange_difference" (or "invoice the difference" per the rules above), and states no outcome. The operator agent reads that field as its instructions and skips exchange_difference on anything it is told is a straight swap, so a "$0" written here routes the money around the tool that computes it.
 
 ### Exchanges — Order Age Tiers
 - Customer gets a new order, donates the old items.

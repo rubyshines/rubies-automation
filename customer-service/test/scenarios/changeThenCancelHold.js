@@ -29,9 +29,11 @@ const gorgias = require('../../import/gorgiasClient');
 const { aiAdvisor } = require('../../lib/aiAdvisor');
 const { getOrderByNumber } = require('../../lib/shopify');
 
-const TICKET_ID = process.argv[2] || '108603227';
+// Re-pinned 2026-08-11 alongside holdOnUnshippedModify: the previous anchor
+// (#32472) was cancelled, and a dead anchor makes this SKIP rather than fail.
+const TICKET_ID = process.argv[2] || '111183724';
 // Anchor order for the default ticket. Pass a second arg when re-pinning.
-const ORDER_NUMBER = process.argv[3] || '32472';
+const ORDER_NUMBER = process.argv[3] || '32615';
 
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }

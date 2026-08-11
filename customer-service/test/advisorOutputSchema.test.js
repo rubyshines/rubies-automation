@@ -1,6 +1,18 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor } = require('../lib/advisorOutputSchema');
+const {
+  ADVISOR_OUTPUT_SCHEMA,
+  OPERATOR_ACTION_SUMMARY_SPEC,
+  LEGACY_STRUCTURED_TEMPLATE,
+  createCustomerReplyStreamExtractor,
+} = require('../lib/advisorOutputSchema');
+
+/** The JSON body of the legacy <structured> template — what production sends. */
+function legacyTemplateFields() {
+  const open = LEGACY_STRUCTURED_TEMPLATE.indexOf('<structured>\n');
+  const close = LEGACY_STRUCTURED_TEMPLATE.indexOf('</structured>');
+  return JSON.parse(LEGACY_STRUCTURED_TEMPLATE.slice(open + '<structured>\n'.length, close).trim());
+}
 
 function runExtractor(deltas) {
   let reply = '';
@@ -52,6 +64,32 @@ test('schema: all properties are required and no extras allowed', () => {
     Object.keys(ADVISOR_OUTPUT_SCHEMA.properties).sort()
   );
   assert.equal(ADVISOR_OUTPUT_SCHEMA.additionalProperties, false);
+});
+
+// The legacy <structured> template is what the model actually reads (schema
+// mode off by default since 2026-06-13), so guidance that exists only in a
+// schema description has never shipped. That is how the "keep customer-facing
+// copy out of operator_action_summary" rule sat unread for two months while
+// donation wording leaked into ~16% of operator actions. These two tests make
+// the divergence fail loudly instead of silently not shipping.
+test('legacy template carries every schema field, so nothing ships schema-only', () => {
+  const legacy = legacyTemplateFields();
+  const schemaFields = Object.keys(ADVISOR_OUTPUT_SCHEMA.properties)
+    // customer_reply is the prose itself in legacy mode — written before the
+    // block, not inside it. Every other field must appear in the template.
+    .filter(f => f !== 'customer_reply');
+  for (const f of schemaFields) {
+    assert.ok(f in legacy, `${f} is in the schema but missing from the legacy template — production never sees it`);
+  }
+});
+
+test('operator_action_summary spec is single-sourced across both output modes', () => {
+  assert.equal(ADVISOR_OUTPUT_SCHEMA.properties.operator_action_summary.description, OPERATOR_ACTION_SUMMARY_SPEC);
+  assert.equal(legacyTemplateFields().operator_action_summary, OPERATOR_ACTION_SUMMARY_SPEC);
+  // The load-bearing halves: what belongs in the field, and what never does.
+  assert.match(OPERATOR_ACTION_SUMMARY_SPEC, /tool arguments/i);
+  assert.match(OPERATOR_ACTION_SUMMARY_SPEC, /donation/i);
+  assert.match(OPERATOR_ACTION_SUMMARY_SPEC, /never a dollar amount/i);
 });
 
 test('schema: message_type enum matches the canonical set', () => {

@@ -38,6 +38,60 @@ async function loadActiveDiscounts(now) {
   return { volumeDiscounts, sale };
 }
 
+/**
+ * The whole read-only computation, shared by the operator tool below and the
+ * advisor's `exchange_price_check` (aiAdvisor.js). Kept as one function so the
+ * two callers can never drift into pricing an exchange differently — the
+ * advisor tells the customer what the operator agent is then going to do.
+ *
+ * @returns {{error:string}|{plan,order,resolved,itemsIdentical,customerGid}}
+ */
+async function planExchangeDifference({ return_order_number, return_items, new_items }) {
+  // 1. Resolve the new items to current catalog prices.
+  const resolved = await resolveLineItems(new_items || []);
+  if (resolved.error) return { error: resolved.error };
+
+  // 2. Map returned items to the original order's line items, then ask Shopify
+  //    what those would refund (= actual paid, original discounts baked in).
+  const order = await getOrderByNumber(return_order_number);
+  if (!order) return { error: `Order ${return_order_number} not found.` };
+  const bySku = new Map((order.lineItems || []).map((li) => [String(li.sku || '').toUpperCase(), li]));
+  const refundLineItems = [];
+  const unmatched = [];
+  const missingId = [];
+  for (const ri of return_items || []) {
+    const li = bySku.get(String(ri.sku || '').toUpperCase());
+    if (!li) { unmatched.push(ri.sku); continue; }
+    if (!li.id) { missingId.push(ri.sku); continue; }
+    refundLineItems.push({ lineItemId: li.id, quantity: ri.quantity });
+  }
+  if (unmatched.length) {
+    return { error: `These return SKUs aren't on ${order.name}: ${unmatched.join(', ')}. Check the order's items.` };
+  }
+  if (missingId.length) {
+    return { error: `Could not resolve line-item IDs for ${missingId.join(', ')} on ${order.name} — cannot compute the return credit. This is an internal error, not a customer issue; stop and report it.` };
+  }
+  const refund = await calculateRefund(order.id, refundLineItems);
+  const returnCredit = parseFloat(refund.subtotalSet?.shopMoney?.amount || '0');
+
+  // 3. Apply live automatic discounts to the new items + compute the net.
+  const now = new Date();
+  const { volumeDiscounts, sale } = await loadActiveDiscounts(now);
+  const newItemsForCalc = resolved.map((r) => ({
+    sku: r.sku,
+    unitPrice: parseFloat(r.price || 0),
+    quantity: r.quantity,
+  }));
+  const plan = computeExchangeDifference({ newItems: newItemsForCalc, returnCredit, volumeDiscounts, sale });
+
+  const itemsIdentical = itemSetsIdentical(
+    return_items,
+    resolved.map((r) => ({ sku: r.sku, quantity: r.quantity })),
+  );
+
+  return { plan, order, resolved, itemsIdentical, customerGid: (order.customer && order.customer.id) || null };
+}
+
 const tools = [
   {
     name: 'exchange_difference',
@@ -84,47 +138,10 @@ const tools = [
       required: ['return_order_number', 'return_items', 'new_items'],
     },
     handler: async ({ return_order_number, return_items, new_items, invoice_requested }) => {
-      // 1. Resolve the new items to current catalog prices.
-      const resolved = await resolveLineItems(new_items || []);
-      if (resolved.error) return { content: [{ type: 'text', text: resolved.error }] };
+      const planned = await planExchangeDifference({ return_order_number, return_items, new_items });
+      if (planned.error) return { content: [{ type: 'text', text: planned.error }] };
+      const { plan, order, resolved, itemsIdentical } = planned;
 
-      // 2. Map returned items to the original order's line items, then ask Shopify
-      //    what those would refund (= actual paid, original discounts baked in).
-      const order = await getOrderByNumber(return_order_number);
-      if (!order) return { content: [{ type: 'text', text: `Order ${return_order_number} not found.` }] };
-      const bySku = new Map((order.lineItems || []).map((li) => [String(li.sku || '').toUpperCase(), li]));
-      const refundLineItems = [];
-      const unmatched = [];
-      const missingId = [];
-      for (const ri of return_items || []) {
-        const li = bySku.get(String(ri.sku || '').toUpperCase());
-        if (!li) { unmatched.push(ri.sku); continue; }
-        if (!li.id) { missingId.push(ri.sku); continue; }
-        refundLineItems.push({ lineItemId: li.id, quantity: ri.quantity });
-      }
-      if (unmatched.length) {
-        return { content: [{ type: 'text', text: `These return SKUs aren't on ${order.name}: ${unmatched.join(', ')}. Check the order's items.` }] };
-      }
-      if (missingId.length) {
-        return { content: [{ type: 'text', text: `Could not resolve line-item IDs for ${missingId.join(', ')} on ${order.name} — cannot compute the return credit. This is an internal error, not a customer issue; stop and report it.` }] };
-      }
-      const refund = await calculateRefund(order.id, refundLineItems);
-      const returnCredit = parseFloat(refund.subtotalSet?.shopMoney?.amount || '0');
-
-      // 3. Apply live automatic discounts to the new items + compute the net.
-      const now = new Date();
-      const { volumeDiscounts, sale } = await loadActiveDiscounts(now);
-      const newItemsForCalc = resolved.map((r) => ({
-        sku: r.sku,
-        unitPrice: parseFloat(r.price || 0),
-        quantity: r.quantity,
-      }));
-      const plan = computeExchangeDifference({ newItems: newItemsForCalc, returnCredit, volumeDiscounts, sale });
-
-      const itemsIdentical = itemSetsIdentical(
-        return_items,
-        resolved.map((r) => ({ sku: r.sku, quantity: r.quantity })),
-      );
       const recommended = recommendExchangeAction({
         net: plan.net,
         itemsIdentical,
@@ -178,3 +195,4 @@ const tools = [
 module.exports = tools;
 module.exports.loadActiveDiscounts = loadActiveDiscounts;
 module.exports.saleIsActive = saleIsActive;
+module.exports.planExchangeDifference = planExchangeDifference;

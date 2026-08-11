@@ -11,9 +11,23 @@
  * in schema order, so the customer-facing email streams first and the SSE
  * path can surface it live (see createCustomerReplyStreamExtractor).
  *
- * Field semantics are carried in `description`s — they were prompt text
- * before; the model sees them either way.
+ * Field semantics are carried in `description`s. NOTE that the model sees them
+ * ONLY in schema mode, which has been off by default since 2026-06-13 — the
+ * legacy <structured> template below is what production actually sends. Any
+ * guidance that lives only in a description here is guidance the advisor has
+ * never read. Measured 2026-08-11: the one exclusion present in both copies
+ * (no dollar amounts) held at 99.7%, while the exclusions that existed only
+ * here were violated on ~16% of drafts. The parity test in
+ * test/advisorOutputSchema.test.js exists to stop that drifting again.
  */
+
+/**
+ * Single-sourced so the schema description and the legacy template cannot
+ * diverge. Positive shape first, then the reason, then one exclusion — the
+ * ordering that survives in production (see feedback_technical_rules.md,
+ * "Positive prompt rules stick; negative ones drift").
+ */
+const OPERATOR_ACTION_SUMMARY_SPEC = "null OR ONE line of tool arguments for the operator agent, nothing else. Shape: '<verb> order #<number>: <qty>x <product> <size> <colour> [→ <replacement>]', plus a settlement clause where one applies ('invoice the difference', 'settle via exchange_difference'). The operator agent already has the customer email and the full order in front of it, so this field carries only what its tool call takes: order number, products, quantities, sizes, colours, shipping speed, address, release-hold-after. Anything it cannot act on stays in the email — donation, return and wash wording, partner names, stock and restock notes, ship dates, and the customer's reason. MUST be null when status is needs_info or gathering. Required when action_type is set OR the reply states (past tense) that an exchange/refund/edit/profile-update happened. Never a dollar amount; the tools compute them (the two exceptions are an invoice total and a custom non-line-item refund such as duties). Example: 'exchange on order #29863: 2x AJ 10→8 Sandstone, 1x Ruby 10→8 Black'.";
 
 const ADVISOR_OUTPUT_SCHEMA = {
   type: 'object',
@@ -139,7 +153,7 @@ const ADVISOR_OUTPUT_SCHEMA = {
     },
     operator_action_summary: {
       anyOf: [{ type: 'string' }, { type: 'null' }],
-      description: "Single-line natural-language description of the exact action the operator's tools must execute, matching the order changes the customer_reply promises. MUST be null when status is needs_info or gathering. Required when action_type is set OR the reply states (past tense) that an exchange/refund/edit/profile-update happened. INCLUDE products, quantities, sizes, colors, swaps, order numbers. EXCLUDE customer-facing instructions (donation addresses, washing instructions, ETAs, kind words). NEVER include dollar amounts — refunds are specified by order + items ('refund order #29812 for the 2x Brooke 2X'); the operator's tools compute amounts. Exchange example: 'exchange on order #29863: 2x AJ 10→8 Sandstone, 1x Ruby 10→8 Black'.",
+      description: OPERATOR_ACTION_SUMMARY_SPEC,
     },
     routing_reason: {
       anyOf: [{ type: 'string' }, { type: 'null' }],
@@ -269,6 +283,7 @@ const LEGACY_STRUCTURED_TEMPLATE = `After handling the conversation, you MUST en
   "items": [{ "product": "...", "current_size": "...", "resolved_size": "... or null", "resolved_color": "... or null", "resolved_product": "... or null", "issue": "close_fit_tight|close_fit_loose|doesnt_fit|way_off|defect|...", "state": "CONFIRMED|AWAITING_DECISION|NEEDS_MEASUREMENT|REFUND_CONFIRMED|ROUTE_TO_HUMAN" }],
   "donation_needed": "true only when THIS message gives donation info (a just-created exchange, a just-processed refund, or a direct answer to where-do-I-send-it-back); false while you are still asking the customer for anything",
   "customer_name": "name or null",
+  "forwarded_sender_email": "null in every normal case. Set ONLY when a customer email reached us FORWARDED from an internal @rubyshines.com address: put the ORIGINAL external sender's address here, never the staff member who forwarded it.",
   "customer_pronouns": "they/them|she/her|he/him",
   "buying_for": "self|third_party",
   "third_party_label": "daughter|son|child|null",
@@ -277,7 +292,7 @@ const LEGACY_STRUCTURED_TEMPLATE = `After handling the conversation, you MUST en
   "summary": "6-8 word lowercase queue summary",
   "history_summary": "2-4 sentence prose summary for future advisor calls (exchange/refund/defect only — null otherwise)",
   "customer_sentiment": "positive|neutral|negative|null",
-  "operator_action_summary": "null OR single-line description of the exact operator action, matching the draft's promises. MUST be null when status is needs_info/gathering. Never include dollar amounts.",
+  "operator_action_summary": ${JSON.stringify(OPERATOR_ACTION_SUMMARY_SPEC)},
   "routing_reason": "null OR one plain sentence naming the specific reason this ticket needs Jamie — REQUIRED (non-null) whenever status is route_to_human, null for every other status.",
   "flags": ["operator-facing warning strings (⚠️ banner; customer never sees them) — [] when none"],
   "audit": ["reasoning step 1", "reasoning step 2"]
@@ -330,4 +345,4 @@ function createLoadShedBreaker(cooldownMs = 10 * 60 * 1000) {
   };
 }
 
-module.exports = { ADVISOR_OUTPUT_SCHEMA: EFFECTIVE_SCHEMA, FULL_SCHEMA: ADVISOR_OUTPUT_SCHEMA, stripDescriptions, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker };
+module.exports = { ADVISOR_OUTPUT_SCHEMA: EFFECTIVE_SCHEMA, FULL_SCHEMA: ADVISOR_OUTPUT_SCHEMA, OPERATOR_ACTION_SUMMARY_SPEC, stripDescriptions, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker };
