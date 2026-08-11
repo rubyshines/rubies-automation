@@ -10,6 +10,7 @@ const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
 const { runToolLoop } = require('./runToolLoop');
+const { formatCompletedActions } = require('./draftActions');
 
 // Parse + remove the automation-only `AUTO_CONFIRM: SAFE | HOLD — reason` verdict
 // the operator agent appends to phase-1 previews. Returns the clean operator-facing
@@ -90,12 +91,7 @@ function buildSystemPrompt(context) {
       }).join(', ')
     : 'none';
 
-  const completedActions = completedList.length > 0
-    ? completedList.map(a => {
-        const day = a.executed_at ? ` (${String(a.executed_at).slice(0, 10)})` : '';
-        return `  - ${a.action_type}${day}${a.summary ? ': ' + a.summary.split('\n')[0].slice(0, 120) : ''}`;
-      }).join('\n')
-    : null;
+  const completedActions = formatCompletedActions(completedList);
 
   return `You are an action executor for the RUBIES customer service dashboard. You execute exchanges, refunds, order edits, holds, and cancellations.
 

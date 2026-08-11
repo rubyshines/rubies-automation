@@ -30,6 +30,7 @@ const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 const { transplantContinuation, buildTransplantMessages } = require('../lib/ticketContinuation');
 const { attachmentOnlyPlaceholder, fetchImagesAsBlocks } = require('../lib/attachmentImages');
 const { isAwayModeActive, isFirstContact, sendAwayAck } = require('../lib/awayMode');
+const { unionTicketActions, formatCompletedActions } = require('../lib/draftActions');
 
 // Pull a clean text body off a Gorgias message. Gorgias's own stripper is
 // English-biased — for non-English replies (Danish "Den ... skrev :", etc.) it
@@ -1364,14 +1365,17 @@ async function commitDraft(supabase, { ticketRowId, gorgiasTicketId, draftFields
  * This tells the AI what was already discussed, decided, and sent.
  */
 async function buildPreviousDraftContext(supabase, ticketId) {
-  const { data: prevDrafts } = await supabase
+  // Superseded drafts are excluded from the per-turn narrative below (a regen
+  // replaced them, so their prose is not what happened) but NOT from the
+  // executed-action union: an action filed before the supersede really ran.
+  const { data: allDrafts } = await supabase
     .from('cs_ai_drafts')
-    .select('draft_response, sent_response, structured_output, advisor_status, action_type, action_result, status, feedback_notes')
+    .select('draft_response, sent_response, structured_output, advisor_status, action_type, action_result, status, feedback_notes, actions')
     .eq('gorgias_ticket_id', ticketId)
-    .neq('status', 'superseded')
     .order('created_at', { ascending: true });
 
-  if (!prevDrafts?.length) return null;
+  if (!allDrafts?.length) return null;
+  const prevDrafts = allDrafts.filter(d => d.status !== 'superseded');
 
   const lines = [];
   for (const d of prevDrafts) {
@@ -1413,6 +1417,34 @@ async function buildPreviousDraftContext(supabase, ticketId) {
     }
 
     lines.push(summary);
+  }
+
+  // Work the OPERATOR already executed on this ticket. Without this the advisor
+  // is the only party on the ticket that can't see it: completed actions are
+  // filed in cs_ai_drafts.actions[], while the per-turn summaries above read
+  // `action_type` (the advisor's own proposal, null when the operator acted on
+  // their own) and `action_result` (cleared on completion). So a turn where the
+  // operator sent an invoice looks, from here, like nothing happened — and when
+  // our reply promised it in the future tense ("I'll send an invoice"), the only
+  // reading left is that the work is still outstanding, so the next draft stages
+  // it a second time. Measured 2026-08-11: 5 re-proposals in 90 days, all caught
+  // downstream by the operator or by the operator agent's own copy of this block.
+  //
+  // The log is attempts, not guaranteed successes: `summary` is the executing
+  // agent's whole turn narrative, so a turn that completed one write while
+  // previewing another files the preview text, and a failed tool call is filed
+  // too. Each line carries its own outcome marker, so the advisor is given the
+  // real log and left to read it — pre-filtering the summaries by regex would
+  // be guessing at outcomes from prose, and calling a failed create_order
+  // "done" is a worse failure than the re-proposal this block exists to stop.
+  const completed = formatCompletedActions(unionTicketActions(allDrafts));
+  if (completed) {
+    lines.push(
+      '\nACTION LOG — operator actions already attempted on this ticket, oldest first.'
+      + ' Each line carries its outcome (✅ done, "failed", "Awaiting Confirmation").'
+      + ' Do not stage work that already succeeded, and do not promise it to the customer as still to come:',
+      completed,
+    );
   }
 
   return lines.join('\n');
