@@ -1588,17 +1588,11 @@ function dedupeLinks(links) {
   return (links || []).filter(l => { if (seen.has(l.url)) return false; seen.add(l.url); return true; });
 }
 
-// Union completed operator actions across all of a ticket's drafts, oldest
-// first. Each customer reply creates a fresh draft row with empty actions[],
-// so any single draft is blind to prior turns' executed work — the agent's
-// "what has already been done" view must aggregate across drafts, exactly like
-// the dashboard timeline does. Pure; exported for tests.
-function unionTicketActions(drafts) {
-  return (drafts || [])
-    .flatMap(d => (Array.isArray(d?.actions) ? d.actions : []))
-    .filter(Boolean)
-    .sort((x, y) => new Date(x.executed_at || 0) - new Date(y.executed_at || 0));
-}
+// Ticket-level union of executed actions lives with the rest of the actions[]
+// plumbing in lib/draftActions.js — the dashboard timeline, the operator agent
+// and the advisor's intake context all read it through that one helper.
+// Re-exported below for the existing tests.
+const { unionTicketActions } = require('../lib/draftActions');
 
 // Executed action_types across ALL the ticket's drafts (same ticket-level
 // union rule as unionTicketActions — completed work is filed on whichever
