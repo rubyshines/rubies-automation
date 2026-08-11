@@ -6,18 +6,29 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { analyzeGrading } = require('./gradingConsistency');
 
+const PAGE = 1000;
+
 // Current-version specs for a product (or all products if handle omitted).
+// Paginated: the table is past Supabase's 1000-row default, so an unpaginated
+// read silently dropped whole products (8 of 19 as of 2026-08-11, including
+// the Sassy and Stella) from both get_graded_specs and the consistency check.
 async function fetchCurrentSpecs(productHandle) {
   const sb = getSupabaseClient();
-  let q = sb
-    .from('tech_pack_specs')
-    .select('product_handle, size, pom_code, pom_name, target_cm, tolerance_cm, sort_order')
-    .eq('is_current', true);
-  if (productHandle) q = q.eq('product_handle', productHandle.toLowerCase());
-  const { data, error } = await q
-    .order('product_handle').order('sort_order').order('size');
-  if (error) throw new Error(`fetchCurrentSpecs: ${error.message}`);
-  return data || [];
+  const rows = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = sb
+      .from('tech_pack_specs')
+      .select('product_handle, size, pom_code, pom_name, target_cm, tolerance_cm, sort_order')
+      .eq('is_current', true);
+    if (productHandle) q = q.eq('product_handle', productHandle.toLowerCase());
+    const { data, error } = await q
+      .order('product_handle').order('sort_order').order('size')
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`fetchCurrentSpecs: ${error.message}`);
+    rows.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return rows;
 }
 
 // rows -> { handle: { pom_code: { pom_name, tolerance_cm, sizes: { size: target_cm } } } }

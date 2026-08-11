@@ -27,7 +27,8 @@ const CS_PRODUCT_CONFIG = [
   { title_match: 'THE CHARLIE NO-TUCK', nickname: 'Charlie', category: 'underwear_bottom', keywords: ['charlie'], delta_wording: 'bottom' },
   { title_match: 'THE SASSY NO-TUCK', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom',
     style_switch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Larger leg opening, recommend for tight legs' } },
-  { title_match: 'THE FLO SHAPING', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom' },
+  { title_match: 'THE FLO SHAPING', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom',
+    style_switch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Larger leg opening, recommend for tight legs (youth sizes only)' } },
   { title_match: 'THE NAOMI GAFF', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom',
     sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'],
     style_switch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Higher-cut cheeky leg, recommend alongside Sassy for tight legs' } },
@@ -39,7 +40,8 @@ const CS_PRODUCT_CONFIG = [
   // Swim bottoms
   { title_match: 'THE RUBY NO-TUCK', nickname: 'Ruby', category: 'swim_bottom', keywords: ['ruby'], delta_wording: 'bottom' },
   { title_match: 'THE STELLA HIGH', nickname: 'Stella', category: 'swim_bottom', keywords: ['stella'], delta_wording: 'bottom' },
-  { title_match: 'THE CHEEKY NO-TUCK', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom' },
+  { title_match: 'THE CHEEKY NO-TUCK', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom',
+    style_switch: { isTarget: true, forCategories: ['swim_bottom'], note: 'Larger leg opening, recommend for tight legs' } },
   { title_match: 'THE SERENA NO-TUCK', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom' },
 
   // Swim tops

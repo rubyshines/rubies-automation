@@ -69,3 +69,36 @@ test('normalizeFact: case/punctuation-insensitive', () => {
   );
   assert.strictEqual(normalizeFact('  '), '');
 });
+
+// --- styleSwitchNote (aiAdvisor) -------------------------------------------
+// The style-switch note is how compare_products tells the advisor which styles
+// are cut with a larger leg opening. It replaced a set of hand-written
+// advisor_facts, one per product pair, which could never be complete.
+const { styleSwitchNote } = require('../lib/aiAdvisor');
+
+test('styleSwitchNote: returns the note for a target in its own category', () => {
+  const config = { styleSwitch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Larger leg opening, recommend for tight legs' } };
+  assert.strictEqual(styleSwitchNote(config, 'underwear_bottom'), 'Larger leg opening, recommend for tight legs');
+});
+
+test('styleSwitchNote: scoped out of categories it does not apply to', () => {
+  // The Flo is a youth underwear answer; it must not surface as a swim option.
+  const flo = { styleSwitch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Larger leg opening (youth sizes only)' } };
+  assert.strictEqual(styleSwitchNote(flo, 'swim_bottom'), null);
+});
+
+test('styleSwitchNote: applies to every category when forCategories is absent', () => {
+  const config = { styleSwitch: { isTarget: true, note: 'Larger leg opening' } };
+  assert.strictEqual(styleSwitchNote(config, 'swim_bottom'), 'Larger leg opening');
+});
+
+test('styleSwitchNote: non-targets and missing config yield null, never undefined', () => {
+  assert.strictEqual(styleSwitchNote({ styleSwitch: { isTarget: false, note: 'x' } }, 'underwear_bottom'), null);
+  assert.strictEqual(styleSwitchNote({ styleSwitch: null }, 'underwear_bottom'), null);
+  assert.strictEqual(styleSwitchNote({}, 'underwear_bottom'), null);
+  assert.strictEqual(styleSwitchNote(null, 'underwear_bottom'), null);
+});
+
+test('styleSwitchNote: a target with no note text yields null rather than empty string', () => {
+  assert.strictEqual(styleSwitchNote({ styleSwitch: { isTarget: true } }, 'underwear_bottom'), null);
+});

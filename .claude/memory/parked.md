@@ -8,6 +8,20 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Judge tool-gap signal — route "a tool should have returned this" to its own queue
+- Parked: 2026-08-11
+- Domains: cs
+- Type: idea
+- Priority: medium
+- Notes: The 2026-08-11 facts audit found most judge-proposed facts were corrections a tool should have answered (product comparisons, size arithmetic, donation routing). The judge prompt now nulls those, which stops `advisor_facts` refilling — but the signal is discarded rather than captured, and it is the most direct evidence we have of which tool is missing data. Wanted: a `tool_gap` field on the judge verdict, stored and surfaced in the daily digest ("3 corrections this week were things a tool should have returned"), so a correction becomes a data/tool ticket instead of vanishing. Not built because it needs a column on `cs_draft_judgments`, and DDL has to be applied by Jamie in the Supabase SQL editor — shipping the parse without the column would be invisible incomplete state. Resume when: add the column, then extend `JUDGE_SYSTEM` + `parseJudgeVerdict` in `customer-service/lib/closenessJudge.js` and the insert in `lib/judgeDaily.js`.
+
+## Drive sizingEngine's style-switch recommendation from config instead of hardcoded names
+- Parked: 2026-08-11
+- Domains: cs
+- Type: idea
+- Priority: low
+- Notes: `sizingEngine.js` style_switch branch hardcodes Cheeky (swim) / Flo (kids) / Sassy (adult underwear). `product_cs_config.style_switch` now marks all four targets including the Naomi, and `compare_products` surfaces them, so both could be driven from one source. Left alone deliberately in the 2026-08-11 change: it decides which product a customer is told to switch to, so it is a customer-facing recommendation change needing a scenario run at `--repeat 3`, not a drive-by edit. A dead `configTargets` computation that read the config and discarded it was removed at the same time, so nothing there looks live that isn't.
+
 ## `edit_order` tells the operator an address-edited order can ship when it still can't
 - Parked: 2026-08-11
 - Type: bug
