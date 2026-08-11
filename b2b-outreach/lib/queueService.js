@@ -75,6 +75,7 @@ async function fetchOutreachQueue(sb, { channel } = {}) {
  */
 function mergePendingDraftEntries(queue, drafts, companiesById) {
   const inQueue = new Set((queue || []).map(e => e.company_id));
+  const withDraft = new Set((drafts || []).map(d => d.company_id));
   const synthetic = [];
   for (const d of drafts || []) {
     if (inQueue.has(d.company_id)) continue;
@@ -92,7 +93,15 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
   return [...(queue || []), ...synthetic].sort((a, b) => {
     if (a.tier !== b.tier) return a.tier - b.tier;
     if (a.tier === 1 && a.waiting_since && b.waiting_since) return new Date(a.waiting_since) - new Date(b.waiting_since);
-    return 0;
+    // Ready work first. Synthetic draft entries were appended to the queue and
+    // the comparator used to return 0 past this point, so with a stable sort
+    // every draft-ready company sank BELOW every empty one in its tier. That is
+    // backwards: a draft is one click from sent, an empty row is work not yet
+    // started, and burying the finished work under the unstarted work makes the
+    // panel read as though the empty rows were the more urgent ones.
+    const aReady = withDraft.has(a.company_id) ? 0 : 1;
+    const bReady = withDraft.has(b.company_id) ? 0 : 1;
+    return aReady - bReady;
   });
 }
 

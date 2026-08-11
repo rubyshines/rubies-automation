@@ -106,6 +106,43 @@ test('mergePendingDraftEntries defaults tier/reason when the draft has none', ()
   assert.equal(out[0].reason, 'pending draft awaiting review');
 });
 
+// A draft-ready row is one click from sent; an empty row is work not started.
+// Synthetic entries used to be appended with a comparator that returned 0 past
+// tier, so a stable sort sank every ready draft below every empty row in its
+// tier and the panel read as though the empty ones were more urgent.
+test('mergePendingDraftEntries sorts draft-ready companies above empty ones in the same tier', () => {
+  const empty = (id, name) => ({ company_id: id, company_name: name, channel: 'lgbtq_org', tier: 3, message_type: 'community_checkin', reason: 'back_to_school window, no prior outbound' });
+  const out = mergePendingDraftEntries(
+    [empty('empty-1', 'Empty One'), empty('empty-2', 'Empty Two')],
+    [{ id: 9, company_id: 'org-c', message_type: 'community_checkin', queue_tier: 3, queue_reason: 'partner re-engagement round' }],
+    companiesById,
+  );
+  assert.equal(out[0].company_id, 'org-c', 'the ready draft must come first');
+  assert.deepEqual(out.map(e => e.company_id), ['org-c', 'empty-1', 'empty-2']);
+});
+
+test('a ready draft does not jump ahead of a more urgent tier', () => {
+  const out = mergePendingDraftEntries(
+    [{ company_id: 'shop-a', company_name: 'Shop A', channel: 'wholesale', tier: 1, message_type: null, reason: 'replied — waiting on us', waiting_since: '2026-08-01T00:00:00Z' }],
+    [{ id: 9, company_id: 'org-c', message_type: 'community_checkin', queue_tier: 3, queue_reason: 'pride window' }],
+    companiesById,
+  );
+  assert.deepEqual(out.map(e => e.company_id), ['shop-a', 'org-c'], 'a person waiting still outranks a ready draft');
+});
+
+test('Tier 1 stays oldest-first, and readiness only breaks a genuine tie', () => {
+  const out = mergePendingDraftEntries(
+    [
+      { company_id: 'newer', company_name: 'Newer', channel: 'lgbtq_org', tier: 1, reason: 'waiting', waiting_since: '2026-08-09T00:00:00Z' },
+      { company_id: 'older', company_name: 'Older', channel: 'lgbtq_org', tier: 1, reason: 'waiting', waiting_since: '2026-08-01T00:00:00Z' },
+    ],
+    [{ id: 9, company_id: 'newer', message_type: 'reply', queue_tier: 1 }],
+    companiesById,
+  );
+  assert.deepEqual(out.map(e => e.company_id), ['older', 'newer'],
+    'an older unanswered person outranks a newer one even when the newer has a draft');
+});
+
 test('mergePendingDraftEntries ignores drafts whose company is out of scope (channel filter)', () => {
   const out = mergePendingDraftEntries([],
     [{ id: 3, company_id: 'unknown-co', message_type: 'intro_pitch', queue_tier: 4 }],
