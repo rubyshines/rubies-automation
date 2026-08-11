@@ -332,7 +332,12 @@ test('reconcileNotes: operator judgment note with no tickets is never touched', 
   assert.equal(resolved.length, 0);
 });
 
-test('reconcileNotes R3: free-form operator note + shipped + all tickets closed → resolved (regression for #31765)', async () => {
+test('reconcileNotes: shipped + all tickets closed → resolved (regression for #31765)', async () => {
+  // Original #31765 fixture, kept verbatim. It still resolves, but now via R1d
+  // rather than R3: the note is a machine-written shipping-method update, which
+  // R1d classifies on the strictly weaker precondition (no closed ticket
+  // needed). The regression this pins — that it does not sit in the report
+  // forever — is unchanged.
   const sb = makeStub({
     notes: [note(31765, 'Shipping updated to US Expedited Shipping: In-stock items shipping now after pre-order split; expediting at no charge per customer outreach.')],
     orders: [{ order_number: 31765, fulfillment_status: 'FULFILLED', cancelled_at: null }],
@@ -340,7 +345,57 @@ test('reconcileNotes R3: free-form operator note + shipped + all tickets closed 
   });
   const { resolved } = await reconcileNotes({ supabase: sb });
   assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'shipping_update_applied');
+});
+
+test('reconcileNotes R3: free-form operator note + shipped + all tickets closed → resolved', async () => {
+  // R3's own coverage, on a note no earlier rule classifies.
+  const sb = makeStub({
+    notes: [note(31770, 'split + expedited; shipped; ticket #2196 closed')],
+    orders: [{ order_number: 31770, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2196, order_number: '#31770', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
   assert.equal(resolved[0].rule, 'order_done_tickets_closed');
+});
+
+test('reconcileNotes R1d: shipping-update note + shipped + NO ticket → resolved (regression for #32311)', async () => {
+  // The gap R3 structurally cannot close. R3 requires >=1 closed ticket as
+  // evidence the conversation ended; an operator expediting an order nobody
+  // wrote in about leaves no ticket, so the note had no exit and aged in
+  // "Waiting on Response" indefinitely.
+  const sb = makeStub({
+    notes: [note(32311, 'Shipping updated to US Expedited Shipping: Operator requested expedited shipping')],
+    orders: [{ order_number: 32311, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'shipping_update_applied');
+  assert.equal(sb._inserts[0].row.resolved, true);
+  assert.equal(sb._inserts[0].row.author, 'auto');
+});
+
+test('reconcileNotes R1d: shipping-update note + order NOT yet shipped → stays open', async () => {
+  // The expedite is still pending delivery of its promise — keep it visible.
+  const sb = makeStub({
+    notes: [note(32312, 'Shipping updated to US Expedited Shipping: Customer needs it for a camp deadline')],
+    orders: [{ order_number: 32312, fulfillment_status: 'UNFULFILLED', cancelled_at: null }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
+test('reconcileNotes R1d: free-form note merely mentioning expediting is NOT auto-resolved', async () => {
+  // The anchor is load-bearing. This is a human judgment note that happens to be
+  // about expediting; it owes a reply and must keep ageing, so only the exact
+  // machine-written "Shipping updated to ..." prefix may match.
+  const sb = makeStub({
+    notes: [note(32313, 'Expedited after split — watching for reply')],
+    orders: [{ order_number: 32313, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
 });
 
 test('reconcileNotes R3: operator note + shipped but a ticket still open → stays open', async () => {

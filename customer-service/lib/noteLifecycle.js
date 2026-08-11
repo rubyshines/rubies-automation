@@ -45,6 +45,15 @@ const OUTREACH_NOTE_RE = /\[auto-draft\]|outreach drafted|outreach sent|pending 
 // author once the order is FULFILLED.
 const HOLD_NOTE_RE = /hold placed/i;
 
+// Shipping-method update notes ("Shipping updated to <method>: <reason>",
+// written by update_shipping_speed — see tools/orderNotes.js). Same shape of
+// fact as a hold note: it records a mechanical change we made to the order, not
+// a decision we still owe someone, so it's moot the moment the order ships.
+// Anchored to the writer's exact prefix precisely so a free-form operator note
+// ("Expedited after split — watching for reply") can never match it; the notes
+// safe to auto-resolve are the machine-written ones with a known format.
+const SHIPPING_UPDATE_NOTE_RE = /^shipping updated to /i;
+
 function isOutreachNote(note) {
   if (!note) return false;
   if (note.author === 'auto') return true;
@@ -168,6 +177,10 @@ async function getWhOrder(fetchWhOrder, orderNumber) {
  *         read current state (has_hold); a not-yet-placed hold can't false-positive
  *         because that order's ticket would still be open. A still-active hold keeps
  *         the note visible — the order genuinely won't ship.
+ *   R1d — shipping-method update note + order shipped → resolve, any author, no
+ *         ticket required. Records a mechanical change we made, so shipping
+ *         closes the question; these are routinely written with no ticket at all,
+ *         which put them beyond R3's reach entirely.
  *   R2  — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
  *   R3  — any-author note + order shipped + the order has ≥1 CS ticket and ALL are
  *         closed → resolve. Catches free-form operator notes R2 misses (their text
@@ -250,6 +263,16 @@ async function reconcileNotes({ supabase = getSupabaseClient(), fetchWhOrder } =
           reason = 'Warehouse hold released and conversation closed — hold note moot (reconciler)';
         }
       }
+    } else if (SHIPPING_UPDATE_NOTE_RE.test(note.note || '') && orderShipped) {
+      // Sibling of the hold rule above, and deliberately NOT gated on tickets:
+      // an expedite either happened or it didn't, and once the order has shipped
+      // that question is closed no matter what the conversation is doing. R3
+      // below can't cover this — it needs >=1 closed ticket as evidence the
+      // conversation ended, and these notes are routinely written with no ticket
+      // at all (an operator expediting an order nobody wrote in about), which
+      // left them stuck in "Waiting on Response" forever with no exit.
+      rule = 'shipping_update_applied';
+      reason = 'Order shipped — shipping-method update applied; note moot (reconciler)';
     } else if (isOutreachNote(note)) {
       if (allTicketsClosed) {
         rule = 'tickets_closed';
