@@ -216,7 +216,9 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   // active partner, so it is the better source whenever the company row is bare.
   const discountCountry = company.country || donation?.partner?.country_code || null;
   lines.push(`Partner purchase discount: ${partnerDiscountPercent(discountCountry)}% off retail.`
-    + ' Use this rate and no other. If the thread shows a signed agreement at a different rate, that agreement wins and you should flag it.');
+    + ' Use this rate and no other. The country table has no per-partner exceptions.'
+    + ' If the thread shows a different rate, quote THIS one anyway and raise the discrepancy'
+    + ' in needs_review_reason rather than settling it yourself.');
   lines.push(...renderMetadataFacts(company.metadata));
   lines.push(...renderDonationFacts(donation));
   lines.push('');

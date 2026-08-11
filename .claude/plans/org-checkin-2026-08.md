@@ -170,11 +170,15 @@ donations routed (Australia is a separate fulfilment problem), so the packages q
 >
 > Jamie Alexander, RUBIES Founder
 
-## 5. Trans Healthkit Projekt (DE, **50%**) — Billy, THProjekt@gmx.net
+## 5. Trans Healthkit Projekt (DE, 30%) — Billy, THProjekt@gmx.net
 
-> **Rate exception:** THP holds a signed agreement at 50%, predating the rule that
-> would put Germany at 30%. Honour the signed rate. This is now recorded on Billy's
-> contact notes so the advisor sees it too.
+> **Rate note:** THP was issued a signed agreement stating 50% in error, before the
+> country rule was settled. Decision 2026-08-11 is that they move to the standard
+> German 30% rather than the rate table carrying a permanent carve-out for one
+> mis-issued document. Quote 30%. Do NOT raise the discrepancy proactively here:
+> that would turn a warm reconnection into a contract correction, and this email
+> already opens with one apology. If Billy raises it, say plainly that we made a
+> mistake on the paperwork. Recorded on Billy's contact notes so the advisor sees it.
 
 **Grounding:** Onboarded April 2026. Billy signed the agreement, completed the survey, and asked
 "Do you have Pictures/Photos for social media, such as logo and products? Then I can post the
@@ -193,7 +197,7 @@ collaboration." **There is no reply to that in the thread.** An unanswered offer
 >
 > If anyone has said anything about the pieces, good or bad, I'd love to hear it.
 >
-> And whenever you want to stock specific sizes rather than wait on donations, you can order at 50% off any time, the rate in your agreement. No minimum, and there's no purchase requirement to stay in the program.
+> And whenever you want to stock specific sizes rather than wait on donations, you can order at 30% off any time. No minimum, and there's no purchase requirement to stay in the program.
 >
 > One small thing: the address on your website, THProjekt@thprojekt.com, bounces when I write to it. Worth fixing so people can reach you.
 >
@@ -551,8 +555,9 @@ The advisor can now draft these itself. What changed:
   fallback. Two unrelated orgs, one record. THP now has its own row and contact.
 - **BAGLY rendered at 30%** because its company row has no country, silently under-quoting
   a US partner. Fixed by the registry fallback above.
-- **THP's signed 50% agreement** is recorded on Billy's contact notes, which the prompt
-  already reads for bespoke arrangements.
+- **THP's mis-issued 50% agreement** resolved to the standard German 30% (2026-08-11),
+  so the country lookup carries no exceptions. The correction and how to handle Billy
+  raising it are on his contact notes, which the prompt already reads.
 
 ## Still open (parked, not done here)
 

@@ -102,9 +102,14 @@ test('renderContext prefers the company country over the registry when both exis
   assert.match(out, /Partner purchase discount: 30% off retail/);
 });
 
-test('renderContext lets a signed agreement override the country rate', () => {
+// A German partner held a mis-issued agreement at 50%; the call was to move them
+// to the standard 30% rather than carry a permanent carve-out. So a conflicting
+// rate in a thread is an escalation, never something the advisor quotes.
+test('renderContext refuses per-partner rate exceptions and escalates instead', () => {
   const out = renderContext(baseCtx(), QUEUE_ENTRY);
-  assert.match(out, /signed agreement at a different rate, that agreement wins/);
+  assert.match(out, /no per-partner exceptions/);
+  assert.match(out, /quote THIS one anyway and raise the discrepancy/);
+  assert.doesNotMatch(out, /that agreement wins/);
 });
 
 test('renderContext folds donation facts into the company block', () => {

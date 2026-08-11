@@ -25,9 +25,12 @@ const SIGNATURE_PATH = path.join(__dirname, '../assets/jamie-signature.png');
  * matching wholesale pricing — the gap covers duties we absorb on other
  * destinations. Pure.
  *
- * NOTE: at least one non-US partner (Trans Healthkit Projekt, Germany) holds a
- * signed agreement stating 50%, predating this rule. Honour existing signed
- * agreements; this governs new ones.
+ * NOTE: Trans Healthkit Projekt (Germany) holds a signed agreement stating 50%,
+ * issued in error before this rule was settled. Jamie's call 2026-08-11 is that
+ * they move to the standard 30% German rate rather than the rule bending around
+ * one mis-issued document; if they raise it we say plainly that we made a
+ * mistake. So the country lookup is the single source of truth for every
+ * partner, with no historical exceptions carved out of it.
  */
 const FIFTY_PERCENT_COUNTRIES = new Set([
   'us', 'usa', 'u.s.', 'u.s.a.', 'united states', 'united states of america',
