@@ -40,12 +40,13 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - **2026-08-11:** still unfixed structurally, but the 18 active donation partners were discovered by hand (74 threads imported), so that cohort now reasons from real history. Confirms the diagnosis at scale: 13 of the 18 had zero messages and would have drafted from an empty record. Two had no importable history for a second reason — the only address on file was not the one we actually corresponded with (MassTPC: survey gave `programs@`, every thread is with `mg@`). So the queue-build fix needs to run discovery across ALL of a company's known addresses, not just the primary.
 - Notes: `discoverCompanyThreads` runs only in `fetchCompanyThreads` (the per-company detail pane), never during the queue build — `reconcileThreads` only refreshes threads that already exist. So a company nobody has clicked has zero `b2b_messages`, and cadence reasons from an empty record. Concrete case: Trans Closet of the Hudson Valley wrote in Aug 2026 and sat at Tier 3 `community_checkin` ("back_to_school window, no prior outbound") instead of Tier 1 "waiting on us"; running discovery by hand imported 12 messages back to Jun 2025 and it flipped to Tier 1 immediately. Compounding design flaw: `community_checkin` treats `lastOutboundAt IS NULL` as infinitely overdue, but null means either "genuinely never contacted" or "no data imported yet" and the engine cannot tell those apart. Fix the data, not the rule: run bounded discovery for companies with zero messages during the queue build (or a nightly pass), so cadence reasons from facts. Until then any newly-added company shows a plausible-but-wrong tier until someone opens it.
 
-## Merge duplicate company rows (same org, two records)
-- Parked: 2026-08-05
+## Nothing stops duplicate company rows re-appearing on the next import
+- Parked: 2026-08-11
+- Last touched: 2026-08-11
 - Domains: b2b_sales, community
-- Type: bug
-- Priority: high
-- Notes: The imports created two rows for the same org on seven domains: BAGLY (active donation partner + bare row), Hugh Lane (three rows), Oasis Youth Center, Skipping Stone, OUT MetroWest, TransFamily Support Service, Self Serve Toys. Each carries a different contact address, so both would receive outreach. Cadence now suppresses the cold opener when a same-domain sibling is already engaged (`ctx.hasEngagedSibling`), which removes the immediate hazard — but the data is still duplicated, order/thread history is split across rows, and the panel shows both. Real fix: merge on domain, keeping the richest row, moving contacts and threads onto it, marking the other `lost` with a triage_reason. Related: the sheet-import contact-association audit entry below.
+- Type: idea
+- Priority: medium
+- Notes: The 2026-08-11 merge cleared the backlog (9 rows across 8 domains merged away, 0 live duplicates remaining), but nothing PREVENTS recurrence: `addProspect` and the sheet importers do not check for an existing row on the same domain before inserting. Add that check at intake, where it is one query, instead of merging after the fact. The merge tool is `scripts/_mergeDuplicateCompanies.js` (gitignored one-off, promote it if this recurs): scores rows by messages + threads*2 + contacts + orders*5, moves children onto the winner, carries only fields the winner is missing, retires losers as `lost` with `vetted_at` cleared so they cannot re-enter Tier 4. It merges only WITHIN a `relationship_type`, since a retailer and an org can legitimately share a domain.
 
 ## Dormancy is never derived, so `reactivation` cannot fire
 - Parked: 2026-08-05

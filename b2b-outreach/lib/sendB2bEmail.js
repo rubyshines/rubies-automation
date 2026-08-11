@@ -164,13 +164,27 @@ function buildRawMessage({ to, cc, subject, body: rawBody, inReplyTo, references
   return Buffer.from(raw, 'utf8').toString('base64url');
 }
 
-/** Resolve the recipient for a company: primary active contact, else general_email. */
+/**
+ * Resolve the recipient for a company: primary active contact, else general_email.
+ *
+ * Ordering past is_primary is load-bearing, not cosmetic. Twenty companies carry
+ * more than one active primary (the imports set the flag freely, and merging
+ * duplicate rows pools their contacts), and `order(is_primary).limit(1)` alone
+ * lets Postgres return whichever row it likes. Oasis had both a stale address
+ * and the successor a human explicitly handed us as the new contact, both
+ * primary, so who received the email was down to row order. Break the tie on
+ * evidence of a real correspondence, then on email for determinism, so the same
+ * company always resolves to the same person.
+ */
 async function resolveRecipient(sb, companyId) {
   const { data: contacts, error } = await sb.from('b2b_contacts')
-    .select('email, full_name, is_primary, is_active')
+    .select('email, full_name, is_primary, is_active, message_count, last_seen_at')
     .eq('company_id', companyId)
     .eq('is_active', true)
     .order('is_primary', { ascending: false })
+    .order('message_count', { ascending: false, nullsFirst: false })
+    .order('last_seen_at', { ascending: false, nullsFirst: false })
+    .order('email', { ascending: true })
     .limit(1);
   if (error) throw new Error(`contact lookup: ${error.message}`);
   if (contacts?.length) return { email: contacts[0].email, name: contacts[0].full_name || null, via: 'contact' };

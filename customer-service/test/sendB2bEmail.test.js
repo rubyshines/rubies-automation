@@ -14,7 +14,15 @@ require.cache[sbPath] = {
       from: (table) => ({
         select: () => ({
           eq: () => ({
-            eq: () => ({ order: () => ({ limit: () => Promise.resolve({ data: state.contacts, error: null }) }) }),
+            // resolveRecipient chains several order() calls to break ties between
+            // multiple primaries, so order() has to return itself here.
+            eq: () => {
+              const q = {
+                order: () => q,
+                limit: () => Promise.resolve({ data: state.contacts, error: null }),
+              };
+              return q;
+            },
             maybeSingle: () => Promise.resolve({ data: state.company, error: null }),
           }),
         }),
