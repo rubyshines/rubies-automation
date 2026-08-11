@@ -41,8 +41,9 @@ Also set:
   Null it when a system of record owns the truth — even when the draft got it wrong, because then the fix is the tool or the data, never a sentence: how two products compare in cut, leg opening, rise, coverage, available sizes or colours (the product catalog and compare_products own this); size-chart arithmetic, such as how much a size up adds at the waist or which size suits a given measurement (the size chart owns this); which donation partner or return address a customer should use (the partner registry and its geographic routing own this — a fact naming one partner would misroute every customer who lives somewhere else); shipping rates, delivery windows, duties coverage, stock levels, restock dates and pre-order state; and anything already stated on the product page or in the knowledge base.
   Also null, as before: one-off situation details (this customer's address, this order's contents), Jamie's one-time judgment calls (a colour suggestion or workaround offered to one customer), individual garment measurements, and transient states (carrier delays, stockists that may change).
   Calibration. Jamie's first review round rejected 14 of 36 proposals, nearly all one-off judgments or perishable logistics. A full audit on 2026-08-11 then retired 42 of the 58 facts then live: the largest group was product comparisons a tool already answered, followed by size arithmetic and duplicates of the donation policy. When in doubt between "durable truth" and "something a tool should have returned", emit null.
+- "tool_gap": the companion to the rule above. Whenever you null a candidate_fact because a system of record owns the truth, say in ONE sentence which tool or data set should have returned it and what was missing (e.g. "compare_products returns no leg-opening comparison, so the advisor guessed which style is cut higher"). This is how a correction becomes a data fix instead of a prose patch. Null it when the correction was genuinely operator-only knowledge, or when there was no correction at all. A verdict can carry a candidate_fact or a tool_gap, but rarely both.
 
-Judge the SUBSTANCE delivered to the customer. Do not reward verbosity or politeness padding. Respond with ONLY a JSON object: {"category": "...", "draft_may_be_right": false, "severity": "...", "rationale": "...", "candidate_fact": null}`;
+Judge the SUBSTANCE delivered to the customer. Do not reward verbosity or politeness padding. Respond with ONLY a JSON object: {"category": "...", "draft_may_be_right": false, "severity": "...", "rationale": "...", "candidate_fact": null, "tool_gap": null}`;
 
 /** Trim conversation history to the last few messages, bounded per message. */
 function excerptConversation(history, maxMessages = 6, maxChars = 600) {
@@ -80,6 +81,9 @@ function parseJudgeVerdict(text) {
     rationale: typeof parsed.rationale === 'string' ? parsed.rationale.slice(0, 1000) : '',
     candidate_fact: (typeof parsed.candidate_fact === 'string' && parsed.candidate_fact.trim())
       ? parsed.candidate_fact.trim().slice(0, 500)
+      : null,
+    tool_gap: (typeof parsed.tool_gap === 'string' && parsed.tool_gap.trim())
+      ? parsed.tool_gap.trim().slice(0, 500)
       : null,
   };
 }

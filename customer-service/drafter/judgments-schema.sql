@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS cs_draft_judgments (
   message_type        text,
   judge_model         text,            -- model id, or 'deterministic' for identical short-circuit
   source              text DEFAULT 'baseline',  -- baseline | daily
+  tool_gap            text,            -- the tool/table that should have returned this correction (added 2026-08-11)
   created_at          timestamptz DEFAULT now()
 );
 
