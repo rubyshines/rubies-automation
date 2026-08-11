@@ -2,6 +2,20 @@
 
 Re-engagement sweep across all 18 active donation partners. Goal is a reply, not a survey.
 
+> **STATUS 2026-08-11: superseded by engine drafts.** All 18 were regenerated through
+> `generateDraft` and are pending in the Outreach panel (drafts #47-#65, one per org).
+> **Review those, not the hand-written drafts below**, which are kept as the spec that
+> produced them and as the comparison baseline. Nothing has been sent.
+>
+> What the regeneration exposed, all since fixed: the advisor dropped the contact-currency
+> ask (17 of 18) and the discount reminder (18 of 18), because the prompt's hard
+> "one question per email, one CTA per email" rule conflicts with a check-in carrying
+> five asks. Resolved in the prompt by naming the two closing lines as housekeeping
+> rather than a second ask. It also wrote "632 items distributed this year" from a
+> September 2025 figure, because the context never stated the current date. And
+> TransPonder rendered at 30% with no donation numbers, because the registry's
+> `website_url` was a stale domain that no longer matched the company row.
+
 ## The five asks (Jamie's brief)
 
 1. How are they doing?

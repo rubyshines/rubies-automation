@@ -17,6 +17,14 @@ function baseCtx(overrides = {}) {
   };
 }
 
+// Without today's date the advisor read a Sept 2025 figure as current and wrote
+// "632 items distributed this year" in an August 2026 draft.
+test('renderContext states today so the advisor can judge recency', () => {
+  const out = renderContext(baseCtx(), QUEUE_ENTRY, null, new Date('2026-08-11T12:00:00Z'));
+  assert.match(out, /^Today is 2026-08-11\./);
+  assert.match(out, /never repeat a figure or a status from an old message as if it still holds/);
+});
+
 test('renderDonationFacts is empty when the org is not a matched partner', () => {
   assert.deepStrictEqual(renderDonationFacts(null), []);
 });

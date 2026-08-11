@@ -150,6 +150,14 @@ When changing the advisor prompt to fix one failure, run the scenario enough tim
 
 **How to apply:** prefer the smallest rule that removes the ambiguity — adding detail to "cover" a case often hands the model new material to act on. Capture the full pass/fail line-up per run, not just the headline. If a fix seems to need more specificity than one scoping sentence, that's a signal the prompt structure is wrong, not that the rule needs more words.
 
+## Any AI context that reasons about elapsed time must state today's date
+
+If a prompt asks a model to judge recency (a re-approach after a gap, whether something has gone stale, whether a figure still holds), the assembled context has to carry the current date explicitly. Timestamps on the records are not enough.
+
+**Why:** the B2B community advisor was handed a thread with absolute dates on every message and asked to write a re-approach. It read the newest message as current and wrote "632 items distributed this year" from a figure an org gave us in September 2025, in a draft composed in August 2026. Nothing in the context said what today was, so "newest in the thread" was the only anchor available and the model took it. The failure is silent and lands in customer-facing text as a confidently wrong fact.
+
+**How to apply:** render a date line into the context, paired with what to do with it ("work out how long ago something was before describing it as recent; never repeat a figure or status from an old message as if it still holds"). Inject the date as a parameter rather than calling `new Date()` inline, so the render stays pure and testable. Audit any other advisor whose prompt talks about gaps, staleness, or "recently" — the CS advisor and any future supervisor have the same exposure.
+
 ## Positive prompt rules stick; negative ones drift
 
 When you need an LLM behavior to be reliable, frame it as a positive instruction with a verbatim template ("Open with: ..."). Negative instructions ("DO NOT open with sorry") are followed unreliably.

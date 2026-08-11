@@ -195,8 +195,18 @@ function renderDonationFacts(donation) {
   return lines;
 }
 
-function renderContext({ company, contacts, messages, donation }, queueEntry, steer) {
+function renderContext({ company, contacts, messages, donation }, queueEntry, steer, now = new Date()) {
   const lines = [];
+  // Without today's date the advisor cannot tell a recent message from an old
+  // one, and it defaults to reading the newest thing in the thread as current.
+  // That produced "632 items distributed this year" from a figure an org gave
+  // us in September 2025 about 2025, in a draft written in August 2026. Every
+  // re-approach in this system is explicitly about elapsed time, so the model
+  // needs the one fact it cannot derive from the transcript.
+  lines.push(`Today is ${now.toISOString().slice(0, 10)}. Thread dates are absolute:`
+    + ' work out how long ago something was before describing it as recent, and never'
+    + ' repeat a figure or a status from an old message as if it still holds.');
+  lines.push('');
   lines.push(`## Company`);
   lines.push(`${company.name} (${company.relationship_type}, state: ${company.relationship_state || 'unknown'}, status: ${company.status || '—'})`);
   if (company.city || company.country) lines.push(`Location: ${[company.city, company.region, company.country].filter(Boolean).join(', ')}`);
