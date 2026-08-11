@@ -6,5 +6,24 @@
     "either credited back, or confirmed as a file-only error we were never charged for.",
     "Shape: { invoice_number, invoice_date, reason, acknowledged_on }"
   ],
-  "acknowledged": []
+  "acknowledged": [
+    {
+      "invoice_number": "80820",
+      "invoice_date": "2026-06-03",
+      "reason": "June 2026 customs billing error. Nitro billed $801.13 against components of $589.48 (over by $211.65). Corrected in the master file and credited on the 2026-07-31 Nitro bill ($1,008.50 covering 80820 + 80998 + 82006, overcharge $908.50).",
+      "acknowledged_on": "2026-08-11"
+    },
+    {
+      "invoice_number": "80998",
+      "invoice_date": "2026-06-10",
+      "reason": "June 2026 customs billing error. Nitro billed $1,321.96 against components of $906.05 (over by $415.91). Corrected in the master file and credited on the 2026-07-31 Nitro bill ($1,008.50 covering 80820 + 80998 + 82006, overcharge $908.50).",
+      "acknowledged_on": "2026-08-11"
+    },
+    {
+      "invoice_number": "82006",
+      "invoice_date": "2026-06-24",
+      "reason": "June 2026 customs billing error. Nitro billed $968.85 against components of $687.91 (over by $280.94). Corrected in the master file and credited on the 2026-07-31 Nitro bill ($1,008.50 covering 80820 + 80998 + 82006, overcharge $908.50).",
+      "acknowledged_on": "2026-08-11"
+    }
+  ]
 }
