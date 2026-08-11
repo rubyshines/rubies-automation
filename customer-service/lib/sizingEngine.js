@@ -143,6 +143,44 @@ function getProductUrl(nickname) {
 }
 
 /**
+ * Style-switch targets to offer for a tight-legs complaint, from
+ * product_cs_config.style_switch.
+ *
+ * The field carries two different meanings and they must not be conflated:
+ *   isTarget     — the CUT fact: this style has a wider leg opening. That is
+ *                  what compare_products shows the advisor, and it is true of
+ *                  the Naomi even though the Naomi is rarely the right suggestion.
+ *   recommendFor — what we actually suggest to a customer, which also weighs
+ *                  compression and age. The Naomi is a gaff (more compression,
+ *                  less all-day comfort), so it is offered ALONGSIDE the Sassy
+ *                  and never ahead of it; the Flo is the youth answer and the
+ *                  Sassy the adult one.
+ *
+ * Ordering is everyday-wear first, so the all-day pick always leads the copy,
+ * then by nickname so the wording is stable between runs.
+ */
+function tightLegsTargets({ category, isKids, excludeNickname } = {}) {
+  const ageGroup = isKids ? 'youth' : 'adult';
+  return Object.values(_activeProducts)
+    .filter((p) => {
+      const ss = p.styleSwitch;
+      if (!ss?.isTarget || !ss.recommendFor?.tightLegs) return false;
+      if (p.category !== category) return false;
+      if (ss.forCategories && !ss.forCategories.includes(category)) return false;
+      const ages = ss.recommendFor.ageGroups;
+      if (ages && !ages.includes(ageGroup)) return false;
+      if (excludeNickname && p.nickname.toLowerCase() === String(excludeNickname).toLowerCase()) return false;
+      return true;
+    })
+    .map((p) => ({
+      nickname: p.nickname,
+      everyday: p.styleSwitch.recommendFor.everyday === true,
+      link: getProductUrl(p.nickname) || '',
+    }))
+    .sort((a, b) => (b.everyday === true) - (a.everyday === true) || a.nickname.localeCompare(b.nickname));
+}
+
+/**
  * Build a human-friendly product list text from the loaded config.
  */
 function buildProductListText() {
@@ -1621,26 +1659,20 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         const productCategory = classifyProduct(item.product);
         const isSwim = productCategory === 'swim_bottom' || productCategory === 'swim_top';
 
-        let recommendation, link;
-        if (isSwim) {
-          recommendation = 'Cheeky Bikini Bottoms';
-          link = getProductUrl('Cheeky') || '';
-        } else if (isKids) {
-          recommendation = 'Flo Dance Underwear';
-          link = getProductUrl('Flo') || '';
-        } else {
-          // Adult underwear. The style-switch targets also live on
-          // product_cs_config.style_switch (which compare_products surfaces to
-          // the advisor); this branch stays hardcoded on purpose — changing
-          // which product it names changes customer-facing recommendations and
-          // needs a scenario run, so it is not a drive-by edit.
-          recommendation = 'Sassy';
-          link = getProductUrl('Sassy') || '';
-        }
-
-        // Check if the recommendation is the same product they already have
+        // Targets come from product_cs_config, not a hardcoded list, so adding
+        // or rescoping a style updates the advisor (via compare_products) and
+        // this recommendation together. A swim complaint looks for swim bottoms;
+        // a one-piece has no target at all, which is why the empty case below
+        // must not fall through to naming an underwear style.
         const currentNick = getProductNickname(item.product);
-        const isSameProduct = currentNick && recommendation.toLowerCase().includes(currentNick.toLowerCase());
+        const targetCategory = isSwim ? 'swim_bottom' : productCategory;
+        const targets = tightLegsTargets({
+          category: targetCategory,
+          isKids,
+          excludeNickname: currentNick,
+        });
+        // "Already on a widest-leg style, and nothing else to move them to."
+        const isSameProduct = targets.length === 0;
 
         // Check if customer confirmed waist is fine — if not, ask for measurement too
         const msgStyle = (intake._latestMessage || '').toLowerCase();
@@ -1658,26 +1690,38 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           const adultEquiv = numericToAdult[normSize] || null;
           const sassyUrl = getProductUrl('Sassy') || '';
           const adultAlt = (nearAdultBoundary || isYouthNearBoundary) && adultEquiv
-            ? ` Or you could try the Sassy in size ${adultEquiv} which is the equivalent in our adult line and has a different cut — ${sassyUrl}`
+            ? ` Or you could try the Sassy in size ${adultEquiv}, the equivalent in our adult line, which has a different cut: ${sassyUrl}`
             : '';
-          rx.response_text = `The ${currentNick} already has the widest leg opening in our range. Sizing up would give more room in the legs.${adultAlt}${measureAsk ? ' ' + measureAsk.charAt(0).toUpperCase() + measureAsk.slice(1) : ''}`;
-          rx.audit = `Tight legs on ${currentNick} — already widest leg opening, suggesting size up${adultAlt ? ' + adult alternative' : ''}`;
+          rx.response_text = `The ${currentNick} already has one of the widest leg openings in our range. Sizing up would give more room in the legs.${adultAlt}${measureAsk ? ' ' + measureAsk.charAt(0).toUpperCase() + measureAsk.slice(1) : ''}`;
+          rx.audit = `Tight legs on ${currentNick} — no other style-switch target, suggesting size up${adultAlt ? ' + adult alternative' : ''}`;
           prescription.still_needed.push(`size_confirmation for ${item.product}`);
         } else {
           rx.state = 'AWAITING_STYLE_CONFIRMATION';
-          const hasHave = recommendation.endsWith('s') ? 'have' : 'has';
-          const thatThem = recommendation.endsWith('s') ? 'them' : 'that';
           // When switching from youth to adult product, mention the equivalent size
           const equivSize = NUMERIC_SIZES.includes(normSize) && !isKids ? NUMERIC_TO_LETTER_UPPER[normSize] : null;
           const sizeNote = equivSize ? ` in size ${equivSize}` : '';
-          rx.response_text = `The ${recommendation}${sizeNote} ${hasHave} a larger leg opening which may work better. Would you like to try ${thatThem} instead? ${link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
-          rx.recommendation = { product: recommendation, link };
+          const lead = targets[0];
+          const offered = targets.slice(0, 2);
+
+          if (offered.length > 1) {
+            // Two styles share the wider cut. Name the everyday pick rather than
+            // stating the trade-off: the Naomi is a gaff, so it buys compression
+            // at some cost to all-day comfort, and we do not say that outright.
+            const names = offered.map(t => `the ${t.nickname}`).join(' and ');
+            const links = offered.map(t => `${t.nickname}: ${t.link}`).join(' ');
+            const everydayPick = offered.find(t => t.everyday) || lead;
+            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} both have a larger leg opening which may work better. The ${everydayPick.nickname} is the one most people find best for all day wear. Would you like to try one instead? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+          } else {
+            rx.response_text = `The ${lead.nickname}${sizeNote} has a larger leg opening which may work better. Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+          }
+
+          rx.recommendation = { product: lead.nickname, link: lead.link, alternatives: offered.slice(1) };
           // Store the pending style switch on the intake item so confirmation uses the new product
           const intakeItemStyle = intake.items.find(ii => ii.product === item.product);
           if (intakeItemStyle) {
-            intakeItemStyle._pendingStyleSwitch = recommendation;
+            intakeItemStyle._pendingStyleSwitch = lead.nickname;
           }
-          rx.audit = `Tight legs → ${recommendation} (${isKids ? 'kids' : 'adult'}, ${isSwim ? 'swim' : 'underwear'})`;
+          rx.audit = `Tight legs → ${offered.map(t => t.nickname).join(' / ')} (${isKids ? 'kids' : 'adult'}, ${isSwim ? 'swim' : 'underwear'})`;
           prescription.still_needed.push(`style_confirmation for ${item.product}`);
         }
         break;

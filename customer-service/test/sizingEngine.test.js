@@ -20,16 +20,16 @@ const mockCsConfig = [
   { product_handle: 'the-ava-seamless-shaping-bra', nickname: 'Ava', category: 'underwear_top', keywords: ['ava'], delta_wording: 'bra', sizes_override: null, style_switch: null },
   { product_handle: 'the-brooke-shaping-bra', nickname: 'Brooke', category: 'underwear_top', keywords: ['brooke'], delta_wording: 'bra', sizes_override: null, style_switch: null },
   { product_handle: 'the-charlie-no-tuck-extra-cute-shaping-underwear', nickname: 'Charlie', category: 'underwear_bottom', keywords: ['charlie'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-cheeky-no-tuck-shaping-bikini-bottom', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-flo-shaping-dance-underwear', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-cheeky-no-tuck-shaping-bikini-bottom', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['swim_bottom'], recommendFor: { tightLegs: true, ageGroups: ['youth', 'adult'], everyday: true } } },
+  { product_handle: 'the-flo-shaping-dance-underwear', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['youth'], everyday: true } } },
   { product_handle: 'the-mia-halter-bikini-top', nickname: 'Mia', category: 'swim_top', keywords: ['mia'], delta_wording: 'bikini_top', sizes_override: null, style_switch: null },
   { product_handle: 'the-ruby-no-tuck-shaping-bikini-bottom', nickname: 'Ruby', category: 'swim_bottom', keywords: ['ruby'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-sassy-no-tuck-shaping-underwear', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'] } },
+  { product_handle: 'the-sassy-no-tuck-shaping-underwear', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: true } } },
   { product_handle: 'the-serena-no-tuck-shaping-shorty-short', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
   { product_handle: 'the-sky-no-tuck-shaping-one-piece', nickname: 'Sky', category: 'onepiece', keywords: ['sky', 'one-piece'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
   { product_handle: 'the-stella-high-waisted-shaping-bikini-bottom', nickname: 'Stella', category: 'swim_bottom', keywords: ['stella'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
   { product_handle: 'the-sunny-queeny-tankini', nickname: 'Queeny', category: 'swim_top', keywords: ['queeny', 'sunny', 'tankini'], delta_wording: 'top', sizes_override: null, style_switch: null },
-  { product_handle: 'the-naomi-gaff-extra-strength-shaping-underwear', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom', sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'], style_switch: { isTarget: true, forCategories: ['underwear_bottom'] } },
+  { product_handle: 'the-naomi-gaff-extra-strength-shaping-underwear', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom', sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'], style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: false } } },
   { product_handle: 'rubies-shaping-chest-pads', nickname: 'Chest Pads', category: 'chest_pads', keywords: ['pad'], delta_wording: null, sizes_override: null, style_switch: null },
   { product_handle: 'rubies-gift-card', nickname: 'Gift Card', category: 'accessory', keywords: ['gift card'], delta_wording: null, sizes_override: null, style_switch: null },
   { product_handle: 'progress-pride-pins', nickname: 'Pride Pins', category: 'accessory', keywords: ['pins'], delta_wording: null, sizes_override: null, style_switch: null },
@@ -1164,16 +1164,82 @@ describe('prescribeSizingResolution', () => {
       assert.ok(!result.items[0].response_text.includes('Flo'), 'Size 16 should not recommend Flo (youth)');
     });
 
-    it('suggests sizing up when already on widest leg product (Sassy)', async () => {
+    it('offers both the Sassy and the Naomi for adult underwear, Sassy leading', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: 'M' })],
+        _latestMessage: 'The waist fits fine but the legs are too tight.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      const text = result.items[0].response_text;
+      assert.ok(text.includes('Sassy') && text.includes('Naomi'), 'both wider-cut styles offered');
+      // The Naomi is a gaff. It is offered, but the Sassy is the named all-day
+      // pick and must lead -- we convey the trade-off that way rather than
+      // telling the customer the Naomi is less comfortable.
+      assert.ok(text.indexOf('Sassy') < text.indexOf('Naomi'), 'Sassy must lead');
+      assert.match(text, /Sassy is the one most people find best for all day wear/);
+      assert.ok(!/compression|less comfortable|sacrific/i.test(text), 'never states the compression trade-off outright');
+      assert.equal(result.items[0].recommendation.product, 'Sassy');
+    });
+
+    it('offers the Naomi when the customer is already on the Sassy', async () => {
+      // Used to dead-end at "already the widest, size up", which contradicts the
+      // rule that a right waist should not be sized up to fix the legs.
       const intake = makeIntake({
         items: [makeItem({ issue: 'tight_legs', size: 'L', product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR' })],
         _latestMessage: 'The Sassy is too tight around the legs.',
       });
       const classified = [makeClassified({ action: 'style_switch', product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'L' })];
       const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
+      assert.ok(result.items[0].response_text.includes('Naomi'));
+      assert.ok(!result.items[0].response_text.includes('Sassy'), 'never re-offers the style they already own');
+    });
+
+    it('offers the Sassy when the customer is already on the Naomi', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: 'M', product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR' })],
+        _latestMessage: 'The Naomi is too tight around the legs.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: 'M' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.ok(result.items[0].response_text.includes('Sassy'));
+      assert.ok(!result.items[0].response_text.includes('Naomi'));
+    });
+
+    it('never offers the adult-only Naomi or Sassy to a youth size', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: '10' })],
+        _latestMessage: 'The waist fits fine but the legs are too tight.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      const text = result.items[0].response_text;
+      assert.ok(text.includes('Flo'), 'youth answer is the Flo');
+      assert.ok(!text.includes('Naomi'), 'Naomi is adult-only');
+      assert.ok(!text.includes('Sassy'), 'Sassy is adult-only');
+    });
+
+    it('falls back to sizing up when the category has no other target left', async () => {
+      // Swim has a single target, so a Cheeky owner has nowhere to switch to.
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: 'M', product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM' })],
+        _latestMessage: 'The Cheeky is too tight around the legs.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
       assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('widest leg opening'));
       assert.ok(result.items[0].response_text.includes('Sizing up'));
+    });
+
+    it('customer-facing style-switch copy carries no em dash', async () => {
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: 'M' })],
+        _latestMessage: 'The legs are too tight.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.ok(!result.items[0].response_text.includes('\u2014'), 'brand guardrail: no em dashes in customer-facing copy');
     });
 
     it('asks for waist measurement when waist not mentioned', async () => {
