@@ -22,7 +22,8 @@ const {
   updateOrderShippingAddress,
 } = require('../shopify');
 const { searchProducts } = require('../productCache');
-const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, warehanceOrderUrl, resolveShippingMethod, updateShippingMethod } = require('../../../reports/lib/warehanceClient');
+const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, releaseAddressHold, getHoldReasons, warehanceOrderUrl, resolveShippingMethod, updateShippingMethod } = require('../../../reports/lib/warehanceClient');
+const { validateShippingAddress } = require('../addressValidation');
 const { getShippingZone } = require('./shippingLookup');
 const { writeAuditEntry } = require('./adminTools');
 const { toCountryCode } = require('../addressUtils');
@@ -351,14 +352,25 @@ const tools = [
           `**New address:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}`,
         ];
 
-        // Fetch the Warehance order once for two post-update tasks:
+        // Fetch the Warehance order once for three post-update tasks:
         //   1. On a country change, correct the shipping method to the new zone
         //      (Shopify's shipping line title is immutable on placed orders, so
         //      Warehance is the only place to fix routing).
-        //   2. Release any warehouse hold that was freezing the order until the
-        //      address was fixed — the change is applied now, so it must ship.
-        //      Without this, an address change leaves the order held forever
-        //      (the order can't ship and nothing else releases it).
+        //   2. Release any hold that was freezing the order until the address was
+        //      fixed — the change is applied now, so it must ship. Without this,
+        //      an address change leaves the order held forever (the order can't
+        //      ship and nothing else releases it).
+        //   3. Re-read the holds afterwards and report what ACTUALLY remains.
+        //
+        // Warehance holds are independent booleans (`address_hold`,
+        // `warehouse_hold`, `fraud_hold`, …) with `has_hold` as the roll-up, and
+        // an address change is the canonical CAUSE of an `address_hold` — so it
+        // is the one hold this path most needs to clear. Releasing it asserts the
+        // NEW address is good, which we only know if it validates: the same
+        // Tier-1 geocode gate autoExecuteAddressChange already trusts to
+        // auto-apply an address in the first place. When it doesn't validate the
+        // hold stays and we say so, because a held order is recoverable and a
+        // parcel sent to a bad address is not.
         try {
           const orderNum = order.name.replace('#', '');
           const whOrder = await fetchOrderByNumber(orderNum);
@@ -377,7 +389,35 @@ const tools = [
             }
             if (whOrder.warehouse_hold) {
               await releaseWarehouseHold(whOrder.id);
-              lines.push('**Warehouse hold:** Released — the address change is applied, so the order can ship.');
+              lines.push('**Warehouse hold:** Released — the address change is applied.');
+            }
+            if (whOrder.address_hold) {
+              const verdict = await validateShippingAddress({
+                address1: a.address1,
+                address2: a.address2,
+                city: a.city,
+                province: a.province,
+                zip: a.zip,
+                country: a.country,
+              });
+              if (verdict.ok) {
+                await releaseAddressHold(whOrder.id);
+                lines.push('**Address hold:** Released — the new address validates, so the order can ship.');
+              } else {
+                lines.push(`**⚠️ Address hold:** STILL HELD — the new address did not validate (${verdict.reason}). The order will NOT ship until this is resolved. Verify the address and release the hold with release_address_hold.`);
+              }
+            }
+
+            // Truthfulness backstop: never leave the operator believing the order
+            // can ship on the strength of the release lines above. Re-read the
+            // live record and name whatever is still blocking it — including hold
+            // kinds this path does not manage (fraud, payment, allocation, store).
+            const after = await fetchOrderByNumber(orderNum);
+            const blocking = after ? getHoldReasons(after) : [];
+            if (blocking.length) {
+              lines.push(`**⚠️ Order still on hold in Warehance:** ${blocking.join(', ')} — it will NOT ship until cleared.`);
+            } else if (after) {
+              lines.push('**Warehance:** No holds remaining — the order is clear to ship.');
             }
           }
           // If whOrder is null, the order hasn't reached Warehance yet — no action needed.

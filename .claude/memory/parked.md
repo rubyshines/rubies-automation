@@ -15,16 +15,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Priority: low
 - Notes: `sizingEngine.js` style_switch branch hardcodes Cheeky (swim) / Flo (kids) / Sassy (adult underwear). `product_cs_config.style_switch` now marks all four targets including the Naomi, and `compare_products` surfaces them, so both could be driven from one source. Left alone deliberately in the 2026-08-11 change: it decides which product a customer is told to switch to, so it is a customer-facing recommendation change needing a scenario run at `--repeat 3`, not a drive-by edit. A dead `configTargets` computation that read the config and discarded it was removed at the same time, so nothing there looks live that isn't.
 
-## `edit_order` tells the operator an address-edited order can ship when it still can't
-- Parked: 2026-08-11
-- Type: bug
-- Domains: cs, logistics
-- Priority: high
-- Notes: Warehance holds are independent boolean fields (`address_hold`, `warehouse_hold`, `fraud_hold`, …; `has_hold` is the roll-up). The address-only branch of `edit_order` ([tools/editOrder.js:378](../../customer-service/lib/tools/editOrder.js#L378)) checks `whOrder.warehouse_hold`, calls `releaseWarehouseHold` (which PATCHes `warehouse_hold: false`) and prints **"Warehouse hold: Released — the address change is applied, so the order can ship."** It never touches `address_hold`. An address change is the canonical *cause* of an address hold, so the one hold type this path most needs to clear is the one it doesn't, and it then asserts the opposite.
-- Observed live 2026-08-11 on #32930: order held with both `address_hold` and `warehouse_hold` set. The edit printed "the order can ship"; Warehance immediately after read `has_hold: true, address_hold: true, ready_to_ship: false`. An explicit `release_address_hold` was needed. An operator trusting the message leaves the order stuck indefinitely.
-- Decision needed before fixing: should an address edit auto-release `address_hold`? Releasing it asserts the *new* address is valid, and `edit_order` applies whatever address it is handed, so auto-release could clear a hold on a still-bad address. Two options: (a) minimal and safe — re-read holds after the update and report what actually remains, warning explicitly when an address hold is still set (makes the message truthful without deciding policy); (b) auto-release `address_hold` when the new address passes the Tier-1 geocode check in [addressValidation.js](../../customer-service/lib/addressValidation.js), the same gate `autoExecuteAddressChange` already trusts. (a) is the smaller change and an improvement either way; (b) subsumes it.
-- Resume when: pick (a) or (b). Either way add a regression test asserting the reported hold state matches Warehance after an address-only edit.
-
 ## `ai_calls` may be under-reporting AI spend — every cost number Jamie sees could be low
 - Parked: 2026-08-10
 - Type: bug

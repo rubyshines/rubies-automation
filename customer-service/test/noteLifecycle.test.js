@@ -309,6 +309,56 @@ test('reconcileNotes R2: matches tickets stored with a leading # prefix', async 
   assert.equal(resolved[0].rule, 'tickets_closed');
 });
 
+test('reconcileNotes R2: falls back to the ticket id named in the note (regression for #32707)', async () => {
+  // Outreach about a child exchange order, placed on the customer's existing
+  // conversation which is filed under the PARENT order. The order-number join
+  // finds nothing, so before this fallback the note was unreachable by every
+  // rule and sat in "Waiting on Response" reading "awaiting customer reply"
+  // for 13 days after the conversation had actually closed.
+  const sb = makeStub({
+    notes: [note(32707, 'Outreach sent (ticket #2883) — awaiting customer reply')],
+    orders: [{ order_number: 32707, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2883, order_number: '#32534', status: 'closed' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].rule, 'tickets_closed');
+});
+
+test('reconcileNotes R2: named ticket still OPEN blocks resolution', async () => {
+  const sb = makeStub({
+    notes: [note(32708, 'Outreach sent (ticket #2884) — awaiting customer reply')],
+    orders: [{ order_number: 32708, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    tickets: [{ id: 2884, order_number: '#32535', status: 'open' }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
+test('reconcileNotes R2: the order-number join wins over the named ticket id', async () => {
+  // The named id is a FALLBACK, never an override: a note naming a since-closed
+  // ticket must not resolve while the order's own conversation is still open.
+  const sb = makeStub({
+    notes: [note(32709, 'Outreach sent (ticket #2885) — awaiting customer reply')],
+    orders: [{ order_number: 32709, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+    tickets: [
+      { id: 2890, order_number: '32709', status: 'open' },
+      { id: 2885, order_number: '#32536', status: 'closed' },
+    ],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
+test('reconcileNotes R2: a named ticket that does not exist is ignored', async () => {
+  const sb = makeStub({
+    notes: [note(32710, 'Outreach sent (ticket #9999) — awaiting customer reply')],
+    orders: [{ order_number: 32710, fulfillment_status: 'FULFILLED', cancelled_at: null }],
+  });
+  const { resolved } = await reconcileNotes({ supabase: sb });
+  assert.equal(resolved.length, 0);
+});
+
 test('reconcileNotes R2: open ticket blocks resolution', async () => {
   const sb = makeStub({
     notes: [note(31273, 'Address-confirmation outreach drafted (v2) — pending operator review')],

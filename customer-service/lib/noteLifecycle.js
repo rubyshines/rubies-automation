@@ -182,6 +182,8 @@ async function getWhOrder(fetchWhOrder, orderNumber) {
  *         closes the question; these are routinely written with no ticket at all,
  *         which put them beyond R3's reach entirely.
  *   R2  — outreach note + the order has ≥1 CS ticket and ALL are closed → resolve.
+ *         "The order's tickets" means the order-number join, falling back to the
+ *         ticket id the note itself names — see ticketsForNote().
  *   R3  — any-author note + order shipped + the order has ≥1 CS ticket and ALL are
  *         closed → resolve. Catches free-form operator notes R2 misses (their text
  *         doesn't match the outreach regex) once the order has shipped and no
@@ -219,12 +221,43 @@ async function reconcileNotes({ supabase = getSupabaseClient(), fetchWhOrder } =
     ticketsByOrder.get(k).push(t);
   }
 
+  // Fallback link for notes whose conversation lives on a DIFFERENT order than
+  // the note. markOutreachSent records the id it was given (`Outreach sent
+  // (ticket #2883)`, from draft.ticket_id — always a cs_tickets id), but the
+  // join above re-derives the link by order number and so misses the case where
+  // outreach about one order was placed on the customer's existing conversation
+  // filed under another. That happens on exchanges: the note lands on the child
+  // exchange order while the ticket stays on the parent, and the note is then
+  // unreachable by EVERY rule below, since R2 and R3 both need this join. It
+  // stays stranded in "Waiting on Response" forever, reading "awaiting customer
+  // reply" long after the conversation closed.
+  const notedTicketIds = [...new Set(
+    open.map(n => Number((n.note || '').match(/ticket #(\d+)/i)?.[1])).filter(Boolean),
+  )];
+  const ticketById = new Map();
+  if (notedTicketIds.length) {
+    const { data: noted, error: nErr } = await supabase
+      .from('cs_tickets')
+      .select('id, order_number, status')
+      .in('id', notedTicketIds);
+    if (nErr) throw new Error(`cs_tickets by id fetch: ${nErr.message}`);
+    for (const t of noted || []) ticketById.set(t.id, t);
+  }
+  /** Tickets for a note: the order-number join, else the ticket the note names. */
+  function ticketsForNote(note) {
+    const byOrder = ticketsByOrder.get(note.order_number) || [];
+    if (byOrder.length) return byOrder;
+    const id = Number((note.note || '').match(/ticket #(\d+)/i)?.[1]);
+    const t = id ? ticketById.get(id) : null;
+    return t ? [t] : [];
+  }
+
   const resolved = [];
   for (const note of open) {
     const order = orderByNum.get(note.order_number);
     const orderCancelled = !!(order && order.cancelled_at);
     const orderShipped = !!(order && order.fulfillment_status === 'FULFILLED');
-    const orderTickets = ticketsByOrder.get(note.order_number) || [];
+    const orderTickets = ticketsForNote(note);
     const allTicketsClosed = orderTickets.length > 0 && orderTickets.every(t => t.status === 'closed');
 
     let rule = null;
