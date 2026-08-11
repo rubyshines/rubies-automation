@@ -117,6 +117,47 @@ function recommendExchangeAction({ net = 0, itemsIdentical = false, operatorRequ
   return 'free_exchange';
 }
 
+/**
+ * Upcharge we absorb rather than chase, in USD. `net` comes from Shopify
+ * shopMoney, which is the store's BASE currency (USD) regardless of what the
+ * customer was presented — so this compares like with like. (Jamie, 2026-08-11:
+ * "in general I let them slide if they are a small difference".)
+ */
+const EXCHANGE_WAIVE_THRESHOLD_USD = 15;
+
+/**
+ * The customer-facing settlement, decided in code so the advisor never has to
+ * judge it — and never has to see a dollar figure it could paste into a draft.
+ * This is the advisor's view of the same policy `recommendExchangeAction`
+ * gives the operator agent, with the threshold standing in for the operator's
+ * explicit ask:
+ *   - identical items or net 0 → 'even'   (straight swap, say nothing)
+ *   - net < 0                  → 'refund' (always, automatic)
+ *   - 0 < net <= threshold     → 'waive'  (we absorb it; tell them not to worry)
+ *   - net > threshold          → 'invoice'
+ *
+ * `customerAskedToPay` is a fact the advisor reads out of the conversation —
+ * a customer who insists on paying gets to. It is an INPUT rather than an
+ * exception the model has to remember to apply on top of a verdict: as a
+ * trailing prompt rule it lost to the verdict on the first live run, which is
+ * the documented failure mode of exceptions buried under positive rules.
+ * It only ever turns a waive into an invoice; being owed money still refunds.
+ *
+ * @returns {'even'|'refund'|'waive'|'invoice'}
+ */
+function settleExchange({
+  net = 0,
+  itemsIdentical = false,
+  customerAskedToPay = false,
+  thresholdUsd = EXCHANGE_WAIVE_THRESHOLD_USD,
+}) {
+  if (itemsIdentical) return 'even';
+  if (net < 0) return 'refund';
+  if (net === 0) return 'even';
+  if (customerAskedToPay) return 'invoice';
+  return net > thresholdUsd ? 'invoice' : 'waive';
+}
+
 /** True when the returned set and the new set are the same SKUs at the same quantities. */
 function itemSetsIdentical(returnItems = [], newItems = []) {
   const norm = (arr) => {
@@ -137,6 +178,8 @@ function itemSetsIdentical(returnItems = [], newItems = []) {
 module.exports = {
   computeExchangeDifference,
   recommendExchangeAction,
+  settleExchange,
+  EXCHANGE_WAIVE_THRESHOLD_USD,
   itemSetsIdentical,
   volumePctForQuantity,
   salePctForSubtotal,

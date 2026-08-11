@@ -124,6 +124,22 @@ function pass(msg) { console.log('  ✓ ' + msg); }
     fail('the ask line ("can you please send the items you are returning to") is missing — the advisor rewrote or dropped the tool\'s ask');
   }
 
+  // Assertion 6: the donation copy stays in the email and out of the action box.
+  // Measured 2026-08-11 across 313 production operator actions: 16% carried a
+  // donation/return/wash clause or a partner name. The operator agent already
+  // receives the full draft and the order, so restating it there only gives an
+  // agentic tool loop work it must not do. The rule shipped in the
+  // operator_action_summary spec (advisorOutputSchema.js).
+  const summary = s.operator_action_summary || '';
+  const DONATION_IN_SUMMARY = /donat|wash|send (it |them )?back|return the|partner org|RUBIES Returns|c\/o/i;
+  if (!summary) {
+    console.log('  (no operator_action_summary this run — skipping action-box scope assert)');
+  } else if (!DONATION_IN_SUMMARY.test(summary)) {
+    pass('operator_action_summary carries no donation/return wording');
+  } else {
+    fail(`operator_action_summary leaks customer-facing donation copy: "${summary}"`);
+  }
+
   console.log('');
   console.log(process.exitCode === 1 ? 'FAILED — see assertions above.' : 'PASSED');
 })().catch(e => { console.error(e); process.exit(1); });

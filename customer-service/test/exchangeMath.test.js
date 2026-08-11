@@ -15,6 +15,8 @@ const assert = require('node:assert');
 const {
   computeExchangeDifference,
   recommendExchangeAction,
+  settleExchange,
+  EXCHANGE_WAIVE_THRESHOLD_USD,
   itemSetsIdentical,
   volumePctForQuantity,
   salePctForSubtotal,
@@ -155,6 +157,48 @@ test('itemSetsIdentical: same SKUs+qty true; size swap false', () => {
   assert.equal(itemSetsIdentical([{ sku: 'AJ-BLK-12', quantity: 3 }], [{ sku: 'AJ-BLK-12', quantity: 3 }]), true);
   assert.equal(itemSetsIdentical([{ sku: 'AJ-BLK-12', quantity: 3 }], [{ sku: 'AJ-BLK-10', quantity: 3 }]), false);
   assert.equal(itemSetsIdentical([{ sku: 'AJ-BLK-12', quantity: 3 }], [{ sku: 'AJ-BLK-12', quantity: 2 }]), false);
+});
+
+// --- settleExchange: the advisor's view of the same policy --------------------
+// Jamie, 2026-08-11: small upcharges slide, the customer is always refunded,
+// and adding to an order is invoiced. The threshold lives here rather than in
+// the prompt because the advisor has no prices and must not judge money.
+test('settle: customer owed money is always refunded, however large or small', () => {
+  assert.equal(settleExchange({ net: -0.01 }), 'refund');
+  assert.equal(settleExchange({ net: -120 }), 'refund');
+});
+
+test('settle: upcharge at or under the threshold is waived, above it is invoiced', () => {
+  assert.equal(EXCHANGE_WAIVE_THRESHOLD_USD, 15);
+  assert.equal(settleExchange({ net: 0.01 }), 'waive');
+  assert.equal(settleExchange({ net: 14.99 }), 'waive');
+  // Boundary is inclusive on the waive side — exactly $15 is still "small".
+  assert.equal(settleExchange({ net: 15 }), 'waive');
+  assert.equal(settleExchange({ net: 15.01 }), 'invoice');
+  assert.equal(settleExchange({ net: 85 }), 'invoice');
+});
+
+test('settle: an even swap and a straight swap both say nothing about money', () => {
+  assert.equal(settleExchange({ net: 0 }), 'even');
+  // itemsIdentical short-circuits before the threshold — a same-SKU swap is
+  // free by policy even if the catalog price moved since they bought.
+  assert.equal(settleExchange({ net: 85, itemsIdentical: true }), 'even');
+  assert.equal(settleExchange({ net: -85, itemsIdentical: true }), 'even');
+});
+
+test('settle: a customer who asks to pay is invoiced even under the threshold', () => {
+  assert.equal(settleExchange({ net: 5 }), 'waive');
+  assert.equal(settleExchange({ net: 5, customerAskedToPay: true }), 'invoice');
+  // But asking to pay never overrides money owed BACK to them, and never
+  // turns a straight swap into a charge.
+  assert.equal(settleExchange({ net: -30, customerAskedToPay: true }), 'refund');
+  assert.equal(settleExchange({ net: 0, customerAskedToPay: true }), 'even');
+  assert.equal(settleExchange({ net: 40, itemsIdentical: true, customerAskedToPay: true }), 'even');
+});
+
+test('settle: threshold is overridable for testing but defaults to the policy', () => {
+  assert.equal(settleExchange({ net: 20, thresholdUsd: 25 }), 'waive');
+  assert.equal(settleExchange({ net: 20 }), 'invoice');
 });
 
 // --- even-swap value guard ----------------------------------------------------

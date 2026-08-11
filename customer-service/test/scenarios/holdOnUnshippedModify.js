@@ -36,8 +36,12 @@ const { aiAdvisor } = require('../../lib/aiAdvisor');
 const { getOrderByNumber } = require('../../lib/shopify');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 
-const TICKET_ID = process.argv[2] || '103643280';
-const ORDER_NUMBER = process.argv[3] || '31618';
+// Re-pinned 2026-08-11: the previous anchor (#31618) shipped, and a shipped
+// anchor makes this scenario SKIP rather than fail — so the whole warehouse_hold
+// branch of the suite was silently measuring nothing. Check for the ⊘ SKIP line,
+// not just a zero exit, and re-pin to any live unshipped item-modify ticket.
+const TICKET_ID = process.argv[2] || '111183524';
+const ORDER_NUMBER = process.argv[3] || '32614';
 
 function fail(msg) { console.error('  ✗ ' + msg); process.exitCode = 1; }
 function pass(msg) { console.log('  ✓ ' + msg); }
@@ -110,11 +114,14 @@ function skip(msg) { console.log('  ⊘ SKIP: ' + msg); }
   if (actionType === 'warehouse_hold') {
     pass('item-modify on an unshipped order routed to warehouse_hold (order frozen before ship)');
     // The specific-request branch should also stage the change for the operator.
+    // Keyed on the verb, not on a product name — the old check hardcoded /aj/
+    // from a previous anchor and silently downgraded to a "note" the moment the
+    // scenario was re-pinned to a different product.
     const isSpecific = !!(s.operator_action_summary && /swap|add|remove|change/i.test(s.operator_action_summary));
-    if (s.operator_action_summary && /aj|swap/i.test(s.operator_action_summary)) {
-      pass('operator_action_summary stages the specific swap for the operator');
+    if (isSpecific) {
+      pass('operator_action_summary stages the specific change for the operator');
     } else {
-      console.log('  (note) operator_action_summary did not name the swap — fine for vague requests');
+      console.log('  (note) operator_action_summary did not name the change — fine for vague requests');
     }
 
     // Prose shape — only meaningful on the SPECIFIC branch. A vague request has
