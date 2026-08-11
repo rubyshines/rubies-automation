@@ -10,10 +10,21 @@
  * No preemptive pacing — interactive callers (dashboard, webhooks) stay
  * fast; bursty batch callers self-throttle when they hit the wall.
  *
+ * Transient failures: 5xx and network-level errors are retried on the same
+ * backoff, but only for reads. A write that 5xx'd may already have applied
+ * (a created ticket, a sent reply), so retrying it risks emailing a customer
+ * twice — writes still retry on 429, which means Gorgias rejected the request
+ * before running it. Same reasoning as lib/shopify.js.
+ *
  * Docs: https://developers.gorgias.com/reference
  */
 
 const GORGIAS_API_VERSION = ''; // No versioning needed for current endpoints
+
+const MAX_ATTEMPTS = 5;
+// Overridable so tests don't sit through real backoff.
+const RETRY_BASE_MS = Number(process.env.GORGIAS_RETRY_BASE_MS) || 1000;
+const SAFE_METHODS = new Set(['GET', 'HEAD']);
 
 function getConfig() {
   const domain = process.env.GORGIAS_DOMAIN;
@@ -37,32 +48,56 @@ function resetRetryCount() { _retryCount = 0; }
 async function apiFetch(path, options = {}) {
   const config = getConfig();
   const url = `${config.baseUrl}${path}`;
+  const isRead = SAFE_METHODS.has((options.method || 'GET').toUpperCase());
 
-  const MAX_ATTEMPTS = 5;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Authorization': `Basic ${config.auth}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...options.headers,
-      },
-    });
+    const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+    let response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Basic ${config.auth}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...options.headers,
+        },
+      });
+    } catch (err) {
+      // Network-level failure (fetch failed, ECONNRESET). The request may have
+      // reached Gorgias and applied, so only reads retry.
+      if (!isRead || isLastAttempt) throw err;
+      _retryCount++;
+      console.error(`[Gorgias] network error on ${path} (attempt ${attempt + 1}): ${err.message}, retrying...`);
+      await delay(RETRY_BASE_MS * Math.pow(2, attempt));
+      continue;
+    }
 
     if (response.ok) return response.json();
 
-    if (response.status === 429 && attempt < MAX_ATTEMPTS - 1) {
+    if (response.status === 429 && !isLastAttempt) {
       _retryCount++;
       const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
       const waitMs = retryAfter != null
         ? Math.min(retryAfter * 1000, 30000)
-        : 1000 * Math.pow(2, attempt);
+        : RETRY_BASE_MS * Math.pow(2, attempt);
       await delay(waitMs);
       continue;
     }
 
-    const errText = await response.text();
+    // Gorgias 502/503s on the views endpoint often enough that a single blip
+    // used to abort the whole daily reconciliation (and with it the follow-up
+    // sweep, which is the only engine for snooze-expiry follow-ups).
+    if (response.status >= 500 && isRead && !isLastAttempt) {
+      _retryCount++;
+      console.error(`[Gorgias] ${response.status} on ${path} (attempt ${attempt + 1}), retrying...`);
+      await delay(RETRY_BASE_MS * Math.pow(2, attempt));
+      continue;
+    }
+
+    // Truncated: a Gorgias 5xx returns a full HTML error page, which otherwise
+    // lands verbatim in the daily digest.
+    const errText = (await response.text()).slice(0, 300);
     throw new Error(`Gorgias API error ${response.status} on ${path}: ${errText}`);
   }
 }
