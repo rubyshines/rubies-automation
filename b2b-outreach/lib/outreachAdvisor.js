@@ -18,6 +18,8 @@
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
+const { partnerDiscountPercent } = require('./donationAgreement');
+const { companyDomain } = require('./queueContext');
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -56,6 +58,44 @@ function pickAdvisor(company) {
   return { name: 'b2b_sales_advisor', prompt: require('../prompts/salesAdvisorPrompt').PROMPT };
 }
 
+/**
+ * What we have actually shipped this org from the donation closet.
+ *
+ * A check-in that asks "are you receiving our packages?" makes the org go and
+ * research the answer, which is how a check-in dies. With the count and the
+ * most recent date in hand the same question is answerable in one line, so
+ * these facts are the difference between a reply and silence.
+ *
+ * Matched on website domain ONLY, never a name fallback: a name match fused
+ * "Trans Healthkit Projekt" (Hagen) onto "Transhealth" (Northampton MA), and
+ * attributing one org's shipments to another in a customer-facing email is
+ * exactly the hallucination the rest of this context block exists to prevent.
+ * No domain match means no routing facts, which is the safe direction.
+ */
+async function fetchDonationRouting(sb, company) {
+  const domain = companyDomain(company.website);
+  if (!domain) return null;
+
+  const { data: partners, error: pErr } = await sb.from('donation_partners')
+    .select('id, name, website_url, country_code, mailing_address')
+    .eq('active', true);
+  if (pErr) throw new Error(`donation partners: ${pErr.message}`);
+
+  const partner = (partners || []).find(p => companyDomain(p.website_url) === domain);
+  if (!partner) return null;
+
+  const routings = await fetchAllPaginated(() => sb.from('donation_routings')
+    .select('items_count, created_at').eq('partner_id', partner.id).order('created_at'));
+
+  return {
+    partner,
+    shipments: routings.length,
+    items: routings.reduce((sum, r) => sum + (r.items_count || 0), 0),
+    firstAt: routings[0]?.created_at || null,
+    lastAt: routings[routings.length - 1]?.created_at || null,
+  };
+}
+
 /** Assemble the per-company context block the advisor reads. */
 async function buildCompanyContext(sb, companyId) {
   const { data: company, error } = await sb.from('b2b_companies').select('*').eq('id', companyId).maybeSingle();
@@ -69,7 +109,11 @@ async function buildCompanyContext(sb, companyId) {
     .select('direction, message_type, body_text, sent_at, from_email')
     .eq('company_id', companyId).order('sent_at', { ascending: false })).then(r => r.slice(0, 20).reverse());
 
-  return { company, contacts, messages };
+  const donation = company.relationship_type === 'lgbtq_org'
+    ? await fetchDonationRouting(sb, company)
+    : null;
+
+  return { company, contacts, messages, donation };
 }
 
 /** Sheet-imported rows stored metadata as a JSON string. Tolerate both. Pure. */
@@ -125,7 +169,33 @@ function renderMetadataFacts(metadata) {
   return lines;
 }
 
-function renderContext({ company, contacts, messages }, queueEntry, steer) {
+/**
+ * The donation-closet facts block. Pure; returns [] when this org isn't a
+ * matched partner. The low-volume note exists because most of our customers
+ * are in the US, so returns rarely come back anywhere else: naming that before
+ * the org does reads as honesty rather than an excuse, and it stops the
+ * advisor writing a breezy "hope the packages are useful" to an org that has
+ * received one.
+ */
+function renderDonationFacts(donation) {
+  if (!donation) return [];
+  const { shipments, items, firstAt, lastAt } = donation;
+  const lines = ['', '## Donation closet: what we have actually shipped them'];
+  if (!shipments) {
+    lines.push('- No donation packages have been routed to this partner yet.',
+      '- Say so plainly if the email touches on donations. Do NOT imply packages have been arriving.');
+    return lines;
+  }
+  lines.push(`- ${shipments} package${shipments === 1 ? '' : 's'} routed, ${items} item${items === 1 ? '' : 's'} in total`);
+  lines.push(`- First on ${String(firstAt).slice(0, 10)}, most recently on ${String(lastAt).slice(0, 10)}`);
+  lines.push('- These are OUR records of what we sent, not confirmation they arrived. Use the number to ask a question they can answer in one line, never to assert that they received anything.');
+  if (shipments <= 2) {
+    lines.push('- This is a low volume. Acknowledge it directly rather than talking up the program.');
+  }
+  return lines;
+}
+
+function renderContext({ company, contacts, messages, donation }, queueEntry, steer) {
   const lines = [];
   lines.push(`## Company`);
   lines.push(`${company.name} (${company.relationship_type}, state: ${company.relationship_state || 'unknown'}, status: ${company.status || '—'})`);
@@ -134,7 +204,21 @@ function renderContext({ company, contacts, messages }, queueEntry, steer) {
   if (company.ai_summary) lines.push(`Relationship summary: ${company.ai_summary}`);
   if (company.order_count) lines.push(`Orders: ${company.order_count} (total $${company.total_sales || 0}, last ${company.last_order_date || '—'})`);
   if (company.program_flags && Object.keys(company.program_flags).length) lines.push(`Programs: ${JSON.stringify(company.program_flags)}`);
+  // The rate is a country lookup, and quoting the wrong one in a partner email
+  // is a promise we then have to walk back (it has happened: a Canadian partner
+  // was quoted 50% and had to be corrected to 30% mid-thread). State it here so
+  // the advisor never has to derive it.
+  //
+  // Falls back to the partner registry's country_code, because plenty of
+  // b2b_companies rows have no country at all: BAGLY in Boston rendered as 30%,
+  // silently under-quoting a US partner, since partnerDiscountPercent treats
+  // unknown as the conservative rate. The registry has a country for every
+  // active partner, so it is the better source whenever the company row is bare.
+  const discountCountry = company.country || donation?.partner?.country_code || null;
+  lines.push(`Partner purchase discount: ${partnerDiscountPercent(discountCountry)}% off retail.`
+    + ' Use this rate and no other. If the thread shows a signed agreement at a different rate, that agreement wins and you should flag it.');
   lines.push(...renderMetadataFacts(company.metadata));
+  lines.push(...renderDonationFacts(donation));
   lines.push('');
   lines.push('## Contacts');
   for (const c of contacts) {
@@ -220,4 +304,7 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   return { draft_id: row.id, advisor: advisor.name, ...out };
 }
 
-module.exports = { generateDraft, buildCompanyContext, renderContext, renderMetadataFacts, pickAdvisor, OUTPUT_SCHEMA };
+module.exports = {
+  generateDraft, buildCompanyContext, renderContext, renderMetadataFacts,
+  renderDonationFacts, fetchDonationRouting, pickAdvisor, OUTPUT_SCHEMA,
+};
