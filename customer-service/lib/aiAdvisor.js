@@ -32,6 +32,7 @@ const {
   _activeProducts,
   PRODUCT_NICKNAMES,
 } = require('./sizingEngine');
+const { styleSwitchNote, tightLegsTargets, offeredSizeFor, crossesToAdult, isYouthSize } = require('./styleSwitch');
 const { prescribeDonationRouting } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
 const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker } = require('./advisorOutputSchema');
@@ -620,6 +621,23 @@ async function executeToolCall(toolName, toolInput) {
       const { searchProducts, loadFromSupabase, getProducts } = require('./productCache');
       if (!getProducts()?.length) await loadFromSupabase();
 
+      // Which styles we would recommend for tight legs, by positioning and
+      // sizing system. Availability is checked below: a style we cannot ship is
+      // not an option, and for the commonest adult size both wider-leg styles
+      // are currently out of stock, so a config-only list would have the advisor
+      // offer products nobody can buy.
+      const recommendable = tightLegsTargets({
+        activeProducts: _activeProducts,
+        category,
+        isKids: isYouthSize(size),
+        size: size || undefined,
+        excludeNickname: sourceConfig.nickname,
+      });
+      const recByNick = new Map(recommendable.map(t => [t.nickname, t]));
+      const unavailable = [];
+      // SKUs per unavailable style, so a dated inbound can be attached below.
+      const unavailableSkus = new Map();
+
       // Build alternatives with size + inventory filtering
       let alternatives = [];
       for (const p of sameCategory) {
@@ -628,25 +646,42 @@ async function executeToolCall(toolName, toolInput) {
         const allSizes = [...(p.kid_sizes || []), ...(p.adult_sizes || [])];
 
         if (size) {
-          const normalizedSize = normalizeSize(size);
-          if (!allSizes.some(s => normalizeSize(s) === normalizedSize)) continue;
+          // The size we would actually SEND, which is not always the size they
+          // gave us: a style sold in adult letters serves a youth 10-16 via the
+          // crossover (10 -> XXS ... 16 -> M). Matching literally used to drop
+          // the Cheeky for a youth swim customer and tell the advisor nothing
+          // wider existed, while sizingEngine crossed over and offered it -- one
+          // question, two answers.
+          const wanted = offeredSizeFor(config.styleSwitch?.recommendFor, size) || normalizeSize(size);
+          if (!allSizes.some(s => normalizeSize(s) === wanted)) {
+            if (recByNick.has(nick)) unavailable.push({ product: nick, size: wanted, reason: 'not made in that size' });
+            continue;
+          }
 
-          // Search by full title — sum inventory across all colors for this size
-          const variants = searchProducts(`${p.title} ${size}`);
+          // Search by full title -- sum inventory across all colors for this size
+          const variants = searchProducts(`${p.title} ${wanted}`);
           const matches = variants.filter(v => {
             const vSize = normalizeSize(v.variantTitle?.split('/').pop()?.trim());
-            return vSize === normalizedSize && v.productTitle === p.title;
+            return vSize === wanted && v.productTitle === p.title;
           });
           const sizeInventory = matches.reduce((sum, v) => sum + (v.inventoryQuantity || 0), 0);
-          if (sizeInventory <= 0) continue;
+          if (sizeInventory <= 0) {
+            if (recByNick.has(nick)) {
+              unavailable.push({ product: nick, size: wanted, reason: 'out of stock in that size' });
+              unavailableSkus.set(nick, matches.map(v => v.sku).filter(Boolean));
+            }
+            continue;
+          }
 
+          const crossed = crossesToAdult(config.styleSwitch?.recommendFor, size);
           alternatives.push({
             product: nick,
             fit_description: p.fit_description,
             best_for: p.best_for,
             comparison_notes: p.comparison_notes,
-            style_switch_note: styleSwitchNote(config, category),
-            size,
+            style_switch_note: recByNick.get(nick)?.note || null,
+            size: wanted,
+            ...(crossed ? { requested_size: normalizeSize(size), size_note: `sold in adult sizing; youth ${normalizeSize(size)} is ${wanted}` } : {}),
             inventory_in_size: sizeInventory,
           });
         } else {
@@ -682,10 +717,21 @@ async function executeToolCall(toolName, toolInput) {
       // (today: the wider leg openings). Sourced from product_cs_config.style_switch
       // so one row edit updates every consumer — this used to be prose in
       // advisor_facts, one hand-written fact per product pair.
-      const styleSwitchOptions = Object.values(_activeProducts)
-        .filter(c => c.category === category && c.styleSwitch?.isTarget
-          && (!c.styleSwitch.forCategories || c.styleSwitch.forCategories.includes(category)))
-        .map(c => ({ product: c.nickname, note: c.styleSwitch.note }));
+      // Derived from the in-stock alternatives above, so `style_switch_options`
+      // can never name something the customer cannot actually buy. When a size
+      // is known and a wider style exists but is unavailable, say so explicitly
+      // in `style_switch_unavailable` -- silence would let the advisor conclude
+      // no wider cut exists, which is a different and false statement.
+      const styleSwitchOptions = alternatives
+        .filter(a => a.style_switch_note)
+        .map(a => ({
+          product: a.product,
+          note: a.style_switch_note,
+          ...(a.size ? { size: a.size } : {}),
+          ...(a.size_note ? { size_note: a.size_note } : {}),
+          best_for_all_day: recByNick.get(a.product)?.everyday === true,
+        }))
+        .sort((x, y) => (y.best_for_all_day === true) - (x.best_for_all_day === true));
 
       return {
         source: {
@@ -699,6 +745,7 @@ async function executeToolCall(toolName, toolInput) {
         },
         alternatives,
         style_switch_options: styleSwitchOptions,
+        ...(unavailable.length ? { style_switch_unavailable: await withRestock(unavailable, unavailableSkus) } : {}),
       };
     }
 
@@ -823,15 +870,23 @@ async function executeToolCall(toolName, toolInput) {
  * (see advisor-facts-schema.sql); grouped by category for scanability.
  */
 /**
- * The product_cs_config.style_switch note, when the product is a switch target
- * for this category. `forCategories` scopes a target to where it applies (the
- * Flo is a youth underwear answer, not a swim one).
+ * Attach a dated inbound to each out-of-stock style. "Out of stock" and "out of
+ * stock, arriving next week" are different answers: the second one is still
+ * worth recommending. Fail-soft, because a missing restock lookup must never
+ * take down a product comparison.
  */
-function styleSwitchNote(config, category) {
-  const ss = config?.styleSwitch;
-  if (!ss?.isTarget) return null;
-  if (ss.forCategories && !ss.forCategories.includes(category)) return null;
-  return ss.note || null;
+async function withRestock(unavailable, skusByProduct) {
+  const { restockEtaForSkus } = require('./restockEta');
+  return Promise.all(unavailable.map(async (u) => {
+    if (u.reason !== 'out of stock in that size') return u;
+    try {
+      const restock = await restockEtaForSkus(skusByProduct.get(u.product) || []);
+      return restock ? { ...u, restock } : { ...u, restock: null };
+    } catch (e) {
+      console.warn(`[compare_products] restock lookup failed for ${u.product}: ${e.message}`);
+      return u;
+    }
+  }));
 }
 
 function buildFactsBlock(facts) {
@@ -1293,7 +1348,7 @@ The operator's action panel is built from the structured items array. Every prod
 **Underwear bottoms (coverage order, most → least):**
 - **AJ** — best-seller, most structured fit, wide waistband. Available in youth + adult sizes.
 - **Charlie** — similar to AJ with structured fit. Available in youth + adult sizes.
-- **Flo** (Dance) — streamlined fit for dancers/performers, good under tight clothing. Youth + adult sizes.
+- **Flo** (Dance) — streamlined fit for dancers/performers, good under tight clothing. Youth sizes ONLY (no adult sizes). Higher leg cut than the AJ, so it is the youth answer for tight legs.
 - **Sassy** — lower rise, higher leg cut, less butt coverage than AJ. Adult sizes only. Recommend for tight legs (larger leg opening).
 - **Naomi** (Gaff) — maximum smoothing, two high-compression fabrics, slightly cheeky silhouette. Adult sizes only. For customers who want extra-strength shaping.
 
