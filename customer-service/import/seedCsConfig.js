@@ -46,7 +46,9 @@ const CS_PRODUCT_CONFIG = [
   { title_match: 'THE STELLA HIGH', nickname: 'Stella', category: 'swim_bottom', keywords: ['stella'], delta_wording: 'bottom' },
   { title_match: 'THE CHEEKY NO-TUCK', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom',
     style_switch: { isTarget: true, forCategories: ['swim_bottom'], note: 'Larger leg opening, recommend for tight legs',
-      recommendFor: { tightLegs: true, ageGroups: ['youth', 'adult'], everyday: true } } },
+      // Adult sizes only (catalog kid_sizes is empty); the tech pack's numeric
+      // labels for the Cheeky are legacy adult numbering, not youth sizes.
+      recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: true } } },
   { title_match: 'THE SERENA NO-TUCK', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom' },
 
   // Swim tops

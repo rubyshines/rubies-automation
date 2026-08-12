@@ -20,7 +20,7 @@ const mockCsConfig = [
   { product_handle: 'the-ava-seamless-shaping-bra', nickname: 'Ava', category: 'underwear_top', keywords: ['ava'], delta_wording: 'bra', sizes_override: null, style_switch: null },
   { product_handle: 'the-brooke-shaping-bra', nickname: 'Brooke', category: 'underwear_top', keywords: ['brooke'], delta_wording: 'bra', sizes_override: null, style_switch: null },
   { product_handle: 'the-charlie-no-tuck-extra-cute-shaping-underwear', nickname: 'Charlie', category: 'underwear_bottom', keywords: ['charlie'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-cheeky-no-tuck-shaping-bikini-bottom', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['swim_bottom'], recommendFor: { tightLegs: true, ageGroups: ['youth', 'adult'], everyday: true } } },
+  { product_handle: 'the-cheeky-no-tuck-shaping-bikini-bottom', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['swim_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: true } } },
   { product_handle: 'the-flo-shaping-dance-underwear', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['youth'], everyday: true } } },
   { product_handle: 'the-mia-halter-bikini-top', nickname: 'Mia', category: 'swim_top', keywords: ['mia'], delta_wording: 'bikini_top', sizes_override: null, style_switch: null },
   { product_handle: 'the-ruby-no-tuck-shaping-bikini-bottom', nickname: 'Ruby', category: 'swim_bottom', keywords: ['ruby'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
@@ -1218,6 +1218,19 @@ describe('prescribeSizingResolution', () => {
       assert.ok(text.includes('Flo'), 'youth answer is the Flo');
       assert.ok(!text.includes('Naomi'), 'Naomi is adult-only');
       assert.ok(!text.includes('Sassy'), 'Sassy is adult-only');
+    });
+
+    it('never offers the adult-only Cheeky to a youth swim size', async () => {
+      // Cheeky kid_sizes is empty. The old hardcoded branch sent every swim
+      // complaint to the Cheeky regardless of age, so a youth customer was
+      // pointed at a product they cannot buy.
+      const intake = makeIntake({
+        items: [makeItem({ issue: 'tight_legs', size: '10', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM' })],
+        _latestMessage: 'The waist fits fine but the legs are too tight.',
+      });
+      const classified = [makeClassified({ action: 'style_switch', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '10' })];
+      const result = await prescribeSizingResolution(classified, intake, makeContext());
+      assert.ok(!result.items[0].response_text.includes('Cheeky'), 'Cheeky has no youth sizes');
     });
 
     it('falls back to sizing up when the category has no other target left', async () => {

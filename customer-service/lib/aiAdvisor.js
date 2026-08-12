@@ -1293,7 +1293,7 @@ The operator's action panel is built from the structured items array. Every prod
 **Underwear bottoms (coverage order, most → least):**
 - **AJ** — best-seller, most structured fit, wide waistband. Available in youth + adult sizes.
 - **Charlie** — similar to AJ with structured fit. Available in youth + adult sizes.
-- **Flo** (Dance) — streamlined fit for dancers/performers, good under tight clothing. Youth + adult sizes.
+- **Flo** (Dance) — streamlined fit for dancers/performers, good under tight clothing. Youth sizes ONLY (no adult sizes). Higher leg cut than the AJ, so it is the youth answer for tight legs.
 - **Sassy** — lower rise, higher leg cut, less butt coverage than AJ. Adult sizes only. Recommend for tight legs (larger leg opening).
 - **Naomi** (Gaff) — maximum smoothing, two high-compression fabrics, slightly cheeky silhouette. Adult sizes only. For customers who want extra-strength shaping.
 
