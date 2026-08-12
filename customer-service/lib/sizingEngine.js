@@ -159,8 +159,9 @@ function getProductUrl(nickname) {
  * Ordering is everyday-wear first, so the all-day pick always leads the copy,
  * then by nickname so the wording is stable between runs.
  */
-function tightLegsTargets({ category, isKids, excludeNickname } = {}) {
+function tightLegsTargets({ category, isKids, size, excludeNickname } = {}) {
   const ageGroup = isKids ? 'youth' : 'adult';
+  const normSize = size ? normalizeSize(size) : null;
   return Object.values(_activeProducts)
     .filter((p) => {
       const ss = p.styleSwitch;
@@ -170,14 +171,41 @@ function tightLegsTargets({ category, isKids, excludeNickname } = {}) {
       const ages = ss.recommendFor.ageGroups;
       if (ages && !ages.includes(ageGroup)) return false;
       if (excludeNickname && p.nickname.toLowerCase() === String(excludeNickname).toLowerCase()) return false;
-      return true;
+      // A style we would recommend but cannot actually supply in their size is
+      // not an option. This is what rules the Cheeky out for a youth 4-9 while
+      // keeping it for a youth 10-16, who crosses into adult XXS-M.
+      return offeredSizeFor(p.styleSwitch.recommendFor, normSize) !== null;
     })
     .map((p) => ({
       nickname: p.nickname,
       everyday: p.styleSwitch.recommendFor.everyday === true,
+      size: offeredSizeFor(p.styleSwitch.recommendFor, normSize),
+      crossesToAdult: Boolean(normSize)
+        && p.styleSwitch.recommendFor.sizedIn === 'adult'
+        && NUMERIC_SIZES.includes(normSize),
       link: getProductUrl(p.nickname) || '',
     }))
     .sort((a, b) => (b.everyday === true) - (a.everyday === true) || a.nickname.localeCompare(b.nickname));
+}
+
+/**
+ * The size we would actually send, in the target's own sizing system.
+ * Returns null when the target cannot serve that customer at all.
+ *
+ * `sizedIn: 'adult'` means the style is sold in adult letters, so a youth
+ * numeric size has to cross over (10 → XXS … 16 → M). Youth 4-9 have no adult
+ * equivalent, so an adult-sized style genuinely cannot serve them. We never
+ * cross an adult DOWN into a youth-sized style: that is a positioning call,
+ * not a sizing one (an adult XS would physically fit the Flo).
+ */
+function offeredSizeFor(recommendFor, normSize) {
+  if (!normSize) return null;
+  const sizedIn = recommendFor?.sizedIn;
+  if (sizedIn === 'adult' && NUMERIC_SIZES.includes(normSize)) {
+    return NUMERIC_TO_LETTER_UPPER[normSize] || null;
+  }
+  if (sizedIn === 'youth' && LETTER_SIZES.includes(normSize)) return null;
+  return normSize;
 }
 
 /**
@@ -1669,6 +1697,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         const targets = tightLegsTargets({
           category: targetCategory,
           isKids,
+          size: item.size,
           excludeNickname: currentNick,
         });
         // "Already on a widest-leg style, and nothing else to move them to."
@@ -1697,11 +1726,17 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           prescription.still_needed.push(`size_confirmation for ${item.product}`);
         } else {
           rx.state = 'AWAITING_STYLE_CONFIRMATION';
-          // When switching from youth to adult product, mention the equivalent size
-          const equivSize = NUMERIC_SIZES.includes(normSize) && !isKids ? NUMERIC_TO_LETTER_UPPER[normSize] : null;
-          const sizeNote = equivSize ? ` in size ${equivSize}` : '';
           const lead = targets[0];
           const offered = targets.slice(0, 2);
+          // Only name a size when it differs from the one they gave us, i.e.
+          // when a youth numeric crosses into the style's adult lettering.
+          const sizeNote = lead.crossesToAdult && lead.size ? ` in size ${lead.size}` : '';
+
+          // Say what it does for THEM, not what it is. "Higher leg cut" is
+          // trade language and reads as "more revealing" rather than "roomier",
+          // so lead with the outcome (room through the thigh without changing
+          // the waist) and give the mechanism in plain words.
+          const WHY = 'the leg openings are cut wider and sit higher on the hip instead of across the top of the thigh, so there is more room through the thighs without going up a size in the waist';
 
           if (offered.length > 1) {
             // Two styles share the wider cut. Name the everyday pick rather than
@@ -1710,9 +1745,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             const names = offered.map(t => `the ${t.nickname}`).join(' and ');
             const links = offered.map(t => `${t.nickname}: ${t.link}`).join(' ');
             const everydayPick = offered.find(t => t.everyday) || lead;
-            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} both have a larger leg opening which may work better. The ${everydayPick.nickname} is the one most people find best for all day wear. Would you like to try one instead? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} may work better: on both, ${WHY}. The ${everydayPick.nickname} is the one most people find best for all day wear. Would you like to try one instead? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           } else {
-            rx.response_text = `The ${lead.nickname}${sizeNote} has a larger leg opening which may work better. Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `The ${lead.nickname}${sizeNote} may work better: ${WHY}. Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           }
 
           rx.recommendation = { product: lead.nickname, link: lead.link, alternatives: offered.slice(1) };

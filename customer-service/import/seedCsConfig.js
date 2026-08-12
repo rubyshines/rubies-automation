@@ -27,15 +27,15 @@ const CS_PRODUCT_CONFIG = [
   { title_match: 'THE CHARLIE NO-TUCK', nickname: 'Charlie', category: 'underwear_bottom', keywords: ['charlie'], delta_wording: 'bottom' },
   { title_match: 'THE SASSY NO-TUCK', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom',
     style_switch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Larger leg opening, recommend for tight legs',
-      recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: true } } },
+      recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: true } } },
   { title_match: 'THE FLO SHAPING', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom',
     style_switch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Larger leg opening, recommend for tight legs (youth sizes only)',
-      recommendFor: { tightLegs: true, ageGroups: ['youth'], everyday: true } } },
+      recommendFor: { tightLegs: true, ageGroups: ['youth'], sizedIn: 'youth', everyday: true } } },
   { title_match: 'THE NAOMI GAFF', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom',
     sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'],
     style_switch: { isTarget: true, forCategories: ['underwear_bottom'], note: 'Higher-cut cheeky leg, recommend alongside Sassy for tight legs',
       // A gaff: more compression, so never the lead suggestion and never the all-day pick.
-      recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: false } } },
+      recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: false } } },
 
   // Underwear tops
   { title_match: 'THE BROOKE', nickname: 'Brooke', category: 'underwear_top', keywords: ['brooke'], delta_wording: 'bra' },
@@ -48,7 +48,7 @@ const CS_PRODUCT_CONFIG = [
     style_switch: { isTarget: true, forCategories: ['swim_bottom'], note: 'Larger leg opening, recommend for tight legs',
       // Adult sizes only (catalog kid_sizes is empty); the tech pack's numeric
       // labels for the Cheeky are legacy adult numbering, not youth sizes.
-      recommendFor: { tightLegs: true, ageGroups: ['adult'], everyday: true } } },
+      recommendFor: { tightLegs: true, ageGroups: ['youth', 'adult'], sizedIn: 'adult', everyday: true } } },
   { title_match: 'THE SERENA NO-TUCK', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom' },
 
   // Swim tops
