@@ -172,3 +172,38 @@ test('daysBetween: whole days, and null on junk', async () => {
   assert.strictEqual(daysBetween('2026-08-12', '2026-08-12'), 0);
   assert.strictEqual(daysBetween('junk', '2026-08-12'), null);
 });
+
+// --- vague phrasing ---------------------------------------------------------
+// A date built on an ETA we do not control should not be quoted precisely. The
+// phrase reuses formatPreOrderDate (same wording as the site and the pre-order
+// line attributes) and skews later so we under-promise.
+
+test('sellable_phrase: vague, and conservative near a boundary', async () => {
+  const mk = (eta) => stubSupabase({
+    items: [{ sku: 'HLA-BLK-M', qty: 10, inbound_shipment_id: 1 }],
+    shipments: [{ id: 1, transfer_number: 'T', status: 'in_transit', estimated_arrival_date: eta, in_inventory_date: null }],
+  }).restockEtaForSkus(['HLA-BLK-M'], { today: TODAY });
+
+  // arrival 20th + 5 receiving = sellable 25th, +3 conservatism = 28th
+  assert.strictEqual((await mk('2026-08-20')).sellable_phrase, 'end of August, 2026');
+
+  // sellable 20th would read "middle" on its own; conservatism pushes it later
+  // so we never sound earlier than we are confident about.
+  const boundary = await mk('2026-08-15');
+  assert.strictEqual(boundary.sellable_estimate, '2026-08-20');
+  assert.strictEqual(boundary.sellable_phrase, 'end of August, 2026', 'boundary must round later, not earlier');
+
+  // rolls into the next month rather than claiming the end of this one
+  assert.strictEqual((await mk('2026-08-25')).sellable_phrase, 'beginning of September, 2026');
+});
+
+test('sellable_phrase: never earlier than the internal sellable estimate implies', async () => {
+  const { restockEtaForSkus, PHRASE_CONSERVATISM_DAYS } = stubSupabase({
+    items: [{ sku: 'HLA-BLK-M', qty: 10, inbound_shipment_id: 1 }],
+    shipments: [{ id: 1, transfer_number: 'T', status: 'in_transit', estimated_arrival_date: '2026-09-08', in_inventory_date: null }],
+  });
+  assert.strictEqual(PHRASE_CONSERVATISM_DAYS, 3);
+  const r = await restockEtaForSkus(['HLA-BLK-M'], { today: TODAY });
+  assert.strictEqual(r.sellable_estimate, '2026-09-13');
+  assert.strictEqual(r.sellable_phrase, 'middle of September, 2026');
+});

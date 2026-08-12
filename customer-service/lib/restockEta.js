@@ -16,6 +16,7 @@
  */
 
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
+const { formatPreOrderDate } = require('./preOrderAttrs');
 
 const OPEN_STATUSES = ['uploaded', 'in_transit', 'partially_received'];
 
@@ -84,6 +85,11 @@ async function restockEtaForSkus(skus, { today } = {}) {
     // each one re-judging "is that soon enough".
     worth_offering: daysUntil !== null && daysUntil <= RESTOCK_OFFER_WINDOW_DAYS,
     sellable_estimate: sellable,
+    // What to actually SAY. The same vague phrasing the site and the pre-order
+    // attributes use ("end of August, 2026"), skewed later so we under-promise.
+    // The advisor should quote this and never the raw dates above, which are
+    // internal and more precise than our confidence in them.
+    sellable_phrase: formatPreOrderDate(addDays(sellable, PHRASE_CONSERVATISM_DAYS)),
     basis: ship.in_inventory_date
       ? 'confirmed sellable date'
       : `warehouse arrival; allow ~${RECEIVING_BUFFER_DAYS} days for receiving before it can ship`,
@@ -96,6 +102,15 @@ async function restockEtaForSkus(skus, { today } = {}) {
 
 /** Receiving + putaway between arrival and sellable. Deliberately generous. */
 const RECEIVING_BUFFER_DAYS = 5;
+
+/**
+ * Extra days added ONLY before turning a date into a vague phrase, so the
+ * phrase lands on the later third when the estimate sits near a boundary. A
+ * date is a promise and this one is built on an ETA we do not control, so the
+ * phrase should under-promise: sellable on the 20th reads as "end of August",
+ * not "middle of August".
+ */
+const PHRASE_CONSERVATISM_DAYS = 3;
 
 /** Whole days from `from` to `to`, or null if either is unparseable. */
 function daysBetween(from, to) {
@@ -114,5 +129,5 @@ function addDays(isoDate, days) {
 
 module.exports = {
   restockEtaForSkus, addDays, daysBetween,
-  RECEIVING_BUFFER_DAYS, RESTOCK_OFFER_WINDOW_DAYS, OPEN_STATUSES,
+  RECEIVING_BUFFER_DAYS, RESTOCK_OFFER_WINDOW_DAYS, PHRASE_CONSERVATISM_DAYS, OPEN_STATUSES,
 };
