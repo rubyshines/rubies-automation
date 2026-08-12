@@ -1177,7 +1177,7 @@ describe('prescribeSizingResolution', () => {
       // pick and must lead -- we convey the trade-off that way rather than
       // telling the customer the Naomi is less comfortable.
       assert.ok(text.indexOf('Sassy') < text.indexOf('Naomi'), 'Sassy must lead');
-      assert.match(text, /Sassy is the one most people find best for all day wear/);
+      assert.match(text, /Sassy is better for all day wear/);
       assert.ok(!/compression|less comfortable|sacrific/i.test(text), 'never states the compression trade-off outright');
       assert.equal(result.items[0].recommendation.product, 'Sassy');
     });
@@ -1254,8 +1254,8 @@ describe('prescribeSizingResolution', () => {
       const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
       const result = await prescribeSizingResolution(classified, intake, makeContext());
       const text = result.items[0].response_text;
-      assert.match(text, /more room through the thighs/, 'says what it does for them');
-      assert.match(text, /without going up a size in the waist/, 'ties it to their waist fitting');
+      assert.match(text, /more room in the thighs/, 'says what it does for them');
+      assert.match(text, /without sizing up the waist/, 'ties it to their waist fitting');
       assert.ok(!/higher leg cut/i.test(text), 'trade language reads as "more revealing", not "roomier"');
     });
 

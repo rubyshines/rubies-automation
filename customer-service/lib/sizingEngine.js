@@ -1732,11 +1732,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           // when a youth numeric crosses into the style's adult lettering.
           const sizeNote = lead.crossesToAdult && lead.size ? ` in size ${lead.size}` : '';
 
-          // Say what it does for THEM, not what it is. "Higher leg cut" is
-          // trade language and reads as "more revealing" rather than "roomier",
-          // so lead with the outcome (room through the thigh without changing
-          // the waist) and give the mechanism in plain words.
-          const WHY = 'the leg openings are cut wider and sit higher on the hip instead of across the top of the thigh, so there is more room through the thighs without going up a size in the waist';
+          // Say what it does for THEM, not what it is. "Higher leg cut" is trade
+          // language and reads as "more revealing" rather than "roomier". No
+          // pronoun, so it reads the same whether they are buying for
+          // themselves or someone else.
+          const WHY = 'cut wider through the leg, so there is more room in the thighs without sizing up the waist';
 
           if (offered.length > 1) {
             // Two styles share the wider cut. Name the everyday pick rather than
@@ -1745,9 +1745,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             const names = offered.map(t => `the ${t.nickname}`).join(' and ');
             const links = offered.map(t => `${t.nickname}: ${t.link}`).join(' ');
             const everydayPick = offered.find(t => t.everyday) || lead;
-            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} may work better: on both, ${WHY}. The ${everydayPick.nickname} is the one most people find best for all day wear. Would you like to try one instead? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} are both ${WHY}. The ${everydayPick.nickname} is better for all day wear. Would you like to try one? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           } else {
-            rx.response_text = `The ${lead.nickname}${sizeNote} may work better: ${WHY}. Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `The ${lead.nickname}${sizeNote} is ${WHY}. Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           }
 
           rx.recommendation = { product: lead.nickname, link: lead.link, alternatives: offered.slice(1) };
