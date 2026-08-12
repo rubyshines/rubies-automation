@@ -12,6 +12,7 @@
  * (cadence.companyEligible) until the operator confirms a new contact.
  */
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { identifyingDomain, emailDomain } = require('./emailDomains');
 
 /** Bounce / departure detection (Design #3 contact-change flow). Pure. */
 function detectContactLoss({ subject = '', body = '', from = '' } = {}) {
@@ -69,6 +70,38 @@ async function correlateInbound(msg) {
     if (byGeneral?.id) companyId = byGeneral.id;
   }
 
+  // 1b. Sender DOMAIN → company. Exact-address matching alone silently drops
+  // mail from a colleague of the person we have on file, and that is not an
+  // edge case: 16 of 45 uncorrelated threads were companies we already knew,
+  // writing from an address that simply was not registered. Four of them then
+  // sat in the queue reading "no prior outbound" while their conversation ran
+  // in Gmail. Same shape as the partner whose survey gave us programs@ while
+  // every real thread was with mg@.
+  //
+  // Only an identifying domain counts (see emailDomains): a gmail.com sender
+  // would otherwise attach to whichever company happened to have a gmail
+  // contact. When this path matches, register the address so the exact-match
+  // above wins next time and the company stops depending on the fallback.
+  let matchedByDomain = false;
+  if (!companyId) {
+    const domain = identifyingDomain(sender);
+    if (domain) {
+      const { data: byWebsite } = await sb.from('b2b_companies')
+        .select('id, website, relationship_state').ilike('website', `%${domain}%`);
+      const site = (byWebsite || []).find(c => identifyingDomain(c.website) === domain
+        && c.relationship_state !== 'lost');
+      if (site) companyId = site.id;
+
+      if (!companyId) {
+        const { data: peers } = await sb.from('b2b_contacts')
+          .select('company_id, email').ilike('email', `%@${domain}`);
+        const peer = (peers || []).find(c => emailDomain(c.email) === domain && c.company_id);
+        if (peer) companyId = peer.company_id;
+      }
+      matchedByDomain = !!companyId;
+    }
+  }
+
   // Bounce case: sender is mailer-daemon — correlate via thread instead
   const loss = detectContactLoss({ subject, body: body_text, from: sender });
   if (!companyId && loss === 'hard_bounce' && gmail_thread_id) {
@@ -116,6 +149,19 @@ async function correlateInbound(msg) {
   if (mErr) {
     if (mErr.code === '23505') return { matched: true, company_id: companyId, thread_id: threadId, duplicate: true };
     throw new Error(`b2b_messages insert: ${mErr.message}`);
+  }
+
+  // 3b. Register an address we only reached via the domain fallback, so the
+  // exact-address match handles it next time and resolveRecipient can see it.
+  // Not primary: a colleague writing in does not displace the person we have
+  // deliberately been corresponding with.
+  if (matchedByDomain) {
+    const { error: cErr } = await sb.from('b2b_contacts').upsert({
+      id: sender, email: sender, company_id: companyId,
+      is_primary: false, is_active: true, source: 'inbound_domain_match',
+      notes: `Auto-added ${new Date().toISOString().slice(0, 10)}: wrote in from a domain already on this company.`,
+    }, { onConflict: 'id', ignoreDuplicates: true });
+    if (cErr) console.warn(`[correlate] contact auto-add ${sender}: ${cErr.message}`);
   }
 
   // 4. State updates
