@@ -19,6 +19,7 @@ const {
   parseSizeVariant, normalizeSize, getSizeModifier,
   extractSizeFromSku, formatMeasurementDisplay,
 } = require('./sizeUtils');
+const { tightLegsTargets } = require('./styleSwitch');
 
 // ---------------------------------------------------------------------------
 // Product maps — populated by initCsConfig() from Supabase at server startup.
@@ -142,71 +143,6 @@ function getProductUrl(nickname) {
   return null;
 }
 
-/**
- * Style-switch targets to offer for a tight-legs complaint, from
- * product_cs_config.style_switch.
- *
- * The field carries two different meanings and they must not be conflated:
- *   isTarget     — the CUT fact: this style has a wider leg opening. That is
- *                  what compare_products shows the advisor, and it is true of
- *                  the Naomi even though the Naomi is rarely the right suggestion.
- *   recommendFor — what we actually suggest to a customer, which also weighs
- *                  compression and age. The Naomi is a gaff (more compression,
- *                  less all-day comfort), so it is offered ALONGSIDE the Sassy
- *                  and never ahead of it; the Flo is the youth answer and the
- *                  Sassy the adult one.
- *
- * Ordering is everyday-wear first, so the all-day pick always leads the copy,
- * then by nickname so the wording is stable between runs.
- */
-function tightLegsTargets({ category, isKids, size, excludeNickname } = {}) {
-  const ageGroup = isKids ? 'youth' : 'adult';
-  const normSize = size ? normalizeSize(size) : null;
-  return Object.values(_activeProducts)
-    .filter((p) => {
-      const ss = p.styleSwitch;
-      if (!ss?.isTarget || !ss.recommendFor?.tightLegs) return false;
-      if (p.category !== category) return false;
-      if (ss.forCategories && !ss.forCategories.includes(category)) return false;
-      const ages = ss.recommendFor.ageGroups;
-      if (ages && !ages.includes(ageGroup)) return false;
-      if (excludeNickname && p.nickname.toLowerCase() === String(excludeNickname).toLowerCase()) return false;
-      // A style we would recommend but cannot actually supply in their size is
-      // not an option. This is what rules the Cheeky out for a youth 4-9 while
-      // keeping it for a youth 10-16, who crosses into adult XXS-M.
-      return offeredSizeFor(p.styleSwitch.recommendFor, normSize) !== null;
-    })
-    .map((p) => ({
-      nickname: p.nickname,
-      everyday: p.styleSwitch.recommendFor.everyday === true,
-      size: offeredSizeFor(p.styleSwitch.recommendFor, normSize),
-      crossesToAdult: Boolean(normSize)
-        && p.styleSwitch.recommendFor.sizedIn === 'adult'
-        && NUMERIC_SIZES.includes(normSize),
-      link: getProductUrl(p.nickname) || '',
-    }))
-    .sort((a, b) => (b.everyday === true) - (a.everyday === true) || a.nickname.localeCompare(b.nickname));
-}
-
-/**
- * The size we would actually send, in the target's own sizing system.
- * Returns null when the target cannot serve that customer at all.
- *
- * `sizedIn: 'adult'` means the style is sold in adult letters, so a youth
- * numeric size has to cross over (10 → XXS … 16 → M). Youth 4-9 have no adult
- * equivalent, so an adult-sized style genuinely cannot serve them. We never
- * cross an adult DOWN into a youth-sized style: that is a positioning call,
- * not a sizing one (an adult XS would physically fit the Flo).
- */
-function offeredSizeFor(recommendFor, normSize) {
-  if (!normSize) return null;
-  const sizedIn = recommendFor?.sizedIn;
-  if (sizedIn === 'adult' && NUMERIC_SIZES.includes(normSize)) {
-    return NUMERIC_TO_LETTER_UPPER[normSize] || null;
-  }
-  if (sizedIn === 'youth' && LETTER_SIZES.includes(normSize)) return null;
-  return normSize;
-}
 
 /**
  * Build a human-friendly product list text from the loaded config.
@@ -1695,6 +1631,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
         const currentNick = getProductNickname(item.product);
         const targetCategory = isSwim ? 'swim_bottom' : productCategory;
         const targets = tightLegsTargets({
+          activeProducts: _activeProducts,
           category: targetCategory,
           isKids,
           size: item.size,
