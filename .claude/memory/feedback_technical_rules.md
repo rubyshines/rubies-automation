@@ -60,6 +60,20 @@ Every sync, webhook handler, intake job, and import script that writes to Supaba
 
 **Audit hook:** any time you add a new sync/webhook/intake handler that writes more than one row per upstream entity, double-check it satisfies the rules above before shipping.
 
+### The claim must come before the expensive work, not just before the write
+
+The rules above make concurrent writes *correct*. They do not make them *cheap*. When the work guarded by a claim costs money or time — an LLM call, a paid API, a long job — the claim has to be taken **before** that work starts, not at the moment of writing the result.
+
+**Why:** intake dedupe was correct for years and still burned ~49% of advisor spend on real tickets. Gorgias emits `ticket-message-created` once per message, and the offline chat widget lands a whole flow transcript at once (measured: 8–10 customer messages inside one second). Each delivery ran a full Opus draft, all resolved to the *same* latest customer message, and all but one were discarded at INSERT on `UNIQUE(gorgias_ticket_id, gorgias_message_id)`. The data was never wrong — one draft, every time — so nothing surfaced it. Only the bill did, and only when someone decomposed it. Concurrency also makes it worse than N×: simultaneous callers cannot share a prompt cache, so every one pays the full cold cache-write.
+
+**How to apply:**
+- Ask of any claim: *what does the loser avoid?* If the answer is "a duplicate row" but not "the cost", the claim is in the wrong place.
+- Insert the claim row first, do the work, then **fill the claim in by UPDATE** — an INSERT at the end would collide with your own claim.
+- A mid-flight claim needs release on **every** exit including thrown errors. A `try/finally` wrapper around the existing body does this without restructuring it; a leaked claim silently suppresses the work forever, which for CS means an unanswered customer.
+- Pair the release with a **staleness takeover** for the process-died case (a redeploy mid-work). Scope it so it can only ever match an unfilled claim of your own kind — never a completed record, never another subsystem's claim.
+- **A stubbed-client unit test cannot catch a schema violation in the claim row.** The first version of this claim omitted a `NOT NULL` column, which would have made every claim fail and *nothing* ever draft. Round-trip the claim against the real table before shipping, and assert N concurrent claims yield exactly one winner.
+- Watch for the symptom rather than the cause: **more API calls than there are outputs to show for them.** A calls-per-output ratio is the cheap tripwire for this whole class.
+
 ## Always paginate Supabase queries
 
 **Why:** Supabase default limit is 1000 rows. Queries without pagination silently truncate, causing wrong analysis and missed data.

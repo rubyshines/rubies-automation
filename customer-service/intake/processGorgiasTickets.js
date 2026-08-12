@@ -823,7 +823,23 @@ async function sendAutoCloseReply({ supabase, ticketId, messages, latestCustomer
  * Process a single Gorgias ticket through the advisor.
  * Returns { drafted: true } if a draft was created, { skipped: true } otherwise.
  */
+/**
+ * Claim-owning wrapper. The claim is taken mid-flight (right before the advisor
+ * call, once the cheap skip checks have passed), so the release has to cover
+ * every exit from that point on — including thrown errors. A finally here does
+ * that without restructuring the body: a leaked claim would permanently
+ * suppress re-drafting of a real customer message.
+ */
 async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
+  const claimCtx = { id: null, settled: false };
+  try {
+    return await processTicketInner(supabase, ticket, aiBotId, existingMessageIds, claimCtx);
+  } finally {
+    if (claimCtx.id && !claimCtx.settled) await releaseDraftSlot(supabase, claimCtx.id);
+  }
+}
+
+async function processTicketInner(supabase, ticket, aiBotId, existingMessageIds, claimCtx) {
   const ticketId = ticket.id;
 
   // Fetch messages (only called for tickets that passed pre-filter)
@@ -1001,6 +1017,15 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
   // advisor reads the content (error screenshots, defect photos), not just
   // filenames. Fail-soft: on any fetch problem the draft proceeds text-only.
   const images = await fetchImagesAsBlocks(attachments);
+
+  // Take exclusive ownership of this message before spending anything on it.
+  // Everything above is cheap and idempotent; the advisor call below is not.
+  const claim = await claimDraftSlot(supabase, ticketId, latestCustomerMsgId);
+  if (!claim) {
+    console.log(`[intake] Skip ${ticketId}: message ${latestCustomerMsgId} claimed by a concurrent run`);
+    return { skipped: true, reason: 'claimed_elsewhere' };
+  }
+  claimCtx.id = claim.id;
 
   // Run through hybrid advisor (Opus) with tree fallback
   console.log(`[intake] Processing ticket ${ticketId} — "${messageText.substring(0, 80)}..."${images.length ? ` [+${images.length} image(s)]` : ''}`);
@@ -1230,8 +1255,11 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
       action_executed_at: autoAction && !protectiveHoldOnly ? nowIso : null,
       previous_draft_id: previousDraftId,
     },
+    claimId: claim.id,
   });
   if (!committed.id) return { skipped: true };
+  // The claim is now a real draft — the finally must not delete it.
+  claimCtx.settled = true;
   const newDraft = { id: committed.id };
 
   console.log(`[intake] Draft created for ticket ${ticketId} (confidence: ${confidence}, status: ${structured.status}, type: ${messageType})`);
@@ -1324,20 +1352,153 @@ async function processTicket(supabase, ticket, aiBotId, existingMessageIds) {
  * supersede is bounded to id < new id and the active_draft_id update only
  * moves forward.
  */
-async function commitDraft(supabase, { ticketRowId, gorgiasTicketId, draftFields }) {
-  const { data: newDraft, error: insertErr } = await supabase
+/**
+ * Take the exclusive right to draft for one customer message, BEFORE any
+ * advisor call.
+ *
+ * Gorgias emits ticket-message-created once per message, and a chat-widget
+ * flow lands its whole transcript at once — 8-10 customer messages in the same
+ * second. Every delivery ran a full Opus draft, all of them resolved to the
+ * same latest customer message, and all but one were thrown away at INSERT on
+ * UNIQUE(gorgias_ticket_id, gorgias_message_id). The dedupe was real but sat
+ * on the far side of the expensive work, so the redundant drafts were paid for
+ * in full — measured at ~49% of advisor spend on real tickets.
+ *
+ * Same atomic-claim shape as sendAutoCloseReply: 23505 means another worker
+ * owns this message, so bail before spending anything. status 'superseded'
+ * keeps the placeholder out of dashboard queues and out of the
+ * buildPreviousDraftContext narrative until commitDraft fleshes it out.
+ *
+ * @returns {Promise<{id:number}|null>} the claim row, or null if another
+ *   worker owns this message.
+ */
+async function claimDraftSlot(supabase, gorgiasTicketId, gorgiasMessageId) {
+  const { data, error } = await supabase
     .from('cs_ai_drafts')
-    .insert(draftFields)
+    .insert({
+      gorgias_ticket_id: gorgiasTicketId,
+      gorgias_message_id: gorgiasMessageId,
+      // draft_response is NOT NULL, so an unfilled claim is the empty string —
+      // that (with intake_claim) is what marks a row as claimed-but-not-drafted.
+      draft_response: '',
+      structured_output: { intake_claim: true },
+      audit_trail: ['intake: claim'],
+      status: 'superseded',
+    })
     .select('id')
     .single();
 
-  if (insertErr) {
-    if (insertErr.code === '23505') {
-      console.log(`[intake] Ticket ${gorgiasTicketId}: draft for this message already exists (concurrent run) — skipping`);
-      return { duplicate: true };
+  if (error) {
+    if (error.code === '23505') {
+      return reclaimIfStale(supabase, gorgiasTicketId, gorgiasMessageId);
     }
-    console.error(`[intake] Insert error for ticket ${gorgiasTicketId}: ${insertErr.message}`);
-    return { error: insertErr };
+    // Can't establish ownership — treat as claimed so we don't spend on a
+    // draft that may be a duplicate. The message is retried by the next pass.
+    console.warn(`[intake] Draft claim failed for ticket ${gorgiasTicketId}: ${error.message}`);
+    return null;
+  }
+  return data;
+}
+
+// A draft takes 18-44s in production. Anything still an unfilled claim after
+// this long belongs to a worker that died (a Railway redeploy mid-draft is the
+// realistic case), so it is safe to take over. Deliberately far beyond any real
+// draft: stealing a LIVE claim would reintroduce the duplicate spend this whole
+// mechanism exists to stop.
+const STALE_CLAIM_MS = 15 * 60 * 1000;
+
+/**
+ * Recover from a claim stranded by a process that died between claiming and
+ * committing. Without this, the placeholder would suppress re-drafting of that
+ * message forever — a silently unanswered customer.
+ *
+ * Only ever matches OUR unfilled intake claims: `draft_response` still empty and
+ * `intake_claim` still set. A committed draft has both replaced, and the
+ * auto-close claim uses a different marker, so neither can be stolen.
+ *
+ * Concurrency: two workers may both see the same stale row. Both delete (the
+ * second is a harmless no-op) and both retry the insert; the unique constraint
+ * still admits exactly one. A second collision means someone else won — bail.
+ */
+async function reclaimIfStale(supabase, gorgiasTicketId, gorgiasMessageId) {
+  const cutoff = new Date(Date.now() - STALE_CLAIM_MS).toISOString();
+  const { data: stale } = await supabase
+    .from('cs_ai_drafts')
+    .select('id')
+    .eq('gorgias_ticket_id', gorgiasTicketId)
+    .eq('gorgias_message_id', gorgiasMessageId)
+    .eq('draft_response', '')
+    .contains('structured_output', { intake_claim: true })
+    .lt('created_at', cutoff)
+    .maybeSingle();
+
+  if (!stale) return null; // a live claim, or a real draft — leave it alone
+
+  console.warn(`[intake] Reclaiming stale draft claim ${stale.id} on ticket ${gorgiasTicketId} (message ${gorgiasMessageId})`);
+  await supabase.from('cs_ai_drafts').delete().eq('id', stale.id);
+
+  const { data, error } = await supabase
+    .from('cs_ai_drafts')
+    .insert({
+      gorgias_ticket_id: gorgiasTicketId,
+      gorgias_message_id: gorgiasMessageId,
+      draft_response: '',
+      structured_output: { intake_claim: true },
+      audit_trail: ['intake: claim (reclaimed stale)'],
+      status: 'superseded',
+    })
+    .select('id')
+    .single();
+
+  if (error) return null; // another worker reclaimed it first
+  return data;
+}
+
+/**
+ * Release a claim that never became a draft, so a later pass can retry the
+ * message. Best-effort: a failure here leaves a placeholder that suppresses
+ * re-drafting of one message, which is strictly better than sending twice.
+ */
+async function releaseDraftSlot(supabase, claimId) {
+  try {
+    await supabase.from('cs_ai_drafts').delete().eq('id', claimId);
+  } catch (err) {
+    console.warn(`[intake] Draft claim release failed for ${claimId}: ${err.message}`);
+  }
+}
+
+async function commitDraft(supabase, { ticketRowId, gorgiasTicketId, draftFields, claimId = null }) {
+  // With a claim held, the row already exists and owns the unique key — filling
+  // it in is an UPDATE. Inserting here would collide with our own claim.
+  let newDraft;
+  if (claimId) {
+    const { data, error: updateErr } = await supabase
+      .from('cs_ai_drafts')
+      .update(draftFields)
+      .eq('id', claimId)
+      .select('id')
+      .single();
+    if (updateErr) {
+      console.error(`[intake] Claim fill-in error for ticket ${gorgiasTicketId}: ${updateErr.message}`);
+      return { error: updateErr };
+    }
+    newDraft = data;
+  } else {
+    const { data, error: insertErr } = await supabase
+      .from('cs_ai_drafts')
+      .insert(draftFields)
+      .select('id')
+      .single();
+
+    if (insertErr) {
+      if (insertErr.code === '23505') {
+        console.log(`[intake] Ticket ${gorgiasTicketId}: draft for this message already exists (concurrent run) — skipping`);
+        return { duplicate: true };
+      }
+      console.error(`[intake] Insert error for ticket ${gorgiasTicketId}: ${insertErr.message}`);
+      return { error: insertErr };
+    }
+    newDraft = data;
   }
 
   await supabase
@@ -1493,6 +1654,8 @@ function buildConversationContext(messages, latestMsgId) {
 module.exports = {
   processTicket,
   commitDraft,
+  claimDraftSlot,
+  releaseDraftSlot,
   getAiBotUserId,
   buildConversationContext,
   buildPreviousDraftContext,

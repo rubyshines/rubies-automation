@@ -24,14 +24,14 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Priority: low
 - Notes: `sizingEngine.js` style_switch branch hardcodes Cheeky (swim) / Flo (kids) / Sassy (adult underwear). `product_cs_config.style_switch` now marks all four targets including the Naomi, and `compare_products` surfaces them, so both could be driven from one source. Left alone deliberately in the 2026-08-11 change: it decides which product a customer is told to switch to, so it is a customer-facing recommendation change needing a scenario run at `--repeat 3`, not a drive-by edit. A dead `configTargets` computation that read the config and discarded it was removed at the same time, so nothing there looks live that isn't.
 
-## `ai_calls` may be under-reporting AI spend — every cost number Jamie sees could be low
+## RESOLVED 2026-08-12 — `ai_calls` is NOT under-reporting; the ledger matches the bill
 - Parked: 2026-08-10
-- Type: bug
+- Resolved: 2026-08-12
+- Type: bug (closed, no code change needed)
 - Domains: tech, finance
-- Priority: high
-- Notes: The 2x2 eval run (2026-08-04) summed Anthropic's own `usage` on every round and put its drafting at **$29.24**. The `ai_calls` ledger over the same window put it at **$17.31** — a 41% shortfall. Row counts reconcile (555 ledger rows against 535 recorded drafting rounds, the excess being judge calls), so this is not missing rows: it is **cost per row**. That points at the pricing math or the token fields in `shared/aiClient.js` / `shared/aiPricing.js`, not at coverage. Prime suspects in order: cache-write and cache-read tokens priced at the plain input rate or not counted at all — cache writes are 53% of advisor spend, so mispricing them alone could account for the whole gap; or a `model_id` with no `aiPricing` entry silently costing zero.
-- Why it matters beyond the eval: `ai_calls` is the source for the daily ops digest's per-component cost line, the month-to-date total, and the `AI_MONTHLY_CAP_USD` early warning (`lib/rollupAiCosts.js` → `ai_costs_daily`, `lib/aiSpendCap.js`). A low ledger means the cap does not fire when it should. This ledger exists precisely because a shadow-eval experiment burned money silently twice with no per-component visibility; a systematically low ledger reopens that blind spot in a quieter, harder-to-notice way.
-- Resume when: take one recent `ai_calls` row with cache activity, recompute its cost by hand from the stored token counts and the `aiPricing` rate for its exact `model_id`, and compare against the stored `cost`. That single row either reproduces the gap or clears the pricing math in minutes. Then reconcile one day's total against the Anthropic console.
+- Outcome: **The ledger is accurate.** Reconciled against the actual Anthropic bill via the Admin API cost report (`lib/billReconcile.js` uses the same endpoint): over 30 days the ledger read $497.01 against $493.52 billed — **+0.7%**, well inside the 12% alarm threshold — and it agrees day by day and model by model (opus-4-8 $383.70 vs $379.75, sonnet-5 exact, opus-5 $41.12 vs $41.62).
+- Where the 41% came from: the eval's "$29.24 drafting" figure is, to the cent, the ledger's own `advisor_eval_judge` cost for 2026-08-04. Judge cost was compared against drafting cost — two different populations, not a pricing defect. The cache-write pricing suspicion was unfounded: recomputing `cs_advisor` from stored token counts at the `aiPricing` rates reproduces the stored total exactly ($311.21).
+- Lesson worth keeping: **reconcile against the vendor bill, not against another one of our own estimates.** The original diagnosis compared two internal numbers and concluded the ledger was broken; one call to the cost report would have settled it in minutes. The monthly `billReconcile` only runs on the 1st, which is why 30 days can pass with no check.
 
 ## Advisor drafts a form submission as if it were an email
 - Parked: 2026-08-06
