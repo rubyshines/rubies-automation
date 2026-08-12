@@ -635,6 +635,8 @@ async function executeToolCall(toolName, toolInput) {
       });
       const recByNick = new Map(recommendable.map(t => [t.nickname, t]));
       const unavailable = [];
+      // SKUs per unavailable style, so a dated inbound can be attached below.
+      const unavailableSkus = new Map();
 
       // Build alternatives with size + inventory filtering
       let alternatives = [];
@@ -664,7 +666,10 @@ async function executeToolCall(toolName, toolInput) {
           });
           const sizeInventory = matches.reduce((sum, v) => sum + (v.inventoryQuantity || 0), 0);
           if (sizeInventory <= 0) {
-            if (recByNick.has(nick)) unavailable.push({ product: nick, size: wanted, reason: 'out of stock in that size' });
+            if (recByNick.has(nick)) {
+              unavailable.push({ product: nick, size: wanted, reason: 'out of stock in that size' });
+              unavailableSkus.set(nick, matches.map(v => v.sku).filter(Boolean));
+            }
             continue;
           }
 
@@ -740,7 +745,7 @@ async function executeToolCall(toolName, toolInput) {
         },
         alternatives,
         style_switch_options: styleSwitchOptions,
-        ...(unavailable.length ? { style_switch_unavailable: unavailable } : {}),
+        ...(unavailable.length ? { style_switch_unavailable: await withRestock(unavailable, unavailableSkus) } : {}),
       };
     }
 
@@ -864,6 +869,26 @@ async function executeToolCall(toolName, toolInput) {
  * Facts are curated one-sentence statements Jamie approved in the dashboard
  * (see advisor-facts-schema.sql); grouped by category for scanability.
  */
+/**
+ * Attach a dated inbound to each out-of-stock style. "Out of stock" and "out of
+ * stock, arriving next week" are different answers: the second one is still
+ * worth recommending. Fail-soft, because a missing restock lookup must never
+ * take down a product comparison.
+ */
+async function withRestock(unavailable, skusByProduct) {
+  const { restockEtaForSkus } = require('./restockEta');
+  return Promise.all(unavailable.map(async (u) => {
+    if (u.reason !== 'out of stock in that size') return u;
+    try {
+      const restock = await restockEtaForSkus(skusByProduct.get(u.product) || []);
+      return restock ? { ...u, restock } : { ...u, restock: null };
+    } catch (e) {
+      console.warn(`[compare_products] restock lookup failed for ${u.product}: ${e.message}`);
+      return u;
+    }
+  }));
+}
+
 function buildFactsBlock(facts) {
   if (!facts?.length) return '';
   const byCategory = {};
