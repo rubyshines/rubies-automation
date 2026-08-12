@@ -29,7 +29,15 @@ require.cache[shippingLookupPath] = {
   },
 };
 
-const { getShippingMethodTitle, SHIPPING_METHOD_TITLES, applyShippingAddressOverride, normalizeCountryCode } = require('../lib/orderUtils');
+const {
+  getShippingMethodTitle,
+  SHIPPING_METHOD_TITLES,
+  applyShippingAddressOverride,
+  normalizeCountryCode,
+  normalizeShippingPrice,
+  shippingPreviewLine,
+  shippingChargeError,
+} = require('../lib/orderUtils');
 
 describe('getShippingMethodTitle', () => {
   beforeEach(() => { stubZone = null; });
@@ -178,5 +186,72 @@ describe('applyShippingAddressOverride', () => {
     const baseCopy = { ...base };
     applyShippingAddressOverride(base, { address1: 'changed' });
     assert.deepEqual(base, baseCopy);
+  });
+});
+
+describe('normalizeShippingPrice', () => {
+  it('defaults to free when absent, null or empty', () => {
+    assert.equal(normalizeShippingPrice(undefined), '0.00');
+    assert.equal(normalizeShippingPrice(null), '0.00');
+    assert.equal(normalizeShippingPrice(''), '0.00');
+  });
+
+  it('formats numbers and numeric strings to two decimals', () => {
+    assert.equal(normalizeShippingPrice(24), '24.00');
+    assert.equal(normalizeShippingPrice('24'), '24.00');
+    assert.equal(normalizeShippingPrice(24.5), '24.50');
+    assert.equal(normalizeShippingPrice(24.567), '24.57');
+  });
+
+  // Fails closed to free: a negative would REDUCE the order total, and junk
+  // must never reach Shopify as a price. The preview shows $0.00 either way,
+  // so a mistyped charge is visible before the invoice goes out.
+  it('collapses negative and non-numeric input to free', () => {
+    assert.equal(normalizeShippingPrice(-24), '0.00');
+    assert.equal(normalizeShippingPrice('abc'), '0.00');
+    assert.equal(normalizeShippingPrice(NaN), '0.00');
+    assert.equal(normalizeShippingPrice(Infinity), '0.00');
+    assert.equal(normalizeShippingPrice({}), '0.00');
+  });
+});
+
+describe('shippingChargeError', () => {
+  // Every `standard` title has "Free" baked in because that is the literal
+  // Shopify rate name Warehance matches on. Charging on one would invoice
+  // "Free US Standard Shipping — $24.00".
+  it('rejects a charge on every standard (Free-named) rate', () => {
+    for (const zone of Object.keys(SHIPPING_METHOD_TITLES)) {
+      const title = SHIPPING_METHOD_TITLES[zone].standard;
+      const err = shippingChargeError(title, 24);
+      assert.ok(err, `expected ${zone} standard ("${title}") to reject a charge`);
+      assert.match(err, /expedited/);
+    }
+  });
+
+  it('allows a charge on every expedited rate', () => {
+    for (const zone of Object.keys(SHIPPING_METHOD_TITLES)) {
+      const title = SHIPPING_METHOD_TITLES[zone].expedited;
+      assert.equal(shippingChargeError(title, 24), null,
+        `expected ${zone} expedited ("${title}") to allow a charge`);
+    }
+  });
+
+  it('allows $0 on any rate, including the Free-named ones', () => {
+    assert.equal(shippingChargeError('Free US Standard Shipping', 0), null);
+    assert.equal(shippingChargeError('Free US Standard Shipping', undefined), null);
+    // A negative normalizes to free, so it must not trip the guard either.
+    assert.equal(shippingChargeError('Free US Standard Shipping', -5), null);
+  });
+});
+
+describe('shippingPreviewLine', () => {
+  it('says RUBIES covers it when free', () => {
+    assert.equal(shippingPreviewLine('US Expedited Shipping', 0),
+      'US Expedited Shipping ($0.00 — covered by RUBIES)');
+  });
+
+  it('says charged to customer when priced', () => {
+    assert.equal(shippingPreviewLine('US Expedited Shipping', 24),
+      'US Expedited Shipping ($24.00 — charged to customer)');
   });
 });

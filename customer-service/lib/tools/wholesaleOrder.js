@@ -21,6 +21,9 @@ const {
   getShippingMethodTitle,
   applyShippingAddressOverride,
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+  normalizeShippingPrice,
+  shippingPreviewLine,
+  shippingChargeError,
 } = require('../orderUtils');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
@@ -353,7 +356,11 @@ const tools = [
         shipping_speed: {
           type: 'string',
           enum: ['standard', 'expedited'],
-          description: 'Shipping speed. Defaults to "standard" for US wholesale and "expedited" for every non-US destination. Pass explicitly to override the per-country default. Sets the Shopify shipping line title at $0; Warehance auto-maps to the carrier.',
+          description: 'Shipping speed. Defaults to "standard" for US wholesale and "expedited" for every non-US destination. Pass explicitly to override the per-country default. Sets the Shopify shipping line title; Warehance auto-maps to the carrier. Shipping is free unless you also pass shipping_price.',
+        },
+        shipping_price: {
+          type: 'number',
+          description: 'Amount to charge for shipping, e.g. 24 for a paid expedited upgrade on a rush order. Defaults to 0 (wholesale ships free). Only valid with shipping_speed="expedited" — the standard rate titles literally read "Free ... Shipping", so a charge on one would contradict itself on the invoice and is rejected. On an AU de-minimis split the charge rides the first draft only, so the customer is not billed freight twice.',
         },
         shipping_address: SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
         confirmed: {
@@ -368,7 +375,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, shipping_address, pre_increase_pricing, credit_items }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, shipping_price, shipping_address, pre_increase_pricing, credit_items }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -536,8 +543,17 @@ const tools = [
         ? shipping_speed
         : (cc === 'US' ? 'standard' : 'expedited');
       const shippingTitle = await getShippingMethodTitle(cc, speed);
+      // Wholesale ships free by default. An operator can charge for it (e.g. a
+      // paid expedited upgrade on a rush order) via shipping_price. On an
+      // AU split this rides the first draft only, so the customer is not
+      // charged the same freight twice.
+      const shippingPrice = normalizeShippingPrice(shipping_price);
+      const shippingErr = shippingChargeError(shippingTitle, shippingPrice);
+      if (shippingErr) {
+        return { content: [{ type: 'text', text: shippingErr }] };
+      }
 
-      function buildDraftInput(itemList, orderNote) {
+      function buildDraftInput(itemList, orderNote, isFirstDraft = true) {
         const lineItems = itemList.map(r => ({
           variantId: r.variantId,
           quantity: r.quantity,
@@ -547,7 +563,7 @@ const tools = [
           customerId: customerGid,
           lineItems,
           note: orderNote,
-          shippingLine: { title: shippingTitle, price: '0.00' },
+          shippingLine: { title: shippingTitle, price: isFirstDraft ? shippingPrice : '0.00' },
           tags: pre_increase_pricing ? ['wholesale', 'cs-mcp', 'pre-apr-16-pricing'] : ['wholesale', 'cs-mcp'],
         };
         if (shippingAddress) {
@@ -617,7 +633,7 @@ const tools = [
           for (let i = 0; i < splits.length; i++) {
             let orderNote = note || defaultNote;
             if (splits.length > 1) orderNote += ` | Split ${i + 1} of ${splits.length}`;
-            const input = buildDraftInput(splits[i], orderNote);
+            const input = buildDraftInput(splits[i], orderNote, i === 0);
             const draftOrder = await createDraftOrder(input);
             createdOrders.push({ draftOrder, splitItems: splits[i] });
           }
@@ -797,7 +813,7 @@ const tools = [
         outputLines.push(`**Total:** ${currency} $${total.toFixed(2)} (${totalUnits} units)`);
       }
       outputLines.push('');
-      outputLines.push(`**Shipping:** ${shippingTitle} ($0.00)`);
+      outputLines.push(`**Shipping:** ${shippingPreviewLine(shippingTitle, shippingPrice)}`);
       outputLines.push('');
       outputLines.push(`⏳ **ACTION REQUIRED:** Show this entire preview to the user and wait for their approval before proceeding.`);
       outputLines.push(`To confirm, call create_wholesale_order with confirmed=true and draft_order_ids=${JSON.stringify(draftOrderIds)}.`);

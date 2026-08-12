@@ -95,6 +95,9 @@ require.cache[orderUtilsPath] = {
     getShippingMethodTitle: fakeGetShippingMethodTitle,
     normalizeCountryCode: realOrderUtils.normalizeCountryCode,
     unknownDestinationWarning: realOrderUtils.unknownDestinationWarning,
+    normalizeShippingPrice: realOrderUtils.normalizeShippingPrice,
+    shippingPreviewLine: realOrderUtils.shippingPreviewLine,
+    shippingChargeError: realOrderUtils.shippingChargeError,
   },
 };
 

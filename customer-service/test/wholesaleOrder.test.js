@@ -50,6 +50,9 @@ require.cache[supabaseClientPath] = {
 };
 
 let lastCreateDraftOrderArgs = null;
+// Every createDraftOrder call this run, in order. The AU de-minimis path makes
+// several (a probe, then one per split), and shipping must be charged once.
+let allCreateDraftOrderArgs = [];
 // Build a draft response that mirrors the input line items so the preview
 // renderer sees one rendered line per requested variant. Discounted unit
 // price is computed from input appliedDiscount + stubVariantPrices.
@@ -88,6 +91,7 @@ require.cache[shopifyPath] = {
   exports: {
     createDraftOrder: (args) => {
       lastCreateDraftOrderArgs = args;
+      allCreateDraftOrderArgs.push(args);
       return Promise.resolve(buildDraftResponseFromInput(args));
     },
     deleteDraftOrder: () => Promise.resolve(),
@@ -170,6 +174,9 @@ require.cache[orderUtilsPath] = {
     applyShippingAddressOverride: realOrderUtils.applyShippingAddressOverride,
     SHIPPING_ADDRESS_OVERRIDE_SCHEMA: realOrderUtils.SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
     getShippingMethodTitle: fakeGetShippingMethodTitle,
+    normalizeShippingPrice: realOrderUtils.normalizeShippingPrice,
+    shippingPreviewLine: realOrderUtils.shippingPreviewLine,
+    shippingChargeError: realOrderUtils.shippingChargeError,
   },
 };
 
@@ -183,6 +190,7 @@ const createWholesaleOrder = wholesaleTools.find(t => t.name === 'create_wholesa
 
 async function runHandler(args) {
   lastCreateDraftOrderArgs = null;
+  allCreateDraftOrderArgs = [];
   return createWholesaleOrder.handler(args);
 }
 
@@ -768,5 +776,93 @@ describe('create_wholesale_order — credit_items (defect credit)', () => {
     assert.equal(lastAppliedDiscountArgs, null, 'no discount applied on error');
     assert.match(result.content[0].text, /must reference SKUs already in the order/);
     assert.match(result.content[0].text, /GHOST-1/);
+  });
+});
+
+describe('create_wholesale_order — shipping_price', () => {
+  beforeEach(() => { lastCreateDraftOrderArgs = null; allCreateDraftOrderArgs = []; });
+
+  it('defaults to free when shipping_price is omitted', async () => {
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.price, '0.00');
+    assert.match(result.content[0].text, /covered by RUBIES/);
+  });
+
+  it('charges the shipping line on an expedited rate', async () => {
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      shipping_speed: 'expedited',
+      shipping_price: 24,
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'US Expedited Shipping');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.price, '24.00');
+    assert.match(result.content[0].text, /\$24\.00 — charged to customer/);
+  });
+
+  // The standard rate titles literally read "Free ... Shipping", so a charge on
+  // one would invoice the customer a contradiction. Reject rather than render it.
+  it('refuses to charge on a standard (Free-named) rate and creates no draft', async () => {
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      shipping_speed: 'standard',
+      shipping_price: 24,
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.match(result.content[0].text, /Cannot charge for shipping/);
+    assert.match(result.content[0].text, /expedited/);
+    assert.equal(allCreateDraftOrderArgs.length, 0, 'must not create a draft when rejected');
+  });
+
+  // US wholesale defaults to standard, so a bare shipping_price with no explicit
+  // speed lands on a "Free" title — same rejection, via the country default.
+  it('refuses a charge that lands on a Free title via the country default', async () => {
+    const result = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      shipping_price: 24,
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.match(result.content[0].text, /Cannot charge for shipping/);
+    assert.equal(allCreateDraftOrderArgs.length, 0);
+  });
+
+  it('negative shipping_price falls back to free rather than crediting the order', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'US',
+      shipping_speed: 'expedited',
+      shipping_price: -24,
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.price, '0.00');
+  });
+
+  // An AU order over the $1,000 de-minimis threshold splits into several drafts.
+  // Freight is one physical shipment, so the charge rides the first draft only.
+  it('charges shipping once across an AU de-minimis split', async () => {
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      country_code: 'AU',
+      shipping_speed: 'expedited',
+      shipping_price: 60,
+      // 30 distinct lines at $50 net = $1,500 AUD, over the $1,000 threshold.
+      // The splitter bins whole line items, so the value has to be spread
+      // across lines rather than sitting in one fat quantity.
+      items: Array.from({ length: 30 }, (_, i) => ({ sku: `rub000${i}-S`, quantity: 1 })),
+    });
+    // Probe draft + one per split; the probe is deleted before the real ones.
+    const splitDrafts = allCreateDraftOrderArgs.slice(1);
+    assert.ok(splitDrafts.length > 1, `expected a split, got ${splitDrafts.length} draft(s)`);
+    assert.equal(splitDrafts[0].shippingLine.price, '60.00');
+    for (const d of splitDrafts.slice(1)) {
+      assert.equal(d.shippingLine.price, '0.00', 'only the first split may carry freight');
+    }
   });
 });

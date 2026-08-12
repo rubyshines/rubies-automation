@@ -165,6 +165,56 @@ async function getShippingMethodTitle(country, speed) {
 }
 
 /**
+ * Normalize an operator-supplied shipping charge into the string Shopify's
+ * draft `shippingLine.price` expects. Defaults to free, which is what almost
+ * every operator-created order wants — RUBIES covers shipping on exchanges,
+ * samples and donations.
+ *
+ * Anything not a finite, non-negative number (missing, null, junk string, a
+ * negative that would REDUCE the order total) collapses to '0.00'. Failing
+ * closed to free is safe because both phases of every order tool show the
+ * shipping price in the preview, so an operator who meant to charge sees $0.00
+ * and can correct it before the invoice goes out.
+ */
+function normalizeShippingPrice(raw) {
+  const n = typeof raw === 'string' ? parseFloat(raw) : raw;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return '0.00';
+  return n.toFixed(2);
+}
+
+/**
+ * Guard against charging for shipping on a rate whose NAME promises it is free.
+ *
+ * Every `standard` entry in SHIPPING_METHOD_TITLES has "Free" baked into the
+ * title, because that is the literal Shopify rate name Warehance matches on to
+ * pick a carrier. Putting a price on one of those lines invoices the customer
+ * "Free US Standard Shipping — $24.00", which is self-contradicting on the
+ * document they file for expenses. We cannot rename the rate without breaking
+ * carrier routing, so the paid case has to ride an expedited title instead.
+ *
+ * Returns an operator-facing error string, or null when the combination is fine.
+ */
+function shippingChargeError(shippingTitle, shippingPrice) {
+  if (normalizeShippingPrice(shippingPrice) === '0.00') return null;
+  if (!/free/i.test(shippingTitle)) return null;
+  return `Cannot charge for shipping on the rate "${shippingTitle}" — the rate name itself says Free, ` +
+    'so the invoice would contradict itself. Charged shipping belongs on an expedited rate: ' +
+    'pass shipping_speed="expedited" alongside shipping_price. If you genuinely need paid standard shipping, ' +
+    'that needs a new non-"Free" rate title in Shopify (and the matching Warehance carrier mapping) first.';
+}
+
+/**
+ * Preview text for a shipping line: names the carrier-routing title and says
+ * plainly whether the customer is being charged for it.
+ */
+function shippingPreviewLine(shippingTitle, shippingPrice) {
+  const price = normalizeShippingPrice(shippingPrice);
+  return price === '0.00'
+    ? `${shippingTitle} ($0.00 — covered by RUBIES)`
+    : `${shippingTitle} ($${price} — charged to customer)`;
+}
+
+/**
  * Warning line appended to order-creation previews when the destination
  * country couldn't be determined (no address on file, unrecognized country).
  * The shipping title has already defaulted to international at that point,
@@ -185,4 +235,7 @@ module.exports = {
   SHIPPING_METHOD_TITLES,
   normalizeCountryCode,
   unknownDestinationWarning,
+  normalizeShippingPrice,
+  shippingPreviewLine,
+  shippingChargeError,
 };

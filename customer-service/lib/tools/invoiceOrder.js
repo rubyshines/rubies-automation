@@ -13,6 +13,9 @@ const { preOrderLineAttributes } = require('../preOrderAttrs');
 const {
   resolveCustomerForDraft,
   getShippingMethodTitle,
+  normalizeShippingPrice,
+  shippingPreviewLine,
+  shippingChargeError,
   applyShippingAddressOverride,
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
   normalizeCountryCode,
@@ -81,7 +84,11 @@ const tools = [
         shipping_speed: {
           type: 'string',
           enum: ['standard', 'expedited'],
-          description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate at $0. Default: "standard".',
+          description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate, which drives Warehance carrier routing. Default: "standard". Shipping is free unless you also pass shipping_price.',
+        },
+        shipping_price: {
+          type: 'number',
+          description: 'Amount to charge for shipping, e.g. 24 for a paid expedited upgrade. Defaults to 0 — RUBIES covers shipping on exchange/replacement orders. Only valid with shipping_speed="expedited": the standard rate titles literally read "Free ... Shipping", so a charge on one would contradict itself on the invoice and is rejected.',
         },
         shipping_address: SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
         confirmed: {
@@ -95,7 +102,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, shipping_speed, shipping_address, confirmed, draft_order_id }) => {
+    handler: async ({ customer_id, exchange_items, paid_items, return_credit, return_credit_note, note, shipping_speed, shipping_price, shipping_address, confirmed, draft_order_id }) => {
       // Guard against a fabricated id (e.g. an email jammed into a GID). Shopify
       // would reject it with a cryptic "Invalid global id" — fail clearly instead.
       if (!confirmed && customer_id && /@/.test(String(customer_id))) {
@@ -172,18 +179,25 @@ const tools = [
         lineItems.push(li);
       }
 
-      // Shipping line title is driven by destination + speed. Price is always $0;
-      // Warehance auto-maps the title to the correct carrier method.
+      // Shipping line title is driven by destination + speed; Warehance auto-maps
+      // the title to the correct carrier method. Price defaults to $0 (RUBIES
+      // covers shipping on exchange/replacement orders) unless the operator
+      // charges for an upgrade via shipping_price.
       const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
       const shipCountry = shippingAddress?.country || '';
       const shippingTitle = await getShippingMethodTitle(shipCountry, speed);
+      const shippingPrice = normalizeShippingPrice(shipping_price);
+      const shippingErr = shippingChargeError(shippingTitle, shippingPrice);
+      if (shippingErr) {
+        return { content: [{ type: 'text', text: shippingErr }] };
+      }
 
       // Build draft input
       const defaultNote = 'Invoice order (exchange + paid items) created via CS MCP server';
       const draftInput = {
         customerId: customerGid,
         lineItems,
-        shippingLine: { title: shippingTitle, price: '0.00' },
+        shippingLine: { title: shippingTitle, price: shippingPrice },
         note: note || defaultNote,
         tags: ['invoice', 'cs-mcp'],
       };
@@ -253,7 +267,7 @@ const tools = [
         lines.push(`**Return credit:** -$${return_credit.toFixed(2)}${return_credit_note ? ` (${return_credit_note})` : ''}`);
       }
 
-      lines.push(`**Shipping:** ${shippingTitle} ($0.00)`);
+      lines.push(`**Shipping:** ${shippingPreviewLine(shippingTitle, shippingPrice)}`);
       lines.push(`**Total:** $${draftOrder.totalPrice}`);
       lines.push('');
       lines.push(`Review the draft order above, then call create_invoice_order again with confirmed=true and draft_order_id="${draftOrder.id}" to send the invoice.`);

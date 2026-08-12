@@ -25,6 +25,9 @@ const {
   buildShippingAddress,
   normalizeCountryCode,
   unknownDestinationWarning,
+  normalizeShippingPrice,
+  shippingPreviewLine,
+  shippingChargeError,
 } = require('../orderUtils');
 
 function fmtCurrency(n) {
@@ -78,7 +81,7 @@ async function handleCreateOrder({
   email, first_name, last_name, phone, shipping_address,
   customer_id,
   items, custom_items, discount_percent, free, donation, note, tags,
-  shipping_speed,
+  shipping_speed, shipping_price,
 }) {
   const hasItems = items && items.length > 0;
   const hasCustomItems = custom_items && custom_items.length > 0;
@@ -179,12 +182,20 @@ async function handleCreateOrder({
     : null;
   const effectiveShippingAddress = applyShippingAddressOverride(baseShippingAddress, shipping_address);
 
-  // Resolve shipping rate title from destination + speed. Operator-created drafts
-  // always get $0 shipping (RUBIES covers it for free / wholesale flows); the title
-  // is what drives Warehance carrier routing.
+  // Resolve shipping rate title from destination + speed. The title is what
+  // drives Warehance carrier routing. Price defaults to $0 (RUBIES covers it for
+  // free / exchange / wholesale flows) but an operator can charge for it — e.g.
+  // an expedited upgrade the customer agreed to pay for. A real shipping line is
+  // the right home for that: it sits outside discount_percent (which applies
+  // per-line-item) and reads correctly on the customer's invoice.
   const shipCountry = effectiveShippingAddress?.country || '';
   const speed = shipping_speed === 'expedited' ? 'expedited' : 'standard';
   const shippingTitle = await getShippingMethodTitle(shipCountry, speed);
+  const shippingPrice = normalizeShippingPrice(shipping_price);
+  const shippingErr = shippingChargeError(shippingTitle, shippingPrice);
+  if (shippingErr) {
+    return { content: [{ type: 'text', text: shippingErr }] };
+  }
 
   // Build preview markdown
   let md = `**Order Preview**\n\n`;
@@ -220,7 +231,7 @@ async function handleCreateOrder({
 
   if (discountPct > 0) md += `\n**Discount:** ${discountLabel}\n`;
   md += `**Subtotal:** ${fmtCurrency(subtotal)}\n`;
-  md += `**Shipping:** ${shippingTitle} ($0.00 — covered by RUBIES)\n`;
+  md += `**Shipping:** ${shippingPreviewLine(shippingTitle, shippingPrice)}\n`;
   if (note) md += `**Note:** ${note}\n`;
 
   // Build line items for Shopify draft
@@ -257,7 +268,7 @@ async function handleCreateOrder({
     lineItems,
     note: note || (isFree ? (donation ? 'Donation order created via CS MCP' : 'Free order created via CS MCP') : 'Order created via CS MCP'),
     tags: [...(tags || []), 'cs-mcp'],
-    shippingLine: { title: shippingTitle, price: '0.00' },
+    shippingLine: { title: shippingTitle, price: shippingPrice },
   };
 
   if (effectiveShippingAddress) {
@@ -352,7 +363,11 @@ const tools = [
         shipping_speed: {
           type: 'string',
           enum: ['standard', 'expedited'],
-          description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate (US Standard / US Expedited / Free Canada Standard / Canada Expedited / Free International / Expedited International). Price is always $0 — RUBIES covers shipping on operator-created orders. Default: "standard".',
+          description: 'Shipping speed. Sets the Shopify shipping line title to the zone-appropriate rate (US Standard / US Expedited / Free Canada Standard / Canada Expedited / Free International / Expedited International), which is what Warehance uses to pick the carrier. Default: "standard". To charge for shipping, use shipping_price — do NOT change the speed to imply a cost.',
+        },
+        shipping_price: {
+          type: 'number',
+          description: 'Amount to charge the customer for shipping, e.g. 24 for a paid expedited upgrade. Defaults to 0 — RUBIES covers shipping on most operator-created orders. Use this rather than adding a custom_item for shipping: a real shipping line is exempt from discount_percent (which applies per line item, so a custom shipping line would be silently discounted too) and reads correctly on the customer\'s invoice.',
         },
       },
       required: [],
