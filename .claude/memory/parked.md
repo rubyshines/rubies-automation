@@ -8,6 +8,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## A bounced reply auto-closes the ticket and the customer silently disappears
+- Parked: 2026-08-12
+- Domains: cs
+- Type: decision
+- Priority: medium
+- Notes: When an agent message fails to deliver, the daily reconciler closes the ticket both sides so it never reaches the follow-up queue. Tidy, but the customer is simply gone: no retry, no operator surface, nothing that says "we wrote this person a good answer and they never got it". Worst case is a first-contact prospect with no order and no account, where the bounced address was the only way to reach them. The digest reports the bounce, which is the whole safety net today. Open question is what SHOULD happen — leave it open as On Me, stage a correction attempt, or accept the loss.
+- Measured base rate (774 tickets since 2026-05-01, via Gorgias `last_sent_message_not_delivered`): **6 bounces, 0.8%**. Not a sender-reputation problem — Microsoft-family domains bounced 1 of 54 against 5 of 720 everywhere else, statistically indistinguishable, so `care@rubyshines.com` is not being blocked. The real signal is **channel**: chat 4/300 (1.33%) vs email 2/424 (0.47%) vs help-center 0/50. An address someone emails us from is self-verifying; an address hand-typed into the chat offline-capture widget is not, and nothing validates it at capture. That is where the loss concentrates and where a fix would pay — a syntax/MX check at capture time, or the operator surface above.
+- Diagnostic note for whoever picks this up: Gorgias renders bounce reasons in distinct buckets, and they are not equally informative. "the email address you tried to reach doesn't appear to exist or is invalid" is a real nonexistent-mailbox signal (Gmail says so plainly). "the recipient's mailbox isn't accepting messages right now" is what Microsoft consumer domains produce for BOTH a nonexistent user and a blocked one — they refuse to distinguish, to prevent address enumeration — so it cannot be read as temporary; check `is_retriable` and the sent-to-failed gap instead (a synchronous rejection in seconds is a permanent 5xx, not a deferral). And a second bounce on the same ticket is usually our own ESP suppression list firing after the first, carrying no information about the address at all.
+
 ## Drive sizingEngine's style-switch recommendation from config instead of hardcoded names
 - Parked: 2026-08-11
 - Domains: cs

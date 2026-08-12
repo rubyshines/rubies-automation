@@ -28,6 +28,8 @@ const {
   countGorgiasMessages,
   countAdvisorCustomerMessages,
   isStatusInSync,
+  failedAgentMessages,
+  partitionBouncedDrift,
 } = require('./lib/gorgiasDriftCore');
 
 async function run({ execute = false } = {}) {
@@ -126,49 +128,23 @@ async function run({ execute = false } = {}) {
     }
   }
 
-  // ── Step 4a: Triage drift — auto-resolve noise, keep only real misses ──
-  //    The reconciler flags any open-in-Gorgias ticket with no advisor draft (or
-  //    a diverging status). Most are junk: vendor sales pitches, emoji-reaction
-  //    reopens, duplicates. Left alone they recur in the digest every day. We
-  //    close the junk here and report only genuine customer misses. Real misses
-  //    are NOT auto-drafted — that keeps webhook/intake bugs visible.
-  //    Only runs when executing (daily sync); dry runs stay pure detection.
-
-  const autoResolved = [];
-  let realMisses = toProcess;
-  if (!dryRun && toProcess.length) {
-    const { triageDriftTicket } = require('../lib/driftTriage');
-    realMisses = [];
-    for (const item of toProcess) {
-      const gid = item.ticket.id;
-      try {
-        const messages = await gorgias.getTicketMessages(gid);
-        const { disposition, reason } = await triageDriftTicket({
-          supabase, gorgias, ticket: item.ticket, messages,
-        });
-        if (disposition === 'real_miss') {
-          realMisses.push(item);
-        } else {
-          autoResolved.push({ ticketId: gid, email: item.ticket.customer?.email || '?', disposition, reason });
-          console.log(`  [triage] #${gid}: auto-resolved (${disposition}) — ${reason}`);
-        }
-      } catch (e) {
-        console.warn(`  [triage] #${gid}: triage failed (${e.message}) — keeping as real miss`);
-        realMisses.push(item);
-      }
-      await gorgias.delay(300);
-    }
-  }
-
-  // ── Step 4b: Check for undelivered agent messages ──
+  // ── Step 4a: Check for undelivered agent messages ──
+  //    Runs BEFORE drift triage on purpose. Gorgias reopens a ticket when an
+  //    agent message bounces, so a ticket we answered and closed flips back to
+  //    open on their side seconds later and the status-drift check above reads
+  //    it as a genuine miss. It isn't — the draft was written, sent, and closed.
+  //    Detecting the bounce first lets triage skip those tickets, so one bounce
+  //    is reported once (as undelivered) instead of also alarming as a real miss.
   //    If not a dry run, auto-close bounced tickets so they never reach the follow-up queue.
 
   const undelivered = [];
+  const bouncedIds = new Set();
   for (const gTicket of gorgiasTickets) {
     if (!gTicket.last_sent_message_not_delivered) continue;
     const messages = await gorgias.getTicketMessages(gTicket.id);
-    const failedMsgs = messages.filter(m => m.from_agent && m.failed_datetime);
+    const failedMsgs = failedAgentMessages(messages);
     if (failedMsgs.length) {
+      bouncedIds.add(gTicket.id);
       const entry = {
         ticket: gTicket,
         failedMessages: failedMsgs.map(m => ({
@@ -197,6 +173,47 @@ async function run({ execute = false } = {}) {
       undelivered.push(entry);
     }
     await gorgias.delay(300);
+  }
+
+  // ── Step 4b: Triage drift — auto-resolve noise, keep only real misses ──
+  //    The reconciler flags any open-in-Gorgias ticket with no advisor draft (or
+  //    a diverging status). Most are junk: vendor sales pitches, emoji-reaction
+  //    reopens, duplicates. Left alone they recur in the digest every day. We
+  //    close the junk here and report only genuine customer misses. Real misses
+  //    are NOT auto-drafted — that keeps webhook/intake bugs visible.
+  //    Only runs when executing (daily sync); dry runs stay pure detection.
+
+  // Bounce-caused drift is filtered out in BOTH modes (the detection above is
+  // read-only), so a CLI dry run reports the same thing the digest does.
+  const { driftToTriage, bounceResolved } = partitionBouncedDrift(toProcess, bouncedIds);
+  const autoResolved = [...bounceResolved];
+  for (const b of bounceResolved) {
+    console.log(`  [triage] #${b.ticketId}: skipped — drift caused by a bounce, reported as undelivered`);
+  }
+
+  let realMisses = driftToTriage;
+  if (!dryRun && driftToTriage.length) {
+    const { triageDriftTicket } = require('../lib/driftTriage');
+    realMisses = [];
+    for (const item of driftToTriage) {
+      const gid = item.ticket.id;
+      try {
+        const messages = await gorgias.getTicketMessages(gid);
+        const { disposition, reason } = await triageDriftTicket({
+          supabase, gorgias, ticket: item.ticket, messages,
+        });
+        if (disposition === 'real_miss') {
+          realMisses.push(item);
+        } else {
+          autoResolved.push({ ticketId: gid, email: item.ticket.customer?.email || '?', disposition, reason });
+          console.log(`  [triage] #${gid}: auto-resolved (${disposition}) — ${reason}`);
+        }
+      } catch (e) {
+        console.warn(`  [triage] #${gid}: triage failed (${e.message}) — keeping as real miss`);
+        realMisses.push(item);
+      }
+      await gorgias.delay(300);
+    }
   }
 
   // ── Step 4c: Process expired snoozes → auto follow-ups ──
@@ -411,7 +428,7 @@ Example: NO | exchange confirmed and created, no reply needed`;
   }
 
   console.log(`\n${'═'.repeat(65)}`);
-  console.log(`  ${realMisses.length} real miss(es) need attention${dryRun ? '' : ` (${autoResolved.length} auto-resolved)`}`);
+  console.log(`  ${realMisses.length} real miss(es) need attention${autoResolved.length ? ` (${autoResolved.length} auto-resolved)` : ''}`);
   console.log(`${'═'.repeat(65)}\n`);
 
   for (const { ticket, reason } of realMisses) {

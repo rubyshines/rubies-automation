@@ -101,6 +101,43 @@ function isStatusInSync(gorgiasStatus, advisorStatus) {
   return allowed.includes(advisorStatus);
 }
 
+// ── Bounced agent messages ──
+//
+// Gorgias reopens a ticket when an agent message fails to deliver, so a ticket
+// we answered and closed flips back to open on their side seconds later. The
+// status check above then reads it as drift, and triage — which only knows
+// about duplicates, reactions, spam and continuations — falls through to
+// `real_miss`, alarming about a customer we did not actually miss. A bounce is
+// its own disposition: reported once as undelivered, never as a miss.
+
+/** The agent messages on a ticket that failed to deliver. */
+function failedAgentMessages(messages) {
+  return (messages || []).filter(m => m.from_agent && m.failed_datetime);
+}
+
+/**
+ * Split detected drift into what still needs triage and what is explained by a
+ * bounce. `bouncedIds` is the set of Gorgias ticket ids with failed agent
+ * messages; each drift item is `{ ticket, reason, ... }`.
+ */
+function partitionBouncedDrift(driftItems, bouncedIds) {
+  const driftToTriage = [];
+  const bounceResolved = [];
+  for (const item of driftItems || []) {
+    if (!bouncedIds || !bouncedIds.has(item.ticket.id)) {
+      driftToTriage.push(item);
+      continue;
+    }
+    bounceResolved.push({
+      ticketId: item.ticket.id,
+      email: item.ticket.customer?.email || '?',
+      disposition: 'undelivered',
+      reason: 'agent message bounced (Gorgias reopens on delivery failure) — see undelivered messages',
+    });
+  }
+  return { driftToTriage, bounceResolved };
+}
+
 module.exports = {
   VIEW_ALL_OPEN,
   VIEW_UNASSIGNED,
@@ -112,4 +149,6 @@ module.exports = {
   countAdvisorCustomerMessages,
   isStatusInSync,
   STATUS_OK,
+  failedAgentMessages,
+  partitionBouncedDrift,
 };
