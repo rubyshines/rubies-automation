@@ -17,20 +17,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Measured base rate (774 tickets since 2026-05-01, via Gorgias `last_sent_message_not_delivered`): **6 bounces, 0.8%**. Not a sender-reputation problem — Microsoft-family domains bounced 1 of 54 against 5 of 720 everywhere else, statistically indistinguishable, so `care@rubyshines.com` is not being blocked. The real signal is **channel**: chat 4/300 (1.33%) vs email 2/424 (0.47%) vs help-center 0/50. An address someone emails us from is self-verifying; an address hand-typed into the chat offline-capture widget is not, and nothing validates it at capture. That is where the loss concentrates and where a fix would pay — a syntax/MX check at capture time, or the operator surface above.
 - Diagnostic note for whoever picks this up: Gorgias renders bounce reasons in distinct buckets, and they are not equally informative. "the email address you tried to reach doesn't appear to exist or is invalid" is a real nonexistent-mailbox signal (Gmail says so plainly). "the recipient's mailbox isn't accepting messages right now" is what Microsoft consumer domains produce for BOTH a nonexistent user and a blocked one — they refuse to distinguish, to prevent address enumeration — so it cannot be read as temporary; check `is_retriable` and the sent-to-failed gap instead (a synchronous rejection in seconds is a permanent 5xx, not a deferral). And a second bounce on the same ticket is usually our own ESP suppression list firing after the first, carrying no information about the address at all.
 
-## The generic "No-Tuck Underwear" keyword outranks specific products on free text
-- Parked: 2026-08-12
-- Domains: cs, inventory
-- Type: bug
-- Priority: medium
-- Notes: `product_cs_config` holds a generic row (`notuck-shaping-underwear`, nickname "No-Tuck Underwear", keywords `["no-tuck"]`). `classifyProduct`/`getProductNickname` match by substring, so any string containing "no-tuck" that is not an exact catalog title resolves to that generic row. Verified 2026-08-12 against live config:
-  - `"RUBY NO-TUCK SHAPING BIKINI BOTTOM"` (exact catalog title) -> swim_bottom / Ruby. Correct.
-  - `"THE RUBY NO-TUCK SHAPING BIKINI BOTTOM"` -> underwear_bottom / No-Tuck Underwear. Wrong.
-  - `"my ruby no-tuck bikini bottom"` -> underwear_bottom / No-Tuck Underwear. Wrong.
-  - `"THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM"` -> nickname Cheeky but category **underwear_bottom**. Wrong category with a right name, which is the nastiest shape.
-  All 43 real catalog titles classify correctly, so this only bites where a product string comes from customer phrasing or AI extraction rather than the catalog. Check what `intake.items[].product` actually holds in production before sizing the fix.
-  Why it matters: the tight-legs style switch picks candidates by `classifyProduct(item.product)`, so a misclassified swim complaint would be offered the Sassy/Naomi (underwear) instead of the Cheeky.
-  Likely fix: prefer the longest/most specific keyword match, or never let the generic row win when a specific product keyword also matches. The test fixture in `sizingEngine.test.js` does NOT contain the generic row, which is why the suite has never caught this - add it when fixing.
-
 ## RESOLVED 2026-08-12 — `ai_calls` is NOT under-reporting; the ledger matches the bill
 - Parked: 2026-08-10
 - Resolved: 2026-08-12

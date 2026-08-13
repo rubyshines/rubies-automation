@@ -92,11 +92,15 @@ function crossesToAdult(recommendFor, size) {
  * @param {string}  [p.size]          their current size; omit to skip the
  *                                    availability check (cut facts only)
  * @param {string}  [p.excludeNickname] the style they already own
+ * @param {object}  [p.availability]  nickname -> { inStock, restock }. Passed IN
+ *   rather than looked up: this stays a pure synchronous function, and
+ *   compare_products remains the only place that knows about stock. Omit it and
+ *   nothing is filtered, which is the behaviour before stock was considered.
  * @returns {Array<{nickname, handle, note, everyday, size, crossesToAdult}>}
  *          everyday-wear picks first (so the all-day option leads the copy),
  *          then by nickname so wording is stable between runs.
  */
-function tightLegsTargets({ activeProducts, category, isKids, size, excludeNickname } = {}) {
+function tightLegsTargets({ activeProducts, category, isKids, size, excludeNickname, availability } = {}) {
   const ageGroup = isKids ? 'youth' : 'adult';
   const checkSize = Boolean(size);
 
@@ -113,10 +117,16 @@ function tightLegsTargets({ activeProducts, category, isKids, size, excludeNickn
       // option. This keeps the Cheeky for a youth 10-16 (crosses to adult
       // XXS-M) and correctly rules it out for a youth 4-9.
       if (checkSize && offeredSizeFor(ss.recommendFor, size) === null) return false;
+      // A style we cannot ship is not an option. Without this the deterministic
+      // reply promised the Naomi, which is out of stock in every size with no
+      // inbound, while compare_products had already stopped offering it.
+      if (availability && !isOfferable(availability[p.nickname])) return false;
       return true;
     })
     .map(([handle, p]) => ({
       nickname: p.nickname,
+      restock: availability?.[p.nickname]?.restock || null,
+      inStock: availability ? availability[p.nickname]?.inStock !== false : null,
       handle,
       note: styleSwitchNote(p, category),
       everyday: p.styleSwitch.recommendFor.everyday === true,
@@ -126,8 +136,21 @@ function tightLegsTargets({ activeProducts, category, isKids, size, excludeNickn
     .sort((a, b) => (b.everyday === true) - (a.everyday === true) || a.nickname.localeCompare(b.nickname));
 }
 
+/**
+ * Offerable = in stock, or out of stock with a restock close enough to be worth
+ * waiting for. `worth_offering` is decided in restockEta so the window lives in
+ * one place. Unknown availability counts as offerable, so a missing entry never
+ * silently hides a style.
+ */
+function isOfferable(entry) {
+  if (!entry) return true;
+  if (entry.inStock !== false) return true;
+  return entry.restock?.worth_offering === true;
+}
+
 module.exports = {
   styleSwitchNote,
+  isOfferable,
   isYouthSize,
   offeredSizeFor,
   crossesToAdult,

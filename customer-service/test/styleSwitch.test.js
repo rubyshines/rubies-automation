@@ -199,3 +199,56 @@ test('ordering is stable when several styles share the everyday flag', () => {
   const t = tightLegsTargets({ activeProducts: products, category: 'underwear_bottom', isKids: false, size: 'M' });
   assert.deepStrictEqual(names(t), ['Alpha', 'Zeta'], 'alphabetical within the same everyday flag');
 });
+
+// --- availability -----------------------------------------------------------
+// Passed IN so the prescription stays synchronous and pure. Omitting it must
+// behave exactly as before availability existed.
+
+const { isOfferable } = require('../lib/styleSwitch');
+
+test('isOfferable: in stock, or out with a restock worth waiting for', () => {
+  assert.strictEqual(isOfferable({ inStock: true }), true);
+  assert.strictEqual(isOfferable({ inStock: false, restock: { worth_offering: true } }), true);
+  assert.strictEqual(isOfferable({ inStock: false, restock: { worth_offering: false } }), false);
+  assert.strictEqual(isOfferable({ inStock: false, restock: null }), false);
+});
+
+test('isOfferable: unknown availability never silently hides a style', () => {
+  assert.strictEqual(isOfferable(undefined), true);
+  assert.strictEqual(isOfferable(null), true);
+});
+
+test('an out-of-stock style with no restock is dropped from the offer', () => {
+  // The live Naomi: zero in every size, no inbound. The deterministic reply
+  // promised it for weeks because the engine could not see stock.
+  const t = tightLegsTargets({
+    activeProducts: PRODUCTS, category: 'underwear_bottom', isKids: false, size: 'M', excludeNickname: 'AJ',
+    availability: { Sassy: { inStock: true }, Naomi: { inStock: false, restock: null } },
+  });
+  assert.deepStrictEqual(names(t), ['Sassy']);
+});
+
+test('an out-of-stock style still arriving soon stays offerable, carrying its restock', () => {
+  const restock = { worth_offering: true, sellable_phrase: 'end of August, 2026' };
+  const t = tightLegsTargets({
+    activeProducts: PRODUCTS, category: 'underwear_bottom', isKids: false, size: 'M', excludeNickname: 'AJ',
+    availability: { Sassy: { inStock: false, restock }, Naomi: { inStock: false, restock: null } },
+  });
+  assert.deepStrictEqual(names(t), ['Sassy']);
+  assert.strictEqual(t[0].inStock, false);
+  assert.strictEqual(t[0].restock.sellable_phrase, 'end of August, 2026');
+});
+
+test('a restock too far out is not offered', () => {
+  const t = tightLegsTargets({
+    activeProducts: PRODUCTS, category: 'underwear_bottom', isKids: false, size: 'M', excludeNickname: 'AJ',
+    availability: { Sassy: { inStock: false, restock: { worth_offering: false } }, Naomi: { inStock: false, restock: null } },
+  });
+  assert.deepStrictEqual(names(t), []);
+});
+
+test('omitting availability leaves every style offerable, as before', () => {
+  const t = tightLegsTargets({ activeProducts: PRODUCTS, category: 'underwear_bottom', isKids: false, size: 'M', excludeNickname: 'AJ' });
+  assert.deepStrictEqual(names(t), ['Sassy', 'Naomi']);
+  assert.strictEqual(t[0].inStock, null, 'null means unknown, not in stock');
+});
