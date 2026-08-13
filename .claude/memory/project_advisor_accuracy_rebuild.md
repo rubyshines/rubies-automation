@@ -125,12 +125,54 @@ went 9% → 15% → 11% → 11% of volume, too small to move the total; they edi
 40% → 61%, which is also the well-powered one (82–274/month vs 10–25). Re-weighting
 June to May's mix still gives 60%.
 
-**What changed at June is not established.** June 11 is also when schema mode went
-live, but the clean drafts measured here are by definition the ones that did NOT
-trip it, and the rate has not recovered since it was switched off on 07-17 — which
-argues against it being the cause. Do not assume the June cohort of prompt changes
-is to blame either; nobody has diffed them against this boundary. This is the
-single best-defined open question in the project.
+**The step-change lines up with the Opus 4.6 → 4.8 upgrade (2026-05-28, commit
+0bc5c6a), not with schema mode or the June/July prompt work.** Windowing the clean
+drafts around the two candidate events separates them, because the model changed
+14 days before schema mode went live:
+
+| window | n | edit rate |
+|---|---|---|
+| Opus 4.6 (Apr 10 – May 27) | 470 | **49%** |
+| Opus 4.8, BEFORE schema mode (May 29 – Jun 11) | 174 | **58%** |
+| Opus 4.8, after schema mode off (Jul 18 – Aug 13) | 208 | **60%** |
+
+The rise is fully present in the 13 days after the upgrade and before schema mode
+existed, and never recovers. Across eras: 49% (n=470) vs 59% (n=404), z=3.07,
+p≈0.002. The 05-27 accuracy fixes are not a candidate — in their own two-day
+window the rate went DOWN (39%, n=18).
+
+**Why this is uncomfortable: the whole project treats 4.8 as the fixed baseline.**
+Opus 5 was evaluated against 4.8 twice and the lean prompt was A/B'd against 4.8.
+Nobody ever tested the upgrade that produced 4.8. If this holds, a meaningful part
+of the last ten weeks was tuning against a model regression.
+
+**WITHDRAWN the same day — half the gap is ticket mix, and the sign flips by
+category.** Jamie pushed back on whether a 20-case eval could settle this; testing
+the objection for free killed the finding instead. Matched windows either side of
+the cutover (04-24→05-28 vs 05-28→06-11, contamination excluded):
+
+| | 4.6 | 4.8 |
+|---|---|---|
+| raw | 44% (n=320) | 56% (n=181) |
+| **re-weighted to a common message_type mix** | **48%** | **54%** |
+
+Per category: refund 34%→27% and shipping 72%→63% (4.8 BETTER), exchange 39%→41%
+(tie), sizing 57%→77% (n=13) and general_inquiry 44%→77% (n=30) worse. The whole
+signal rests on the two smallest strata, one of which (`general_inquiry`) is the
+label the model emits when it has NOT identified the situation — so it is closer to
+an uncertainty marker than a topic, and a shift in it is not cleanly a model effect.
+
+**The z=3.07 above was computed on unadjusted data and does not survive mix
+adjustment. Do not quote it.** The residual effect is ~6 points and may be zero.
+
+**Do not run the model eval on ~20 cases.** Powering a 6-point difference needs
+several hundred PAIRED cases per arm (same tickets through each model, scored
+against Jamie's sent reply), × 3 models × 3 runs for advisor non-determinism —
+$300–400, not $20. A 20-case run here returns noise that reads as signal, which is
+exactly how the first 2x2 scoring produced a "3x win, p<0.05" that vanished when
+the judge was fixed. **The generalisable rule: before buying an eval, re-weight the
+observational data that motivated it. Half the effects do not survive, and that
+check is free.**
 
 ## The two defects (they are separate — do not conflate)
 
