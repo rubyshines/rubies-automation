@@ -19,7 +19,7 @@ const {
   parseSizeVariant, normalizeSize, getSizeModifier,
   extractSizeFromSku, formatMeasurementDisplay,
 } = require('./sizeUtils');
-const { tightLegsTargets } = require('./styleSwitch');
+const { tightLegsTargets, offeredSizeFor } = require('./styleSwitch');
 
 // ---------------------------------------------------------------------------
 // Product maps — populated by initCsConfig() from Supabase at server startup.
@@ -32,6 +32,8 @@ const PRODUCT_CATEGORIES = {};
 const PRODUCT_SIZE_OVERRIDES = {};
 const TITLE_TO_HANDLE = {};  // Shopify product title (upper) → handle for exact lookups
 let _activeProducts = {};
+/** keyword -> how many catalog titles contain it. Lower is more specific. */
+const KEYWORD_MATCH_COUNT = {};
 
 /**
  * Load product CS config from Supabase product_cs_config table.
@@ -52,6 +54,7 @@ async function initCsConfig() {
   for (const k of Object.keys(PRODUCT_CATEGORIES)) delete PRODUCT_CATEGORIES[k];
   for (const k of Object.keys(PRODUCT_SIZE_OVERRIDES)) delete PRODUCT_SIZE_OVERRIDES[k];
   for (const k of Object.keys(TITLE_TO_HANDLE)) delete TITLE_TO_HANDLE[k];
+  for (const k of Object.keys(KEYWORD_MATCH_COUNT)) delete KEYWORD_MATCH_COUNT[k];
   for (const k of Object.keys(_activeProducts)) delete _activeProducts[k];
 
   // Build title → handle map from products table for exact product resolution
@@ -89,6 +92,23 @@ async function initCsConfig() {
     }
   }
 
+  // How many catalog titles each keyword appears in. A keyword that matches
+  // several products is generic and must never beat a keyword that identifies
+  // exactly one: "no-tuck" is in the AJ, Ruby, Sassy, Cheeky and Naomi titles,
+  // while "ruby" is in one. Sorting by keyword LENGTH got this backwards, since
+  // "no-tuck" (7) outranks "ruby" (4), which is how a Ruby bikini complaint
+  // could be classified as underwear.
+  // Counted over titles AND handles: the product table is not always loaded
+  // (tests, cold start), and a handle carries the same words as its title, so
+  // using both keeps specificity working everywhere rather than silently
+  // degrading to the length rule that caused the bug.
+  const corpus = [...Object.keys(TITLE_TO_HANDLE), ...Object.keys(_activeProducts)]
+    .map(x => x.toUpperCase());
+  for (const kw of Object.keys(PRODUCT_CATEGORIES)) {
+    const needle = kw.toUpperCase();
+    KEYWORD_MATCH_COUNT[kw] = corpus.filter(t => t.includes(needle)).length || 1;
+  }
+
   console.error(`[DecisionTree] Loaded ${data.length} products from product_cs_config`);
 }
 
@@ -107,10 +127,16 @@ function getProductNickname(fullTitle) {
   // Try exact keyword match
   if (PRODUCT_NICKNAMES[upper]) return PRODUCT_NICKNAMES[upper];
 
-  // Try: does any nickname key contain the title or vice versa
-  for (const [key, nick] of Object.entries(PRODUCT_NICKNAMES)) {
-    if (upper.includes(key) || key.includes(upper)) return nick;
-  }
+  // Try: does any nickname key contain the title or vice versa. Ranked by the
+  // same specificity rule as classifyProduct, so a generic keyword never wins
+  // over one that names a single product.
+  // Keys are registered as "KW", "THE KW" and "RUBIES KW"; strip the prefix
+  // before the specificity lookup, which is keyed on the bare keyword.
+  const bareCount = (key) => KEYWORD_MATCH_COUNT[key.replace(/^(THE|RUBIES)\s+/, '').toLowerCase()] || 1;
+  const fuzzy = Object.entries(PRODUCT_NICKNAMES)
+    .filter(([key]) => upper.includes(key) || key.includes(upper))
+    .sort((a, b) => bareCount(a[0]) - bareCount(b[0]) || b[0].length - a[0].length);
+  if (fuzzy.length) return fuzzy[0][1];
 
   // Fallback: extract person name from old "THE [NAME] ..." title format (pre-2026 style).
   // Titles no longer start with "THE" but this handles stale references in order history.
@@ -203,12 +229,13 @@ function classifyProduct(productName) {
 
   // Fall back to keyword matching for free text (nicknames, customer messages)
   const lower = productName.toLowerCase();
-  // Sort by keyword length descending so longer/more specific keywords match first
-  const entries = Object.entries(PRODUCT_CATEGORIES).sort((a, b) => b[0].length - a[0].length);
-  for (const [keyword, category] of entries) {
-    if (lower.includes(keyword)) return category;
-  }
-  return null;
+  // Most specific keyword wins: fewest catalog titles matched, then longest.
+  // Length alone is the wrong signal -- see KEYWORD_MATCH_COUNT above.
+  const entries = Object.entries(PRODUCT_CATEGORIES)
+    .filter(([keyword]) => lower.includes(keyword))
+    .sort((a, b) => (KEYWORD_MATCH_COUNT[a[0]] || 1) - (KEYWORD_MATCH_COUNT[b[0]] || 1)
+      || b[0].length - a[0].length);
+  return entries.length ? entries[0][1] : null;
 }
 
 // Which categories use even+odd (full range) numeric sizes?
@@ -901,7 +928,57 @@ function prescribeActionClassification(intake) {
 // Phase 4: Sizing Resolution
 // ---------------------------------------------------------------------------
 
-async function prescribeSizingResolution(classifiedItems, intake, context) {
+/**
+ * Stock + restock for every style we might suggest for tight legs, keyed by
+ * nickname. Built here because prescribeSizingResolution must stay synchronous.
+ *
+ * Fail-soft on purpose: if this throws we return null, tightLegsTargets skips
+ * the availability filter, and the reply degrades to the previous behaviour
+ * rather than the customer getting no answer at all.
+ */
+async function resolveStyleSwitchAvailability(items) {
+  try {
+    const sized = (items || []).filter(i => i.size);
+    if (!sized.length) return null;
+
+    const { searchProducts, loadFromSupabase, getProducts } = require('./productCache');
+    if (!getProducts()?.length) await loadFromSupabase();
+    const { restockEtaForSkus } = require('./restockEta');
+
+    const handleToTitle = {};
+    for (const [t, h] of Object.entries(TITLE_TO_HANDLE)) handleToTitle[h] = t;
+
+    const out = {};
+    for (const [handle, cfg] of Object.entries(_activeProducts)) {
+      if (!cfg.styleSwitch?.recommendFor?.tightLegs) continue;
+      for (const item of sized) {
+        const wanted = offeredSizeFor(cfg.styleSwitch.recommendFor, item.size);
+        if (!wanted) continue;
+        // searchProducts is fuzzy and returns other products: a search for
+        // "Naomi M" surfaces the Ava in M too. Without the title check its 168
+        // units counted as Naomi stock and the out-of-stock style stayed
+        // offerable, which is the whole bug this filter exists to prevent.
+        const title = handleToTitle[handle];
+        if (!title) continue;
+        const variants = searchProducts(`${title} ${wanted}`).filter((v) => {
+          if (v.productTitle !== title) return false;
+          const vSize = normalizeSize(v.variantTitle?.split('/').pop()?.trim());
+          return vSize === wanted;
+        });
+        const qty = variants.reduce((sum, v) => sum + (v.inventoryQuantity || 0), 0);
+        if (qty > 0) { out[cfg.nickname] = { inStock: true, restock: null }; continue; }
+        const skus = variants.map(v => v.sku).filter(Boolean);
+        out[cfg.nickname] = { inStock: false, restock: skus.length ? await restockEtaForSkus(skus) : null };
+      }
+    }
+    return Object.keys(out).length ? out : null;
+  } catch (e) {
+    console.warn(`[sizingEngine] style-switch availability lookup failed: ${e.message}`);
+    return null;
+  }
+}
+
+async function prescribeSizingResolution(classifiedItems, intake, context, { availability } = {}) {
   const prescription = {
     phase: 'sizing_resolution',
     items: [],
@@ -1636,7 +1713,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           isKids,
           size: item.size,
           excludeNickname: currentNick,
-        });
+          // Supplied by the caller (see fetchStyleSwitchAvailability in
+          // aiAdvisor). Absent in tests and older callers, which then behave
+          // exactly as before.
+          availability,
+        }).map(t => ({ ...t, link: getProductUrl(t.nickname) || '' }));
         // "Already on a widest-leg style, and nothing else to move them to."
         const isSameProduct = targets.length === 0;
 
@@ -1668,6 +1749,11 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
           // Only name a size when it differs from the one they gave us, i.e.
           // when a youth numeric crosses into the style's adult lettering.
           const sizeNote = lead.crossesToAdult && lead.size ? ` in size ${lead.size}` : '';
+          // Out of stock but close enough to be worth waiting for: say so with
+          // the vague phrase, never a precise date.
+          const waitNote = lead.inStock === false && lead.restock?.sellable_phrase
+            ? ` It is between shipments in that size and should be back in stock ${lead.restock.sellable_phrase.replace(/,\s*\d{4}$/, '')}.`
+            : '';
 
           // Say what it does for THEM, not what it is. "Higher leg cut" is trade
           // language and reads as "more revealing" rather than "roomier". No
@@ -1684,7 +1770,7 @@ async function prescribeSizingResolution(classifiedItems, intake, context) {
             const everydayPick = offered.find(t => t.everyday) || lead;
             rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} are both ${WHY}. The ${everydayPick.nickname} is better for all day wear. Would you like to try one? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           } else {
-            rx.response_text = `The ${lead.nickname}${sizeNote} is ${WHY}. Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `The ${lead.nickname}${sizeNote} is ${WHY}.${waitNote} Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           }
 
           rx.recommendation = { product: lead.nickname, link: lead.link, alternatives: offered.slice(1) };
@@ -2236,8 +2322,11 @@ async function walkTree(intake, context) {
     result.audit.push(...phase3.audit.map(a => `[Phase 3] ${a}`));
     result.phases_completed.push('classify_actions');
 
-    // Phase 4: Sizing resolution
-    const phase4 = await prescribeSizingResolution(phase3.items, intake, context);
+    // Phase 4: Sizing resolution. Availability is resolved here, at the async
+    // boundary, and handed down so the prescription itself stays synchronous
+    // and pure.
+    const availability = await resolveStyleSwitchAvailability(phase3.items);
+    const phase4 = await prescribeSizingResolution(phase3.items, intake, context, { availability });
     for (const item of phase4.items) {
       if (item.response_text || item.self_diagnosed) {
         result.response_parts.push({
@@ -2380,4 +2469,5 @@ module.exports = {
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
+  KEYWORD_MATCH_COUNT,
 };

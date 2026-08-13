@@ -31,6 +31,10 @@ const mockCsConfig = [
   { product_handle: 'the-sunny-queeny-tankini', nickname: 'Queeny', category: 'swim_top', keywords: ['queeny', 'sunny', 'tankini'], delta_wording: 'top', sizes_override: null, style_switch: null },
   { product_handle: 'the-naomi-gaff-extra-strength-shaping-underwear', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom', sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'], style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: false } } },
   { product_handle: 'rubies-shaping-chest-pads', nickname: 'Chest Pads', category: 'chest_pads', keywords: ['pad'], delta_wording: null, sizes_override: null, style_switch: null },
+  // Production has a generic legacy row whose 'no-tuck' keyword appears in most
+  // product titles. Its absence from this fixture is why the classification bug
+  // went uncaught: without it nothing competes with the specific keywords.
+  { product_handle: 'notuck-shaping-underwear', nickname: 'No-Tuck Underwear', category: 'underwear_bottom', keywords: ['no-tuck'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
   { product_handle: 'rubies-gift-card', nickname: 'Gift Card', category: 'accessory', keywords: ['gift card'], delta_wording: null, sizes_override: null, style_switch: null },
   { product_handle: 'progress-pride-pins', nickname: 'Pride Pins', category: 'accessory', keywords: ['pins'], delta_wording: null, sizes_override: null, style_switch: null },
 ];
@@ -2574,5 +2578,54 @@ describe('advisor tool export contract', () => {
     const se = require('../lib/sizingEngine');
     assert.equal(typeof se.analyzeOnepieceFit, 'function');
     assert.equal(typeof se.getSeparatesText, 'function');
+  });
+});
+
+describe('generic keyword must not outrank a specific product', () => {
+  // 'no-tuck' is in the AJ, Ruby, Sassy, Cheeky and Naomi titles; 'ruby' is in
+  // one. Ranking by keyword LENGTH got this backwards, since 'no-tuck' (7)
+  // beats 'ruby' (4), so a Ruby bikini complaint classified as underwear and
+  // would have been offered underwear styles as the fix.
+  it('classifies free-text and prefixed titles by the specific product', () => {
+    for (const input of [
+      'RUBY NO-TUCK SHAPING BIKINI BOTTOM',
+      'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM',
+      'my ruby no-tuck bikini bottom',
+      'the no-tuck ruby',
+    ]) {
+      assert.equal(classifyProduct(input), 'swim_bottom', input);
+      assert.equal(getProductNickname(input), 'Ruby', input);
+    }
+  });
+
+  it('keeps the right category when the nickname is already right', () => {
+    // The nastiest shape: right name, wrong category.
+    assert.equal(getProductNickname('THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM'), 'Cheeky');
+    assert.equal(classifyProduct('THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM'), 'swim_bottom');
+  });
+
+  it('still resolves the generic product when nothing more specific matches', () => {
+    assert.equal(getProductNickname('NO-TUCK SHAPING UNDERWEAR'), 'No-Tuck Underwear');
+    assert.equal(classifyProduct('NO-TUCK SHAPING UNDERWEAR'), 'underwear_bottom');
+  });
+
+  it('does not misroute the one-piece, whose title also contains no-tuck', () => {
+    assert.equal(classifyProduct('SKY NO-TUCK SHAPING ONE-PIECE'), 'onepiece');
+  });
+});
+
+describe('style-switch copy never emits a broken link', () => {
+  // A refactor moved link resolution out of the shared module and the reply
+  // shipped "Would you like to try that instead? undefined" to customers.
+  it('renders a real URL, never undefined', async () => {
+    const intake = makeIntake({
+      items: [makeItem({ issue: 'tight_legs', size: 'M', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM' })],
+      _latestMessage: 'The waist fits fine but the legs are too tight.',
+    });
+    const classified = [makeClassified({ action: 'style_switch', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M' })];
+    const result = await prescribeSizingResolution(classified, intake, makeContext());
+    const text = result.items[0].response_text;
+    assert.ok(!/undefined/.test(text), `no undefined in customer copy: ${text}`);
+    assert.match(text, /https:\/\/rubyshines\.com\/products\//);
   });
 });
