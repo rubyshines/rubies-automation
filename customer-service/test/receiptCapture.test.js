@@ -223,6 +223,49 @@ test('reconcile scales tolerance with the size of the figure', () => {
   }).ok, false);
 });
 
+test('reconcile survives floating-point residue in a sum that is exactly right', () => {
+  // Regression, found on the first live capture. 17.98+42.99+6.49-5.00 is
+  // 62.460000000000008 in binary floating point, so the delta was 7.1e-15 —
+  // which JS stringifies in EXPONENTIAL notation. The cent-rounding helper
+  // shifted that to "7.1e-15e2", parsed NaN, and the check failed. Every
+  // correctly-read receipt would have been permanently flagged.
+  const r = reconcile({
+    subtotal: 62.46, tax_total: 8.12, tip: null, total: 70.58,
+    tax_lines: [{ label: 'HST', amount: 8.12 }],
+    line_items: [{ amount: 17.98 }, { amount: 42.99 }, { amount: 6.49 }, { amount: -5.00 }],
+  });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.checks));
+  for (const c of r.checks) assert.ok(Number.isFinite(c.delta), `${c.name} delta was ${c.delta}`);
+});
+
+test('roundCents collapses sub-cent floating-point residue to zero', () => {
+  assert.strictEqual(toMoney(7.105427357601002e-15), 0);
+  assert.strictEqual(toMoney(-3.5527136788005009e-15), 0);
+});
+
+test('reconcile accepts NUMERIC columns arriving as strings from PostgREST', () => {
+  // The update path re-reconciles against rows read back from Supabase, where
+  // NUMERIC comes back as a string. `0 + "17.98"` concatenates, so the sum was
+  // a string and every check downstream went NaN.
+  const r = reconcile({
+    subtotal: '62.46', tax_total: '8.12', tip: null, total: '70.58',
+    tax_lines: [{ label: 'HST', amount: '8.12' }],
+    line_items: [{ amount: '17.98' }, { amount: '42.99' }, { amount: '6.49' }, { amount: '-5.00' }],
+  });
+  assert.strictEqual(r.ok, true, JSON.stringify(r.checks));
+  assert.strictEqual(r.checks.length, 3);
+});
+
+test('reconcile still catches a real error when the figures are strings', () => {
+  const r = reconcile({
+    subtotal: '62.46', tax_total: '8.12', total: '999.00',
+    tax_lines: [], line_items: [],
+  });
+  assert.strictEqual(r.ok, false);
+  // delta is computed-minus-printed, so a total inflated to 999 reads negative.
+  assert.strictEqual(r.checks.find(c => !c.ok).delta, -928.42);
+});
+
 test('reconcile treats a missing tip as zero, not as a failure', () => {
   const r = reconcile({ subtotal: 10, tax_total: 1.3, tip: null, total: 11.3, tax_lines: [], line_items: [] });
   assert.strictEqual(r.ok, true);

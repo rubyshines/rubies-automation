@@ -48,6 +48,12 @@ html {
 /* Grey flash on every tap is the loudest "this is a web page" tell on iOS. */
 * { -webkit-tap-highlight-color: transparent; }
 
+/* MUST come before any rule that sets `display` on an element the JS toggles
+   with the `hidden` attribute. `[hidden]` only gets `display:none` from the UA
+   stylesheet, so an author rule like `.sheet { display: flex }` outranks it and
+   the overlay renders permanently over the page. */
+[hidden] { display: none !important; }
+
 body {
   font-family: var(--sans);
   background: var(--bg);
@@ -255,11 +261,13 @@ body {
    detail — it is what makes the list read as tape rather than as a table. */
 .ledger::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 22px;
+  /* Dots FIRST: background layers paint first-listed on top, so with the fill
+     listed first it covered the perforations completely. */
   background:
-    linear-gradient(90deg, var(--inset), var(--inset)),
-    radial-gradient(circle at 11px 9px, var(--bg) 2.2px, transparent 2.4px);
-  background-size: 100% 100%, 22px 18px;
-  background-repeat: no-repeat, repeat-y;
+    radial-gradient(circle at 11px 9px, var(--bg) 2.2px, transparent 2.4px),
+    linear-gradient(90deg, var(--inset), var(--inset));
+  background-size: 22px 18px, 100% 100%;
+  background-repeat: repeat-y, no-repeat;
   border-right: 1px solid var(--border);
   pointer-events: none;
   z-index: 1;
@@ -389,7 +397,17 @@ body {
    A torn strip of thermal paper. The zigzag top and bottom are a conic-
    gradient mask, so the edges are genuinely irregular paper rather than a
    straight card with a shadow. */
-.tape-wrap { padding: 30px 26px; display: flex; justify-content: center; }
+/* The tape sits on a warmer, darker ground than the page. Without the
+   contrast the torn edge is invisible: white-on-near-white made the strip
+   read as a plain flat card. */
+.tape-col { background: #f0ece5; }
+.tape-wrap {
+  padding: 30px 26px; display: flex; justify-content: center;
+  /* drop-shadow, NOT box-shadow on .tape — a mask clips box-shadow away with
+     the rest of the element's box, which is what flattened the torn edge.
+     A filter shadow follows the masked alpha silhouette, teeth included. */
+  filter: drop-shadow(0 5px 14px rgba(28,25,23,.18));
+}
 .tape {
   width: 100%; max-width: 400px;
   background: #fffefb;
@@ -398,16 +416,21 @@ body {
   font-size: 12.5px;
   line-height: 1.65;
   color: #2a2622;
-  box-shadow: 0 6px 26px rgba(28,25,23,.13);
   position: relative;
+  /* Torn top and bottom edge.
+     Each tooth layer's tile must be `2*tooth` wide by `tooth` TALL. Sizing the
+     tiles `100%` tall (the obvious-looking version) makes each conic layer
+     opaque over nearly the whole element, and since mask layers composite with
+     `add` the two unioned back into a plain rectangle — mask applied, no teeth,
+     and nothing in the computed style looks wrong. */
   --tooth: 9px;
   -webkit-mask:
-    conic-gradient(from -45deg at 50% var(--tooth), #0000 90deg, #000 0) 0 0 / calc(var(--tooth)*2) 100% repeat-x,
-    conic-gradient(from 135deg at 50% calc(100% - var(--tooth)), #0000 90deg, #000 0) 0 100% / calc(var(--tooth)*2) 100% repeat-x,
+    conic-gradient(from -45deg at 50% 100%, #0000 90deg, #000 0) 50% 0   / calc(var(--tooth)*2) var(--tooth) repeat-x,
+    conic-gradient(from 135deg at 50% 0,    #0000 90deg, #000 0) 50% 100% / calc(var(--tooth)*2) var(--tooth) repeat-x,
     linear-gradient(#000 0 0) 0 var(--tooth) / 100% calc(100% - var(--tooth)*2) no-repeat;
   mask:
-    conic-gradient(from -45deg at 50% var(--tooth), #0000 90deg, #000 0) 0 0 / calc(var(--tooth)*2) 100% repeat-x,
-    conic-gradient(from 135deg at 50% calc(100% - var(--tooth)), #0000 90deg, #000 0) 0 100% / calc(var(--tooth)*2) 100% repeat-x,
+    conic-gradient(from -45deg at 50% 100%, #0000 90deg, #000 0) 50% 0   / calc(var(--tooth)*2) var(--tooth) repeat-x,
+    conic-gradient(from 135deg at 50% 0,    #0000 90deg, #000 0) 50% 100% / calc(var(--tooth)*2) var(--tooth) repeat-x,
     linear-gradient(#000 0 0) 0 var(--tooth) / 100% calc(100% - var(--tooth)*2) no-repeat;
   animation: rise .4s cubic-bezier(.2,.7,.3,1) both;
 }
@@ -596,6 +619,11 @@ body {
   .rc-header { padding: 0 14px; gap: 10px; }
   .rc-header h1 { font-size: 14px; }
   .rc-header-nav a { padding: 8px 10px; font-size: 12.5px; }
+  /* A 56px bar cannot hold per-currency spend AND the nav without clipping a
+     pill in half, which reads as broken rather than as scrollable. Lifetime
+     spend is not what you need at a till; the review count is. */
+  .rc-header-totals .tot { display: none; }
+  .rc-header-totals .tot.review { display: inline; }
   .rc-main { padding: 16px 12px calc(120px + env(safe-area-inset-bottom)); }
 
   .capture-drop { padding: 18px; gap: 14px; }

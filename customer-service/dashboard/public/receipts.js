@@ -382,12 +382,15 @@ function renderDetail(data) {
           ${itemLines}
 
           <div class="tape-rule"></div>
-          ${tapeLine({ desc: 'SUBTOTAL', amount: cur + (editableMoney('subtotal', r.subtotal)) })}
+          ${tapeLine({ desc: 'SUBTOTAL', amount: editableMoney('subtotal', r.subtotal) })}
           ${taxLines}
-          ${tapeLine({ desc: 'TAX', amount: cur + editableMoney('tax_total', r.tax_total) })}
-          ${r.tip ? tapeLine({ desc: 'TIP', amount: cur + editableMoney('tip', r.tip) }) : ''}
+          ${tapeLine({ desc: 'TAX', amount: editableMoney('tax_total', r.tax_total) })}
+          ${r.tip ? tapeLine({ desc: 'TIP', amount: editableMoney('tip', r.tip) }) : ''}
 
           <div class="tape-rule double"></div>
+          <!-- The currency code appears once, on the total. Repeating it on
+               every summary row reads as noise and made the rows disagree with
+               the $-prefixed item lines above them. -->
           ${tapeLine({ desc: 'TOTAL', amount: cur + editableMoney('total', r.total), cls: 'total' })}
 
           ${(r.payment_method || r.card_last4)
@@ -436,8 +439,8 @@ function renderDetail(data) {
 }
 
 function editableMoney(field, value) {
-  return `<span contenteditable="plaintext-only" class="edit" data-field="${field}"
-    >${value === null || value === undefined ? '—' : Number(value).toFixed(2)}</span>`;
+  const shown = value === null || value === undefined ? '—' : `$${Number(value).toFixed(2)}`;
+  return `<span contenteditable="plaintext-only" class="edit" data-field="${field}">${shown}</span>`;
 }
 
 async function openDetail(id, preloaded) {

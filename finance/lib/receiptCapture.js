@@ -223,7 +223,18 @@ function toNumber(v) {
  * kind of bug nobody ever finds by reading the output.
  */
 function roundCents(n) {
-  const shifted = Math.round(Number(`${n}e2`));
+  const v = Number(n);
+  if (!Number.isFinite(v)) return null;
+  // JS stringifies |x| < 1e-6 and |x| >= 1e21 in EXPONENTIAL notation, which
+  // turns the shift below into "7.1e-15e2" — two exponents, parses as NaN.
+  // That is not a hypothetical: summing money in floating point leaves
+  // residue at exactly that magnitude, so `62.46 - 62.46` came back as
+  // 7.105427357601002e-15 and every correctly-read receipt failed its own
+  // subtotal check. Sub-cent magnitudes ARE that residue and collapse to
+  // zero; the huge end is not a receipt figure and just rounds plainly.
+  if (Math.abs(v) < 1e-6) return 0;
+  if (Math.abs(v) >= 1e21) return Number(v.toFixed(2));
+  const shifted = Math.round(Number(`${v}e2`));
   return Number(`${shifted}e-2`);
 }
 
@@ -344,8 +355,20 @@ function tolerance(magnitude) {
 function reconcile({ subtotal, tax_total, tip, total, tax_lines, line_items }) {
   const checks = [];
 
+  // PostgREST returns NUMERIC columns as STRINGS, so the update path arrives
+  // here with "17.98" where the capture path had 17.98 — and `0 + "17.98"`
+  // concatenates rather than adds. Coerce at the boundary: this function is
+  // pure and gets called with both shapes.
+  const num = v => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
   const add = (name, expected, actual, note) => {
-    if (expected === null || expected === undefined || actual === null || actual === undefined) return;
+    expected = num(expected);
+    actual = num(actual);
+    if (expected === null || actual === null) return;
     const delta = roundCents(actual - expected);
     checks.push({
       name,
@@ -357,23 +380,23 @@ function reconcile({ subtotal, tax_total, tip, total, tax_lines, line_items }) {
     });
   };
 
-  const items = Array.isArray(line_items) ? line_items.filter(i => i.amount !== null) : [];
+  const items = (Array.isArray(line_items) ? line_items : [])
+    .map(i => num(i?.amount)).filter(a => a !== null);
   if (items.length) {
-    const sum = items.reduce((a, i) => a + i.amount, 0);
-    add('line_items_sum_to_subtotal', subtotal, sum,
+    add('line_items_sum_to_subtotal', subtotal, items.reduce((a, b) => a + b, 0),
       'Line items should sum to the printed subtotal.');
   }
 
-  const taxes = Array.isArray(tax_lines) ? tax_lines.filter(t => t.amount !== null) : [];
+  const taxes = (Array.isArray(tax_lines) ? tax_lines : [])
+    .map(t => num(t?.amount)).filter(a => a !== null);
   if (taxes.length) {
-    const sum = taxes.reduce((a, t) => a + t.amount, 0);
-    add('tax_lines_sum_to_tax_total', tax_total, sum,
+    add('tax_lines_sum_to_tax_total', tax_total, taxes.reduce((a, b) => a + b, 0),
       'Individual tax lines should sum to the printed tax total.');
   }
 
-  if (subtotal !== null && subtotal !== undefined && total !== null && total !== undefined) {
-    const computed = subtotal + (tax_total || 0) + (tip || 0);
-    add('subtotal_plus_tax_equals_total', total, computed,
+  if (num(subtotal) !== null && num(total) !== null) {
+    add('subtotal_plus_tax_equals_total', total,
+      num(subtotal) + (num(tax_total) || 0) + (num(tip) || 0),
       'Subtotal + tax + tip should equal the printed total.');
   }
 
