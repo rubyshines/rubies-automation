@@ -46,13 +46,35 @@ CREATE TABLE IF NOT EXISTS b2b_threads (
   company_id       TEXT REFERENCES b2b_companies(id) NOT NULL,
   thread_type      TEXT NOT NULL,            -- 'intro' | 'order' | 'program' | 'support' | 'other'
   subject          TEXT,
-  gmail_thread_id  TEXT UNIQUE,              -- null until first send/receive correlates
+  gmail_thread_id  TEXT,                     -- null until first send/receive correlates
   status           TEXT NOT NULL DEFAULT 'open',  -- 'open' | 'closed'
   created_at       TIMESTAMPTZ DEFAULT NOW(),
   last_message_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_b2b_threads_company ON b2b_threads (company_id);
 CREATE INDEX IF NOT EXISTS idx_b2b_threads_gmail ON b2b_threads (gmail_thread_id) WHERE gmail_thread_id IS NOT NULL;
+
+-- One row per (company, gmail thread), NOT one per gmail thread (2026-08-13).
+-- Gmail threads on subject, so one conversation regularly contains two orgs —
+-- 13 of ours do. A bare UNIQUE(gmail_thread_id) makes that unrepresentable: the
+-- second org's messages either hang off the first org's thread row (105 messages,
+-- 8.9% of the corpus, were in that state) or, worse, the discovery upsert's
+-- onConflict='gmail_thread_id' REWRITES the first org's row to point at the
+-- second company, silently handing one org's whole conversation to another.
+-- Two orgs in one Gmail thread are two relationships and get two rows, each with
+-- its own status so Close/Reopen means something per company.
+-- Dropped by lookup rather than by name: the old constraint came from an inline
+-- column-level UNIQUE, so its generated name is not guaranteed across environments.
+DO $$
+DECLARE c text;
+BEGIN
+  SELECT conname INTO c FROM pg_constraint
+   WHERE conrelid = 'b2b_threads'::regclass AND contype = 'u'
+     AND pg_get_constraintdef(oid) LIKE '%(gmail_thread_id)%';
+  IF c IS NOT NULL THEN EXECUTE format('ALTER TABLE b2b_threads DROP CONSTRAINT %I', c); END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_threads_company_gmail
+  ON b2b_threads (company_id, gmail_thread_id) WHERE gmail_thread_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- b2b_messages — one row per email, both directions.

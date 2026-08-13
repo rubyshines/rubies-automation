@@ -105,16 +105,26 @@ async function correlateInbound(msg) {
   // Bounce case: sender is mailer-daemon — correlate via thread instead
   const loss = detectContactLoss({ subject, body: body_text, from: sender });
   if (!companyId && loss === 'hard_bounce' && gmail_thread_id) {
-    const { data: thread } = await sb.from('b2b_threads')
-      .select('id, company_id').eq('gmail_thread_id', gmail_thread_id).maybeSingle();
-    if (thread) companyId = thread.company_id;
+    // Deliberately unscoped — this branch is trying to DISCOVER the company. But
+    // a shared Gmail thread now yields several rows, and picking one would mark
+    // the wrong org's contact as lost, which pauses their cadence. Ambiguous
+    // means unknown: guess nothing and let the bounce go uncorrelated.
+    const { data: threads } = await sb.from('b2b_threads')
+      .select('company_id').eq('gmail_thread_id', gmail_thread_id);
+    const owners = [...new Set((threads || []).map(t => t.company_id))];
+    if (owners.length === 1) companyId = owners[0];
   }
   if (!companyId) return { matched: false };
 
-  // 2. Thread: match by gmail_thread_id, else create
+  // 2. Thread: match by (company, gmail_thread_id), else create.
+  //
+  // Scoped by company, not by gmail_thread_id alone. Gmail threads on subject, so
+  // one conversation regularly holds two orgs — an unscoped lookup found the OTHER
+  // company's row and filed this message under their relationship. That is how 105
+  // messages ended up mis-parented. A company now only ever matches its own row.
   let threadId = null;
   const { data: thread } = await sb.from('b2b_threads')
-    .select('id').eq('gmail_thread_id', gmail_thread_id).maybeSingle();
+    .select('id').eq('gmail_thread_id', gmail_thread_id).eq('company_id', companyId).maybeSingle();
   if (thread) {
     threadId = thread.id;
   } else {
@@ -126,7 +136,7 @@ async function correlateInbound(msg) {
     if (error) {
       // unique race: another worker created it — refetch
       const { data: again } = await sb.from('b2b_threads')
-        .select('id').eq('gmail_thread_id', gmail_thread_id).maybeSingle();
+        .select('id').eq('gmail_thread_id', gmail_thread_id).eq('company_id', companyId).maybeSingle();
       if (!again) throw new Error(`thread create: ${error.message}`);
       threadId = again.id;
     } else {

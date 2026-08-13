@@ -25,13 +25,26 @@ function makeClient() {
             return ok(hit ? { id: hit.id } : null);
           }
           if (table === 'b2b_threads') {
-            const hit = state.threads.find(t => t.gmail_thread_id === q._filters.gmail_thread_id);
+            // Honours company_id when the caller scopes by it — the whole point
+            // of the fix is that a company only ever matches its OWN row, so a
+            // stub that ignored the filter would green-light the old bug.
+            const hit = state.threads.find(t =>
+              t.gmail_thread_id === q._filters.gmail_thread_id
+              && (q._filters.company_id === undefined || t.company_id === q._filters.company_id));
             return ok(hit || null);
           }
           return ok(null);
         },
-        // The domain-fallback lookups are the only ilike() reads.
+        // The domain-fallback lookups are the only ilike() reads; the bounce
+        // branch reads b2b_threads as a plain list (it must see EVERY owner of a
+        // shared Gmail thread to know the answer is ambiguous).
         then(resolve) {
+          if (table === 'b2b_threads') {
+            return resolve({
+              data: state.threads.filter(t => t.gmail_thread_id === q._filters.gmail_thread_id),
+              error: null,
+            });
+          }
           const pat = (q._filters['ilike:website'] || q._filters['ilike:email'] || '').replace(/%/g, '');
           if (table === 'b2b_companies') {
             return resolve({ data: state.companies.filter(c => (c.website || '').includes(pat)), error: null });
@@ -147,4 +160,66 @@ test('a subdomain sender does not match a different org on the same host', async
   reset({ companies: [{ id: 'thp', website: 'https://thprojekt.wordpress.com/thp-en/', relationship_state: 'active' }] });
   const r = await correlateInbound(MSG({ from_email: 'someone@othergroup.wordpress.com' }));
   assert.strictEqual(r.matched, false);
+});
+
+// ── shared Gmail threads ────────────────────────────────────────────────────
+// Gmail threads on subject, so one conversation regularly holds two orgs — 13 of
+// ours do. The thread lookup used to key on gmail_thread_id alone, so the second
+// org's replies were filed under the FIRST org's relationship: 105 messages, 8.9%
+// of the corpus, were in that state before this was fixed.
+
+test('a reply on a thread another company owns gets its own thread, not theirs', async () => {
+  reset({
+    companies: [{ id: 'socirc', website: 'https://socirc.ca', relationship_state: 'active' }],
+    threads: [{ id: 500, company_id: 'tdsb-gsd-team', gmail_thread_id: 't1' }],
+  });
+  const r = await correlateInbound(MSG());
+  assert.strictEqual(r.company_id, 'socirc');
+  assert.notStrictEqual(r.thread_id, 500, "must not file SoCirC's reply under TDSB's thread");
+  const created = state.inserts.find(i => i.table === 'b2b_threads');
+  assert.ok(created, 'a thread row for this company should be created');
+  assert.strictEqual(created.row.company_id, 'socirc');
+  assert.strictEqual(created.row.gmail_thread_id, 't1', 'same Gmail conversation, separate relationship');
+});
+
+test('a reply on the company\'s own thread still attaches to it', async () => {
+  reset({
+    companies: [{ id: 'socirc', website: 'https://socirc.ca', relationship_state: 'active' }],
+    threads: [
+      { id: 500, company_id: 'tdsb-gsd-team', gmail_thread_id: 't1' },
+      { id: 501, company_id: 'socirc', gmail_thread_id: 't1' },
+    ],
+  });
+  const r = await correlateInbound(MSG());
+  assert.strictEqual(r.thread_id, 501);
+  assert.strictEqual(state.inserts.filter(i => i.table === 'b2b_threads').length, 0, 'no duplicate row');
+});
+
+// The bounce branch is deliberately unscoped — it is trying to DISCOVER the
+// company. On a shared thread that would pick one at random, and marking the
+// wrong org's contact as lost pauses their cadence.
+test('a hard bounce on a single-owner thread still correlates', async () => {
+  reset({ threads: [{ id: 500, company_id: 'socirc', gmail_thread_id: 't1' }] });
+  const r = await correlateInbound(MSG({
+    from_email: 'mailer-daemon@googlemail.com',
+    subject: 'Delivery Status Notification (Failure)',
+    body_text: 'Address not found. 550 5.1.1 The email account that you tried to reach does not exist.',
+  }));
+  assert.strictEqual(r.matched, true);
+  assert.strictEqual(r.company_id, 'socirc');
+});
+
+test('a hard bounce on a thread two orgs share guesses nobody', async () => {
+  reset({
+    threads: [
+      { id: 500, company_id: 'socirc', gmail_thread_id: 't1' },
+      { id: 501, company_id: 'tdsb-gsd-team', gmail_thread_id: 't1' },
+    ],
+  });
+  const r = await correlateInbound(MSG({
+    from_email: 'mailer-daemon@googlemail.com',
+    subject: 'Delivery Status Notification (Failure)',
+    body_text: 'Address not found. 550 5.1.1 The email account that you tried to reach does not exist.',
+  }));
+  assert.strictEqual(r.matched, false, 'ambiguous means unknown, not "pick one"');
 });

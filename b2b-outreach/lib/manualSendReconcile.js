@@ -266,8 +266,12 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
   const found = listing.data?.threads || [];
   if (!found.length) return { discovered: 0 };
 
+  // Scoped to THIS company. Unscoped, a Gmail thread shared with another org
+  // resolved to their row, and every message this pass imported was written
+  // against their relationship instead of a new row for ours.
   const { data: existing, error } = await sb.from('b2b_threads')
-    .select('id, gmail_thread_id, status').in('gmail_thread_id', found.map(t => t.id));
+    .select('id, gmail_thread_id, status')
+    .eq('company_id', companyId).in('gmail_thread_id', found.map(t => t.id));
   if (error) throw new Error(`existing threads: ${error.message}`);
   const known = new Map((existing || []).map(t => [t.gmail_thread_id, t]));
 
@@ -304,7 +308,11 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
           company_id: companyId, thread_type: 'other', subject,
           gmail_thread_id: t.id, status: discoveredThreadStatus(last),
           last_message_at: last.sent_at,
-        }, { onConflict: 'gmail_thread_id' })
+        // (company_id, gmail_thread_id), not gmail_thread_id alone. On the old
+        // key, a company discovering a Gmail thread another org already had a row
+        // for did not create its own — the upsert UPDATED theirs, rewriting
+        // company_id and handing that org's entire conversation to this one.
+        }, { onConflict: 'company_id,gmail_thread_id' })
         .select('id').single();
       if (tErr) { console.error(`[discover] thread insert ${t.id}: ${tErr.message}`); continue; }
       threadId = thread.id;

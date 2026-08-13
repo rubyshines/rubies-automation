@@ -8,13 +8,6 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
-## The conversation pane shows the wrong messages when two orgs share a Gmail thread
-- Parked: 2026-08-13
-- Domains: b2b_sales, community
-- Type: bug
-- Priority: high
-- Notes: `b2b_threads.gmail_thread_id` is UNIQUE, so a Gmail thread containing two orgs gets ONE thread row, owned by whichever company created it first. Each org's messages still carry the correct `company_id` (the per-message membership rule from 2026-08-07 working as intended), but the panel reads the conversation as `b2b_threads WHERE company_id = X` then `b2b_messages WHERE thread_id IN (...)`. So it both HIDES messages that are genuinely this company's (their thread row belongs to the other org) and SHOWS messages that are the other org's. Measured 2026-08-13: **105 of 1186 messages, 8.9%, across 21 company pairs** — worst are BAGLY/Four Corners (17), Out MetroWest/Four Corners (12), Transponder/Four Corners (12), SoCirC/TDSB GSD (12), Transformation Closet/Trans Closet Hudson Valley (9), She Bop/The Tool Shed (5). SoCirC shows 52 of its 63 messages plus 3 belonging to TDSB. The relationship summary reads by `company_id` and is therefore correct, which is why the two now disagree on screen — the summary block states the true count deliberately (see the note in `fetchCompanyThreads`). Fix options: (a) drop the UNIQUE on `gmail_thread_id` and allow one thread row per (company, gmail_thread), or (b) keep one row and have the panel read messages by `company_id`, grouping by `gmail_thread_id` rather than by thread ownership. (b) is smaller and matches how the data is already attributed. Same family as the 2026-08-07 per-message thread-membership decision — that fixed IMPORT attribution; this is the READ side of the same constraint.
-
 ## A bounced reply auto-closes the ticket and the customer silently disappears
 - Parked: 2026-08-12
 - Domains: cs
