@@ -9,8 +9,45 @@ done_when: >
   model (MODELS.OPUS, currently claude-opus-4-8), with the winning change merged and
   the pinned scenario suite green. "The prompt is rewritten" is NOT done_when.
 branch: merged 2026-08-10 (wt/eval-land)
-last_updated: 2026-08-10
+last_updated: 2026-08-13
 ---
+
+## How this project validates — zero-API by default (Jamie, 2026-08-13)
+
+**Default to directional, zero-API assessment. Run a paid API eval only when Jamie
+explicitly approves that specific run.** The point is to let him make accuracy
+improvements without each one costing money, so the constraint is not a budget
+ceiling — it is the working mode.
+
+What zero-API covers, and it is most of the work:
+- **Diagnosis** is already free: `cs_ai_drafts` holds the draft, the sent reply,
+  the conversation, the audit trail. Root-causing draft-vs-sent pairs needs
+  Supabase reads and Claude Code subagents, nothing else.
+- **Prompt-contradiction sweeps** are free and have the best hit rate of anything
+  tried so far — grep the prompt for a struck line rather than measuring whether
+  the model emits it.
+- **Corpus compliance counts** are free: a struck phrase, a banned construction,
+  a tool-call-before-claim rule can all be counted with a regex over stored
+  drafts, before and after a change. This is the closest thing to a real metric
+  that costs nothing.
+- **Replay A/B** via `scripts/_renderCasePrompt.js`, which renders the exact
+  production system prompt (same tone-sample + facts queries, same legacy
+  `<structured>` swap production actually sends) and hands it to Claude Code
+  subagents, control arm and variant arm on the same cases.
+
+**The two limits, state them every time rather than letting a number travel
+without them:**
+1. Claude Code runs **Opus 5**; production is pinned **4.8**. Absolute pass rates
+   from a replay are not production rates. Only the within-instrument comparison
+   (variant vs control, same model, same cases) carries.
+2. `cs_ai_drafts.order_context` is a **display snapshot** (`date`/`name`/`items`),
+   not the `target_order` shape `buildSystemPrompt` consumes, so a naive replay
+   silently runs with NO order context. Frozen hand-built contexts are required —
+   and live re-fetch is the order-state drift the domain file already warns against.
+
+When a change is marginal under this instrument, the honest report is "this needs
+a paid run to call" — not a confident number from the wrong model. That ask is
+when to raise a paid eval, and it needs Jamie's explicit yes.
 
 ## Why this exists
 
@@ -55,6 +92,45 @@ partly the China window (he steered rather than rewrote), so true plateau ≈ lo
 Edit rate by type since May: exchange 49% · general_inquiry **65%** · refund 33% ·
 closing 7% · shipping **68%** · sizing_inquiry **57%**. **We have only worked on
 exchange and refund. Shipping / general_inquiry / sizing are worse and untouched.**
+
+## Baseline correction (2026-08-13) — the trend above is wrong, and June is a step-change
+
+**A third contamination, missed by the 08-04 repair: the enforced-schema output
+path was live in production far longer than memory records.** 453 drafts carry a
+`Enforced-schema parse failed` / `529 on schema` audit line, ~51% of June and ~51%
+of July, ending at `2026-07-17T14:16Z`. `domain_cs.md` says schema mode was
+defaulted off 2026-06-13; production ran it five more weeks. Final drafts always
+recovered (0 degenerate `draft_response`), but contaminated drafts edit at **55%
+vs 44% clean**, so any metric spanning June–July mixes two populations. The 30-day
+window behind the 08-04 baseline sits mostly inside it.
+
+Recomputed on clean drafts only, excluding the `closing` template:
+
+| month | n | edit rate |
+|---|---|---|
+| May | 274 | **42%** |
+| June | 169 | 60% |
+| July | 122 | 60% |
+| Aug | 92 | 60% |
+
+So the "improved to mid-May then flat in the low 50s" story is wrong twice over:
+the level is **60%, not low-50s**, and it is a **step-change at June**, not a
+plateau. Exchange — one of the two categories ever worked on — went 34% → 43% →
+67% → 55%.
+
+**Mix shift was tested and rejected as the explanation** (founder hypothesis: more
+stock in May meant fewer tricky pre-order cases later). Pre-order-flavoured drafts
+went 9% → 15% → 11% → 11% of volume, too small to move the total; they edited
+*higher* in May (69%) than after; and the rise is in the NON-pre-order stratum,
+40% → 61%, which is also the well-powered one (82–274/month vs 10–25). Re-weighting
+June to May's mix still gives 60%.
+
+**What changed at June is not established.** June 11 is also when schema mode went
+live, but the clean drafts measured here are by definition the ones that did NOT
+trip it, and the rate has not recovered since it was switched off on 07-17 — which
+argues against it being the cause. Do not assume the June cohort of prompt changes
+is to blame either; nobody has diffed them against this boundary. This is the
+single best-defined open question in the project.
 
 ## The two defects (they are separate — do not conflate)
 
