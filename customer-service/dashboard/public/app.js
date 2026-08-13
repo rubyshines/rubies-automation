@@ -6343,6 +6343,18 @@ function updateSummaryBar(ticket) {
     statusDot.className = `status-dot status-dot-${ticket.status || 'open'}`;
   }
 
+  // Gorgias link — the mobile equivalent of the sidebar's ticket header, which
+  // is off-screen once the detail view is open.
+  const ticketLink = document.getElementById('mobile-ticket-link');
+  if (ticketLink) {
+    if (ticket.gorgias_ticket_id) {
+      ticketLink.href = `https://rubies.gorgias.com/app/ticket/${ticket.gorgias_ticket_id}`;
+      ticketLink.style.display = '';
+    } else {
+      ticketLink.style.display = 'none';
+    }
+  }
+
   // Context tags — follow-up, prior actions, alerts (as colored pills)
   const contextEl = document.getElementById('summary-context');
   if (contextEl) {

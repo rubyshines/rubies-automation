@@ -1474,7 +1474,14 @@ async function commitDraft(supabase, { ticketRowId, gorgiasTicketId, draftFields
   if (claimId) {
     const { data, error: updateErr } = await supabase
       .from('cs_ai_drafts')
-      .update(draftFields)
+      // status is set HERE, not by the caller: the claim row was inserted
+      // 'superseded' so an unfilled placeholder stays out of dashboard queues,
+      // and filling it in is exactly the moment it becomes a real draft. The
+      // no-claim branch below relies on the column default ('pending'), so
+      // draftFields carries no status — without this flip the draft renders on
+      // the dashboard but the send path refuses it ("Draft N is not pending"),
+      // which is what every claim-path draft did until 2026-08-13.
+      .update({ ...draftFields, status: 'pending' })
       .eq('id', claimId)
       .select('id')
       .single();

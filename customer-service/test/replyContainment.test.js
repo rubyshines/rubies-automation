@@ -164,6 +164,25 @@ Jamie Alexander, RUBIES Founder`;
       assert.ok(!res.text.includes('stock verifie'));
     });
 
+    // 2026-08-13: this exact draft reached the operator with its planning
+    // intact. The model found the leak; the cut was thrown away because
+    // "Aloha" was not in GREETING_RE, so the guard decided its own correct
+    // slice did not open like an email.
+    test('a mirrored regional greeting still counts as an email opening', () => {
+      const leak = `The customer already has a home for these items: their daughter's doctor. I should honor their plan rather than redirect them to ship everything to Oregon.
+
+Aloha,
+
+Thank you for sharing all of this, and please do donate both orders to your daughter's doctor.
+
+Take care,
+Jamie Alexander, RUBIES Founder`;
+      const res = sliceBetweenAnchors(leak, 'Aloha,', 'Jamie Alexander, RUBIES Founder');
+      assert.ok(!res.error, res.error);
+      assert.ok(res.text.startsWith('Aloha,'));
+      assert.ok(!res.text.includes('I should honor their plan'));
+    });
+
     // Trailing removal takes nothing off the front, so the opening is whatever
     // the advisor wrote and the greeting check must not apply.
     test('a trailing cut is exempt from the greeting check', () => {

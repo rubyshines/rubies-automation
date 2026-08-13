@@ -55,8 +55,17 @@ const MIN_REMOVED_CHARS = 40;
  * walks straight past both guards (a French draft opening "Bonjour," reached a
  * customer with its stock-check notes attached on 2026-08-02, for exactly that
  * reason).
+ *
+ * "Aloha" is the same lesson a second time (2026-08-13): the advisor mirrored a
+ * Hawaiian customer's greeting, the model DID spot the two paragraphs of
+ * planning above it, and the cut was thrown away by the opens-like-an-email
+ * check because the list had never heard of the word. Mirroring the customer's
+ * greeting is allowed (founder call — the Aloha reply read fine), so the list
+ * is the only thing standing between a mirrored opener and a leaked draft. It
+ * stays deliberately generous: a greeting it doesn't know costs a leak, an
+ * extra greeting it does know costs nothing.
  */
-const GREETING_RE = /^(Hi|Hey|Hello|Hola|Bonjour|Bonsoir|Salut|Hallo|Ciao|Ol[áa])\b/m;
+const GREETING_RE = /^(Hi|Hey|Hello|Hola|Aloha|Bonjour|Bonsoir|Salut|Hallo|Ciao|Ol[áa]|Dear|Greetings|Good (morning|afternoon|evening))\b/m;
 
 // Placeholders this pipeline writes itself when the model returns nothing
 // usable. They are not emails, they are instructions to the operator, and a

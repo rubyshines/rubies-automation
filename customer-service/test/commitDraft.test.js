@@ -14,6 +14,11 @@
  *   2. Supersede targets only OLDER pending drafts (id < new id) on the same
  *      Gorgias ticket.
  *   3. active_draft_id only moves forward (null or < new id).
+ *   4. Filling in a claim flips the row back to 'pending'. The claim row is
+ *      inserted 'superseded' to stay out of dashboard queues while unfilled;
+ *      when that flip was missing (2026-08-12, PR #141) EVERY advisor draft
+ *      committed through the claim path stayed superseded and the same
+ *      "Draft X is not pending" send failure came back.
  *
  * Run: node --test customer-service/test/commitDraft.test.js
  */
@@ -90,6 +95,56 @@ describe('commitDraft', () => {
     assert.deepEqual(result, { duplicate: true });
     // The losing run must not supersede the winner's draft — that's the bug.
     assert.deepEqual(sb._ops.map(o => o.op), ['insert']);
+  });
+
+  it('claim path: fills the claim in and flips it back to pending', async () => {
+    const sb = makeSupabase({ insertResult: { data: { id: 42 }, error: null } });
+    const result = await commitDraft(sb, {
+      ticketRowId: 7, gorgiasTicketId: 555, draftFields: DRAFT_FIELDS, claimId: 42,
+    });
+
+    assert.deepEqual(result, { id: 42 });
+    const [fill] = sb._ops;
+    assert.equal(fill.op, 'update');
+    assert.deepEqual(fill.filters, [['eq', 'id', 42]]);
+    // The claim row was inserted 'superseded' so an unfilled placeholder stays
+    // out of the dashboard queues. Filling it in is what makes it a real draft:
+    // without this flip the draft renders but the send path refuses it
+    // ("Draft 42 is not pending"), which is what shipped on 2026-08-12.
+    assert.equal(fill.values.status, 'pending');
+    assert.equal(fill.values.draft_response, DRAFT_FIELDS.draft_response);
+  });
+
+  it('claim path: still supersedes older drafts and repoints the ticket', async () => {
+    const sb = makeSupabase({ insertResult: { data: { id: 42 }, error: null } });
+    await commitDraft(sb, {
+      ticketRowId: 7, gorgiasTicketId: 555, draftFields: DRAFT_FIELDS, claimId: 42,
+    });
+
+    assert.deepEqual(sb._ops.map(o => [o.table, o.op]), [
+      ['cs_ai_drafts', 'update'],
+      ['cs_ai_drafts', 'update'],
+      ['cs_tickets', 'update'],
+    ]);
+    const [, supersede, repoint] = sb._ops;
+    assert.deepEqual(supersede.values, { status: 'superseded' });
+    assert.deepEqual(supersede.filters, [
+      ['eq', 'gorgias_ticket_id', 555],
+      ['eq', 'status', 'pending'],
+      ['lt', 'id', 42], // the claim we just filled in is id 42 — never itself
+    ]);
+    assert.deepEqual(repoint.values, { active_draft_id: 42 });
+  });
+
+  it('claim path: a failed fill-in writes nothing else', async () => {
+    const err = { code: '22P02', message: 'invalid input' };
+    const sb = makeSupabase({ insertResult: { data: null, error: err } });
+    const result = await commitDraft(sb, {
+      ticketRowId: 7, gorgiasTicketId: 555, draftFields: DRAFT_FIELDS, claimId: 42,
+    });
+
+    assert.deepEqual(result, { error: err });
+    assert.deepEqual(sb._ops.map(o => o.op), ['update']);
   });
 
   it('other insert error: returns the error and writes nothing else', async () => {

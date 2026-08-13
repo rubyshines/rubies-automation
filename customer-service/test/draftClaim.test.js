@@ -175,7 +175,13 @@ describe('commitDraft with a claim held', () => {
     ]);
 
     const [fill, supersede, repoint] = sb._ops;
-    assert.equal(fill.values, DRAFT_FIELDS);
+    // The fill-in carries the caller's fields PLUS the status flip: the claim
+    // row was inserted 'superseded' to stay out of the dashboard queues while
+    // unfilled, and filling it in is the moment it becomes a real draft. This
+    // assertion used to compare by reference, which is what let the missing
+    // flip ship — every claim-path draft stayed superseded and the send path
+    // refused it ("Draft N is not pending"), 2026-08-12 to 2026-08-13.
+    assert.deepEqual(fill.values, { ...DRAFT_FIELDS, status: 'pending' });
     assert.deepEqual(fill.filters, [['eq', 'id', 42]]);
 
     assert.deepEqual(supersede.values, { status: 'superseded' });
