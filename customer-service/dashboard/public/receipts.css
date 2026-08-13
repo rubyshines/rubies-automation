@@ -1,0 +1,666 @@
+/* ===========================================================================
+   Receipts — "the ledger tape"
+   ---------------------------------------------------------------------------
+   Same paper stock and crimson as the ops dashboard, but the page is built
+   around one idea: this thing is made of receipt tape. The list is a ledger
+   with a sprocket rail and mono figures aligned on the decimal; the detail is
+   a torn strip of thermal paper with dotted leaders and a double-ruled total.
+   Everything numeric is JetBrains Mono so columns line up and a wrong figure
+   is visible from across the room.
+   ========================================================================= */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #faf9f7;
+  --surface: #ffffff;
+  --inset: #f3f1ee;
+  --accent: #c0392b;
+  --accent-soft: #f8e8e6;
+  --accent-hover: #a93226;
+  --teal: #1a8f7d;
+  --text: #1c1917;
+  --text-2: #78716c;
+  --text-3: #a8a29e;
+  --border: #e7e5e4;
+  --border-strong: #d6d3d1;
+  --green: #15803d;
+  --amber: #a16207;
+  --amber-bg: #fef9c3;
+  --red: #b91c1c;
+  --red-bg: #fee2e2;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgba(28,25,23,.04);
+  --shadow-md: 0 2px 8px rgba(28,25,23,.06), 0 1px 2px rgba(28,25,23,.04);
+  --shadow-lift: 0 12px 40px rgba(28,25,23,.16), 0 2px 8px rgba(28,25,23,.08);
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* iOS paints the overscroll rubber-band area in the html background, not the
+     body's — without this the page bounces to white above the paper stock. */
+  background: var(--bg);
+}
+
+/* Grey flash on every tap is the loudest "this is a web page" tell on iOS. */
+* { -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  /* Paper grain. Two very low-contrast gradients, not an image — enough to
+     stop large flats reading as flat screen white. */
+  background-image:
+    radial-gradient(circle at 15% 0%, rgba(192,57,43,.025), transparent 45%),
+    radial-gradient(circle at 85% 8%, rgba(26,143,125,.022), transparent 40%);
+  background-attachment: fixed;
+}
+
+/* ─── Header ────────────────────────────────────────────────── */
+
+.rc-header {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 16px;
+  height: 56px; padding: 0 20px;
+  background: rgba(255,255,255,.88);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+.rc-logo { height: 30px; width: 30px; object-fit: contain; flex-shrink: 0; }
+.rc-header h1 {
+  font-size: 15px; font-weight: 600; letter-spacing: -.01em;
+  color: var(--accent); white-space: nowrap;
+}
+.rc-header-totals {
+  flex: 1; display: flex; gap: 8px; align-items: center;
+  overflow-x: auto; scrollbar-width: none;
+}
+.rc-header-totals::-webkit-scrollbar { display: none; }
+.rc-header-totals .tot {
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  color: var(--text-2); background: var(--inset);
+  padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+}
+.rc-header-totals .tot b { color: var(--text); font-weight: 700; }
+.rc-header-totals .tot.review { background: var(--amber-bg); color: var(--amber); }
+.rc-header-nav { display: flex; gap: 4px; }
+.rc-header-nav a {
+  font-size: 13px; font-weight: 500; color: var(--text-2);
+  text-decoration: none; padding: 6px 12px; border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.rc-header-nav a:hover { background: var(--inset); color: var(--text); }
+
+.rc-main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 96px; }
+
+/* ─── Capture ───────────────────────────────────────────────── */
+
+.capture { margin-bottom: 28px; }
+
+.capture-drop {
+  display: flex; align-items: center; gap: 18px;
+  padding: 22px 24px;
+  background: var(--surface);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  position: relative; overflow: hidden;
+  transition: border-color .18s, box-shadow .18s, transform .18s;
+  animation: rise .5s cubic-bezier(.2,.7,.3,1) both;
+}
+.capture-drop:hover,
+.capture-drop:focus-within,
+.capture-drop.dragover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 24px rgba(192,57,43,.10);
+  transform: translateY(-1px);
+}
+.capture-drop:active { transform: translateY(0); }
+/* A faint crimson wash that grows out of the icon on hover. */
+.capture-drop::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(circle at 42px 50%, rgba(192,57,43,.06), transparent 55%);
+  opacity: 0; transition: opacity .25s;
+}
+.capture-drop:hover::before { opacity: 1; }
+
+.capture-icon {
+  flex-shrink: 0; width: 46px; height: 46px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  position: relative; z-index: 1;
+}
+.capture-icon svg { width: 26px; height: 20px; }
+.capture-copy { display: flex; flex-direction: column; gap: 2px; flex: 1; position: relative; z-index: 1; }
+.capture-copy strong { font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; }
+.capture-copy em { font-style: normal; font-size: 13px; color: var(--text-2); }
+.capture-hint {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
+  color: var(--text-3); text-transform: uppercase;
+  position: relative; z-index: 1;
+}
+
+.capture-error {
+  margin-top: 12px; padding: 10px 14px;
+  background: var(--red-bg); color: var(--red);
+  border-radius: var(--radius); font-size: 13px;
+}
+
+/* ─── Scan panel ────────────────────────────────────────────── */
+
+.scan {
+  display: flex; align-items: center; gap: 20px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  animation: rise .35s cubic-bezier(.2,.7,.3,1) both;
+}
+.scan-frame {
+  position: relative; flex-shrink: 0;
+  width: 74px; height: 98px;
+  border-radius: 6px; overflow: hidden;
+  background: var(--inset);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.scan-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The beam. This is the whole point of the panel — it makes a 6-second wait
+   legible as work happening to THIS photo. */
+.scan-beam {
+  position: absolute; left: 0; right: 0; height: 42%;
+  background: linear-gradient(180deg, transparent, rgba(192,57,43,.30) 45%, rgba(255,255,255,.55) 50%, rgba(192,57,43,.30) 55%, transparent);
+  animation: beam 1.7s cubic-bezier(.5,0,.5,1) infinite;
+  mix-blend-mode: multiply;
+}
+@keyframes beam {
+  0%   { transform: translateY(-110%); }
+  100% { transform: translateY(240%); }
+}
+.scan-status { flex: 1; min-width: 0; }
+.scan-label { display: block; font-size: 14.5px; font-weight: 600; letter-spacing: -.01em; }
+.scan-label::after {
+  content: '…'; display: inline-block;
+  animation: ellipsis 1.4s steps(4, end) infinite; width: 0; overflow: hidden;
+  vertical-align: bottom;
+}
+@keyframes ellipsis { to { width: 1.2em; } }
+.scan-steps {
+  display: block; margin-top: 4px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
+}
+
+/* ─── Ledger controls ───────────────────────────────────────── */
+
+.ledger-controls {
+  display: flex; align-items: center; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 14px;
+}
+.filters { display: flex; gap: 4px; }
+.chip {
+  font-family: var(--sans); font-size: 12.5px; font-weight: 500;
+  color: var(--text-2); background: none;
+  border: 1px solid transparent; border-radius: 20px;
+  padding: 5px 13px; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.chip:hover { background: var(--inset); color: var(--text); }
+.chip.is-active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.ledger-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+#search {
+  font-family: var(--sans); font-size: 13px;
+  padding: 7px 13px; width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: 20px;
+  color: var(--text); outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+#search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(192,57,43,.08); }
+#search::placeholder { color: var(--text-3); }
+
+.btn-ghost {
+  font-family: var(--sans); font-size: 12.5px; font-weight: 500;
+  padding: 7px 14px; cursor: pointer;
+  background: var(--surface); color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 20px;
+  transition: border-color .15s, color .15s, background .15s;
+  white-space: nowrap;
+}
+.btn-ghost:hover { border-color: var(--border-strong); color: var(--text); background: var(--inset); }
+
+/* ─── The ledger ────────────────────────────────────────────── */
+
+.ledger {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+}
+/* Sprocket rail: the perforation strip down the left edge. The signature
+   detail — it is what makes the list read as tape rather than as a table. */
+.ledger::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 22px;
+  background:
+    linear-gradient(90deg, var(--inset), var(--inset)),
+    radial-gradient(circle at 11px 9px, var(--bg) 2.2px, transparent 2.4px);
+  background-size: 100% 100%, 22px 18px;
+  background-repeat: no-repeat, repeat-y;
+  border-right: 1px solid var(--border);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ledger-row {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 18px 13px 36px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  background: none; border-left: 0; border-right: 0; border-top: 0;
+  width: 100%; text-align: left;
+  font: inherit; color: inherit;
+  transition: background .12s;
+  animation: rise .4s cubic-bezier(.2,.7,.3,1) both;
+}
+.ledger-row:last-child { border-bottom: 0; }
+.ledger-row:hover { background: var(--inset); }
+.ledger-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.rl-date {
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+  color: var(--text-2); letter-spacing: -.02em; white-space: nowrap;
+}
+.rl-date .yr { color: var(--text-3); }
+.rl-date.missing { color: var(--text-3); font-style: italic; }
+
+.rl-mid { min-width: 0; }
+.rl-merchant {
+  font-size: 14.5px; font-weight: 600; letter-spacing: -.012em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rl-sub {
+  font-size: 12px; color: var(--text-2); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 7px;
+}
+.rl-sub .acct { color: var(--text-2); }
+.rl-sub .dot { color: var(--text-3); }
+
+.rl-right { display: flex; align-items: center; gap: 12px; }
+.rl-amount {
+  font-family: var(--mono); font-size: 14.5px; font-weight: 500;
+  letter-spacing: -.03em; white-space: nowrap;
+  /* Fixed width so decimals stack down the column. */
+  min-width: 104px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rl-amount .cur { font-size: 10.5px; color: var(--text-3); margin-right: 3px; font-weight: 400; }
+.rl-amount.missing { color: var(--text-3); }
+
+/* Stamps. Rotated, letter-spaced, ink-on-paper — deliberately not pill
+   badges, because these mean "a human needs to look" and should feel stamped
+   onto the row rather than styled into it. */
+.stamp {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  padding: 2.5px 7px; border-radius: 3px;
+  border: 1.5px solid currentColor;
+  transform: rotate(-3deg);
+  white-space: nowrap; flex-shrink: 0;
+  opacity: .88;
+}
+.stamp.check { color: var(--red); background: var(--red-bg); }
+.stamp.dupe  { color: var(--amber); background: var(--amber-bg); }
+.stamp.ok    { color: var(--green); background: #dcfce7; transform: rotate(2deg); }
+.stamp.rejected { color: var(--text-3); background: var(--inset); border-color: var(--border-strong); }
+
+.ledger-empty {
+  padding: 56px 24px; text-align: center;
+  color: var(--text-3); font-size: 13.5px;
+}
+
+/* ─── Detail sheet ──────────────────────────────────────────── */
+
+.sheet { position: fixed; inset: 0; z-index: 60; display: flex; }
+.sheet-scrim {
+  position: absolute; inset: 0;
+  background: rgba(28,25,23,.42);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  animation: fade .2s ease both;
+}
+.sheet-body {
+  position: relative; margin: auto;
+  width: min(980px, calc(100vw - 40px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  /* Stop a flick at the end of the sheet from scrolling the ledger behind it. */
+  overscroll-behavior: contain;
+  background: var(--bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+  animation: pop .28s cubic-bezier(.2,.8,.3,1) both;
+}
+.sheet-close {
+  position: absolute; top: 12px; right: 14px; z-index: 3;
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface);
+  color: var(--text-2); font-size: 22px; line-height: 1; cursor: pointer;
+  display: grid; place-items: center;
+  transition: color .15s, border-color .15s;
+}
+.sheet-close:hover { color: var(--accent); border-color: var(--accent); }
+
+.detail { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 0; }
+.detail-photo {
+  background: #efece7;
+  border-left: 1px solid var(--border);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+  padding: 24px 20px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.detail-photo img {
+  width: 100%; border-radius: 6px; cursor: zoom-in;
+  box-shadow: 0 4px 18px rgba(28,25,23,.14);
+  background: #fff;
+}
+.detail-meta { font-size: 12px; color: var(--text-2); }
+.detail-meta div { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.detail-meta .k { color: var(--text-3); }
+.detail-meta .v { font-family: var(--mono); font-size: 11.5px; text-align: right; }
+
+/* ── The tape ──
+   A torn strip of thermal paper. The zigzag top and bottom are a conic-
+   gradient mask, so the edges are genuinely irregular paper rather than a
+   straight card with a shadow. */
+.tape-wrap { padding: 30px 26px; display: flex; justify-content: center; }
+.tape {
+  width: 100%; max-width: 400px;
+  background: #fffefb;
+  padding: 26px 26px 30px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: #2a2622;
+  box-shadow: 0 6px 26px rgba(28,25,23,.13);
+  position: relative;
+  --tooth: 9px;
+  -webkit-mask:
+    conic-gradient(from -45deg at 50% var(--tooth), #0000 90deg, #000 0) 0 0 / calc(var(--tooth)*2) 100% repeat-x,
+    conic-gradient(from 135deg at 50% calc(100% - var(--tooth)), #0000 90deg, #000 0) 0 100% / calc(var(--tooth)*2) 100% repeat-x,
+    linear-gradient(#000 0 0) 0 var(--tooth) / 100% calc(100% - var(--tooth)*2) no-repeat;
+  mask:
+    conic-gradient(from -45deg at 50% var(--tooth), #0000 90deg, #000 0) 0 0 / calc(var(--tooth)*2) 100% repeat-x,
+    conic-gradient(from 135deg at 50% calc(100% - var(--tooth)), #0000 90deg, #000 0) 0 100% / calc(var(--tooth)*2) 100% repeat-x,
+    linear-gradient(#000 0 0) 0 var(--tooth) / 100% calc(100% - var(--tooth)*2) no-repeat;
+  animation: rise .4s cubic-bezier(.2,.7,.3,1) both;
+}
+
+.tape-head { text-align: center; margin-bottom: 14px; }
+.tape-merchant {
+  font-size: 15px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; word-break: break-word;
+}
+.tape-addr { font-size: 10.5px; color: #7a736c; margin-top: 3px; letter-spacing: .01em; }
+.tape-when { font-size: 11px; color: #57514b; margin-top: 7px; letter-spacing: .04em; }
+
+.tape-rule { border-top: 1px dashed #c8c1b8; margin: 12px 0; }
+.tape-rule.double { border-top: 3px double #57514b; margin: 10px 0; }
+
+.tape-section-label {
+  font-size: 9.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: #9c948b; text-align: center; margin-bottom: 8px;
+}
+
+/* Dotted leaders between description and amount — the detail that reads as a
+   printed receipt instead of a two-column div. */
+.tape-line {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 1.5px 0;
+}
+.tape-line .desc { flex-shrink: 1; min-width: 0; overflow-wrap: anywhere; }
+.tape-line .lead {
+  flex: 1 1 auto; min-width: 12px;
+  border-bottom: 1px dotted #cfc8bf;
+  transform: translateY(-3px);
+}
+.tape-line .amt {
+  flex-shrink: 0; font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em; white-space: nowrap;
+}
+.tape-line .qty { color: #9c948b; font-size: 10.5px; }
+.tape-line .cat {
+  display: block; font-size: 9.5px; color: #9c948b;
+  letter-spacing: .04em; text-transform: lowercase;
+}
+.tape-line.neg .amt { color: var(--teal); }
+.tape-line.indent { padding-left: 12px; color: #57514b; }
+.tape-line.total {
+  font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 4px 0;
+}
+.tape-line.total .amt { letter-spacing: -.02em; }
+.tape-line.muted { color: #9c948b; }
+
+.tape-pay {
+  text-align: center; font-size: 10.5px; color: #7a736c;
+  letter-spacing: .08em; text-transform: uppercase; margin-top: 12px;
+}
+.tape-foot {
+  text-align: center; font-size: 9.5px; color: #b3aca3;
+  letter-spacing: .14em; text-transform: uppercase; margin-top: 14px;
+}
+.tape-barcode {
+  height: 26px; margin: 12px auto 0; max-width: 190px;
+  background-image: repeating-linear-gradient(90deg,
+    #2a2622 0 1px, transparent 1px 3px, #2a2622 3px 5px, transparent 5px 6px,
+    #2a2622 6px 9px, transparent 9px 11px, #2a2622 11px 12px, transparent 12px 15px);
+  opacity: .78;
+}
+
+/* Flags above the tape */
+.tape-flags {
+  max-width: 400px; margin: 0 auto; padding: 26px 26px 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.flag {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 10px 13px; border-radius: var(--radius);
+  font-size: 12.5px; line-height: 1.45;
+}
+.flag.warn { background: var(--amber-bg); color: #7a4d06; }
+.flag.err  { background: var(--red-bg); color: #8f1d1d; }
+.flag b { font-weight: 600; }
+.flag .fig { font-family: var(--mono); font-size: 11.5px; }
+
+/* Detail actions */
+.detail-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 0 26px 26px; max-width: 452px; margin: 0 auto; width: 100%;
+}
+.btn {
+  font-family: var(--sans); font-size: 13px; font-weight: 600;
+  padding: 9px 16px; border-radius: 20px; cursor: pointer;
+  border: 1px solid transparent; transition: background .15s, border-color .15s, color .15s;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary { background: var(--surface); color: var(--text-2); border-color: var(--border); }
+.btn-secondary:hover { border-color: var(--border-strong); color: var(--text); }
+.btn-danger { background: none; color: var(--red); border-color: transparent; }
+.btn-danger:hover { background: var(--red-bg); }
+.btn:disabled { opacity: .5; cursor: default; }
+
+/* Editable fields inside the tape */
+.tape [contenteditable] {
+  outline: none; border-bottom: 1px dashed transparent;
+  transition: border-color .15s, background .15s;
+  cursor: text;
+}
+.tape [contenteditable]:hover { border-bottom-color: #cfc8bf; }
+.tape [contenteditable]:focus {
+  border-bottom-color: var(--accent);
+  background: rgba(192,57,43,.05);
+}
+
+.acct-picker {
+  max-width: 400px; margin: 0 auto 10px; width: 100%;
+}
+.acct-picker select {
+  width: 100%; font-family: var(--sans); font-size: 12.5px;
+  padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); color: var(--text);
+  outline: none;
+}
+.acct-picker select:focus { border-color: var(--accent); }
+.acct-picker label {
+  display: block; font-size: 10px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-3); margin-bottom: 5px;
+}
+
+/* ─── Lightbox ──────────────────────────────────────────────── */
+.lightbox {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(28,25,23,.9);
+  display: grid; place-items: center; padding: 24px;
+  cursor: zoom-out; animation: fade .18s ease both;
+}
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
+
+/* ─── Toast ─────────────────────────────────────────────────── */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  z-index: 100; padding: 10px 18px; border-radius: 22px;
+  background: var(--text); color: #fff; font-size: 13px; font-weight: 500;
+  box-shadow: var(--shadow-lift);
+  animation: pop .22s cubic-bezier(.2,.8,.3,1) both;
+  max-width: calc(100vw - 40px); text-align: center;
+}
+.toast.err { background: var(--red); }
+
+/* ─── Motion ────────────────────────────────────────────────── */
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop  { from { opacity: 0; transform: translateX(-50%) scale(.96); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+.sheet-body { animation-name: popc; }
+@keyframes popc { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  /* The beam is the progress indicator — keep it, just make it calm. */
+  .scan-beam { animation: none !important; opacity: .35; top: 30%; }
+}
+
+/* ─── Mobile ────────────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .detail { grid-template-columns: 1fr; }
+  .detail-photo {
+    border-left: 0; border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    order: -1; padding: 18px 16px;
+  }
+  .detail-photo img { max-height: 46vh; object-fit: contain; }
+}
+
+/* ─── iPhone ────────────────────────────────────────────────────
+   This page is used one-handed, standing at a till or in a car, so the phone
+   layout is the real target and the desktop one is the accommodation.
+
+   Three iOS-specific rules earn their keep here and are easy to lose in a
+   refactor: every focusable field is >=16px (Safari force-zooms the viewport
+   on focus below that, and never zooms back out); heights are dvh not vh (vh
+   on iOS measures the viewport WITHOUT the toolbars, so a 100vh sheet is
+   always taller than the screen); and anything anchored to the bottom clears
+   env(safe-area-inset-bottom) or the home indicator sits on top of it.
+   ------------------------------------------------------------- */
+@media (max-width: 620px) {
+  .rc-header { padding: 0 14px; gap: 10px; }
+  .rc-header h1 { font-size: 14px; }
+  .rc-header-nav a { padding: 8px 10px; font-size: 12.5px; }
+  .rc-main { padding: 16px 12px calc(120px + env(safe-area-inset-bottom)); }
+
+  .capture-drop { padding: 18px; gap: 14px; }
+  .capture-hint { display: none; }
+  .capture-copy strong { font-size: 15px; }
+
+  .ledger-controls { gap: 8px; }
+  .ledger-tools { margin-left: 0; width: 100%; }
+  /* 16px: below this, focusing the field zooms the whole viewport and iOS
+     never restores it. */
+  #search { width: 100%; font-size: 16px; padding: 10px 14px; }
+  .filters { overflow-x: auto; scrollbar-width: none; width: 100%; }
+  .filters::-webkit-scrollbar { display: none; }
+  .chip { padding: 9px 14px; }   /* 44px tap target */
+
+  .ledger-row {
+    grid-template-columns: 1fr auto;
+    padding: 12px 14px 12px 32px;
+    gap: 10px;
+  }
+  /* On a phone the date belongs under the merchant, not in a gutter that eats
+     a third of the width. */
+  .rl-date { grid-column: 1; grid-row: 2; font-size: 11px; }
+  .rl-mid { grid-column: 1; grid-row: 1; }
+  .rl-right { grid-column: 2; grid-row: 1 / span 2; align-items: flex-end; flex-direction: column; gap: 5px; }
+  .rl-amount { min-width: 0; font-size: 15px; }
+
+  /* dvh, not vh: on iOS `100vh` is the viewport with the toolbars hidden, so a
+     100vh sheet is always taller than what you can actually see. */
+  .sheet-body {
+    width: 100vw; max-height: 100dvh; height: 100dvh;
+    border-radius: 0; margin: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sheet-close { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
+  .tape-wrap { padding: 20px 12px; }
+  .tape {
+    /* 16px keeps the editable figures out of Safari's force-zoom range, and a
+       receipt set at 16px mono happens to be almost exactly the character
+       width of real thermal tape — so the constraint improves the design. */
+    font-size: 16px; max-width: 100%; padding: 24px 20px 28px;
+  }
+  .tape-line .cat, .tape-line .qty { font-size: 12px; }
+  .tape-merchant { font-size: 17px; }
+  .acct-picker select { font-size: 16px; padding: 11px 12px; }
+  .detail-actions { padding: 0 16px calc(28px + env(safe-area-inset-bottom)); }
+  .btn { padding: 12px 18px; }   /* 44px tap target */
+
+  /* Thumb-reach capture. The camera is the primary action on a phone and it
+     should not require scrolling back to the top of the page to reach. */
+  .fab {
+    position: fixed; right: 18px; z-index: 40;
+    bottom: calc(22px + env(safe-area-inset-bottom));
+    width: 60px; height: 60px; border-radius: 50%;
+    background: var(--accent); color: #fff; border: 0;
+    display: grid; place-items: center; cursor: pointer;
+    box-shadow: 0 8px 24px rgba(192,57,43,.34);
+    -webkit-touch-callout: none; user-select: none;
+    transition: transform .1s;
+  }
+  .fab svg { width: 27px; height: 21px; }
+  .fab:active { transform: scale(.92); }
+
+  /* A long press on a row should open the receipt, not raise a text-selection
+     loupe over the merchant name. */
+  .ledger-row { -webkit-touch-callout: none; user-select: none; }
+}
+@media (min-width: 621px) { .fab { display: none; } }

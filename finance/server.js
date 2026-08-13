@@ -25,6 +25,7 @@ const taxEstimateTools = require('./lib/tools/taxEstimate');
 const runwayProjectionTools = require('./lib/tools/runwayProjection');
 const financialHealthTools = require('./lib/tools/financialHealth');
 const budgetVsActualTools = require('./lib/tools/budgetVsActual');
+const receiptTools = require('./lib/tools/receipts');
 
 const allTools = [
   ...financialSummaryTools,
@@ -37,6 +38,7 @@ const allTools = [
   ...runwayProjectionTools,
   ...financialHealthTools,
   ...budgetVsActualTools,
+  ...receiptTools,
 ];
 
 /**
