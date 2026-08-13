@@ -1250,7 +1250,7 @@ describe('prescribeSizingResolution', () => {
       assert.ok(!result.items[0].response_text.includes('Cheeky'), 'no adult equivalent for youth 6');
     });
 
-    it('explains the fix in outcome terms, not as "higher leg cut"', async () => {
+    it('leads with the roomier opening and gives cut-higher as the reason', async () => {
       const intake = makeIntake({
         items: [makeItem({ issue: 'tight_legs', size: 'M' })],
         _latestMessage: 'The waist fits fine but the legs are too tight.',
@@ -1258,9 +1258,11 @@ describe('prescribeSizingResolution', () => {
       const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
       const result = await prescribeSizingResolution(classified, intake, makeContext());
       const text = result.items[0].response_text;
-      assert.match(text, /more room in the thighs/, 'says what it does for them');
-      assert.match(text, /without sizing up the waist/, 'ties it to their waist fitting');
-      assert.ok(!/higher leg cut/i.test(text), 'trade language reads as "more revealing", not "roomier"');
+      assert.match(text, /roomier leg opening/, 'leads with the roomier opening');
+      assert.match(text, /cut higher/, 'gives the reason for it');
+    assert.match(text, /without sizing up the waist/, 'ties it to their waist fitting');
+    assert.ok(text.indexOf('roomier leg opening') < text.indexOf('cut higher'), 'opening first, reason second');
+      assert.ok(!/higher leg cut/i.test(text), 'never leads with the trade phrasing, which reads as more revealing');
     });
 
     it('falls back to sizing up when the category has no other target left', async () => {

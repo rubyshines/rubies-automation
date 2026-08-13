@@ -1752,14 +1752,18 @@ async function prescribeSizingResolution(classifiedItems, intake, context, { ava
           // Out of stock but close enough to be worth waiting for: say so with
           // the vague phrase, never a precise date.
           const waitNote = lead.inStock === false && lead.restock?.sellable_phrase
-            ? ` It is between shipments in that size and should be back in stock ${lead.restock.sellable_phrase.replace(/,\s*\d{4}$/, '')}.`
+            ? ` It should be back in stock ${lead.restock.sellable_phrase.replace(/,\s*\d{4}$/, '')}.`
             : '';
 
-          // Say what it does for THEM, not what it is. "Higher leg cut" is trade
-          // language and reads as "more revealing" rather than "roomier". No
-          // pronoun, so it reads the same whether they are buying for
-          // themselves or someone else.
-          const WHY = 'cut wider through the leg, so there is more room in the thighs without sizing up the waist';
+          // Founder wording: lead with the roomier leg opening, and give "cut
+          // higher" as the REASON for it rather than on its own. Alone it reads
+          // as "more revealing"; tied to the opening it reads as the fit
+          // benefit, which is what the customer is asking about. No pronoun, so
+          // it reads the same whether they are buying for themselves or someone
+          // else.
+          const why = (plural) => plural
+            ? 'have roomier leg openings as they are cut higher, so the thighs get more room without sizing up the waist'
+            : 'has a roomier leg opening as it is cut higher, so the thighs get more room without sizing up the waist';
 
           if (offered.length > 1) {
             // Two styles share the wider cut. Name the everyday pick rather than
@@ -1768,9 +1772,9 @@ async function prescribeSizingResolution(classifiedItems, intake, context, { ava
             const names = offered.map(t => `the ${t.nickname}`).join(' and ');
             const links = offered.map(t => `${t.nickname}: ${t.link}`).join(' ');
             const everydayPick = offered.find(t => t.everyday) || lead;
-            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} are both ${WHY}. The ${everydayPick.nickname} is better for all day wear. Would you like to try one? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `${names.charAt(0).toUpperCase() + names.slice(1)}${sizeNote} ${why(true)}. The ${everydayPick.nickname} is better for all day wear. Would you like to try one? ${links}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           } else {
-            rx.response_text = `The ${lead.nickname}${sizeNote} is ${WHY}.${waitNote} Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
+            rx.response_text = `The ${lead.nickname}${sizeNote} ${why(false)}.${waitNote} Would you like to try that instead? ${lead.link}${measureAsk ? ' Also, ' + measureAsk : ''}`;
           }
 
           rx.recommendation = { product: lead.nickname, link: lead.link, alternatives: offered.slice(1) };
