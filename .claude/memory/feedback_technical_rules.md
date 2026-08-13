@@ -172,6 +172,14 @@ If a prompt asks a model to judge recency (a re-approach after a gap, whether so
 
 **How to apply:** render a date line into the context, paired with what to do with it ("work out how long ago something was before describing it as recent; never repeat a figure or status from an old message as if it still holds"). Inject the date as a parameter rather than calling `new Date()` inline, so the render stays pure and testable. Audit any other advisor whose prompt talks about gaps, staleness, or "recently" — the CS advisor and any future supervisor have the same exposure.
 
+## When a draft sounds wrong, grep the prompt for the exact phrase before theorising
+
+A tone complaint about AI-written text is usually not the model drifting. It is the model following a verbatim template it was handed. Search the prompt for the offending words first.
+
+**Why:** Jamie flagged "and that's on me" as something no human writes. It came, word for word, from a prompt line that said: *own it plainly and warmly with zero defensiveness: "I am so sorry, that one is on me."* The same draft's bloated scheduling paragraph came from a rule requiring explicit timezone math, a statement that Jamie sends the invite, and naming Google Meet "whenever the email names a platform at all." Both complaints were the prompt working exactly as written. No amount of reasoning about model behaviour would have found that; one grep did.
+
+**How to apply:** take the phrase the human objected to, grep the prompt file for it and for its close variants. Then fix the template rather than adding a "do not say X" rule on top, since the positive template will keep winning. Replace it with what the person actually writes — pull real examples from their sent mail rather than inventing a register (Jamie's real apologies are "So sorry" and "Oh darn I am so sorry for missing this", never a construction that performs accountability). When a rule exists for a real reason but produces bloat, keep the outcome and cut the narration: "write the time in both zones" preserves the anti-timezone-confusion goal that "explain that you will confirm both zones" was bloating. Re-run the same draft 3+ times after, since one clean generation is not evidence.
+
 ## Positive prompt rules stick; negative ones drift
 
 When you need an LLM behavior to be reliable, frame it as a positive instruction with a verbatim template ("Open with: ..."). Negative instructions ("DO NOT open with sorry") are followed unreliably.
