@@ -110,7 +110,14 @@ async function handleSearch(input = {}) {
       const last = c.last_message_at ? ` — last activity ${etDate(c.last_message_at)}` : '';
       const why = c.matched_on ? ` [${c.matched_on}]` : '';
       const draft = c.has_pending_draft ? ' · DRAFT PENDING' : '';
-      return `**${c.name}** (${c.id}) · ${c.relationship_type} · ${state}${last}${why}${draft}`;
+      // The relationship summary is the whole point of looking a company up —
+      // without it the console answers "does this company exist" while the
+      // dashboard answers "what is going on with them". Same data, both surfaces.
+      const summary = c.relationship_summary
+        ? `\n  ${c.relationship_summary}${c.relationship_summary_at ? ` _(as of ${etDate(c.relationship_summary_at)})_` : ''}`
+        : '';
+      const next = c.relationship_next_step ? `\n  NEXT: ${c.relationship_next_step}` : '';
+      return `**${c.name}** (${c.id}) · ${c.relationship_type} · ${state}${last}${why}${draft}${summary}${next}`;
     });
     const shown = res.companies.length < res.total ? ` (showing ${res.companies.length} of ${res.total})` : '';
     return text(`Companies${res.query ? ` matching "${res.query}"` : ''}${shown}:\n${lines.join('\n')}`);

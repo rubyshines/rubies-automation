@@ -282,7 +282,7 @@ async function searchCompanies(sb, { q, stage = 'all', status = 'all', channel, 
   }
 
   let cq = sb.from('b2b_companies')
-    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until');
+    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until, relationship_summary, relationship_next_step, relationship_summary_at');
   if (channel) cq = cq.eq('relationship_type', channel);
   if (matchedIds) cq = cq.in('id', [...matchedIds]);
   const { data: companies, error } = await cq;
