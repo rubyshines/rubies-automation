@@ -211,7 +211,22 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   lines.push(`${company.name} (${company.relationship_type}, state: ${company.relationship_state || 'unknown'}, status: ${company.status || '—'})`);
   if (company.city || company.country) lines.push(`Location: ${[company.city, company.region, company.country].filter(Boolean).join(', ')}`);
   if (company.description) lines.push(`About: ${company.description}`);
-  if (company.ai_summary) lines.push(`Relationship summary: ${company.ai_summary}`);
+  // Two summaries, and conflating them is how a stale fact reaches a partner.
+  // The live one is dated and rebuilt from b2b_messages. `ai_summary` is a frozen
+  // pre-migration snapshot with no reliable timestamp, written in relative time
+  // ("about 10 months ago", "scheduled a call for today"), so it is labelled as
+  // background rather than presented as the current state of the relationship.
+  if (company.relationship_summary) {
+    lines.push(`Relationship summary (as of ${String(company.relationship_summary_at || '').slice(0, 10) || 'unknown'}): ${company.relationship_summary}`);
+    if (company.relationship_next_step) {
+      lines.push(`Suggested next step (a note to Jamie, not an instruction to you): ${company.relationship_next_step}`);
+    }
+  }
+  if (company.ai_summary) {
+    lines.push(`Pre-migration notes (written by an older system before June 2026, undated,`
+      + ` and phrased in relative time — treat as background, and do not repeat its`
+      + ` specifics or timings as if they still hold): ${company.ai_summary}`);
+  }
   if (company.order_count) lines.push(`Orders: ${company.order_count} (total $${company.total_sales || 0}, last ${company.last_order_date || '—'})`);
   if (company.program_flags && Object.keys(company.program_flags).length) lines.push(`Programs: ${JSON.stringify(company.program_flags)}`);
   // The rate is a country lookup, and quoting the wrong one in a partner email

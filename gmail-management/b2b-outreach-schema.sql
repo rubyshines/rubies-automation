@@ -17,6 +17,23 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS samples_shopify_order_id TEXT
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS samples_shipped_at TIMESTAMPTZ;
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS samples_delivered_at TIMESTAMPTZ;
 
+-- Rolling relationship summary — the recap + suggested next step the old Google
+-- Sheet carried per company, rebuilt on b2b_messages. Distinct from the sheet-era
+-- ai_summary / next_action columns above, which are a frozen pre-migration
+-- snapshot and are never written again: for companies whose history the engine
+-- never imported, that text is the only relationship knowledge we hold.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary TEXT;
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_next_step TEXT;              -- advisory only; cadence.js still owns what is due
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_next_step_owner TEXT;        -- 'us' | 'them'
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_at TIMESTAMPTZ;
+-- Watermark + count together, not a bare timestamp: history arrives BACKWARDS in
+-- this system (discoverCompanyThreads imports old threads long after the fact), so
+-- a message can land below the generation time and would never be noticed by a
+-- `date > summary_updated_at` test. The count catches those inserts.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_through TIMESTAMPTZ; -- sent_at of the newest message included
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_msg_count INTEGER;
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_claimed_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_next_action ON b2b_companies (next_action_date)
   WHERE next_action_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_rel_state ON b2b_companies (relationship_state);

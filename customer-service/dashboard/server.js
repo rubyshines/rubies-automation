@@ -2777,6 +2777,20 @@ async function apiB2bCompanyThreads(companyId) {
   return b2bQueueService.fetchCompanyThreads(getSupabaseClient(), companyId);
 }
 
+// Rebuild the relationship summary on demand (the ↻ beside "Where this stands").
+// `force` because the operator clicking it IS the trigger — they may be looking
+// at a summary that is technically current but was written before a thread they
+// just imported by opening the company.
+async function apiB2bRefreshSummary(companyId) {
+  const { refreshCompanySummary } = require('../../b2b-outreach/lib/relationshipSummary');
+  const sb = getSupabaseClient();
+  const result = await refreshCompanySummary(sb, companyId, { force: true });
+  const { data } = await sb.from('b2b_companies')
+    .select('relationship_summary, relationship_next_step, relationship_next_step_owner, relationship_summary_at')
+    .eq('id', companyId).maybeSingle();
+  return { ...result, ...(data || {}) };
+}
+
 // Directory: every company, searchable — the panel's browse surface, as
 // opposed to the queue's "what's due today".
 async function apiB2bCompanies(query) {
@@ -3407,6 +3421,7 @@ const paramRoutes = [
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id) => apiB2bAttachmentPreview(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },

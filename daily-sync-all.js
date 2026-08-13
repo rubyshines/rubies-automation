@@ -132,6 +132,14 @@ const PIPELINES = [
     },
   },
   {
+    name: 'Relationship Summaries',
+    // After every Gmail step above, so the day's messages have landed before we
+    // recap them. Deliberately not run on panel open: fetchCompanyThreads kicks
+    // off thread discovery in the background, and summarizing in that request
+    // would race it and recap a record whose history is still arriving.
+    run: () => require('./b2b-outreach/lib/relationshipSummary').run(),
+  },
+  {
     name: 'Ticket Reconciliation',
     run: () => require('./customer-service/sync/gorgiasAdvisorResync').runPipeline(),
   },

@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-08-05
+last_updated: 2026-08-13
 ---
 
 ## Goal
@@ -16,6 +16,8 @@ Grow retailer partnerships and wholesale revenue.
 4. Tier 3 custom searches — not started
 
 ## Current Status
+**2026-08-13: the per-company summary is back.** The recap + next step the old Google Sheet carried had been missing from the panel since the migration — not removed, orphaned: the summariser still runs daily but writes a store the engine doesn't read, reaching 11 of 242 companies. Rebuilt company-level on `b2b_messages`, updating incrementally as messages land, and the Outreach detail pane restructured around it so relationship state is answered before the composer instead of buried under it. Next: watch the summaries against real threads for a few weeks before deciding whether the suggested next step should drive the queue.
+
 **2026-08-05: THE QUEUE HAS WORK IN IT.** The panel was empty because the queue returned zero rows — Tier 4 was wired but no cadence branch ever produced a first touch, so the entire discovery backlog was invisible by construction. Fixed, along with two other causes: seven cadence branches gated on context that was never assembled, and $0 sample-kit orders were counted as purchases (15 retailers read as customers). Queue now 38 rows. Import data repaired across ~370 row-updates. Lane 1 (25 donation-form orgs) admitted through the new `vetted_at` gate; the ~120 CenterLink rows stay out until enrichment. Still pull-mode — nothing auto-sends. Next: work the Tier-4 org intros and the 5 pending follow-ups, then the 41-retailer vetting pass (needs the panel UI, not yet built).
 
 **2026-07-24 (session 2): FIRST REAL SEND** — the Mermaids UK intro went out through the engine. Panel matured in one day: CS-aligned UX (sidebar company card + orders, editable draft, one-click send), fact-verify checklist with corrections, conversation history with Gmail thread discovery, deep links, frequency-aligned reorder cadence + advisor `next_touch_days` override, auto-responder guard, clickable-link HTML sends, `b2b_add_prospect` intake tool. Operating plan: opportunistic outreach first (stagger the UK sends; TGV + Uniting Pride replies pending), then B2B retailer outbound as the next phase.

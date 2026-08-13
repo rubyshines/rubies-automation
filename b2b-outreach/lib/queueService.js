@@ -22,7 +22,7 @@
 const { assembleQueue } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
-const { generateDraft } = require('./outreachAdvisor');
+const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
 const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG } = require('./sendB2bEmail');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 
@@ -746,8 +746,8 @@ async function fetchCompanyThreads(sb, companyId) {
   const threads = threadsRes.data || [];
   const gmailSync = emails.length ? startCompanyGmailSync(sb, companyId, emails) : 'skipped';
 
-  // Round 2 — messages + orders in parallel (each depends on round 1).
-  const [messagesRes, ordersRes] = await Promise.all([
+  // Round 2 — messages + orders + donation routing in parallel (each depends on round 1).
+  const [messagesRes, ordersRes, msgCountRes, donation] = await Promise.all([
     threads.length
       ? sb.from('b2b_messages')
         .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
@@ -761,6 +761,26 @@ async function fetchCompanyThreads(sb, companyId) {
         .order('created_at', { ascending: false })
         .limit(8)
       : Promise.resolve({ data: [] }),
+    // The company's TRUE message count, which is not the same as the number of
+    // messages hanging off its threads. `b2b_threads.gmail_thread_id` is UNIQUE,
+    // so when two orgs share a Gmail thread (Gmail threads on subject) there is
+    // only ONE thread row and it belongs to whoever created it first — the other
+    // org's messages carry the right company_id but hang off a thread this query
+    // never selects. 8.9% of b2b_messages are in that state. The summary reads by
+    // company_id, so the header count has to as well or the block contradicts
+    // itself. (The conversation list below still shows the thread-derived set —
+    // that discrepancy is the parked thread-ownership bug, not this one.)
+    sb.from('b2b_messages').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
+    // Same reasoning as the advisor's donation facts: where our own records can
+    // answer "how is this partnership actually going", the operator should not
+    // have to go and look it up either. Org-only, and fail-soft — a missing
+    // routing count is a thinner header, not a broken pane.
+    companyRes.data?.relationship_type === 'lgbtq_org'
+      ? fetchDonationRouting(sb, companyRes.data).catch(err => {
+        console.error(`[queueService] donation routing lookup failed: ${err.message}`);
+        return null;
+      })
+      : Promise.resolve(null),
   ]);
   if (messagesRes.error) throw new Error(messagesRes.error.message);
   if (ordersRes.error) console.error(`[queueService] orders lookup failed: ${ordersRes.error.message}`);
@@ -785,7 +805,9 @@ async function fetchCompanyThreads(sb, companyId) {
   return {
     threads: [...byThread.values()],
     orders: ordersRes.data || [],
-    company,
+    // Derived here rather than in the panel so the detail pane and the directory
+    // rows can never disagree about what stage a company is at.
+    company: company ? { ...company, stage: companyStage(company) } : null,
     contacts: contactsRes.error ? [] : (contactsRes.data || []),
     pending_draft: draftRes.error ? null : (draftRes.data || null),
     logo_url: logoUrl,
@@ -794,6 +816,11 @@ async function fetchCompanyThreads(sb, companyId) {
     // panel knows whether a Send button is even honest here.
     recipient: recipient?.mode === 'email' ? recipient : null,
     delivery: recipient || { mode: 'none' },
+    message_count: msgCountRes?.count ?? null,
+    donation: donation ? {
+      shipments: donation.shipments, items: donation.items,
+      firstAt: donation.firstAt, lastAt: donation.lastAt,
+    } : null,
     gmail_sync: gmailSync,
   };
 }

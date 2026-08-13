@@ -5620,6 +5620,136 @@ function outreachAdvancePast(companyId) {
 // Newest thread starts expanded; older threads collapse behind <details>.
 // Bubbles reuse the CS advisor's conversation language: customer/org gray on
 // the left (.msg-customer), Jamie teal on the right (.msg-agent).
+function companyStageChip(c) {
+  if (!c || !c.stage) return '';
+  return `<span class="badge badge-muted outreach-stage-${esc(c.stage)}">${esc(OUTREACH_STAGE_LABELS[c.stage] || c.stage)}</span>`;
+}
+
+/**
+ * "Where this stands" — the relationship block.
+ *
+ * The pane used to open straight into the draft composer, so the two questions
+ * an operator actually arrives with ("what is this relationship" and "what should
+ * I do about it") were answered nowhere above the fold: you had to scroll past a
+ * full draft into an accordion of raw email to find out. This block answers both
+ * before the composer, and the transcript below it becomes the audit trail rather
+ * than the primary read.
+ *
+ * The stat strip pulls the conversation and commerce signal into the main pane;
+ * the sidebar keeps the reference data (address, contacts, itemised orders).
+ */
+function outreachRelationshipHtml(entry) {
+  const h = outreachHistory;
+  if (h === null) {
+    return `<div id="outreach-relationship" class="detail-section outreach-relationship">
+      <div class="outreach-loading">Loading relationship&hellip;</div></div>`;
+  }
+  const c = h.company || {};
+  const threads = h.threads || [];
+  // The company's real count, not the thread-derived one — see the note in
+  // fetchCompanyThreads. The summary reads by company_id, so this must too, or
+  // the block states a message count its own recap does not match.
+  const msgCount = h.message_count ?? threads.reduce((n, t) => n + (t.messages || []).length, 0);
+  const lastAt = threads.reduce((max, t) =>
+    t.last_message_at && (!max || new Date(t.last_message_at) > new Date(max)) ? t.last_message_at : max, null);
+
+  const stats = [
+    msgCount ? `${msgCount} message${msgCount === 1 ? '' : 's'}` : null,
+    lastAt ? `last activity ${timeAgo(lastAt, 'short')} ago` : null,
+    h.donation?.shipments ? `${h.donation.shipments} package${h.donation.shipments === 1 ? '' : 's'} routed` : null,
+    c.order_count ? `${c.order_count} order${c.order_count === 1 ? '' : 's'}` : null,
+    c.total_sales ? `$${Number(c.total_sales).toLocaleString()} lifetime` : null,
+  ].filter(Boolean);
+
+  const asOf = c.relationship_summary_at
+    ? `as of ${new Date(c.relationship_summary_at).toLocaleDateString('en-US', {
+      timeZone: 'America/New_York', month: 'short', day: 'numeric',
+    })}`
+    : '';
+
+  // A summary is stale when messages have landed since it was written. Saying so
+  // is the point: an out-of-date recap that looks current is worse than none.
+  const stale = c.relationship_summary_through && lastAt
+    && new Date(lastAt) > new Date(c.relationship_summary_through);
+
+  let bodyHtml;
+  if (c.relationship_summary) {
+    bodyHtml = `<div class="outreach-summary-text">${esc(c.relationship_summary)}</div>`;
+  } else if (msgCount) {
+    bodyHtml = `<div class="outreach-empty-note">No summary yet. Hit &#8635; to write one from the ${msgCount} message${msgCount === 1 ? '' : 's'} on record.</div>`;
+  } else {
+    // Honest rather than invented: plenty of companies genuinely have no imported
+    // history yet (thread discovery only runs when someone opens the company).
+    bodyHtml = `<div class="outreach-empty-note">No conversation on record, so there is nothing to summarise yet.</div>`;
+  }
+
+  const nextStep = c.relationship_next_step
+    ? `<div class="outreach-next-step">
+         <span class="outreach-next-step-label">Next</span>
+         <span class="outreach-next-step-text">${esc(c.relationship_next_step)}</span>
+         ${c.relationship_next_step_owner === 'them'
+           ? '<span class="badge badge-muted">waiting on them</span>' : ''}
+       </div>` : '';
+
+  // The cadence reason lives here now, next to the state it is explaining,
+  // instead of as a subtitle under the company name. It is a separate voice from
+  // the summary's next step — one is the engine, one is a recommendation — so it
+  // is labelled rather than blended in.
+  const cadence = entry?.reason
+    ? `<div class="outreach-cadence-note">${entry.tier ? 'Due per cadence: ' : ''}${esc(entry.reason)}</div>`
+    : '';
+
+  return `<div id="outreach-relationship" class="detail-section outreach-relationship">
+    <h3>Where this stands
+      <span class="outreach-summary-stamp">
+        ${asOf ? `<span${stale ? ' class="outreach-summary-stale"' : ''}>${esc(asOf)}${stale ? ' · new messages since' : ''}</span>` : ''}
+        <button id="outreach-summary-refresh" class="btn-refresh-inline" onclick="refreshOutreachSummary()"
+          title="Rebuild this summary from the conversation">&#8635;</button>
+      </span>
+    </h3>
+    ${stats.length ? `<div class="outreach-relationship-stats">${esc(stats.join(' · '))}</div>` : ''}
+    ${bodyHtml}
+    ${nextStep}
+    ${cadence}
+  </div>`;
+}
+
+// Rebuild the summary in place. Sonnet over the whole conversation, so it takes
+// a couple of seconds — spin the control rather than leaving a dead button.
+async function refreshOutreachSummary() {
+  const companyId = outreachSelectedId;
+  const btn = document.getElementById('outreach-summary-refresh');
+  if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
+  try {
+    const res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/summary/refresh`, {
+      method: 'POST', body: {},
+    });
+    if (outreachSelectedId !== companyId) return; // moved on while it ran
+    if (res.status === 'empty') {
+      showToast('Nothing to summarise — no conversation on record', 'error');
+      return;
+    }
+    // Only the summary fields — the response also carries status/mode, which
+    // have no business on the company record the rest of the pane renders from.
+    if (outreachHistory?.company) {
+      for (const k of ['relationship_summary', 'relationship_next_step',
+        'relationship_next_step_owner', 'relationship_summary_at']) {
+        outreachHistory.company[k] = res[k] ?? null;
+      }
+      // The recap now covers everything on record, so the staleness marker clears.
+      outreachHistory.company.relationship_summary_through = (outreachHistory.threads || [])
+        .reduce((max, t) => t.last_message_at && (!max || new Date(t.last_message_at) > new Date(max))
+          ? t.last_message_at : max, null);
+    }
+    const el = document.getElementById('outreach-relationship');
+    if (el) el.outerHTML = outreachRelationshipHtml(outreachEntries.get(companyId));
+    showToast('Summary updated', 'success');
+  } catch (err) {
+    showToast(`Summary refresh failed: ${err.message}`, 'error');
+    if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
+  }
+}
+
 function outreachHistoryHtml() {
   if (outreachHistory === null) {
     return `<div id="outreach-history" class="detail-section outreach-history">
@@ -5678,9 +5808,15 @@ function outreachHistoryHtml() {
       ${actions}
     </details>`;
   };
+  // Every thread starts collapsed now. The summary above is the primary read;
+  // this is the audit trail behind it, opened when you want to check the recap
+  // against what was actually said rather than as the only way to learn anything.
+  const total = threads.reduce((n, t) => n + (t.messages || []).length, 0);
   return `<div id="outreach-history" class="detail-section outreach-history">
-    <h3>Conversation</h3>
-    ${threads.map((t, i) => threadHtml(t, i === 0)).join('')}
+    <h3>Conversation
+      <span class="outreach-history-note">${total} message${total === 1 ? '' : 's'} · the record behind the summary above</span>
+    </h3>
+    ${threads.map(t => threadHtml(t, false)).join('')}
   </div>`;
 }
 
@@ -5739,6 +5875,19 @@ async function loadOutreachContext(companyId, allowRefetch) {
     if (ctxEl) ctxEl.innerHTML = outreachHistoryHtml();
     const recipEl = document.getElementById('outreach-recipient');
     if (recipEl) recipEl.outerHTML = outreachRecipientHtml();
+    // The relationship block and the stage chip are both rendered from this
+    // payload, so they are placeholders until it lands. Patch them in place
+    // rather than re-rendering the detail — that would discard whatever the
+    // operator has already typed into the draft editor.
+    const relEl = document.getElementById('outreach-relationship');
+    if (relEl && outreachEntries.has(companyId)) {
+      relEl.outerHTML = outreachRelationshipHtml(outreachEntries.get(companyId));
+    }
+    const headEl = document.getElementById('outreach-detail-head');
+    if (headEl && h.company && !headEl.querySelector('.outreach-tier')) {
+      const chip = headEl.querySelector('.badge');
+      if (!chip) headEl.querySelector('h2')?.insertAdjacentHTML('afterend', companyStageChip(h.company));
+    }
   }
   renderOutreachSidebarContext();
   // One follow-up fetch after the background Gmail sync has had time to land.
@@ -6014,14 +6163,18 @@ function renderOutreachDetail(entry, draft) {
   const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '?';
 
   // Directory and activity rows carry no tier — nothing is due about them, and
-  // a fake "T3" would read as a cadence decision the engine never made.
+  // a fake "T3" would read as a cadence decision the engine never made. They do
+  // carry a relationship stage, which is the honest thing to show in its place:
+  // a bare header told you nothing about who you had just opened.
+  const stage = outreachHistory?.company ? companyStageChip(outreachHistory.company) : '';
   const header = `
-    <div class="outreach-detail-head">
+    <div class="outreach-detail-head" id="outreach-detail-head">
       <h2>${esc(entry.company_name)}</h2>
-      ${entry.tier ? `<span class="outreach-tier outreach-tier-${entry.tier}">T${entry.tier}</span>` : ''}
+      ${entry.tier
+        ? `<span class="outreach-tier outreach-tier-${entry.tier}">T${entry.tier}</span>`
+        : stage}
       <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
-    </div>
-    <div class="outreach-detail-sub">${esc(entry.reason || '')}</div>`;
+    </div>`;
 
   const steerBlock = `
     <div class="steer-row">
@@ -6041,9 +6194,9 @@ function renderOutreachDetail(entry, draft) {
     // generated on demand, so every company starts here and comes back here
     // after each send. So it gets a real composer — write it yourself when you
     // already know the words, or hit ↻ to have the advisor write it.
-    el.innerHTML = header + `
+    el.innerHTML = header + outreachRelationshipHtml(entry) + `
       <div class="detail-section">
-        <h3>Draft</h3>
+        <h3>What I'm sending</h3>
         <div class="outreach-empty-note">Write it yourself below, or &#8635; to have the advisor write ${what}.</div>
         ${steerBlock}
         <div class="outreach-subject">
@@ -6066,7 +6219,7 @@ function renderOutreachDetail(entry, draft) {
 
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
 
-  el.innerHTML = header + outreachFactsHtml(draft) + `
+  el.innerHTML = header + outreachRelationshipHtml(entry) + outreachFactsHtml(draft) + `
     <div class="detail-section">
       <h3>AI Draft
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>

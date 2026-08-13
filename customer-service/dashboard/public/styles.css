@@ -5485,6 +5485,87 @@ main { height: calc(100vh - 56px); }
   margin-bottom: 14px;
 }
 
+/* "Where this stands" — the relationship block above the composer. Reads as
+   state, so it sits on the inset surface rather than the raised one the draft
+   uses: the eye separates the two zones before reading either. */
+.outreach-relationship {
+  background: var(--surface-inset);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+/* One heading treatment across the pane's zones. They were browser-default h3s,
+   which gave "Where this stands", "What I'm sending" and "Conversation" the same
+   weight as the company name and left the two-zone structure invisible. */
+#outreach-detail .detail-section > h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+/* The as-of stamp and its refresh control ride the right edge of the heading;
+   the draft heading's badges stay clustered left, so this is scoped here. */
+.outreach-summary-stamp {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+}
+.outreach-summary-stale { color: var(--yellow); }
+.outreach-relationship-stats {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+.outreach-summary-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+/* The recommendation, marked off from the recap by a teal rule. It is advisory
+   — cadence still decides what is due — so it reads as a note, not a verdict. */
+.outreach-next-step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--teal);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.outreach-next-step-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--teal);
+}
+.outreach-next-step-text { color: var(--text); }
+.outreach-cadence-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.outreach-history-note {
+  font-weight: 400;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+}
+
 /* Conversation history pane — bubbles reuse the CS .msg language (customer
    gray left, Jamie teal right); only thread grouping is outreach-specific. */
 .outreach-history { padding-bottom: 6px; }
