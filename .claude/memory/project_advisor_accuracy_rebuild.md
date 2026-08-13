@@ -337,8 +337,17 @@ already on main (verified by diff, 2026-08-10) and nothing here is waiting on a
 merge. **The lean prompt is dropped** — see the Phase 0 section for what that
 means and what was deleted with it.
 
-1. **Fix the tone-sample contradiction** (see below). Small, and it is teaching
-   against a shipped rule right now.
+1. ~~**Fix the tone-sample contradiction**~~ — **Done 2026-08-13.** Swept all 32
+   active samples against every ruling. Two real hits, both fixed by deleting the
+   offending sentence (never rewording Jamie): #58 `refund_with_donation` carried
+   the struck confirmation-email promise, and #78 `address_reship_confirm` put
+   already-shipped language on a just-created order (now fenced in `context`, the
+   same way the 07-22 apology nuance was). Five apology hits were checked and kept
+   — four are apologies for OUR failures, and #74's softener was already fenced.
+   **The sweep also found the prompt teaching the struck line itself**: the
+   cancellation template at `aiAdvisor.js` still closed with it, and a verbatim
+   template outranks a rule stated elsewhere, so fixing only the sample data would
+   have left the stronger instruction intact.
 2. **Keep fixing rules on 4.8.** Next up is the shipping stall: 14% of shipping
    drafts route to human, and Jamie replaced the "let me look into this" stall 14
    times out of 16 with concrete recourse.
