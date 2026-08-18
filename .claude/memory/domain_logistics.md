@@ -26,7 +26,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 - **Production:** Daily unfulfilled order alerts. Shipping delay detection across all carriers (reads `orders.fulfillments[].events`). Address hold auto-resolution. Hourly Passport scrape mirrors into fulfillment row. Delivery time estimation. Shipping info tool (pre-purchase). Passport claims tracking.
 - **Partial:** Shipping zone sync from Shopify ready but currently manual table seeding.
-- **Production inbound receiving:** supplier packing-list ingest → `inbound_shipments` → lot splitting → 3-way reconcile → founder review tab in the 2026 Production Numbers sheet → Warehance ASN. Warehance ASN upload path built but not yet exercised against the live API. See Key Decisions.
+- **Production inbound receiving:** supplier packing-list ingest → `inbound_shipments` → lot splitting → 3-way reconcile → founder review tab in the 2026 Production Numbers sheet → Warehance ASN. Exercised live against the Warehance API since Aug 2026: ASNs post, and one has been received and closed by the warehouse end-to-end with per-SKU quantities polled back. See Key Decisions.
 
 ## Key Files
 
