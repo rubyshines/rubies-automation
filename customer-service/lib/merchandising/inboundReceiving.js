@@ -663,10 +663,36 @@ async function uploadInboundToWarehance(inboundShipmentId, { clientId, force = f
   return { inbound_shipment_id: ship.id, transfer_number: ship.transfer_number, warehance_inbound_id: whId, uploaded: resolved.length, unresolved, tracking_number: ship.tracking_number || null };
 }
 
+/** YYYY-MM-DD from a Warehance timestamp, or null. Warehance writes 0001-01-01 for "unset". */
+function isoDate(ts) {
+  if (!ts) return null;
+  const d = String(ts).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && d > '1900-01-01' ? d : null;
+}
+
+/**
+ * Match Warehance ASN lines back to our SKUs. Warehance nests the identifiers under
+ * `product` ({ product: { id, sku } }), so read that first and fall back to the
+ * product-id map built from our own catalog. A line that matches nothing is counted
+ * in the total but left untouched, rather than guessing which SKU it belongs to.
+ */
+function matchReceivedLines(remoteItems, productIdToSku = new Map()) {
+  let totalReceived = 0;
+  const updates = [];
+  for (const ri of remoteItems || []) {
+    const productId = ri.product_id ?? ri.product?.id;
+    const sku = ri.sku || ri.product?.sku || productIdToSku.get(String(productId));
+    const received = Number(ri.received || 0);
+    totalReceived += received;
+    if (sku) updates.push({ sku, received });
+  }
+  return { totalReceived, updates };
+}
+
 /**
  * Pull receiving progress from Warehance into qty_received. Matches Warehance line
- * items back to our SKUs by product_id; falls back to leaving a line untouched if it
- * can't be matched, rather than guessing.
+ * items back to our SKUs by product id/sku; falls back to leaving a line untouched if
+ * it can't be matched, rather than guessing.
  */
 async function pollInboundReceiving(inboundShipmentId) {
   const sb = getSupabaseClient();
@@ -682,23 +708,22 @@ async function pollInboundReceiving(inboundShipmentId) {
   const productIdToSku = new Map();
   for (const it of items) { const p = stock.get(it.sku); if (p && p.id != null) productIdToSku.set(String(p.id), it.sku); }
 
-  let totalReceived = 0;
-  const updates = [];
-  for (const ri of remote.items || []) {
-    const sku = ri.sku || productIdToSku.get(String(ri.product_id));
-    const received = Number(ri.received || 0);
-    totalReceived += received;
-    if (sku) updates.push({ sku, received });
-  }
+  const { totalReceived, updates } = matchReceivedLines(remote.items, productIdToSku);
   for (const u of updates) {
     await sb.from('inbound_shipment_items').update({ qty_received: u.received }).eq('inbound_shipment_id', ship.id).eq('sku', u.sku);
   }
 
   const closed = remote.closed === true || /received|closed|complete/i.test(String(remote.status || ''));
-  const status = closed ? 'received' : 'receiving';
+  // Only claim the warehouse is receiving once something actually has been — an ASN
+  // sitting untouched must keep whatever travel status we already had (in_transit).
+  const status = closed ? 'received' : (totalReceived > 0 ? 'receiving' : ship.status);
   await sb.from('inbound_shipments').update({
     qty_received_total: totalReceived, status,
-    actual_arrival_date: closed ? (ship.actual_arrival_date || new Date().toISOString().slice(0, 10)) : ship.actual_arrival_date,
+    // Warehance's closed_date is when receiving finished; prefer it over "today", which
+    // is only right if we happen to poll on the day it lands.
+    actual_arrival_date: closed
+      ? (ship.actual_arrival_date || isoDate(remote.closed_date) || new Date().toISOString().slice(0, 10))
+      : ship.actual_arrival_date,
     last_checked_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq('id', ship.id);
 
@@ -727,6 +752,8 @@ module.exports = {
   buildSkuResolver,
   uploadInboundToWarehance,
   pollInboundReceiving,
+  matchReceivedLines,
+  isoDate,
   resolveOrder,
   mergeBySku,
 };
