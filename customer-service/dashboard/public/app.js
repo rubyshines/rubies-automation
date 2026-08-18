@@ -4251,13 +4251,46 @@ function collapseQuotedContent(html) {
     // (it's the original order confirmation email)
   }
 
-  return container.innerHTML + `<div class="quoted-toggle">
+  return container.innerHTML + quotedToggleHtml(quotedHtml);
+}
+
+/** The "…  Show forwarded message" disclosure that hides a quoted/forwarded block. */
+function quotedToggleHtml(innerHtml) {
+  return `<div class="quoted-toggle">
     <button class="quoted-toggle-btn" onclick="this.parentElement.classList.toggle('expanded')" type="button">
       <span class="quoted-dots">...</span>
       <span class="quoted-label">Show forwarded message</span>
     </button>
-    <div class="quoted-content">${quotedHtml}</div>
+    <div class="quoted-content">${innerHtml}</div>
   </div>`;
+}
+
+/**
+ * A customer message as the operator should see it: the richer of the two
+ * representations Gorgias gives us (see messageBody.js), sanitized, with the
+ * quoted/forwarded block collapsed behind a toggle.
+ *
+ * Shared by the message bubble and the email intake card. They used to differ —
+ * the card read `body_html` straight, so whenever Gorgias's stripper ate the HTML
+ * the card showed the operator less than the advisor had read. Measured over the
+ * stored corpus: 32 of 364 first-contact emails, one of them (a customer who
+ * forwarded their order confirmation and wrote three lines above it) completely
+ * blank, with a correct refund drafted underneath it.
+ */
+function renderCustomerBodyHtml(m) {
+  const chosen = chooseBody(m);
+  // Sanitize the untrusted customer HTML BEFORE collapseQuotedContent, so both
+  // the visible body and the raw quoted snapshot it re-embeds are neutralized,
+  // while the trusted toggle control it appends afterward is left intact.
+  const processed = collapseQuotedContent(sanitizeHtml(cleanMessageBody(chosen.html)));
+  // Falling back to plain text means we did the cutting ourselves, so
+  // collapseQuotedContent found no marker left to hang a toggle on. Re-attach it:
+  // on a first-contact forward the quoted block is usually the order confirmation
+  // the customer is writing about, and Gorgias shows it (collapsed) too.
+  if (chosen.source === 'plain' && chosen.quotedTail) {
+    return processed + quotedToggleHtml(esc(chosen.quotedTail).replace(/\n/g, '<br>'));
+  }
+  return processed;
 }
 
 // ---------------------------------------------------------------------------
@@ -4361,7 +4394,7 @@ const {
 // Same arrangement for the html-vs-plain-text choice on a customer message —
 // see messageBody.js for why the two representations disagree.
 const {
-  pickRichestBody,
+  chooseBody,
 } = window.messageBody;
 
 /**
@@ -4509,12 +4542,7 @@ function sanitizeHtml(html) {
 }
 
 function renderMessageBubble(m, ticket) {
-  const rawHtml = pickRichestBody(m);
-  const cleaned = cleanMessageBody(rawHtml);
-  // Sanitize the untrusted customer HTML BEFORE collapseQuotedContent, so both
-  // the visible body and the raw quoted snapshot it re-embeds are neutralized,
-  // while the trusted toggle control it appends afterward is left intact.
-  const processed = collapseQuotedContent(sanitizeHtml(cleaned));
+  const processed = renderCustomerBodyHtml(m);
   const attachmentHtml = (m.attachments || []).length
     ? `<div class="msg-attachments">${m.attachments.map(a => {
         const isImage = (a.content_type || '').startsWith('image/');
@@ -4694,6 +4722,10 @@ function renderConversation(messages, ticket) {
       let body = rawBody;
       let subject = '';
       let orderItems = [];
+      // Set by the form branches below: they pick the customer's words out of the
+      // PLAIN text, so the whole-message rendering the plain-email path uses would
+      // put the metadata block back on screen.
+      let splitFromPlain = false;
       if (isHelpCenterForm(rawBody)) {
         // Help-center / chat form: "I'd like to edit my order ----- Order: #... Item names: ...".
         // The customer's question and the order-metadata block can be in either
@@ -4703,6 +4735,7 @@ function renderConversation(messages, ticket) {
         const split = splitHelpCenterForm(rawBody);
         body = split.question;
         orderItems = parseOrderFormItems(split.metadata);
+        splitFromPlain = true;
       } else if (!firstMsg.body_html) {
         // Chat-widget/contact-form capture: "<subject>\n-----\n<message>".
         // This used to blind-strip the first line as boilerplate, which is right
@@ -4715,11 +4748,17 @@ function renderConversation(messages, ticket) {
         const split = splitContactFormSubject(rawBody);
         subject = split.subject;
         body = split.body;
+        splitFromPlain = true;
       }
       if (body || subject || orderItems.length) {
-        const rawHtml = firstMsg.body_html || esc(body).replace(/\n/g, '<br>');
-        const cleaned = cleanMessageBody(rawHtml);
-        const processed = collapseQuotedContent(cleaned);
+        // A plain email renders exactly as the message bubble renders it: same
+        // html-vs-plain-text guard, same sanitizer, same quoted-content toggle.
+        // Reading `body_html` straight here was the defect — see
+        // renderCustomerBodyHtml.
+        const processed = splitFromPlain
+          ? collapseQuotedContent(sanitizeHtml(cleanMessageBody(
+              firstMsg.body_html || esc(body).replace(/\n/g, '<br>'))))
+          : renderCustomerBodyHtml(firstMsg);
         const intent = extractFormIntent([firstMsg]);
         parts.push(renderIntakeCard({
           channel: firstChannel,
@@ -6497,11 +6536,14 @@ function updateSummaryBar(ticket) {
   }
 
   // Gorgias link — the mobile equivalent of the sidebar's ticket header, which
-  // is off-screen once the detail view is open.
+  // is off-screen once the detail view is open. It carries the ticket number for
+  // the same reason the desktop header does: a bare ↗ in a circle reads as one
+  // more unlabelled control and went unfound for a week after it shipped.
   const ticketLink = document.getElementById('mobile-ticket-link');
   if (ticketLink) {
     if (ticket.gorgias_ticket_id) {
       ticketLink.href = `https://rubies.gorgias.com/app/ticket/${ticket.gorgias_ticket_id}`;
+      ticketLink.innerHTML = `#${esc(String(ticket.gorgias_ticket_id))} <span class="external-link-icon">&#8599;</span>`;
       ticketLink.style.display = '';
     } else {
       ticketLink.style.display = 'none';

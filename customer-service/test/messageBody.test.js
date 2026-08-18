@@ -5,6 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const {
+  splitAtQuote,
   plainTextBeforeQuote,
   decodeEntities,
   htmlVisibleText,
@@ -293,7 +294,51 @@ describe('linesMissingFromHtml', () => {
 // chooseBody — the decision the operator sees
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// splitAtQuote — the cut, plus the tail. The tail exists so that a caller
+// rendering plain text can still offer the forwarded block behind a toggle;
+// dropping it silently is what made a forwarded order confirmation unreachable.
+// ---------------------------------------------------------------------------
+
+describe('splitAtQuote', () => {
+  it('returns the customer words and the forwarded block either side of the cut', () => {
+    const body = 'Hello,\nI would like to return the shorty shorts.\n\nThanks,\nAnnie\n'
+      + '---------- Forwarded message ---------\nFrom: RUBIES <care@rubyshines.com>\nOrder No. #32382';
+    const { own, quoted } = splitAtQuote(body);
+    assert.match(own, /return the shorty shorts/);
+    assert.doesNotMatch(own, /Forwarded message/);
+    assert.match(quoted, /^-{5,}\s*Forwarded message/);
+    assert.match(quoted, /Order No\. #32382/);
+  });
+
+  it('leaves the tail empty when the customer quoted nothing', () => {
+    assert.deepEqual(splitAtQuote('Just a plain note.'), { own: 'Just a plain note.', quoted: '' });
+  });
+});
+
 describe('chooseBody', () => {
+  // The defect this closes: Gorgias's stripper removes the forwarded block from
+  // stripped_html and, on a message that is mostly forward, can leave the HTML
+  // empty. Ticket #113100333 (2026-08-17) stored `<html><body><div dir="ltr">
+  // </div></body></html>` against three lines of plain text, and the operator saw
+  // a blank message with a correct refund drafted underneath it.
+  it('falls back to plain text and hands back the forwarded tail', () => {
+    const body = 'Hello,\nI would like to return both shorty shorts and the high waisted bottoms. '
+      + 'The fit just is not right.\n\nThanks so much,\nAnnie\n'
+      + '---------- Forwarded message ---------\nSubject: Thank you for placing an order\nOrder No. #32382';
+    const r = chooseBody({ body, body_html: '<html><body><div dir="ltr"></div>\n</body></html>' });
+    assert.equal(r.source, 'plain');
+    assert.match(r.html, /return both shorty shorts/);
+    assert.match(r.quotedTail, /Order No\. #32382/);
+  });
+
+  it('carries no tail when the HTML is the richer representation', () => {
+    const body = 'I would like to exchange the Brooke bra for a 2X please, it is far too small.';
+    const r = chooseBody({ body, body_html: `<div>${body}</div>` });
+    assert.equal(r.source, 'html');
+    assert.equal(r.quotedTail, '');
+  });
+
   it('renders escaped plain text when there is no HTML part', () => {
     const r = chooseBody({ body: 'line one\nline <two>' });
     assert.equal(r.source, 'no-html');
@@ -301,8 +346,8 @@ describe('chooseBody', () => {
   });
 
   it('handles a message with neither part', () => {
-    assert.deepEqual(chooseBody({}), { html: '', source: 'no-html', missingLines: [] });
-    assert.deepEqual(chooseBody(null), { html: '', source: 'no-html', missingLines: [] });
+    assert.deepEqual(chooseBody({}), { html: '', source: 'no-html', missingLines: [], quotedTail: '' });
+    assert.deepEqual(chooseBody(null), { html: '', source: 'no-html', missingLines: [], quotedTail: '' });
   });
 
   it('keeps the HTML when it carries everything the plain text does', () => {
@@ -518,6 +563,28 @@ describe('dashboard wiring', () => {
     const app = html.indexOf('/app.js');
     assert.ok(mod > -1, 'index.html does not load messageBody.js');
     assert.ok(app > -1 && mod < app, 'messageBody.js must load before app.js');
+  });
+
+  // The email intake card renders the FIRST customer message — the one most
+  // likely to be a forward, and the one Gorgias's stripper hurts most. It read
+  // `body_html` straight for a year while the message bubble beside it went
+  // through the picker, so the operator's view of first contact was the one view
+  // that could show less than the advisor read.
+  it('the email intake card renders through the shared picker, not body_html', () => {
+    const app = fs.readFileSync(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+    const start = app.indexOf('--- Email/contact form intake');
+    assert.ok(start > -1, 'email intake branch moved — update this test');
+    const branch = app.slice(start, app.indexOf('renderIntakeCard({', start));
+    assert.match(branch, /renderCustomerBodyHtml\(firstMsg\)/);
+    assert.doesNotMatch(branch, /const rawHtml = firstMsg\.body_html/);
+  });
+
+  it('every customer-message render path sanitizes before collapsing quotes', () => {
+    const app = fs.readFileSync(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+    for (const call of app.match(/collapseQuotedContent\([^;]*/g) || []) {
+      if (/^collapseQuotedContent\(html\)/.test(call)) continue; // the definition's own recursion guard
+      assert.match(call, /sanitizeHtml\(/, `unsanitized customer HTML reaches the DOM: ${call}`);
+    }
   });
 
   it('app.js no longer carries its own copy of the picker', () => {
