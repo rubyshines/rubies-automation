@@ -188,7 +188,9 @@ async function handleTriage(input = {}) {
     const detail = {
       keep: `admitted to the outreach queue (vetted ${res.vetted_at})`,
       drop: `marked lost — ${res.triage_reason}`,
-      snooze: `snoozed until ${res.snoozed_until}`,
+      snooze: `snoozed until ${res.snoozed_until} — no outreach until then, and any reply already sitting there stops showing as waiting on us`,
+      pause: `outreach paused — ${res.outreach_paused_reason}. Still fully visible and searchable; nothing will be drafted or chased, but a NEW reply still surfaces.`,
+      resume: 'outreach resumed — back on the normal cadence',
     }[input.action];
     return text(`**${res.name}** (${res.company_id}) — ${detail}. No draft generated.`);
   } catch (err) {
@@ -290,13 +292,13 @@ module.exports = [
   },
   {
     name: 'b2b_triage',
-    description: "Vet a company for outreach WITHOUT generating a draft: keep (admit it to the Tier-4 first-touch queue), drop (mark lost with a reason), or snooze (out of the queue until a date). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted — cohort by cohort rather than all at once.",
+    description: "Vet a company for outreach WITHOUT generating a draft. keep (admit it to the Tier-4 first-touch queue), drop (they are gone or said no — marks lost), snooze (come back on a date: 'we just spoke, not yet'), pause (indefinite, ours to reverse: 'not working this market right now'), resume (undo a pause). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted, cohort by cohort. Snooze and pause both leave the company fully visible and searchable and stop it being chased; the difference is only how they end. Neither can hide a reply that arrives afterwards.",
     inputSchema: {
       type: 'object',
       properties: {
         company_id: { type: 'string', description: 'b2b_companies id.' },
-        action: { type: 'string', description: "'keep' | 'drop' | 'snooze'." },
-        reason: { type: 'string', description: 'Why. Required on drop so the decision is not re-litigated later; optional otherwise.' },
+        action: { type: 'string', description: "'keep' | 'drop' | 'snooze' | 'pause' | 'resume'." },
+        reason: { type: 'string', description: "Why. Required on drop and on pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise." },
         until: { type: 'string', description: 'Snooze only: YYYY-MM-DD, must be in the future.' },
       },
       required: ['company_id', 'action'],

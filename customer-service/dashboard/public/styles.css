@@ -5561,6 +5561,37 @@ main { height: calc(100vh - 56px); }
   font-size: 12px;
   color: var(--text-secondary);
 }
+/* Deferral state. Yellow rather than muted: a company the engine will never
+   chase must not be mistaken for one it is quietly handling. */
+.outreach-deferral {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--yellow-bg);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--yellow);
+}
+.outreach-deferral-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+.outreach-deferral .btn { margin-left: auto; }
+.outreach-deferral-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.outreach-deferral-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
 .outreach-history-note {
   font-weight: 400;
   font-size: 11px;

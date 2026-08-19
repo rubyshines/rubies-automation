@@ -2791,6 +2791,18 @@ async function apiB2bRefreshSummary(companyId) {
   return { ...result, ...(data || {}) };
 }
 
+// Pause / snooze / resume from the panel. Same triageCompany the b2b_triage
+// console tool calls, so the two surfaces can never drift on what a pause means.
+async function apiB2bTriage(companyId, body = {}) {
+  const { triageCompany } = require('../../b2b-outreach/lib/triage');
+  return triageCompany(getSupabaseClient(), {
+    company_id: companyId,
+    action: body.action,
+    reason: body.reason || null,
+    until: body.until || null,
+  });
+}
+
 // Directory: every company, searchable — the panel's browse surface, as
 // opposed to the queue's "what's due today".
 async function apiB2bCompanies(query) {
@@ -3524,6 +3536,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },

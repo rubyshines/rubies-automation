@@ -5738,6 +5738,31 @@ function outreachRelationshipHtml(entry) {
     ? `<div class="outreach-cadence-note">${entry.tier ? 'Due per cadence: ' : ''}${esc(entry.reason)}</div>`
     : '';
 
+  // Deferral state, and the control to change it. Stated plainly rather than as a
+  // quiet badge: a company the engine will never chase is exactly the thing you
+  // must not mistake for one it is quietly handling.
+  const snoozeLive = c.snoozed_until && new Date(c.snoozed_until) > new Date();
+  let deferral;
+  if (c.outreach_paused_at) {
+    deferral = `<div class="outreach-deferral">
+      <span class="outreach-deferral-label">Paused</span>
+      <span>${esc(c.outreach_paused_reason || 'no reason recorded')}</span>
+      <button class="btn btn-ghost" onclick="resumeOutreach()">Resume</button>
+    </div>
+    <div class="outreach-deferral-note">Not drafted, not chased, not followed up. A new reply still surfaces.</div>`;
+  } else if (snoozeLive) {
+    deferral = `<div class="outreach-deferral">
+      <span class="outreach-deferral-label">Snoozed</span>
+      <span>until ${esc(new Date(c.snoozed_until).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}</span>
+      <button class="btn btn-ghost" onclick="resumeOutreach()">Resume now</button>
+    </div>`;
+  } else {
+    deferral = `<div class="outreach-deferral-actions">
+      <button class="btn btn-ghost" onclick="pauseOutreach()">Pause outreach</button>
+      <button class="btn btn-ghost" onclick="snoozeOutreach()">Snooze&hellip;</button>
+    </div>`;
+  }
+
   return `<div id="outreach-relationship" class="detail-section outreach-relationship">
     <h3>Where this stands
       <span class="outreach-summary-stamp">
@@ -5750,7 +5775,43 @@ function outreachRelationshipHtml(entry) {
     ${bodyHtml}
     ${nextStep}
     ${cadence}
+    ${deferral}
   </div>`;
+}
+
+// Pause / snooze / resume. All three go through the same triage endpoint the
+// b2b_triage console tool uses, so the panel can never mean something different
+// by "paused" than the tool does.
+async function applyOutreachTriage(body, okMessage) {
+  const companyId = outreachSelectedId;
+  try {
+    await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/triage`, { method: 'POST', body });
+    if (outreachSelectedId !== companyId) return;
+    await loadOutreachContext(companyId, false);   // re-read so the block reflects it
+    loadOutreach();                                // the queue changes as a result
+    showToast(okMessage, 'success');
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+  }
+}
+
+function pauseOutreach() {
+  // Required, and asked for at the point of decision — six months on, "why is
+  // this paused?" is the only thing anyone wants to know.
+  const reason = prompt('Why are we pausing outreach to this company?\n\n(e.g. "not working Canadian retailers this year", "asked not to be contacted regularly")');
+  if (!reason || !reason.trim()) return;
+  applyOutreachTriage({ action: 'pause', reason: reason.trim() }, 'Outreach paused');
+}
+
+function snoozeOutreach() {
+  const until = prompt('Come back to this company on (YYYY-MM-DD):');
+  if (!until || !until.trim()) return;
+  const reason = prompt('Why? (optional)') || null;
+  applyOutreachTriage({ action: 'snooze', until: until.trim(), reason }, `Snoozed until ${until.trim()}`);
+}
+
+function resumeOutreach() {
+  applyOutreachTriage({ action: 'resume' }, 'Outreach resumed');
 }
 
 // Rebuild the summary in place. Sonnet over the whole conversation, so it takes

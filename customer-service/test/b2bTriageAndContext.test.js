@@ -99,3 +99,79 @@ test('empty and malformed metadata produce no section', () => {
   assert.deepEqual(renderMetadataFacts({}), []);
   assert.deepEqual(renderMetadataFacts('not json'), []);
 });
+
+// ── deferring outreach: snooze (dated) and pause (indefinite) ────────────────
+// Neither is `drop`. A company we have decided not to work is not lost — they
+// did not go away, we made a call, and it is ours to reverse.
+
+const { computeQueueEntry, deferredSince } = require('../../b2b-outreach/lib/queue');
+
+test('pause records a reason and is refused without one', () => {
+  const upd = computeTriage('pause', { reason: 'not working Canadian retailers this year', now: NOW });
+  assert.equal(upd.outreach_paused_at, NOW.toISOString());
+  assert.equal(upd.outreach_paused_reason, 'not working Canadian retailers this year');
+  assert.equal(upd.relationship_state, undefined, 'pausing must NOT mark them lost');
+  assert.throws(() => computeTriage('pause', { now: NOW }), /requires a reason/);
+});
+
+test('resume clears the pause', () => {
+  const upd = computeTriage('resume', { now: NOW });
+  assert.equal(upd.outreach_paused_at, null);
+  assert.equal(upd.outreach_paused_reason, null);
+});
+
+test('snooze now records when it was set, not just when it lifts', () => {
+  const upd = computeTriage('snooze', { until: '2026-12-01', now: NOW });
+  assert.equal(upd.snoozed_until, '2026-12-01');
+  assert.equal(upd.snoozed_at, NOW.toISOString());
+});
+
+const paused = (over = {}) => ({ id: 'x', relationship_state: 'in_contact', ...over });
+
+test('a lapsed snooze stops deferring', () => {
+  assert.equal(deferredSince(paused({ snoozed_until: '2026-01-01', snoozed_at: '2025-12-01T00:00:00Z' }), NOW), null);
+});
+
+test('a live snooze defers from when it was set', () => {
+  const at = '2026-08-01T00:00:00Z';
+  assert.equal(deferredSince(paused({ snoozed_until: '2026-12-01', snoozed_at: at }), NOW), at);
+});
+
+test('a snooze with no recorded set-time defers nothing', () => {
+  // Rows snoozed before snoozed_at existed. Falling back to the END date would
+  // suppress a reply that arrived mid-snooze.
+  assert.equal(deferredSince(paused({ snoozed_until: '2026-12-01', snoozed_at: null }), NOW), null);
+});
+
+// The Bra Room: replied 170 days ago, and Canada is not being worked this year.
+test('pausing clears a reply that was already sitting there', () => {
+  const co = paused({ outreach_paused_at: '2026-08-05T00:00:00Z' });
+  const entry = computeQueueEntry(co, { lastInboundAt: '2026-02-15T00:00:00Z', lastOutboundAt: null }, NOW);
+  assert.equal(entry, null, 'an old unanswered reply should stop nagging once paused');
+});
+
+// The rule this whole feature has to obey.
+test('a reply arriving AFTER the pause still surfaces at Tier 1', () => {
+  const co = paused({ outreach_paused_at: '2026-08-01T00:00:00Z' });
+  const entry = computeQueueEntry(co, { lastInboundAt: '2026-08-04T00:00:00Z', lastOutboundAt: null }, NOW);
+  assert.equal(entry?.tier, 1, 'pausing means stop chasing, never stop listening');
+});
+
+// Fenway Health: replied 72 days ago, but we have since spoken on the phone.
+test('snoozing clears a stale waiting-on-us but not a fresh one', () => {
+  const co = paused({ snoozed_until: '2026-09-15', snoozed_at: '2026-08-04T00:00:00Z' });
+  assert.equal(computeQueueEntry(co, { lastInboundAt: '2026-06-01T00:00:00Z' }, NOW), null);
+  assert.equal(
+    computeQueueEntry(co, { lastInboundAt: '2026-08-04T12:00:00Z' }, NOW)?.tier, 1,
+    'they wrote again after we snoozed — that is new information');
+});
+
+test('a paused company is off the cadence entirely, not just off Tier 1', () => {
+  const co = paused({ outreach_paused_at: '2026-08-01T00:00:00Z', next_action_date: '2026-01-01' });
+  assert.equal(computeQueueEntry(co, {}, NOW), null, 'no Tier 5 overdue nag either');
+});
+
+test('an unpaused company with the same overdue date still surfaces', () => {
+  const co = paused({ next_action_date: '2026-01-01' });
+  assert.equal(computeQueueEntry(co, {}, NOW)?.tier, 5, 'control: the pause is what suppressed it');
+});

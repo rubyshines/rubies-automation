@@ -43,6 +43,21 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_claimed_
 -- forever.
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS threads_discovered_at TIMESTAMPTZ;
 
+-- "Do not chase this one" — deliberately NOT a relationship_state value.
+-- `lost` means they went away or said no; this is OUR decision (a market we are
+-- not working this year, a partner who does not want regular contact), and it is
+-- reversible. Folding it into relationship_state would destroy the fact we would
+-- need to resume: The Bra Room is a real `in_contact` retailer that happens to be
+-- in a country we are not pursuing right now. Orthogonal columns keep both facts.
+-- The reason is the part that matters in six months.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS outreach_paused_at TIMESTAMPTZ;
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS outreach_paused_reason TEXT;
+-- WHEN the snooze was set, as opposed to snoozed_until which is when it lifts.
+-- Deferring outreach has to be able to clear a stale "waiting on us" (you just
+-- spoke to them, so the 72-day-old email is not really outstanding) without ever
+-- hiding a reply that lands afterwards. That comparison needs the set-time.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS snoozed_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_next_action ON b2b_companies (next_action_date)
   WHERE next_action_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_rel_state ON b2b_companies (relationship_state);

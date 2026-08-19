@@ -36,10 +36,22 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
       if (!until) throw new Error('snooze requires an until date (YYYY-MM-DD)');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) throw new Error(`snooze until must be YYYY-MM-DD, got '${until}'`);
       if (new Date(`${until}T00:00:00Z`) <= now) throw new Error(`snooze until must be in the future, got '${until}'`);
-      return { snoozed_until: until, triage_reason: reason || null };
+      // snoozed_at, not just snoozed_until: the queue needs to know WHEN the
+      // decision was made to tell an already-stale "waiting on us" apart from a
+      // reply that lands during the snooze.
+      return { snoozed_until: until, snoozed_at: now.toISOString(), triage_reason: reason || null };
     }
+    case 'pause': {
+      // Indefinite by design — the whole reason snooze does not fit is that
+      // "not working Canadian retailers this year" has no date attached, and
+      // inventing one produces a queue item on a day nobody chose.
+      if (!reason) throw new Error('pause requires a reason — in six months "why is this paused?" is the only question that matters');
+      return { outreach_paused_at: now.toISOString(), outreach_paused_reason: reason };
+    }
+    case 'resume':
+      return { outreach_paused_at: null, outreach_paused_reason: null };
     default:
-      throw new Error(`unknown triage action '${action}' — expected keep, drop or snooze`);
+      throw new Error(`unknown triage action '${action}' — expected keep, drop, snooze, pause or resume`);
   }
 }
 

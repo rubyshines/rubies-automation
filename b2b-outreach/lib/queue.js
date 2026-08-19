@@ -52,6 +52,28 @@ const TIER_BY_TYPE = {
 };
 
 /**
+ * When outreach to this company was last deliberately deferred, or null. PURE.
+ *
+ * Two flavours of the same intent, and they differ only in how they end:
+ *   - snooze  — dated. `snoozed_until` lifts it automatically ("we just spoke,
+ *               come back in six weeks").
+ *   - pause   — indefinite. Only an explicit resume lifts it ("not working
+ *               Canadian retailers this year").
+ * A lapsed snooze is not a deferral any more, so it stops suppressing.
+ */
+function deferredSince(company, now = new Date()) {
+  if (!company) return null;
+  if (company.outreach_paused_at) return company.outreach_paused_at;
+  if (company.snoozed_until && new Date(company.snoozed_until) > now) {
+    // Older rows were snoozed before set-time was recorded. Falling back to the
+    // snooze END date would suppress a reply that arrived during the snooze, so
+    // an unknown set-time suppresses nothing.
+    return company.snoozed_at || null;
+  }
+  return null;
+}
+
+/**
  * computeQueueEntry — decide whether a company belongs in today's queue and at
  * what tier. Returns { tier, message_type|null, reason } or null.
  *
@@ -63,8 +85,26 @@ const TIER_BY_TYPE = {
 function computeQueueEntry(company, ctx, now = new Date()) {
   if (!company || company.relationship_state === 'lost') return null;
 
-  // Tier 1 — they replied, we haven't answered. Beats everything, even snooze.
-  if (ctx.lastInboundAt && (!ctx.lastOutboundAt || new Date(ctx.lastInboundAt) > new Date(ctx.lastOutboundAt))) {
+  // Tier 1 — they replied, we haven't answered.
+  //
+  // Deferring outreach is the only thing that can suppress it, and only for mail
+  // that was already sitting there when the deferral was set. That is most of the
+  // point: The Bra Room's 170-day-old reply is not outstanding once you have
+  // decided not to work Canada, and Fenway's 72-day-old one is not outstanding
+  // once you have spoken to them on the phone. Both were unclearable before,
+  // because Tier 1 outranked everything.
+  //
+  // A message arriving AFTER the deferral always surfaces, whichever kind it is.
+  // Deferring means "stop chasing them", never "stop telling me when a human
+  // writes" — this system has already left four partners waiting, one for 332
+  // days, and a control that could silence a live correspondent would rebuild
+  // that failure deliberately.
+  const deferredAt = deferredSince(company, now);
+  const staleReply = deferredAt && ctx.lastInboundAt
+    && new Date(ctx.lastInboundAt) <= new Date(deferredAt);
+
+  if (!staleReply && ctx.lastInboundAt
+    && (!ctx.lastOutboundAt || new Date(ctx.lastInboundAt) > new Date(ctx.lastOutboundAt))) {
     return {
       tier: 1,
       message_type: null, // advisor reads the thread and decides
@@ -141,4 +181,4 @@ function assembleQueue(items, now = new Date()) {
   });
 }
 
-module.exports = { computeQueueEntry, assembleQueue, humanAge, TIER_BY_TYPE };
+module.exports = { computeQueueEntry, assembleQueue, humanAge, deferredSince, TIER_BY_TYPE };

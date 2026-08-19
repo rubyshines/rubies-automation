@@ -116,6 +116,12 @@ const SAMPLES_CHECKIN_MAX_AGE_DAYS = 60;
 function companyEligible(company, { hasPendingDraft } = {}, now = new Date()) {
   if (!company) return false;
   if (company.relationship_state === 'lost') return false;
+  // Paused: we have decided not to work this relationship for now. Distinct from
+  // `lost` (they went away) and from snooze (a date we are waiting for) — this is
+  // indefinite and ours to reverse. It stops everything the engine would START:
+  // cadence, follow-ups, first touch. It does NOT hide the company, its history,
+  // or a reply that arrives after the pause (see computeQueueEntry).
+  if (company.outreach_paused_at) return false;
   if (company.contact_unknown) return false;
   if (hasPendingDraft) return false;
   if (company.snoozed_until && new Date(company.snoozed_until) > now) return false;
