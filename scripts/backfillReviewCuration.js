@@ -85,15 +85,19 @@ async function main() {
   }
 
   if (!audienceOnly) {
-    console.log(`Assessing ${c.unassessed} unpublished review(s) against the rubric…`);
-    // The tool caps at 100 per call; loop until the queue is drained.
-    let remaining = c.unassessed;
-    while (remaining > 0) {
-      const res = await toolMap.review_assess.handler({ limit: 100 });
-      const done = res._structured?.assessed || 0;
-      console.log(res.content[0].text);
-      if (!done) break;
-      remaining -= done;
+    // Both populations, not just the live backlog: the "skipped" view is there
+    // so old passed-over reviews can be reconsidered, and it is useless without
+    // recommendations on the rows.
+    for (const status of ['pending', 'skipped']) {
+      console.log(`Assessing unpublished "${status}" review(s) against the rubric…`);
+      // The tool caps at 100 per call; loop until that population is drained.
+      for (;;) {
+        const res = await toolMap.review_assess.handler({ status, limit: 100 });
+        const done = res._structured?.assessed || 0;
+        console.log(res.content[0].text);
+        if (!done) break;
+      }
+      console.log('');
     }
   }
 

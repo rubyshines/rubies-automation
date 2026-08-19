@@ -7,7 +7,7 @@
  * rule — any advisor can call them too.
  */
 
-const { getSupabaseClient } = require('../../../shared/supabaseClient');
+const { getSupabaseClient, fetchAllPaginated } = require('../../../shared/supabaseClient');
 const {
   classifyAudience, recommendCuration, applyDecision, AUDIENCE_VALUES,
 } = require('../reviewCuration');
@@ -121,7 +121,7 @@ async function handleReviewQueue(input = {}) {
 // Assess — fill in recommendations
 // ---------------------------------------------------------------------------
 
-async function handleReviewAssess({ review_id, limit = 25 } = {}) {
+async function handleReviewAssess({ review_id, status = 'pending', limit = 25 } = {}) {
   const supabase = getSupabaseClient();
 
   let rows;
@@ -130,7 +130,7 @@ async function handleReviewAssess({ review_id, limit = 25 } = {}) {
     if (error) throw new Error(`Supabase error: ${error.message}`);
     rows = data || [];
   } else {
-    rows = (await fetchQueue({ status: 'pending', limit: 500 }))
+    rows = (await fetchQueue({ status, limit: 500 }))
       .filter((r) => !r.ai_recommendation)
       .slice(0, Math.min(limit, 100));
   }
@@ -171,12 +171,15 @@ async function handleReviewClassify({ review_id, limit = 200, reclassify = false
     if (error) throw new Error(`Supabase error: ${error.message}`);
     rows = data || [];
   } else {
-    let q = supabase.from('judgeme_reviews').select('review_id, title, body')
-      .order('created_at', { ascending: false }).limit(Math.min(limit, 2000));
-    if (!reclassify) q = q.is('audience', null);
-    const { data, error } = await q;
-    if (error) throw new Error(`Supabase error: ${error.message}`);
-    rows = data || [];
+    // Paginated: the corpus is >1000 rows and Supabase silently truncates at
+    // 1000, which quietly left 1005 reviews unclassified on the first backfill.
+    rows = await fetchAllPaginated(() => {
+      let q = supabase.from('judgeme_reviews').select('review_id, title, body')
+        .order('created_at', { ascending: false });
+      if (!reclassify) q = q.is('audience', null);
+      return q;
+    });
+    rows = rows.slice(0, limit);
   }
 
   if (!rows.length) {
@@ -271,6 +274,7 @@ const tools = [
       type: 'object',
       properties: {
         review_id: { type: 'number', description: 'Assess just this review.' },
+        status: { type: 'string', enum: ['pending', 'skipped', 'held'], description: 'Which population to assess (default "pending").' },
         limit: { type: 'number', description: 'Max reviews to assess in one call (default 25, max 100).' },
       },
       required: [],
