@@ -198,6 +198,22 @@ async function handleTriage(input = {}) {
   }
 }
 
+async function handleUpdateContact(input = {}) {
+  try {
+    const { updateCompanyContact } = require(path.join(B2B_LIB, 'updateContact'));
+    const r = await updateCompanyContact(getSupabaseClient(), input);
+    const bits = [`**${r.company_name}** now writes to **${r.contact.email}**`
+      + (r.contact.full_name ? ` (${r.contact.full_name}${r.contact.title ? `, ${r.contact.title}` : ''})` : '')];
+    if (r.previous_recipient && r.previous_recipient !== r.contact.email) {
+      bits.push(`Was: ${r.previous_recipient}.`);
+    }
+    if (r.deactivated.length) bits.push(`Retired: ${r.deactivated.join(', ')} (kept on the record for history).`);
+    return text(bits.join(' '));
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
 async function handleAgreement(input = {}) {
   try {
     const { renderAgreementPdf } = require(path.join(B2B_LIB, 'donationAgreement'));
@@ -304,6 +320,22 @@ module.exports = [
       required: ['company_id', 'action'],
     },
     handler: handleTriage,
+  },
+  {
+    name: 'b2b_update_contact',
+    description: "Change who we write to at a B2B company. Use whenever a thread reveals the person has moved on ('X is no longer with us, please contact Y') or Jamie names a new contact. Sets them as the single primary contact, so the next draft and send address them; pass `replaces` with the old address to retire that person at the same time (they stay on the record so their history still reads correctly). Also clears contact_unknown, which otherwise keeps the cadence from drafting at all. Refuses an address already registered to a different company.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'b2b_companies id.' },
+        email: { type: 'string', description: 'The new contact address.' },
+        full_name: { type: 'string', description: "The person's name, as they sign off." },
+        title: { type: 'string', description: 'Their role/title, if the thread gives one.' },
+        replaces: { type: 'string', description: 'Email of the person they are taking over from. Only pass this when someone has genuinely left — it deactivates that contact. Omit to simply add a person.' },
+      },
+      required: ['company_id', 'email'],
+    },
+    handler: handleUpdateContact,
   },
   {
     name: 'b2b_add_prospect',

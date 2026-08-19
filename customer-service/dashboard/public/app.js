@@ -5800,6 +5800,63 @@ function outreachRelationshipHtml(entry) {
   </div>`;
 }
 
+// ── Contacts ────────────────────────────────────────────────────────────────
+// The advisor can read "Riley has left, contact Matt instead" out of a thread
+// and say so in the summary, but until this existed the Send box still addressed
+// Riley and there was no way to change it short of the database. Knowing a
+// contact has moved on and being unable to act on it is worse than not knowing.
+
+/** @param replaces email of the person being replaced, or null to just add. */
+function showContactForm(replaces) {
+  const el = document.getElementById('outreach-contact-form');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="outreach-contact-form">
+      <div class="outreach-contact-form-title">${replaces ? `Replacing ${esc(replaces)}` : 'New contact'}</div>
+      <input type="text" id="contact-name" placeholder="Full name" autocomplete="off">
+      <input type="text" id="contact-email" placeholder="email@org.org" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){saveContact(${replaces ? `'${esc(replaces)}'` : 'null'})}">
+      <input type="text" id="contact-title" placeholder="Title (optional)" autocomplete="off">
+      <div class="outreach-contact-form-actions">
+        <button class="btn btn-primary" onclick="saveContact(${replaces ? `'${esc(replaces)}'` : 'null'})">Save</button>
+        <button class="btn btn-ghost" onclick="hideContactForm()">Cancel</button>
+      </div>
+      <div class="outreach-contact-form-note">${replaces
+        ? 'They stop being written to, and stay on the record so their history keeps making sense.'
+        : 'Becomes the person we write to.'}</div>
+    </div>`;
+  document.getElementById('contact-name')?.focus();
+}
+
+function hideContactForm() {
+  const el = document.getElementById('outreach-contact-form');
+  if (el) el.innerHTML = '';
+}
+
+async function saveContact(replaces) {
+  const companyId = outreachSelectedId;
+  const email = (document.getElementById('contact-email')?.value || '').trim();
+  const full_name = (document.getElementById('contact-name')?.value || '').trim();
+  const title = (document.getElementById('contact-title')?.value || '').trim();
+  if (!email) { showToast('An email address is required', 'error'); return; }
+
+  let res;
+  try {
+    res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/contact`, {
+      method: 'POST', body: { email, full_name, title, replaces },
+    });
+  } catch (err) {
+    showToast(`Could not save contact: ${err.message}`, 'error');
+    return;
+  }
+  // Name who we now write to. The whole point of the change is the recipient, so
+  // confirming anything vaguer than the address would not tell you it worked.
+  showToast(`Now writing to ${res.contact.email}`, 'success');
+  if (outreachSelectedId !== companyId) return;
+  hideContactForm();
+  await loadOutreachContext(companyId, false);   // redraws the sidebar and the To line
+}
+
 // Pause / snooze / resume. All three go through the same triage endpoint the
 // b2b_triage console tool uses, so the panel can never mean something different
 // by "paused" than the tool does.
@@ -6076,11 +6133,16 @@ function renderOutreachSidebarContext() {
 
   const place = [c.city, c.region, c.country].filter(Boolean).join(', ');
   const flags = Object.entries(c.program_flags || {}).filter(([, v]) => v).map(([k]) => k.replace(/_/g, ' '));
+  // "Replace" carries the address it replaces, so retiring the person who left
+  // and promoting the person who took over is one action rather than two edits
+  // that can half-happen.
   const contacts = (h.contacts || []).map(ct => `
     <div class="outreach-contact-row">
       <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}${ct.is_primary ? ' <span class="badge badge-muted">primary</span>' : ''}</span>
       ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
       <span class="outreach-contact-email">${esc(ct.email)}</span>
+      <button class="outreach-contact-replace" onclick="showContactForm('${esc(ct.email)}')"
+        title="This person has moved on — put someone else in their place">replace</button>
     </div>`).join('');
 
   cardEl.innerHTML = `
@@ -6104,7 +6166,10 @@ function renderOutreachSidebarContext() {
         ${c.phone ? `<div>${esc(c.phone)}</div>` : ''}
         ${c.general_email ? `<div>${esc(c.general_email)}</div>` : ''}
       </div>
-      ${contacts ? `<div class="context-section-label">Contacts</div>${contacts}` : ''}
+      <div class="context-section-label">Contacts</div>
+      ${contacts || '<div class="outreach-contact-none">Nobody on file — mail falls back to the general inbox.</div>'}
+      <div id="outreach-contact-form"></div>
+      <button class="outreach-contact-add" onclick="showContactForm(null)">+ Add contact</button>
     </div>`;
 
   document.getElementById('outreach-orders-card').innerHTML = outreachOrdersHtml();
