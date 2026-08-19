@@ -6489,6 +6489,53 @@ async function saveOutreachRecipients() {
 }
 
 /**
+ * Send a message the operator wrote themselves, from the empty state.
+ *
+ * Compose FIRST, then send. The order is the point: composing persists the text
+ * as a b2b_drafts row, so if the send then fails the words survive and come back
+ * with the company. Until this was restored the Send button in the empty state
+ * threw ReferenceError — it was deleted by an unrelated commit and stayed broken
+ * for twelve days — so a message typed here existed only in the textarea, and a
+ * failed send plus a refresh lost it outright.
+ */
+async function sendComposedDraft() {
+  const body = document.getElementById('outreach-draft-editor')?.value || '';
+  const subject = document.getElementById('outreach-subject-editor')?.value || '';
+  if (!body.trim()) { showToast('Nothing to send — write a message first', 'error'); return; }
+
+  const btn = document.getElementById('outreach-compose-send-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  const companyId = outreachSelectedId;
+  let composed = null;
+  try {
+    composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/compose`, {
+      method: 'POST', body: { body, subject },
+    });
+    const res = await api('/api/b2b/send', {
+      method: 'POST', body: { draft_id: composed.draft_id, confirmed: true, body, subject },
+    });
+    if (res.phase === 'sent') {
+      showToast(`Sent to ${res.to}`, 'success');
+      outreachAdvancePast(companyId);
+      return;
+    }
+    if (res.phase === 'blocked') {
+      document.getElementById('outreach-send-panel').innerHTML =
+        `<div class="outreach-empty-note">${esc(res.error)}</div>`;
+    } else {
+      showToast(res.error || 'Not sent', 'error');
+    }
+  } catch (err) {
+    // Say plainly whether the words were kept. "Send failed" alone leaves you
+    // guessing whether to copy the text somewhere safe before touching anything.
+    showToast(composed
+      ? `Send failed: ${err.message} — your draft is saved, it will be here when you come back`
+      : `Send failed: ${err.message} — nothing was saved, keep this tab open`, 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
+}
+
+/**
  * Copy the draft (as edited) to the clipboard for pasting into a contact form.
  * Reads the textarea rather than the stored draft so operator edits go with it.
  */
