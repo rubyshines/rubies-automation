@@ -2642,8 +2642,62 @@ async function apiSearchTickets(query) {
   return data;
 }
 
+// The Outreach badge is the only nav count that is expensive: it walks every
+// company and builds cadence contexts (~2s), where the ticket counts are head
+// counts and the swimwear/reviews ones are a single query each. So it is cached
+// for a minute — a poll is a poll, and a queue that just changed is caught by
+// invalidateOutreachCount() on the paths that change it.
+const OUTREACH_COUNT_TTL_MS = 60_000;
+let _outreachCount = { value: null, at: 0 };
+
+function invalidateOutreachCount() {
+  _outreachCount = { value: null, at: 0 };
+}
+
+async function getOutreachCount() {
+  if (_outreachCount.value !== null && Date.now() - _outreachCount.at < OUTREACH_COUNT_TTL_MS) {
+    return _outreachCount.value;
+  }
+  const value = await b2bQueueService.fetchQueueCount(getSupabaseClient(), {});
+  _outreachCount = { value, at: Date.now() };
+  return value;
+}
+
+// A nav badge is decoration on someone else's work: if the count can't be
+// computed the dashboard still has to load, so each one fails to null and the
+// client leaves that badge alone rather than blanking it.
+async function navCount(label, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[stats] ${label} count failed: ${err.message}`);
+    return null;
+  }
+}
+
 async function apiGetTicketStats() {
   const supabase = getSupabaseClient();
+
+  // Free Swimwear / Reviews / Outreach ride this poll rather than loading when
+  // their tab is opened, which is what left those badges blank until clicked —
+  // useless for a number whose whole job is to tell you the tab is worth
+  // opening. Kicked off before the ticket counts so all of it overlaps.
+  const navCounts = Promise.all([
+    navCount('swimwear', async () => {
+      const { count, error } = await supabase.from('free_swimwear_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'new');
+      if (error) throw new Error(error.message);
+      return count || 0;
+    }),
+    // "pending" is not a stored status — it is the live backlog above the
+    // published watermark, so the queue tool owns the definition and this
+    // counts what it returns.
+    navCount('reviews', async () => {
+      const res = await callReviewTool('review_queue', { status: 'pending', limit: 500 });
+      return (res._structured?.reviews || []).length;
+    }),
+    navCount('outreach', () => getOutreachCount()),
+  ]);
 
   const [newResult, followupResult, onmeResult, parkedResult, snoozedResult, newGenResult, followupGenResult] = await Promise.all([
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
@@ -2678,6 +2732,8 @@ async function apiGetTicketStats() {
     }
   } catch (_) { /* banner is cosmetic — never fail the stats call for it */ }
 
+  const [swimwear, reviews, outreach] = await navCounts;
+
   return {
     new: newResult.count || 0,
     followup: followupResult.count || 0,
@@ -2687,6 +2743,10 @@ async function apiGetTicketStats() {
     new_in_progress: newGenResult.count || 0,
     followup_in_progress: followupGenResult.count || 0,
     away_mode: away,
+    // null = couldn't compute; the client leaves that badge as it was.
+    swimwear,
+    reviews,
+    outreach,
   };
 }
 
@@ -3876,6 +3936,12 @@ async function handleRequest(req, res) {
     // is the only layer). Same failure this file already guards against for
     // JS/CSS below — live data must never be reusable.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
+
+    // Any write under /api/b2b/ can change what's due (send, compose, triage,
+    // close, reopen), so drop the cached Outreach badge count here rather than
+    // at each endpoint — one missed call site would leave the badge stale for a
+    // minute with no way to tell from the number itself.
+    if (req.method !== 'GET' && pathname.startsWith('/api/b2b/')) invalidateOutreachCount();
 
     try {
       // Static routes

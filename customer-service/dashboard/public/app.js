@@ -3603,6 +3603,31 @@ async function returnToInbox(classification) {
 // the rest from the server so it never fights loadTicketQueue on the live tab.
 const QUEUE_TABS = ['new', 'followup', 'onme', 'parked', 'snoozed'];
 
+// Does the open tab's own loader currently own its badge? While you are looking
+// at a list, the number must match the rows in front of you — including an
+// optimistic removal a poll hasn't caught up with yet. But the panels with
+// filters only own it on their default filter: browsing Free Swimwear's
+// "ordered" pile says nothing about how many are waiting for a decision, so the
+// server's count stays in charge there.
+function clientOwnsBadge(tab) {
+  if (tab !== currentTab) return false;
+  if (QUEUE_TABS.includes(tab)) return true;
+  if (tab === 'swimwear') return swimwearStatus === 'new';
+  if (tab === 'reviews') return reviewsStatus === 'pending';
+  if (tab === 'outreach') return outreachMode === 'queue' && !outreachChannel;
+  return false;
+}
+
+// Write a tab's number to both navs. Shared by loadStats and the per-panel
+// loaders so there is one definition of "blank means zero".
+function writeTabCount(tab, value) {
+  const v = value || '';
+  const top = document.getElementById(`tab-count-${tab}`);
+  const bot = document.getElementById(`bottom-count-${tab}`);
+  if (top) top.textContent = v;
+  if (bot) bot.textContent = v;
+}
+
 // Toggle the "something's cooking" dot on a tab (top nav + mobile bottom nav).
 function setTabProgress(tab, on) {
   document.querySelectorAll(`.tab[data-tab="${tab}"], .bottom-tab[data-bottom-tab="${tab}"]`)
@@ -3635,21 +3660,26 @@ async function loadStats() {
     }
 
     // Set a tab's number on both the top nav and the mobile bottom nav, but skip
-    // the active queue tab — loadTicketQueue owns it (so tombstoned/optimistic
-    // removals are reflected and the number matches the rendered list exactly).
+    // the tab you are looking at — its own loader owns the badge there (so
+    // tombstoned/optimistic removals are reflected and the number matches the
+    // rendered list exactly). A null count means the server couldn't compute it;
+    // leave whatever is on screen rather than blanking a good number.
     const setTabCount = (tab, value) => {
-      if (tab === currentTab && QUEUE_TABS.includes(tab)) return;
-      const v = value || '';
-      const top = document.getElementById(`tab-count-${tab}`);
-      const bot = document.getElementById(`bottom-count-${tab}`);
-      if (top) top.textContent = v;
-      if (bot) bot.textContent = v;
+      if (value === null || value === undefined) return;
+      if (clientOwnsBadge(tab)) return;
+      writeTabCount(tab, value);
     };
     setTabCount('new', newActionable);
     setTabCount('followup', followupActionable);
     setTabCount('onme', s.onme);
     setTabCount('parked', s.parked);
     setTabCount('snoozed', s.snoozed);
+    // Free Swimwear / Reviews / Outreach: these used to load only when their tab
+    // was opened, so the badge was blank exactly when it was supposed to be
+    // telling you whether opening the tab was worth it.
+    setTabCount('swimwear', s.swimwear);
+    setTabCount('reviews', s.reviews);
+    setTabCount('outreach', s.outreach);
 
     // In-progress dots (only new/followup ever have drafting tickets). Skip the
     // active tab — loadTicketQueue sets its dot from the rendered list.
@@ -3667,11 +3697,7 @@ function updateActiveTabCount(visibleTickets) {
   if (!QUEUE_TABS.includes(currentTab)) return; // closed has no badge
   const inProgress = visibleTickets.filter(isTicketInProgress).length;
   const actionable = visibleTickets.length - inProgress;
-  const v = actionable || '';
-  const top = document.getElementById(`tab-count-${currentTab}`);
-  const bot = document.getElementById(`bottom-count-${currentTab}`);
-  if (top) top.textContent = v;
-  if (bot) bot.textContent = v;
+  writeTabCount(currentTab, actionable);
   if (currentTab === 'new' || currentTab === 'followup') setTabProgress(currentTab, inProgress > 0);
 }
 
@@ -5288,6 +5314,9 @@ async function loadOutreachQueue(isSilentRefresh) {
   outreachQueue = Array.isArray(payload) ? payload : (payload.entries || []);
   rememberOutreachEntries(outreachQueue);
   renderOutreachSidebar();
+  // Keep the badge on the rendered queue while you are working it, so a send
+  // drops the number immediately instead of waiting out the server's cache.
+  if (clientOwnsBadge('outreach')) writeTabCount('outreach', outreachQueue.length);
   // Deep link: restore #outreach-<company_id> selection once the queue exists.
   if (pendingOutreachRestore) {
     const target = pendingOutreachRestore;
@@ -7120,11 +7149,12 @@ function renderSwimwearQueue() {
   container.innerHTML = swimwearQueue.map(swimwearRowHtml).join('');
 }
 
-// The tab badge tracks the count of the "new" review queue.
+// The tab badge tracks the count of the "new" review queue. Only written while
+// that filter is up — on any other filter the rendered list is a different
+// population and loadStats keeps the badge honest.
 function renderSwimwearCount() {
-  if (swimwearStatus !== 'new') return;
-  const badge = document.getElementById('tab-count-swimwear');
-  if (badge) badge.textContent = swimwearQueue.length ? String(swimwearQueue.length) : '';
+  if (!clientOwnsBadge('swimwear')) return;
+  writeTabCount('swimwear', swimwearQueue.length);
 }
 
 function swimwearTransBadge(v) {
@@ -7370,9 +7400,8 @@ function renderReviewsQueue() {
 // The tab badge tracks the live backlog only — the skipped pile is historical
 // and would nag permanently if it counted.
 function renderReviewsCount() {
-  if (reviewsStatus !== 'pending') return;
-  const badge = document.getElementById('tab-count-reviews');
-  if (badge) badge.textContent = reviewsQueue.length ? String(reviewsQueue.length) : '';
+  if (!clientOwnsBadge('reviews')) return;
+  writeTabCount('reviews', reviewsQueue.length);
 }
 
 function reviewStars(n) {

@@ -138,9 +138,22 @@ function startReconcile(sb, companyIds) {
   return 'started';
 }
 
-async function fetchQueueWithDrafts(sb, { channel } = {}) {
+/**
+ * The rows the Outreach panel would show: companies → contexts → assembleQueue
+ * → mergePendingDraftEntries, with the pending drafts that fed the merge.
+ *
+ * Extracted so the panel and the nav badge cannot answer "what's in the queue"
+ * differently. The badge is a count of the same list, computed here rather than
+ * from anything cheaper — the merge is what puts pending-draft companies in the
+ * queue, and a count that reasoned about companies or drafts on its own would
+ * disagree with the list it labels the moment either rule changed.
+ *
+ * `onCompanies` runs as soon as the company set is known, before the slow
+ * context build, so a caller can kick background work off it without waiting.
+ */
+async function buildQueueEntries(sb, { channel, onCompanies } = {}) {
   const companies = await fetchCompanies(sb, { channel });
-  const gmailSync = startReconcile(sb, companies.map(c => c.id));
+  if (onCompanies) onCompanies(companies);
   const contexts = await buildContexts(sb, companies);
   const queue = assembleQueue(companies.map(c => ({ company: c, ctx: contexts.get(c.id) })));
 
@@ -152,8 +165,29 @@ async function fetchQueueWithDrafts(sb, { channel } = {}) {
     if (error) throw new Error(error.message);
     drafts = data || [];
   }
-  const merged = mergePendingDraftEntries(queue, drafts, new Map(companies.map(c => [c.id, c])));
-  return { entries: attachDrafts(merged, drafts), gmail_sync: gmailSync };
+  return {
+    entries: mergePendingDraftEntries(queue, drafts, new Map(companies.map(c => [c.id, c]))),
+    drafts,
+  };
+}
+
+async function fetchQueueWithDrafts(sb, { channel } = {}) {
+  let gmailSync = 'recent';
+  const { entries, drafts } = await buildQueueEntries(sb, {
+    channel,
+    onCompanies: (companies) => { gmailSync = startReconcile(sb, companies.map(c => c.id)); },
+  });
+  return { entries: attachDrafts(entries, drafts), gmail_sync: gmailSync };
+}
+
+/**
+ * How many rows the Outreach panel would show right now — the nav badge.
+ * Deliberately skips the Gmail reconcile: this runs off a background poll, and
+ * a badge must never trigger outside work.
+ */
+async function fetchQueueCount(sb, { channel } = {}) {
+  const { entries } = await buildQueueEntries(sb, { channel });
+  return entries.length;
 }
 
 // ── Directory search ───────────────────────────────────────────────────────
@@ -894,6 +928,7 @@ module.exports = {
   mergePendingDraftEntries,
   fetchOutreachQueue,
   fetchQueueWithDrafts,
+  fetchQueueCount,
   fetchCompanyThreads,
   generateDraftForCompany,
   composeDraft,

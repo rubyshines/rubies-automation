@@ -121,6 +121,25 @@ test('no dashboard code calls a function that does not exist', () => {
     + ' — these throw ReferenceError when the code path runs');
 });
 
+/**
+ * Same class as the handler checks: a nav badge is a `<span>` in the markup and
+ * a write in the poll, joined by a string id that nothing verifies. Outreach
+ * shipped with neither half, and Free Swimwear and Reviews shipped with a span
+ * that only their own tab filled — so the number was blank until you opened the
+ * tab, which is the one moment you no longer need it.
+ */
+test('every nav badge is filled by the background stats poll, and vice versa', () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+
+  const inMarkup = new Set([...html.matchAll(/id="tab-count-([a-z]+)"/g)].map(m => m[1]));
+  const filledByPoll = new Set([...app.matchAll(/setTabCount\('([a-z]+)'/g)].map(m => m[1]));
+
+  assert.deepEqual([...inMarkup].sort(), [...filledByPoll].sort(),
+    'a badge nobody fills reads as "nothing to do" forever, and a write to an id '
+    + 'that is not in the nav is silently dropped');
+});
+
 test('the guards can actually see something', () => {
   // A regex that silently matched nothing would keep both tests above green
   // forever while checking exactly zero things.
@@ -130,4 +149,8 @@ test('the guards can actually see something', () => {
   assert.ok([...code.matchAll(BARE_CALL)].length > 200, 'expected many bare calls to check');
   assert.ok(defined.has('sendComposedDraft'), 'the first regression case should be covered');
   assert.ok(defined.has('loadOutreachSidebar'), 'the second regression case should be covered');
+
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  assert.ok([...html.matchAll(/id="tab-count-([a-z]+)"/g)].length >= 5,
+    'the badge check needs badges to find, or it passes on an empty set');
 });
