@@ -139,4 +139,90 @@ async function updateCompanyContact(sb, { company_id, email, full_name, title, r
   };
 }
 
-module.exports = { updateCompanyContact, planContactUpdate, normalizeEmail };
+/**
+ * Promote a contact already on file to be the one we write to.
+ *
+ * Distinct from updateCompanyContact: that one is "a new person exists", this is
+ * "the right person was already here". Charly Robles auto-registered from her own
+ * reply (correlateInbound's domain fallback), so retyping her name and address to
+ * make her primary would be asking the operator to enter data we already hold.
+ */
+async function setPrimaryContact(sb, { company_id, email } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  const target = normalizeEmail(email);
+  if (!target) throw new Error('email required');
+
+  const { data: rows, error } = await sb.from('b2b_contacts')
+    .select('email, is_primary, is_active').eq('company_id', company_id);
+  if (error) throw new Error(error.message);
+  const found = (rows || []).find(c => normalizeEmail(c.email) === target);
+  if (!found) throw new Error(`${target} is not a contact on '${company_id}'`);
+
+  const demote = (rows || [])
+    .filter(c => normalizeEmail(c.email) !== target && c.is_primary)
+    .map(c => c.email);
+  if (demote.length) {
+    const { error: dErr } = await sb.from('b2b_contacts')
+      .update({ is_primary: false }).in('email', demote);
+    if (dErr) throw new Error(`demote: ${dErr.message}`);
+  }
+  // Promoting a deactivated contact reactivates them: choosing to write to
+  // someone is a statement that they are reachable.
+  const { error: pErr } = await sb.from('b2b_contacts')
+    .update({ is_primary: true, is_active: true }).eq('email', found.email);
+  if (pErr) throw new Error(`promote: ${pErr.message}`);
+
+  await sb.from('b2b_companies')
+    .update({ contact_unknown: false, updated_at: new Date().toISOString() }).eq('id', company_id);
+
+  return { company_id, email: found.email, demoted: demote };
+}
+
+/**
+ * Retire a contact. Deactivates rather than deletes.
+ *
+ * Their address is what makes their own messages resolve to this company
+ * (`messageInvolves` matches on known addresses), so a hard delete would orphan
+ * their history and let a future import file it somewhere else. Refuses to
+ * retire the last reachable contact when there is no general inbox to fall back
+ * to — that silently makes the company unwriteable.
+ */
+async function removeCompanyContact(sb, { company_id, email } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  const target = normalizeEmail(email);
+  if (!target) throw new Error('email required');
+
+  const { data: rows, error } = await sb.from('b2b_contacts')
+    .select('email, is_primary, is_active').eq('company_id', company_id);
+  if (error) throw new Error(error.message);
+  const found = (rows || []).find(c => normalizeEmail(c.email) === target);
+  if (!found) throw new Error(`${target} is not a contact on '${company_id}'`);
+
+  const otherActive = (rows || []).filter(c =>
+    normalizeEmail(c.email) !== target && c.is_active !== false);
+  if (!otherActive.length) {
+    const { data: co } = await sb.from('b2b_companies')
+      .select('general_email').eq('id', company_id).maybeSingle();
+    if (!co?.general_email) {
+      throw new Error(`${target} is the only way to reach this company — add another contact or a general email first`);
+    }
+  }
+
+  const { error: rErr } = await sb.from('b2b_contacts')
+    .update({ is_active: false, is_primary: false }).eq('email', found.email);
+  if (rErr) throw new Error(`remove: ${rErr.message}`);
+
+  // Removing the primary leaves nobody nominated, and resolveRecipient would
+  // then fall back to row order. Promote the most plausible remaining person.
+  let promoted = null;
+  if (found.is_primary && otherActive.length) {
+    promoted = otherActive[0].email;
+    await sb.from('b2b_contacts').update({ is_primary: true }).eq('email', promoted);
+  }
+  return { company_id, removed: found.email, promoted };
+}
+
+module.exports = {
+  updateCompanyContact, planContactUpdate, normalizeEmail,
+  setPrimaryContact, removeCompanyContact,
+};

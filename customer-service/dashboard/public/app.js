@@ -5835,6 +5835,34 @@ function outreachRelationshipHtml(entry) {
 // Riley and there was no way to change it short of the database. Knowing a
 // contact has moved on and being unable to act on it is worse than not knowing.
 
+/**
+ * Promote or retire someone already on file.
+ *
+ * "Make primary" exists because the person we should be writing to is often
+ * already here: `correlateInbound` auto-registers anyone who writes in from the
+ * company's domain, so Charly Robles was on the record from her own reply.
+ * Making the operator retype a name and address the system already holds would
+ * be busywork, and retyping is where typos in a send address come from.
+ */
+async function contactAction(action, email) {
+  const companyId = outreachSelectedId;
+  if (action === 'remove' && !confirm(`Stop writing to ${email}?\n\nTheir messages stay on the record so the history still reads correctly.`)) return;
+  let res;
+  try {
+    res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/contact-action`, {
+      method: 'POST', body: { action, email },
+    });
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+  showToast(action === 'primary'
+    ? `Now writing to ${res.email}`
+    : `Removed ${res.removed}${res.promoted ? ` — now writing to ${res.promoted}` : ''}`, 'success');
+  if (outreachSelectedId !== companyId) return;
+  await loadOutreachContext(companyId, false);
+}
+
 /** @param replaces email of the person being replaced, or null to just add. */
 function showContactForm(replaces) {
   const el = document.getElementById('outreach-contact-form');
@@ -5947,7 +5975,7 @@ function resumeOutreach() {
 
 // Rebuild the summary in place. Sonnet over the whole conversation, so it takes
 // a couple of seconds — spin the control rather than leaving a dead button.
-async function refreshOutreachSummary() {
+async function refreshOutreachSummary({ silent = false } = {}) {
   const companyId = outreachSelectedId;
   const btn = document.getElementById('outreach-summary-refresh');
   if (btn) { btn.disabled = true; btn.classList.add('spinning'); }
@@ -5957,7 +5985,7 @@ async function refreshOutreachSummary() {
     });
     if (outreachSelectedId !== companyId) return; // moved on while it ran
     if (res.status === 'empty') {
-      showToast('Nothing to summarise — no conversation on record', 'error');
+      if (!silent) showToast('Nothing to summarise — no conversation on record', 'error');
       return;
     }
     // Only the summary fields — the response also carries status/mode, which
@@ -5974,9 +6002,11 @@ async function refreshOutreachSummary() {
     }
     const el = document.getElementById('outreach-relationship');
     if (el) el.outerHTML = outreachRelationshipHtml(outreachEntries.get(companyId));
-    showToast('Summary updated', 'success');
+    // Silent when it ran on its own: an automatic catch-up is not news, and a
+    // toast for something the operator never asked for is just noise.
+    if (!silent) showToast('Summary updated', 'success');
   } catch (err) {
-    showToast(`Summary refresh failed: ${err.message}`, 'error');
+    if (!silent) showToast(`Summary refresh failed: ${err.message}`, 'error');
     if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
   }
 }
@@ -6086,6 +6116,35 @@ async function closeOutreachThread(threadId) {
   if (outreachSelectedId === companyId) await loadOutreachContext(companyId, false);
 }
 
+/**
+ * Bring a stale summary up to date on open, rather than relying on the operator
+ * noticing the "new messages since" marker.
+ *
+ * That marker sits at the top of the block, and the moment you scroll to read a
+ * reply it is off screen — so a summary written before the reply looks exactly
+ * like one written after it. That is how a correct system reads as a broken one:
+ * MTPC's recap was generated on 13 August covering 2024, a new contact wrote in
+ * saying the old one had left, and the summary appeared to have simply missed it.
+ *
+ * Skipped while Gmail discovery is mid-flight — summarising then would recap a
+ * record still being imported. The re-fetch that follows the sync picks it up.
+ */
+async function maybeRefreshStaleSummary(companyId, h) {
+  const c = h?.company;
+  if (!c || h.gmail_sync === 'started') return;
+  const lastAt = (h.threads || []).reduce((max, t) =>
+    t.last_message_at && (!max || new Date(t.last_message_at) > new Date(max)) ? t.last_message_at : max, null);
+  if (!lastAt || !c.relationship_summary_through) return;
+  if (new Date(lastAt) <= new Date(c.relationship_summary_through)) return;
+
+  setAutosaveNote(''); // unrelated slot; keep it clean
+  const stamp = document.querySelector('.outreach-summary-stamp span');
+  if (stamp) stamp.textContent = 'updating…';
+  try {
+    await refreshOutreachSummary({ silent: true });
+  } catch (_) { /* the marker still says it is out of date */ }
+}
+
 async function loadOutreachContext(companyId, allowRefetch) {
   let h;
   try {
@@ -6121,6 +6180,7 @@ async function loadOutreachContext(companyId, allowRefetch) {
     }
   }
   renderOutreachSidebarContext();
+  maybeRefreshStaleSummary(companyId, h);
   // One follow-up fetch after the background Gmail sync has had time to land.
   // Cooldowns server-side guarantee the second response can't re-trigger it.
   if (allowRefetch && h.gmail_sync === 'started') {
@@ -6170,8 +6230,14 @@ function renderOutreachSidebarContext() {
       <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}${ct.is_primary ? ' <span class="badge badge-muted">primary</span>' : ''}</span>
       ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
       <span class="outreach-contact-email">${esc(ct.email)}</span>
-      <button class="outreach-contact-replace" onclick="showContactForm('${esc(ct.email)}')"
-        title="This person has moved on — put someone else in their place">replace</button>
+      <span class="outreach-contact-actions">
+        ${ct.is_primary ? '' : `<button onclick="contactAction('primary', '${esc(ct.email)}')"
+          title="Write to this person instead">make primary</button>`}
+        <button onclick="showContactForm('${esc(ct.email)}')"
+          title="This person has moved on — put someone else in their place">replace</button>
+        <button class="outreach-contact-danger" onclick="contactAction('remove', '${esc(ct.email)}')"
+          title="Stop writing to them; their history stays on the record">remove</button>
+      </span>
     </div>`).join('');
 
   cardEl.innerHTML = `

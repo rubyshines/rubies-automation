@@ -63,3 +63,72 @@ test('an already-inactive predecessor is not deactivated twice', () => {
   const p = planContactUpdate([gone], { email: 'new@x.org', replaces: 'old@x.org' });
   assert.deepEqual(p.deactivate, []);
 });
+
+// ── promote / retire someone already on file ────────────────────────────────
+const { setPrimaryContact, removeCompanyContact } = require('../../b2b-outreach/lib/updateContact');
+
+function sbWith(rows, company = { general_email: null }) {
+  const state = { updates: [] };
+  const client = {
+    from(table) {
+      const q = {
+        _f: {}, _in: null,
+        select() { return q; },
+        eq(c, v) { q._f[c] = v; return q; },
+        in(c, v) { q._in = v; return q; },
+        maybeSingle() { return Promise.resolve({ data: table === 'b2b_companies' ? company : null, error: null }); },
+        update(patch) { state.updates.push({ table, patch, email: q._f.email || q._in }); return q; },
+        then(r) { return r({ data: table === 'b2b_contacts' ? rows : [], error: null }); },
+      };
+      return q;
+    },
+  };
+  return { client, state };
+}
+
+const dj = { email: 'programs@masstpc.org', is_primary: true, is_active: true };
+const charly = { email: 'charly@masstpc.org', is_primary: false, is_active: true };
+
+test('making someone primary demotes the previous one', async () => {
+  const { client, state } = sbWith([dj, charly]);
+  const r = await setPrimaryContact(client, { company_id: 'mtpc', email: 'charly@masstpc.org' });
+  assert.equal(r.email, 'charly@masstpc.org');
+  assert.deepEqual(r.demoted, ['programs@masstpc.org']);
+  const promote = state.updates.find(u => u.patch.is_primary === true);
+  assert.ok(promote, 'the new primary is set');
+  assert.equal(promote.patch.is_active, true, 'promoting someone reactivates them');
+});
+
+test('promoting an address that is not on the company is refused', async () => {
+  const { client } = sbWith([dj]);
+  await assert.rejects(() => setPrimaryContact(client, { company_id: 'mtpc', email: 'stranger@x.org' }),
+    /is not a contact on/);
+});
+
+test('removing a contact deactivates rather than deletes', async () => {
+  const { client, state } = sbWith([dj, charly]);
+  const r = await removeCompanyContact(client, { company_id: 'mtpc', email: 'charly@masstpc.org' });
+  assert.equal(r.removed, 'charly@masstpc.org');
+  const del = state.updates.find(u => u.patch.is_active === false);
+  assert.ok(del, 'deactivated, so their messages still resolve to this company');
+});
+
+test('removing the primary promotes someone else rather than leaving nobody', async () => {
+  const { client } = sbWith([dj, charly]);
+  const r = await removeCompanyContact(client, { company_id: 'mtpc', email: 'programs@masstpc.org' });
+  assert.equal(r.promoted, 'charly@masstpc.org',
+    'without this resolveRecipient falls back to row order');
+});
+
+test('the last way to reach a company cannot be removed', async () => {
+  const { client } = sbWith([dj], { general_email: null });
+  await assert.rejects(() => removeCompanyContact(client, { company_id: 'mtpc', email: 'programs@masstpc.org' }),
+    /only way to reach this company/);
+});
+
+test('the last contact CAN go when a general inbox exists', async () => {
+  const { client } = sbWith([dj], { general_email: 'info@masstpc.org' });
+  const r = await removeCompanyContact(client, { company_id: 'mtpc', email: 'programs@masstpc.org' });
+  assert.equal(r.removed, 'programs@masstpc.org');
+  assert.equal(r.promoted, null);
+});

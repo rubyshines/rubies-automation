@@ -2873,6 +2873,14 @@ async function apiB2bUpdateContact(companyId, body = {}) {
   });
 }
 
+async function apiB2bContactAction(companyId, body = {}) {
+  const lib = require('../../b2b-outreach/lib/updateContact');
+  const sb = getSupabaseClient();
+  if (body.action === 'primary') return lib.setPrimaryContact(sb, { company_id: companyId, email: body.email });
+  if (body.action === 'remove') return lib.removeCompanyContact(sb, { company_id: companyId, email: body.email });
+  throw new Error(`unknown contact action '${body.action}' — expected primary or remove`);
+}
+
 // Pause / snooze / resume from the panel. Same triageCompany the b2b_triage
 // console tool calls, so the two surfaces can never drift on what a pause means.
 async function apiB2bTriage(companyId, body = {}) {
@@ -3656,6 +3664,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact$/, handler: (body, id) => apiB2bUpdateContact(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact-action$/, handler: (body, id) => apiB2bContactAction(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },
