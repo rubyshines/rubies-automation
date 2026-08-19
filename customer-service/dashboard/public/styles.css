@@ -5973,3 +5973,20 @@ main { height: calc(100vh - 56px); }
 }
 .outreach-autosave-ok { color: var(--text-tertiary); }
 .outreach-autosave-fail { color: var(--red); font-weight: 600; }
+
+/* Snooze horizons sit together as one control, so they read as a choice rather
+   than three unrelated buttons next to Pause. */
+.outreach-snooze-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+.outreach-snooze-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin-right: 2px;
+}
+.outreach-snooze-group .btn { padding: 4px 10px; }

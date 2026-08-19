@@ -5770,9 +5770,17 @@ function outreachRelationshipHtml(entry) {
       <button class="btn btn-ghost" onclick="resumeOutreach()">Resume now</button>
     </div>`;
   } else {
+    // Snooze offers fixed horizons rather than a date field. "Come back to this
+    // in a while" is the actual decision; picking a calendar day is busywork that
+    // makes you do arithmetic to express it, and no reason is asked for because
+    // the useful one is already implied by the length.
     deferral = `<div class="outreach-deferral-actions">
       <button class="btn btn-ghost" onclick="pauseOutreach()">Pause outreach</button>
-      <button class="btn btn-ghost" onclick="snoozeOutreach()">Snooze&hellip;</button>
+      <span class="outreach-snooze-group">
+        <span class="outreach-snooze-label">Snooze</span>
+        ${SNOOZE_PRESETS.map(p => `<button class="btn ${p.default ? 'btn-secondary' : 'btn-ghost'}"
+          onclick="snoozeOutreach(${p.days})">${p.label}</button>`).join('')}
+      </span>
     </div>`;
   }
 
@@ -5816,11 +5824,24 @@ function pauseOutreach() {
   applyOutreachTriage({ action: 'pause', reason: reason.trim() }, 'Outreach paused');
 }
 
-function snoozeOutreach() {
-  const until = prompt('Come back to this company on (YYYY-MM-DD):');
-  if (!until || !until.trim()) return;
-  const reason = prompt('Why? (optional)') || null;
-  applyOutreachTriage({ action: 'snooze', until: until.trim(), reason }, `Snoozed until ${until.trim()}`);
+// 180 is the default because the common case is "this relationship is fine, stop
+// asking me about it" rather than a specific date being waited on. Anything that
+// genuinely has a date is usually a pause with a note instead.
+const SNOOZE_PRESETS = [
+  { days: 30, label: '30d' },
+  { days: 90, label: '90d' },
+  { days: 180, label: '180d', default: true },
+];
+
+/** today + n days as YYYY-MM-DD. Pure enough; horizons this long ignore TZ drift. */
+function snoozeDate(days, now = new Date()) {
+  return new Date(now.getTime() + days * 864e5).toISOString().slice(0, 10);
+}
+
+function snoozeOutreach(days) {
+  const until = snoozeDate(days);
+  const label = new Date(until).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  applyOutreachTriage({ action: 'snooze', until }, `Snoozed for ${days} days — back ${label}`);
 }
 
 function resumeOutreach() {
