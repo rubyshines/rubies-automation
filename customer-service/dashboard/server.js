@@ -2791,6 +2791,15 @@ async function apiB2bRefreshSummary(companyId) {
   return { ...result, ...(data || {}) };
 }
 
+// Autosave what the operator is typing. Fires on a debounce from the composer,
+// so it must stay cheap and must never 500 the panel — a failed save reports
+// itself in the UI rather than throwing.
+async function apiB2bSaveDraft(companyId, body = {}) {
+  return b2bQueueService.saveOperatorDraft(getSupabaseClient(), {
+    company_id: companyId, body: body.body, subject: body.subject,
+  });
+}
+
 // Pause / snooze / resume from the panel. Same triageCompany the b2b_triage
 // console tool calls, so the two surfaces can never drift on what a pause means.
 async function apiB2bTriage(companyId, body = {}) {
@@ -3572,6 +3581,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },

@@ -540,6 +540,61 @@ function composeDraftRow({ company_id, body, subject, message_type, thread_id, e
   };
 }
 
+/**
+ * Persist what the operator is typing, before they send it.
+ *
+ * Composing only ever ran at send time, so a message written in the panel lived
+ * purely in a textarea: close the tab, hit refresh, or lose the browser, and the
+ * words were gone with nothing to recover. The draft table already models this
+ * exactly — an operator draft is a pending row with `advisor: null` — it simply
+ * was not being written until the last possible moment.
+ *
+ * Updates the operator's existing pending row in place rather than
+ * supersede-and-insert, so typing produces one row per message and not one per
+ * pause in typing.
+ *
+ * Deliberately refuses to touch an ADVISOR draft. On those rows `subject`/`body`
+ * are the AI's originals and the pair with `sent_subject`/`sent_body` IS the
+ * edit record — the training signal for where the advisor's judgment is weak.
+ * Autosaving edits over the original would quietly destroy that, so in-progress
+ * edits to an AI draft are still send-time only (noted in domain memory).
+ *
+ * @returns {{ draft_id, saved: boolean, reason?: string }}
+ */
+async function saveOperatorDraft(sb, { company_id, body, subject } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  const text = (body || '').trim();
+
+  const { data: pending, error: pErr } = await sb.from('b2b_drafts')
+    .select('id, advisor').eq('company_id', company_id).eq('status', 'pending').maybeSingle();
+  if (pErr) throw new Error(pErr.message);
+
+  if (pending && pending.advisor) {
+    return { draft_id: pending.id, saved: false, reason: 'advisor_draft' };
+  }
+
+  // Emptying the box is a deletion, not a save of "". Leaving a blank pending
+  // row behind would put the company back in the queue advertising a draft with
+  // nothing in it.
+  if (!text) {
+    if (pending) {
+      await sb.from('b2b_drafts').update({ status: 'dismissed' }).eq('id', pending.id);
+      return { draft_id: null, saved: true, cleared: true };
+    }
+    return { draft_id: null, saved: true, cleared: false };
+  }
+
+  if (pending) {
+    const { error } = await sb.from('b2b_drafts')
+      .update({ body: text, subject: subject?.trim() || null }).eq('id', pending.id);
+    if (error) throw new Error(`draft autosave: ${error.message}`);
+    return { draft_id: pending.id, saved: true };
+  }
+
+  const { draft_id } = await composeDraft(sb, { company_id, body: text, subject });
+  return { draft_id, saved: true, created: true };
+}
+
 async function composeDraft(sb, { company_id, body, subject, message_type, thread_id } = {}) {
   if (!company_id) throw new Error('company_id required');
   if (!body || !body.trim()) throw new Error('body required — nothing to send');
@@ -842,6 +897,7 @@ module.exports = {
   fetchCompanyThreads,
   generateDraftForCompany,
   composeDraft,
+  saveOperatorDraft,
   composeDraftRow,
   sendDraftById,
   mergeFactVerification,

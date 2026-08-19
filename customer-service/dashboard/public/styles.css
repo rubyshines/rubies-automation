@@ -5963,3 +5963,13 @@ main { height: calc(100vh - 56px); }
     color: #f0c48a;
   }
 }
+
+/* Composer autosave status. Quiet when it works, loud when it does not — the
+   whole point is being able to trust the words are kept. */
+.outreach-autosave {
+  min-height: 16px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.outreach-autosave-ok { color: var(--text-tertiary); }
+.outreach-autosave-fail { color: var(--red); font-weight: 600; }

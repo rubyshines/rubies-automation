@@ -6314,10 +6314,13 @@ function renderOutreachDetail(entry, draft) {
         ${steerBlock}
         <div class="outreach-subject">
           <span class="outreach-field-label">Subject</span>
-          <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)">
+          <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)"
+            oninput="queueComposerAutosave()">
         </div>
-        <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"
-          placeholder="Type your message here, then Send."></textarea>
+        <textarea id="outreach-draft-editor" rows="8"
+          oninput="autoExpandTextarea(this); queueComposerAutosave()"
+          placeholder="Type your message here. Saved as you write."></textarea>
+        <div id="outreach-autosave" class="outreach-autosave"></div>
         ${outreachRecipientHtml()}
         <div class="btn-row btn-row-primary outreach-actions">
           ${outreachHistory?.delivery?.mode === 'form'
@@ -6334,18 +6337,26 @@ function renderOutreachDetail(entry, draft) {
 
   el.innerHTML = header + outreachRelationshipHtml(entry) + outreachFactsHtml(draft) + `
     <div class="detail-section">
-      <h3>AI Draft
+      <h3>${draft.advisor ? 'AI Draft' : 'Your draft'}
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>
         ${s.confidence ? `<span class="badge badge-${esc(s.confidence)}">${esc(s.confidence)}</span>` : ''}
-        ${draft.advisor ? `<span class="badge badge-muted">${esc(draft.advisor.replace(/^b2b_/, '').replace(/_/g, ' '))}</span>` : ''}
+        ${draft.advisor
+          ? `<span class="badge badge-muted">${esc(draft.advisor.replace(/^b2b_/, '').replace(/_/g, ' '))}</span>`
+          : '<span class="badge badge-muted">written by you</span>'}
       </h3>
       ${s.needs_review_reason ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
       ${steerBlock}
       <div class="outreach-subject">
         <span class="outreach-field-label">Subject</span>
-        <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)">
+        <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)"
+          ${draft.advisor ? '' : 'oninput="queueComposerAutosave()"'}>
       </div>
-      <textarea id="outreach-draft-editor" rows="8" oninput="autoExpandTextarea(this)"></textarea>
+      ${/* Only YOUR text autosaves. On an advisor draft, subject/body are the AI's
+           originals and the pair with sent_subject/sent_body IS the edit record —
+           overwriting them would quietly destroy that training signal. */ ''}
+      <textarea id="outreach-draft-editor" rows="8"
+        oninput="autoExpandTextarea(this)${draft.advisor ? '' : '; queueComposerAutosave()'}"></textarea>
+      ${draft.advisor ? '' : '<div id="outreach-autosave" class="outreach-autosave"></div>'}
       ${outreachAttachmentsHtml(draft)}
       ${outreachReasoningHtml(draft)}
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
@@ -6485,6 +6496,49 @@ async function saveOutreachRecipients() {
     outreachDraft.structured = { ...(outreachDraft.structured || {}), to: to.trim() || undefined, cc: cc.trim() || undefined };
   } catch (err) {
     showToast(`Could not save recipients: ${err.message}`, 'error');
+  }
+}
+
+// ── Composer autosave ───────────────────────────────────────────────────────
+// A message written here used to live only in the textarea until Send. Refresh,
+// a closed tab, or a browser crash took it with nothing to recover — and the
+// draft table already modelled it exactly (a pending row with advisor: null), it
+// just was not written until the last possible moment.
+let composerSaveTimer = null;
+let composerSaveSeq = 0;
+
+function setAutosaveNote(text, cls = '') {
+  const el = document.getElementById('outreach-autosave');
+  if (el) el.innerHTML = text ? `<span class="${cls}">${esc(text)}</span>` : '';
+}
+
+function queueComposerAutosave() {
+  clearTimeout(composerSaveTimer);
+  setAutosaveNote('');
+  composerSaveTimer = setTimeout(saveComposerDraft, 1200);
+}
+
+async function saveComposerDraft() {
+  const companyId = outreachSelectedId;
+  const bodyEl = document.getElementById('outreach-draft-editor');
+  if (!companyId || !bodyEl) return;
+  const body = bodyEl.value || '';
+  const subject = document.getElementById('outreach-subject-editor')?.value || '';
+
+  // Out-of-order responses would otherwise let an older save's result overwrite
+  // a newer one's status line.
+  const seq = ++composerSaveSeq;
+  try {
+    const res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/save-draft`, {
+      method: 'POST', body: { body, subject },
+    });
+    if (seq !== composerSaveSeq || outreachSelectedId !== companyId) return;
+    if (res.saved === false && res.reason === 'advisor_draft') return; // not ours to overwrite
+    setAutosaveNote(body.trim() ? 'Saved' : '', 'outreach-autosave-ok');
+  } catch (err) {
+    if (seq !== composerSaveSeq || outreachSelectedId !== companyId) return;
+    // Loud, because the whole point is that you can trust it is kept.
+    setAutosaveNote(`Not saved — ${err.message}. Copy your text before leaving.`, 'outreach-autosave-fail');
   }
 }
 
