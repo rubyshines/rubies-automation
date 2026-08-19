@@ -146,6 +146,7 @@ Return ONLY a JSON object, with no prose before or after it and no markdown fenc
   "line_items": [ { "description": "string", "quantity": number or null, "unit_price": number or null, "amount": number, "category": "short generic label" } ],
   "category": "short generic label for the whole purchase",
   "qbo_account_id": "id from the account list below, or null",
+  "category_rationale": "one short sentence on why that account, or null",
   "confidence": number between 0 and 1,
   "notes": "string or null — anything that made this hard to read"
 }
@@ -166,7 +167,7 @@ Each line item gets a short generic "category" ("meals", "office supplies", "fue
 
 The receipt-level "category" is that same kind of short generic label for the purchase as a whole.
 
-"qbo_account_id" is the single best-fitting account from the list below — return the id only. Choose on what was actually bought and how this business would book it. If nothing fits well, return null rather than forcing one.
+"qbo_account_id" is the single best-fitting account from the list below — return the id only. Choose on what was actually bought and how this business would book it. If nothing fits well, return null rather than forcing one. Say why in one short sentence in "category_rationale", naming what on the receipt decided it, so a later reviewer can tell a considered choice from a guess.
 
 If the image is not a receipt at all, set every field to null, set confidence to 0, and say so in "notes".
 
@@ -322,6 +323,7 @@ function normalizeExtraction(raw) {
     card_last4: last4 && /^\d{4}$/.test(last4.slice(-4)) ? last4.slice(-4) : null,
     category: toText(r.category, 60),
     qbo_account_id: toText(r.qbo_account_id, 40),
+    category_rationale: toText(r.category_rationale, 300),
     extraction_confidence: confidence,
     extraction_notes: toText(r.notes, 1000),
     line_items: lineItems,
@@ -427,21 +429,31 @@ function isClean({ mathOk, confidence, total }) {
 /**
  * One vision call over the receipt image.
  *
- * MODEL CHOICE — Opus, deliberately. Line-item extraction from a creased,
- * glare-lit phone photo is the hard part of this whole feature, and the
- * measure of it working is that Jamie does not have to retype anything. A
- * cheaper model that reads 8 of 11 lines turns a ten-second capture into a
- * two-minute correction and the feature stops being used. There is downstream
- * review and an arithmetic check, but those catch a wrong TOTAL — neither can
- * notice a line item that was never read at all. Volume is a handful of
- * receipts a day, so the accuracy is bought for pennies.
+ * MODEL CHOICE — Sonnet. This is bounded structured extraction against a fixed
+ * schema, it is reviewed before anything is booked, and the arithmetic is
+ * reconciled downstream — which is squarely the Sonnet case in the model
+ * policy. Measured on Opus for reference: ~5.3k in / 565 out, $0.041 a
+ * receipt; Sonnet is $0.025 for the same shape.
+ *
+ * The cost delta is NOT the reason. At a handful of receipts a week the whole
+ * spread between Opus and Haiku is under $20 a year, so this was only ever an
+ * accuracy question, and the accuracy has not been measured yet. The failure
+ * that matters is a line item never read at all — the arithmetic check catches
+ * a wrong total but is blind to a line that is simply missing, so line-item
+ * RECALL is the metric to compare on, not total accuracy. If drafts start
+ * needing hand correction, run that eval before assuming the model is the
+ * cause; if Sonnet holds, this comment should be replaced with its numbers.
  */
 async function extractReceipt({ imageBase64, mimeType, accounts, todayIso }) {
   const prompt = buildExtractionPrompt(accounts, todayIso);
+  // Named once: `extraction_model` is the provenance record on every stored
+  // receipt, and a second literal further down would keep claiming the old
+  // model after a swap — which is worse than not recording it at all.
+  const model = MODELS.SONNET;
 
   const result = await callClaude({
     component: 'receipt_extraction',
-    model: MODELS.OPUS,
+    model,
     max_tokens: 8000,
     system: prompt,
     messages: [{
@@ -457,7 +469,7 @@ async function extractReceipt({ imageBase64, mimeType, accounts, todayIso }) {
   return {
     extraction: normalizeExtraction(parsed),
     raw: parsed,
-    model: MODELS.OPUS,
+    model,
     ai_call_id: result._ai_call_id || null,
   };
 }
@@ -576,6 +588,9 @@ async function captureReceipt({ imageBase64, mimeType, capturedBy = null, notes 
     category: extraction.category,
     qbo_account_id: account ? account.id : null,
     qbo_account_name: account ? account.full_name : null,
+    // Only meaningful alongside an account it explains — a rationale for an
+    // account we rejected as unmatched would read as if we had booked it.
+    category_rationale: account ? extraction.category_rationale : null,
     extraction_model: model,
     extraction_confidence: extraction.extraction_confidence,
     extraction_notes: extraction.extraction_notes,

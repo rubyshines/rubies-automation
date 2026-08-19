@@ -337,6 +337,17 @@ test('storagePathFor shards by hash prefix and keeps the extension', () => {
   assert.strictEqual(storagePathFor('abcdef123', 'image/tiff'), 'ab/abcdef123.jpg');
 });
 
+test('normalizeExtraction carries the account rationale through', () => {
+  const n = normalizeExtraction({ qbo_account_id: '115', category_rationale: 'Facebook ad spend line.' });
+  assert.strictEqual(n.category_rationale, 'Facebook ad spend line.');
+  assert.strictEqual(normalizeExtraction({}).category_rationale, null);
+});
+
+test('buildExtractionPrompt asks for the account rationale', () => {
+  const prompt = buildExtractionPrompt([{ id: '115', full_name: 'Advertising' }], '2026-08-19');
+  assert.match(prompt, /category_rationale/);
+});
+
 test('buildExtractionPrompt lists the accounts and states today', () => {
   const prompt = buildExtractionPrompt(
     [{ id: '115', full_name: 'Advertising' }, { id: '241', full_name: 'Cost of Goods:Inventory Shipping' }],

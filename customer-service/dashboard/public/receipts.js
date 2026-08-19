@@ -410,6 +410,7 @@ function renderDetail(data) {
           <option value="">${state.accounts ? '(unassigned)' : 'loading accounts…'}</option>
           ${accountOptions}
         </select>
+        ${r.category_rationale ? `<p class="acct-why">${esc(r.category_rationale)}</p>` : ''}
       </div>
 
       <div class="detail-actions">
