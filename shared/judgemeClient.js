@@ -33,15 +33,29 @@ function getJudgemeClient() {
     return `api_token=${encodeURIComponent(apiToken)}&shop_domain=${encodeURIComponent(shopDomain)}`;
   }
 
-  async function apiFetch(path) {
+  /**
+   * @param {string} path
+   * @param {object} [opts] - { method, body }. Defaults to GET with no body.
+   *
+   * Retrying a write is safe for everything we send: the only write endpoint is
+   * `PUT /reviews/{id}` setting `curated`, which is idempotent (setting a review
+   * to `ok` twice lands in the same state as once). Revisit the retry loop if a
+   * non-idempotent write is ever added here.
+   */
+  async function apiFetch(path, { method = 'GET', body } = {}) {
     const separator = path.includes('?') ? '&' : '?';
     const url = `${BASE_URL}${path}${separator}${authParams()}`;
+    const init = { method, headers: { accept: 'application/json' } };
+    if (body !== undefined) {
+      init.headers['content-type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
 
     let lastErr;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       let res;
       try {
-        res = await fetch(url, { headers: { accept: 'application/json' } });
+        res = await fetch(url, init);
       } catch (err) {
         // Network-level failure (TypeError: fetch failed) — transient, retry.
         lastErr = err;
@@ -50,7 +64,18 @@ function getJudgemeClient() {
         continue;
       }
 
-      if (res.ok) return res.json();
+      if (res.ok) {
+        // Writes return a short message payload rather than a resource, and an
+        // empty body is a legitimate success — don't let a JSON parse failure
+        // turn a completed write into a thrown error.
+        const text = await res.text();
+        if (!text) return null;
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { message: text };
+        }
+      }
 
       const body = await res.text();
       const err = new Error(`Judge.me ${res.status}: ${body.slice(0, 300)}`);
@@ -107,6 +132,35 @@ function getJudgemeClient() {
     return all;
   }
 
+  // ── curation (the only write path) ───────────────────────────────────
+
+  /**
+   * Publish or hide a review.
+   *
+   * `curated` is Judge.me's publish control, not a spam verdict despite the
+   * vocabulary: 'ok' publishes the review to the storefront, 'spam' takes it
+   * down. Judge.me does not support editing review text via the API, so this
+   * state change is the entire write surface.
+   *
+   * @param {number|string} reviewId
+   * @param {'ok'|'spam'} curated
+   */
+  async function setCurated(reviewId, curated) {
+    if (curated !== 'ok' && curated !== 'spam') {
+      throw new Error(`setCurated: curated must be 'ok' or 'spam', got ${JSON.stringify(curated)}`);
+    }
+    if (reviewId == null || reviewId === '') {
+      throw new Error('setCurated: reviewId is required');
+    }
+    return apiFetch(`/reviews/${encodeURIComponent(reviewId)}`, {
+      method: 'PUT',
+      body: { curated },
+    });
+  }
+
+  const publishReview = (reviewId) => setCurated(reviewId, 'ok');
+  const hideReview = (reviewId) => setCurated(reviewId, 'spam');
+
   // ── counts ───────────────────────────────────────────────────────────
 
   /**
@@ -151,6 +205,9 @@ function getJudgemeClient() {
     getAllReviews,
     getReviewCount,
     getRatingDistribution,
+    setCurated,
+    publishReview,
+    hideReview,
   };
 
   return client;

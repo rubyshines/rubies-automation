@@ -29,6 +29,7 @@ const csKnowledgeTools = require('./lib/tools/csKnowledge');
 const csAdminTools = require('./lib/tools/csAdmin');
 const marginsTools = require('./lib/tools/margins');
 const reviewsTools = require('./lib/tools/reviews');
+const reviewCurationTools = require('./lib/tools/reviewCuration');
 const inventoryTools = require('./lib/tools/inventory');
 const blogResearchTools = require('./lib/tools/blogResearch');
 const draftOrderTools = require('./lib/tools/draftOrders');
@@ -87,6 +88,7 @@ const allTools = [
   ...csAdminTools,
   ...marginsTools,
   ...reviewsTools,
+  ...reviewCurationTools,
   ...inventoryTools,
   ...blogResearchTools,
   ...draftOrderTools,

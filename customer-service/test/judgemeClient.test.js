@@ -18,6 +18,19 @@ let origToken;
 let origDomain;
 let origBaseMs;
 
+// A success stub shaped like a real Response. apiFetch reads the body via
+// text() (so an empty body from a write is not a parse error), and a real
+// Response always exposes it — a json()-only stub was passing for the wrong
+// reason and broke the moment the read path changed.
+function okResponse(payload, status = 200) {
+  return {
+    ok: true,
+    status,
+    text: async () => JSON.stringify(payload),
+    json: async () => payload,
+  };
+}
+
 function freshClient() {
   // Module caches the singleton at module scope, so re-require with a clean
   // cache entry for an isolated client per test.
@@ -49,7 +62,7 @@ describe('judgemeClient — apiFetch retries', () => {
     global.fetch = async () => {
       calls++;
       if (calls < 3) throw new TypeError('fetch failed'); // mimic undici network error
-      return { ok: true, json: async () => ({ count: 42 }) };
+      return okResponse({ count: 42 });
     };
 
     const client = freshClient();
@@ -64,7 +77,7 @@ describe('judgemeClient — apiFetch retries', () => {
     global.fetch = async () => {
       calls++;
       if (calls < 2) return { ok: false, status: 500, text: async () => 'server error' };
-      return { ok: true, json: async () => ({ reviews: [{ id: 1 }] }) };
+      return okResponse({ reviews: [{ id: 1 }] });
     };
 
     const client = freshClient();
@@ -79,7 +92,7 @@ describe('judgemeClient — apiFetch retries', () => {
     global.fetch = async () => {
       calls++;
       if (calls < 2) return { ok: false, status: 429, text: async () => 'rate limited' };
-      return { ok: true, json: async () => ({ count: 7 }) };
+      return okResponse({ count: 7 });
     };
 
     const client = freshClient();

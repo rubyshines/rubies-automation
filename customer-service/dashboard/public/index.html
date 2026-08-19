@@ -53,6 +53,7 @@
       <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
       <button class="tab" data-tab="outreach" onclick="switchTab('outreach')">Outreach</button>
       <button class="tab" data-tab="swimwear" onclick="switchTab('swimwear')">Free Swimwear <span class="tab-count" id="tab-count-swimwear"></span></button>
+      <button class="tab" data-tab="reviews" onclick="switchTab('reviews')">Reviews <span class="tab-count" id="tab-count-reviews"></span></button>
       <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
     </nav>
     <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
@@ -301,6 +302,18 @@
       <div class="detail">
         <div id="swimwear-placeholder" class="outreach-placeholder">Select an application to review</div>
         <div id="swimwear-detail" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Judge.me review publishing queue -->
+    <div id="panel-reviews" class="panel" style="display:none">
+      <div class="sidebar">
+        <div class="swimwear-filters" id="reviews-filters"></div>
+        <div id="reviews-queue-list"><div class="swimwear-loading">Loading&hellip;</div></div>
+      </div>
+      <div class="detail">
+        <div id="reviews-placeholder" class="outreach-placeholder">Select a review to publish or hold</div>
+        <div id="reviews-detail" style="display:none"></div>
       </div>
     </div>
 

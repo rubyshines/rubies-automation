@@ -3030,6 +3030,40 @@ async function apiSwimwearSummary(id) {
   return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text };
 }
 
+// --- Judge.me review publishing panel (delegates to the review_* MCP tools so
+// the curation rubric and the Judge.me write path live in one place) ---
+const reviewCurationTools = require('../lib/tools/reviewCuration');
+const reviewToolMap = Object.fromEntries(reviewCurationTools.map(t => [t.name, t]));
+
+async function callReviewTool(name, input) {
+  return reviewToolMap[name].handler(input);
+}
+
+async function apiReviewsQueue(searchParams) {
+  const res = await callReviewTool('review_queue', {
+    status: searchParams.get('status') || 'pending',
+    audience: searchParams.get('audience') || undefined,
+    min_rating: searchParams.get('min_rating') ? parseInt(searchParams.get('min_rating'), 10) : undefined,
+    limit: parseInt(searchParams.get('limit') || '200', 10),
+  });
+  return res._structured?.reviews || [];
+}
+
+async function apiReviewPublish(id, body = {}) {
+  const res = await callReviewTool('review_publish', { review_id: id, operator: body.operator || null });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text, ...res._structured };
+}
+
+async function apiReviewHold(id, body = {}) {
+  const res = await callReviewTool('review_hold', { review_id: id, reason: body.reason || null, operator: body.operator || null });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text, ...res._structured };
+}
+
+async function apiReviewAssess(id) {
+  const res = await callReviewTool('review_assess', { review_id: id });
+  return res.isError ? { error: res.content[0].text } : { ok: true, message: res.content[0].text, ...res._structured };
+}
+
 async function apiGetTicket(id) {
   const supabase = getSupabaseClient();
 
@@ -3498,6 +3532,7 @@ const routes = {
   'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/reviews/queue': (req) => apiReviewsQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/classifications': () => {
     const { BUSINESS_AREAS } = require('../../gmail-management/config');
     const exclude = new Set(['customer_support', 'spam', 'auto_reply', 'newsletter', 'skip', 'pipeline', 'internal']);
@@ -3546,6 +3581,10 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/reject$/, handler: (body, id) => apiSwimwearReject(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/resend$/, handler: (_, id) => apiSwimwearResend(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/summary$/, handler: (_, id) => apiSwimwearSummary(parseInt(id)) },
+  // Judge.me review publishing panel
+  { method: 'POST', pattern: /^\/api\/reviews\/(\d+)\/publish$/, handler: (body, id) => apiReviewPublish(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/reviews\/(\d+)\/hold$/, handler: (body, id) => apiReviewHold(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/reviews\/(\d+)\/assess$/, handler: (_, id) => apiReviewAssess(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
   // Receipts. `capture` and `confirm` are listed before the numeric-id routes;
   // the id patterns are \d+-anchored so the order is belt-and-braces.

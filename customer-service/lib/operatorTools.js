@@ -28,6 +28,7 @@ function loadAllOperatorTools() {
     require('./tools/csAdmin'),
     require('./tools/margins'),
     require('./tools/reviews'),
+    require('./tools/reviewCuration'),
     require('./tools/inventory'),
     require('./tools/blogResearch'),
     require('./tools/draftOrders'),
