@@ -5805,14 +5805,25 @@ function outreachRelationshipHtml(entry) {
 // by "paused" than the tool does.
 async function applyOutreachTriage(body, okMessage) {
   const companyId = outreachSelectedId;
+  // The triage call IS the operation. Confirm it the moment it lands, before
+  // refreshing anything: the refreshes are cosmetic, and wrapping them in the
+  // same try meant a failure in one of them reported "Failed" for a pause that
+  // had already been written — which is what Jamie saw, a red error above a
+  // banner correctly showing the company as paused.
   try {
     await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/triage`, { method: 'POST', body });
-    if (outreachSelectedId !== companyId) return;
-    await loadOutreachContext(companyId, false);   // re-read so the block reflects it
-    loadOutreach();                                // the queue changes as a result
-    showToast(okMessage, 'success');
   } catch (err) {
     showToast(`Failed: ${err.message}`, 'error');
+    return;
+  }
+  showToast(okMessage, 'success');
+  if (outreachSelectedId !== companyId) return;
+  try {
+    await loadOutreachContext(companyId, false);   // re-read so the block reflects it
+    loadOutreachSidebar();                         // the list changes as a result
+  } catch (err) {
+    // Saved, just not redrawn. Say which, rather than implying it did not happen.
+    showToast(`Saved, but the view did not refresh: ${err.message}`, 'error');
   }
 }
 
