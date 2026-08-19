@@ -269,3 +269,141 @@ describe('judgemeClient.setCurated', () => {
       });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Size join — resolving `unclear` from what the reviewer actually bought.
+//
+// The load-bearing rule is `informativeProducts`: a letter size only means
+// "adult" on a product that ALSO sells youth numeric sizes. Chest pads are
+// S/M/L for every age, and treating those as adult would tag children's
+// purchases as adults across a whole product line.
+// ---------------------------------------------------------------------------
+
+const {
+  buildCatalogueMaps, audienceFromLineItems, bareProductId, sizeTier,
+} = require('../lib/reviewCuration');
+
+describe('bareProductId', () => {
+  test('strips the Shopify GID wrapper', () => {
+    assert.equal(bareProductId('gid://shopify/Product/4831811928149'), '4831811928149');
+  });
+
+  test('leaves a bare numeric id alone', () => {
+    // Judge.me returns the bare form; product_variants stores the GID. Both
+    // must land on the same key or the join silently matches nothing.
+    assert.equal(bareProductId(4831811928149), '4831811928149');
+  });
+});
+
+describe('sizeTier', () => {
+  test('numeric sizes are youth', () => {
+    ['4', '8', '10', '14', '16'].forEach((s) => assert.equal(sizeTier(s), 'youth'));
+  });
+
+  test('letter sizes are adult', () => {
+    ['XS', 'S', 'M', 'L', '1X', '3X'].forEach((s) => assert.equal(sizeTier(s), 'adult'));
+  });
+
+  test('no size is null, not a guess', () => {
+    assert.equal(sizeTier(null), null);
+    assert.equal(sizeTier(''), null);
+  });
+});
+
+describe('buildCatalogueMaps', () => {
+  const variants = [
+    // Dual-tier garment: youth numerics AND adult letters.
+    { shopify_variant_id: 1, shopify_product_id: 'gid://shopify/Product/100', sku: 'RUBY-BLK-8', title: 'Black / 8' },
+    { shopify_variant_id: 2, shopify_product_id: 'gid://shopify/Product/100', sku: 'RUBY-BLK-L', title: 'Black / L' },
+    // Letter-only accessory (chest pads: S/M/L for every age).
+    { shopify_variant_id: 3, shopify_product_id: 'gid://shopify/Product/200', sku: 'PAD-NUD-S', title: 'Nude / S' },
+    { shopify_variant_id: 4, shopify_product_id: 'gid://shopify/Product/200', sku: 'PAD-NUD-M', title: 'Nude / M' },
+    // Youth-only garment.
+    { shopify_variant_id: 5, shopify_product_id: 'gid://shopify/Product/300', sku: 'KID-BLK-6', title: 'Black / 6' },
+  ];
+
+  test('a dual-tier product is informative', () => {
+    const m = buildCatalogueMaps(variants);
+    assert.ok(m.informativeProducts.has('100'));
+  });
+
+  test('a letter-only product is NOT informative', () => {
+    // This is the chest-pad case. Including it would read "bought size M" as
+    // "adult" for a child's purchase.
+    const m = buildCatalogueMaps(variants);
+    assert.ok(!m.informativeProducts.has('200'));
+  });
+
+  test('a youth-only product is informative', () => {
+    // Buying a youth-only item at all implies a child wearer.
+    const m = buildCatalogueMaps(variants);
+    assert.ok(m.informativeProducts.has('300'));
+  });
+
+  test('maps variants to their product and tier', () => {
+    const m = buildCatalogueMaps(variants);
+    assert.equal(m.variantToProduct.get('1'), '100');
+    assert.equal(m.variantToTier.get('1'), 'youth');
+    assert.equal(m.variantToTier.get('2'), 'adult');
+  });
+});
+
+describe('audienceFromLineItems', () => {
+  const variants = [
+    { shopify_variant_id: 1, shopify_product_id: 'gid://shopify/Product/100', sku: 'RUBY-BLK-8', title: 'Black / 8' },
+    { shopify_variant_id: 2, shopify_product_id: 'gid://shopify/Product/100', sku: 'RUBY-BLK-L', title: 'Black / L' },
+    { shopify_variant_id: 3, shopify_product_id: 'gid://shopify/Product/200', sku: 'PAD-NUD-M', title: 'Nude / M' },
+    { shopify_variant_id: 9, shopify_product_id: 'gid://shopify/Product/900', sku: 'OTHER-BLK-M', title: 'Black / M' },
+    { shopify_variant_id: 10, shopify_product_id: 'gid://shopify/Product/900', sku: 'OTHER-BLK-8', title: 'Black / 8' },
+  ];
+  const maps = buildCatalogueMaps(variants);
+  const review = { product_external_id: 100 };
+
+  test('a youth size on that product means kids', () => {
+    const r = audienceFromLineItems(review, [{ shopify_variant_id: 1, sku: 'RUBY-BLK-8' }], maps);
+    assert.equal(r.audience, 'kids');
+    assert.match(r.reason, /youth/);
+  });
+
+  test('an adult size on that product means adults', () => {
+    const r = audienceFromLineItems(review, [{ shopify_variant_id: 2, sku: 'RUBY-BLK-L' }], maps);
+    assert.equal(r.audience, 'adults');
+  });
+
+  test('both tiers of the SAME product abstains', () => {
+    // Almost certainly a parent buying for a child and for themselves.
+    // Guessing either way would be worse than leaving it unclear.
+    const r = audienceFromLineItems(review, [
+      { shopify_variant_id: 1, sku: 'RUBY-BLK-8' },
+      { shopify_variant_id: 2, sku: 'RUBY-BLK-L' },
+    ], maps);
+    assert.equal(r.audience, null);
+    assert.match(r.reason, /both youth and adult/);
+  });
+
+  test('ignores line items for OTHER products', () => {
+    // The reviewer's adult purchase of a different product must not decide
+    // the audience of a review about this one.
+    const r = audienceFromLineItems(review, [{ shopify_variant_id: 9, sku: 'OTHER-BLK-M' }], maps);
+    assert.equal(r.audience, null);
+    assert.match(r.reason, /no matching order line/);
+  });
+
+  test('abstains entirely on a letter-only product', () => {
+    const r = audienceFromLineItems({ product_external_id: 200 }, [{ shopify_variant_id: 3, sku: 'PAD-NUD-M' }], maps);
+    assert.equal(r.audience, null);
+    assert.match(r.reason, /does not indicate age/);
+  });
+
+  test('abstains when the reviewer has no orders at all', () => {
+    const r = audienceFromLineItems(review, [], maps);
+    assert.equal(r.audience, null);
+  });
+
+  test('matches a GID-stored product against a bare review product id', () => {
+    // Regression: the first version of this join compared 'gid://...' to
+    // '4831811928149' and resolved 0 of 414 while reporting success.
+    const r = audienceFromLineItems({ product_external_id: '100' }, [{ shopify_variant_id: 1, sku: 'RUBY-BLK-8' }], maps);
+    assert.equal(r.audience, 'kids');
+  });
+});
