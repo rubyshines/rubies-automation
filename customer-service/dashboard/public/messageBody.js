@@ -57,17 +57,27 @@
   ];
 
   /**
-   * Cut a plain-text body at the first quoted reply or trailing sign-off block, so
-   * we measure/keep only what the customer actually wrote this turn.
+   * Split a plain-text body at the first quoted reply or trailing sign-off block.
+   *
+   * `own` is what the customer wrote this turn — the part we measure and render.
+   * `quoted` is everything after it. Callers that render plain text need the tail
+   * as well: having cut the forwarded block off ourselves, we are the only ones
+   * who can still offer it behind a "show forwarded message" toggle, and on a
+   * first-contact forward that block is usually the order being written about.
    */
-  function plainTextBeforeQuote(text) {
-    if (!text) return '';
+  function splitAtQuote(text) {
+    if (!text) return { own: '', quoted: '' };
     let cut = text.length;
     for (const re of BODY_END_MARKERS) {
       const m = text.match(re);
       if (m && m.index < cut) cut = m.index;
     }
-    return text.slice(0, cut).trim();
+    return { own: text.slice(0, cut).trim(), quoted: text.slice(cut).trim() };
+  }
+
+  /** splitAtQuote(), for callers that only want the customer's own words. */
+  function plainTextBeforeQuote(text) {
+    return splitAtQuote(text).own;
   }
 
   const NAMED_ENTITIES = {
@@ -175,26 +185,28 @@
   /**
    * Decide what to render for a message body, with the reasoning attached.
    *
-   * Returns { html, source, missingLines }:
+   * Returns { html, source, missingLines, quotedTail }:
    *   source 'html'     — the HTML says everything the plain text does; render it.
    *   source 'plain'    — the HTML is short of content; render escaped plain text
-   *                       (cut at the quoted reply, as the HTML would have been).
+   *                       (cut at the quoted reply, as the HTML would have been),
+   *                       with the part we cut returned as `quotedTail` so the
+   *                       caller can still offer it behind a toggle.
    *   source 'no-html'  — no HTML part at all; render the whole escaped body.
    */
   function chooseBody(m) {
     const msg = m || {};
     const html = msg.body_html;
     const body = msg.body || '';
-    if (!html) return { html: plainAsHtml(body), source: 'no-html', missingLines: [] };
+    if (!html) return { html: plainAsHtml(body), source: 'no-html', missingLines: [], quotedTail: '' };
 
-    const plain = plainTextBeforeQuote(body);
+    const { own: plain, quoted } = splitAtQuote(body);
     // Too little plain text to judge by — a one-word reply says nothing about
     // whether the HTML is complete.
-    if (plain.length <= 40) return { html, source: 'html', missingLines: [] };
+    if (plain.length <= 40) return { html, source: 'html', missingLines: [], quotedTail: '' };
 
     const missingLines = linesMissingFromHtml(plain, html);
     if (missingLines.length) {
-      return { html: plainAsHtml(plain), source: 'plain', missingLines };
+      return { html: plainAsHtml(plain), source: 'plain', missingLines, quotedTail: quoted };
     }
 
     // Backstop for HTML that contains the words but drops the structure around
@@ -202,10 +214,10 @@
     // dramatically shorter than what the customer wrote, trust the plain text.
     const htmlText = normalizeForCompare(htmlVisibleText(html));
     if (htmlText.length < normalizeForCompare(plain).length * 0.6) {
-      return { html: plainAsHtml(plain), source: 'plain', missingLines: [] };
+      return { html: plainAsHtml(plain), source: 'plain', missingLines: [], quotedTail: quoted };
     }
 
-    return { html, source: 'html', missingLines: [] };
+    return { html, source: 'html', missingLines: [], quotedTail: '' };
   }
 
   /** chooseBody(), for callers that only want the markup. */
@@ -214,6 +226,7 @@
   }
 
   return {
+    splitAtQuote,
     plainTextBeforeQuote,
     decodeEntities,
     htmlVisibleText,
