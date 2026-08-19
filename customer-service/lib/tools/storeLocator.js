@@ -388,7 +388,11 @@ async function handlePublish({ dry_run, merge } = {}) {
     dry_run: dry_run === true,
     merge: merge !== false,
   });
-  const lines = [`Wrote ${result.count} stores to ${result.path}`];
+  const lines = [
+    result.path
+      ? `Wrote ${result.count} stores to ${result.path}`
+      : `Published ${result.count} stores.`,
+  ];
 
   if (result.dryRun) {
     lines.push('', '_(dry_run)_ — working tree only. No commit, no push, no deploy.');

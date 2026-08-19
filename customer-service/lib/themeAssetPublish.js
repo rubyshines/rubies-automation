@@ -28,6 +28,13 @@ function serializePayload(payload) {
   return JSON.stringify(payload, null, 2) + '\n';
 }
 
+// gh/git errors end with a trailing newline, so a bare split().pop() yields ''
+// and the operator sees an empty reason.
+function lastLine(message) {
+  const line = String(message || '').split('\n').map(s => s.trim()).filter(Boolean).pop();
+  return line || 'no detail reported';
+}
+
 function gitc(cwd, args) {
   return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
 }
@@ -118,7 +125,7 @@ async function publishViaWorktree(payload, {
         const state = ghc(wt, ['pr', 'view', prUrl, '--json', 'state,mergedAt']);
         const parsed = JSON.parse(state);
         if (parsed.state === 'MERGED') {
-          mergeWarning = `Merge succeeded but local cleanup hit a non-fatal error: ${e.message.split('\n').pop()}`;
+          mergeWarning = `Merge succeeded but local cleanup hit a non-fatal error: ${lastLine(e.message)}`;
         } else {
           return { branch, baseBranch, themeRepo, remoteUrl, merged: false, prUrl, mergeError: `pr merge failed (state=${parsed.state}): ${e.message}` };
         }
@@ -155,16 +162,18 @@ async function publishThemeAsset(payload, {
     throw new Error(`Theme assets dir does not exist: ${outDir} (is rubies-ecom-v4 checked out as a sibling of rubies-automations?)`);
   }
 
-  fs.writeFileSync(outPath, serializePayload(payload), 'utf8');
-
+  // Only the dry-run path writes the theme's own working tree. On the real path
+  // the commit comes from an isolated worktree, so writing here would do nothing
+  // except leave the theme main checkout dirty after every publish.
   if (dry_run) {
+    fs.writeFileSync(outPath, serializePayload(payload), 'utf8');
     return { path: outPath, count: payload.length, committed: false, dryRun: true };
   }
 
   const themeRepo = path.dirname(outDir);
   const wt = await publishViaWorktree(payload, { themeRepo, baseBranch, merge, ...worktreeOpts });
   return {
-    path: outPath,
+    path: null,
     count: payload.length,
     committed: !wt.noOp,
     merged: !!wt.merged,
@@ -180,4 +189,4 @@ async function publishThemeAsset(payload, {
   };
 }
 
-module.exports = { publishThemeAsset, publishViaWorktree, serializePayload };
+module.exports = { publishThemeAsset, publishViaWorktree, serializePayload, lastLine };
