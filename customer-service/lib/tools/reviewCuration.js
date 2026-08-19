@@ -10,6 +10,7 @@
 const { getSupabaseClient, fetchAllPaginated } = require('../../../shared/supabaseClient');
 const {
   classifyAudience, recommendCuration, applyDecision, AUDIENCE_VALUES,
+  buildCatalogueMaps, audienceFromLineItems,
 } = require('../reviewCuration');
 
 const STARS = ['', '⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐⭐'];
@@ -218,6 +219,123 @@ async function handleReviewClassify({ review_id, limit = 200, reclassify = false
 }
 
 // ---------------------------------------------------------------------------
+// Resolve remaining `unclear` from the size the reviewer bought
+// ---------------------------------------------------------------------------
+
+const IN_CHUNK = 80;
+
+/**
+ * Deterministic second pass. Runs only over reviews the text classifier left
+ * `unclear`, and only writes when the order data gives an unambiguous answer.
+ *
+ * `audience_model` is set to 'size-join' rather than a model id so a
+ * size-derived tag stays distinguishable from a text-derived one — and so the
+ * whole pass is reversible with a single WHERE clause if the rule turns out
+ * wrong. Size is a proxy for age, not age itself: a small adult who buys a
+ * youth size will be tagged kids, which is the known error in this approach.
+ */
+async function handleReviewResolveBySize({ dry_run = false } = {}) {
+  const supabase = getSupabaseClient();
+
+  const reviews = await fetchAllPaginated(() => supabase
+    .from('judgeme_reviews')
+    .select('review_id, product_external_id, product_title, reviewer_email')
+    .eq('audience', 'unclear')
+    .order('review_id'));
+
+  if (!reviews.length) {
+    return { content: [{ type: 'text', text: 'No unclear reviews to resolve.' }], _structured: { resolved: 0 } };
+  }
+
+  const variants = await fetchAllPaginated(() => supabase
+    .from('product_variants')
+    .select('shopify_variant_id, shopify_product_id, sku, title')
+    .order('shopify_variant_id'));
+  const maps = buildCatalogueMaps(variants);
+
+  // Reviewer email -> their order ids -> their line items.
+  const emails = [...new Set(reviews.map((r) => (r.reviewer_email || '').toLowerCase()).filter(Boolean))];
+  const orderIdsByEmail = new Map();
+  for (let i = 0; i < emails.length; i += IN_CHUNK) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('shopify_order_id, customer_email')
+      .in('customer_email', emails.slice(i, i + IN_CHUNK));
+    if (error) throw new Error(`Supabase error: ${error.message}`);
+    for (const o of data || []) {
+      const e = (o.customer_email || '').toLowerCase();
+      if (!orderIdsByEmail.has(e)) orderIdsByEmail.set(e, []);
+      orderIdsByEmail.get(e).push(o.shopify_order_id);
+    }
+  }
+
+  const allOrderIds = [...orderIdsByEmail.values()].flat();
+  const lineItemsByOrder = new Map();
+  for (let i = 0; i < allOrderIds.length; i += IN_CHUNK) {
+    const { data, error } = await supabase
+      .from('order_line_items')
+      .select('shopify_order_id, shopify_variant_id, sku')
+      .in('shopify_order_id', allOrderIds.slice(i, i + IN_CHUNK));
+    if (error) throw new Error(`Supabase error: ${error.message}`);
+    for (const li of data || []) {
+      if (!lineItemsByOrder.has(li.shopify_order_id)) lineItemsByOrder.set(li.shopify_order_id, []);
+      lineItemsByOrder.get(li.shopify_order_id).push(li);
+    }
+  }
+
+  const now = new Date().toISOString();
+  const tally = { kids: 0, adults: 0 };
+  const skipped = {};
+  const examples = [];
+  let resolved = 0;
+
+  for (const r of reviews) {
+    const orderIds = orderIdsByEmail.get((r.reviewer_email || '').toLowerCase()) || [];
+    const lineItems = orderIds.flatMap((id) => lineItemsByOrder.get(id) || []);
+    const { audience, reason } = audienceFromLineItems(r, lineItems, maps);
+
+    if (!audience) {
+      skipped[reason] = (skipped[reason] || 0) + 1;
+      continue;
+    }
+
+    if (!dry_run) {
+      const { error } = await supabase
+        .from('judgeme_reviews')
+        .update({
+          audience,
+          audience_reason: reason,
+          audience_model: 'size-join',
+          audience_at: now,
+        })
+        .eq('review_id', r.review_id);
+      if (error) throw new Error(`Supabase error: ${error.message}`);
+    }
+
+    tally[audience]++;
+    resolved++;
+    if (examples.length < 8) examples.push(`#${r.review_id} ${r.product_title} → ${audience} (${reason})`);
+  }
+
+  const lines = [
+    `${dry_run ? 'Would resolve' : 'Resolved'} ${resolved} of ${reviews.length} unclear review(s).`,
+    '',
+    `kids: ${tally.kids} · adults: ${tally.adults}`,
+    '',
+    'Left unclear:',
+    ...Object.entries(skipped).sort((a, b) => b[1] - a[1]).map(([k, v]) => `  ${v} — ${k}`),
+    '',
+    'Examples:',
+    ...examples.map((e) => `  ${e}`),
+  ];
+
+  return {
+    content: [{ type: 'text', text: lines.join('\n') }],
+    _structured: { resolved, tally, skipped, dry_run },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Publish / hold
 // ---------------------------------------------------------------------------
 
@@ -294,6 +412,18 @@ const tools = [
       required: [],
     },
     handler: handleReviewClassify,
+  },
+  {
+    name: 'review_resolve_audience_by_size',
+    description: 'Resolve reviews the text classifier left "unclear" by looking up what size the reviewer actually bought — a youth numeric size means the wearer is a child, an adult letter size means an adult. Deterministic lookup, no AI. Only fills unclear rows, never overwrites a tag derived from the review text, and only trusts products that sell in both youth and adult sizes (chest pads are S/M/L for everyone, so size says nothing there).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dry_run: { type: 'boolean', description: 'Report what would change without writing (default false).' },
+      },
+      required: [],
+    },
+    handler: handleReviewResolveBySize,
   },
   {
     name: 'review_publish',

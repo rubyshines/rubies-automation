@@ -17,6 +17,7 @@ const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { getJudgemeClient } = require('../../shared/judgemeClient');
+const { extractSizeFromSku, normalizeSize } = require('./sizeUtils');
 
 const AUDIENCE_VALUES = ['kids', 'adults', 'both', 'unclear'];
 const RECOMMENDATIONS = ['publish', 'hold', 'decide'];
@@ -252,6 +253,121 @@ async function applyDecision(reviewId, action, { reason = null, operator = null 
   return { review_id: reviewId, action, curated };
 }
 
+// ---------------------------------------------------------------------------
+// Audience from the size they bought — deterministic, no AI
+// ---------------------------------------------------------------------------
+
+/**
+ * The text classifier abstains a lot, and it abstains asymmetrically. A parent
+ * naturally writes "my daughter loves these"; an adult writing about herself
+ * usually just writes "so comfy". So `unclear` is not noise evenly spread — it
+ * hides adults. (Measured 2026-08: 442 of 2005 unclear, and the ones the order
+ * data could resolve split 54% adult against a text-derived ratio of 30%.)
+ *
+ * The size someone bought answers what their words did not. This is a lookup,
+ * not a judgement, so it is deterministic code rather than a model call.
+ *
+ * Only ever fills an `unclear`; never overwrites a text-derived tag. A parent
+ * can buy an adult size for herself in the same order as her daughter's, and
+ * "my daughter" is the better signal when we have it.
+ */
+
+const YOUTH_SIZE_SET = new Set(require('./sizeUtils').NUMERIC_SIZES.map(String));
+
+/** Strip Shopify's GID wrapper: gid://shopify/Product/123 -> "123". */
+function bareProductId(id) {
+  return String(id || '').replace(/^gid:\/\/shopify\/Product\//, '');
+}
+
+/** youth | adult | null, from a variant's SKU or title. */
+function sizeTier(size) {
+  if (!size) return null;
+  return YOUTH_SIZE_SET.has(String(size)) ? 'youth' : 'adult';
+}
+
+/**
+ * Build the catalogue map the join needs.
+ *
+ * The important part is `informativeProducts`. A letter size only means "adult"
+ * on a product that ALSO sells youth numeric sizes. Chest pads are sized S/M/L
+ * for every age, so on those a letter size says nothing — including them would
+ * tag children's purchases as adults. Rather than hardcode a product list, we
+ * derive it: a product is informative if its variants span both tiers, or if it
+ * is youth-only (in which case buying it at all implies a child wearer).
+ *
+ * @param {Array} variants - rows from product_variants
+ */
+function buildCatalogueMaps(variants) {
+  const variantToProduct = new Map();
+  const variantToTier = new Map();
+  const tiersByProduct = new Map();
+
+  for (const v of variants) {
+    const vid = String(v.shopify_variant_id);
+    const pid = bareProductId(v.shopify_product_id);
+    const size = extractSizeFromSku(v.sku || '').normalized
+      || normalizeSize((v.title || '').split('/').pop().trim());
+    const tier = sizeTier(size);
+
+    variantToProduct.set(vid, pid);
+    if (tier) variantToTier.set(vid, tier);
+    if (!tiersByProduct.has(pid)) tiersByProduct.set(pid, new Set());
+    if (tier) tiersByProduct.get(pid).add(tier);
+  }
+
+  const informativeProducts = new Set();
+  for (const [pid, tiers] of tiersByProduct) {
+    // Both tiers → numeric vs letter genuinely separates child from adult.
+    // Youth-only → any purchase implies a child.
+    // Letter-only → ambiguous (S/M/L accessories), deliberately excluded.
+    if (tiers.size === 2 || (tiers.size === 1 && tiers.has('youth'))) {
+      informativeProducts.add(pid);
+    }
+  }
+
+  return { variantToProduct, variantToTier, tiersByProduct, informativeProducts };
+}
+
+/**
+ * Decide one review's audience from the line items its reviewer bought.
+ *
+ * @param {object} review - { product_external_id }
+ * @param {Array} lineItems - every line item across that reviewer's orders
+ * @param {object} maps - from buildCatalogueMaps
+ * @returns {{audience: string|null, reason: string}} audience null = leave as is
+ */
+function audienceFromLineItems(review, lineItems, maps) {
+  const productId = bareProductId(review.product_external_id);
+  if (!maps.informativeProducts.has(productId)) {
+    return { audience: null, reason: 'product size does not indicate age' };
+  }
+
+  const forThisProduct = lineItems.filter(
+    (li) => maps.variantToProduct.get(String(li.shopify_variant_id)) === productId,
+  );
+  const tiers = [...new Set(
+    forThisProduct.map((li) => maps.variantToTier.get(String(li.shopify_variant_id))).filter(Boolean),
+  )];
+
+  if (tiers.length === 1) {
+    const size = forThisProduct
+      .map((li) => maps.variantToTier.get(String(li.shopify_variant_id)) && li.sku)
+      .filter(Boolean)[0];
+    return {
+      audience: tiers[0] === 'youth' ? 'kids' : 'adults',
+      reason: `bought a ${tiers[0]} size of this product${size ? ` (${size})` : ''}`,
+    };
+  }
+
+  // Bought both tiers of the SAME product — almost certainly buying for a child
+  // and for themselves. Guessing here would be worse than abstaining.
+  if (tiers.length > 1) {
+    return { audience: null, reason: 'bought both youth and adult sizes of this product' };
+  }
+
+  return { audience: null, reason: 'no matching order line for this product' };
+}
+
 module.exports = {
   classifyAudience,
   recommendCuration,
@@ -259,6 +375,11 @@ module.exports = {
   AUDIENCE_VALUES,
   RECOMMENDATIONS,
   CURATION_RUBRIC,
+  // size-join (deterministic)
+  buildCatalogueMaps,
+  audienceFromLineItems,
+  bareProductId,
+  sizeTier,
   // exported for tests
   parseJsonBlock,
   reviewLine,
