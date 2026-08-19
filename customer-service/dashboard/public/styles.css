@@ -91,11 +91,13 @@ header h1 {
   color: var(--accent);
 }
 
+/* Does not grow — the tab row is what gets the leftover width, because that is
+   what has to overflow gracefully. */
 #stats-bar {
   display: flex;
   gap: 12px;
   align-items: center;
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 .stat {
@@ -113,7 +115,25 @@ header h1 {
   min-width: 110px;
 }
 
-nav { display: flex; gap: 2px; }
+/* The header nav takes the leftover width and never pushes the tools menu or the
+   version badge off the edge: #nav-tabs clips, and layoutNavOverflow() moves the
+   clipped tabs into the More menu. min-width:0 is what lets a flex item shrink
+   below its content — without it the row just overflows the header again. */
+#primary-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
 
 .tab {
   background: none;
@@ -125,6 +145,8 @@ nav { display: flex; gap: 2px; }
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
+  white-space: nowrap;
+  flex: 0 0 auto;
   transition: all 0.15s ease;
 }
 .tab.active {
@@ -132,6 +154,71 @@ nav { display: flex; gap: 2px; }
   color: var(--text);
 }
 .tab:hover { color: var(--text); }
+
+/* ─── Header nav overflow ("More") ──────────────────────── */
+
+.nav-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+.nav-more[hidden] { display: none; }
+
+/* A real element, not ::after — `.tab.tab-has-progress::after` already owns that
+   pseudo on these buttons, and the two declarations merged into a blue blob. */
+.nav-caret {
+  display: inline-block;
+  margin-left: 6px;
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+  border-top: 4px solid currentColor;
+  vertical-align: middle;
+  opacity: 0.7;
+}
+
+/* The active section is inside the menu — mirror the mobile bottom nav, which
+   highlights More for the same reason. */
+.nav-more-btn.nav-more-active {
+  background: var(--surface-inset);
+  color: var(--text);
+}
+
+.nav-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+}
+.nav-more-menu[hidden] { display: none; }
+
+/* Tabs read as menu rows once they're in the menu — same elements, different box.
+   Full-strength text: the dimmed tertiary colour is legible against the header
+   but not as a menu row. */
+.nav-more-menu .tab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  border-radius: 6px;
+}
+.nav-more-menu .tab:hover { background: var(--surface-inset); }
+.nav-more-menu .tab.tab-onme { color: #d97706; }
+.nav-more-menu .tab.active { background: var(--surface-inset); }
 
 .tab-count {
   display: inline-flex;
@@ -3933,9 +4020,17 @@ main { height: calc(100vh - 56px); }
 
 .test-summary h3 { margin-bottom: 8px; }
 
-/* ─── Stats Link ────────────────────────────────────────── */
+/* ─── Header tools menu ─────────────────────────────────── */
 
-.btn-stats {
+/* Auto-send, Facts, Auto-actions, Stats and Sign out used to sit in the header
+   as five separate pills, which is what pushed Sign out off the right edge at
+   every window width. They live behind one button now. */
+.header-tools {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.tools-btn {
   background: none;
   border: 1px solid var(--border);
   color: var(--text-secondary);
@@ -3947,14 +4042,72 @@ main { height: calc(100vh - 56px); }
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
-  text-decoration: none;
-  margin-left: auto;
 }
-.btn-stats:hover {
+.tools-btn:hover,
+.tools-btn[aria-expanded="true"] {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-soft);
 }
+
+/* Something inside the menu wants attention (pending facts) — otherwise the
+   badge would be invisible while the menu is closed. */
+.tools-btn-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+.tools-btn-dot[hidden] { display: none; }
+
+.tools-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 190px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+}
+.tools-menu[hidden] { display: none; }
+
+.tools-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: none;
+  border: none;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tools-item:hover { background: var(--surface-inset); }
+
+.tools-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.tools-item-danger { color: var(--text-tertiary); }
+.tools-item-danger:hover { color: var(--red); background: var(--red-bg); }
 
 /* ─── Version Badge ─────────────────────────────────────── */
 
@@ -3974,10 +4127,6 @@ main { height: calc(100vh - 56px); }
 .version-badge.version-stale { color: #fff; background: var(--danger, #c0392b); }
 
 /* ─── Auto-send Panel ───────────────────────────────────── */
-
-/* Header: Auto-send button takes over the auto margin; Stats follows it */
-.btn-autosend { margin-left: auto; }
-.btn-stats-follow { margin-left: 0; }
 
 .autosend-overlay {
   position: fixed;
@@ -4100,27 +4249,6 @@ main { height: calc(100vh - 56px); }
   cursor: not-allowed;
 }
 
-/* ─── Logout Button ─────────────────────────────────────── */
-
-.btn-logout {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--text-tertiary);
-  padding: 5px 14px;
-  border-radius: 20px;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  white-space: nowrap;
-  margin-left: 0;
-}
-.btn-logout:hover {
-  border-color: var(--red);
-  color: var(--red);
-  background: var(--red-bg);
-}
 
 /* ─── Toast Notifications ────────────────────────────────── */
 
@@ -4295,15 +4423,16 @@ main { height: calc(100vh - 56px); }
   header h1 { display: none; }
 
   #stats-bar { display: none; }
-  .btn-stats { display: none; }
+  /* Bottom nav carries these on mobile. */
+  .header-tools { display: none; }
 
-  nav {
-    flex: 1;
-    overflow-x: auto;
-    scrollbar-width: none;
-    gap: 0;
-  }
-  nav::-webkit-scrollbar { display: none; }
+  /* Deleted, not scoped: a bare `nav { overflow-x: auto }` lived here to make the
+     header tab strip swipeable, but that strip is display:none on mobile (see
+     #primary-nav below) so it had no target left. It still matched
+     <nav id="bottom-nav">, and overflow-x:auto forces overflow-y from visible to
+     auto — turning the bottom nav into a scroll container that clipped the More
+     popover (positioned above it) out of existence. The menu opened, painted
+     nowhere, and every tap fell through to the queue behind it. */
 
   .tab {
     padding: 6px 12px;
@@ -4314,12 +4443,6 @@ main { height: calc(100vh - 56px); }
 
   /* Hide test tab on mobile */
   .tab[data-tab="test"] { display: none; }
-
-  .btn-logout {
-    padding: 4px 10px;
-    font-size: 10px;
-    flex-shrink: 0;
-  }
 
   /* ── Main Layout ───────────────────────────────────────── */
 
@@ -5130,6 +5253,10 @@ main { height: calc(100vh - 56px); }
     padding-bottom: env(safe-area-inset-bottom, 0);
     z-index: 100;
     box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+    /* Load-bearing: the More popover sits entirely outside this box (above it),
+       so any overflow other than visible clips it away. Stated explicitly so a
+       future `nav {}` rule can't silently take the menu out again. */
+    overflow: visible;
   }
 
   .bottom-tab {
@@ -5205,9 +5332,20 @@ main { height: calc(100vh - 56px); }
     border-radius: 10px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
     flex-direction: column;
-    min-width: 160px;
+    min-width: 180px;
+    /* Nine entries overflow a short phone, so the menu scrolls rather than
+       running off the top of the screen. */
+    max-height: calc(100vh - 90px);
+    overflow-y: auto;
     padding: 4px;
     z-index: 101;
+  }
+
+  .bottom-more-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--border);
+    flex: 0 0 auto;
   }
 
   .bottom-more-popover button,
@@ -5233,10 +5371,13 @@ main { height: calc(100vh - 56px); }
     background: var(--surface-inset);
   }
 
-  .bottom-more-onme { color: var(--accent); font-weight: 600; }
+  /* Needs the parent in the selector to beat `.bottom-more-popover button`,
+     which set every row to --text and had been silently winning. */
+  .bottom-more-popover .bottom-more-onme { color: var(--accent); font-weight: 600; }
 
-  /* Hide top nav tabs on mobile — bottom nav replaces them */
-  header nav { display: none; }
+  /* Hide top nav tabs on mobile — bottom nav replaces them. Must out-specify
+     `#primary-nav { display: flex }`, so it is matched by id here too. */
+  header nav, header #primary-nav { display: none; }
 
   /* Show app title on mobile to fill space cleanly */
   header h1 {

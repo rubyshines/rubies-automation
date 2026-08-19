@@ -44,25 +44,47 @@
     <div id="stats-bar">
       <span id="stat-attention" class="stat stat-fixed">--</span>
     </div>
-    <nav>
-      <button class="tab active" data-tab="new" onclick="switchTab('new')">New <span class="tab-count" id="tab-count-new"></span></button>
-      <button class="tab" data-tab="followup" onclick="switchTab('followup')">Follow-up <span class="tab-count" id="tab-count-followup"></span></button>
-      <button class="tab tab-onme" data-tab="onme" onclick="switchTab('onme')">On Me <span class="tab-count" id="tab-count-onme"></span></button>
-      <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
-      <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
-      <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
-      <button class="tab" data-tab="outreach" onclick="switchTab('outreach')">Outreach <span class="tab-count" id="tab-count-outreach"></span></button>
-      <button class="tab" data-tab="swimwear" onclick="switchTab('swimwear')">Free Swimwear <span class="tab-count" id="tab-count-swimwear"></span></button>
-      <button class="tab" data-tab="reviews" onclick="switchTab('reviews')">Reviews <span class="tab-count" id="tab-count-reviews"></span></button>
-      <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
+    <!-- Primary nav. #nav-tabs holds every section button; layoutNavOverflow()
+         moves the ones that don't fit into #nav-more-menu and back again, so the
+         buttons (and their count/progress ids) are the same DOM nodes wherever
+         they live. -->
+    <nav id="primary-nav" aria-label="Sections">
+      <div class="nav-tabs" id="nav-tabs">
+        <button class="tab active" data-tab="new" onclick="switchTab('new')">New <span class="tab-count" id="tab-count-new"></span></button>
+        <button class="tab" data-tab="followup" onclick="switchTab('followup')">Follow-up <span class="tab-count" id="tab-count-followup"></span></button>
+        <button class="tab tab-onme" data-tab="onme" onclick="switchTab('onme')">On Me <span class="tab-count" id="tab-count-onme"></span></button>
+        <button class="tab" data-tab="parked" onclick="switchTab('parked')">Parked <span class="tab-count" id="tab-count-parked"></span></button>
+        <button class="tab" data-tab="snoozed" onclick="switchTab('snoozed')">Snoozed <span class="tab-count" id="tab-count-snoozed"></span></button>
+        <button class="tab" data-tab="closed" onclick="switchTab('closed')">Closed</button>
+        <button class="tab" data-tab="outreach" onclick="switchTab('outreach')">Outreach <span class="tab-count" id="tab-count-outreach"></span></button>
+        <button class="tab" data-tab="swimwear" onclick="switchTab('swimwear')">Free Swimwear <span class="tab-count" id="tab-count-swimwear"></span></button>
+        <button class="tab" data-tab="reviews" onclick="switchTab('reviews')">Reviews <span class="tab-count" id="tab-count-reviews"></span></button>
+        <button class="tab" data-tab="adhoc" onclick="switchTab('adhoc')">Ad Hoc</button>
+      </div>
+      <div class="nav-more" id="nav-more" hidden>
+        <button class="tab nav-more-btn" id="nav-more-btn" onclick="toggleNavMore(event)"
+                aria-haspopup="true" aria-expanded="false" aria-controls="nav-more-menu"
+                title="Sections that don't fit">More <span class="tab-count" id="nav-more-count"></span><span class="nav-caret" aria-hidden="true"></span></button>
+        <div class="nav-more-menu" id="nav-more-menu" role="menu" hidden></div>
+      </div>
     </nav>
-    <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
-    <button class="btn-stats btn-autosend" onclick="openFactsPanel()" title="Operator facts the advisor is taught (knowledge loop)">Facts <span id="facts-pending-badge"></span></button>
-    <button class="btn-stats btn-autoaction" onclick="openAutoactionPanel()" title="Auto-actions the system runs on its own">Auto-actions</button>
-    <a href="/receipts" class="btn-stats btn-stats-follow" title="Capture and review expense receipts">Receipts</a>
-    <a href="/stats" class="btn-stats btn-stats-follow" title="Performance stats">Stats</a>
+    <div class="header-tools" id="header-tools">
+      <button class="tools-btn" id="tools-btn" onclick="toggleToolsMenu(event)"
+              aria-haspopup="true" aria-expanded="false" aria-controls="tools-menu"
+              title="Tools and settings">Tools <span class="tools-btn-dot" id="tools-btn-dot" hidden></span><span class="nav-caret" aria-hidden="true"></span></button>
+      <div class="tools-menu" id="tools-menu" role="menu" hidden>
+        <button class="tools-item" role="menuitem" onclick="closeToolsMenu();openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
+        <button class="tools-item" role="menuitem" onclick="closeToolsMenu();openFactsPanel()" title="Operator facts the advisor is taught (knowledge loop)">Facts <span id="facts-pending-badge"></span></button>
+        <button class="tools-item" role="menuitem" onclick="closeToolsMenu();openAutoactionPanel()" title="Auto-actions the system runs on its own">Auto-actions</button>
+        <a class="tools-item" role="menuitem" href="/receipts" title="Capture and review expense receipts">Receipts</a>
+        <a class="tools-item" role="menuitem" href="/stats" title="Performance stats">Stats</a>
+        <div class="tools-sep"></div>
+        <button class="tools-item tools-item-danger" role="menuitem" onclick="logout()" title="Sign out">Sign out</button>
+      </div>
+    </div>
+    <!-- Stays in the header on purpose: it turns red when the loaded bundle is
+         stale, and that signal is worthless behind a menu. -->
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
-    <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
   </header>
 
   <!-- Away mode: shown only while the out-of-office ack is actively sending.
@@ -345,8 +367,10 @@
       <button onclick="bottomMoreSelect('outreach')">Outreach <span class="bottom-tab-count" id="bottom-count-outreach"></span></button>
       <button onclick="bottomMoreSelect('swimwear')">Free Swimwear <span class="bottom-tab-count" id="bottom-count-swimwear"></span></button>
       <button onclick="bottomMoreSelect('reviews')">Reviews <span class="bottom-tab-count" id="bottom-count-reviews"></span></button>
+      <div class="bottom-more-sep"></div>
       <button onclick="toggleBottomMore(event);openAutosendPanel()">Auto-send</button>
       <button onclick="toggleBottomMore(event);openFactsPanel()">Facts <span class="bottom-tab-count" id="bottom-count-facts"></span></button>
+      <button onclick="toggleBottomMore(event);openAutoactionPanel()">Auto-actions</button>
       <a href="/receipts">Receipts</a>
       <a href="/stats">Stats</a>
     </div>
