@@ -67,7 +67,23 @@ async function triageCompany(sb, { company_id, action, reason, until, now = new 
   const { error: uErr } = await sb.from('b2b_companies')
     .update({ ...patch, updated_at: now.toISOString() }).eq('id', company_id);
   if (uErr) throw new Error(uErr.message);
-  return { company_id, name: company.name, action, ...patch };
+
+  // A pending draft is a chase waiting to be sent, so deciding not to chase has
+  // to clear it. Leaving it behind does not merely look untidy: the panel merges
+  // any company holding a pending draft back INTO the queue, carrying the tier
+  // and reason frozen on the draft row, so a paused company reappeared at its
+  // old tier with a stale "now due" explanation. Superseded rather than
+  // dismissed, so the advisor's text survives as training signal.
+  let draftsCleared = 0;
+  if (action === 'pause' || action === 'snooze' || action === 'drop') {
+    const { data, error: dErr } = await sb.from('b2b_drafts')
+      .update({ status: 'superseded' })
+      .eq('company_id', company_id).eq('status', 'pending').select('id');
+    if (dErr) throw new Error(`clear pending drafts: ${dErr.message}`);
+    draftsCleared = (data || []).length;
+  }
+
+  return { company_id, name: company.name, action, drafts_cleared: draftsCleared, ...patch };
 }
 
 module.exports = { computeTriage, triageCompany };

@@ -261,3 +261,60 @@ test('companyStage is independent of conversation history', () => {
   assert.equal(companyStage(account), 'active');
   assert.equal(companyThreadStatus({ open: 0, closed: 13 }), 'inactive');
 });
+
+// ── deferred companies must not come back via the pending-draft merge ────────
+// The panel does not render assembleQueue's output — it renders
+// mergePendingDraftEntries, which adds any company holding a pending draft
+// WITHOUT consulting the cadence, using the tier/reason frozen on the draft row.
+// So pausing a company cleared it from the cadence and the panel still showed
+// it, at its old tier, with a stale "now due" reason.
+
+const NOW_D = new Date('2026-08-19T12:00:00Z');
+
+test('a paused company with a stale pending draft stays out of the queue', () => {
+  const companies = new Map([['bra-room', {
+    id: 'bra-room', name: 'The Bra Room', relationship_type: 'wholesale',
+    outreach_paused_at: '2026-08-19T10:00:00Z',
+  }]]);
+  const merged = mergePendingDraftEntries([], [
+    { company_id: 'bra-room', queue_tier: 1, queue_reason: 'promised check-in now due (164d)' },
+  ], companies);
+  assert.deepEqual(merged, [], 'the pause must survive a leftover draft');
+});
+
+test('a snoozed company with a pending draft stays out too', () => {
+  const companies = new Map([['fenway', {
+    id: 'fenway', name: 'Fenway Health', relationship_type: 'lgbtq_org',
+    snoozed_until: '2026-11-01', snoozed_at: '2026-08-19T10:00:00Z',
+  }]]);
+  const merged = mergePendingDraftEntries([], [{ company_id: 'fenway', queue_tier: 3 }], companies);
+  assert.deepEqual(merged, []);
+});
+
+test('a lapsed snooze lets the draft show again', () => {
+  const companies = new Map([['fenway', {
+    id: 'fenway', name: 'Fenway Health', relationship_type: 'lgbtq_org',
+    snoozed_until: '2026-01-01', snoozed_at: '2025-12-01T00:00:00Z',
+  }]]);
+  const merged = mergePendingDraftEntries([], [{ company_id: 'fenway', queue_tier: 3 }], companies);
+  assert.equal(merged.length, 1);
+});
+
+// The case the exclusion must NOT break: they wrote after the pause, so the
+// cadence put them in `queue` legitimately, and a draft exists for that reply.
+test('a paused company that replied still shows, with its live Tier 1', () => {
+  const companies = new Map([['bra-room', {
+    id: 'bra-room', name: 'The Bra Room', relationship_type: 'wholesale',
+    outreach_paused_at: '2026-08-01T00:00:00Z',
+  }]]);
+  const realEntry = { company_id: 'bra-room', company_name: 'The Bra Room', tier: 1, waiting_since: '2026-08-18T00:00:00Z' };
+  const merged = mergePendingDraftEntries([realEntry], [{ company_id: 'bra-room', queue_tier: 3 }], companies);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].tier, 1, 'the live cadence entry wins, not the frozen draft tier');
+});
+
+test('an unpaused company with a pending draft still shows', () => {
+  const companies = new Map([['x', { id: 'x', name: 'X', relationship_type: 'wholesale' }]]);
+  const merged = mergePendingDraftEntries([], [{ company_id: 'x', queue_tier: 4 }], companies);
+  assert.equal(merged.length, 1, 'control: the deferral is what excluded the others');
+});

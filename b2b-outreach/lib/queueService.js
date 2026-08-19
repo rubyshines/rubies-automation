@@ -19,7 +19,7 @@
  *   sendDraftById            — load a pending draft → sendB2bEmail (two-phase,
  *                              gate pass-through); marks the draft sent
  */
-const { assembleQueue } = require('./queue');
+const { assembleQueue, deferredSince } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
@@ -81,6 +81,14 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
     if (inQueue.has(d.company_id)) continue;
     const c = companiesById.get(d.company_id);
     if (!c) continue;
+    // Never resurrect a company whose outreach is deferred. Triage supersedes
+    // pending drafts on pause/snooze, so this should not fire — but this merge
+    // is what puts a company in the queue WITHOUT consulting the cadence, using
+    // the tier and reason frozen on the draft row, and a stale draft arriving by
+    // any other path would silently undo the pause. The one thing that must
+    // still get through is a genuine Tier-1 reply, and that arrives via `queue`
+    // above, so it is already excluded by the inQueue check.
+    if (deferredSince(c)) continue;
     synthetic.push({
       company_id: d.company_id,
       company_name: c.name,
