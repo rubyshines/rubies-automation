@@ -61,6 +61,14 @@ function buildShippingAddress(a, firstName, lastName) {
  * instruction to ship somewhere other than what's on file. Unspecified fields
  * fall back to the base address.
  *
+ * ONE EXCEPTION, and it is the whole reason this function is not a plain merge:
+ * a new address1 with no address2 CLEARS address2 rather than inheriting it.
+ * address2 (apartment, unit, delivery instruction) belongs to the street it was
+ * written for, so carrying it onto a different street produces an address that
+ * is wrong in a way nothing downstream can detect. Observed live: a reship to a
+ * corrected PO box kept "Right side with deck" from the returned-to-sender house
+ * address. To keep an address2 across an address1 change, pass it explicitly.
+ *
  * Returns null if both base and override are absent.
  */
 function applyShippingAddressOverride(base, override) {
@@ -70,6 +78,7 @@ function applyShippingAddressOverride(base, override) {
   if (override.last_name != null)  merged.lastName  = override.last_name;
   if (override.address1 != null)   merged.address1  = override.address1;
   if (override.address2 != null)   merged.address2  = override.address2 || '';
+  else if (override.address1 != null && override.address1 !== base?.address1) merged.address2 = '';
   if (override.city != null)       merged.city      = override.city;
   if (override.province != null)   merged.province  = override.province;
   if (override.country != null)    merged.country   = override.country;
@@ -84,12 +93,14 @@ function applyShippingAddressOverride(base, override) {
 const SHIPPING_ADDRESS_OVERRIDE_SCHEMA = {
   type: 'object',
   description:
-    'Operator override for the shipping address. When provided, takes precedence over the customer default and the previous-order address. Use whenever the customer has explicitly asked to ship to a different address than what is on file (the customer profile may not be updated yet). Provide every field of the new address; partial updates merge onto the base, but for a full address change supply all of address1, city, province, country, zip.',
+    'Operator override for the shipping address. When provided, takes precedence over the customer default and the previous-order address. Use whenever the customer has explicitly asked to ship to a different address than what is on file (the customer profile may not be updated yet). Provide every field of the new address; partial updates merge onto the base, but for a full address change supply all of address1, city, province, country, zip. ' +
+    'first_name/last_name set the RECIPIENT NAME printed on the shipping label, which is part of the address and not merely a formality — copy the name EXACTLY as the customer wrote it, including digits, suffixes, initials, or spellings that look like mistakes. Customers write an unusual name because their carrier or post office requires it (a PO box released only against a specific name); never tidy it, never fall back to the name on the Shopify profile, and if it looks wrong ship it as written and mention it rather than silently correcting it. Omit these fields only when the recipient name is unchanged. ' +
+    'Passing a new address1 without address2 CLEARS address2, because an apartment or delivery instruction from the old street is wrong on a new one — to keep it, pass it explicitly.',
   properties: {
-    first_name: { type: 'string' },
-    last_name: { type: 'string' },
+    first_name: { type: 'string', description: 'Recipient first name for the label. Copy verbatim from the customer, even if unusual.' },
+    last_name: { type: 'string', description: 'Recipient last name for the label. Copy verbatim from the customer, even if unusual.' },
     address1: { type: 'string' },
-    address2: { type: 'string', description: 'Apartment, suite, unit, etc.' },
+    address2: { type: 'string', description: 'Apartment, suite, unit, etc. Cleared when address1 changes and this is not supplied.' },
     city: { type: 'string' },
     province: { type: 'string' },
     country: { type: 'string', description: 'Two-letter country code (e.g. "AU", "US")' },

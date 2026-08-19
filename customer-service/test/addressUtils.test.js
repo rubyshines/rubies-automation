@@ -7,7 +7,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { formatAddressBlock, formatAddressLine, toCountryCode } = require('../lib/addressUtils');
+const { formatAddressBlock, formatAddressLine, formatRecipientName, toCountryCode } = require('../lib/addressUtils');
 
 // ---------------------------------------------------------------------------
 // formatAddressBlock
@@ -104,6 +104,62 @@ describe('formatAddressBlock', () => {
       country: 'USA',
     });
     assert.equal(result, '123 Main St\nPortland, OR 97227\nUSA');
+  });
+
+  // The ship-to block in a draft-order preview is the only place an operator can
+  // check the name that will be printed on the label before confirming.
+  describe('recipient name', () => {
+    it('leads the block when the address carries a camelCase Shopify name', () => {
+      const result = formatAddressBlock({
+        firstName: 'Neve', lastName: 'Graham57',
+        address1: 'PO Box 57', city: 'Tahoe City', province: 'CA', zip: '96145', country: 'United States',
+      });
+      assert.equal(result, 'Neve Graham57\nPO Box 57\nTahoe City, CA 96145\nUnited States');
+    });
+
+    it('accepts the snake_case shape used by tool parameters', () => {
+      const result = formatAddressBlock({ first_name: 'Casey', last_name: 'Smith', address1: '1 New St', city: 'Toronto' });
+      assert.equal(result, 'Casey Smith\n1 New St\nToronto');
+    });
+
+    it('renders a first name alone without a stray separator', () => {
+      const result = formatAddressBlock({ firstName: 'Neve', address1: 'PO Box 57', city: 'Tahoe City' });
+      assert.equal(result, 'Neve\nPO Box 57\nTahoe City');
+    });
+
+    it('omits the name line entirely when the address has no name', () => {
+      const result = formatAddressBlock({ address1: '1 New St', city: 'Toronto' });
+      assert.equal(result, '1 New St\nToronto');
+    });
+
+    it('returns the fallback when a name is the only field', () => {
+      // A name with no address behind it is not a shippable address — a bare
+      // "Neve" must not read as somewhere we can send a parcel.
+      assert.equal(formatAddressBlock({ firstName: 'Neve' }, '—'), '—');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatRecipientName
+// ---------------------------------------------------------------------------
+
+describe('formatRecipientName', () => {
+  it('joins camelCase first and last name', () => {
+    assert.equal(formatRecipientName({ firstName: 'Neve', lastName: 'Graham57' }), 'Neve Graham57');
+  });
+
+  it('joins snake_case first and last name', () => {
+    assert.equal(formatRecipientName({ first_name: 'Casey', last_name: 'Smith' }), 'Casey Smith');
+  });
+
+  it('falls back to a pre-joined name field', () => {
+    assert.equal(formatRecipientName({ name: 'Neve Graham57' }), 'Neve Graham57');
+  });
+
+  it('returns empty string for a nameless or absent address', () => {
+    assert.equal(formatRecipientName({ address1: '1 New St' }), '');
+    assert.equal(formatRecipientName(null), '');
   });
 });
 

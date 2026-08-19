@@ -62,7 +62,13 @@ stub(path.join(__dirname, '..', '..', 'reports', 'lib', 'warehanceClient.js'), {
 stub(path.join(LIB, 'addressValidation.js'), { validateShippingAddress: async () => state.validate });
 stub(path.join(LIB, 'tools', 'shippingLookup.js'), { getShippingZone: async () => 'ddp' });
 stub(path.join(LIB, 'tools', 'adminTools.js'), { writeAuditEntry: () => {} });
-stub(path.join(LIB, 'addressUtils.js'), { toCountryCode: (c) => (c === 'Romania' || c === 'RO' ? 'RO' : c) });
+// Only toCountryCode is stubbed; the formatting helpers are pure, so keep the
+// real ones rather than letting a partial stub silently return undefined.
+const realAddressUtils = require('../lib/addressUtils');
+stub(path.join(LIB, 'addressUtils.js'), {
+  ...realAddressUtils,
+  toCountryCode: (c) => (c === 'Romania' || c === 'RO' ? 'RO' : c),
+});
 
 const { handleEditOrder } = require('../lib/tools/editOrder');
 

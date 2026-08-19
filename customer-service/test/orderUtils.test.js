@@ -33,6 +33,7 @@ const {
   getShippingMethodTitle,
   SHIPPING_METHOD_TITLES,
   applyShippingAddressOverride,
+  SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
   normalizeCountryCode,
   normalizeShippingPrice,
   shippingPreviewLine,
@@ -186,6 +187,58 @@ describe('applyShippingAddressOverride', () => {
     const baseCopy = { ...base };
     applyShippingAddressOverride(base, { address1: 'changed' });
     assert.deepEqual(base, baseCopy);
+  });
+
+  // address2 belongs to the street it was written for. A reship to a corrected
+  // PO box once kept "Right side with deck" from the returned-to-sender house
+  // address, producing an address wrong in a way nothing downstream can catch.
+  describe('address2 does not survive an address1 change', () => {
+    const withUnit = { ...base, address1: '480 Parramatta Rd', address2: 'Right side with deck' };
+
+    it('clears address2 when address1 changes and none is supplied', () => {
+      const merged = applyShippingAddressOverride(withUnit, {
+        address1: 'PO Box 57', city: 'Tahoe City', province: 'CA', country: 'US', zip: '96145',
+      });
+      assert.equal(merged.address1, 'PO Box 57');
+      assert.equal(merged.address2, '');
+    });
+
+    it('keeps address2 when it is explicitly re-supplied with the new street', () => {
+      const merged = applyShippingAddressOverride(withUnit, { address1: '76 Parramatta Rd', address2: 'Apt 4' });
+      assert.equal(merged.address2, 'Apt 4');
+    });
+
+    it('keeps address2 when address1 is not part of the override', () => {
+      const merged = applyShippingAddressOverride(withUnit, { zip: '2048' });
+      assert.equal(merged.address2, 'Right side with deck');
+    });
+
+    it('keeps address2 when address1 is re-sent unchanged', () => {
+      const merged = applyShippingAddressOverride(withUnit, { address1: '480 Parramatta Rd', zip: '2048' });
+      assert.equal(merged.address2, 'Right side with deck');
+    });
+  });
+
+  // The recipient name is part of the address: a PO box the post office only
+  // releases against an exact name is not deliverable under the profile name.
+  it('takes the recipient name verbatim, digits and all', () => {
+    const merged = applyShippingAddressOverride(base, { first_name: 'Neve', last_name: 'Graham57' });
+    assert.equal(merged.firstName, 'Neve');
+    assert.equal(merged.lastName, 'Graham57');
+  });
+});
+
+describe('SHIPPING_ADDRESS_OVERRIDE_SCHEMA', () => {
+  it('tells the agent to copy the recipient name verbatim', () => {
+    // The agent dropped a customer-specified "57" from a name as a suspected
+    // typo. The schema description is the only place that instruction can live.
+    assert.match(SHIPPING_ADDRESS_OVERRIDE_SCHEMA.description, /verbatim|EXACTLY/i);
+    assert.match(SHIPPING_ADDRESS_OVERRIDE_SCHEMA.description, /address2/);
+  });
+
+  it('exposes first_name and last_name as overridable fields', () => {
+    assert.ok(SHIPPING_ADDRESS_OVERRIDE_SCHEMA.properties.first_name);
+    assert.ok(SHIPPING_ADDRESS_OVERRIDE_SCHEMA.properties.last_name);
   });
 });
 

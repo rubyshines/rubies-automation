@@ -26,10 +26,45 @@ const { fetchOrderByNumber, setWarehouseHold, releaseWarehouseHold, releaseAddre
 const { validateShippingAddress } = require('../addressValidation');
 const { getShippingZone } = require('./shippingLookup');
 const { writeAuditEntry } = require('./adminTools');
-const { toCountryCode } = require('../addressUtils');
+const { toCountryCode, formatAddressBlock } = require('../addressUtils');
+const { applyShippingAddressOverride, SHIPPING_ADDRESS_OVERRIDE_SCHEMA } = require('../orderUtils');
 
 // Server-side store for pending edit data (MCP can't round-trip custom fields)
 const pendingEdits = new Map();
+
+/**
+ * Build the complete OrderInput.shippingAddress for an address change.
+ *
+ * Always sends the WHOLE address rather than only the fields the operator named.
+ * A partial address leaves the result up to Shopify's merge semantics, which is
+ * how an address1-only correction can keep the previous street's apartment line
+ * or lose the recipient name. Merging through applyShippingAddressOverride means
+ * edit_order resolves an override exactly the way the order-creation tools do —
+ * including that helper's rule that a new address1 clears a stale address2.
+ */
+function buildMergedShippingAddress(baseAddr, override) {
+  const merged = applyShippingAddressOverride({
+    firstName: baseAddr?.firstName || '',
+    lastName: baseAddr?.lastName || '',
+    address1: baseAddr?.address1 || '',
+    address2: baseAddr?.address2 || '',
+    city: baseAddr?.city || '',
+    province: baseAddr?.province || '',
+    zip: baseAddr?.zip || '',
+  }, override);
+  return {
+    firstName: merged.firstName || '',
+    lastName: merged.lastName || '',
+    address1: merged.address1,
+    address2: merged.address2 || '',
+    city: merged.city,
+    province: merged.province,
+    zip: merged.zip,
+    // countryCode is a CountryCode enum — normalize so a spelled-out country
+    // isn't rejected, and hold the order's existing country when unchanged.
+    countryCode: toCountryCode(override?.country) || (baseAddr?.countryCodeV2 || '').toUpperCase(),
+  };
+}
 
 /**
  * Calculate effective discount percentage on a line item from its allocations.
@@ -106,17 +141,12 @@ const tools = [
           },
         },
         shipping_address: {
-          type: 'object',
-          description: 'Update shipping address. Can be used alone (address-only update) or with swap_items. Fields: address1, address2, city, province, country, zip, first_name, last_name.',
+          ...SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
+          description: 'Update the shipping address on this order. Can be used alone (address-only update) or with swap_items. ' +
+            SHIPPING_ADDRESS_OVERRIDE_SCHEMA.description,
           properties: {
-            first_name: { type: 'string' },
-            last_name: { type: 'string' },
-            address1: { type: 'string' },
-            address2: { type: 'string' },
-            city: { type: 'string' },
-            province: { type: 'string' },
-            country: { type: 'string', description: 'Country code e.g. "US", "CA", "AU"' },
-            zip: { type: 'string' },
+            ...SHIPPING_ADDRESS_OVERRIDE_SCHEMA.properties,
+            country: { type: 'string', description: 'Country code e.g. "US", "CA", "AU". A full name ("United States") is accepted and normalized.' },
           },
         },
         note: {
@@ -168,17 +198,9 @@ const tools = [
         // silently dropped unless the operator happened to re-pass it here.
         const addr = shipping_address || _edit_data.shipping_address;
         if (addr) {
-          const addrInput = {};
-          if (addr.first_name) addrInput.firstName = addr.first_name;
-          if (addr.last_name) addrInput.lastName = addr.last_name;
-          if (addr.address1) addrInput.address1 = addr.address1;
-          if (addr.address2 !== undefined) addrInput.address2 = addr.address2 || '';
-          if (addr.city) addrInput.city = addr.city;
-          if (addr.province) addrInput.province = addr.province;
-          if (addr.country) addrInput.countryCode = toCountryCode(addr.country);
-          if (addr.zip) addrInput.zip = addr.zip;
+          const addrInput = buildMergedShippingAddress(_edit_data.old_address, addr);
           await updateOrderShippingAddress(committedOrder.id, addrInput);
-          lines.push('**Shipping address:** Updated');
+          lines.push('**Shipping address:** Updated', formatAddressBlock(addrInput));
 
           // On a cross-border change, re-match the Warehance shipping method to
           // the new zone (Shopify's shipping line title is immutable on placed
@@ -333,15 +355,7 @@ const tools = [
         const newCountry = (toCountryCode(shipping_address.country) || '').toUpperCase();
         const countryChanged = newCountry && oldCountry && newCountry !== oldCountry;
 
-        const addrInput = {};
-        if (shipping_address.first_name) addrInput.firstName = shipping_address.first_name;
-        if (shipping_address.last_name) addrInput.lastName = shipping_address.last_name;
-        if (shipping_address.address1) addrInput.address1 = shipping_address.address1;
-        if (shipping_address.address2 !== undefined) addrInput.address2 = shipping_address.address2 || '';
-        if (shipping_address.city) addrInput.city = shipping_address.city;
-        if (shipping_address.province) addrInput.province = shipping_address.province;
-        if (shipping_address.country) addrInput.countryCode = shipping_address.country;
-        if (shipping_address.zip) addrInput.zip = shipping_address.zip;
+        const addrInput = buildMergedShippingAddress(order.shippingAddress, shipping_address);
 
         const updated = await updateOrderShippingAddress(order.id, addrInput);
         const a = updated.shippingAddress;
@@ -349,7 +363,8 @@ const tools = [
           '**Shipping Address Updated**',
           '',
           `**Order:** ${order.name} — ${getAdminUrl(order.id)}`,
-          `**New address:** ${[a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`, a.country].filter(Boolean).join(', ')}`,
+          '**New address:**',
+          formatAddressBlock(a),
         ];
 
         // Fetch the Warehance order once for three post-update tasks:
@@ -712,6 +727,9 @@ const tools = [
         // shipping_line_title let Phase 2 fix the Warehance method on a
         // cross-border change (Shopify's shipping line title is immutable).
         shipping_address: shipping_address || null,
+        // The full current address, so Phase 2 merges the override onto what the
+        // order actually has rather than sending a partial address.
+        old_address: order.shippingAddress || null,
         old_country: (order.shippingAddress?.countryCodeV2 || '').toUpperCase(),
         shipping_line_title: order.shippingLines?.[0]?.title || '',
       };
@@ -740,9 +758,10 @@ const tools = [
       }
 
       if (shipping_address) {
-        const a = shipping_address;
-        const preview = [a.address1, a.address2, a.city, `${a.province || ''} ${a.zip || ''}`.trim(), a.country].filter(Boolean).join(', ');
-        lines.push('', `**Shipping address change:** ${preview}`);
+        // Preview the MERGED result, not the operator's raw input — that is what
+        // will actually be written, recipient name included.
+        const a = buildMergedShippingAddress(order.shippingAddress, shipping_address);
+        lines.push('', '**Shipping address change:**', formatAddressBlock({ ...a, country: a.countryCode }));
         const newCountry = (toCountryCode(a.country) || '').toUpperCase();
         if (newCountry && editData.old_country && newCountry !== editData.old_country) {
           lines.push(`  → Cross-border change (${editData.old_country} → ${newCountry}); Warehance shipping method will be re-matched.`);

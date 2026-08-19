@@ -200,7 +200,10 @@ const tools = [
           if (match.shippingAddress) {
             const a = match.shippingAddress;
             addressBlock = formatAddressBlock(a);
-            shippingAddress = buildShippingAddress(a, shippingAddress?.firstName, shippingAddress?.lastName);
+            // The order's own recipient name wins over the customer profile name:
+            // it is who the last parcel was actually addressed to, and it is what
+            // the preview above renders. Profile name is only a fallback.
+            shippingAddress = buildShippingAddress(a, a.firstName || shippingAddress?.firstName, a.lastName || shippingAddress?.lastName);
           }
         } else {
           // Auto-find: try Supabase first, fall back to Shopify
@@ -222,7 +225,8 @@ const tools = [
           // Prefer shipping address from the original order over customer default
           if (eligible.shippingAddress) {
             addressBlock = formatAddressBlock(eligible.shippingAddress);
-            shippingAddress = buildShippingAddress(eligible.shippingAddress, shippingAddress?.firstName, shippingAddress?.lastName);
+            const ea = eligible.shippingAddress;
+            shippingAddress = buildShippingAddress(ea, ea.firstName || shippingAddress?.firstName, ea.lastName || shippingAddress?.lastName);
           }
         }
       } catch (err) {

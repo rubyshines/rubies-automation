@@ -112,12 +112,33 @@ function toCountryCode(value) {
 }
 
 /**
+ * Extract the recipient name from an address object.
+ *
+ * Accepts Shopify's camelCase MailingAddress shape (firstName/lastName), the
+ * snake_case shape our tool parameters use (first_name/last_name), and a
+ * pre-joined `name`. Returns '' when the address carries no name.
+ */
+function formatRecipientName(a) {
+  if (!a) return '';
+  const first = a.firstName != null ? a.firstName : a.first_name;
+  const last = a.lastName != null ? a.lastName : a.last_name;
+  const joined = cleanLine([first, last]);
+  return joined || cleanLine([a.name]);
+}
+
+/**
  * Format an address as a multi-line block for display.
  *
+ *   Jane Smith
  *   123 Main St
  *   Apt 4
  *   Portland, OR 97227
  *   United States
+ *
+ * The recipient name leads the block whenever the address carries one. This is
+ * the only place an operator reviewing a draft-order preview can see what name
+ * will be printed on the label, and the name is sometimes load-bearing for
+ * delivery (a PO box the post office only releases against an exact name).
  *
  * Province and zip are dropped if null/empty. Country is dropped if null.
  * Returns fallback (default 'No address on file') when address is null/empty.
@@ -125,6 +146,7 @@ function toCountryCode(value) {
 function formatAddressBlock(a, fallback = 'No address on file') {
   if (!a) return fallback;
 
+  const nameLine = formatRecipientName(a);
   const line1 = cleanLine([a.address1]);
   const line2 = cleanLine([a.address2]);
 
@@ -145,8 +167,11 @@ function formatAddressBlock(a, fallback = 'No address on file') {
 
   const countryLine = cleanLine([a.country]);
 
-  const lines = [line1, line2, cityLine, countryLine].filter(Boolean);
-  return lines.length ? lines.join('\n') : fallback;
+  // A name with no address behind it is not an address — keep the fallback so a
+  // customer with a name and no address on file doesn't read as deliverable.
+  const addressLines = [line1, line2, cityLine, countryLine].filter(Boolean);
+  if (!addressLines.length) return fallback;
+  return [nameLine, ...addressLines].filter(Boolean).join('\n');
 }
 
 /**
@@ -171,4 +196,4 @@ function formatAddressLine(a, fallback = 'No address') {
   return parts.length ? parts.join(', ') : fallback;
 }
 
-module.exports = { formatAddressBlock, formatAddressLine, toCountryCode };
+module.exports = { formatAddressBlock, formatAddressLine, formatRecipientName, toCountryCode };

@@ -189,7 +189,7 @@ async function getCustomerOrders(customerId, limit = 10, { queryFilter } = {}) {
               displayFulfillmentStatus
               cancelledAt
               shippingAddress {
-                address1 address2 city province country countryCodeV2 zip
+                firstName lastName address1 address2 city province country countryCodeV2 zip
               }
               totalPriceSet { shopMoney { amount currencyCode } }
               currentTotalPriceSet { shopMoney { amount currencyCode } }
@@ -243,6 +243,8 @@ async function getOrderByNumber(orderNumber) {
               email
             }
             shippingAddress {
+              firstName
+              lastName
               address1
               address2
               city
@@ -339,7 +341,7 @@ async function getCustomerFulfilledOrders(customerId, limit = 10) {
             displayFulfillmentStatus
             cancelledAt
             shippingAddress {
-              address1 address2 city province country countryCodeV2 zip
+              firstName lastName address1 address2 city province country countryCodeV2 zip
             }
             totalPriceSet { shopMoney { amount currencyCode } }
             currentTotalPriceSet { shopMoney { amount currencyCode } }
@@ -1184,7 +1186,7 @@ async function getOrderForEdit(orderNumber) {
               email
             }
             shippingAddress {
-              address1 address2 city province country countryCodeV2 zip
+              firstName lastName address1 address2 city province country countryCodeV2 zip
             }
             shippingLines(first: 1) {
               edges { node { title } }
@@ -2161,7 +2163,7 @@ async function updateOrderShippingAddress(orderId, shippingAddress) {
       orderUpdate(input: $input) {
         order {
           id
-          shippingAddress { address1 address2 city province provinceCode zip country countryCodeV2 }
+          shippingAddress { firstName lastName address1 address2 city province provinceCode zip country countryCodeV2 }
         }
         userErrors { field message }
       }
