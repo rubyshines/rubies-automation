@@ -132,6 +132,12 @@ const PIPELINES = [
     },
   },
   {
+    name: 'Thread Discovery',
+    // Must precede Relationship Summaries: anything imported here should be
+    // summarized the same night rather than waiting for tomorrow's run.
+    run: () => require('./b2b-outreach/lib/manualSendReconcile').runDiscoverySweep(),
+  },
+  {
     name: 'Relationship Summaries',
     // After every Gmail step above, so the day's messages have landed before we
     // recap them. Deliberately not run on panel open: fetchCompanyThreads kicks

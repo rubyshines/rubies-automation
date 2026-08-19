@@ -277,6 +277,7 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
 
   let discovered = 0;
   let repaired = 0;
+  let failed = 0;
   for (const t of found) {
     // A known thread is NOT necessarily a complete one. Threads created by an
     // inbound pubsub event hold only the messages pubsub delivered — skipping
@@ -303,28 +304,172 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
       threadId = existingThread.id;
       if (last.sent_at) await sb.from('b2b_threads').update({ last_message_at: last.sent_at }).eq('id', threadId);
     } else {
+      // Insert, then recover from a lost race — NOT an upsert. The uniqueness we
+      // want is (company_id, gmail_thread_id), but that index is partial
+      // (`WHERE gmail_thread_id IS NOT NULL`, so a thread can sit uncorrelated
+      // with a NULL id), and ON CONFLICT cannot infer a partial index: it fails
+      // with "no unique or exclusion constraint matching the ON CONFLICT
+      // specification" for every row. Same shape as replyCorrelation's create.
       const { data: thread, error: tErr } = await sb.from('b2b_threads')
-        .upsert({
+        .insert({
           company_id: companyId, thread_type: 'other', subject,
           gmail_thread_id: t.id, status: discoveredThreadStatus(last),
           last_message_at: last.sent_at,
-        // (company_id, gmail_thread_id), not gmail_thread_id alone. On the old
-        // key, a company discovering a Gmail thread another org already had a row
-        // for did not create its own — the upsert UPDATED theirs, rewriting
-        // company_id and handing that org's entire conversation to this one.
-        }, { onConflict: 'company_id,gmail_thread_id' })
+        })
         .select('id').single();
-      if (tErr) { console.error(`[discover] thread insert ${t.id}: ${tErr.message}`); continue; }
-      threadId = thread.id;
+      if (tErr) {
+        // A concurrent discovery got there first: adopt its row rather than
+        // dropping this company's messages on the floor. Scoped to THIS company —
+        // another org legitimately holds its own row for the same Gmail thread.
+        const { data: again } = await sb.from('b2b_threads')
+          .select('id').eq('company_id', companyId).eq('gmail_thread_id', t.id).maybeSingle();
+        if (!again) {
+          console.error(`[discover] thread insert ${t.id}: ${tErr.message}`);
+          failed++;
+          continue;
+        }
+        threadId = again.id;
+      } else {
+        threadId = thread.id;
+      }
     }
 
     const { error: mErr } = await sb.from('b2b_messages')
       .upsert(rows.map(r => ({ ...r, thread_id: threadId, company_id: companyId })),
         { onConflict: 'gmail_message_id', ignoreDuplicates: true });
-    if (mErr) { console.error(`[discover] messages ${t.id}: ${mErr.message}`); continue; }
+    if (mErr) { console.error(`[discover] messages ${t.id}: ${mErr.message}`); failed++; continue; }
     if (existingThread) repaired++; else discovered++;
   }
-  return { discovered, repaired };
+  // `failed` is not cosmetic: the nightly sweep stamps a company as searched,
+  // and a run whose writes all failed would otherwise mark itself done and not
+  // be retried for a month. Silent failure that records itself as success is
+  // exactly how this subsystem has gone wrong before.
+  return { discovered, repaired, failed };
 }
 
-module.exports = { reconcileThreads, discoverCompanyThreads, discoveredThreadStatus, partitionThreadMessages, messageInvolves, addressesIn, extractPlainText };
+// ---------------------------------------------------------------------------
+// Nightly discovery sweep — companies the engine has never looked for
+// ---------------------------------------------------------------------------
+
+/**
+ * Decide which companies the sweep should search, and in what order. PURE.
+ *
+ * `discoverCompanyThreads` only ever ran from the per-company detail pane, so a
+ * company nobody had clicked held zero b2b_messages and the cadence reasoned from
+ * an empty record. That is not a missing-data problem, it is a WRONG-ANSWER
+ * problem: `lastOutboundAt IS NULL` reads as "never contacted", so an org that
+ * wrote to us last month can sit at Tier 3 "no prior outbound" instead of Tier 1
+ * "waiting on us". Trans Closet of the Hudson Valley did exactly that, and a
+ * hand-run discovery flipped it to Tier 1 with 12 messages going back a year.
+ *
+ * Ordering matters more than it looks. Most empty companies are `prospect` —
+ * never approached, so there is genuinely nothing in Gmail to find. The ones that
+ * carry evidence of a relationship but no messages are the ones producing wrong
+ * tiers today, so they go first and a truncating limit can only ever defer the
+ * quiet cases.
+ *
+ * @returns {object[]} companies to search, most consequential first
+ */
+function selectCompaniesForDiscovery({ companies, companiesWithMessages, emailsByCompany, staleBefore }) {
+  const withMessages = new Set(companiesWithMessages);
+  // 'prospect' means never approached, so an empty record is expected rather than
+  // suspicious. Everything else claims a relationship the messages do not show.
+  const rank = (c) => (c.relationship_state && c.relationship_state !== 'prospect' ? 0 : 1);
+
+  return companies
+    .filter(c => !withMessages.has(c.id))
+    .filter(c => (emailsByCompany[c.id] || []).length > 0)
+    .filter(c => !c.threads_discovered_at || new Date(c.threads_discovered_at) < staleBefore)
+    .sort((a, b) => rank(a) - rank(b)
+      || String(a.threads_discovered_at || '').localeCompare(String(b.threads_discovered_at || ''))
+      || a.id.localeCompare(b.id));
+}
+
+const DISCOVERY_RETRY_DAYS = 30;
+// Higher than the per-pane default: this is a company's FIRST look, so the cap is
+// the whole relationship rather than a top-up on an already-imported thread list.
+const SWEEP_MAX_THREADS = 20;
+
+/**
+ * Search Gmail for history on companies that have none on file.
+ *
+ * Runs nightly, before the relationship-summary sweep, so anything imported here
+ * gets summarized the same night. Bounded per run and stamped per company, so the
+ * companies that genuinely have nothing are not re-searched every night forever.
+ */
+async function sweepEmptyCompanies(sb, { limit = 60, now = new Date(), retryDays = DISCOVERY_RETRY_DAYS } = {}) {
+  const companies = await fetchAllPaginated(() => sb.from('b2b_companies')
+    .select('id, relationship_state, general_email, threads_discovered_at'));
+  const messages = await fetchAllPaginated(() => sb.from('b2b_messages').select('company_id'));
+  const contacts = await fetchAllPaginated(() => sb.from('b2b_contacts')
+    .select('company_id, email').eq('is_active', true));
+
+  const emailsByCompany = {};
+  for (const c of contacts) {
+    if (c.email) (emailsByCompany[c.company_id] ||= []).push(c.email.toLowerCase());
+  }
+  for (const c of companies) {
+    if (c.general_email) (emailsByCompany[c.id] ||= []).push(c.general_email.toLowerCase());
+  }
+
+  const staleBefore = new Date(now.getTime() - retryDays * 864e5);
+  const candidates = selectCompaniesForDiscovery({
+    companies, companiesWithMessages: messages.map(m => m.company_id), emailsByCompany, staleBefore,
+  });
+
+  const results = { candidates: candidates.length, searched: 0, withHistory: 0, threadsImported: 0, failed: 0 };
+  for (const c of candidates.slice(0, limit)) {
+    try {
+      const r = await discoverCompanyThreads(sb, {
+        companyId: c.id, emails: [...new Set(emailsByCompany[c.id])],
+        maxThreads: SWEEP_MAX_THREADS, force: true,
+      });
+      results.searched += 1;
+      if (r.discovered) { results.withHistory += 1; results.threadsImported += r.discovered; }
+      // Stamped only when the search actually completed. "We looked and there was
+      // nothing" is what stops us looking again tomorrow — but a run whose writes
+      // all failed would record itself as that same result and go unretried for a
+      // month. Leave the stamp off and let the next sweep pick it up.
+      if (!r.failed) {
+        await sb.from('b2b_companies')
+          .update({ threads_discovered_at: now.toISOString() }).eq('id', c.id);
+      } else {
+        results.failed += 1;
+      }
+    } catch (err) {
+      results.failed += 1;
+      console.error(`[discoverySweep] ${c.id}: ${err.message}`);
+    }
+  }
+
+  if (candidates.length > limit) {
+    results.deferred = candidates.length - limit;
+    console.log(`[discoverySweep] ${results.deferred} companies deferred to the next run (limit ${limit})`);
+  }
+  return results;
+}
+
+/** daily-sync-all entry point. */
+async function runDiscoverySweep() {
+  const { getSupabaseClient } = require('../../shared/supabaseClient');
+  const r = await sweepEmptyCompanies(getSupabaseClient(), {});
+  console.log(`Thread Discovery — searched ${r.searched} of ${r.candidates} empty companies, `
+    + `${r.withHistory} had history (${r.threadsImported} threads imported)`
+    + `${r.deferred ? `, ${r.deferred} deferred` : ''}${r.failed ? `, ${r.failed} failed` : ''}`);
+  return {
+    sources: {
+      b2b_thread_discovery: {
+        success: r.failed === 0, rowsWritten: r.threadsImported,
+        error: r.failed ? `${r.failed} companies failed` : null,
+      },
+    },
+    status: r.failed ? 'error' : 'success',
+  };
+}
+
+module.exports = {
+  reconcileThreads, discoverCompanyThreads, discoveredThreadStatus, partitionThreadMessages,
+  messageInvolves, addressesIn, extractPlainText,
+  selectCompaniesForDiscovery, sweepEmptyCompanies, runDiscoverySweep,
+  DISCOVERY_RETRY_DAYS, SWEEP_MAX_THREADS,
+};

@@ -34,6 +34,15 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_through 
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_msg_count INTEGER;
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_claimed_at TIMESTAMPTZ;
 
+-- When we last searched Gmail for this company's history. Thread discovery used
+-- to run ONLY when an operator opened a company, so a company nobody had clicked
+-- had zero b2b_messages and the cadence reasoned from an empty record — which is
+-- indistinguishable from "never contacted" and produces a plausible, wrong tier.
+-- The nightly sweep needs this stamp to back off: without it, the ~120 companies
+-- that genuinely have no history would be re-searched against Gmail every night
+-- forever.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS threads_discovered_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_next_action ON b2b_companies (next_action_date)
   WHERE next_action_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_rel_state ON b2b_companies (relationship_state);
