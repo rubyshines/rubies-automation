@@ -2,7 +2,7 @@
 
 ## Domain Map
 - tickets, Gorgias, advisor, exchanges, sizing, drafts, knowledge base, follow-ups, incident outreach, customer notification, batch email, follow-up campaign, feedback request, mistaken pre-order → Customer Service (domain_cs.md) [CS Advisor]
-- QBO, margins, cash flow, tax, budget, CCPC, corporate, accounting → Finance (domain_finance.md) [Finance Advisor]
+- QBO, margins, cash flow, tax, budget, CCPC, corporate, accounting, receipts, expenses → Finance (domain_finance.md) [Finance Advisor]
 - retailers, lead scoring, scraping, wholesale orders, B2B, outreach → B2B Sales (domain_b2b_sales.md) [Sales Advisor]
 - SEO, Klaviyo, email campaigns, blog, competitor pricing, reviews, JudgeMe, Sadie → Marketing (domain_marketing.md) [Marketing Advisor]
 - grading, measurements, fabric deltas, size charts, design, Natta → Product Design (domain_product_design.md) [Merchandising Advisor]

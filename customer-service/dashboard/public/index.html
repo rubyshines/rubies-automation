@@ -58,6 +58,7 @@
     <button class="btn-stats btn-autosend" onclick="openAutosendPanel()" title="Auto-send allowlist">Auto-send</button>
     <button class="btn-stats btn-autosend" onclick="openFactsPanel()" title="Operator facts the advisor is taught (knowledge loop)">Facts <span id="facts-pending-badge"></span></button>
     <button class="btn-stats btn-autoaction" onclick="openAutoactionPanel()" title="Auto-actions the system runs on its own">Auto-actions</button>
+    <a href="/receipts" class="btn-stats btn-stats-follow" title="Capture and review expense receipts">Receipts</a>
     <a href="/stats" class="btn-stats btn-stats-follow" title="Performance stats">Stats</a>
     <span id="version-badge" class="version-badge" onclick="showVersionInfo()" title="Version info"></span>
     <button id="btn-logout" class="btn-logout" onclick="logout()" title="Sign out">Sign out</button>
@@ -331,6 +332,7 @@
       <button onclick="bottomMoreSelect('outreach')">Outreach</button>
       <button onclick="toggleBottomMore(event);openAutosendPanel()">Auto-send</button>
       <button onclick="toggleBottomMore(event);openFactsPanel()">Facts <span class="bottom-tab-count" id="bottom-count-facts"></span></button>
+      <a href="/receipts">Receipts</a>
       <a href="/stats">Stats</a>
     </div>
   </nav>

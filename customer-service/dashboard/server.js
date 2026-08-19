@@ -42,7 +42,7 @@ function computeBuildInfo() {
   }
   // Hash the bytes of every file the browser actually runs.
   const publicDir = path.join(__dirname, 'public');
-  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'intakeParse.js', 'messageBody.js', 'sw.js'];
+  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'intakeParse.js', 'messageBody.js', 'sw.js', 'receipts.html', 'receipts.js', 'receipts.css'];
   const h = crypto.createHash('sha256');
   for (const f of assetFiles) {
     try { h.update(fs.readFileSync(path.join(publicDir, f))); } catch { /* file optional */ }
@@ -3363,10 +3363,112 @@ async function apiUnpendTicket(ticketId, body = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Expense receipts
+//
+// Thin wrappers only. Every one of these calls straight into
+// finance/lib/receiptCapture.js — the same functions the finance MCP tools
+// call — so a receipt captured from a phone and one captured by an advisor go
+// through identical validation, idempotency and reconciliation.
+// ---------------------------------------------------------------------------
+
+const receiptCapture = require('../../finance/lib/receiptCapture');
+
+// The dashboard downscales before upload, so anything approaching this is a
+// caller that skipped the client path. Generous enough to allow the base64
+// inflation (~4/3) of a 5MB image plus the JSON envelope.
+const MAX_RECEIPT_UPLOAD_CHARS = 8 * 1024 * 1024;
+
+function sessionEmail(req) {
+  try {
+    const session = verifySession(parseCookies(req).session);
+    return session?.email || null;
+  } catch { return null; }
+}
+
+async function apiReceiptsList(params) {
+  const [list, summary] = await Promise.all([
+    receiptCapture.listReceipts({
+      status: params.get('status') || null,
+      search: params.get('search') || null,
+      from: params.get('from') || null,
+      to: params.get('to') || null,
+      limit: parseInt(params.get('limit') || '100', 10),
+      offset: parseInt(params.get('offset') || '0', 10),
+    }),
+    receiptCapture.receiptSummary({ from: params.get('from') || null, to: params.get('to') || null }),
+  ]);
+  return { ...list, summary };
+}
+
+async function apiReceiptGet(id) {
+  const result = await receiptCapture.getReceipt(id);
+  if (!result) { const e = new Error(`No receipt #${id}`); e.statusCode = 404; throw e; }
+  return result;
+}
+
+async function apiReceiptCapture(body, req) {
+  const raw = body?.image_base64 || '';
+  if (!raw) { const e = new Error('No image was uploaded'); e.statusCode = 400; throw e; }
+  if (raw.length > MAX_RECEIPT_UPLOAD_CHARS) {
+    const e = new Error('That image is too large — retake it or pick a smaller file.');
+    e.statusCode = 413;
+    throw e;
+  }
+  try {
+    return await receiptCapture.captureReceipt({
+      imageBase64: String(raw).replace(/^data:[^;]+;base64,/, ''),
+      mimeType: body.mime_type,
+      capturedBy: sessionEmail(req),
+      notes: body.notes || null,
+    });
+  } catch (err) {
+    // Bad image / bad type / oversize are the operator's problem to fix, not a
+    // server fault — surfacing them as 500s makes the UI say "try again" for
+    // something retrying will never fix.
+    if (/Unsupported image type|empty|the limit is|is required/i.test(err.message)) err.statusCode = 400;
+    throw err;
+  }
+}
+
+async function apiReceiptUpdate(id, body) {
+  return receiptCapture.updateReceipt(id, body || {});
+}
+
+async function apiReceiptDelete(id) {
+  return receiptCapture.deleteReceipt(id);
+}
+
+/**
+ * Bulk-confirm. Used by the list's "confirm all clean" action — the arithmetic
+ * has already been checked on every one of these, so the operator is
+ * confirming a filtered set they can see, not a blind sweep.
+ */
+async function apiReceiptsConfirm(body) {
+  const ids = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Number.isInteger) : [];
+  if (!ids.length) { const e = new Error('No receipt ids supplied'); e.statusCode = 400; throw e; }
+  const results = [];
+  for (const id of ids) {
+    try {
+      await receiptCapture.updateReceipt(id, { review_status: body.status || 'confirmed' });
+      results.push({ id, ok: true });
+    } catch (err) {
+      results.push({ id, ok: false, error: err.message });
+    }
+  }
+  return { confirmed: results.filter(r => r.ok).length, results };
+}
+
+async function apiReceiptAccounts() {
+  return { accounts: await receiptCapture.loadExpenseAccounts() };
+}
+
+// ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
 
 const routes = {
+  'GET /api/receipts': (req) => apiReceiptsList(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/receipts/accounts': () => apiReceiptAccounts(),
   'GET /api/drafts': (req) => apiGetDrafts(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/stats': () => apiGetStats(),
   'GET /api/stats/daily': (req) => apiGetStatsDaily(new URL(req.url, 'http://localhost').searchParams),
@@ -3432,6 +3534,13 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/resend$/, handler: (_, id) => apiSwimwearResend(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/swimwear\/(\d+)\/summary$/, handler: (_, id) => apiSwimwearSummary(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/console\/extract-pdf$/, handler: (body) => apiConsoleExtractPdf(body) },
+  // Receipts. `capture` and `confirm` are listed before the numeric-id routes;
+  // the id patterns are \d+-anchored so the order is belt-and-braces.
+  { method: 'POST', pattern: /^\/api\/receipts\/capture$/, handler: (body, _m, req) => apiReceiptCapture(body, req) },
+  { method: 'POST', pattern: /^\/api\/receipts\/confirm$/, handler: (body) => apiReceiptsConfirm(body) },
+  { method: 'GET',  pattern: /^\/api\/receipts\/(\d+)$/, handler: (_, id) => apiReceiptGet(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/receipts\/(\d+)\/update$/, handler: (body, id) => apiReceiptUpdate(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/receipts\/(\d+)\/delete$/, handler: (_, id) => apiReceiptDelete(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/close$/, handler: (body, id) => apiCloseDraft(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/refresh$/, handler: (_, id) => apiRefreshDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/drafts\/(\d+)\/release$/, handler: (body, id) => apiReleaseDraft(parseInt(id), body) },
@@ -3854,7 +3963,10 @@ async function handleRequest(req, res) {
   }
 
   // Static files
-  let filePath = pathname === '/' ? '/index.html' : pathname === '/stats' ? '/stats.html' : pathname;
+  let filePath = pathname === '/' ? '/index.html'
+    : pathname === '/stats' ? '/stats.html'
+    : pathname === '/receipts' ? '/receipts.html'
+    : pathname;
   const fullPath = path.join(STATIC_DIR, filePath);
 
   // Prevent directory traversal
@@ -3878,7 +3990,7 @@ async function handleRequest(req, res) {
       // content hash so a new deploy busts any cached app.js/styles.css.
       const v = GIT_VERSION.assetHash;
       let html = fs.readFileSync(fullPath, 'utf8')
-        .replace(/(href|src)="(\/(?:app|styles|voiceInput|intakeParse|messageBody)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
+        .replace(/(href|src)="(\/(?:app|styles|voiceInput|intakeParse|messageBody|receipts)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
         .replace('</head>', `<script>window.__BUILD__=${JSON.stringify({
           commit: GIT_VERSION.short, assetHash: v, started: GIT_VERSION.started,
         })};</script>\n</head>`);
