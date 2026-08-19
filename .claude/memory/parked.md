@@ -33,15 +33,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Priority: low
 - Notes: Form-contact companies get a normal email draft — "Hi [name]," plus the full signature block — which reads slightly odd pasted into a form that already has separate name and email fields. Deliberately left alone until a real one has been sent: it may need nothing, or it may want a shorter form-shaped variant that drops the greeting and signature. The advisor is not told the delivery channel today; `queueEntry` would be the place to pass it. Revisit after the first Genderswap submission.
 
-## Queue reasons from empty history — thread discovery never runs on the queue build
-- Parked: 2026-08-06
-- Last touched: 2026-08-11
-- Domains: b2b_sales, community, tech
-- Type: bug
-- Priority: high
-- **2026-08-11:** still unfixed structurally, but the 18 active donation partners were discovered by hand (74 threads imported), so that cohort now reasons from real history. Confirms the diagnosis at scale: 13 of the 18 had zero messages and would have drafted from an empty record. Two had no importable history for a second reason — the only address on file was not the one we actually corresponded with (MassTPC: survey gave `programs@`, every thread is with `mg@`). So the queue-build fix needs to run discovery across ALL of a company's known addresses, not just the primary.
-- Notes: `discoverCompanyThreads` runs only in `fetchCompanyThreads` (the per-company detail pane), never during the queue build — `reconcileThreads` only refreshes threads that already exist. So a company nobody has clicked has zero `b2b_messages`, and cadence reasons from an empty record. Concrete case: Trans Closet of the Hudson Valley wrote in Aug 2026 and sat at Tier 3 `community_checkin` ("back_to_school window, no prior outbound") instead of Tier 1 "waiting on us"; running discovery by hand imported 12 messages back to Jun 2025 and it flipped to Tier 1 immediately. Compounding design flaw: `community_checkin` treats `lastOutboundAt IS NULL` as infinitely overdue, but null means either "genuinely never contacted" or "no data imported yet" and the engine cannot tell those apart. Fix the data, not the rule: run bounded discovery for companies with zero messages during the queue build (or a nightly pass), so cadence reasons from facts. Until then any newly-added company shows a plausible-but-wrong tier until someone opens it.
-
 ## Nothing stops duplicate company rows re-appearing on the next import
 - Parked: 2026-08-11
 - Last touched: 2026-08-11

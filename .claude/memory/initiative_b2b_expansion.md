@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-08-13
+last_updated: 2026-08-19
 ---
 
 ## Goal
@@ -16,6 +16,8 @@ Grow retailer partnerships and wholesale revenue.
 4. Tier 3 custom searches — not started
 
 ## Current Status
+**2026-08-19: the engine can finally see its own correspondence.** Thread discovery only ever ran when someone opened a company, so 197 of 242 companies held zero messages. A nightly sweep now searches Gmail for them: 165 searched, **70 had history**, 238 threads and 489 messages imported. Companies with history went 45 → 120. The queue did NOT grow, and that is the correct outcome — almost all the recovered history is concluded (472 of 530 threads closed; a thread whose last inbound is over 30 days old is not "waiting on us"). The value is in what the advisor reads: it reasons from real history for 120 companies now instead of 45, so it can no longer open a cold intro to an org we have corresponded with for years. Remaining blind spots: 27 companies have no address to search with, and ~120 genuinely have no history.
+
 **2026-08-13: the per-company summary is back.** The recap + next step the old Google Sheet carried had been missing from the panel since the migration — not removed, orphaned: the summariser still runs daily but writes a store the engine doesn't read, reaching 11 of 242 companies. Rebuilt company-level on `b2b_messages`, updating incrementally as messages land, and the Outreach detail pane restructured around it so relationship state is answered before the composer instead of buried under it. Next: watch the summaries against real threads for a few weeks before deciding whether the suggested next step should drive the queue.
 
 **2026-08-13: four partners were waiting and the queue could not see them.** Fixing the shared-Gmail-thread constraint (see domain Key Decision) repointed 105 mis-parented messages onto 27 new thread rows. Four orgs immediately surfaced as Tier 1 "waiting on us" — Transponder (replied **332 days** ago with an impact update and got nothing back), SoCirC (70d), Oasis Youth Center (64d), She Bop (51d). Their replies had been filed under another org's relationship, so the cadence read them as silent. Queue is 28 rows. These four are the most overdue work in the system and should be answered before any new outreach.
