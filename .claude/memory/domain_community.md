@@ -24,7 +24,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 ## Current Status
 
-- **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partner list is 18 active orgs (US/CA/CH/AU/DE).
+- **Production:** Registry is the SSOT. CS routing live. Donation page (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing) reads the published JSON. Partner list is 19 active orgs (US/CA/CH/AU/DE).
 - **Free swimwear:** live in Supabase + the dashboard "Free Swimwear" tab (~1,436 applications after de-duplication). Daily import + lifecycle reconcile run as two `daily-sync-all` sub-pipelines (`Free Swimwear Apps` + `Free Swimwear Lifecycle`). End-to-end verified 2026-06: form → sync → approve → code + acceptance email + sheet row updated. Repeat/duplicate handling runs at intake (see Key Decisions); the queue surfaces returning / possible-2nd-child / repeat badges and filters.
 
 ## Key Files
