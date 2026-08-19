@@ -8,6 +8,14 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Storefront kids/adults review filter
+- Parked: 2026-08-19
+- Domains: marketing, tech
+- Type: idea
+- Priority: medium
+- Notes: Every review now carries an `audience` tag in `judgeme_reviews` (kids / adults / both / unclear — 54% / 23% / 1% / 22% across 2,005 reviews), but it is internal only: it feeds `find_review_quotes`, campaign copy, and the Reviews tab filter, and changes nothing a shopper sees. The ask was for the site's adults/kids toggle to also filter reviews, which matters because most SKUs sell in both youth and adult sizes so a single product page mixes a parent writing about their daughter with an adult writing about herself. **Blocker is Judge.me, not us:** their API has no tag or custom-field endpoint (see the domain Key Decision), so their widget cannot filter on our tag. Doing it means exposing a public read endpoint and building a custom reviews component in the `rubies-ecom-v4` theme repo to replace the Judge.me widget wherever the toggle applies — i.e. taking on review rendering ourselves, including pagination, star summaries, and photos. Deliberately deferred until the split can be seen in real data. Worth checking first whether the mix on the highest-traffic PDPs is lopsided enough to be worth the swap; if a product's reviews are 90% one audience, a filter buys little.
+- Cheaper half-step if the full swap looks unattractive: use the tag to pick which reviews get *featured* (Judge.me has a featured flag we already sync), so the toggle's context at least influences what surfaces first.
+
 ## A bounced reply auto-closes the ticket and the customer silently disappears
 - Parked: 2026-08-12
 - Domains: cs

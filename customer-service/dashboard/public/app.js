@@ -209,7 +209,7 @@ function startAutoRefresh() {
 
 // Non-ticket-queue tabs (their own panels own the sidebar, so loadTicketQueue
 // must not clobber it) plus search (its results replace the tab queue).
-const NON_QUEUE_TABS = ['adhoc', 'outreach', 'swimwear'];
+const NON_QUEUE_TABS = ['adhoc', 'outreach', 'swimwear', 'reviews'];
 
 async function autoRefreshTick() {
   // Skip while an action is settling so the optimistic removal isn't undone
@@ -267,7 +267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach', 'swimwear'].includes(savedTab)) {
+  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach', 'swimwear', 'reviews'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -411,11 +411,13 @@ function switchTab(tab) {
   const adhocPanel = document.getElementById('panel-adhoc');
   const outreachPanel = document.getElementById('panel-outreach');
   const swimwearPanel = document.getElementById('panel-swimwear');
+  const reviewsPanel = document.getElementById('panel-reviews');
 
   if (tab === 'outreach') {
     ticketsPanel.style.display = 'none';
     adhocPanel.style.display = 'none';
     swimwearPanel.style.display = 'none';
+    reviewsPanel.style.display = 'none';
     outreachPanel.style.display = 'flex';
     localStorage.setItem('activeTab', tab);
     // Clear any stale ticket hash so a refresh restores Outreach, not the
@@ -436,6 +438,17 @@ function switchTab(tab) {
     return;
   }
   swimwearPanel.style.display = 'none';
+
+  if (tab === 'reviews') {
+    ticketsPanel.style.display = 'none';
+    adhocPanel.style.display = 'none';
+    reviewsPanel.style.display = 'flex';
+    localStorage.setItem('activeTab', tab);
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    loadReviewsQueue();
+    return;
+  }
+  reviewsPanel.style.display = 'none';
 
   if (tab === 'adhoc') {
     ticketsPanel.style.display = 'none';
@@ -7091,5 +7104,223 @@ async function resendSwimwear(id) {
     else showToast(`Code resent to ${name}`, 'success');
   } catch (err) {
     showToast(`Resend failed: ${err.message}`, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Judge.me review publishing
+//
+// Three populations, kept separate on purpose:
+//   pending — never processed. The live backlog, oldest first, which is how
+//             this queue has always been worked by hand.
+//   skipped — unpublished but OLDER than the newest published review, i.e.
+//             passed over during an earlier manual pass. Some were deliberate
+//             declines and some were accidental skips, and the data cannot
+//             tell them apart — so this is framed as "worth a second look",
+//             never as a decline list.
+//   held    — explicitly held here, with a reason.
+// ---------------------------------------------------------------------------
+let reviewsStatus = 'pending';
+let reviewsQueue = [];
+let reviewsSelectedId = null;
+
+const REVIEWS_FILTERS = ['pending', 'skipped', 'held'];
+
+const REVIEWS_FILTER_BLURB = {
+  pending: 'Never been through a pass — the live backlog.',
+  skipped: 'Passed over in an earlier pass. Some deliberate, some missed by accident.',
+  held: 'Held back, with a reason.',
+};
+
+async function loadReviewsQueue() {
+  const container = document.getElementById('reviews-queue-list');
+  try {
+    reviewsQueue = await api(`/api/reviews/queue?status=${encodeURIComponent(reviewsStatus)}`);
+  } catch (err) {
+    container.innerHTML = `<div class="swimwear-loading">Failed to load: ${esc(err.message)}</div>`;
+    return;
+  }
+  renderReviewsFilters();
+  renderReviewsQueue();
+  renderReviewsCount();
+}
+
+function setReviewsStatus(s) {
+  reviewsStatus = s;
+  reviewsSelectedId = null;
+  document.getElementById('reviews-detail').style.display = 'none';
+  document.getElementById('reviews-placeholder').style.display = 'flex';
+  loadReviewsQueue();
+}
+
+function renderReviewsFilters() {
+  document.getElementById('reviews-filters').innerHTML = `<div class="queue-filter-row">`
+    + REVIEWS_FILTERS.map(f => `<button class="filter-chip ${reviewsStatus === f ? 'active' : ''}" onclick="setReviewsStatus('${f}')">${f}</button>`).join('')
+    + `</div>`
+    + `<div class="outreach-row-reason" style="padding:4px 8px 8px">${esc(REVIEWS_FILTER_BLURB[reviewsStatus] || '')}</div>`;
+}
+
+function renderReviewsQueue() {
+  const container = document.getElementById('reviews-queue-list');
+  if (!reviewsQueue.length) {
+    container.innerHTML = `<div class="swimwear-loading">Nothing ${esc(reviewsStatus)}.</div>`;
+    return;
+  }
+  container.innerHTML = reviewsQueue.map(reviewRowHtml).join('');
+}
+
+// The tab badge tracks the live backlog only — the skipped pile is historical
+// and would nag permanently if it counted.
+function renderReviewsCount() {
+  if (reviewsStatus !== 'pending') return;
+  const badge = document.getElementById('tab-count-reviews');
+  if (badge) badge.textContent = reviewsQueue.length ? String(reviewsQueue.length) : '';
+}
+
+function reviewStars(n) {
+  const r = Number(n) || 0;
+  return '★'.repeat(r) + '☆'.repeat(Math.max(0, 5 - r));
+}
+
+function reviewDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function reviewRecBadge(r) {
+  if (!r.ai_recommendation) return '<span class="badge badge-muted">not assessed</span>';
+  if (r.ai_recommendation === 'publish') return '<span class="badge badge-ok">publish</span>';
+  if (r.ai_recommendation === 'hold') return '<span class="badge badge-warn">hold</span>';
+  return '<span class="badge">your call</span>';
+}
+
+function reviewAudienceBadge(r) {
+  if (!r.audience || r.audience === 'unclear') return '';
+  return `<span class="badge badge-muted">${esc(r.audience)}</span>`;
+}
+
+function reviewRowHtml(r) {
+  const snippet = (r.body || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+  return `
+  <div class="queue-item ${r.review_id === reviewsSelectedId ? 'active' : ''}" data-id="${r.review_id}" onclick="selectReview(${r.review_id})">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="queue-item-name">${esc(reviewStars(r.rating))}</span>
+        <span class="outreach-row-reason">${esc(reviewDate(r.created_at))}</span>
+      </div>
+      <div class="swimwear-row-name">${esc(r.product_title || r.product_handle || 'Unknown product')}</div>
+      <div class="queue-item-row2">${reviewRecBadge(r)} ${reviewAudienceBadge(r)}</div>
+      ${r.ai_rationale ? `<div class="outreach-row-reason">${esc(r.ai_rationale)}</div>` : ''}
+      ${snippet ? `<div class="outreach-row-snippet">${esc(snippet)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function selectReview(id) {
+  reviewsSelectedId = id;
+  renderReviewsQueue();
+  const row = reviewsQueue.find(r => r.review_id === id);
+  document.getElementById('reviews-placeholder').style.display = 'none';
+  const detailEl = document.getElementById('reviews-detail');
+  detailEl.style.display = 'block';
+  if (!row) { detailEl.innerHTML = `<div class="swimwear-loading">Not in the loaded queue.</div>`; return; }
+  renderReviewDetail(row);
+}
+
+function renderReviewDetail(r) {
+  const el = document.getElementById('reviews-detail');
+  const verified = r.verified === 'verified-purchase' ? '✓ verified purchase' : esc(r.verified || 'unverified');
+  const media = [r.has_pictures && '📷 photo', r.has_videos && '🎥 video'].filter(Boolean).join(' · ');
+
+  // Publishing is a live storefront change, so both actions are always
+  // available regardless of what the rubric suggested — the recommendation is
+  // advice, not a gate.
+  const actions = `<div class="outreach-actions" style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="publishReview(${r.review_id})">Publish to storefront</button>
+    <button class="btn" onclick="holdReview(${r.review_id})">Hold</button>
+    <button class="btn" onclick="assessReview(${r.review_id})">Re-assess</button>
+  </div>`;
+
+  el.innerHTML = `
+    <div class="outreach-detail-head">
+      <h2>${esc(reviewStars(r.rating))} ${esc(r.product_title || r.product_handle || 'Unknown product')}</h2>
+      ${reviewRecBadge(r)}
+    </div>
+    <div class="outreach-detail-sub">
+      ${esc(r.reviewer_name || 'Anonymous')} &middot; ${esc(reviewDate(r.created_at))} &middot; ${verified}
+      ${media ? ` &middot; ${esc(media)}` : ''} &middot; source ${esc(r.source || '?')}
+    </div>
+    ${r.audience && r.audience !== 'unclear'
+      ? `<div class="outreach-detail-sub">audience: <b>${esc(r.audience)}</b>${r.audience_reason ? ` (${esc(r.audience_reason)})` : ''}</div>`
+      : ''}
+    ${r.ai_rationale ? `<div class="outreach-row-snippet" style="margin:8px 0">${esc(r.ai_rationale)}</div>` : ''}
+    ${actions}
+    <hr style="margin:14px 0;border:none;border-top:1px solid var(--border,#333)">
+    ${r.title ? `<div class="outreach-field-label">Title</div><div class="swimwear-field-value">${esc(r.title)}</div>` : ''}
+    <div class="outreach-field-label">Review</div>
+    <div class="swimwear-field-value" style="white-space:pre-wrap">${esc(r.body || '(no text)')}</div>
+    ${r.decision ? `<div class="outreach-detail-sub" style="margin-top:12px">already ${esc(r.decision)}${r.decision_reason ? `: ${esc(r.decision_reason)}` : ''}</div>` : ''}
+  `;
+}
+
+// Drop the acted-on row and move to the next, so the queue can be worked
+// without waiting on the round-trip.
+function reviewsAdvancePast(id) {
+  const idx = reviewsQueue.findIndex(r => r.review_id === id);
+  const next = reviewsQueue[idx + 1] || reviewsQueue[idx - 1] || null;
+  reviewsQueue = reviewsQueue.filter(r => r.review_id !== id);
+  renderReviewsQueue();
+  renderReviewsCount();
+  if (next) {
+    selectReview(next.review_id);
+  } else {
+    reviewsSelectedId = null;
+    document.getElementById('reviews-detail').style.display = 'none';
+    document.getElementById('reviews-placeholder').style.display = 'flex';
+  }
+}
+
+function reviewsRestore(row) {
+  if (!reviewsQueue.find(r => r.review_id === row.review_id)) {
+    reviewsQueue.unshift(row);
+    renderReviewsQueue();
+    renderReviewsCount();
+  }
+}
+
+async function reviewsAct(id, path, verb, body = {}) {
+  const row = reviewsQueue.find(r => r.review_id === id);
+  if (!row) return;
+  reviewsAdvancePast(id); // optimistic
+  try {
+    const res = await api(`/api/reviews/${id}/${path}`, { method: 'POST', body });
+    if (res && res.error) {
+      showToast(`#${id}: ${res.error}`, 'error');
+      reviewsRestore(row);
+    } else {
+      showToast(`Review #${id} ${verb}`, 'success');
+    }
+  } catch (err) {
+    showToast(`#${id} — ${verb} failed: ${err.message}`, 'error');
+    reviewsRestore(row);
+  }
+}
+
+function publishReview(id) { reviewsAct(id, 'publish', 'published'); }
+
+function holdReview(id) {
+  const reason = prompt('Why are you holding this review? (optional)');
+  if (reason === null) return; // cancelled
+  reviewsAct(id, 'hold', 'held', { reason: reason || null });
+}
+
+async function assessReview(id) {
+  try {
+    await api(`/api/reviews/${id}/assess`, { method: 'POST', body: {} });
+    showToast(`Re-assessed #${id}`, 'success');
+    await loadReviewsQueue();
+    selectReview(id);
+  } catch (err) {
+    showToast(`Assess failed: ${err.message}`, 'error');
   }
 }

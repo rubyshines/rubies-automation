@@ -40,6 +40,35 @@ function addDays(dateStr, n) {
 // Judge.me: Sync reviews
 // ---------------------------------------------------------------------------
 
+// Map a Judge.me API review onto a `judgeme_reviews` row.
+function toReviewRow(r) {
+  return {
+    review_id: r.id,
+    rating: r.rating,
+    title: r.title || '',
+    body: r.body || '',
+    reviewer_name: r.reviewer?.name || '',
+    reviewer_email: r.reviewer?.email || '',
+    product_external_id: r.product_external_id ? String(r.product_external_id) : null,
+    product_title: r.product_title || '',
+    product_handle: r.product_handle || '',
+    verified: r.verified || '',
+    source: r.source || '',
+    // Display state. `curated` is the control Judge.me writes when a review is
+    // published ('ok') or hidden ('spam'); published/hidden are the effect.
+    curated: r.curated || '',
+    published: r.published === true,
+    hidden: r.hidden === true,
+    featured: r.featured === true,
+    has_pictures: r.has_published_pictures || false,
+    has_videos: r.has_published_videos || false,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
+}
+
+const UPSERT_CHUNK = 500;
+
 async function runReviewSync(results) {
   const sourceKey = 'reviews';
   const client = getJudgemeClient();
@@ -51,44 +80,29 @@ async function runReviewSync(results) {
   let rowsWritten = 0;
 
   try {
-    // Find the most recent review we have stored
-    const { data: latest } = await supabase
-      .from('judgeme_reviews')
-      .select('created_at')
-      .order('created_at', { ascending: false })
-      .limit(1);
+    // Full walk, not an incremental one.
+    //
+    // This used to page only until it reached a review older than our newest
+    // stored `created_at`, which meant a review's STATE could never re-sync —
+    // publishing or hiding an existing review leaves `created_at` untouched, so
+    // the change was invisible to us forever. That is how 48 unpublished
+    // reviews accumulated without anything noticing (2026-08). Curation state
+    // is now the point of this table, so it has to be re-read.
+    //
+    // The corpus is ~2k reviews growing by ~25/month, so a full walk is ~21
+    // requests and a few seconds. Cheaper than reasoning about incremental
+    // correctness, and self-healing after any missed run.
+    const reviews = await client.getAllReviews({ perPage: 100, maxPages: 200 });
 
-    const sinceDate = latest?.[0]?.created_at || null;
+    console.log(`  Fetched ${reviews.length} reviews from Judge.me (full walk)`);
 
-    // Fetch new reviews (since last stored, or all if first run)
-    const reviews = sinceDate
-      ? await client.getAllReviews({ since: sinceDate, perPage: 100, maxPages: 50 })
-      : await client.getAllReviews({ perPage: 100, maxPages: 200 });
-
-    console.log(`  Fetched ${reviews.length} new reviews from Judge.me`);
-
-    if (reviews.length) {
-      const rows = reviews.map(r => ({
-        review_id: r.id,
-        rating: r.rating,
-        title: r.title || '',
-        body: r.body || '',
-        reviewer_name: r.reviewer?.name || '',
-        reviewer_email: r.reviewer?.email || '',
-        product_external_id: r.product_external_id ? String(r.product_external_id) : null,
-        product_title: r.product_title || '',
-        product_handle: r.product_handle || '',
-        verified: r.verified || '',
-        source: r.source || '',
-        curated: r.curated || '',
-        has_pictures: r.has_published_pictures || false,
-        has_videos: r.has_published_videos || false,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-      }));
-
-      rowsWritten = await upsert('judgeme_reviews', rows, ['review_id']);
+    const rows = reviews.map(toReviewRow);
+    for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+      rowsWritten += await upsert('judgeme_reviews', rows.slice(i, i + UPSERT_CHUNK), ['review_id']);
     }
+
+    const unpublished = reviews.filter(r => r.published !== true).length;
+    console.log(`  Publish state: ${reviews.length - unpublished} published, ${unpublished} not`);
 
     results[sourceKey] = { success: true, rowsWritten, error: null };
   } catch (err) {
@@ -207,7 +221,7 @@ async function run() {
   };
 }
 
-module.exports = { run };
+module.exports = { run, toReviewRow };
 
 // ---------------------------------------------------------------------------
 // Standalone mode
