@@ -407,3 +407,31 @@ describe('audienceFromLineItems', () => {
     assert.equal(r.audience, 'kids');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Audience filtering — an unclassified review must not be invisible.
+// ---------------------------------------------------------------------------
+
+const { audienceFilterValues } = require('../lib/tools/reviewCuration');
+
+describe('audienceFilterValues', () => {
+  test('kids includes both and unclear', () => {
+    assert.deepEqual(audienceFilterValues('kids'), ['kids', 'both', 'unclear']);
+  });
+
+  test('adults includes both and unclear', () => {
+    assert.deepEqual(audienceFilterValues('adults'), ['adults', 'both', 'unclear']);
+  });
+
+  test('every review reachable from at least one of kids/adults', () => {
+    // The property that matters: no stored audience value can hide a review
+    // from BOTH shopper-facing filters.
+    const reachable = new Set([...audienceFilterValues('kids'), ...audienceFilterValues('adults')]);
+    ['kids', 'adults', 'both', 'unclear'].forEach((v) => assert.ok(reachable.has(v), `${v} is unreachable`));
+  });
+
+  test('unclear and both can still be isolated for moderation', () => {
+    assert.deepEqual(audienceFilterValues('unclear'), ['unclear']);
+    assert.deepEqual(audienceFilterValues('both'), ['both']);
+  });
+});

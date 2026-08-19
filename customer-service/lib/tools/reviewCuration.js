@@ -18,6 +18,28 @@ const STARS = ['', '⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐�
 const REC_ICON = { publish: '✅', hold: '⛔', decide: '🤔' };
 
 // ---------------------------------------------------------------------------
+// Audience filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Which stored audience values a filter selection should match.
+ *
+ * Asking for "kids" returns reviews we know are about kids, reviews about both,
+ * AND reviews we could not classify. A review with no audience signal — "so
+ * comfy", or one where the buyer bought youth and adult sizes of the same item
+ * — is equally relevant to either shopper, and showing it under no filter at
+ * all is the worse failure: it hides 139 real reviews from everyone.
+ *
+ * Selecting "unclear" or "both" explicitly still returns only those, so the
+ * moderation tab can still isolate them.
+ */
+function audienceFilterValues(audience) {
+  if (audience === 'kids') return ['kids', 'both', 'unclear'];
+  if (audience === 'adults') return ['adults', 'both', 'unclear'];
+  return [audience];
+}
+
+// ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
 
@@ -51,7 +73,7 @@ async function fetchQueue({ status = 'pending', audience, min_rating, limit = 10
   } else {
     query = query.eq('published', false).is('decision', null);
   }
-  if (audience) query = query.eq('audience', audience);
+  if (audience) query = query.in('audience', audienceFilterValues(audience));
   if (min_rating) query = query.gte('rating', min_rating);
 
   const { data, error } = await query;
@@ -296,6 +318,18 @@ async function handleReviewResolveBySize({ dry_run = false } = {}) {
 
     if (!audience) {
       skipped[reason] = (skipped[reason] || 0) + 1;
+      // Record WHY it stayed unclear. "bought both youth and adult sizes" is a
+      // real finding — the buyer is shopping for a child and for themselves —
+      // and it is worth keeping even though it does not change the tag. Without
+      // this the row keeps the text pass's "no wearer information" reason, which
+      // understates what we actually know.
+      if (!dry_run && reason.startsWith('bought both')) {
+        const { error } = await supabase
+          .from('judgeme_reviews')
+          .update({ audience_reason: reason, audience_model: 'size-join', audience_at: now })
+          .eq('review_id', r.review_id);
+        if (error) throw new Error(`Supabase error: ${error.message}`);
+      }
       continue;
     }
 
@@ -377,7 +411,7 @@ const tools = [
       type: 'object',
       properties: {
         status: { type: 'string', enum: ['pending', 'skipped', 'held'], description: 'Which population to show (default "pending").' },
-        audience: { type: 'string', enum: AUDIENCE_VALUES, description: 'Filter by who the review is about.' },
+        audience: { type: 'string', enum: AUDIENCE_VALUES, description: 'Filter by who the review is about. "kids" and "adults" also include reviews covering both and reviews we could not classify, since those are relevant to either shopper. Pass "unclear" or "both" to isolate just those.' },
         min_rating: { type: 'number', description: 'Minimum star rating (1-5).' },
         limit: { type: 'number', description: 'Max results (default 100, max 500).' },
       },
@@ -457,3 +491,4 @@ const tools = [
 module.exports = tools;
 module.exports.fetchQueue = fetchQueue;
 module.exports.formatRow = formatRow;
+module.exports.audienceFilterValues = audienceFilterValues;
