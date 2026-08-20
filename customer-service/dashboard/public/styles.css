@@ -6474,3 +6474,49 @@ main { height: calc(100vh - 56px); }
 .schedule-booked-item { white-space: nowrap; }
 .schedule-booked-time { font-variant-numeric: tabular-nums; opacity: 0.8; }
 .schedule-booked-item::before { content: '\25CF'; font-size: 7px; vertical-align: middle; margin-right: 5px; opacity: 0.5; }
+
+/* Loading: three calendar reads plus a model pass takes several seconds, long
+   enough that a static line of text reads as a stuck panel. */
+.schedule-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.schedule-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: schedule-spin 0.7s linear infinite;
+  flex: none;
+}
+@keyframes schedule-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .schedule-spinner { animation-duration: 2s; }
+}
+
+/* Slots line up in columns rather than wrapping raggedly, so the same time sits
+   under the same time on every row and a gap is visible as a gap. */
+.schedule-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 4px;
+}
+.schedule-slot { text-align: center; }
+
+.schedule-toggle {
+  background: none;
+  border: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: inherit;
+}
+.schedule-toggle:hover { text-decoration: underline; }
+/* The day-offer row shares the grid layout, so its slots line up with the
+   full-availability rows below when both are on screen. */
+.schedule-dayhint .schedule-slots { flex: 1 1 auto; min-width: 0; }

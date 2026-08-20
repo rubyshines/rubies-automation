@@ -6988,6 +6988,20 @@ async function testSendOutreachDraft() {
 let scheduleState = null;      // last /availability payload
 let scheduleSelected = null;   // the chosen slot { start, label, theirLabel }
 let scheduleInsertedLine = ''; // the one sentence this panel owns in the draft
+let scheduleShowAll = false;   // reveal full availability alongside their offer
+
+/**
+ * When they have named times, the panel answers "which of their options works"
+ * and shows ONLY those. The full grid used to render underneath regardless,
+ * which repeated any day they had offered — Wed 26 appeared twice and one click
+ * lit up both copies, reading as a duplicate row. Full availability is still one
+ * click away for when none of their options fit; it is just a different question
+ * and no longer asked at the same time.
+ */
+function toggleScheduleAllDays() {
+  scheduleShowAll = !scheduleShowAll;
+  renderSchedulePanel();
+}
 
 function scheduleDurationOptions(selected) {
   return [15, 20, 30, 45, 60, 90].map(m =>
@@ -7005,7 +7019,13 @@ async function openSchedulePanel(duration, timezone) {
     return;
   }
   el.dataset.open = '1';
-  el.innerHTML = '<div class="outreach-empty-note">Reading your calendars…</div>';
+  // Three calendar reads plus a model pass over their last message — several
+  // seconds, long enough that a static line of text reads as a stuck panel.
+  el.innerHTML = `
+    <div class="schedule-panel schedule-loading">
+      <span class="schedule-spinner" aria-hidden="true"></span>
+      <span>Reading your calendars${timezone || duration ? ' again' : ''}…</span>
+    </div>`;
   const companyId = outreachSelectedId;
   try {
     const qs = new URLSearchParams();
@@ -7063,7 +7083,7 @@ function renderSchedulePanel() {
    * up was the hardest one to book. It now renders as its own row of that day's
    * free times, directly clickable.
    */
-  const dayHintHtml = dayHints.map(hint => {
+  const dayHintRow = (hint) => {
     const day = (s.days || []).find(d => d.date === hint.date);
     const free = (day?.slots || []).filter(sl => !sl.busy);
     const label = esc(day?.label || hint.dayLabel || hint.date);
@@ -7080,18 +7100,31 @@ function renderSchedulePanel() {
         class="schedule-slot${scheduleSelected?.start === sl.start ? ' is-selected' : ''}${sl.unsociableForThem ? ' is-unsociable' : ''}"
         onclick="selectScheduleSlot('${esc(sl.start)}')">${esc(sl.label)}</button>`).join('')}</span>
     </div>`;
-  }).join('');
+  };
 
-  const proposedHtml = (proposed.length || dayHints.length) ? `
+  // Chronological, mixing timed suggestions and whole-day offers together.
+  // They arrived in the order the model happened to emit them, which put an
+  // offer of Wed 26 BELOW two times on 1 September — the earliest option read
+  // as the last resort.
+  const suggestions = [
+    ...proposed.map(t => ({ sort: t.start, html: proposedSlot(t) })),
+    ...dayHints.map(h => ({ sort: `${h.date}T00:00`, html: dayHintRow(h) })),
+  ].sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));
+
+  const proposedHtml = suggestions.length ? `
     <div class="schedule-proposed">
       <div class="schedule-label">They suggested</div>
-      ${proposed.map(proposedSlot).join('')}
-      ${dayHintHtml}
+      ${suggestions.map(x => x.html).join('')}
     </div>` : (s.proposed_error
       ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
       : '');
 
-  const grid = s.days.map(day => {
+  // Their offer answers the question when there is one; the full grid is the
+  // fallback for "none of these work" and the default when they named nothing.
+  const hasSuggestions = suggestions.length > 0;
+  const showGrid = !hasSuggestions || scheduleShowAll;
+
+  const grid = !showGrid ? '' : s.days.map(day => {
     const chips = day.slots.map(slot => {
       const cls = ['schedule-slot'];
       if (slot.busy) cls.push('is-busy');
@@ -7165,7 +7198,10 @@ function renderSchedulePanel() {
       ${s.their_timezone_warning ? `<div class="schedule-warning">&#9888; ${esc(s.their_timezone_warning)}</div>` : ''}
       ${booked}
       ${proposedHtml}
-      <div class="schedule-grid">${grid}</div>
+      ${hasSuggestions ? `<button class="schedule-toggle" onclick="toggleScheduleAllDays()">
+        ${scheduleShowAll ? '&#9652; Just their suggestions' : '&#9662; None of these work — show all my availability'}
+      </button>` : ''}
+      ${showGrid ? `<div class="schedule-grid">${grid}</div>` : ''}
       <div class="schedule-hint">Checked: ${(s.calendars || []).map(esc).join(', ')} · 9-5 Eastern, weekdays, from tomorrow</div>
       ${footer}
     </div>`;
