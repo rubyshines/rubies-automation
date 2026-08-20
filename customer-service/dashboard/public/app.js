@@ -406,6 +406,10 @@ function switchTab(tab) {
   // Hide the more popover when switching
   const pop = document.getElementById('bottom-more-popover');
   if (pop) pop.style.display = 'none';
+  // Desktop: the active tab may be inside the header More menu — close it and
+  // move the highlight onto the More button so the current section still reads.
+  closeNavMore();
+  syncNavMoreActive();
 
   const ticketsPanel = document.getElementById('panel-tickets');
   const adhocPanel = document.getElementById('panel-adhoc');
@@ -503,6 +507,133 @@ function switchTab(tab) {
   showSidebarQueue();
   loadTicketQueue();
 }
+
+// ---------------------------------------------------------------------------
+// Header nav overflow
+//
+// Every section button lives in #nav-tabs. When the row runs out of width the
+// rightmost buttons move into #nav-more-menu and back out again when there's
+// room. They are the SAME elements wherever they sit, so tab-count-* ids,
+// setTabProgress() and switchTab()'s [data-tab] lookup all keep working with no
+// knowledge of which tabs are currently visible.
+// ---------------------------------------------------------------------------
+
+function layoutNavOverflow() {
+  const nav = document.getElementById('primary-nav');
+  const tabsWrap = document.getElementById('nav-tabs');
+  const moreWrap = document.getElementById('nav-more');
+  const menu = document.getElementById('nav-more-menu');
+  if (!nav || !tabsWrap || !moreWrap || !menu) return;
+  // Mobile hides the header nav entirely — the bottom nav owns navigation there,
+  // and measuring a display:none row yields zeroes that would hide every tab.
+  if (!nav.offsetParent && getComputedStyle(nav).display === 'none') return;
+
+  const before = [...menu.children].map(el => el.dataset.tab).join(',');
+
+  // Recompute from "everything visible" each time, or widening the window would
+  // never bring a tab back out of the menu.
+  while (menu.firstElementChild) tabsWrap.appendChild(menu.firstElementChild);
+  moreWrap.hidden = true;
+
+  // +1 absorbs sub-pixel rounding, which otherwise overflows a row that fits.
+  const fits = () => tabsWrap.scrollWidth <= tabsWrap.clientWidth + 1;
+
+  if (!fits()) {
+    moreWrap.hidden = false; // measure with the More button taking its space
+    let guard = 50;
+    while (!fits() && tabsWrap.children.length > 1 && guard-- > 0) {
+      menu.insertBefore(tabsWrap.lastElementChild, menu.firstChild);
+    }
+  }
+
+  // Don't reshuffle the list under a finger that's already in it.
+  if ([...menu.children].map(el => el.dataset.tab).join(',') !== before) closeNavMore();
+  refreshNavMoreBadge();
+  syncNavMoreActive();
+}
+
+// The More button carries the counts and the in-progress dot of whatever it's
+// hiding — otherwise overflowing "On Me" would silently hide work owed.
+function refreshNavMoreBadge() {
+  const menu = document.getElementById('nav-more-menu');
+  const btn = document.getElementById('nav-more-btn');
+  const badge = document.getElementById('nav-more-count');
+  if (!menu || !btn || !badge) return;
+  let total = 0;
+  let progress = false;
+  menu.querySelectorAll('.tab').forEach(tab => {
+    const n = parseInt(tab.querySelector('.tab-count')?.textContent || '', 10);
+    if (!Number.isNaN(n)) total += n;
+    if (tab.classList.contains('tab-has-progress')) progress = true;
+  });
+  badge.textContent = total > 0 ? String(total) : '';
+  btn.classList.toggle('tab-has-progress', progress);
+}
+
+// Highlight More when the active section is inside it — same reason the mobile
+// bottom nav does it.
+function syncNavMoreActive() {
+  const menu = document.getElementById('nav-more-menu');
+  const btn = document.getElementById('nav-more-btn');
+  if (!menu || !btn) return;
+  btn.classList.toggle('nav-more-active', !!menu.querySelector('.tab.active'));
+}
+
+function closeNavMore() {
+  const menu = document.getElementById('nav-more-menu');
+  const btn = document.getElementById('nav-more-btn');
+  if (menu) menu.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleNavMore(event) {
+  event?.stopPropagation();
+  const menu = document.getElementById('nav-more-menu');
+  const btn = document.getElementById('nav-more-btn');
+  if (!menu) return;
+  closeToolsMenu();
+  menu.hidden = !menu.hidden;
+  if (btn) btn.setAttribute('aria-expanded', String(!menu.hidden));
+}
+
+// ---------------------------------------------------------------------------
+// Header tools menu (Auto-send, Facts, Auto-actions, Stats, Sign out)
+// ---------------------------------------------------------------------------
+
+function closeToolsMenu() {
+  const menu = document.getElementById('tools-menu');
+  const btn = document.getElementById('tools-btn');
+  if (menu) menu.hidden = true;
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function toggleToolsMenu(event) {
+  event?.stopPropagation();
+  const menu = document.getElementById('tools-menu');
+  const btn = document.getElementById('tools-btn');
+  if (!menu) return;
+  closeNavMore();
+  menu.hidden = !menu.hidden;
+  if (btn) btn.setAttribute('aria-expanded', String(!menu.hidden));
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#primary-nav')) closeNavMore();
+  if (!e.target.closest('#header-tools')) closeToolsMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  closeNavMore();
+  closeToolsMenu();
+});
+
+if (typeof ResizeObserver !== 'undefined') {
+  const header = document.querySelector('header');
+  if (header) new ResizeObserver(() => layoutNavOverflow()).observe(header);
+}
+window.addEventListener('load', layoutNavOverflow);
+document.fonts?.ready.then(layoutNavOverflow); // tab widths shift once the webfont lands
 
 function toggleBottomMore(event) {
   event?.stopPropagation();
@@ -3626,12 +3757,17 @@ function writeTabCount(tab, value) {
   const bot = document.getElementById(`bottom-count-${tab}`);
   if (top) top.textContent = v;
   if (bot) bot.textContent = v;
+  // A badge appearing or clearing changes how wide the tab is, so what fits in
+  // the header has to be recomputed. Hooked here rather than at each caller so
+  // a new count source can't forget it.
+  layoutNavOverflow();
 }
 
 // Toggle the "something's cooking" dot on a tab (top nav + mobile bottom nav).
 function setTabProgress(tab, on) {
   document.querySelectorAll(`.tab[data-tab="${tab}"], .bottom-tab[data-bottom-tab="${tab}"]`)
     .forEach(el => el.classList.toggle('tab-has-progress', !!on));
+  refreshNavMoreBadge(); // the dot has to surface on More when the tab is hidden
 }
 
 async function loadStats() {
@@ -5049,6 +5185,10 @@ function updateFactsBadges(pendingCount) {
   if (badge) badge.textContent = pendingCount ? ` ${pendingCount}` : '';
   const bottomCount = document.getElementById('bottom-count-facts');
   if (bottomCount) bottomCount.textContent = pendingCount ? String(pendingCount) : '';
+  // Facts now lives inside the collapsed tools menu, so its pending count needs
+  // a mark on the closed button or it can't be seen at all.
+  const dot = document.getElementById('tools-btn-dot');
+  if (dot) dot.hidden = !pendingCount;
 }
 
 function factsCategorySelect(id, categories, selected) {
