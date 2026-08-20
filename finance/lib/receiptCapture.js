@@ -121,10 +121,15 @@ async function loadExpenseAccounts() {
  * @param {string} todayIso  YYYY-MM-DD — injected, never read from the clock
  *   here, so the prompt render stays pure and testable (and so a two-digit
  *   receipt year resolves against a date we control).
+ * @param {number} pageCount how many images accompany this prompt. The
+ *   multi-image block is omitted entirely at 1: those rules are about
+ *   suppressing a line seen twice across overlapping shots, and a single-image
+ *   call that reads them has been handed a reason to drop a receipt's second,
+ *   genuinely-printed coffee.
  */
-function buildExtractionPrompt(accounts, todayIso) {
+function buildExtractionPrompt(accounts, todayIso, pageCount = 1) {
   const accountList = accounts.map(a => `- ${a.id} | ${a.full_name}`).join('\n');
-  return `You read a photograph of a purchase receipt and return structured data about it.
+  return `You read ${pageCount > 1 ? 'photographs' : 'a photograph'} of a purchase receipt and return structured data about it.
 
 Today is ${todayIso}.
 
@@ -136,6 +141,8 @@ Return ONLY a JSON object, with no prose before or after it and no markdown fenc
   "purchased_at": "YYYY-MM-DD or null",
   "purchased_time": "HH:MM (24h) or null",
   "currency": "ISO 4217 code, e.g. CAD, USD, EUR — or null if genuinely undeterminable",
+  "currency_source": "printed | address | null — see the currency rule",
+  "merchant_country": "ISO 3166 alpha-2 of the merchant's own address, e.g. CA, US, GB — or null",
   "subtotal": number or null,
   "tax_lines": [ { "label": "HST", "rate": 0.13, "amount": 9.75, "registration_number": "string or null" } ],
   "tax_total": number or null,
@@ -148,7 +155,8 @@ Return ONLY a JSON object, with no prose before or after it and no markdown fenc
   "qbo_account_id": "id from the account list below, or null",
   "category_rationale": "one short sentence on why that account, or null",
   "confidence": number between 0 and 1,
-  "notes": "string or null — anything that made this hard to read"
+  "notes": "string or null — anything that made this hard to read",
+  "page_issues": ["short strings — only if something is wrong with the images themselves, see the multi-image rule"]
 }
 
 RULES
@@ -159,7 +167,9 @@ Read the printed totals off the receipt. Do not compute subtotal, tax or total y
 
 Break tax out per line as printed. Canadian receipts commonly show HST, or GST and PST/QST separately; a US receipt usually shows one "TAX". Set "rate" only when the receipt prints a percentage or one is unambiguous from the label. "tax_total" is the sum as printed on the receipt.
 
-Currency: use the printed symbol or code. If the receipt shows HST, QST or PST it is Canadian. If nothing indicates the currency, return null rather than assuming.
+Currency has two separate questions and you answer both. WHAT the currency is goes in "currency"; HOW you know goes in "currency_source". If an ISO code or an unambiguous symbol is printed on the receipt, that is "printed". If the paper does not say — a bare "$" is not an answer, it is used by Canada, the US, Australia, New Zealand and others — then work it out from the merchant's own address and mark it "address". Return null for both if you can do neither. Never mark an inference "printed": a guess recorded as a reading is worse than no answer, because nothing downstream can tell it was a guess.
+
+"merchant_country" is the country of the MERCHANT'S address as printed on the receipt, not the customer's and not where the card was issued.
 
 Line items are the individual purchased things, not the summary rows: skip SUBTOTAL, TAX, TOTAL, CHANGE, BALANCE, and payment lines. Keep item-level discounts as their own negative line. If a line is genuinely unreadable, include it with the description "(unreadable)" and its amount if the amount is legible.
 
@@ -170,6 +180,24 @@ The receipt-level "category" is that same kind of short generic label for the pu
 "qbo_account_id" is the single best-fitting account from the list below — return the id only. Choose on what was actually bought and how this business would book it. If nothing fits well, return null rather than forcing one. Say why in one short sentence in "category_rationale", naming what on the receipt decided it, so a later reviewer can tell a considered choice from a guess.
 
 If the image is not a receipt at all, set every field to null, set confidence to 0, and say so in "notes".
+${pageCount > 1 ? `
+THERE ARE ${pageCount} IMAGES
+
+They are photographs of ONE long receipt, taken in sections. Read them together and return ONE receipt.
+
+They usually OVERLAP. A person photographing a long receipt re-frames with a few lines of the previous shot still in view, so the same purchased items appear in two images. Emit every real line ONCE. Match on the line itself — same description and same amount, adjacent to the same neighbours — not on how far down the image it sits. Two genuinely separate purchases of the same thing at the same price DO both belong (a receipt really can list the same coffee twice), so the question is whether it is the same PRINTED LINE seen twice, not whether the text matches.
+
+They may be out of order. Someone photographs the bottom first, or reshoots a blurry middle and it lands last. Order the items by the receipt's own structure — the header is where the merchant and date are, the totals are at the foot, and an overlap tells you which section precedes which — not by the order the images are given to you.
+
+Read the totals from wherever they actually appear, normally the last section. Read the merchant, address and date from the header section. Do not add up the items to produce a subtotal, exactly as with a single image.
+
+If something is wrong with the images themselves, say so in "page_issues", one short string each, and still return your best reading of everything else:
+- "duplicate: image N repeats image M" — the same section photographed twice with nothing new
+- "gap: items are missing between image N and image M" — the sections do not meet, so part of the receipt was never photographed
+- "different receipt: image N" — a different merchant, date or receipt entirely
+- "unreadable: image N" — too blurry, dark or cropped to read
+Leave "page_issues" as an empty array when the images are fine. Do not use it for ordinary reading difficulty; that belongs in "notes".
+` : ''}
 
 QBO EXPENSE ACCOUNTS
 ${accountList || '(none loaded — return null for qbo_account_id)'}`;
@@ -264,17 +292,66 @@ function toDate(v) {
   return `${y}-${mo}-${d}`;
 }
 
+/** ISO 3166 alpha-2, uppercased. Anything else is dropped. */
+function toCountry(v) {
+  const s = toText(v, 8);
+  return s && /^[A-Za-z]{2}$/.test(s) ? s.toUpperCase() : null;
+}
+
+function isoCode(v) {
+  const s = toText(v, 8);
+  return s && /^[A-Za-z]{3}$/.test(s) ? s.toUpperCase() : null;
+}
+
+const CANADIAN_TAX_LABEL = /\b(HST|QST|PST|TVQ)\b/;
+
 /**
- * Canadian-only tax labels are conclusive about currency; GST alone is not
- * (Australia, New Zealand, Singapore and India all use it), so it is
- * deliberately excluded from the inference.
+ * Resolve the currency AND record how we know, in strict precedence:
+ *
+ *   printed    an ISO code or unambiguous symbol on the paper
+ *   tax_label  HST/QST/PST — these exist only in Canada
+ *   address    the merchant's country. A GUESS, and marked as one.
+ *
+ * Tax labels outrank the address because they are printed on the receipt while
+ * the country is an inference about the merchant. GST alone is deliberately
+ * NOT a Canadian signal — Australia, New Zealand, Singapore and India all
+ * print it.
+ *
+ * The `conflict` case is a receipt carrying a Canadian tax label with a
+ * non-Canadian merchant address. CAD still wins, but silently resolving it
+ * would hide the more likely reading: that the address or the tax line was
+ * misread, and one of the two figures on this receipt is wrong.
+ *
+ * @returns {{ currency: string|null, source: string|null, conflict: string|null }}
  */
-function inferCurrency(stated, taxLines) {
-  const s = toText(stated, 8);
-  if (s && /^[A-Za-z]{3}$/.test(s)) return s.toUpperCase();
-  const labels = (taxLines || []).map(t => String(t?.label || '').toUpperCase());
-  if (labels.some(l => /\b(HST|QST|PST|TVQ)\b/.test(l))) return 'CAD';
-  return null;
+function inferCurrency(stated, taxLines, { statedSource = null, country = null } = {}) {
+  const code = isoCode(stated);
+  const src = toText(statedSource, 16);
+  const ctry = toCountry(country);
+  const canadianTax = (taxLines || []).some(t => CANADIAN_TAX_LABEL.test(String(t?.label || '').toUpperCase()));
+
+  if (code && src !== 'address') {
+    const conflict = canadianTax && code !== 'CAD'
+      ? `Receipt shows a Canadian tax line but the currency reads ${code}.`
+      : null;
+    return { currency: code, source: 'printed', conflict };
+  }
+
+  if (canadianTax) {
+    return {
+      currency: 'CAD',
+      source: 'tax_label',
+      conflict: ctry && ctry !== 'CA'
+        ? `Receipt shows a Canadian tax line (HST/QST/PST) but the merchant address is in ${ctry}. Filed as CAD.`
+        : null,
+    };
+  }
+
+  // Address-derived. The model does the country → currency reasoning; this
+  // only records that it was reasoning rather than reading.
+  if (code && src === 'address') return { currency: code, source: 'address', conflict: null };
+
+  return { currency: null, source: null, conflict: null };
 }
 
 /** Coerce a raw extraction into the exact shape the tables expect. */
@@ -307,13 +384,25 @@ function normalizeExtraction(raw) {
   else confidence = Math.max(0, Math.min(1, confidence));
 
   const last4 = toText(r.card_last4, 8);
+  const country = toCountry(r.merchant_country);
+  const cur = inferCurrency(r.currency, taxLines, {
+    statedSource: r.currency_source,
+    country,
+  });
+
+  const pageIssues = (Array.isArray(r.page_issues) ? r.page_issues : [])
+    .map(s => toText(s, 200)).filter(Boolean);
 
   return {
     merchant: toText(r.merchant, 200),
     merchant_address: toText(r.merchant_address, 400),
+    merchant_country: country,
     purchased_at: toDate(r.purchased_at),
     purchased_time: toText(r.purchased_time, 8),
-    currency: inferCurrency(r.currency, taxLines),
+    currency: cur.currency,
+    currency_source: cur.source,
+    currency_conflict: cur.conflict,
+    page_issues: pageIssues,
     subtotal: toMoney(r.subtotal),
     tax_total: toMoney(r.tax_total),
     tip: toMoney(r.tip),
@@ -444,8 +533,8 @@ function isClean({ mathOk, confidence, total }) {
  * needing hand correction, run that eval before assuming the model is the
  * cause; if Sonnet holds, this comment should be replaced with its numbers.
  */
-async function extractReceipt({ imageBase64, mimeType, accounts, todayIso }) {
-  const prompt = buildExtractionPrompt(accounts, todayIso);
+async function extractReceipt({ pages, accounts, todayIso }) {
+  const prompt = buildExtractionPrompt(accounts, todayIso, pages.length);
   // Named once: `extraction_model` is the provenance record on every stored
   // receipt, and a second literal further down would keep claiming the old
   // model after a swap — which is worse than not recording it at all.
@@ -458,9 +547,20 @@ async function extractReceipt({ imageBase64, mimeType, accounts, todayIso }) {
     system: prompt,
     messages: [{
       role: 'user',
+      // Each image is labelled before it appears. Without the label the model
+      // has no way to name a bad one, so "duplicate: image 2 repeats image 1"
+      // could not be reported against anything the operator can identify.
       content: [
-        { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
-        { type: 'text', text: 'Extract this receipt.' },
+        ...pages.flatMap((p, i) => ([
+          ...(pages.length > 1 ? [{ type: 'text', text: `Image ${i + 1} of ${pages.length}:` }] : []),
+          { type: 'image', source: { type: 'base64', media_type: p.mimeType, data: p.base64 } },
+        ])),
+        {
+          type: 'text',
+          text: pages.length > 1
+            ? `Extract this receipt. The ${pages.length} images are sections of one receipt and may overlap.`
+            : 'Extract this receipt.',
+        },
       ],
     }],
   });
@@ -511,36 +611,100 @@ async function findSoftDuplicate({ merchant, purchased_at, total, excludeId }) {
   return data?.[0]?.id || null;
 }
 
+/** How many photographs one receipt may be captured in. */
+const MAX_PAGES = 8;
+
 /**
- * Capture a receipt end to end.
- *
- * @param {object}  args
- * @param {string}  args.imageBase64  base64 image payload (no data: prefix)
- * @param {string}  args.mimeType
- * @param {string} [args.capturedBy]
- * @param {string} [args.notes]
- * @param {string} [args.today]       YYYY-MM-DD override, for tests
- * @returns {Promise<{receipt, items, duplicate_of, already_captured}>}
+ * Validate and hash one uploaded image. Pure apart from the hash.
  */
-async function captureReceipt({ imageBase64, mimeType, capturedBy = null, notes = null, today = null }) {
-  if (!imageBase64) throw new Error('An image is required to capture a receipt');
-  const mime = (mimeType || 'image/jpeg').toLowerCase();
-  if (!ALLOWED_MIME.has(mime)) {
-    throw new Error(`Unsupported image type '${mime}'. Use JPEG, PNG, WebP or GIF.`);
+function preparePage(image, index) {
+  const base64 = String(image?.image_base64 ?? image?.base64 ?? image ?? '')
+    .replace(/^data:[^;]+;base64,/, '');
+  if (!base64) throw new Error(`Image ${index + 1} was empty`);
+
+  const mimeType = String(image?.mime_type || image?.mimeType || 'image/jpeg').toLowerCase();
+  if (!ALLOWED_MIME.has(mimeType)) {
+    throw new Error(`Image ${index + 1} is an unsupported type '${mimeType}'. Use JPEG, PNG, WebP or GIF.`);
   }
 
-  const buffer = Buffer.from(imageBase64, 'base64');
-  if (!buffer.length) throw new Error('The uploaded image was empty');
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length) throw new Error(`Image ${index + 1} was empty`);
   if (buffer.length > MAX_IMAGE_BYTES) {
-    throw new Error(`Image is ${(buffer.length / 1024 / 1024).toFixed(1)}MB; the limit is 5MB.`);
+    throw new Error(`Image ${index + 1} is ${(buffer.length / 1024 / 1024).toFixed(1)}MB; the limit is 5MB.`);
   }
 
-  const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+  return {
+    base64,
+    mimeType,
+    buffer,
+    hash: crypto.createHash('sha256').update(buffer).digest('hex'),
+  };
+}
 
-  // Idempotency: the same bytes are the same receipt. This is checked BEFORE
-  // the upload and before the model call, so a retry (or a double-tapped
+/**
+ * The identity of a captured receipt is the SET of its images.
+ *
+ * Sorted, so the same pages photographed in a different order are recognised
+ * as the same receipt — page order is a property of this capture, not of the
+ * receipt. And a single page hashes to ITSELF rather than to a hash-of-a-hash,
+ * which is what keeps every receipt captured before multi-page existed
+ * idempotent against a re-upload of its one image.
+ */
+function compositeHash(pageHashes) {
+  const sorted = [...pageHashes].sort();
+  if (sorted.length === 1) return sorted[0];
+  return crypto.createHash('sha256').update(sorted.join(':')).digest('hex');
+}
+
+/**
+ * Drop images that are byte-identical to one already in the set, keeping the
+ * first. A double-tapped "add page" is the common cause. Deterministic, free,
+ * and done before the model call so the duplicate never costs anything —
+ * unlike a near-duplicate overlapping shot, which is a real page and is the
+ * model's problem to reconcile.
+ */
+function dedupePages(pages) {
+  const seen = new Set();
+  const kept = [];
+  const dropped = [];
+  pages.forEach((p, i) => {
+    if (seen.has(p.hash)) dropped.push(i + 1);
+    else { seen.add(p.hash); kept.push(p); }
+  });
+  return { pages: kept, dropped };
+}
+
+/**
+ * Capture a receipt end to end, from one photograph or several.
+ *
+ * @param {object}   args
+ * @param {Array}   [args.images]      [{ image_base64, mime_type }, ...] in capture order
+ * @param {string}  [args.imageBase64] single-image form, still supported
+ * @param {string}  [args.mimeType]
+ * @param {string}  [args.capturedBy]
+ * @param {string}  [args.notes]
+ * @param {string}  [args.today]       YYYY-MM-DD override, for tests
+ * @returns {Promise<{receipt, items, pages, duplicate_of, already_captured}>}
+ */
+async function captureReceipt({
+  images = null, imageBase64 = null, mimeType = null,
+  capturedBy = null, notes = null, today = null,
+}) {
+  const incoming = images && images.length
+    ? images
+    : (imageBase64 ? [{ image_base64: imageBase64, mime_type: mimeType }] : []);
+  if (!incoming.length) throw new Error('At least one image is required to capture a receipt');
+  if (incoming.length > MAX_PAGES) {
+    throw new Error(`A receipt can be captured in at most ${MAX_PAGES} photos; ${incoming.length} were sent.`);
+  }
+
+  const { pages, dropped } = dedupePages(incoming.map(preparePage));
+  const receiptHash = compositeHash(pages.map(p => p.hash));
+
+  // Idempotency: the same set of images is the same receipt. Checked BEFORE
+  // any upload and before the model call, so a retry (or a double-tapped
   // shutter) costs nothing rather than paying for a second extraction.
-  const existingId = await findByHash(imageHash);
+  const existingId = await findByHash(receiptHash);
   if (existingId) {
     const existing = await getReceipt(existingId);
     return { ...existing, already_captured: true };
@@ -548,16 +712,18 @@ async function captureReceipt({ imageBase64, mimeType, capturedBy = null, notes 
 
   await ensureReceiptBucket();
   const sb = getSupabaseClient();
-  const storagePath = storagePathFor(imageHash, mime);
-  const { error: uploadError } = await sb.storage
-    .from(BUCKET)
-    .upload(storagePath, buffer, { contentType: mime, upsert: true });
-  if (uploadError) throw new Error(`Could not store the receipt image: ${uploadError.message}`);
+  for (const page of pages) {
+    page.storagePath = storagePathFor(page.hash, page.mimeType);
+    const { error: uploadError } = await sb.storage
+      .from(BUCKET)
+      .upload(page.storagePath, page.buffer, { contentType: page.mimeType, upsert: true });
+    if (uploadError) throw new Error(`Could not store receipt image ${pages.indexOf(page) + 1}: ${uploadError.message}`);
+  }
 
   const accounts = await loadExpenseAccounts();
   const todayIso = today || new Date().toISOString().slice(0, 10);
   const { extraction, raw, model, ai_call_id } = await extractReceipt({
-    imageBase64, mimeType: mime, accounts, todayIso,
+    pages, accounts, todayIso,
   });
 
   const account = accounts.find(a => a.id === extraction.qbo_account_id) || null;
@@ -568,16 +734,32 @@ async function captureReceipt({ imageBase64, mimeType, capturedBy = null, notes 
     total: extraction.total,
   });
 
+  // Anything wrong with the images themselves, plus a currency contradiction,
+  // surfaces in the same place the operator already reads extraction problems.
+  const noteParts = [
+    extraction.extraction_notes,
+    ...extraction.page_issues,
+    extraction.currency_conflict,
+    dropped.length
+      ? `Ignored ${dropped.length} image${dropped.length === 1 ? '' : 's'} identical to another in this capture (position ${dropped.join(', ')}).`
+      : null,
+  ].filter(Boolean);
+
   const row = {
-    image_hash: imageHash,
-    storage_path: storagePath,
-    image_mime: mime,
-    image_bytes: buffer.length,
+    image_hash: receiptHash,
+    // Page 1 stays on the receipt row so every list thumbnail and signed-URL
+    // read keeps working without knowing pages exist.
+    storage_path: pages[0].storagePath,
+    image_mime: pages[0].mimeType,
+    image_bytes: pages.reduce((a, p) => a + p.buffer.length, 0),
+    page_count: pages.length,
     merchant: extraction.merchant,
     merchant_address: extraction.merchant_address,
+    merchant_country: extraction.merchant_country,
     purchased_at: extraction.purchased_at,
     purchased_time: extraction.purchased_time,
     currency: extraction.currency,
+    currency_source: extraction.currency_source,
     subtotal: extraction.subtotal,
     tax_total: extraction.tax_total,
     tip: extraction.tip,
@@ -593,7 +775,7 @@ async function captureReceipt({ imageBase64, mimeType, capturedBy = null, notes 
     category_rationale: account ? extraction.category_rationale : null,
     extraction_model: model,
     extraction_confidence: extraction.extraction_confidence,
-    extraction_notes: extraction.extraction_notes,
+    extraction_notes: noteParts.length ? noteParts.join(' ') : null,
     ai_call_id,
     raw_extraction: raw,
     math_check: math,
@@ -611,6 +793,18 @@ async function captureReceipt({ imageBase64, mimeType, capturedBy = null, notes 
     .select()
     .single();
   if (insertError) throw new Error(`Could not save the receipt: ${insertError.message}`);
+
+  const { error: pagesError } = await sb
+    .from('expense_receipt_pages')
+    .upsert(pages.map((p, i) => ({
+      receipt_id: inserted.id,
+      page_number: i + 1,
+      image_hash: p.hash,
+      storage_path: p.storagePath,
+      image_mime: p.mimeType,
+      image_bytes: p.buffer.length,
+    })), { onConflict: 'receipt_id,page_number' });
+  if (pagesError) throw new Error(`Could not save the receipt pages: ${pagesError.message}`);
 
   if (extraction.line_items.length) {
     const itemRows = extraction.line_items.map(it => ({
@@ -651,10 +845,31 @@ async function getReceipt(id) {
     .order('line_number');
   if (itemsError) throw new Error(`Could not load line items for receipt ${id}: ${itemsError.message}`);
 
+  const { data: pageRows, error: pagesError } = await sb
+    .from('expense_receipt_pages')
+    .select('*')
+    .eq('receipt_id', id)
+    .order('page_number');
+  if (pagesError) throw new Error(`Could not load pages for receipt ${id}: ${pagesError.message}`);
+
+  // A receipt captured before pages existed and not yet backfilled still has
+  // its image on the receipt row — synthesize page 1 so every consumer can
+  // read `pages` unconditionally.
+  const pages = (pageRows && pageRows.length) ? pageRows : (data.storage_path ? [{
+    receipt_id: id, page_number: 1, image_hash: data.image_hash,
+    storage_path: data.storage_path, image_mime: data.image_mime, image_bytes: data.image_bytes,
+  }] : []);
+
+  const withUrls = await Promise.all(pages.map(async p => ({
+    ...p, image_url: await signedImageUrl(p.storage_path),
+  })));
+
   return {
     receipt: withCleanFlag(data),
     items: items || [],
-    image_url: await signedImageUrl(data.storage_path),
+    pages: withUrls,
+    // Page 1's URL, kept so existing callers that read a single image still work.
+    image_url: withUrls[0]?.image_url || null,
     duplicate_of: data.possible_duplicate_of || null,
   };
 }
@@ -670,7 +885,8 @@ async function listReceipts({ status = null, search = null, from = null, to = nu
   const sb = getSupabaseClient();
   let q = sb
     .from('expense_receipts')
-    .select('id, merchant, purchased_at, currency, subtotal, tax_total, tip, total, category, ' +
+    .select('id, merchant, purchased_at, currency, currency_source, merchant_country, ' +
+            'subtotal, tax_total, tip, total, category, page_count, ' +
             'qbo_account_id, qbo_account_name, review_status, extraction_confidence, math_check, ' +
             'possible_duplicate_of, payment_method, card_last4, storage_path, created_at', { count: 'exact' })
     // purchased_at first so the ledger reads chronologically; created_at breaks
@@ -740,7 +956,7 @@ function summarize(rows) {
 // ---------------------------------------------------------------------------
 
 const EDITABLE_FIELDS = new Set([
-  'merchant', 'merchant_address', 'purchased_at', 'purchased_time', 'currency',
+  'merchant', 'merchant_address', 'merchant_country', 'purchased_at', 'purchased_time', 'currency',
   'subtotal', 'tax_total', 'tip', 'total', 'payment_method', 'card_last4',
   'category', 'qbo_account_id', 'notes', 'review_status',
 ]);
@@ -768,6 +984,14 @@ async function updateReceipt(id, patch = {}) {
   }
   if (!Object.keys(update).length) return current;
 
+  // A hand-corrected currency is neither printed nor inferred — it is a human
+  // decision, and leaving the old provenance on it would keep presenting an
+  // operator's fix as the model's guess (or worse, as a reading off the paper).
+  if ('currency' in update) {
+    update.currency = update.currency ? String(update.currency).toUpperCase().slice(0, 3) : null;
+    update.currency_source = update.currency ? 'operator' : null;
+  }
+
   if ('qbo_account_id' in update) {
     if (update.qbo_account_id) {
       const accounts = await loadExpenseAccounts();
@@ -794,16 +1018,40 @@ async function updateReceipt(id, patch = {}) {
   return getReceipt(id);
 }
 
-/** Removes the row (line items cascade) and the stored image. */
+/**
+ * Removes the row (line items and pages cascade) and every stored image.
+ *
+ * Storage is content-addressed, so an identical photo captured onto two
+ * different receipts is ONE blob with two page rows pointing at it. Deleting
+ * either receipt must not blank the other's photo, so a blob is only removed
+ * once nothing else references its hash — checked after the row delete, when
+ * this receipt's own page rows are already gone.
+ */
 async function deleteReceipt(id) {
   const sb = getSupabaseClient();
   const current = await getReceipt(id);
   if (!current) throw new Error(`Receipt ${id} not found`);
+
+  const paths = current.pages.length
+    ? current.pages.map(p => ({ hash: p.image_hash, path: p.storage_path }))
+    : [{ hash: current.receipt.image_hash, path: current.receipt.storage_path }];
+
   const { error } = await sb.from('expense_receipts').delete().eq('id', id);
   if (error) throw new Error(`Could not delete receipt ${id}: ${error.message}`);
-  // Best-effort: an orphaned image is harmless, a failed delete is not.
-  try { await sb.storage.from(BUCKET).remove([current.receipt.storage_path]); } catch { /* ignore */ }
-  return { deleted: true, id };
+
+  // Best-effort: an orphaned blob wastes a few KB, a failed delete loses data.
+  try {
+    const orphaned = [];
+    for (const { hash, path } of paths) {
+      if (!path) continue;
+      const { data: others } = await sb
+        .from('expense_receipt_pages').select('id').eq('image_hash', hash).limit(1);
+      if (!others || !others.length) orphaned.push(path);
+    }
+    if (orphaned.length) await sb.storage.from(BUCKET).remove(orphaned);
+  } catch { /* ignore */ }
+
+  return { deleted: true, id, pages_removed: paths.length };
 }
 
 module.exports = {
@@ -825,6 +1073,10 @@ module.exports = {
   summarize,
   isClean,
   storagePathFor,
+  compositeHash,
+  dedupePages,
+  preparePage,
+  MAX_PAGES,
   toMoney,
   toDate,
   BUCKET,

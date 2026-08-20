@@ -37,7 +37,9 @@
            camera and remove "Photo Library", which is the wrong default for a
            receipt photographed earlier. The FAB below is the straight-to-camera
            path. -->
-      <input type="file" id="file-input" accept="image/*" hidden>
+      <!-- `multiple` so a long receipt already shot in sections can be picked
+           in one go from the library. -->
+      <input type="file" id="file-input" accept="image/*" multiple hidden>
       <span class="capture-icon" aria-hidden="true">
         <svg viewBox="0 0 32 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
           <path d="M2 7.5h5.5L9.5 4h13l2 3.5H30v14H2z"/>
@@ -50,6 +52,22 @@
       </span>
       <span class="capture-hint">JPEG · PNG · HEIC</span>
     </label>
+
+    <!-- Page tray: a long receipt gets photographed in sections, and they are
+         held here until submitted together as ONE receipt. Hidden until the
+         first shot lands, so the single-photo flow is untouched. -->
+    <div class="tray" id="tray" hidden>
+      <div class="tray-head">
+        <strong id="tray-count"></strong>
+        <span class="tray-hint">Sections of one long receipt. Overlap is fine — repeated lines are only counted once.</span>
+      </div>
+      <div class="tray-pages" id="tray-pages"></div>
+      <div class="tray-actions">
+        <button class="btn btn-secondary" id="tray-add" type="button">Add another section</button>
+        <button class="btn btn-primary" id="tray-submit" type="button">Read receipt</button>
+        <button class="btn-ghost" id="tray-discard" type="button">Discard</button>
+      </div>
+    </div>
 
     <!-- The scan panel: shown while a photo is being read. This is the one
          moment the operator actually waits on, so it shows the photo with a

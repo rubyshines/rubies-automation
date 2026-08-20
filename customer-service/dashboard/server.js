@@ -3520,7 +3520,7 @@ const receiptCapture = require('../../finance/lib/receiptCapture');
 // The dashboard downscales before upload, so anything approaching this is a
 // caller that skipped the client path. Generous enough to allow the base64
 // inflation (~4/3) of a 5MB image plus the JSON envelope.
-const MAX_RECEIPT_UPLOAD_CHARS = 8 * 1024 * 1024;
+const MAX_RECEIPT_UPLOAD_CHARS = 24 * 1024 * 1024;
 
 function sessionEmail(req) {
   try {
@@ -3551,17 +3551,27 @@ async function apiReceiptGet(id) {
 }
 
 async function apiReceiptCapture(body, req) {
-  const raw = body?.image_base64 || '';
-  if (!raw) { const e = new Error('No image was uploaded'); e.statusCode = 400; throw e; }
-  if (raw.length > MAX_RECEIPT_UPLOAD_CHARS) {
-    const e = new Error('That image is too large — retake it or pick a smaller file.');
+  // One photo, or several sections of a long receipt.
+  const images = Array.isArray(body?.images) && body.images.length
+    ? body.images
+    : (body?.image_base64 ? [{ image_base64: body.image_base64, mime_type: body.mime_type }] : []);
+  if (!images.length) { const e = new Error('No image was uploaded'); e.statusCode = 400; throw e; }
+  if (images.length > receiptCapture.MAX_PAGES) {
+    const e = new Error(`A receipt can be captured in at most ${receiptCapture.MAX_PAGES} photos.`);
+    e.statusCode = 400;
+    throw e;
+  }
+  // Budget the WHOLE submission, not each image: eight individually-legal
+  // photos still add up to a body no one wants to buffer.
+  const totalChars = images.reduce((a, i) => a + String(i?.image_base64 || '').length, 0);
+  if (totalChars > MAX_RECEIPT_UPLOAD_CHARS) {
+    const e = new Error('Those photos are too large altogether — retake them or capture fewer at once.');
     e.statusCode = 413;
     throw e;
   }
   try {
     return await receiptCapture.captureReceipt({
-      imageBase64: String(raw).replace(/^data:[^;]+;base64,/, ''),
-      mimeType: body.mime_type,
+      images,
       capturedBy: sessionEmail(req),
       notes: body.notes || null,
     });
@@ -3569,7 +3579,7 @@ async function apiReceiptCapture(body, req) {
     // Bad image / bad type / oversize are the operator's problem to fix, not a
     // server fault — surfacing them as 500s makes the UI say "try again" for
     // something retrying will never fix.
-    if (/Unsupported image type|empty|the limit is|is required/i.test(err.message)) err.statusCode = 400;
+    if (/unsupported type|empty|the limit is|is required|at most/i.test(err.message)) err.statusCode = 400;
     throw err;
   }
 }

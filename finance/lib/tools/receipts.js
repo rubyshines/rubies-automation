@@ -16,6 +16,7 @@ const {
   deleteReceipt,
   loadExpenseAccounts,
   REVIEW_STATUSES,
+  MAX_PAGES,
 } = require('../receiptCapture');
 
 // ---------------------------------------------------------------------------
@@ -40,7 +41,14 @@ function formatReceiptDetail({ receipt: r, items, duplicate_of }) {
   lines.push('');
   lines.push(`- Date: ${r.purchased_at || '(not read)'}${r.purchased_time ? ` ${r.purchased_time}` : ''}`);
   if (r.merchant_address) lines.push(`- Address: ${r.merchant_address}`);
-  lines.push(`- Currency: ${r.currency || '(not determined)'}`);
+  lines.push(`- Currency: ${r.currency || '(not determined)'}${r.currency_source ? ` (${{
+    printed: 'printed on the receipt',
+    tax_label: 'from the Canadian tax line',
+    address: 'INFERRED from the merchant address',
+    operator: 'set by hand',
+  }[r.currency_source] || r.currency_source})` : ''}`);
+  if (r.merchant_country) lines.push(`- Merchant country: ${r.merchant_country}`);
+  if (r.page_count > 1) lines.push(`- Captured in ${r.page_count} photos`);
   lines.push(`- Subtotal: ${money(r.subtotal, r.currency)}`);
   for (const t of r.tax_lines || []) {
     const rate = t.rate ? ` @ ${(Number(t.rate) * 100).toFixed(2).replace(/\.?0+$/, '')}%` : '';
@@ -88,18 +96,20 @@ function formatReceiptDetail({ receipt: r, items, duplicate_of }) {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async function handleCaptureReceipt({ image_base64, mime_type, captured_by, notes }) {
-  if (!image_base64) {
-    return { content: [{ type: 'text', text: 'No image supplied. Pass the receipt photo as base64 in `image_base64` (no data: prefix).' }] };
+async function handleCaptureReceipt({ image_base64, mime_type, images, captured_by, notes }) {
+  const pages = Array.isArray(images) && images.length
+    ? images
+    : (image_base64 ? [{ image_base64, mime_type }] : []);
+  if (!pages.length) {
+    return { content: [{ type: 'text', text: 'No image supplied. Pass one photo as base64 in `image_base64`, or several sections of a long receipt in `images`.' }] };
   }
   const result = await captureReceipt({
-    imageBase64: String(image_base64).replace(/^data:[^;]+;base64,/, ''),
-    mimeType: mime_type,
+    images: pages,
     capturedBy: captured_by || null,
     notes: notes || null,
   });
   const prefix = result.already_captured
-    ? 'This exact image was already captured — returning the existing receipt rather than filing it twice.\n\n'
+    ? 'These exact images were already captured — returning the existing receipt rather than filing it twice.\n\n'
     : '';
   return { content: [{ type: 'text', text: prefix + formatReceiptDetail(result) }] };
 }
@@ -144,12 +154,12 @@ async function handleDeleteReceipt({ receipt_id, confirmed }) {
     return {
       content: [{
         type: 'text',
-        text: `About to permanently delete ${receiptHeadline(existing.receipt)} and its stored image. Call again with confirmed: true to proceed.`,
+        text: `About to permanently delete ${receiptHeadline(existing.receipt)} and its ${existing.pages.length > 1 ? `${existing.pages.length} stored photos` : 'stored photo'}. Call again with confirmed: true to proceed.`,
       }],
     };
   }
-  await deleteReceipt(receipt_id);
-  return { content: [{ type: 'text', text: `Deleted receipt #${receipt_id} and its image.` }] };
+  const res = await deleteReceipt(receipt_id);
+  return { content: [{ type: 'text', text: `Deleted receipt #${receipt_id} and its ${res.pages_removed > 1 ? `${res.pages_removed} photos` : 'photo'}.` }] };
 }
 
 async function handleReceiptAccounts() {
@@ -164,16 +174,26 @@ async function handleReceiptAccounts() {
 const tools = [
   {
     name: 'capture_receipt',
-    description: 'Capture an expense receipt from a photo. Extracts merchant, date, subtotal, per-tax-line breakdown, tip, total, currency, payment method and line items, categorizes the purchase against the live QuickBooks chart of accounts, stores the image, and reconciles the arithmetic. Re-capturing the identical image returns the existing receipt instead of filing a duplicate.',
+    description: `Capture an expense receipt from one photo, or from several photos of one long receipt. Extracts merchant, date, subtotal, per-tax-line breakdown, tip, total, currency, payment method and line items, categorizes the purchase against the live QuickBooks chart of accounts, stores the images, and reconciles the arithmetic. Currency is read from the receipt where printed and otherwise derived from the merchant's country, with the difference recorded. For a long receipt photographed in overlapping sections, pass every section in \`images\` in capture order — they are read together as one receipt and repeated lines are emitted once. Re-capturing the identical set of images returns the existing receipt instead of filing a duplicate. Max ${MAX_PAGES} images.`,
     inputSchema: {
       type: 'object',
       properties: {
-        image_base64: { type: 'string', description: 'The receipt photo, base64-encoded. A data: URI prefix is stripped automatically. Max 5MB.' },
+        image_base64: { type: 'string', description: 'Single-photo form. The receipt photo, base64-encoded; a data: URI prefix is stripped automatically. Max 5MB.' },
         mime_type: { type: 'string', description: 'image/jpeg, image/png, image/webp or image/gif. Defaults to image/jpeg.' },
+        images: {
+          type: 'array',
+          description: `Multi-photo form for a long receipt, in capture order. Overrides image_base64. Max ${MAX_PAGES}.`,
+          items: {
+            type: 'object',
+            properties: {
+              image_base64: { type: 'string', description: 'Base64 image payload.' },
+              mime_type: { type: 'string', description: 'Defaults to image/jpeg.' },
+            },
+          },
+        },
         captured_by: { type: 'string', description: 'Who captured it (email or name).' },
         notes: { type: 'string', description: 'Optional free-text note to file with the receipt.' },
       },
-      required: ['image_base64'],
     },
     handler: handleCaptureReceipt,
   },

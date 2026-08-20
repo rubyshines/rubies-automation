@@ -137,23 +137,28 @@ test('toMoney rounds an exact half-cent up, not down', () => {
 // ---------------------------------------------------------------------------
 
 test('inferCurrency prefers the stated code', () => {
-  assert.strictEqual(inferCurrency('usd', [{ label: 'HST' }]), 'USD');
+  const r = inferCurrency('usd', [{ label: 'HST' }], { statedSource: 'printed' });
+  assert.strictEqual(r.currency, 'USD');
+  assert.strictEqual(r.source, 'printed');
 });
 
 test('inferCurrency reads HST/QST/PST as Canadian', () => {
-  assert.strictEqual(inferCurrency(null, [{ label: 'HST 13%' }]), 'CAD');
-  assert.strictEqual(inferCurrency(null, [{ label: 'QST' }]), 'CAD');
-  assert.strictEqual(inferCurrency(null, [{ label: 'PST' }]), 'CAD');
+  for (const label of ['HST 13%', 'QST', 'PST']) {
+    const r = inferCurrency(null, [{ label }], {});
+    assert.strictEqual(r.currency, 'CAD', label);
+    assert.strictEqual(r.source, 'tax_label', label);
+  }
 });
 
 test('inferCurrency does NOT read GST alone as Canadian', () => {
   // Australia, New Zealand, Singapore and India all print GST. Guessing CAD
-  // here would file foreign spend into the wrong currency silently.
-  assert.strictEqual(inferCurrency(null, [{ label: 'GST' }]), null);
+  // here would file foreign spend into the wrong currency silently. With no
+  // country either, the honest answer is still nothing.
+  assert.strictEqual(inferCurrency(null, [{ label: 'GST' }], {}).currency, null);
 });
 
 test('inferCurrency ignores a malformed code', () => {
-  assert.strictEqual(inferCurrency('dollars', []), null);
+  assert.strictEqual(inferCurrency('dollars', [], {}).currency, null);
 });
 
 // ---------------------------------------------------------------------------
@@ -361,4 +366,178 @@ test('buildExtractionPrompt lists the accounts and states today', () => {
 test('buildExtractionPrompt survives an empty chart of accounts', () => {
   const prompt = buildExtractionPrompt([], '2026-08-13');
   assert.match(prompt, /none loaded/);
+});
+
+// ---------------------------------------------------------------------------
+// Currency provenance
+// ---------------------------------------------------------------------------
+
+const { compositeHash, dedupePages, preparePage, MAX_PAGES } = require('../../finance/lib/receiptCapture');
+
+test('inferCurrency reports a printed code as printed', () => {
+  const r = inferCurrency('USD', [], { statedSource: 'printed', country: 'US' });
+  assert.deepStrictEqual(r, { currency: 'USD', source: 'printed', conflict: null });
+});
+
+test('inferCurrency derives from the merchant country when the paper does not say', () => {
+  // The case this whole feature exists for: a bare "$" on a US receipt used to
+  // resolve to null, because "$" alone is not evidence of any currency.
+  const r = inferCurrency('USD', [], { statedSource: 'address', country: 'US' });
+  assert.deepStrictEqual(r, { currency: 'USD', source: 'address', conflict: null });
+});
+
+test('inferCurrency now resolves GST + a non-Canadian country instead of giving up', () => {
+  const r = inferCurrency('AUD', [{ label: 'GST' }], { statedSource: 'address', country: 'AU' });
+  assert.strictEqual(r.currency, 'AUD');
+  assert.strictEqual(r.source, 'address');
+});
+
+test('a Canadian tax label outranks the merchant address', () => {
+  const r = inferCurrency('USD', [{ label: 'HST 13%' }], { statedSource: 'address', country: 'US' });
+  assert.strictEqual(r.currency, 'CAD');
+  assert.strictEqual(r.source, 'tax_label');
+});
+
+test('a Canadian tax label with a foreign address files as CAD but reports the conflict', () => {
+  // Resolving this silently would hide the likelier reading: that the address
+  // or the tax line was misread, so a figure on this receipt is wrong.
+  const r = inferCurrency(null, [{ label: 'QST' }], { country: 'FR' });
+  assert.strictEqual(r.currency, 'CAD');
+  assert.match(r.conflict, /FR/);
+});
+
+test('a printed code still wins over a Canadian tax label, and says so', () => {
+  const r = inferCurrency('USD', [{ label: 'HST' }], { statedSource: 'printed', country: 'US' });
+  assert.strictEqual(r.currency, 'USD');
+  assert.strictEqual(r.source, 'printed');
+  assert.match(r.conflict, /Canadian tax line/);
+});
+
+test('inferCurrency returns nothing rather than guessing with no signal at all', () => {
+  assert.deepStrictEqual(inferCurrency(null, [], {}), { currency: null, source: null, conflict: null });
+});
+
+test('normalizeExtraction surfaces currency provenance and country', () => {
+  const n = normalizeExtraction({
+    currency: 'GBP', currency_source: 'address', merchant_country: 'gb',
+  });
+  assert.strictEqual(n.currency, 'GBP');
+  assert.strictEqual(n.currency_source, 'address');
+  assert.strictEqual(n.merchant_country, 'GB');
+});
+
+test('normalizeExtraction drops a malformed country rather than storing it', () => {
+  assert.strictEqual(normalizeExtraction({ merchant_country: 'Canada' }).merchant_country, null);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-page identity
+// ---------------------------------------------------------------------------
+
+const H_A = 'a'.repeat(64), H_B = 'b'.repeat(64), H_C = 'c'.repeat(64);
+
+test('a single page hashes to itself, so pre-multi-page receipts stay idempotent', () => {
+  // If this became a hash-of-a-hash, every receipt captured before multi-page
+  // existed would re-extract (and re-charge) on the next upload of its image.
+  assert.strictEqual(compositeHash([H_A]), H_A);
+});
+
+test('the composite hash is order-independent', () => {
+  // Page order is a property of this capture, not of the receipt — the same
+  // sections shot in a different order are the same receipt.
+  assert.strictEqual(compositeHash([H_A, H_B, H_C]), compositeHash([H_C, H_A, H_B]));
+});
+
+test('the composite hash distinguishes different page sets', () => {
+  assert.notStrictEqual(compositeHash([H_A, H_B]), compositeHash([H_A, H_C]));
+  assert.notStrictEqual(compositeHash([H_A, H_B]), compositeHash([H_A]));
+});
+
+test('adding a page changes the receipt identity', () => {
+  assert.notStrictEqual(compositeHash([H_A]), compositeHash([H_A, H_B]));
+});
+
+// ---------------------------------------------------------------------------
+// Page preparation + dedupe
+// ---------------------------------------------------------------------------
+
+const img = (s, mime) => ({ image_base64: Buffer.from(s).toString('base64'), mime_type: mime || 'image/png' });
+
+test('preparePage hashes the decoded bytes and keeps the mime', () => {
+  const p = preparePage(img('hello'), 0);
+  assert.strictEqual(p.mimeType, 'image/png');
+  assert.strictEqual(p.buffer.toString(), 'hello');
+  assert.match(p.hash, /^[0-9a-f]{64}$/);
+});
+
+test('preparePage strips a data: URI prefix', () => {
+  const raw = Buffer.from('x').toString('base64');
+  const p = preparePage({ image_base64: `data:image/png;base64,${raw}`, mime_type: 'image/png' }, 0);
+  assert.strictEqual(p.buffer.toString(), 'x');
+});
+
+test('preparePage names the offending image in its error', () => {
+  // "Image 3 is an unsupported type" is actionable; "unsupported type" is not
+  // when six photos were submitted at once.
+  assert.throws(() => preparePage(img('x', 'application/pdf'), 2), /Image 3.*unsupported type/);
+  assert.throws(() => preparePage({ image_base64: '' }, 4), /Image 5 was empty/);
+});
+
+test('dedupePages drops byte-identical repeats, keeps the first, and reports positions', () => {
+  const pages = [img('one'), img('two'), img('one'), img('three')].map(preparePage);
+  const { pages: kept, dropped } = dedupePages(pages);
+  assert.strictEqual(kept.length, 3);
+  assert.deepStrictEqual(dropped, [3]);
+  assert.strictEqual(kept[0].buffer.toString(), 'one');
+  assert.strictEqual(kept[1].buffer.toString(), 'two');
+});
+
+test('dedupePages leaves genuinely different overlapping shots alone', () => {
+  // Overlap is near-identical, never byte-identical — reconciling those is the
+  // model's job, and dropping them here would delete real sections.
+  const pages = [img('sectionA'), img('sectionAB'), img('sectionB')].map(preparePage);
+  assert.strictEqual(dedupePages(pages).pages.length, 3);
+});
+
+test('dedupePages is a no-op on a single page', () => {
+  const { pages: kept, dropped } = dedupePages([preparePage(img('solo'))]);
+  assert.strictEqual(kept.length, 1);
+  assert.deepStrictEqual(dropped, []);
+});
+
+// ---------------------------------------------------------------------------
+// Prompt gating
+// ---------------------------------------------------------------------------
+
+test('the multi-image rules are omitted for a single image', () => {
+  // Those rules exist to suppress a line seen twice across overlapping shots.
+  // A single-image call reading them has been handed a reason to drop a
+  // receipt's second, genuinely-printed coffee.
+  const one = buildExtractionPrompt([{ id: '1', full_name: 'A' }], '2026-08-19', 1);
+  assert.doesNotMatch(one, /IMAGES/);
+  assert.doesNotMatch(one, /overlap/i);
+  assert.match(one, /a photograph of a purchase receipt/);
+});
+
+test('the multi-image rules appear, with the count, for several images', () => {
+  const many = buildExtractionPrompt([{ id: '1', full_name: 'A' }], '2026-08-19', 4);
+  assert.match(many, /THERE ARE 4 IMAGES/);
+  assert.match(many, /OVERLAP/);
+  assert.match(many, /page_issues/);
+  assert.match(many, /photographs of a purchase receipt/);
+});
+
+test('buildExtractionPrompt defaults to the single-image form', () => {
+  assert.doesNotMatch(buildExtractionPrompt([], '2026-08-19'), /THERE ARE/);
+});
+
+test('the prompt distinguishes reading a currency from inferring one', () => {
+  const p = buildExtractionPrompt([], '2026-08-19');
+  assert.match(p, /currency_source/);
+  assert.match(p, /merchant_country/);
+  assert.match(p, /Never mark an inference "printed"/);
+});
+
+test('MAX_PAGES is a real bound', () => {
+  assert.ok(MAX_PAGES >= 2 && MAX_PAGES <= 20);
 });
