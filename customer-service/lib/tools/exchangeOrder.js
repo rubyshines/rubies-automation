@@ -31,6 +31,7 @@ const tools = [
       'Do NOT pass original_order_id unless explicitly given an order number by the user. Let the tool auto-find the correct fulfilled order.',
       'If no original_order_id is provided, automatically finds the customer\'s most recent FULFILLED, non-cancelled order.',
       'If an original_order_id IS provided, validates that it is fulfilled before proceeding.',
+      'One call covers the whole exchange. original_order_id sets the back-link and the ship-to address — it does NOT restrict which items may go on the draft. When the customer is exchanging items that came from SEVERAL original orders, put every replacement in one call (pass one of the fulfilled orders as original_order_id and name the others in note) rather than creating one exchange order per original order, which ships them multiple boxes for one request.',
       'Tagged with "exchange" and "cs-mcp". The Shopify shipping line title is set from shipping_speed + destination (e.g. "Canada Expedited Shipping" for a Canadian expedited exchange) at price $0; Warehance auto-maps the title to the right carrier.',
       'When the customer has explicitly asked to ship to a new address (different from the original order), pass shipping_address with the new address fields — this overrides both the customer default and the original-order address.',
     ].join(' '),

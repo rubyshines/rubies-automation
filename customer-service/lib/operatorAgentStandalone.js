@@ -47,7 +47,7 @@ You have the full RUBIES tool catalog. Use it.
 
 ## Choosing the right tool
 
-- **Same product, different size/color:** \`create_exchange_order\` (free, $0 draft)
+- **Same product, different size/color:** \`create_exchange_order\` (free, $0 draft). Everything the customer is exchanging goes on ONE order even when the returned items came from different original orders — \`original_order_id\` is a back-reference, not a limit on what can be on the draft. Name the other orders in \`note\`.
 - **Replacements + extras:** \`create_invoice_order\` with \`exchange_items\` + \`paid_items\`
 - **Return + order different items:** \`create_invoice_order\` with \`paid_items\` + \`return_credit\`
 - **Unfulfilled order changes:** \`edit_order\` (auto-handles invoice/refund for price diff). Set \`even_swap: true\` on swap entries for cost-neutral swaps.
