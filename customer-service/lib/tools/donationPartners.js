@@ -22,6 +22,7 @@ const { extractLogoUrl } = require('../logoExtractor');
 const { generateShortDescription } = require('../donationDescriptionShort');
 const fs = require('fs');
 const { readSurveyRows, findSurveyRowByName, ensureRubiesReturnsPrefix } = require('../donationPartnerSurvey');
+const { parseSizeAcceptance, formatSizeAcceptance } = require('../sizeAcceptance');
 const { rehostImageOnShopify, rehostImageFromFile, isShopifyCdnUrl } = require('../shopifyFileUpload');
 
 function looksLikeLocalPath(s) {
@@ -37,7 +38,7 @@ function expandHome(p) {
   return p;
 }
 
-const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, description_short, size_range, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
+const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, description_short, accepts_smaller_sizes, accepts_larger_sizes, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
 
 /**
  * Normalize a website URL down to its bare apex-ish domain so we can compare
@@ -58,7 +59,7 @@ function normalizeDomain(url) {
 function fmtPartner(p) {
   return `**${p.name}** (#${p.id}) ${p.active ? '' : '[inactive]'} — ${p.city || '?'}, ${p.country_code}
   lat/lng: ${p.latitude ?? '—'}, ${p.longitude ?? '—'}
-  size_range: ${p.size_range || '—'}
+  sizes: ${formatSizeAcceptance(p) || '— none (unroutable)'}
   donations_routed: ${p.donations_routed || 0}
   website: ${p.website_url || '—'}
   logo: ${p.logo_url || '—'}`;
@@ -175,7 +176,16 @@ async function deriveCreatePayload(params, { logs }) {
     mailing_address: params.mailing_address,
     description: params.description || null,
     description_short,
-    size_range: params.size_range || null,
+    // Accept either the survey's free text (parsed) or explicit booleans from
+    // an operator. Explicit wins; absent both, a new partner defaults to taking
+    // everything rather than silently becoming unroutable.
+    ...(() => {
+      const parsed = params.size_range ? parseSizeAcceptance(params.size_range) : null;
+      return {
+        accepts_smaller_sizes: params.accepts_smaller_sizes ?? parsed?.accepts_smaller_sizes ?? true,
+        accepts_larger_sizes: params.accepts_larger_sizes ?? parsed?.accepts_larger_sizes ?? true,
+      };
+    })(),
     logo_url,
     website_url: params.website_url || null,
     latitude: lat,
@@ -198,7 +208,7 @@ function renderPreview(row, logs, opts = {}) {
   lines.push(`- **Name:** ${row.name}`);
   lines.push(`- **Country / Region / City:** ${row.country_code || '—'} / ${row.region || '—'} / ${row.city || '—'}`);
   lines.push(`- **Lat / Lng:** ${row.latitude}, ${row.longitude}`);
-  lines.push(`- **Size range:** ${row.size_range || '—'}`);
+  lines.push(`- **Sizes accepted:** ${formatSizeAcceptance(row) || '— none (would be unroutable)'}`);
   lines.push(`- **Website:** ${row.website_url || '—'}`);
   lines.push('');
   lines.push(`**Mailing address:**\n\`\`\`\n${row.mailing_address}\n\`\`\``);
@@ -300,7 +310,8 @@ async function handleUpdate(params) {
   const supabase = getSupabaseClient();
 
   const allowed = ['name', 'country_code', 'region', 'city', 'address', 'mailing_address',
-    'description', 'description_short', 'size_range', 'logo_url', 'website_url', 'latitude', 'longitude', 'active'];
+    'description', 'description_short', 'accepts_smaller_sizes', 'accepts_larger_sizes',
+    'logo_url', 'website_url', 'latitude', 'longitude', 'active'];
   const patch = { updated_at: new Date().toISOString() };
   for (const k of allowed) {
     if (params[k] !== undefined) patch[k] = params[k];
@@ -525,7 +536,7 @@ async function handleListSubmissions({ status } = {}) {
     const tag = r.status ? `[${r.status}]` : '[ ]';
     lines.push(`${tag} **${r.name}** (row ${r.sheet_row}, submitted ${r.timestamp || '?'})`);
     lines.push(`    website: ${r.website || '—'}`);
-    lines.push(`    sizes: ${r.size_range || '—'}`);
+    lines.push(`    sizes: ${r.size_range || '—'} → ${formatSizeAcceptance(parseSizeAcceptance(r.size_range)) || '— none'}`);
     lines.push(`    contact: ${r.contact_name || '—'} <${r.contact_email || '—'}>`);
     if (r.matched_partner_name) {
       lines.push(`    matched DB partner #${r.matched_partner_id} "${r.matched_partner_name}" via ${r.matched_via}`);
@@ -542,7 +553,7 @@ async function handleListSubmissions({ status } = {}) {
 // create_from_survey
 // ---------------------------------------------------------------------------
 
-async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, mailing_address, description, description_short, size_range }) {
+async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, mailing_address, description, description_short, size_range, accepts_smaller_sizes, accepts_larger_sizes }) {
   if (!name && !sheet_row) {
     return { content: [{ type: 'text', text: 'Provide either name or sheet_row to pick a row from the survey.' }], isError: true };
   }
@@ -586,6 +597,8 @@ async function handleCreateFromSurvey({ name, sheet_row, confirmed, logo_url, ma
     description: description || row.description,
     description_short: description_short || undefined, // undefined → create() auto-generates via Opus
     size_range: size_range || row.size_range,
+    accepts_smaller_sizes,
+    accepts_larger_sizes,
     website_url: row.website,
     logo_url: logo_url || undefined, // undefined → create() falls back to Haiku
     confirmed: confirmed === true,
@@ -607,7 +620,9 @@ const partnerFieldsSchema = {
   mailing_address: { type: 'string', description: 'Multi-line mailing block as shown on the donation page (e.g. "RUBIES Returns\\nc/o ORG\\nstreet\\ncity, state\\nzip").' },
   description: { type: 'string', description: 'Full public-facing description of the org (shown on the website donation page)' },
   description_short: { type: 'string', description: '1-2 sentence version used in CS advisor emails. Auto-generated from description (Opus) when omitted on create; pass explicitly to override.' },
-  size_range: { type: 'string', description: 'Sizes accepted, e.g. "Youth sizes 4-8, Adult XS - 4X"' },
+  size_range: { type: 'string', description: 'Raw survey answer about sizes accepted; parsed into accepts_smaller_sizes / accepts_larger_sizes. Prefer setting those booleans directly.' },
+  accepts_smaller_sizes: { type: 'boolean', description: 'Partner can distribute kids sizes 4-11. Defaults true on create.' },
+  accepts_larger_sizes: { type: 'boolean', description: 'Partner can distribute kids sizes 12-16 and adult sizes XXS-4X. Defaults true on create.' },
   logo_url: { type: 'string', description: 'Public CDN URL of the org logo. If omitted and website_url is set, auto-extracted via Haiku.' },
   website_url: { type: 'string', description: 'Org\'s external website (used as the source for auto logo extraction).' },
   latitude: { type: 'number', description: 'Latitude. Auto-derived from mailing_address via Google if omitted.' },
@@ -715,7 +730,9 @@ module.exports = [
         mailing_address: { type: 'string', description: 'Optional override for the multi-line "RUBIES Returns / c/o ORG / ..." block. Use this when the org\'s submitted address needs cleanup.' },
         description: { type: 'string', description: 'Optional override for the full public-facing description (website).' },
         description_short: { type: 'string', description: 'Optional override for the short 1-2 sentence description used in CS advisor emails. Omit to auto-generate from the description.' },
-        size_range: { type: 'string', description: 'Optional override for the size range string.' },
+        size_range: { type: 'string', description: 'Optional override for the raw size answer before it is parsed.' },
+        accepts_smaller_sizes: { type: 'boolean', description: 'Optional override — partner can distribute kids sizes 4-11.' },
+        accepts_larger_sizes: { type: 'boolean', description: 'Optional override — partner can distribute kids 12-16 and adult XXS-4X.' },
       },
     },
     handler: handleCreateFromSurvey,

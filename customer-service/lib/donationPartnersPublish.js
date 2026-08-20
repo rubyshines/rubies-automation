@@ -17,6 +17,7 @@ const path = require('path');
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { publishThemeAsset } = require('./themeAssetPublish');
+const { formatSizeAcceptance } = require('./sizeAcceptance');
 
 const DEFAULT_THEME_ASSET_PATH = path.resolve(
   __dirname, '../../../rubies-ecom-v4/assets/donation-partners.json'
@@ -29,7 +30,9 @@ function toPublicShape(row) {
     name: row.name,
     address: row.mailing_address || row.address || '',
     description: row.description || '',
-    sizeRange: row.size_range || '',
+    // Derived, never stored — so the sizes a shopper reads on the donation page
+    // are the same ones routing actually filters on.
+    sizeRange: formatSizeAcceptance(row),
     imageUrl: row.logo_url || '',
     orgUrl: row.website_url || '',
     lat: Number(row.latitude),
@@ -41,7 +44,7 @@ async function readActivePartners() {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase
     .from('donation_partners')
-    .select('name, mailing_address, address, description, size_range, logo_url, website_url, latitude, longitude, active')
+    .select('name, mailing_address, address, description, accepts_smaller_sizes, accepts_larger_sizes, logo_url, website_url, latitude, longitude, active')
     .eq('active', true)
     .order('country_code')
     .order('name');

@@ -12,6 +12,7 @@
 
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { geocode } = require('./geocoder');
+const { shipmentSizeCategories, partnerAcceptsCategories } = require('./sizeAcceptance');
 
 // Trailing window for load balancing. Lifetime counts made every newly added
 // partner monopolize its region until it caught up (Montgomery blacked out
@@ -239,11 +240,27 @@ async function prescribeDonationRouting(intake, context) {
   try {
     const { data } = await supabase
       .from('donation_partners')
-      .select('id, name, region, city, address, mailing_address, description, description_short, donations_routed, latitude, longitude')
+      .select('id, name, region, city, address, mailing_address, description, description_short, donations_routed, latitude, longitude, accepts_smaller_sizes, accepts_larger_sizes')
       .eq('country_code', country)
       .eq('active', true);
     partners = data || [];
   } catch (e) { /* no partners table yet */ }
+
+  // Size eligibility, applied before the proximity tiers rather than inside
+  // them: a partner that cannot use these sizes is not a worse match, it is not
+  // a match at all, so it should not occupy a local slot and suppress the
+  // in-state or national tier behind it. Filtering here means the tiers fall
+  // through naturally, and an empty result lands on the existing
+  // no-partner-in-country branch below.
+  const sizeCategories = shipmentSizeCategories(context.donationSizes);
+  const partnersBeforeSizeFilter = partners.length;
+  if (sizeCategories.size > 0) {
+    partners = partners.filter(p => partnerAcceptsCategories(p, sizeCategories));
+  }
+  const sizeFilterExcluded = partnersBeforeSizeFilter - partners.length;
+  const sizeNote = sizeCategories.size > 0
+    ? ` [sizes: ${[...sizeCategories].join('+')}${sizeFilterExcluded ? `, ${sizeFilterExcluded} partner(s) excluded` : ''}]`
+    : '';
 
   const singleItem = itemCount <= 1;
 
@@ -318,7 +335,9 @@ async function prescribeDonationRouting(intake, context) {
       phase: 'donation_routing',
       type: 'local_no_partner',
       response_text: `${programExplanation} Feel free to donate locally. Do you know of any LGBTQ+ organizations in your area we could partner with?`,
-      audit: `No partners in ${country} — local donation + ask for org referral`,
+      audit: sizeFilterExcluded > 0
+        ? `No partner in ${country} can use these sizes${sizeNote} — local donation + ask for org referral`
+        : `No partners in ${country} — local donation + ask for org referral`,
     };
   }
 
@@ -368,7 +387,7 @@ async function prescribeDonationRouting(intake, context) {
       washReminder,
       includeProofAsk ? (singleItem ? PROOF_ASK_TEXT_SINGULAR : PROOF_ASK_TEXT) : null,
     ),
-    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${includeProofAsk ? ', proof ask included' : ''}`,
+    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${sizeNote}${includeProofAsk ? ', proof ask included' : ''}`,
   };
 }
 

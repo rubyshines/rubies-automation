@@ -24,6 +24,7 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../..', '.env') });
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+const { parseSizeAcceptance } = require('../lib/sizeAcceptance');
 
 const THEME_TEMPLATE = path.resolve(
   __dirname, '../../../rubies-ecom-v4/templates/page.donate-preloved.json'
@@ -161,7 +162,9 @@ async function main() {
       name: p.name,
       mailing_address: p.mailing_address,
       description: p.description,
-      size_range: p.size_range,
+      // The theme carried sizes as free text; the registry stores the two
+      // categories routing filters on (see lib/sizeAcceptance.js).
+      ...parseSizeAcceptance(p.size_range),
       logo_url: p.logo_url,
       website_url: p.website_url,
       latitude: p.latitude,

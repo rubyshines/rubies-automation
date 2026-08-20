@@ -14,7 +14,11 @@ CREATE TABLE IF NOT EXISTS donation_partners (
   mailing_address text,         -- multi-line "RUBIES Returns / c/o ORG / ..." block shown on the donation page
   description   text,           -- org's full self-written description (website)
   description_short text,       -- 1-2 sentence version used in CS advisor emails
-  size_range    text,           -- e.g. "Youth sizes 4-8, Adult XS - 4X"
+  -- Which size categories the org can actually distribute. Split on the one
+  -- boundary that is physically real (kids 12 == adult XS by waist), so routing
+  -- never sends an org a box it cannot use. See lib/sizeAcceptance.js.
+  accepts_smaller_sizes boolean NOT NULL DEFAULT true,  -- kids 4-11
+  accepts_larger_sizes  boolean NOT NULL DEFAULT true,  -- kids 12-16 + adult XXS-4X
   logo_url      text,           -- always on cdn.shopify.com (re-hosted on save)
   website_url   text,
   latitude      double precision,

@@ -123,6 +123,11 @@ const TOOLS = [
             country: { type: 'string' },
           },
         },
+        sizes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'The size of every unit being donated, one entry per unit, exactly as it appears on the order line item (e.g. ["8", "L", "1X"]). Take them from the SKU-derived sizes in get_order_context. Partner orgs serve different age groups and cannot all use every size, so this decides which orgs are eligible to receive the box. Omit only when the sizes are genuinely unknown.',
+        },
         has_defect: { type: 'boolean', description: 'True if any item has a defect (skip donation for defects)' },
         customer_requested_partner: { type: 'boolean', description: 'Set true ONLY when the customer has explicitly accepted a prior offer of partner org info on a single-item donation. Bypasses the default "donate locally" response and returns a partner address. Leave false/omitted otherwise — the tool handles the default single vs multi-item routing.' },
         include_proof_ask: { type: 'boolean', description: 'Set true ONLY when this same draft raises a "Refund-pattern:" flag. Routes the donation to a partner org even for a single item and appends the photo/receipt request to the donation text. The tool automatically omits the ask when no partner org exists (local-donation fallback) — never compose the ask yourself.' },
@@ -394,7 +399,7 @@ async function executeToolCall(toolName, toolInput) {
     }
 
     case 'get_donation_partner': {
-      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner, include_proof_ask } = toolInput;
+      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner, include_proof_ask, sizes } = toolInput;
       // Reuse the deterministic donation routing from decisionTree
       const intake = {
         items: has_defect
@@ -407,6 +412,7 @@ async function executeToolCall(toolName, toolInput) {
         targetOrder: { lineItems: intake.items.map(() => ({ title: 'item', quantity: 1 })) },
         customerRequestedPartner: !!customer_requested_partner,
         includeProofAsk: !!include_proof_ask,
+        donationSizes: Array.isArray(sizes) ? sizes : [],
       };
       const result = await prescribeDonationRouting(intake, context);
       // Side-channel: stash routing metadata (partner_id + items_count) on the
