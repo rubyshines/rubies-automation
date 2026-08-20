@@ -145,6 +145,8 @@ function startScan(previewUrl, pageCount = 1) {
     ? `Reading ${pageCount} sections as one receipt`
     : 'Reading the receipt';
   $('capture-drop').hidden = true;
+  const alt = $('capture-alt');
+  if (alt) alt.hidden = true;
   $('scan').hidden = false;
   $('capture-error').hidden = true;
   const steps = pageCount > 1 ? SCAN_STEPS_MULTI : SCAN_STEPS;
@@ -162,6 +164,8 @@ function stopScan() {
   clearInterval(scanTimer);
   $('scan').hidden = true;
   $('capture-drop').hidden = false;
+  const alt = $('capture-alt');
+  if (alt) alt.hidden = state.tray.length > 0;
   $('scan-preview').src = '';
 }
 
@@ -205,8 +209,12 @@ async function captureFiles(files, { hold = false } = {}) {
 
 function renderTray() {
   const tray = $('tray');
-  if (!state.tray.length) { tray.hidden = true; return; }
+  // The entry point and the tray are the same affordance at two stages, so
+  // exactly one of them is on screen at a time.
+  const alt = $('capture-alt');
+  if (!state.tray.length) { tray.hidden = true; if (alt) alt.hidden = false; return; }
   tray.hidden = false;
+  if (alt) alt.hidden = true;
   $('tray-count').textContent = `${state.tray.length} section${state.tray.length === 1 ? '' : 's'}`;
   $('tray-pages').innerHTML = state.tray.map((p, i) => `
     <div class="tray-page">
@@ -674,12 +682,15 @@ function init() {
 
   $('fab').addEventListener('click', () => $('camera-input').click());
 
-  // Tray
-  $('tray-add').addEventListener('click', () => {
+  // Start a multi-section capture. Same "hold" mechanism as Add another
+  // section, but reachable before any photo exists.
+  const holdCapture = () => {
     const input = $('camera-input');
     input.dataset.hold = '1';   // keep collecting instead of submitting on one
     input.click();
-  });
+  };
+  $('capture-sections').addEventListener('click', holdCapture);
+  $('tray-add').addEventListener('click', holdCapture);
   $('tray-submit').addEventListener('click', () => submitTray());
   $('tray-discard').addEventListener('click', () => {
     if (state.tray.length > 1 && !confirm('Discard these photos?')) return;

@@ -157,6 +157,19 @@ body {
   position: relative; z-index: 1;
 }
 
+/* ─── Multi-section entry point ─────────────────────────────── */
+
+.capture-alt { margin-top: 10px; display: flex; justify-content: center; }
+.capture-alt-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--sans); font-size: 12.5px; font-weight: 500;
+  color: var(--text-2); background: none; border: 0;
+  padding: 8px 12px; border-radius: 20px; cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.capture-alt-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+.capture-alt-btn:hover { color: var(--accent); background: var(--accent-soft); }
+
 /* ─── Page tray ─────────────────────────────────────────────── */
 
 .tray {
@@ -704,6 +717,7 @@ body {
 
   .capture-drop { padding: 18px; gap: 14px; }
   .capture-hint { display: none; }
+  .capture-alt-btn { padding: 11px 14px; font-size: 13px; }   /* 44px tap target */
   .capture-copy strong { font-size: 15px; }
 
   .ledger-controls { gap: 8px; }
