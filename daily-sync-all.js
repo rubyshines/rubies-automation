@@ -132,6 +132,25 @@ const PIPELINES = [
     },
   },
   {
+    name: 'Bounce Replay',
+    // The catch-up gmailPush never had. Push correlation is fire-and-forget and
+    // keeps no record of what it considered, so a bounce it skips or errors on
+    // is lost — which is exactly how two partners' addresses died with the sends
+    // recorded as delivered. Short window: this is a safety net behind the live
+    // path, not the primary route.
+    //
+    // Before Thread Discovery and Relationship Summaries, so a send marked
+    // undelivered tonight is already undelivered when the recap is written and
+    // the summary cannot narrate a check-in that never arrived.
+    run: async () => {
+      const r = await require('./b2b-outreach/sync/replayBounces').replayBounces({ days: 14, apply: true });
+      return {
+        sources: { bounce_replay: { success: true, ...r } },
+        status: r.capped || r.unparsed.length ? 'warn' : 'ok',
+      };
+    },
+  },
+  {
     name: 'Thread Discovery',
     // Must precede Relationship Summaries: anything imported here should be
     // summarized the same night rather than waiting for tomorrow's run.

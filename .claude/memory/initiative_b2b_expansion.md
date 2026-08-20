@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-08-19
+last_updated: 2026-08-20
 ---
 
 ## Goal
@@ -16,6 +16,8 @@ Grow retailer partnerships and wholesale revenue.
 4. Tier 3 custom searches — not started
 
 ## Current Status
+**2026-08-20: two partners were unreachable and the engine reported success.** The 19 Aug check-in round sent 17 emails; two bounced permanently (BAGLY's and Valid USA's primary contacts) and **12% of a round is six times the rate that damages sender reputation on rubyshines.com**, the domain Klaviyo shares. Nothing surfaced it: BAGLY was booked for its next touch in **February 2027** off a message nobody received. Bounces now come back as Tier-1 work carrying the draft Jamie already approved, so repointing at a live address is one edit rather than a fresh Opus call. Both cases repaired by the build itself. Standing risk this confirms: **contact churn is the org failure mode** — Valid USA's only same-domain alternate was last used in 2024 and they are renaming to Reach Pluto, so the queue entry dates stale suggestions rather than presenting them as live. Next: the bulk address-verification pass over all 242 companies (parked), which turns "12% surprise" into a known list before the next round goes out.
+
 **2026-08-19: the engine can finally see its own correspondence.** Thread discovery only ever ran when someone opened a company, so 197 of 242 companies held zero messages. A nightly sweep now searches Gmail for them: 165 searched, **70 had history**, 238 threads and 489 messages imported. Companies with history went 45 → 120. The queue did NOT grow, and that is the correct outcome — almost all the recovered history is concluded (472 of 530 threads closed; a thread whose last inbound is over 30 days old is not "waiting on us"). The value is in what the advisor reads: it reasons from real history for 120 companies now instead of 45, so it can no longer open a cold intro to an org we have corresponded with for years. Remaining blind spots: 27 companies have no address to search with, and ~120 genuinely have no history.
 
 **2026-08-13: the per-company summary is back.** The recap + next step the old Google Sheet carried had been missing from the panel since the migration — not removed, orphaned: the summariser still runs daily but writes a store the engine doesn't read, reaching 11 of 242 companies. Rebuilt company-level on `b2b_messages`, updating incrementally as messages land, and the Outreach detail pane restructured around it so relationship state is answered before the composer instead of buried under it. Next: watch the summaries against real threads for a few weeks before deciding whether the suggested next step should drive the queue.

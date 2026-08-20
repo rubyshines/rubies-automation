@@ -73,7 +73,7 @@ async function buildContexts(sb, companies) {
   const ids = (companies || []).map(c => c.id);
   const messages = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_messages')
-      .select('company_id, direction, message_type, sent_at, thread_id')
+      .select('company_id, direction, message_type, sent_at, thread_id, undelivered_at')
       .in('company_id', ids)
       .order('sent_at', { ascending: true })
   ) : [];
@@ -113,6 +113,8 @@ async function buildContexts(sb, companies) {
       sentTypes: new Set(),
       lastInboundAt: null,
       lastInboundThreadId: null,
+      // Newest send that came back undelivered. Null for almost every company.
+      lastUndeliveredAt: null,
       lastOutboundAt: c.last_outbound_at || null,
       lastOrderAt: c.last_order_date || null,
       orderCount: c.order_count || 0,
@@ -143,10 +145,22 @@ async function buildContexts(sb, companies) {
   for (const m of messages) {
     const ctx = byCompany.get(m.company_id);
     if (!ctx) continue;
+    // A message that bounced was not sent. It must not count as contact made
+    // (lastOutboundAt) or as a message type already covered (sentTypes) — a
+    // check-in nobody received still needs sending, and the whole point of the
+    // bounce path is that the company comes BACK as work.
+    if (m.direction === 'outbound' && m.undelivered_at) {
+      // Remember it though: this is what the queue's "no working address" branch
+      // sorts on, and what tells the operator how long we have been unable to
+      // reach them rather than just that we cannot.
+      ctx.lastUndeliveredAt = ctx.lastUndeliveredAt && ctx.lastUndeliveredAt > m.sent_at
+        ? ctx.lastUndeliveredAt : m.sent_at;
+      continue;
+    }
     if (m.direction === 'inbound') {
       if (closedThreadIds.has(m.thread_id)) continue;
-      // Auto-responders and calendar notifications are history, not a human
-      // waiting on us.
+      // Auto-responders, calendar notifications and delivery failures are
+      // history, not a human waiting on us.
       if (NON_REPLY_INBOUND_TYPES.has(m.message_type)) continue;
       const checkinAt = lastCheckinAt.get(m.company_id);
       if (checkinAt && new Date(m.sent_at) > new Date(checkinAt) && !ctx.postSamplesReplyAt) {

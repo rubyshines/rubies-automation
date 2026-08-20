@@ -42,6 +42,16 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
   joined on one, matched nothing, and reported a clean bill of health; assert the checked-product
   count before trusting any run of it).
 
+## Bulk address verification across b2b_contacts (before the next outreach round)
+- Parked: 2026-08-20
+- Domains: b2b_sales, community
+- Type: idea
+- Priority: high
+- Notes: The 2026-08-19 check-in round bounced at **12%** (2 of 17) against the ~2% that damages sender reputation on rubyshines.com — the same domain Klaviyo uses to reach customers. Bounce recovery now catches these AFTER the fact; this is the half that stops them being sent. The valuable version is **not** per-send checking but a one-time sweep over all `b2b_contacts` (242 companies, addresses of unknown age): it converts "12% surprise" into a known list of dead addresses before anyone writes to them. `bounced_at` (added 2026-08-20) already makes "known dead" a query, and `reachableAlternates` will skip anything marked.
+- Options, with the trade-off already worked out: **syntax + MX lookup** is free and would have caught NEITHER 19 Aug bounce (`bagly.org` and `validbybrodie.com` both publish working MX; the individual mailboxes were dead) — worth having against typos and dead domains, not as the answer. **SMTP probe / verification API** (ZeroBounce, Kickbox, NeverBounce; ~$0.005/address, so the whole book is ~$1.20) WOULD have caught both, since the probe gets the same 5.1.1 / 5.2.1 the real send did. **Daily send cap in `sendB2bEmail`** verifies nothing but bounds the blast radius of a bad batch. Vendor choice is the open decision.
+- Related open question from the same parked entry (*B2B lead supply — remaining plan phases*, phase 5): whether cold B2B keeps riding rubyshines.com alongside Klaviyo customer mail or moves to a separate sending domain. Decide together — they are the same reputation question.
+- Context that makes this urgent rather than tidy: contact churn is the standing org-side failure mode (Oasis handed off in June, Carleton's is a student post that turns over yearly, Valid USA's contact left and the org is renaming to Reach Pluto). Most of the book has not been written to in over a year.
+
 ## Storefront kids/adults review filter
 - Parked: 2026-08-19
 - Domains: marketing, tech

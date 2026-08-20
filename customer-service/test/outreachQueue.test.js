@@ -71,3 +71,43 @@ test('looksLikeOrder: item lines and PO mentions', () => {
   assert.equal(looksLikeOrder('Please find our PO #4451 attached'), true);
   assert.equal(looksLikeOrder('Love the samples, will be in touch!'), false);
 });
+
+// ── unreachable companies must not go quiet ─────────────────────────────────
+// `contact_unknown` makes companyEligible() false and renders nowhere, so before
+// this branch a company whose only contact bounced or resigned dropped silently
+// out of the system — going quiet about a partner at the exact moment we learned
+// something urgent about them.
+
+test('Tier 1: no working address surfaces despite the eligibility gate', () => {
+  const c = retailer({ contact_unknown: true });
+  const e = computeQueueEntry(c, { sentTypes: new Set(), lastUndeliveredAt: '2026-06-01T00:00:00Z' }, NOW);
+  assert.equal(e.tier, 1);
+  assert.match(e.reason, /no working address/);
+  assert.match(e.reason, /bounced 10d ago/);
+  assert.equal(e.waiting_since, '2026-06-01T00:00:00Z', 'Tier 1 sorts on this');
+});
+
+test('a company with no working address and no bounce date still surfaces', () => {
+  // The "X has left, contact Y" path knows nothing died on a given date.
+  const e = computeQueueEntry(retailer({ contact_unknown: true }), { sentTypes: new Set() }, NOW);
+  assert.equal(e.tier, 1);
+  assert.match(e.reason, /bounced or left/);
+});
+
+test('deferring still outranks an unreachable address', () => {
+  // Deciding not to work a relationship covers not chasing a dead address at it.
+  const paused = retailer({ contact_unknown: true, outreach_paused_at: '2026-06-01T00:00:00Z' });
+  assert.equal(computeQueueEntry(paused, { sentTypes: new Set() }, NOW), null);
+  const claimed = retailer({ contact_unknown: true, on_me_at: '2026-06-01T00:00:00Z' });
+  assert.equal(computeQueueEntry(claimed, { sentTypes: new Set() }, NOW), null);
+});
+
+test('a real reply still beats the unreachable branch', () => {
+  // Someone wrote in from another address: they are not unreachable at all.
+  const c = retailer({ contact_unknown: true });
+  const e = computeQueueEntry(c, {
+    lastInboundAt: '2026-06-10T08:00:00Z', lastOutboundAt: '2026-06-09T00:00:00Z',
+  }, NOW);
+  assert.equal(e.tier, 1);
+  assert.match(e.reason, /waiting on us/, 'the human, not the mail server');
+});

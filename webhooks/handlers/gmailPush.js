@@ -200,8 +200,17 @@ async function handle(payload, gmailPush) {
   // B2B contact / general_email lands on the company's thread and surfaces
   // Tier 1 in the outreach queue. Fail-soft — B2B tables absent or any error
   // must never break the CS-critical push path.
+  const { looksLikeDsn } = require('../../b2b-outreach/lib/bounceRecovery');
   for (const m of classified) {
-    if (m.is_sent || m.is_auto_reply) continue;
+    if (m.is_sent) continue;
+    // A delivery failure is the one auto-reply that must NOT be skipped. The
+    // intake classifier marks mailer-daemon DSNs is_auto_reply, which made a
+    // bounce exactly the message shape that could never reach the bounce
+    // detector — correlateInbound's hard_bounce branch and detectContactLoss's
+    // whole bounce path never ran once in production, and two partners' dead
+    // addresses stayed on file with the sends recorded as delivered.
+    // Out-of-office still skips (nobody has gone anywhere); a bounce is work.
+    if (m.is_auto_reply && !looksLikeDsn({ from: m.from_address })) continue;
     try {
       const { correlateInbound } = require('../../b2b-outreach/lib/replyCorrelation');
       const r = await correlateInbound({

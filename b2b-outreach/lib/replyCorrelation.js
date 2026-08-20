@@ -13,6 +13,7 @@
  */
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { identifyingDomain, emailDomain } = require('./emailDomains');
+const { parseBounce, handleBounce } = require('./bounceRecovery');
 
 /** Bounce / departure detection (Design #3 contact-change flow). Pure. */
 function detectContactLoss({ subject = '', body = '', from = '' } = {}) {
@@ -91,10 +92,16 @@ function detectCalendarNotice({ subject, body } = {}) {
  * a reply. queueContext skips these when deriving lastInboundAt, which is what
  * keeps them out of Tier 1.
  */
-const NON_REPLY_INBOUND_TYPES = new Set(['auto_reply', 'calendar_notice']);
+// A delivery failure joins these for the same reason a calendar acceptance
+// does: it is evidence ABOUT a message, never a human writing back. The DSN is
+// kept on the thread so the panel can show why a check-in got no answer, but
+// counting it as a reply would put the company at Tier 1 as though they had
+// replied — which is exactly what the pre-fix panel did.
+const NON_REPLY_INBOUND_TYPES = new Set(['auto_reply', 'calendar_notice', 'bounce']);
 
 /** Classify an inbound message. Returns a message_type or null. Pure. */
-function classifyInbound({ subject, body } = {}) {
+function classifyInbound({ subject, body, from } = {}) {
+  if (detectContactLoss({ subject, body, from }) === 'hard_bounce') return 'bounce';
   if (detectCalendarNotice({ subject, body })) return 'calendar_notice';
   if (detectAutoReply({ subject, body })) return 'auto_reply';
   return null;
@@ -153,19 +160,41 @@ async function correlateInbound(msg) {
     }
   }
 
-  // Bounce case: sender is mailer-daemon — correlate via thread instead
+  // Bounce case: the sender is mailer-daemon, so it tells us nothing about who
+  // this is about. The DSN's Final-Recipient does — and it is a far sharper key
+  // than the thread, which Gmail shares between orgs: naming the failed address
+  // says exactly whose contact died, where an ambiguous thread previously had to
+  // give up rather than risk pausing the wrong org's cadence.
   const loss = detectContactLoss({ subject, body: body_text, from: sender });
+  const parsedBounce = loss === 'hard_bounce'
+    ? parseBounce({ subject, body: body_text, from: sender }) : null;
+  if (!companyId && parsedBounce) {
+    for (const f of parsedBounce.failures) {
+      const { data: c } = await sb.from('b2b_contacts')
+        .select('company_id').eq('email', f.address).maybeSingle();
+      if (c?.company_id) { companyId = c.company_id; break; }
+      const { data: m } = await sb.from('b2b_messages')
+        .select('company_id').eq('to_email', f.address).eq('direction', 'outbound')
+        .order('sent_at', { ascending: false }).limit(1);
+      if (m?.[0]?.company_id) { companyId = m[0].company_id; break; }
+    }
+  }
   if (!companyId && loss === 'hard_bounce' && gmail_thread_id) {
-    // Deliberately unscoped — this branch is trying to DISCOVER the company. But
-    // a shared Gmail thread now yields several rows, and picking one would mark
-    // the wrong org's contact as lost, which pauses their cadence. Ambiguous
-    // means unknown: guess nothing and let the bounce go uncorrelated.
+    // Fallback for a DSN we could not read a recipient out of. Still refuses to
+    // guess on a shared thread: marking the wrong org's contact dead pauses a
+    // relationship that was perfectly healthy.
     const { data: threads } = await sb.from('b2b_threads')
       .select('company_id').eq('gmail_thread_id', gmail_thread_id);
     const owners = [...new Set((threads || []).map(t => t.company_id))];
     if (owners.length === 1) companyId = owners[0];
   }
-  if (!companyId) return { matched: false };
+  if (!companyId) {
+    // A bounce we cannot attribute is a dead address we will keep writing to.
+    if (loss === 'hard_bounce') {
+      console.warn(`[correlate] unattributed bounce ${gmail_message_id}: ${(parsedBounce?.failures || []).map(f => f.address).join(', ') || 'no recipient parsed'}`);
+    }
+    return { matched: false, contact_loss: loss || undefined };
+  }
 
   // 2. Thread: match by (company, gmail_thread_id), else create.
   //
@@ -195,21 +224,30 @@ async function correlateInbound(msg) {
     }
   }
 
-  // 3. Idempotent message insert (UNIQUE gmail_message_id). Auto-responders and
-  // calendar notifications are kept for history but labeled so they never
-  // create a Tier-1 "waiting on us" (queueContext skips the types in
-  // NON_REPLY_INBOUND_TYPES).
+  // 3. Idempotent message insert (UNIQUE gmail_message_id). Auto-responders,
+  // calendar notifications and delivery failures are kept for history but
+  // labeled so they never create a Tier-1 "waiting on us" (queueContext skips
+  // the types in NON_REPLY_INBOUND_TYPES). Keeping the DSN matters: without it
+  // the panel shows a warm check-in going out and silence coming back, which is
+  // exactly how two dead partner addresses stayed invisible.
   const { error: mErr } = await sb.from('b2b_messages').insert({
     thread_id: threadId, company_id: companyId, direction: 'inbound',
-    message_type: classifyInbound({ subject, body: body_text }),
+    message_type: classifyInbound({ subject, body: body_text, from: sender }),
     gmail_message_id, gmail_thread_id,
     from_email: sender, to_email: to_email || null,
     body_text: (body_text || '').slice(0, 20000),
     sent_at: received_at || new Date().toISOString(), source: 'pubsub',
   });
+  let duplicate = false;
   if (mErr) {
-    if (mErr.code === '23505') return { matched: true, company_id: companyId, thread_id: threadId, duplicate: true };
-    throw new Error(`b2b_messages insert: ${mErr.message}`);
+    if (mErr.code !== '23505') throw new Error(`b2b_messages insert: ${mErr.message}`);
+    // Already stored — which says nothing about whether its CONSEQUENCES were
+    // applied. Returning here skipped bounce handling for exactly the messages
+    // the replay exists to repair (it re-reads mail the push path already
+    // inserted), and still reported a match, so a run that did nothing looked
+    // like a run that worked. handleBounce is independently idempotent; let it
+    // be the thing that decides whether there is work left.
+    duplicate = true;
   }
 
   // 3b. Register an address we only reached via the domain fallback, so the
@@ -228,7 +266,25 @@ async function correlateInbound(msg) {
   // 4. State updates
   const nowIso = new Date().toISOString();
   await sb.from('b2b_threads').update({ last_message_at: received_at || nowIso }).eq('id', threadId);
-  if (loss) {
+  // A hard bounce knows WHICH address died, so it can do the specific thing:
+  // retire that contact, revive the approved text against a live one, and undo
+  // the cadence date the failed send bought. Flagging the whole company
+  // `contact_unknown` here instead would pause it entirely and render nowhere —
+  // muting a partner we can still reach at another address.
+  let bounce = null;
+  if (parsedBounce) {
+    for (const failure of parsedBounce.failures) {
+      if (!failure.permanent) continue;
+      bounce = await handleBounce(sb, { failure, gmail_thread_id, now: new Date(nowIso) });
+    }
+    if (parsedBounce.unparsed) {
+      console.warn(`[correlate] unreadable DSN ${gmail_message_id} on company ${companyId}`);
+    }
+  } else if (loss === 'departed') {
+    // A human telling us someone left names a successor we cannot parse
+    // reliably. The operator resolves it with update_contact; until then the
+    // company surfaces via the queue's "no working address" branch rather than
+    // going quiet.
     await sb.from('b2b_companies').update({ contact_unknown: true, updated_at: nowIso }).eq('id', companyId);
   }
 
@@ -236,7 +292,9 @@ async function correlateInbound(msg) {
     matched: true,
     company_id: companyId,
     thread_id: threadId,
+    duplicate,
     contact_loss: loss,
+    bounce,
     looks_like_order: looksLikeOrder(body_text || ''),
   };
 }

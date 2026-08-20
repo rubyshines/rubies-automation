@@ -153,6 +153,33 @@ function computeQueueEntry(company, ctx, now = new Date()) {
     };
   }
 
+  // Tier 1 — we have no working address for them.
+  //
+  // ABOVE the eligibility gate on purpose, because the gate is what hides them:
+  // `contact_unknown` makes companyEligible() false, and nothing else in the
+  // panel renders the flag, so a company whose only contact bounced or resigned
+  // dropped silently out of the system entirely. That is worse than the miss it
+  // was meant to handle — the engine went quiet about a partner precisely when
+  // it had learned something urgent about them.
+  //
+  // Deferral still wins (see above): deciding not to work a relationship covers
+  // not chasing a dead address at it. The usual case never reaches here — a
+  // bounce with an alternate on file revives its draft and returns through
+  // mergePendingDraftEntries at the tier frozen on that row. This branch is for
+  // when there is nothing left to revive: a manual send that bounced, or every
+  // address exhausted.
+  if (company.contact_unknown && !deferredAt) {
+    const since = ctx.lastUndeliveredAt || ctx.lastOutboundAt || null;
+    return {
+      tier: 1,
+      message_type: null,
+      reason: since
+        ? `no working address — last send bounced ${humanAge(since, now)} ago`
+        : 'no working address — last contact bounced or left',
+      waiting_since: since,
+    };
+  }
+
   if (!companyEligible(company, ctx, now)) return null;
 
   // Tier 2 — explicit signal from Trigger 4 (events outrank cadence)
