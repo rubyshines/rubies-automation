@@ -34,19 +34,25 @@ function meetingTitle(companyName) {
 /**
  * The one sentence the panel drops into the draft. Deterministic, not AI.
  *
- * Both zones, per the standing prompt rule earned from real missed meetings.
- * Terse on purpose: the rule that killed the old bloated scheduling paragraph
- * bans narrating the mechanics, so this states a completed fact and stops. The
- * Meet link is not repeated here — it is in the invite. Pure.
+ * Wording is Jamie's own (2026-08-20). Terse on purpose: the rule that killed
+ * the old bloated scheduling paragraph bans narrating the mechanics, so this
+ * states a completed fact and stops. The Meet link is not repeated — it is in
+ * the invite.
+ *
+ * The date is ABSOLUTE, never "next Wednesday": a relative date is a stale fact
+ * with a long fuse, and this text can sit in a pending draft for days before it
+ * sends. Their local time is appended only when their zone actually differs —
+ * the both-zones habit exists because timezone confusion killed real meetings,
+ * but for a Toronto org it prints the same number twice. Pure.
  */
 function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null }) {
   const d = new Date(start);
   const day = formatDayInZone(d, businessTimeZone);
   const ours = formatTimeInZone(d, businessTimeZone);
   if (theirTimeZone && isValidTimeZone(theirTimeZone) && theirTimeZone !== businessTimeZone) {
-    return `${day} at ${ours} Eastern (${formatTimeInZone(d, theirTimeZone)} your time), invite just sent.`;
+    return `I just created an invite for ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
   }
-  return `${day} at ${ours} Eastern, invite just sent.`;
+  return `I just created an invite for ${day} at ${ours} ET.`;
 }
 
 /**
@@ -65,13 +71,16 @@ function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, t
  * @param {boolean} p.test_mode         real event + real invite, but only to Jamie,
  *                                      titled [TEST], writing nothing to the record
  * @param {boolean} p.force             book over a clash
+ * @param {boolean} p.skip_reply        create the event and invite, send NO email —
+ *                                      for repairing a message that already stated
+ *                                      the time before the event existed
  */
 async function scheduleMeeting(p = {}) {
   const {
     company_id, start, thread_id, subject, body,
     duration_minutes = DEFAULT_DURATION_MIN,
     their_timezone = null, their_timezone_source = null,
-    title: titleOverride, confirmed, test_mode, force,
+    title: titleOverride, confirmed, test_mode, force, skip_reply,
     message_type = DEFAULT_MESSAGE_TYPE, cc, notes,
   } = p;
 
@@ -135,7 +144,7 @@ async function scheduleMeeting(p = {}) {
   };
   if (!confirmed) return preview;
 
-  if (!body || !body.trim()) {
+  if (!skip_reply && (!body || !body.trim())) {
     return { ok: false, error: 'body required — the reply that tells them the time.' };
   }
 
@@ -202,16 +211,27 @@ async function scheduleMeeting(p = {}) {
     || null;
 
   // --- 4. the reply, down the one send path ---------------------------------
+  // `skip_reply` books WITHOUT writing an email: the repair path for a message
+  // that already told them the time before the event existed. Sending a second
+  // one would restate a time they have already read. Creating the event still
+  // emails them the Google invite, which is the thing that was missing.
   let send;
-  try {
-    send = await sendB2bEmail({
-      company_id, thread_id, subject, body, cc,
-      message_type,
-      confirmed: true,
-      ...(test_mode ? { test_send: true } : {}),
-    });
-  } catch (e) {
-    send = { ok: false, error: e.message };
+  if (skip_reply) {
+    send = { ok: true, phase: 'no_reply_sent', thread_id: thread_id || null };
+  } else {
+    try {
+      send = await sendB2bEmail({
+        company_id, thread_id, subject, body, cc,
+        message_type,
+        confirmed: true,
+        // The event exists as of a moment ago; its b2b_meetings row is written
+        // after this call, so the row cannot be the evidence here.
+        invite_created: true,
+        ...(test_mode ? { test_send: true } : {}),
+      });
+    } catch (e) {
+      send = { ok: false, error: e.message };
+    }
   }
 
   if (!send?.ok) {

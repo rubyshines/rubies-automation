@@ -189,12 +189,31 @@ function buildSlots({
       slots.push(slot);
     }
 
+    // What is actually booked that day, named and with its real span. The grid
+    // can only say a slot is taken; this says what it is taken BY, which is what
+    // tells you whether a neighbouring slot is realistic (a 10am across town is
+    // not the same as a 10am call).
+    const dayOpen = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_START_HOUR }, timeZone).getTime();
+    const dayClose = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_END_HOUR }, timeZone).getTime();
+    const busyBlocks = busyIntervals
+      .filter(b => b.start < dayClose && b.end > dayOpen)
+      .map(b => ({
+        start: new Date(b.start).toISOString(),
+        end: new Date(b.end).toISOString(),
+        summary: b.summary,
+        // Clamped to the working day so an all-morning block from 7am reads as
+        // starting at 9 rather than implying the grid is hiding something.
+        label: `${formatTimeInZone(new Date(Math.max(b.start, dayOpen)), timeZone)}`
+          + `–${formatTimeInZone(new Date(Math.min(b.end, dayClose)), timeZone)}`,
+      }));
+
     const notes = allDayByDate.get(cursor) || [];
     out.push({
       date: cursor,
       label: formatDayInZone(wallClockToUtc({ year: y, month: m, day: d, hour: 12 }, timeZone), timeZone),
       notes,
       slots,
+      busyBlocks,
       freeCount: slots.filter(s => !s.busy).length,
     });
     cursor = addDaysToIso(cursor, 1);

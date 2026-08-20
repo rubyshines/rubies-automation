@@ -6988,6 +6988,28 @@ async function testSendOutreachDraft() {
 let scheduleState = null;      // last /availability payload
 let scheduleSelected = null;   // the chosen slot { start, label, theirLabel }
 let scheduleInsertedLine = ''; // the one sentence this panel owns in the draft
+let scheduleShowAll = false;   // reveal full availability alongside their offer
+// Optional description on the calendar event. Kept in a module var rather than
+// read off the DOM at book time, because selecting a slot re-renders the panel
+// and would otherwise wipe whatever had been typed. Blank by default — an event
+// with an invented purpose on it is worse than one with none.
+let scheduleNotes = '';
+// null = use the generated "RUBIES x <Company>". Only an actual edit sets it, so
+// the default keeps tracking the company rather than freezing at first render.
+let scheduleTitle = null;
+
+/**
+ * When they have named times, the panel answers "which of their options works"
+ * and shows ONLY those. The full grid used to render underneath regardless,
+ * which repeated any day they had offered — Wed 26 appeared twice and one click
+ * lit up both copies, reading as a duplicate row. Full availability is still one
+ * click away for when none of their options fit; it is just a different question
+ * and no longer asked at the same time.
+ */
+function toggleScheduleAllDays() {
+  scheduleShowAll = !scheduleShowAll;
+  renderSchedulePanel();
+}
 
 function scheduleDurationOptions(selected) {
   return [15, 20, 30, 45, 60, 90].map(m =>
@@ -7002,10 +7024,23 @@ async function openSchedulePanel(duration, timezone) {
     el.innerHTML = '';
     scheduleState = null;
     scheduleSelected = null;
+    scheduleNotes = '';
+    scheduleTitle = null;
+    syncSendButtonsForSchedule();
     return;
   }
   el.dataset.open = '1';
-  el.innerHTML = '<div class="outreach-empty-note">Reading your calendars…</div>';
+  if (scheduleState && scheduleState.company?.id !== outreachSelectedId) {
+    scheduleNotes = '';
+    scheduleTitle = null;
+  }
+  // Three calendar reads plus a model pass over their last message — several
+  // seconds, long enough that a static line of text reads as a stuck panel.
+  el.innerHTML = `
+    <div class="schedule-panel schedule-loading">
+      <span class="schedule-spinner" aria-hidden="true"></span>
+      <span>Reading your calendars${timezone || duration ? ' again' : ''}…</span>
+    </div>`;
   const companyId = outreachSelectedId;
   try {
     const qs = new URLSearchParams();
@@ -7016,6 +7051,7 @@ async function openSchedulePanel(duration, timezone) {
     scheduleState = data;
     scheduleSelected = null;
     renderSchedulePanel();
+    syncSendButtonsForSchedule();
   } catch (err) {
     el.innerHTML = `<div class="outreach-review-note">&#9888; Could not read your calendars: ${esc(err.message)}</div>`;
   }
@@ -7040,25 +7076,86 @@ function renderSchedulePanel() {
 
   const proposed = (s.proposed_times || []).filter(t => t.start);
   const dayHints = (s.proposed_times || []).filter(t => !t.start);
-  const proposedHtml = proposed.length ? `
+
+  // Their local time is only worth printing when it differs from ours. For a
+  // Toronto org it is the same number twice, which reads as noise.
+  const sameZone = !s.their_timezone || s.their_timezone === s.timezone;
+
+  /**
+   * One row per DAY, in the same shape as the availability grid below.
+   *
+   * Named times used to render as full-width buttons while a whole-day offer
+   * rendered as a label-plus-chips row — two layouts for the same kind of thing,
+   * and two times on 1 September took two rows. Grouping by day makes the
+   * formatting consistent by construction: the day is on the left, its clickable
+   * times are on the right, exactly as in the grid.
+   */
+  const byDate = new Map();
+  for (const t of proposed) {
+    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], wholeDay: false, dayLabel: t.dayLabel });
+    byDate.get(t.date).times.push(t);
+  }
+  for (const h of dayHints) {
+    if (!byDate.has(h.date)) byDate.set(h.date, { date: h.date, times: [], wholeDay: false, dayLabel: h.dayLabel });
+    byDate.get(h.date).wholeDay = true;
+  }
+
+  const slotChip = (start, label, { busy, busyWith, unsociable } = {}) =>
+    `<button class="schedule-slot${busy ? ' is-busy' : ''}${unsociable ? ' is-unsociable' : ''}${scheduleSelected?.start === start ? ' is-selected' : ''}"
+      ${busy ? `disabled title="Busy — ${esc(busyWith || '')}"` : `onclick="selectScheduleSlot('${esc(start)}')"`}
+      >${esc(label)}</button>`;
+
+  const suggestionRows = [...byDate.values()]
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map(entry => {
+      const day = (s.days || []).find(d => d.date === entry.date);
+      const label = esc(day?.label || entry.dayLabel || entry.date);
+
+      // A whole-day offer opens up every free slot on it; named times show only
+      // what they actually named.
+      const chips = entry.wholeDay
+        ? (day?.slots || []).filter(sl => !sl.busy)
+            .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }))
+        : entry.times.map(t => {
+            const state = findSlotState(t.start);
+            return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem });
+          });
+
+      const note = entry.wholeDay ? 'they offered this day' : 'they suggested';
+      const theirs = !sameZone && entry.times.length
+        ? `<span class="schedule-hint">${entry.times.map(t => esc(t.theirLabel)).filter(Boolean).join(', ')} their time</span>` : '';
+
+      if (!chips.length) {
+        return `<div class="schedule-day schedule-day-offered">
+          <div class="schedule-day-label">${label}<span class="schedule-hint">${note}</span></div>
+          <div class="schedule-day-body"><span class="schedule-hint">nothing free that day</span></div>
+        </div>`;
+      }
+      return `<div class="schedule-day schedule-day-offered">
+        <div class="schedule-day-label">${label}<span class="schedule-hint">${note}</span></div>
+        <div class="schedule-day-body">
+          <div class="schedule-slots">${chips.join('')}</div>
+          ${theirs}
+        </div>
+      </div>`;
+    });
+
+  const suggestions = suggestionRows;
+
+  const proposedHtml = suggestions.length ? `
     <div class="schedule-proposed">
       <div class="schedule-label">They suggested</div>
-      ${proposed.map(t => {
-        const clash = findSlotState(t.start);
-        return `<button class="schedule-slot schedule-slot-proposed${clash.busy ? ' is-busy' : ''}${scheduleSelected?.start === t.start ? ' is-selected' : ''}"
-          ${clash.busy ? `title="${esc(clash.busyWith || 'Busy')}"` : ''}
-          onclick="selectScheduleSlot('${esc(t.start)}')">
-          ${esc(t.dayLabel || '')} ${esc(t.label || '')}
-          ${t.theirLabel ? `<span class="schedule-their">${esc(t.theirLabel)} their time</span>` : ''}
-          ${clash.busy ? `<span class="schedule-busy-tag">busy — ${esc(clash.busyWith || '')}</span>` : ''}
-        </button>`;
-      }).join('')}
-      ${dayHints.length ? `<div class="schedule-hint">Also mentioned: ${dayHints.map(d => esc(d.dayLabel || d.date)).join(', ')}</div>` : ''}
+      ${suggestions.join('')}
     </div>` : (s.proposed_error
       ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
       : '');
 
-  const grid = s.days.map(day => {
+  // Their offer answers the question when there is one; the full grid is the
+  // fallback for "none of these work" and the default when they named nothing.
+  const hasSuggestions = suggestions.length > 0;
+  const showGrid = !hasSuggestions || scheduleShowAll;
+
+  const grid = !showGrid ? '' : s.days.map(day => {
     const chips = day.slots.map(slot => {
       const cls = ['schedule-slot'];
       if (slot.busy) cls.push('is-busy');
@@ -7072,33 +7169,53 @@ function renderSchedulePanel() {
     }).join('');
     const notes = day.notes?.length
       ? `<span class="schedule-day-note">${esc(day.notes.map(n => n.summary).join(' · '))}</span>` : '';
+    // What the busy slots actually are. A struck-through chip tells you a time
+    // is gone; the name tells you whether the slot beside it is realistic.
+    // Blocks from a free/busy-only calendar have no title and honestly say so.
+    const booked = day.busyBlocks?.length
+      ? `<div class="schedule-booked-line">${day.busyBlocks.map(b =>
+          `<span class="schedule-booked-item"><span class="schedule-booked-time">${esc(b.label)}</span> ${esc(b.summary)}</span>`
+        ).join('')}</div>`
+      : '';
     return `<div class="schedule-day">
       <div class="schedule-day-label">${esc(day.label)}${notes}</div>
-      <div class="schedule-slots">${chips || '<span class="schedule-hint">nothing free</span>'}</div>
+      <div class="schedule-day-body">
+        <div class="schedule-slots">${chips || '<span class="schedule-hint">nothing free</span>'}</div>
+        ${booked}
+      </div>
     </div>`;
   }).join('');
 
-  const footer = scheduleSelected ? `
-    <div class="schedule-footer">
+  // The actions are ALWAYS rendered, disabled until a slot is picked. Hiding
+  // them until selection meant the rehearsal button did not exist as far as a
+  // first-time user was concerned — you cannot look for a control you have no
+  // evidence of. Disabled-with-a-reason is discoverable; absent is not.
+  const footer = `
+    <div class="schedule-footer${scheduleSelected ? '' : ' schedule-footer-lookup'}">
       <div class="schedule-chosen">
-        <strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern
-        ${scheduleSelected.theirLabel ? ` · ${esc(scheduleSelected.theirLabel)} their time` : ''}
-        <span class="schedule-hint">${esc(s.title)} · ${s.duration_minutes} min</span>
+        ${scheduleSelected
+          ? `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
+            + (scheduleSelected.theirLabel && !sameZone ? ` · ${esc(scheduleSelected.theirLabel)} their time` : '')
+            + `<span class="schedule-hint">${esc((scheduleTitle ?? s.title) || s.title)} · ${s.duration_minutes} min</span>`
+          : '<span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot above to book it.</span>'}
       </div>
       <div class="btn-row btn-row-primary">
-        <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()">Book &amp; Send</button>
+        <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()"
+          ${scheduleSelected ? '' : 'disabled title="Pick a slot first"'}>Book &amp; Send</button>
         <button class="btn btn-ghost" id="schedule-test-btn" onclick="bookMeetingAndSend(true)"
-          title="Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company's record.">Test booking (me only)</button>
+          ${scheduleSelected ? '' : 'disabled'}
+          title="${scheduleSelected
+            ? 'Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company\'s record.'
+            : 'Pick a slot first — then this books a real event and invites only you.'}">Test booking (me only)</button>
       </div>
-    </div>` : `
-    <div class="schedule-footer schedule-footer-lookup">
-      <span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot to book it.</span>
     </div>`;
 
   el.innerHTML = `
     <div class="schedule-panel">
       <div class="schedule-head">
-        <strong>${esc(s.title)}</strong>
+        <input type="text" id="schedule-title-input" class="schedule-title-input"
+          value="${esc(scheduleTitle ?? s.title)}" aria-label="Meeting title"
+          oninput="scheduleTitle = this.value">
         <label class="schedule-inline">Length
           <select onchange="openSchedulePanel(this.value, scheduleState?.their_timezone)">
             ${scheduleDurationOptions(s.duration_minutes)}
@@ -7110,11 +7227,18 @@ function renderSchedulePanel() {
             onchange="openSchedulePanel(scheduleState?.duration_minutes, this.value)">
         </label>
       </div>
+      <div class="schedule-agenda">
+        <input type="text" id="schedule-notes-input" placeholder="Agenda for the invite (optional)"
+          value="${esc(scheduleNotes)}" oninput="scheduleNotes = this.value">
+      </div>
       <div class="schedule-tz-note">Their time: ${tzNote}</div>
       ${s.their_timezone_warning ? `<div class="schedule-warning">&#9888; ${esc(s.their_timezone_warning)}</div>` : ''}
       ${booked}
       ${proposedHtml}
-      <div class="schedule-grid">${grid}</div>
+      ${hasSuggestions ? `<button class="schedule-toggle" onclick="toggleScheduleAllDays()">
+        ${scheduleShowAll ? '&#9652; Just their suggestions' : '&#9662; None of these work — show all my availability'}
+      </button>` : ''}
+      ${showGrid ? `<div class="schedule-grid">${grid}</div>` : ''}
       <div class="schedule-hint">Checked: ${(s.calendars || []).map(esc).join(', ')} · 9-5 Eastern, weekdays, from tomorrow</div>
       ${footer}
     </div>`;
@@ -7130,6 +7254,26 @@ function findSlotState(startIso) {
   return { busy: false, busyWith: null };
 }
 
+/**
+ * While a slot is picked, the ordinary Send is disabled and points at Book &
+ * Send. Clicking a slot writes "I just created an invite for…" into the draft
+ * immediately, but only Book & Send creates the event — and plain Send sits
+ * right beside it, so on 2026-08-20 a partner was told about an invite that did
+ * not exist. Two buttons where one silently makes the other's promise false.
+ */
+function syncSendButtonsForSchedule() {
+  const armed = !!scheduleSelected;
+  for (const id of ['outreach-send-btn', 'outreach-compose-send-btn']) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    btn.disabled = armed;
+    btn.title = armed
+      ? 'A time is selected — use "Book & Send" so the calendar invite is actually created.'
+      : '';
+    btn.classList.toggle('btn-superseded', armed);
+  }
+}
+
 function selectScheduleSlot(startIso) {
   const fromGrid = findSlotState(startIso);
   const fromProposed = (scheduleState?.proposed_times || []).find(t => t.start === startIso);
@@ -7141,6 +7285,7 @@ function selectScheduleSlot(startIso) {
   };
   insertConfirmationLine();
   renderSchedulePanel();
+  syncSendButtonsForSchedule();
 }
 
 function dayLabelForSlot(startIso) {
@@ -7158,8 +7303,12 @@ function dayLabelForSlot(startIso) {
 function insertConfirmationLine() {
   const editor = document.getElementById('outreach-draft-editor');
   if (!editor || !scheduleSelected) return;
-  const their = scheduleSelected.theirLabel ? ` (${scheduleSelected.theirLabel} your time)` : '';
-  const line = `${scheduleSelected.dayLabel} at ${scheduleSelected.label} Eastern${their}, invite just sent.`;
+  // Their local time is added only when their zone differs from ours — the
+  // both-zones habit exists because timezone confusion killed real meetings,
+  // but for a Toronto org it printed the same number twice.
+  const sameZone = !scheduleState?.their_timezone || scheduleState.their_timezone === scheduleState.timezone;
+  const their = scheduleSelected.theirLabel && !sameZone ? ` (${scheduleSelected.theirLabel} your time)` : '';
+  const line = `I just created an invite for ${scheduleSelected.dayLabel} at ${scheduleSelected.label} ET${their}.`;
 
   if (scheduleInsertedLine && editor.value.includes(scheduleInsertedLine)) {
     editor.value = editor.value.replace(scheduleInsertedLine, line);
@@ -7194,6 +7343,8 @@ async function bookMeetingAndSend(testMode) {
         start: scheduleSelected.start,
         duration_minutes: scheduleState?.duration_minutes || 30,
         their_timezone: scheduleState?.their_timezone || undefined,
+        notes: scheduleNotes.trim() || undefined,
+        title: (scheduleTitle ?? '').trim() || undefined,
         thread_id: outreachDraft?.thread_id || scheduleState?.inbound_thread_id || undefined,
         subject, body, confirmed: true,
         ...(testMode ? { test_mode: true } : {}),

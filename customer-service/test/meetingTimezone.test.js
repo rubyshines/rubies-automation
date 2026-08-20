@@ -92,9 +92,13 @@ test('normalizers', () => {
 test('the confirmation line states both zones, and stops', () => {
   const start = new Date('2026-08-25T18:00:00.000Z'); // 2pm ET, 11am Pacific
   const line = renderConfirmationLine({ start, theirTimeZone: 'America/Los_Angeles' });
+  assert.match(line, /^I just created an invite for /);
   assert.match(line, /Tue 25 Aug/);
-  assert.match(line, /2:00 PM Eastern/);
+  assert.match(line, /2:00 PM ET/);
   assert.match(line, /11:00 AM your time/);
+  // Absolute date only. "next Wednesday" in a draft that sits pending for days
+  // is a stale fact with a long fuse.
+  assert.ok(!/\bnext\b|\btomorrow\b|\bthis (week|coming)\b/i.test(line));
   // No narration of the mechanics — the rule that killed the old bloated
   // scheduling paragraph. It states a completed fact and ends.
   assert.ok(!/will send|going to|confirm back|Google Meet/i.test(line));
@@ -104,7 +108,7 @@ test('the confirmation line states both zones, and stops', () => {
 test('the confirmation line drops the second zone when theirs is unknown', () => {
   const start = new Date('2026-08-25T18:00:00.000Z');
   const line = renderConfirmationLine({ start, theirTimeZone: null });
-  assert.match(line, /2:00 PM Eastern/);
+  assert.match(line, /2:00 PM ET/);
   assert.ok(!line.includes('your time'));
   // An invalid zone is treated as unknown rather than crashing the render.
   assert.ok(!renderConfirmationLine({ start, theirTimeZone: 'Mars/Olympus' }).includes('your time'));

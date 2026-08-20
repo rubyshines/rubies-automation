@@ -241,8 +241,44 @@ async function resolveDelivery(sb, companyId) {
  * @param {object} p { company_id, thread_id?, message_type, variant_id?,
  *                     subject?, body, confirmed? }
  */
+/**
+ * The panel writes "I just created an invite for …" into the draft the moment a
+ * slot is CLICKED, but only Book & Send actually creates the event — and the
+ * ordinary Send button sits right beside it. On 2026-08-20 that sent a partner a
+ * message promising an invite that did not exist, with nothing anywhere to catch
+ * it. This is the deterministic backstop: a claim about a booked call has to be
+ * backed by a booked call.
+ *
+ * Deliberately here rather than in the UI, because it also covers the console,
+ * the MCP tool, and a draft sent after a page refresh (where the panel has
+ * forgotten a slot was ever picked). `invite_created` is how scheduleMeeting
+ * says "I made the event moments ago" — its b2b_meetings row is written after
+ * this call, so the row cannot be the evidence on the legitimate path.
+ */
+const INVITE_CLAIM = /\bI just created an invite for\b/i;
+
+async function assertInviteClaimIsBacked(sb, { company_id, body }) {
+  if (!INVITE_CLAIM.test(body || '')) return null;
+  const { data, error } = await sb.from('b2b_meetings')
+    .select('id, starts_at')
+    .eq('company_id', company_id)
+    .eq('status', 'booked')
+    .gte('starts_at', new Date().toISOString())
+    .limit(1);
+  if (error) return null; // never block a send on a failed lookup
+  if (data?.length) return null;
+  return {
+    ok: false,
+    phase: 'unbacked_invite_claim',
+    error: 'This message says you just created an invite, but no meeting is booked for '
+      + `${company_id}. Use "Book & Send" in the Schedule panel so the event is actually created, `
+      + 'or remove that sentence. (If you booked it by hand in Google Calendar, re-send with '
+      + 'allow_unbacked_invite_claim: true.)',
+  };
+}
+
 async function sendB2bEmail(p = {}) {
-  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override, test_send } = p;
+  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override, test_send, invite_created, allow_unbacked_invite_claim } = p;
   if (!company_id) throw new Error('company_id required');
   if (!message_type) throw new Error('message_type required');
   if (!body || !body.trim()) throw new Error('body required');
@@ -366,6 +402,13 @@ async function sendB2bEmail(p = {}) {
   }
 
   // ---- PHASE 2: the gate ---------------------------------------------------
+  // Checked before the send gate: a draft claiming a call that was never booked
+  // is wrong whether or not sending is enabled.
+  if (!invite_created && !allow_unbacked_invite_claim) {
+    const unbacked = await assertInviteClaimIsBacked(sb, { company_id, body });
+    if (unbacked) return unbacked;
+  }
+
   if (!(await isFlagEnabled(SEND_FLAG))) {
     return {
       ok: false,
@@ -429,4 +472,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, assertInviteClaimIsBacked, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, FROM_EMAIL, SEND_FLAG };
