@@ -53,6 +53,20 @@
       <span class="capture-hint">JPEG · PNG · HEIC</span>
     </label>
 
+    <!-- The way INTO a multi-section capture. It has to live out here, outside
+         the tray: the tray only exists once it holds a photo, and a single shot
+         submits immediately, so an "add another" button inside it can never be
+         reached from the camera — which is the whole point on a phone. -->
+    <div class="capture-alt" id="capture-alt">
+      <button class="capture-alt-btn" id="capture-sections" type="button">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <rect x="2.5" y="4.5" width="9" height="13" rx="1"/>
+          <path d="M6 2.5h9a1 1 0 0 1 1 1v11"/>
+        </svg>
+        Longer than one photo? Capture it in sections
+      </button>
+    </div>
+
     <!-- Page tray: a long receipt gets photographed in sections, and they are
          held here until submitted together as ONE receipt. Hidden until the
          first shot lands, so the single-photo flow is untouched. -->
