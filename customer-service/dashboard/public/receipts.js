@@ -12,6 +12,7 @@ const state = {
   openId: null,
   detail: null,
   capturing: false,
+  tray: [],          // prepared images held for one multi-section capture
 };
 
 // ---------------------------------------------------------------------------
@@ -126,19 +127,34 @@ const SCAN_STEPS = [
   'checking the arithmetic',
 ];
 
+const SCAN_STEPS_MULTI = [
+  'uploading the photos',
+  'putting the sections in order',
+  'reading merchant and date',
+  'reading line items across the sections',
+  'removing lines that appear in two photos',
+  'reading the tax breakdown',
+  'matching a QuickBooks account',
+  'checking the arithmetic',
+];
+
 let scanTimer;
-function startScan(previewUrl) {
+function startScan(previewUrl, pageCount = 1) {
   $('scan-preview').src = previewUrl;
+  $('scan-label').textContent = pageCount > 1
+    ? `Reading ${pageCount} sections as one receipt`
+    : 'Reading the receipt';
   $('capture-drop').hidden = true;
   $('scan').hidden = false;
   $('capture-error').hidden = true;
+  const steps = pageCount > 1 ? SCAN_STEPS_MULTI : SCAN_STEPS;
   let i = 0;
-  $('scan-steps').textContent = SCAN_STEPS[0];
+  $('scan-steps').textContent = steps[0];
   // Paced slower than the model actually is on the early steps, so the copy
   // never claims to be further along than it could be.
   scanTimer = setInterval(() => {
-    i = Math.min(i + 1, SCAN_STEPS.length - 1);
-    $('scan-steps').textContent = SCAN_STEPS[i];
+    i = Math.min(i + 1, steps.length - 1);
+    $('scan-steps').textContent = steps[i];
   }, 1900);
 }
 
@@ -151,31 +167,79 @@ function stopScan() {
 
 let captureAbort = null;
 
-async function captureFile(file) {
-  if (!file || state.capturing) return;
-  state.capturing = true;
+const MAX_PAGES = 8;
+
+/**
+ * Take photos into the tray.
+ *
+ * A single photo submits immediately — that is the overwhelmingly common case
+ * and making it wait behind a confirm step to serve long receipts would be the
+ * wrong trade. The tray only appears once there is more than one image to hold
+ * together, or when "add another section" is used deliberately.
+ */
+async function captureFiles(files, { hold = false } = {}) {
+  const list = [...(files || [])].filter(Boolean);
+  if (!list.length || state.capturing) return;
   $('capture-error').hidden = true;
 
-  let prepared;
-  try {
-    prepared = await prepareImage(file);
-  } catch (err) {
-    state.capturing = false;
-    showCaptureError(err.message);
-    return;
+  const room = MAX_PAGES - state.tray.length;
+  if (room <= 0) { showCaptureError(`A receipt can be captured in at most ${MAX_PAGES} photos.`); return; }
+  const accepted = list.slice(0, room);
+  if (accepted.length < list.length) {
+    showCaptureError(`Only the first ${room} of those photos were added — a receipt holds at most ${MAX_PAGES}.`);
   }
 
-  startScan(prepared.previewUrl);
+  for (const file of accepted) {
+    try {
+      const prepared = await prepareImage(file);
+      state.tray.push(prepared);
+    } catch (err) {
+      showCaptureError(err.message);
+      return;
+    }
+  }
+
+  renderTray();
+  if (state.tray.length === 1 && !hold) await submitTray();
+}
+
+function renderTray() {
+  const tray = $('tray');
+  if (!state.tray.length) { tray.hidden = true; return; }
+  tray.hidden = false;
+  $('tray-count').textContent = `${state.tray.length} section${state.tray.length === 1 ? '' : 's'}`;
+  $('tray-pages').innerHTML = state.tray.map((p, i) => `
+    <div class="tray-page">
+      <img src="${p.previewUrl}" alt="Section ${i + 1}">
+      <span class="tray-page-no">${i + 1}</span>
+      <button class="tray-page-x" data-i="${i}" type="button" aria-label="Remove section ${i + 1}">&times;</button>
+    </div>`).join('');
+  $('tray-pages').querySelectorAll('.tray-page-x').forEach(b =>
+    b.addEventListener('click', () => { state.tray.splice(Number(b.dataset.i), 1); renderTray(); }));
+  $('tray-add').disabled = state.tray.length >= MAX_PAGES;
+}
+
+async function submitTray() {
+  if (!state.tray.length || state.capturing) return;
+  const pages = state.tray;
+  state.capturing = true;
+  $('tray').hidden = true;
+
+  startScan(pages[0].previewUrl, pages.length);
   captureAbort = new AbortController();
 
   try {
     const result = await api('/api/receipts/capture', {
       method: 'POST',
       signal: captureAbort.signal,
-      body: JSON.stringify({ image_base64: prepared.base64, mime_type: 'image/jpeg' }),
+      body: JSON.stringify({
+        images: pages.map(p => ({ image_base64: p.base64, mime_type: 'image/jpeg' })),
+      }),
     });
     stopScan();
     state.capturing = false;
+    state.tray = [];
+    renderTray();
 
     await loadList();
     if (result.already_captured) toast('Already captured — opening the existing receipt');
@@ -184,6 +248,10 @@ async function captureFile(file) {
   } catch (err) {
     stopScan();
     state.capturing = false;
+    // The photos stay in the tray on failure — they may be the only copy, and
+    // making someone re-shoot a six-section receipt because the request timed
+    // out is the worst thing this page could do.
+    renderTray();
     if (err.name === 'AbortError') { toast('Capture cancelled'); return; }
     showCaptureError(err.message);
   }
@@ -428,12 +496,23 @@ function renderDetail(data) {
       ${data.image_url
         ? `<img src="${esc(data.image_url)}" alt="Receipt photo" id="detail-img">`
         : `<div class="ledger-empty">Image unavailable</div>`}
+      ${(data.pages || []).length > 1 ? `
+        <div class="photo-count">${data.pages.length} photos · tap to switch</div>
+        <div class="photo-strip" id="photo-strip">
+          ${data.pages.map((p, i) => `<img src="${esc(p.image_url || '')}" alt="Section ${i + 1}"
+             data-url="${esc(p.image_url || '')}" class="${i === 0 ? 'is-active' : ''}">`).join('')}
+        </div>` : ''}
       <div class="detail-meta">
         <div><span class="k">Captured</span><span class="v">${esc(new Date(r.created_at).toLocaleString('en-CA', { timeZone: 'America/Toronto', dateStyle: 'medium', timeStyle: 'short' }))}</span></div>
         ${r.captured_by ? `<div><span class="k">By</span><span class="v">${esc(r.captured_by)}</span></div>` : ''}
         ${r.extraction_confidence !== null && r.extraction_confidence !== undefined
           ? `<div><span class="k">Confidence</span><span class="v">${(Number(r.extraction_confidence) * 100).toFixed(0)}%</span></div>` : ''}
         <div><span class="k">Read by</span><span class="v">${esc(r.extraction_model || '—')}</span></div>
+        ${r.currency ? `<div><span class="k">Currency</span><span class="v">${esc(r.currency)}
+          <span class="cur-src ${r.currency_source === 'address' ? 'inferred' : ''}">${esc({
+            printed: 'on receipt', tax_label: 'tax line', address: 'inferred', operator: 'by hand',
+          }[r.currency_source] || 'unknown')}</span></span></div>` : ''}
+        ${r.merchant_country ? `<div><span class="k">Country</span><span class="v">${esc(r.merchant_country)}</span></div>` : ''}
       </div>
     </div>
   </div>`;
@@ -501,6 +580,14 @@ function wireDetail(data) {
   if (img) img.addEventListener('click', () => {
     $('lightbox-img').src = img.src;
     $('lightbox').hidden = false;
+  });
+
+  const strip = $('photo-strip');
+  if (strip && img) strip.querySelectorAll('img').forEach(thumb => {
+    thumb.addEventListener('click', () => {
+      img.src = thumb.dataset.url;
+      strip.querySelectorAll('img').forEach(t => t.classList.toggle('is-active', t === thumb));
+    });
   });
 
   $('sheet-content').querySelectorAll('[data-act]').forEach(btn => {
@@ -575,13 +662,31 @@ function init() {
   for (const id of ['file-input', 'camera-input']) {
     const input = $(id);
     input.addEventListener('change', () => {
-      const file = input.files?.[0];
+      const files = input.files;
+      const hold = input.dataset.hold === '1';
+      input.dataset.hold = '';
+      const picked = [...(files || [])];
       input.value = '';   // so re-picking the same file fires change again
-      captureFile(file);
+      // Several photos picked at once are always sections of one receipt.
+      captureFiles(picked, { hold: hold || picked.length > 1 });
     });
   }
 
   $('fab').addEventListener('click', () => $('camera-input').click());
+
+  // Tray
+  $('tray-add').addEventListener('click', () => {
+    const input = $('camera-input');
+    input.dataset.hold = '1';   // keep collecting instead of submitting on one
+    input.click();
+  });
+  $('tray-submit').addEventListener('click', () => submitTray());
+  $('tray-discard').addEventListener('click', () => {
+    if (state.tray.length > 1 && !confirm('Discard these photos?')) return;
+    state.tray = [];
+    renderTray();
+    $('capture-error').hidden = true;
+  });
   $('scan-cancel').addEventListener('click', () => captureAbort?.abort());
 
   // Desktop: drop a scanned receipt straight onto the panel.
@@ -593,16 +698,16 @@ function init() {
     e.preventDefault(); drop.classList.remove('dragover');
   }));
   drop.addEventListener('drop', e => {
-    const file = [...(e.dataTransfer?.files || [])].find(f => f.type.startsWith('image/'));
-    if (file) captureFile(file);
+    const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
+    if (files.length) captureFiles(files, { hold: files.length > 1 });
     else showCaptureError('Drop an image file — a photo or scan of the receipt.');
   });
 
   // Paste a screenshot straight in.
   document.addEventListener('paste', e => {
     if (state.openId) return;
-    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
-    if (item) captureFile(item.getAsFile());
+    const imgs = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith('image/'));
+    if (imgs.length) captureFiles(imgs.map(i => i.getAsFile()), { hold: state.tray.length > 0 });
   });
 
   $('filters').addEventListener('click', e => {
