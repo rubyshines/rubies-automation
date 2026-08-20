@@ -126,7 +126,7 @@ const TOOLS = [
         sizes: {
           type: 'array',
           items: { type: 'string' },
-          description: 'The size of every unit being donated, one entry per unit, exactly as it appears on the order line item (e.g. ["8", "L", "1X"]). Take them from the SKU-derived sizes in get_order_context. Partner orgs serve different age groups and cannot all use every size, so this decides which orgs are eligible to receive the box. Omit only when the sizes are genuinely unknown.',
+          description: 'Every distinct size being donated, exactly as it appears on the order line item (e.g. ["8", "L", "1X"]). Take them from the SKU-derived sizes in get_order_context. Repeats do not matter, but a size missed here is a size the org may not be able to use: partner orgs serve different age groups, and this decides which of them are eligible to receive the box. Omit only when the sizes are genuinely unknown.',
         },
         has_defect: { type: 'boolean', description: 'True if any item has a defect (skip donation for defects)' },
         customer_requested_partner: { type: 'boolean', description: 'Set true ONLY when the customer has explicitly accepted a prior offer of partner org info on a single-item donation. Bypasses the default "donate locally" response and returns a partner address. Leave false/omitted otherwise — the tool handles the default single vs multi-item routing.' },
