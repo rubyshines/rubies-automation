@@ -7040,20 +7040,53 @@ function renderSchedulePanel() {
 
   const proposed = (s.proposed_times || []).filter(t => t.start);
   const dayHints = (s.proposed_times || []).filter(t => !t.start);
-  const proposedHtml = proposed.length ? `
+
+  // Their local time is only worth printing when it differs from ours. For a
+  // Toronto org it is the same number twice, which reads as noise.
+  const sameZone = !s.their_timezone || s.their_timezone === s.timezone;
+
+  const proposedSlot = (t) => {
+    const clash = findSlotState(t.start);
+    return `<button class="schedule-slot schedule-slot-proposed${clash.busy ? ' is-busy' : ''}${scheduleSelected?.start === t.start ? ' is-selected' : ''}"
+      ${clash.busy ? `title="${esc(clash.busyWith || 'Busy')}"` : ''}
+      onclick="selectScheduleSlot('${esc(t.start)}')">
+      ${esc(t.dayLabel || '')} ${esc(t.label || '')}
+      ${t.theirLabel && !sameZone ? `<span class="schedule-their">${esc(t.theirLabel)} their time</span>` : ''}
+      ${clash.busy ? `<span class="schedule-busy-tag">busy — ${esc(clash.busyWith || '')}</span>` : ''}
+    </button>`;
+  };
+
+  /**
+   * A day they named with no time ("Wednesday is wide open") is an OFFER, not a
+   * footnote. It used to render as "Also mentioned: Wed 26 Aug" with its slots
+   * buried in the scrolled grid below — so the day they had explicitly opened
+   * up was the hardest one to book. It now renders as its own row of that day's
+   * free times, directly clickable.
+   */
+  const dayHintHtml = dayHints.map(hint => {
+    const day = (s.days || []).find(d => d.date === hint.date);
+    const free = (day?.slots || []).filter(sl => !sl.busy);
+    const label = esc(day?.label || hint.dayLabel || hint.date);
+    if (!day) {
+      return `<div class="schedule-hint">Also mentioned: ${label} (outside the window shown)</div>`;
+    }
+    if (!free.length) {
+      return `<div class="schedule-dayhint"><span class="schedule-dayhint-label">${label}</span>
+        <span class="schedule-hint">they offered this day, but you have nothing free</span></div>`;
+    }
+    return `<div class="schedule-dayhint">
+      <span class="schedule-dayhint-label">${label}<span class="schedule-hint">they offered this day</span></span>
+      <span class="schedule-slots">${free.map(sl => `<button
+        class="schedule-slot${scheduleSelected?.start === sl.start ? ' is-selected' : ''}${sl.unsociableForThem ? ' is-unsociable' : ''}"
+        onclick="selectScheduleSlot('${esc(sl.start)}')">${esc(sl.label)}</button>`).join('')}</span>
+    </div>`;
+  }).join('');
+
+  const proposedHtml = (proposed.length || dayHints.length) ? `
     <div class="schedule-proposed">
       <div class="schedule-label">They suggested</div>
-      ${proposed.map(t => {
-        const clash = findSlotState(t.start);
-        return `<button class="schedule-slot schedule-slot-proposed${clash.busy ? ' is-busy' : ''}${scheduleSelected?.start === t.start ? ' is-selected' : ''}"
-          ${clash.busy ? `title="${esc(clash.busyWith || 'Busy')}"` : ''}
-          onclick="selectScheduleSlot('${esc(t.start)}')">
-          ${esc(t.dayLabel || '')} ${esc(t.label || '')}
-          ${t.theirLabel ? `<span class="schedule-their">${esc(t.theirLabel)} their time</span>` : ''}
-          ${clash.busy ? `<span class="schedule-busy-tag">busy — ${esc(clash.busyWith || '')}</span>` : ''}
-        </button>`;
-      }).join('')}
-      ${dayHints.length ? `<div class="schedule-hint">Also mentioned: ${dayHints.map(d => esc(d.dayLabel || d.date)).join(', ')}</div>` : ''}
+      ${proposed.map(proposedSlot).join('')}
+      ${dayHintHtml}
     </div>` : (s.proposed_error
       ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
       : '');
@@ -7072,27 +7105,45 @@ function renderSchedulePanel() {
     }).join('');
     const notes = day.notes?.length
       ? `<span class="schedule-day-note">${esc(day.notes.map(n => n.summary).join(' · '))}</span>` : '';
+    // What the busy slots actually are. A struck-through chip tells you a time
+    // is gone; the name tells you whether the slot beside it is realistic.
+    // Blocks from a free/busy-only calendar have no title and honestly say so.
+    const booked = day.busyBlocks?.length
+      ? `<div class="schedule-booked-line">${day.busyBlocks.map(b =>
+          `<span class="schedule-booked-item"><span class="schedule-booked-time">${esc(b.label)}</span> ${esc(b.summary)}</span>`
+        ).join('')}</div>`
+      : '';
     return `<div class="schedule-day">
       <div class="schedule-day-label">${esc(day.label)}${notes}</div>
-      <div class="schedule-slots">${chips || '<span class="schedule-hint">nothing free</span>'}</div>
+      <div class="schedule-day-body">
+        <div class="schedule-slots">${chips || '<span class="schedule-hint">nothing free</span>'}</div>
+        ${booked}
+      </div>
     </div>`;
   }).join('');
 
-  const footer = scheduleSelected ? `
-    <div class="schedule-footer">
+  // The actions are ALWAYS rendered, disabled until a slot is picked. Hiding
+  // them until selection meant the rehearsal button did not exist as far as a
+  // first-time user was concerned — you cannot look for a control you have no
+  // evidence of. Disabled-with-a-reason is discoverable; absent is not.
+  const footer = `
+    <div class="schedule-footer${scheduleSelected ? '' : ' schedule-footer-lookup'}">
       <div class="schedule-chosen">
-        <strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern
-        ${scheduleSelected.theirLabel ? ` · ${esc(scheduleSelected.theirLabel)} their time` : ''}
-        <span class="schedule-hint">${esc(s.title)} · ${s.duration_minutes} min</span>
+        ${scheduleSelected
+          ? `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
+            + (scheduleSelected.theirLabel && !sameZone ? ` · ${esc(scheduleSelected.theirLabel)} their time` : '')
+            + `<span class="schedule-hint">${esc(s.title)} · ${s.duration_minutes} min</span>`
+          : '<span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot above to book it.</span>'}
       </div>
       <div class="btn-row btn-row-primary">
-        <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()">Book &amp; Send</button>
+        <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()"
+          ${scheduleSelected ? '' : 'disabled title="Pick a slot first"'}>Book &amp; Send</button>
         <button class="btn btn-ghost" id="schedule-test-btn" onclick="bookMeetingAndSend(true)"
-          title="Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company's record.">Test booking (me only)</button>
+          ${scheduleSelected ? '' : 'disabled'}
+          title="${scheduleSelected
+            ? 'Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company\'s record.'
+            : 'Pick a slot first — then this books a real event and invites only you.'}">Test booking (me only)</button>
       </div>
-    </div>` : `
-    <div class="schedule-footer schedule-footer-lookup">
-      <span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot to book it.</span>
     </div>`;
 
   el.innerHTML = `

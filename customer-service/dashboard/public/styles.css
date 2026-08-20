@@ -6432,3 +6432,45 @@ main { height: calc(100vh - 56px); }
   .schedule-day-label { flex: none; }
   .schedule-inline input { width: 140px; }
 }
+
+/* A day they named with no specific time ("Wednesday is wide open") is an
+   offer, not a footnote — it gets that day's free slots inline rather than a
+   passive "also mentioned" line with the times buried in the grid below. */
+.schedule-dayhint {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.schedule-dayhint-label {
+  flex: 0 0 130px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.schedule-dayhint-label .schedule-hint { display: block; font-weight: 400; margin-top: 2px; }
+.schedule-footer .btn-row { margin-top: 8px; }
+.schedule-footer button[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+@media (max-width: 700px) {
+  .schedule-dayhint { flex-direction: column; gap: 6px; }
+  .schedule-dayhint-label { flex: none; }
+}
+
+/* What the busy slots actually ARE. A block from a free/busy-only calendar has
+   no title and reads "Busy" — honest, and fixable in Google sharing settings. */
+.schedule-day-body { flex: 1 1 auto; min-width: 0; }
+.schedule-booked-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.schedule-booked-item { white-space: nowrap; }
+.schedule-booked-time { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.schedule-booked-item::before { content: '\25CF'; font-size: 7px; vertical-align: middle; margin-right: 5px; opacity: 0.5; }

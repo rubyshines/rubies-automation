@@ -158,3 +158,36 @@ test('date helpers', () => {
   assert.strictEqual(isWeekendIso('2026-08-23'), true);  // Sunday
   assert.strictEqual(isWeekendIso('2026-08-24'), false); // Monday
 });
+
+test('each day names what is booked, clamped to the working window', () => {
+  const grid = buildSlots({
+    now: new Date(et('2026-08-20', 9)),
+    days: 1,
+    busy: [
+      { start: et('2026-08-21', 10), end: et('2026-08-21', 11), summary: 'Natta call' },
+      // Starts before the working day — the label must read from 9, not 7, so it
+      // does not imply the grid is hiding earlier slots.
+      { start: et('2026-08-21', 7), end: et('2026-08-21', 9, 30), summary: 'Gym' },
+      // A different day entirely: must not appear on this one.
+      { start: et('2026-08-24', 10), end: et('2026-08-24', 11), summary: 'Elsewhere' },
+    ],
+  });
+  const blocks = grid.days[0].busyBlocks;
+  assert.deepStrictEqual(blocks.map(b => b.summary), ['Gym', 'Natta call']);
+  assert.strictEqual(blocks[0].label, '9:00 AM–9:30 AM');
+  assert.strictEqual(blocks[1].label, '10:00 AM–11:00 AM');
+});
+
+test('an untitled block from a free/busy-only calendar still reports as Busy', () => {
+  const grid = buildSlots({
+    now: new Date(et('2026-08-20', 9)),
+    days: 1,
+    busy: [{ start: et('2026-08-21', 14), end: et('2026-08-21', 14, 30) }],
+  });
+  assert.strictEqual(grid.days[0].busyBlocks[0].summary, 'Busy');
+});
+
+test('a day with nothing booked carries an empty block list, not undefined', () => {
+  const grid = buildSlots({ now: new Date(et('2026-08-20', 9)), days: 1 });
+  assert.deepStrictEqual(grid.days[0].busyBlocks, []);
+});
