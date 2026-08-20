@@ -7260,8 +7260,12 @@ function dayLabelForSlot(startIso) {
 function insertConfirmationLine() {
   const editor = document.getElementById('outreach-draft-editor');
   if (!editor || !scheduleSelected) return;
-  const their = scheduleSelected.theirLabel ? ` (${scheduleSelected.theirLabel} your time)` : '';
-  const line = `${scheduleSelected.dayLabel} at ${scheduleSelected.label} Eastern${their}, invite just sent.`;
+  // Their local time is added only when their zone differs from ours — the
+  // both-zones habit exists because timezone confusion killed real meetings,
+  // but for a Toronto org it printed the same number twice.
+  const sameZone = !scheduleState?.their_timezone || scheduleState.their_timezone === scheduleState.timezone;
+  const their = scheduleSelected.theirLabel && !sameZone ? ` (${scheduleSelected.theirLabel} your time)` : '';
+  const line = `I just created an invite for ${scheduleSelected.dayLabel} at ${scheduleSelected.label} ET${their}.`;
 
   if (scheduleInsertedLine && editor.value.includes(scheduleInsertedLine)) {
     editor.value = editor.value.replace(scheduleInsertedLine, line);

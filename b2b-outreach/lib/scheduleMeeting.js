@@ -34,19 +34,25 @@ function meetingTitle(companyName) {
 /**
  * The one sentence the panel drops into the draft. Deterministic, not AI.
  *
- * Both zones, per the standing prompt rule earned from real missed meetings.
- * Terse on purpose: the rule that killed the old bloated scheduling paragraph
- * bans narrating the mechanics, so this states a completed fact and stops. The
- * Meet link is not repeated here — it is in the invite. Pure.
+ * Wording is Jamie's own (2026-08-20). Terse on purpose: the rule that killed
+ * the old bloated scheduling paragraph bans narrating the mechanics, so this
+ * states a completed fact and stops. The Meet link is not repeated — it is in
+ * the invite.
+ *
+ * The date is ABSOLUTE, never "next Wednesday": a relative date is a stale fact
+ * with a long fuse, and this text can sit in a pending draft for days before it
+ * sends. Their local time is appended only when their zone actually differs —
+ * the both-zones habit exists because timezone confusion killed real meetings,
+ * but for a Toronto org it prints the same number twice. Pure.
  */
 function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null }) {
   const d = new Date(start);
   const day = formatDayInZone(d, businessTimeZone);
   const ours = formatTimeInZone(d, businessTimeZone);
   if (theirTimeZone && isValidTimeZone(theirTimeZone) && theirTimeZone !== businessTimeZone) {
-    return `${day} at ${ours} Eastern (${formatTimeInZone(d, theirTimeZone)} your time), invite just sent.`;
+    return `I just created an invite for ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
   }
-  return `${day} at ${ours} Eastern, invite just sent.`;
+  return `I just created an invite for ${day} at ${ours} ET.`;
 }
 
 /**
