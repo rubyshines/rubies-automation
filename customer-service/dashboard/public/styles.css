@@ -6411,16 +6411,7 @@ main { height: calc(100vh - 56px); }
   border-color: var(--accent);
   color: #fff;
 }
-.schedule-slot-proposed {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 10px;
-  margin-bottom: 6px;
-  font-size: 13px;
-}
 .schedule-their { display: block; font-size: 11px; color: var(--text-secondary); }
-.schedule-slot-proposed.is-selected .schedule-their { color: #fff; opacity: 0.85; }
 .schedule-busy-tag { display: block; font-size: 11px; color: var(--yellow); }
 .schedule-hint { font-size: 11px; color: var(--text-secondary); margin-top: 8px; display: block; }
 .schedule-footer { margin-top: 12px; }
@@ -6436,29 +6427,11 @@ main { height: calc(100vh - 56px); }
 /* A day they named with no specific time ("Wednesday is wide open") is an
    offer, not a footnote — it gets that day's free slots inline rather than a
    passive "also mentioned" line with the times buried in the grid below. */
-.schedule-dayhint {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  padding: 8px 10px;
-  margin-bottom: 6px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.schedule-dayhint-label {
-  flex: 0 0 130px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.schedule-dayhint-label .schedule-hint { display: block; font-weight: 400; margin-top: 2px; }
 .schedule-footer .btn-row { margin-top: 8px; }
 .schedule-footer button[disabled] { opacity: 0.5; cursor: not-allowed; }
 
 @media (max-width: 700px) {
-  .schedule-dayhint { flex-direction: column; gap: 6px; }
-  .schedule-dayhint-label { flex: none; }
-}
+  }
 
 /* What the busy slots actually ARE. A block from a free/busy-only calendar has
    no title and reads "Busy" — honest, and fixable in Google sharing settings. */
@@ -6519,4 +6492,17 @@ main { height: calc(100vh - 56px); }
 .schedule-toggle:hover { text-decoration: underline; }
 /* The day-offer row shares the grid layout, so its slots line up with the
    full-availability rows below when both are on screen. */
-.schedule-dayhint .schedule-slots { flex: 1 1 auto; min-width: 0; }
+
+/* Their suggestions use the SAME row shape as the availability grid — day on
+   the left, its clickable times on the right — so the two read as one system
+   rather than two layouts for the same kind of thing. */
+.schedule-day-offered {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.schedule-day-offered + .schedule-day-offered { border-top: 1px solid var(--border); }
+.schedule-day-offered .schedule-day-label { font-weight: 600; color: inherit; }
+.schedule-day-label .schedule-hint { display: block; font-weight: 400; margin-top: 2px; }

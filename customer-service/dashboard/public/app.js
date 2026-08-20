@@ -7065,56 +7065,71 @@ function renderSchedulePanel() {
   // Toronto org it is the same number twice, which reads as noise.
   const sameZone = !s.their_timezone || s.their_timezone === s.timezone;
 
-  const proposedSlot = (t) => {
-    const clash = findSlotState(t.start);
-    return `<button class="schedule-slot schedule-slot-proposed${clash.busy ? ' is-busy' : ''}${scheduleSelected?.start === t.start ? ' is-selected' : ''}"
-      ${clash.busy ? `title="${esc(clash.busyWith || 'Busy')}"` : ''}
-      onclick="selectScheduleSlot('${esc(t.start)}')">
-      ${esc(t.dayLabel || '')} ${esc(t.label || '')}
-      ${t.theirLabel && !sameZone ? `<span class="schedule-their">${esc(t.theirLabel)} their time</span>` : ''}
-      ${clash.busy ? `<span class="schedule-busy-tag">busy — ${esc(clash.busyWith || '')}</span>` : ''}
-    </button>`;
-  };
-
   /**
-   * A day they named with no time ("Wednesday is wide open") is an OFFER, not a
-   * footnote. It used to render as "Also mentioned: Wed 26 Aug" with its slots
-   * buried in the scrolled grid below — so the day they had explicitly opened
-   * up was the hardest one to book. It now renders as its own row of that day's
-   * free times, directly clickable.
+   * One row per DAY, in the same shape as the availability grid below.
+   *
+   * Named times used to render as full-width buttons while a whole-day offer
+   * rendered as a label-plus-chips row — two layouts for the same kind of thing,
+   * and two times on 1 September took two rows. Grouping by day makes the
+   * formatting consistent by construction: the day is on the left, its clickable
+   * times are on the right, exactly as in the grid.
    */
-  const dayHintRow = (hint) => {
-    const day = (s.days || []).find(d => d.date === hint.date);
-    const free = (day?.slots || []).filter(sl => !sl.busy);
-    const label = esc(day?.label || hint.dayLabel || hint.date);
-    if (!day) {
-      return `<div class="schedule-hint">Also mentioned: ${label} (outside the window shown)</div>`;
-    }
-    if (!free.length) {
-      return `<div class="schedule-dayhint"><span class="schedule-dayhint-label">${label}</span>
-        <span class="schedule-hint">they offered this day, but you have nothing free</span></div>`;
-    }
-    return `<div class="schedule-dayhint">
-      <span class="schedule-dayhint-label">${label}<span class="schedule-hint">they offered this day</span></span>
-      <span class="schedule-slots">${free.map(sl => `<button
-        class="schedule-slot${scheduleSelected?.start === sl.start ? ' is-selected' : ''}${sl.unsociableForThem ? ' is-unsociable' : ''}"
-        onclick="selectScheduleSlot('${esc(sl.start)}')">${esc(sl.label)}</button>`).join('')}</span>
-    </div>`;
-  };
+  const byDate = new Map();
+  for (const t of proposed) {
+    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], wholeDay: false, dayLabel: t.dayLabel });
+    byDate.get(t.date).times.push(t);
+  }
+  for (const h of dayHints) {
+    if (!byDate.has(h.date)) byDate.set(h.date, { date: h.date, times: [], wholeDay: false, dayLabel: h.dayLabel });
+    byDate.get(h.date).wholeDay = true;
+  }
 
-  // Chronological, mixing timed suggestions and whole-day offers together.
-  // They arrived in the order the model happened to emit them, which put an
-  // offer of Wed 26 BELOW two times on 1 September — the earliest option read
-  // as the last resort.
-  const suggestions = [
-    ...proposed.map(t => ({ sort: t.start, html: proposedSlot(t) })),
-    ...dayHints.map(h => ({ sort: `${h.date}T00:00`, html: dayHintRow(h) })),
-  ].sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));
+  const slotChip = (start, label, { busy, busyWith, unsociable } = {}) =>
+    `<button class="schedule-slot${busy ? ' is-busy' : ''}${unsociable ? ' is-unsociable' : ''}${scheduleSelected?.start === start ? ' is-selected' : ''}"
+      ${busy ? `disabled title="Busy — ${esc(busyWith || '')}"` : `onclick="selectScheduleSlot('${esc(start)}')"`}
+      >${esc(label)}</button>`;
+
+  const suggestionRows = [...byDate.values()]
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map(entry => {
+      const day = (s.days || []).find(d => d.date === entry.date);
+      const label = esc(day?.label || entry.dayLabel || entry.date);
+
+      // A whole-day offer opens up every free slot on it; named times show only
+      // what they actually named.
+      const chips = entry.wholeDay
+        ? (day?.slots || []).filter(sl => !sl.busy)
+            .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }))
+        : entry.times.map(t => {
+            const state = findSlotState(t.start);
+            return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem });
+          });
+
+      const note = entry.wholeDay ? 'they offered this day' : 'they suggested';
+      const theirs = !sameZone && entry.times.length
+        ? `<span class="schedule-hint">${entry.times.map(t => esc(t.theirLabel)).filter(Boolean).join(', ')} their time</span>` : '';
+
+      if (!chips.length) {
+        return `<div class="schedule-day schedule-day-offered">
+          <div class="schedule-day-label">${label}<span class="schedule-hint">${note}</span></div>
+          <div class="schedule-day-body"><span class="schedule-hint">nothing free that day</span></div>
+        </div>`;
+      }
+      return `<div class="schedule-day schedule-day-offered">
+        <div class="schedule-day-label">${label}<span class="schedule-hint">${note}</span></div>
+        <div class="schedule-day-body">
+          <div class="schedule-slots">${chips.join('')}</div>
+          ${theirs}
+        </div>
+      </div>`;
+    });
+
+  const suggestions = suggestionRows;
 
   const proposedHtml = suggestions.length ? `
     <div class="schedule-proposed">
       <div class="schedule-label">They suggested</div>
-      ${suggestions.map(x => x.html).join('')}
+      ${suggestions.join('')}
     </div>` : (s.proposed_error
       ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
       : '');
