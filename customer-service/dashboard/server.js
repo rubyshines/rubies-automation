@@ -3002,6 +3002,82 @@ async function apiB2bTestSend(id, body = {}) {
   });
 }
 
+/**
+ * What the Schedule panel needs in one call: the availability grid, the other
+ * party's timezone (and where it came from), any booked call, and the times
+ * they suggested in their last message.
+ *
+ * The proposed-time read is best-effort — the panel must open even when it
+ * fails, because the whole grid is still usable by hand.
+ */
+async function apiB2bAvailability(companyId, params) {
+  const sb = getSupabaseClient();
+  const { fetchAvailability } = require('../../b2b-outreach/lib/availability');
+  const { timezoneFromLocation, isValidTimeZone } = require('../../b2b-outreach/lib/meetingTimezone');
+  const { extractProposedTimes } = require('../../b2b-outreach/lib/proposedTimes');
+
+  const duration = Math.max(5, parseInt(params?.get('duration'), 10) || 30);
+  const days = Math.min(30, Math.max(1, parseInt(params?.get('days'), 10) || 10));
+  const override = params?.get('timezone');
+
+  const { data: company } = await sb.from('b2b_companies')
+    .select('id, name, city, region, country, address').eq('id', companyId).maybeSingle();
+  if (!company) throw new Error(`No company ${companyId}`);
+
+  const tz = isValidTimeZone(override)
+    ? { timeZone: override, source: 'set by you', split: false, reason: null }
+    : timezoneFromLocation(company);
+
+  const grid = await fetchAvailability({ durationMinutes: duration, days, theirTimeZone: tz.timeZone });
+
+  const { data: meeting } = await sb.from('b2b_meetings')
+    .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone')
+    .eq('company_id', companyId).eq('status', 'booked')
+    .gte('starts_at', new Date().toISOString())
+    .order('starts_at', { ascending: true }).limit(1).maybeSingle();
+
+  // Their most recent inbound message is where suggested times live.
+  const { data: inbound } = await sb.from('b2b_messages')
+    .select('body_text, sent_at, thread_id')
+    .eq('company_id', companyId).eq('direction', 'inbound')
+    .order('sent_at', { ascending: false }).limit(1).maybeSingle();
+
+  let proposed = { times: [], error: null, wantsToMeet: false };
+  if (inbound?.body_text) {
+    try {
+      proposed = await extractProposedTimes({
+        message: inbound.body_text,
+        fallbackTimeZone: tz.timeZone,
+        company_id: companyId,
+      });
+    } catch (e) {
+      proposed = { times: [], error: e.message, wantsToMeet: false };
+    }
+  }
+
+  return {
+    company: { id: company.id, name: company.name },
+    title: `RUBIES x ${company.name}`,
+    duration_minutes: duration,
+    timezone: grid.timeZone,
+    their_timezone: tz.timeZone,
+    their_timezone_source: tz.source,
+    their_timezone_warning: tz.split ? tz.reason : (tz.timeZone ? null : tz.reason),
+    calendars: grid.calendars,
+    days: grid.days,
+    booked: meeting || null,
+    proposed_times: proposed.times,
+    proposed_error: proposed.error,
+    inbound_at: inbound?.sent_at || null,
+    inbound_thread_id: inbound?.thread_id || null,
+  };
+}
+
+async function apiB2bScheduleMeeting(companyId, body = {}) {
+  const { scheduleMeeting } = require('../../b2b-outreach/lib/scheduleMeeting');
+  return scheduleMeeting({ ...body, company_id: companyId });
+}
+
 async function apiB2bSetRecipients(id, body = {}) {
   return b2bQueueService.setDraftRecipients(getSupabaseClient(), {
     draft_id: id, to: body.to, cc: body.cc,
@@ -3684,6 +3760,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact$/, handler: (body, id) => apiB2bUpdateContact(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact-action$/, handler: (body, id) => apiB2bContactAction(decodeURIComponent(id), body) },
+  { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/availability$/, handler: (_, id, req) => apiB2bAvailability(decodeURIComponent(id), new URL(req.url, 'http://localhost').searchParams) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/schedule$/, handler: (body, id) => apiB2bScheduleMeeting(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },

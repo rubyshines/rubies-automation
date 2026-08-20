@@ -6303,3 +6303,132 @@ main { height: calc(100vh - 56px); }
   text-decoration: line-through;
   text-decoration-color: var(--border-strong);
 }
+
+/* ── Scheduling panel ────────────────────────────────────────────────────────
+   Read-only availability by default; picking a slot turns it into a booking.
+   Busy slots are shown rather than hidden — the point is to see WHY a time is
+   awkward, not only that it is taken. Same for holidays and all-day events,
+   which annotate a day instead of removing it. */
+.schedule-panel {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface-inset);
+}
+.schedule-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+.schedule-inline {
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.schedule-inline select,
+.schedule-inline input {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+}
+.schedule-inline input { width: 180px; }
+.schedule-tz-note { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.schedule-tz-source { font-style: italic; opacity: 0.8; }
+.schedule-tz-unknown { font-style: italic; }
+.schedule-warning {
+  background: var(--yellow-bg);
+  color: var(--yellow);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  margin: 6px 0;
+}
+.schedule-booked {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--green);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin: 8px 0;
+}
+.schedule-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.schedule-proposed { margin: 10px 0 14px; }
+.schedule-grid {
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.schedule-day { display: flex; gap: 10px; padding: 5px 0; align-items: baseline; }
+.schedule-day + .schedule-day { border-top: 1px dashed var(--border); }
+.schedule-day-label {
+  flex: 0 0 130px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.schedule-day-note { display: block; font-size: 11px; opacity: 0.75; }
+.schedule-slots { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }
+.schedule-slot {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+.schedule-slot:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.schedule-slot.is-busy {
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+/* Outside ~8am-8pm for THEM. Greyed, never hidden: for a German or Australian
+   partner every 9-5 Eastern slot lands here, and an empty grid would be worse
+   than an annotated one. */
+.schedule-slot.is-unsociable { border-style: dashed; opacity: 0.7; }
+.schedule-slot.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.schedule-slot-proposed {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.schedule-their { display: block; font-size: 11px; color: var(--text-secondary); }
+.schedule-slot-proposed.is-selected .schedule-their { color: #fff; opacity: 0.85; }
+.schedule-busy-tag { display: block; font-size: 11px; color: var(--yellow); }
+.schedule-hint { font-size: 11px; color: var(--text-secondary); margin-top: 8px; display: block; }
+.schedule-footer { margin-top: 12px; }
+.schedule-footer-lookup { border-top: 1px dashed var(--border); padding-top: 8px; }
+.schedule-chosen { font-size: 13px; margin-bottom: 8px; }
+
+@media (max-width: 700px) {
+  .schedule-day { flex-direction: column; gap: 4px; }
+  .schedule-day-label { flex: none; }
+  .schedule-inline input { width: 140px; }
+}

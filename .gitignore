@@ -38,3 +38,6 @@ reports/output/
 
 # Local analysis output — contains customer draft text, never commit
 temp-analysis-data/
+
+# Local OAuth tokens (calendar). Never committed.
+.creds/

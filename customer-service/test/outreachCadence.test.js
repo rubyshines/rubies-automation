@@ -288,3 +288,41 @@ test('one human reply retires the ladder permanently', () => {
   });
   assert.equal(evaluateDue(c, replied, NOW), null, 'followup_2 must not fire after they engaged');
 });
+
+// ── Booked calls ────────────────────────────────────────────────────────────
+// A company with a call coming up is not stalled, it is waiting for a date, so
+// nothing the cadence would START is appropriate underneath it.
+test('an upcoming booked call suppresses the cadence', () => {
+  const c = retailer({ relationship_state: 'in_contact', samples_delivered_at: '2026-06-02T00:00:00Z' });
+  const ctx = { sentTypes: new Set() };
+  // Without a meeting this company is due a post-samples checkin…
+  assert.equal(evaluateDue(c, ctx, NOW).message_type, 'post_samples_checkin');
+  // …and with one booked, it is not.
+  assert.equal(evaluateDue(c, { ...ctx, upcomingMeetingAt: '2026-06-15T14:00:00Z' }, NOW), null);
+  assert.equal(companyEligible(c, { upcomingMeetingAt: '2026-06-15T14:00:00Z' }, NOW), false);
+});
+
+test('a call already in the past does not suppress anything', () => {
+  // The call happened; the relationship is live again and the cadence resumes.
+  const c = retailer({ relationship_state: 'in_contact', samples_delivered_at: '2026-06-02T00:00:00Z' });
+  assert.equal(companyEligible(c, { upcomingMeetingAt: '2026-06-01T14:00:00Z' }, NOW), true);
+  assert.equal(
+    evaluateDue(c, { sentTypes: new Set(), upcomingMeetingAt: '2026-06-01T14:00:00Z' }, NOW).message_type,
+    'post_samples_checkin',
+  );
+});
+
+test('no meeting field at all behaves exactly as before', () => {
+  // The field is optional context; its absence must not change any decision.
+  const c = retailer();
+  assert.equal(companyEligible(c, {}, NOW), true);
+  assert.equal(companyEligible(c, { upcomingMeetingAt: null }, NOW), true);
+});
+
+// Guard for the standing trap: cadence may only read context buildContexts sets.
+test('buildContexts assembles every field companyEligible reads', () => {
+  const src = require('fs').readFileSync(require.resolve('../../b2b-outreach/lib/queueContext.js'), 'utf8');
+  for (const field of ['hasPendingDraft', 'upcomingMeetingAt']) {
+    assert.ok(src.includes(field), `buildContexts must set ${field} — cadence reads it`);
+  }
+});
