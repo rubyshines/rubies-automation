@@ -6,7 +6,7 @@ metadata:
   type: project
   domains: 
     - community
-  last_updated: 2026-08-11
+  last_updated: 2026-08-20
   originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -33,7 +33,17 @@ history: `.claude/plans/org-checkin-2026-08.md`. Sends are manual, none gone out
 - Contact churn confirmed as the standing risk: Oasis handed off in June, Carleton's is a student post that turns over yearly, Valid USA's contact left the state and the org is renaming to Reach Pluto.
 - Engine can now draft these itself (donation facts + discount rate in advisor context). Next: send the 18, then decide whether the seasonal `community_checkin` cadence should run in push mode for partners.
 
+## Size-Aware Routing (2026-08-20)
+A partner reported that the donations we route them include sizes they cannot distribute.
+Sizes an org accepts are now a routing constraint rather than a display field: partners are
+filtered on size before proximity, and a mixed box only goes to an org that can take all of
+it. See domain_community.md. The onboarding form's size question was recut into two
+categories at the same time; the existing network was backfilled from the old answers, with
+seven orgs landing on teen-and-adult only. Five of those seven were inferred rather than
+asked, so their check-in is the moment to confirm it.
+
 ## Decisions Made
+- 2026-08-20 — Partner size acceptance recut into two categories and enforced in routing. The old three-checkbox survey question had overlapping ranges and was never read by anything, so an org's stated limits had no effect on what we sent them.
 - 2026-05-28 — Partner registry is the SSOT in rubies-automations. Theme reads a published JSON asset (`assets/donation-partners.json`); no more hand-edited section blocks. Updates flow only via MCP tools.
 - 2026-05-28 — New submissions ingest via MCP with preview/confirm. Auto-geocode (Google Maps), auto-extract logo (Haiku from org website), re-host logo on Shopify CDN, then auto-merge to theme main on publish (Shopify auto-deploys ~30s).
 - 2026-05-28 — Submissions match to existing partners by website domain (org names drift; domains stay stable).
