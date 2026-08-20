@@ -12,8 +12,11 @@ const assert = require('node:assert');
 const {
   SMALLER,
   LARGER,
+  SMALLER_FORM_OPTION,
+  LARGER_FORM_OPTION,
   SMALLER_LABEL,
   LARGER_LABEL,
+  BOTH_LABEL,
   categorizeSize,
   categorizeSku,
   shipmentSizeCategories,
@@ -116,22 +119,44 @@ describe('partnerAcceptsCategories', () => {
 });
 
 describe('parseSizeAcceptance', () => {
-  test('reads the current form options', () => {
-    assert.deepStrictEqual(parseSizeAcceptance(SMALLER_LABEL),
+  // These four cases are the live coupling: whatever the Google Form emits has
+  // to parse correctly, and a partner ticking BOTH boxes is the case that
+  // silently broke when the form said "Youth" and the code said "Kids".
+  test('reads the current form options, singly and joined', () => {
+    assert.deepStrictEqual(parseSizeAcceptance(SMALLER_FORM_OPTION),
       { accepts_smaller_sizes: true, accepts_larger_sizes: false });
-    assert.deepStrictEqual(parseSizeAcceptance(LARGER_LABEL),
+    assert.deepStrictEqual(parseSizeAcceptance(LARGER_FORM_OPTION),
       { accepts_smaller_sizes: false, accepts_larger_sizes: true });
-    assert.deepStrictEqual(parseSizeAcceptance(`${SMALLER_LABEL}, ${LARGER_LABEL}`),
+    assert.deepStrictEqual(parseSizeAcceptance(`${SMALLER_FORM_OPTION}, ${LARGER_FORM_OPTION}`),
       { accepts_smaller_sizes: true, accepts_larger_sizes: true });
   });
 
-  test('both current labels survive being joined, despite containing commas', () => {
-    // The larger label has its own comma ("12-16, XXS-4X"), so a naive split
-    // on "," would shred it. Guarding the substring match instead.
-    const joined = `${SMALLER_LABEL}, ${LARGER_LABEL}`;
-    assert.ok(joined.split(',').length > 2, 'fixture should contain the tricky comma');
+  test('an option carrying its own comma survives being joined', () => {
+    const joined = `${SMALLER_FORM_OPTION}, ${LARGER_FORM_OPTION}`;
     assert.deepStrictEqual(parseSizeAcceptance(joined),
       { accepts_smaller_sizes: true, accepts_larger_sizes: true });
+  });
+
+  test('survives the prose being reworded, since it keys on the size ranges', () => {
+    // The exact failure that shipped: form said "Youth", code said "Kids".
+    // Either wording, and the punctuation variants a human types, must work.
+    for (const smaller of ['Kids sizes 4-11', 'Youth sizes 4-11', 'youth sizes 4 - 11']) {
+      assert.strictEqual(parseSizeAcceptance(smaller).accepts_smaller_sizes, true, smaller);
+      assert.strictEqual(parseSizeAcceptance(smaller).accepts_larger_sizes, false, smaller);
+    }
+    for (const larger of [
+      'Teen and adult sizes 12-16, XXS-4X',
+      'Youth size 12 - 16 and Adult sizes XXS-4X.',
+      'youth sizes 12-16 and adult sizes xxs-4x',
+    ]) {
+      assert.strictEqual(parseSizeAcceptance(larger).accepts_larger_sizes, true, larger);
+      assert.strictEqual(parseSizeAcceptance(larger).accepts_smaller_sizes, false, larger);
+    }
+  });
+
+  test('the adult range does not leak into the smaller category', () => {
+    // "XXS-4X" ends in "4X" — the smaller pattern must not read that as a 4.
+    assert.strictEqual(parseSizeAcceptance('Adult sizes XXS-4X').accepts_smaller_sizes, false);
   });
 
   describe('legacy survey answers still in the sheet', () => {
@@ -172,7 +197,7 @@ describe('formatSizeAcceptance', () => {
   test('renders each combination for the website and console', () => {
     assert.strictEqual(
       formatSizeAcceptance({ accepts_smaller_sizes: true, accepts_larger_sizes: true }),
-      'Kids sizes 4-11, teen and adult sizes 12-16, XXS-4X');
+      BOTH_LABEL);
     assert.strictEqual(
       formatSizeAcceptance({ accepts_smaller_sizes: true, accepts_larger_sizes: false }),
       SMALLER_LABEL);
@@ -183,13 +208,15 @@ describe('formatSizeAcceptance', () => {
       formatSizeAcceptance({ accepts_smaller_sizes: false, accepts_larger_sizes: false }), '');
   });
 
-  test('round-trips through the parser', () => {
-    for (const partner of [
-      { accepts_smaller_sizes: true, accepts_larger_sizes: true },
-      { accepts_smaller_sizes: true, accepts_larger_sizes: false },
-      { accepts_smaller_sizes: false, accepts_larger_sizes: true },
-    ]) {
-      assert.deepStrictEqual(parseSizeAcceptance(formatSizeAcceptance(partner)), partner);
+  test('both categories read as one continuous run, not two stitched ranges', () => {
+    assert.strictEqual(BOTH_LABEL, 'Youth sizes 4-16 and adult sizes XXS-4X');
+  });
+
+  test('no display label uses XL-style plus sizing', () => {
+    // Customer-facing copy says 1X-4X, never XL/2XL (CLAUDE.md guardrail) —
+    // these strings render on the public donation page.
+    for (const label of [SMALLER_LABEL, LARGER_LABEL, BOTH_LABEL]) {
+      assert.doesNotMatch(label, /\dXL\b|\bXL\b/, label);
     }
   });
 

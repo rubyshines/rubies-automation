@@ -30,15 +30,25 @@ const SMALLER = 'smaller';
 const LARGER = 'larger';
 
 /**
- * The two checkbox options on the LGBTQ+ Organization Donation Onboarding form.
+ * The two checkbox options currently on the LGBTQ+ Organization Donation
+ * Onboarding form, recorded here so a test can prove the parser still reads
+ * them. The form joins a multi-select with ", " into one cell, which
+ * parseSizeAcceptance() reads back.
  *
- * These strings MUST match the Google Form's options character-for-character —
- * the form joins a multi-select with ", " into a single cell, and
- * parseSizeAcceptance() reads that cell back. If the form wording changes,
- * change it here in the same breath or new submissions parse to "no sizes".
+ * Matching deliberately does NOT depend on these exact strings — see
+ * parseSizeAcceptance. An earlier version did, and the wording drifted between
+ * the form and the code within a day of shipping ("Kids" vs "Youth"), which
+ * silently parsed a partner who ticked both boxes as teen-and-adult only. The
+ * size numbers are the part that carries the meaning; the prose around them is
+ * the part a human will naturally rewrite.
  */
-const SMALLER_LABEL = 'Kids sizes 4-11';
-const LARGER_LABEL = 'Teen and adult sizes 12-16, XXS-4X';
+const SMALLER_FORM_OPTION = 'Youth sizes 4-11';
+const LARGER_FORM_OPTION = 'Youth size 12 - 16 and Adult sizes XXS-4X.';
+
+/** Display labels for the operator console and the public donation page. */
+const SMALLER_LABEL = 'Youth sizes 4-11';
+const LARGER_LABEL = 'Youth sizes 12-16 and adult sizes XXS-4X';
+const BOTH_LABEL = 'Youth sizes 4-16 and adult sizes XXS-4X';
 
 /** Highest kids numeric size that still belongs to the smaller category. */
 const SMALLER_MAX_NUMERIC = 11;
@@ -105,17 +115,26 @@ function partnerAcceptsCategories(partner, categories) {
 /**
  * Read the survey cell (or an operator-typed string) into the two booleans.
  *
- * Understands the current form options and the three legacy ones still sitting
- * in the sheet's history, so re-ingesting an old row years later still lands
- * correctly. Matching is by substring because the current labels contain their
- * own commas, which makes splitting the joined multi-select unreliable.
+ * Keys on the SIZE RANGES rather than the surrounding prose, so rewording an
+ * option on the form ("Kids sizes 4-11" → "Youth sizes 4-11") does not silently
+ * stop it parsing. Splitting the joined multi-select on "," is not an option
+ * either — an option can contain its own comma — so each category is detected
+ * independently across the whole string.
  *
- * The legacy mapping deliberately treats "Youth sizes 10-16" as LARGER only.
- * That combination (10-16 plus Adult, without 4-8) overlaps the smaller
- * category at exactly one size, 10, and the org explicitly declined 4-8 — so
- * reading it as teen-and-adult risks nothing worse than not sending them a
- * single size, whereas the reverse risks shipping a box they can't use.
+ * Also understands the three legacy options still sitting in the sheet's
+ * history, so re-ingesting an old row years from now still lands correctly.
+ * The legacy mapping treats "Youth sizes 10-16" as LARGER only: that
+ * combination (10-16 plus Adult, without 4-8) overlaps the smaller category at
+ * exactly one size, 10, and the org explicitly declined 4-8 — so reading it as
+ * teen-and-adult risks nothing worse than withholding a single size, whereas
+ * the reverse risks shipping a box they cannot use.
  */
+// Current form: "...4-11". Legacy: "Youth sizes 4-8".
+const SMALLER_PATTERN = /\b4\s*-\s*(11|8)\b/;
+// Current form: "...12 - 16..." and/or "Adult sizes ...". Legacy: "Youth sizes
+// 10-16", "Adult sizes XS - 4X".
+const LARGER_PATTERN = /\b12\s*-\s*16\b|\b10\s*-\s*16\b|adult sizes/;
+
 function parseSizeAcceptance(text) {
   const s = (text || '').toLowerCase();
   if (!s.trim()) return { accepts_smaller_sizes: false, accepts_larger_sizes: false };
@@ -124,14 +143,10 @@ function parseSizeAcceptance(text) {
     return { accepts_smaller_sizes: true, accepts_larger_sizes: true };
   }
 
-  const smaller = s.includes(SMALLER_LABEL.toLowerCase())
-    || s.includes('youth sizes 4-8');
-
-  const larger = s.includes(LARGER_LABEL.toLowerCase())
-    || s.includes('youth sizes 10-16')
-    || s.includes('adult sizes');
-
-  return { accepts_smaller_sizes: smaller, accepts_larger_sizes: larger };
+  return {
+    accepts_smaller_sizes: SMALLER_PATTERN.test(s),
+    accepts_larger_sizes: LARGER_PATTERN.test(s),
+  };
 }
 
 /**
@@ -142,9 +157,9 @@ function parseSizeAcceptance(text) {
 function formatSizeAcceptance(partner) {
   const smaller = !!(partner && partner.accepts_smaller_sizes);
   const larger = !!(partner && partner.accepts_larger_sizes);
-  if (smaller && larger) {
-    return `${SMALLER_LABEL}, ${LARGER_LABEL.charAt(0).toLowerCase()}${LARGER_LABEL.slice(1)}`;
-  }
+  // Both categories collapse to one continuous run (4-11 plus 12-16 is 4-16)
+  // rather than reading as two ranges stitched together.
+  if (smaller && larger) return BOTH_LABEL;
   if (smaller) return SMALLER_LABEL;
   if (larger) return LARGER_LABEL;
   return '';
@@ -153,8 +168,11 @@ function formatSizeAcceptance(partner) {
 module.exports = {
   SMALLER,
   LARGER,
+  SMALLER_FORM_OPTION,
+  LARGER_FORM_OPTION,
   SMALLER_LABEL,
   LARGER_LABEL,
+  BOTH_LABEL,
   SMALLER_MAX_NUMERIC,
   categorizeSize,
   categorizeSku,
