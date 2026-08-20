@@ -58,6 +58,17 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS outreach_paused_reason TEXT;
 -- hiding a reply that lands afterwards. That comparison needs the set-time.
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS snoozed_at TIMESTAMPTZ;
 
+-- "I owe this one an answer, just not right now." The third deferral, and the
+-- only one that means the work is still LIVE — pause and snooze both say we are
+-- not working the relationship, so both supersede the pending draft. This one
+-- keeps it, because that draft is exactly what you want in front of you when you
+-- come back. It exists so the queue can stay a list of things doable today
+-- without the ones you have claimed silently becoming things nobody is doing.
+-- The note is optional on purpose: this decision is made in a second, and
+-- demanding an essay for it would just make you leave it in the queue instead.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_at TIMESTAMPTZ;
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_note TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_next_action ON b2b_companies (next_action_date)
   WHERE next_action_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_rel_state ON b2b_companies (relationship_state);

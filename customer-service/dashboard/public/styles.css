@@ -5493,6 +5493,33 @@ main { height: calc(100vh - 56px); }
   color: var(--teal);
   border-bottom-color: var(--teal);
 }
+/* On Me's count, on the tab itself — the list has to be able to nag from the
+   outside or it becomes somewhere work goes quiet. */
+.outreach-mode-count {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  margin-left: 3px;
+  font-size: 10px;
+  line-height: 15px;
+  border-radius: 8px;
+  color: #fff;
+  background: #7c3aed;
+}
+
+/* Days-on-you, the queue's tier chip position. Purple to match the CS On Me
+   tab, red once it has been sitting a week, which is the point at which "I'll
+   get to it" has stopped being true. */
+.outreach-onme-age {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  color: #fff;
+  background: #7c3aed;
+}
+.outreach-onme-age-old { background: #991b1b; }
 
 .outreach-search-row { padding: 8px 10px 0; }
 .outreach-search {

@@ -5,6 +5,7 @@
  *
  * The panel asks three different questions, and each has a function here:
  *   "what needs action?"    → fetchQueueWithDrafts   (the 6-tier queue)
+ *   "what have I claimed?"  → fetchOnMe              (deferred onto Jamie)
  *   "what just happened?"   → fetchActivity          (message-level feed)
  *   "where's that company?" → searchCompanies        (searchable directory)
  *
@@ -19,7 +20,7 @@
  *   sendDraftById            — load a pending draft → sendB2bEmail (two-phase,
  *                              gate pass-through); marks the draft sent
  */
-const { assembleQueue, deferredSince } = require('./queue');
+const { assembleQueue, deferredSince, onMeHeld, humanAge } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
@@ -82,12 +83,18 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
     const c = companiesById.get(d.company_id);
     if (!c) continue;
     // Never resurrect a company whose outreach is deferred. Triage supersedes
-    // pending drafts on pause/snooze, so this should not fire — but this merge
-    // is what puts a company in the queue WITHOUT consulting the cadence, using
-    // the tier and reason frozen on the draft row, and a stale draft arriving by
-    // any other path would silently undo the pause. The one thing that must
-    // still get through is a genuine Tier-1 reply, and that arrives via `queue`
-    // above, so it is already excluded by the inQueue check.
+    // pending drafts on pause/snooze, so for those this rarely fires — but this
+    // merge is what puts a company in the queue WITHOUT consulting the cadence,
+    // using the tier and reason frozen on the draft row, and a stale draft
+    // arriving by any other path would silently undo the pause. The one thing
+    // that must still get through is a genuine Tier-1 reply, and that arrives
+    // via `queue` above, so it is already excluded by the inQueue check.
+    //
+    // For On Me this is not a belt-and-braces check, it is the whole mechanism:
+    // that deferral deliberately KEEPS its pending draft, so without this line
+    // every company Jamie claimed would be merged straight back into the queue
+    // it was claimed out of, at its old tier, and the button would appear to do
+    // nothing at all.
     if (deferredSince(c)) continue;
     synthetic.push({
       company_id: d.company_id,
@@ -188,6 +195,63 @@ async function fetchQueueWithDrafts(sb, { channel } = {}) {
 async function fetchQueueCount(sb, { channel } = {}) {
   const { entries } = await buildQueueEntries(sb, { channel });
   return entries.length;
+}
+
+// ── On Me ──────────────────────────────────────────────────────────────────
+// The queue answers "what can I do today". Everything in it is meant to be
+// actionable now, which makes it useless the moment it fills with things that
+// are real but not for right now — you stop reading it, and the genuinely urgent
+// row is buried among the ones you have already thought about. On Me is where
+// those go: still yours, still counted, still ageing, just not in the way.
+
+/**
+ * Companies Jamie has claimed, oldest first. `days_on_you` is the point of the
+ * whole surface — this list's failure mode is becoming a graveyard, and an age
+ * is the only thing that makes that visible before it happens.
+ *
+ * A company whose contact has replied since the claim is NOT here: that reply
+ * put it back in the queue (computeQueueEntry), and a row cannot be in both
+ * lists without one of them lying about who is holding it.
+ */
+async function fetchOnMe(sb, { channel } = {}) {
+  let q = sb.from('b2b_companies').select('*').not('on_me_at', 'is', null);
+  if (channel) q = q.eq('relationship_type', channel);
+  const { data: claimed, error } = await q;
+  if (error) throw new Error(error.message);
+  if (!claimed?.length) return { entries: [], returned: [] };
+
+  // Full context build rather than a bare inbound lookup: the Tier-1 rule
+  // ignores messages on CLOSED threads, and a list that used a different
+  // definition of "they replied" than the queue does would drop rows the queue
+  // never picked up — the one state where a company is on neither surface.
+  const contexts = await buildContexts(sb, claimed);
+  const { data: drafts } = await sb.from('b2b_drafts')
+    .select('id, company_id, subject, body, generated_at, message_type, queue_tier, queue_reason')
+    .eq('status', 'pending').in('company_id', claimed.map(c => c.id));
+  const draftBy = new Map((drafts || []).map(d => [d.company_id, d]));
+
+  const now = new Date();
+  const entries = [];
+  const returned = [];
+  for (const c of claimed) {
+    const ctx = contexts.get(c.id) || {};
+    const d = draftBy.get(c.id);
+    const row = {
+      company_id: c.id,
+      company_name: c.name,
+      channel: c.relationship_type,
+      on_me_at: c.on_me_at,
+      on_me_note: c.on_me_note || null,
+      age: humanAge(c.on_me_at, now),
+      days_on_you: Math.floor((now - new Date(c.on_me_at)) / 86400000),
+      last_inbound_at: ctx.lastInboundAt || null,
+      draft: d ? { id: d.id, subject: d.subject, snippet: draftSnippet(d.body), generated_at: d.generated_at } : null,
+    };
+    (onMeHeld(c, ctx) ? entries : returned).push(row);
+  }
+
+  entries.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)));
+  return { entries, returned };
 }
 
 // ── Directory search ───────────────────────────────────────────────────────
@@ -324,7 +388,7 @@ async function searchCompanies(sb, { q, stage = 'all', status = 'all', channel, 
   }
 
   let cq = sb.from('b2b_companies')
-    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until, snoozed_at, outreach_paused_at, outreach_paused_reason, relationship_summary, relationship_next_step, relationship_summary_at');
+    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until, snoozed_at, outreach_paused_at, outreach_paused_reason, on_me_at, on_me_note, relationship_summary, relationship_next_step, relationship_summary_at');
   if (channel) cq = cq.eq('relationship_type', channel);
   if (matchedIds) cq = cq.in('id', [...matchedIds]);
   const { data: companies, error } = await cq;
@@ -934,6 +998,7 @@ module.exports = {
   fetchOutreachQueue,
   fetchQueueWithDrafts,
   fetchQueueCount,
+  fetchOnMe,
   fetchCompanyThreads,
   generateDraftForCompany,
   composeDraft,

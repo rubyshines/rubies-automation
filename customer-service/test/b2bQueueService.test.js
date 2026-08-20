@@ -313,6 +313,21 @@ test('a paused company that replied still shows, with its live Tier 1', () => {
   assert.equal(merged[0].tier, 1, 'the live cadence entry wins, not the frozen draft tier');
 });
 
+// On Me is the case this exclusion exists for. Pause and snooze supersede the
+// pending draft in triage, so for them the merge guard is a backstop; On Me
+// deliberately KEEPS its draft, so without the guard every claimed company would
+// be merged straight back into the queue it was claimed out of.
+test('a claimed company keeps its draft and still stays out of the queue', () => {
+  const companies = new Map([['she-bop', {
+    id: 'she-bop', name: 'She Bop', relationship_type: 'wholesale',
+    on_me_at: '2026-08-19T10:00:00Z',
+  }]]);
+  const merged = mergePendingDraftEntries([], [
+    { company_id: 'she-bop', queue_tier: 1, queue_reason: 'replied 51d ago — waiting on us' },
+  ], companies);
+  assert.deepEqual(merged, [], 'On Me must not be undone by the draft it deliberately kept');
+});
+
 test('an unpaused company with a pending draft still shows', () => {
   const companies = new Map([['x', { id: 'x', name: 'X', relationship_type: 'wholesale' }]]);
   const merged = mergePendingDraftEntries([], [{ company_id: 'x', queue_tier: 4 }], companies);

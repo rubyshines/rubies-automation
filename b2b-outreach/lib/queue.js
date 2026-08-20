@@ -54,23 +54,59 @@ const TIER_BY_TYPE = {
 /**
  * When outreach to this company was last deliberately deferred, or null. PURE.
  *
- * Two flavours of the same intent, and they differ only in how they end:
+ * Three flavours of one intent — "not from the queue, not right now" — differing
+ * in how they end and in who holds the work:
  *   - snooze  — dated. `snoozed_until` lifts it automatically ("we just spoke,
  *               come back in six weeks").
  *   - pause   — indefinite. Only an explicit resume lifts it ("not working
  *               Canadian retailers this year").
+ *   - on me   — indefinite, and the work is still LIVE: Jamie has claimed it
+ *               rather than set it down. It lifts when he sends, puts it back,
+ *               or they write again.
  * A lapsed snooze is not a deferral any more, so it stops suppressing.
+ *
+ * The LATEST stamp wins when more than one applies, because the only thing this
+ * value does is judge whether an unanswered reply is stale (below), and the
+ * operator's most recent decision is the one that saw the most mail.
  */
 function deferredSince(company, now = new Date()) {
   if (!company) return null;
-  if (company.outreach_paused_at) return company.outreach_paused_at;
+  const stamps = [company.outreach_paused_at, company.on_me_at];
   if (company.snoozed_until && new Date(company.snoozed_until) > now) {
     // Older rows were snoozed before set-time was recorded. Falling back to the
     // snooze END date would suppress a reply that arrived during the snooze, so
     // an unknown set-time suppresses nothing.
-    return company.snoozed_at || null;
+    stamps.push(company.snoozed_at || null);
   }
-  return null;
+  const live = stamps.filter(Boolean).sort();
+  return live.length ? live[live.length - 1] : null;
+}
+
+/**
+ * Did they write to us after `stamp`? PURE.
+ *
+ * The single expression of the rule that governs every deferral: deciding not to
+ * chase someone clears the mail that was already sitting there, and can never
+ * silence a human who writes afterwards. Both the queue (below) and the On Me
+ * list read it from here rather than each spelling out the comparison, because
+ * two copies of this rule is exactly how one of them ends up hiding a reply.
+ */
+function replyLandedAfter(ctx, stamp) {
+  if (!stamp || !ctx?.lastInboundAt) return false;
+  return new Date(ctx.lastInboundAt) > new Date(stamp);
+}
+
+/**
+ * Is this company's On Me claim still standing? PURE.
+ *
+ * False once they reply: what you claimed was answering their last message, and
+ * a newer one supersedes it. The company goes back to Tier 1 through the normal
+ * path and off the On Me list, with nothing written anywhere — deriving it means
+ * the two surfaces cannot disagree and no sweep has to remember to clear a flag.
+ */
+function onMeHeld(company, ctx = {}) {
+  if (!company?.on_me_at) return false;
+  return !replyLandedAfter(ctx, company.on_me_at);
 }
 
 /**
@@ -98,10 +134,11 @@ function computeQueueEntry(company, ctx, now = new Date()) {
   // Deferring means "stop chasing them", never "stop telling me when a human
   // writes" — this system has already left four partners waiting, one for 332
   // days, and a control that could silence a live correspondent would rebuild
-  // that failure deliberately.
+  // that failure deliberately. On Me is held to the same rule for the same
+  // reason, and it is the deferral where breaking it would be easiest to excuse:
+  // "I know, it's on my list" is precisely the sentiment that left them waiting.
   const deferredAt = deferredSince(company, now);
-  const staleReply = deferredAt && ctx.lastInboundAt
-    && new Date(ctx.lastInboundAt) <= new Date(deferredAt);
+  const staleReply = !!deferredAt && !!ctx.lastInboundAt && !replyLandedAfter(ctx, deferredAt);
 
   if (!staleReply && ctx.lastInboundAt
     && (!ctx.lastOutboundAt || new Date(ctx.lastInboundAt) > new Date(ctx.lastOutboundAt))) {
@@ -181,4 +218,7 @@ function assembleQueue(items, now = new Date()) {
   });
 }
 
-module.exports = { computeQueueEntry, assembleQueue, humanAge, deferredSince, TIER_BY_TYPE };
+module.exports = {
+  computeQueueEntry, assembleQueue, humanAge, deferredSince,
+  replyLandedAfter, onMeHeld, TIER_BY_TYPE,
+};

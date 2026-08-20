@@ -457,6 +457,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
   if (waitingRows.length) summaryParts.push(`Waiting: ${waitingRows.length}`);
   if ((extra.onMe || []).length) summaryParts.push(`<strong style="color:#7c3aed;">On Me: ${extra.onMe.length}</strong>`);
+  if ((extra.outreachOnMe || []).length) summaryParts.push(`<strong style="color:#7c3aed;">Outreach On Me: ${extra.outreachOnMe.length}</strong>`);
   if (ufNormal.length) summaryParts.push(`Normal: ${ufNormal.length}`);
   if (preOrders.length) summaryParts.push(`Pre-order: ${preOrders.length}`);
   if (totalResolved) summaryParts.push(`Resolved: ${totalResolved}`);
@@ -484,6 +485,28 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       </div>`;
     });
     onMeHtml = section('On Me (awaiting your reply)', '#7c3aed', onMeCards);
+  }
+
+  // --- Outreach On Me: B2B companies claimed out of the queue, with age ---
+  // Its own section rather than folded into the one above: these are companies,
+  // not tickets, and they deep-link into a different panel. Same reason for
+  // being here at all — a list you only see by opening its tab is a list you
+  // stop opening, and this one holds relationships that have already been
+  // waiting once by the time they land on it.
+  let outreachOnMeHtml = '';
+  const outreachOnMe = extra.outreachOnMe || [];
+  if (outreachOnMe.length > 0) {
+    const dashboardBase = process.env.DASHBOARD_URL || 'https://ops.rubyshines.com';
+    const cards = outreachOnMe.map(r => {
+      const ageStyle = r.days_on_you >= 7 ? 'background:#991b1b;color:#fff;' : 'background:#e5e7eb;color:#374151;';
+      return `<div style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <a href="${dashboardBase}/#outreach-${encodeURIComponent(r.company_id)}" style="color:#2563eb;text-decoration:none;font-weight:bold;">${esc(r.company_name)}</a>
+        <span style="${ageStyle}padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${r.days_on_you}d on you</span>
+        ${r.draft ? '<span style="color:#6b7280;font-size:12px;margin-left:6px;">draft ready</span>' : ''}
+        ${r.on_me_note ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(r.on_me_note)}</div>` : ''}
+      </div>`;
+    });
+    outreachOnMeHtml = section('Outreach — On Me', '#7c3aed', cards);
   }
 
   // --- Note reconciler activity (today's sweep) ---
@@ -532,6 +555,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       ${section('Drafted in CS Advisor (auto)', '#6366f1', autoDraftedRows)}
       ${section('Waiting on Response', '#f97316', waitingRows)}
       ${onMeHtml}
+      ${outreachOnMeHtml}
       ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
       ${section('Pre-Order', '#6366f1', preOrderRows)}
       ${ufNormal.length > 0 ? `<p style="color:#6b7280;margin-top:16px;">Normal: ${ufNormal.length} orders (recently placed or in progress \u2014 not shown)</p>` : ''}
@@ -744,6 +768,17 @@ async function run() {
     console.warn(`[alerts] Could not fetch pending_operator tickets: ${err.message}`);
   }
 
+  // B2B companies claimed out of the outreach queue — same reason as above, and
+  // fail-soft for the same one: a missing outreach table must never cost Jamie
+  // the whole order digest.
+  let outreachOnMe = [];
+  try {
+    const { fetchOnMe } = require('../b2b-outreach/lib/queueService');
+    ({ entries: outreachOnMe } = await fetchOnMe(supabase));
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch outreach On Me: ${err.message}`);
+  }
+
   // Active sales (managed_discounts registry) — fail-soft so a missing table never
   // breaks the daily email. Surfaces "this sale is still on, ends X (N days left)".
   let activeSales = [];
@@ -779,7 +814,7 @@ async function run() {
   }
 
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, reconciled, activeSales, ticketsByOrder });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, outreachOnMe, reconciled, activeSales, ticketsByOrder });
 
   const sgMail = opts.noEmail ? null : getSendgridClient();
   if (opts.noEmail) console.log('Email skipped (--no-email)');

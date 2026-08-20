@@ -5365,11 +5365,13 @@ async function setAutoactionFlag(key, enabled) {
 // The queue only ever shows what is DUE, which left every other company — the
 // one you spoke to in March, the prospect you never wrote to — unreachable.
 //   queue     what needs action        (6-tier, the original view)
+//   onme      what you claimed         (taken out of the queue to answer later)
 //   activity  what just happened       (message-level, newest first)
 //   companies where's that company     (searchable directory of all of them)
 let outreachMode = 'queue';
 let outreachChannel = '';        // '' = all | wholesale | lgbtq_org | affiliate
 let outreachQueue = [];
+let outreachOnMe = [];           // company rows from /api/b2b/on-me
 let outreachDirectory = [];      // company rows from /api/b2b/companies
 let outreachActivity = [];       // message rows from /api/b2b/activity
 let outreachDirTotal = 0;
@@ -5389,6 +5391,7 @@ let outreachEntries = new Map();
 
 const OUTREACH_MODES = [
   { value: 'queue', label: 'Queue', hint: 'what needs action today' },
+  { value: 'onme', label: 'On Me', hint: "what you've claimed to answer yourself", count: () => outreachOnMe.length },
   { value: 'activity', label: 'Activity', hint: 'what was sent and what came back' },
   { value: 'companies', label: 'Companies', hint: 'search every company' },
 ];
@@ -5434,6 +5437,7 @@ function switchOutreachMode(mode) {
 function loadOutreachSidebar() {
   if (outreachMode === 'activity') return loadOutreachActivity();
   if (outreachMode === 'companies') return loadOutreachDirectory();
+  if (outreachMode === 'onme') return loadOutreachOnMe();
   return loadOutreachQueue();
 }
 
@@ -5454,6 +5458,9 @@ async function loadOutreachQueue(isSilentRefresh) {
   outreachQueue = Array.isArray(payload) ? payload : (payload.entries || []);
   rememberOutreachEntries(outreachQueue);
   renderOutreachSidebar();
+  // Keep the On Me count honest without opening the tab. A badge that only
+  // appears once you have already gone looking is not a reminder of anything.
+  refreshOnMeCount();
   // Keep the badge on the rendered queue while you are working it, so a send
   // drops the number immediately instead of waiting out the server's cache.
   if (clientOwnsBadge('outreach')) writeTabCount('outreach', outreachQueue.length);
@@ -5504,6 +5511,68 @@ function entryFromCompany(c) {
     message_type: null,
     reason: outreachCompanySubtitle(c),
   };
+}
+
+// ── On Me ───────────────────────────────────────────────────────────────────
+// Work you took out of the queue on purpose. It keeps its pending draft (unlike
+// pause and snooze, which clear it), keeps ageing, and comes back on its own the
+// moment they write again.
+
+async function fetchOnMeRows() {
+  const params = outreachChannel ? `?channel=${encodeURIComponent(outreachChannel)}` : '';
+  const payload = await api(`/api/b2b/on-me${params}`);
+  return payload.entries || [];
+}
+
+async function loadOutreachOnMe() {
+  try {
+    outreachOnMe = await fetchOnMeRows();
+  } catch (err) {
+    renderOutreachSidebar(`Failed to load On Me: ${esc(err.message)}`);
+    return;
+  }
+  rememberOutreachEntries(outreachOnMe.map(r => ({
+    company_id: r.company_id,
+    company_name: r.company_name,
+    channel: r.channel,
+    tier: null,
+    message_type: null,
+    reason: r.on_me_note || `on you ${r.age}`,
+  })));
+  renderOutreachSidebar();
+}
+
+// Badge-only refresh: never repaints a list the operator is reading, so it is
+// safe to fire from the queue load.
+async function refreshOnMeCount() {
+  try {
+    outreachOnMe = await fetchOnMeRows();
+  } catch (_) { return; }        // a missing count is a quiet gap, not an error banner
+  if (currentTab === 'outreach' && outreachMode === 'queue') renderOutreachSidebar();
+}
+
+function outreachOnMeRowHtml(r) {
+  const channelLabel = OUTREACH_CHANNEL_LABELS[r.channel] || r.channel || '?';
+  // Red past a week. The number is the whole point of this list: "3 companies on
+  // me" is fine, "one of them for 24 days" is the thing you need to see without
+  // opening anything.
+  const ageClass = r.days_on_you >= 7 ? ' outreach-onme-age-old' : '';
+  return `
+  <div class="queue-item outreach-row ${r.company_id === outreachSelectedId ? 'active' : ''}"
+       data-company-id="${esc(r.company_id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="outreach-onme-age${ageClass}">${r.days_on_you}d</span>
+        <span class="queue-item-name">${esc(r.company_name)}</span>
+        <span class="outreach-channel-chip outreach-channel-${esc(r.channel)}">${esc(channelLabel)}</span>
+      </div>
+      <div class="outreach-row-reason">${esc(r.on_me_note || `on you since ${new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`)}</div>
+      <div class="queue-item-row2">
+        ${r.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
+      </div>
+      ${r.draft?.snippet ? `<div class="outreach-row-snippet">${esc(r.draft.snippet)}</div>` : ''}
+    </div>
+  </div>`;
 }
 
 async function loadOutreachDirectory(isSearchRefresh) {
@@ -5573,10 +5642,14 @@ async function loadOutreachActivity() {
 }
 
 function outreachModeHtml() {
-  return `<div class="outreach-mode-row">` + OUTREACH_MODES.map(m =>
-    `<button class="outreach-mode ${outreachMode === m.value ? 'active' : ''}" title="${esc(m.hint)}"
-       onclick="switchOutreachMode('${m.value}')">${m.label}</button>`
-  ).join('') + `</div>`;
+  return `<div class="outreach-mode-row">` + OUTREACH_MODES.map(m => {
+    // On Me carries its count on the button. A list you have to open to discover
+    // is holding four things you promised yourself you would get to is how this
+    // surface turns into a place work goes to be forgotten.
+    const n = m.count ? m.count() : 0;
+    return `<button class="outreach-mode ${outreachMode === m.value ? 'active' : ''}" title="${esc(m.hint)}"
+       onclick="switchOutreachMode('${m.value}')">${m.label}${n ? ` <span class="outreach-mode-count">${n}</span>` : ''}</button>`;
+  }).join('') + `</div>`;
 }
 
 function outreachChipsHtml(options, active, handler) {
@@ -5673,6 +5746,15 @@ function renderOutreachList(errorHtml) {
       ? `<div class="outreach-list-note">Checking Gmail &mdash; anything you sent by hand in the last few minutes may not be listed yet.</div>`
       : '';
     el.innerHTML = syncing + outreachActivity.map(outreachActivityRowHtml).join('');
+    return;
+  }
+
+  if (outreachMode === 'onme') {
+    if (!outreachOnMe.length) {
+      el.innerHTML = `<div class="outreach-loading">Nothing is on you.<br><span class="outreach-list-note">Use <strong>On me</strong> on a company to move it here when you owe them an answer but not today.</span></div>`;
+      return;
+    }
+    el.innerHTML = outreachOnMe.map(outreachOnMeRowHtml).join('');
     return;
   }
 
@@ -5925,7 +6007,17 @@ function outreachRelationshipHtml(entry) {
   // must not mistake for one it is quietly handling.
   const snoozeLive = c.snoozed_until && new Date(c.snoozed_until) > new Date();
   let deferral;
-  if (c.outreach_paused_at) {
+  if (c.on_me_at) {
+    // Checked before the other two because it is the one where work is still
+    // owed: a company that is somehow both should read as yours, not as parked.
+    const days = Math.floor((Date.now() - new Date(c.on_me_at)) / 864e5);
+    deferral = `<div class="outreach-deferral">
+      <span class="outreach-deferral-label">On you</span>
+      <span>${days}d${c.on_me_note ? ` &mdash; ${esc(c.on_me_note)}` : ''}</span>
+      <button class="btn btn-ghost" onclick="resumeOutreach()">Back to queue</button>
+    </div>
+    <div class="outreach-deferral-note">Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again it returns to the queue on its own.</div>`;
+  } else if (c.outreach_paused_at) {
     deferral = `<div class="outreach-deferral">
       <span class="outreach-deferral-label">Paused</span>
       <span>${esc(c.outreach_paused_reason || 'no reason recorded')}</span>
@@ -5943,7 +6035,12 @@ function outreachRelationshipHtml(entry) {
     // in a while" is the actual decision; picking a calendar day is busywork that
     // makes you do arithmetic to express it, and no reason is asked for because
     // the useful one is already implied by the length.
+    // "On me" leads: it is the everyday one (this is a real thing to answer, just
+    // not right now), where pause and snooze are decisions about the relationship
+    // itself and get made far less often.
     deferral = `<div class="outreach-deferral-actions">
+      <button class="btn btn-secondary" onclick="onMeOutreach()"
+        title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
       <button class="btn btn-ghost" onclick="pauseOutreach()">Pause outreach</button>
       <span class="outreach-snooze-group">
         <span class="outreach-snooze-label">Snooze</span>
@@ -6054,9 +6151,9 @@ async function saveContact(replaces) {
   await loadOutreachContext(companyId, false);   // redraws the sidebar and the To line
 }
 
-// Pause / snooze / resume. All three go through the same triage endpoint the
-// b2b_triage console tool uses, so the panel can never mean something different
-// by "paused" than the tool does.
+// Pause / snooze / on me / resume. All of them go through the same triage
+// endpoint the b2b_triage console tool uses, so the panel can never mean
+// something different by "paused" than the tool does.
 async function applyOutreachTriage(body, okMessage) {
   const companyId = outreachSelectedId;
   // The triage call IS the operation. Confirm it the moment it lands, before
@@ -6109,8 +6206,18 @@ function snoozeOutreach(days) {
   applyOutreachTriage({ action: 'snooze', until }, `Snoozed for ${days} days — back ${label}`);
 }
 
+// No reason is asked for, unlike pause. This decision gets made in a second
+// while working the queue, and a prompt in front of it is exactly the friction
+// that makes you leave the row where it is instead. The note is there for when
+// there is genuinely something to remember, so it is offered, not demanded.
+function onMeOutreach() {
+  const note = prompt('On you. Anything to note?\n\n(e.g. "waiting on pricing from Natta first" — optional, leave blank)');
+  if (note === null) return;   // cancelled; empty string is a deliberate "no note"
+  applyOutreachTriage({ action: 'on_me', reason: note.trim() || null }, 'Moved to On Me');
+}
+
 function resumeOutreach() {
-  applyOutreachTriage({ action: 'resume' }, 'Outreach resumed');
+  applyOutreachTriage({ action: 'resume' }, 'Back in the queue');
 }
 
 // Rebuild the summary in place. Sonnet over the whole conversation, so it takes
@@ -6364,6 +6471,7 @@ function renderOutreachSidebarContext() {
   document.getElementById('outreach-sidebar-context').style.display = '';
   const backLabel = outreachMode === 'companies' ? `${outreachDirectory.length} companies`
     : outreachMode === 'activity' ? `${outreachActivity.length} messages`
+    : outreachMode === 'onme' ? `${outreachOnMe.length} on you`
     : `${outreachQueue.length} in queue`;
   document.getElementById('outreach-back-count').textContent = backLabel;
 

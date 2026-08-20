@@ -2833,6 +2833,12 @@ async function apiB2bQueue(query) {
   return b2bQueueService.fetchQueueWithDrafts(getSupabaseClient(), { channel });
 }
 
+// What Jamie has claimed out of the queue and not yet answered, oldest first.
+async function apiB2bOnMe(query) {
+  const channel = query.get('channel') || null;
+  return b2bQueueService.fetchOnMe(getSupabaseClient(), { channel });
+}
+
 async function apiB2bCompanyThreads(companyId) {
   return b2bQueueService.fetchCompanyThreads(getSupabaseClient(), companyId);
 }
@@ -2882,8 +2888,9 @@ async function apiB2bContactAction(companyId, body = {}) {
   throw new Error(`unknown contact action '${body.action}' — expected primary, remove or restore`);
 }
 
-// Pause / snooze / resume from the panel. Same triageCompany the b2b_triage
-// console tool calls, so the two surfaces can never drift on what a pause means.
+// Pause / snooze / on me / resume from the panel. Same triageCompany the
+// b2b_triage console tool calls, so the two surfaces can never drift on what
+// any of them means.
 async function apiB2bTriage(companyId, body = {}) {
   const { triageCompany } = require('../../b2b-outreach/lib/triage');
   return triageCompany(getSupabaseClient(), {
@@ -3620,6 +3627,7 @@ const routes = {
   'GET /api/autoaction-config': () => apiGetAutoactionConfig(),
   'GET /api/advisor-facts': () => apiGetAdvisorFacts(),
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/on-me': (req) => apiB2bOnMe(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),

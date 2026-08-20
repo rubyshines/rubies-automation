@@ -414,10 +414,16 @@ async function sendB2bEmail(p = {}) {
   });
   if (mErr) console.error(`[sendB2bEmail] b2b_messages insert failed (sent ok): ${mErr.message}`);
 
-  // Cadence bookkeeping
+  // Cadence bookkeeping. Answering them IS the thing an On Me claim was for, so
+  // sending clears it — the alternative is a list that only ever grows, cleared
+  // by a second deliberate click nobody makes once the real work is done.
+  // Snooze and pause are untouched: a send during either is one deliberate
+  // message, not a decision to resume chasing.
   await sb.from('b2b_companies').update({
     last_outbound_at: sentAt,
     next_action_date: nextActionDateAfterSend(message_type, new Date(sentAt), next_touch_days ?? null),
+    on_me_at: null,
+    on_me_note: null,
     updated_at: sentAt,
   }).eq('id', company_id);
 

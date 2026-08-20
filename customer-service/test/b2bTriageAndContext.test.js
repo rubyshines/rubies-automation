@@ -114,10 +114,16 @@ test('pause records a reason and is refused without one', () => {
   assert.throws(() => computeTriage('pause', { now: NOW }), /requires a reason/);
 });
 
-test('resume clears the pause', () => {
+test('resume clears every deferral, not just the pause', () => {
+  // It used to null only the pause columns, which made the "Resume now" button
+  // rendered beside a live snooze a silent no-op.
   const upd = computeTriage('resume', { now: NOW });
   assert.equal(upd.outreach_paused_at, null);
   assert.equal(upd.outreach_paused_reason, null);
+  assert.equal(upd.snoozed_until, null);
+  assert.equal(upd.snoozed_at, null);
+  assert.equal(upd.on_me_at, null);
+  assert.equal(upd.on_me_note, null);
 });
 
 test('snooze now records when it was set, not just when it lifts', () => {
@@ -174,4 +180,59 @@ test('a paused company is off the cadence entirely, not just off Tier 1', () => 
 test('an unpaused company with the same overdue date still surfaces', () => {
   const co = paused({ next_action_date: '2026-01-01' });
   assert.equal(computeQueueEntry(co, {}, NOW)?.tier, 5, 'control: the pause is what suppressed it');
+});
+
+// ── On Me: the third deferral, where the work is still live ──────────────────
+// Pause and snooze both say "we are not working this". On Me says "I am working
+// this, just not in the queue" — so it must hold the same never-silence-a-live-
+// correspondent rule, and must NOT clear the draft the way the other two do.
+
+const { onMeHeld } = require('../../b2b-outreach/lib/queue');
+
+test('on_me records the stamp and takes an optional note', () => {
+  const upd = computeTriage('on_me', { reason: 'waiting on pricing first', now: NOW });
+  assert.equal(upd.on_me_at, NOW.toISOString());
+  assert.equal(upd.on_me_note, 'waiting on pricing first');
+  assert.equal(upd.relationship_state, undefined, 'claiming it must NOT mark them lost');
+});
+
+test('on_me needs no reason — the whole point is that it is one click', () => {
+  const upd = computeTriage('on_me', { now: NOW });
+  assert.equal(upd.on_me_at, NOW.toISOString());
+  assert.equal(upd.on_me_note, null);
+});
+
+test('claiming a company clears its stale waiting-on-us', () => {
+  const co = paused({ on_me_at: '2026-08-05T00:00:00Z' });
+  assert.equal(
+    computeQueueEntry(co, { lastInboundAt: '2026-07-01T00:00:00Z', lastOutboundAt: null }, NOW), null,
+    'it is on Jamie now, so it must leave the queue');
+});
+
+test('a reply arriving after the claim comes back to Tier 1', () => {
+  const co = paused({ on_me_at: '2026-08-01T00:00:00Z' });
+  const entry = computeQueueEntry(co, { lastInboundAt: '2026-08-04T00:00:00Z', lastOutboundAt: null }, NOW);
+  assert.equal(entry?.tier, 1, '"I know, it is on my list" must never silence a live correspondent');
+});
+
+test('a claimed company is off the cadence too, not just off Tier 1', () => {
+  const co = paused({ on_me_at: '2026-08-01T00:00:00Z', next_action_date: '2026-01-01' });
+  assert.equal(computeQueueEntry(co, {}, NOW), null, 'no Tier 5 nag underneath work Jamie has picked up');
+});
+
+test('onMeHeld follows the same boundary the queue uses', () => {
+  const co = paused({ on_me_at: '2026-08-01T00:00:00Z' });
+  assert.equal(onMeHeld(co, {}), true, 'no reply at all — still held');
+  assert.equal(onMeHeld(co, { lastInboundAt: '2026-07-20T00:00:00Z' }), true, 'the reply he claimed');
+  assert.equal(onMeHeld(co, { lastInboundAt: '2026-08-04T00:00:00Z' }), false, 'superseded — back in the queue');
+  assert.equal(onMeHeld(paused({}), { lastInboundAt: '2026-08-04T00:00:00Z' }), false, 'never claimed');
+});
+
+test('the latest deferral judges staleness when more than one is set', () => {
+  // Claimed on the 20th, then paused on the 1st having seen the reply from the
+  // 25th. The pause is the decision that saw the most mail, so it is the one
+  // that decides whether that reply is still outstanding.
+  const co = paused({ on_me_at: '2026-07-20T00:00:00Z', outreach_paused_at: '2026-08-01T00:00:00Z' });
+  assert.equal(deferredSince(co, NOW), '2026-08-01T00:00:00Z');
+  assert.equal(computeQueueEntry(co, { lastInboundAt: '2026-07-25T00:00:00Z' }, NOW), null);
 });

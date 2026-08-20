@@ -111,7 +111,8 @@ const SAMPLES_CHECKIN_MAX_AGE_DAYS = 60;
 
 /**
  * Gate conditions every cadence message shares (locked + drafted spec):
- * not lost, not snoozed, contact known, no pending draft.
+ * not lost, not deferred (snoozed / paused / on me), contact known,
+ * no pending draft.
  */
 function companyEligible(company, { hasPendingDraft } = {}, now = new Date()) {
   if (!company) return false;
@@ -122,6 +123,11 @@ function companyEligible(company, { hasPendingDraft } = {}, now = new Date()) {
   // cadence, follow-ups, first touch. It does NOT hide the company, its history,
   // or a reply that arrives after the pause (see computeQueueEntry).
   if (company.outreach_paused_at) return false;
+  // On Me: Jamie has claimed this one. Same effect as pause on everything the
+  // engine would START — the last thing a company you have personally picked up
+  // needs is the cadence writing it a cheerful unrelated nudge underneath you.
+  // Unlike pause it does not clear an existing draft (see triage.js).
+  if (company.on_me_at) return false;
   if (company.contact_unknown) return false;
   if (hasPendingDraft) return false;
   if (company.snoozed_until && new Date(company.snoozed_until) > now) return false;
