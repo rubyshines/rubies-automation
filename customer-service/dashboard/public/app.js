@@ -6989,6 +6989,11 @@ let scheduleState = null;      // last /availability payload
 let scheduleSelected = null;   // the chosen slot { start, label, theirLabel }
 let scheduleInsertedLine = ''; // the one sentence this panel owns in the draft
 let scheduleShowAll = false;   // reveal full availability alongside their offer
+// Optional description on the calendar event. Kept in a module var rather than
+// read off the DOM at book time, because selecting a slot re-renders the panel
+// and would otherwise wipe whatever had been typed. Blank by default — an event
+// with an invented purpose on it is worse than one with none.
+let scheduleNotes = '';
 
 /**
  * When they have named times, the panel answers "which of their options works"
@@ -7016,6 +7021,7 @@ async function openSchedulePanel(duration, timezone) {
     el.innerHTML = '';
     scheduleState = null;
     scheduleSelected = null;
+    scheduleNotes = '';
     syncSendButtonsForSchedule();
     return;
   }
@@ -7211,6 +7217,10 @@ function renderSchedulePanel() {
             onchange="openSchedulePanel(scheduleState?.duration_minutes, this.value)">
         </label>
       </div>
+      <div class="schedule-agenda">
+        <input type="text" id="schedule-notes-input" placeholder="Agenda for the invite (optional)"
+          value="${esc(scheduleNotes)}" oninput="scheduleNotes = this.value">
+      </div>
       <div class="schedule-tz-note">Their time: ${tzNote}</div>
       ${s.their_timezone_warning ? `<div class="schedule-warning">&#9888; ${esc(s.their_timezone_warning)}</div>` : ''}
       ${booked}
@@ -7323,6 +7333,7 @@ async function bookMeetingAndSend(testMode) {
         start: scheduleSelected.start,
         duration_minutes: scheduleState?.duration_minutes || 30,
         their_timezone: scheduleState?.their_timezone || undefined,
+        notes: scheduleNotes.trim() || undefined,
         thread_id: outreachDraft?.thread_id || scheduleState?.inbound_thread_id || undefined,
         subject, body, confirmed: true,
         ...(testMode ? { test_mode: true } : {}),

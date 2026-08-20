@@ -6508,3 +6508,15 @@ main { height: calc(100vh - 56px); }
 .schedule-day-label .schedule-hint { display: block; font-weight: 400; margin-top: 2px; }
 /* Send while a time is selected: superseded by Book & Send, not merely off. */
 .btn-superseded { opacity: 0.45; cursor: not-allowed; }
+/* Optional agenda on the calendar event. Blank unless you write something. */
+.schedule-agenda { margin: 6px 0 8px; }
+.schedule-agenda input {
+  width: 100%;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font-family: inherit;
+}
