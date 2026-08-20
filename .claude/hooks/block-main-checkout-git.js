@@ -28,6 +28,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execSync } = require('child_process');
+const { stripLiterals } = require('./lib/commandText');
 
 function allow() { process.exit(0); }
 
@@ -37,24 +38,36 @@ try { raw = fs.readFileSync(0, 'utf8'); } catch { allow(); }
 let data;
 try { data = JSON.parse(raw); } catch { allow(); }
 
-const command = data && data.tool_input && data.tool_input.command;
-if (!command || typeof command !== 'string') allow();
+const rawCommand = data && data.tool_input && data.tool_input.command;
+if (!rawCommand || typeof rawCommand !== 'string') allow();
+// See memory-closeout-check: quoted strings and heredoc bodies are data, not
+// instructions, and reading them as instructions moves this hook's mind about
+// which tree the command runs in.
+const command = stripLiterals(rawCommand);
 
 // Only care about history-mutating git verbs. `reset`, `pull`, `fetch`, `push`
 // are deliberately allowed (mirror refresh + rollback escape hatch).
 const MUTATING = /\bgit\b[^\n;&|]*?\b(commit|merge|rebase|cherry-pick)\b/;
-if (!MUTATING.test(command)) allow();
+const mutatingMatch = MUTATING.exec(command);
+if (!mutatingMatch) allow();
 
-// Resolve the effective directory the git command runs in. Default to the hook's
-// cwd. If the command changes directory (`cd <path>`), honour the LAST such target
-// — handles `VAR=x && cd <path> && git ...`, chained cds, and leading `~`.
+// Resolve the directory the MUTATING command runs in: the last `cd` BEFORE it,
+// not the last `cd` in the whole command. Taking the final one is wrong in both
+// directions, and one of them is a hole rather than an annoyance:
+//   cd <main> && git commit && cd <worktree>   → resolved to the worktree and
+//   ALLOWED a commit in the main checkout, which is the single thing this hook
+//   exists to stop.
+// The mirror case (cd <worktree> && git commit && cd <main>) merely blocked
+// legitimate work, which is how the flaw was noticed.
 const cwd = (data && data.cwd) || process.cwd();
 let dir = cwd;
 const expandHome = (p) =>
   p === '~' ? os.homedir() : p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p;
 const cdRe = /(?:^|&&|;|\|)\s*cd\s+("([^"]+)"|'([^']+)'|([^\s&;|]+))/g;
 let m, lastCd = null;
-while ((m = cdRe.exec(command)) !== null) lastCd = m;
+while ((m = cdRe.exec(command)) !== null) {
+  if (m.index < mutatingMatch.index) lastCd = m;
+}
 if (lastCd) {
   const target = expandHome(lastCd[2] || lastCd[3] || lastCd[4]);
   dir = path.isAbsolute(target) ? target : path.resolve(cwd, target);

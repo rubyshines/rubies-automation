@@ -25,6 +25,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execSync } = require('child_process');
+const { stripLiterals } = require('./lib/commandText');
 
 function allow() { process.exit(0); }
 
@@ -34,21 +35,32 @@ try { raw = fs.readFileSync(0, 'utf8'); } catch { allow(); }
 let data;
 try { data = JSON.parse(raw); } catch { allow(); }
 
-const command = data && data.tool_input && data.tool_input.command;
-if (!command || typeof command !== 'string') allow();
+const rawCommand = data && data.tool_input && data.tool_input.command;
+if (!rawCommand || typeof rawCommand !== 'string') allow();
+// Match against the command with heredoc bodies and quoted strings blanked out:
+// a commit message documenting the worktree protocol contains `cd` and `git
+// push origin HEAD:main`, and reading those as instructions blocked the push.
+const command = stripLiterals(rawCommand);
 
 // Only pushes that land on main (worktree-protocol `HEAD:main`, or a direct
 // `git push origin main`). Branch pushes (PR flows, memory PRs) pass through.
 const PUSH_TO_MAIN = /\bgit\b[^\n;&|]*\bpush\b[^\n;&|]*\b(HEAD:main|HEAD:master|origin\s+main\b|origin\s+master\b)/;
-if (!PUSH_TO_MAIN.test(command)) allow();
+const pushMatch = PUSH_TO_MAIN.exec(command);
+if (!pushMatch) allow();
 
 // Explicit, per-invocation override after the close-out check has been done.
 if (/\bMEMORY_REVIEWED=1\b/.test(command)) allow();
 
-// Resolve the effective directory the git command runs in (same convention as
-// block-main-checkout-git.js): honour the LAST `cd <path>` in the command.
+// Resolve the directory the PUSH runs in — the last `cd` BEFORE it, not the last
+// `cd` in the whole command. The everyday shape is
+//   cd <worktree> && git push origin HEAD:main && cd <main checkout> && git pull
+// and taking the final cd resolved to the read-only mirror, where origin/main..HEAD
+// is empty by definition, so a push carrying a memory commit was blocked anyway.
+// A gate that misfires on the correct workflow trains people to reach for the
+// override, which is precisely the habit it exists to prevent.
 let dir = (data && data.cwd) || process.cwd();
-const cdMatches = [...command.matchAll(/(?:^|&&|;|\|\|)\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/g)];
+const cdMatches = [...command.matchAll(/(?:^|&&|;|\|\|)\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/g)]
+  .filter(m => m.index < pushMatch.index);
 if (cdMatches.length) {
   let target = cdMatches[cdMatches.length - 1][1].replace(/^["']|["']$/g, '');
   if (target.startsWith('~')) target = path.join(os.homedir(), target.slice(1));

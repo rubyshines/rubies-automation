@@ -249,6 +249,18 @@ Both are project-scoped, so every checkout carries them. The hooks stop the *cur
 they can't stop a concurrent session that lacks them. Hook/settings changes need a Claude Code
 restart to arm.
 
+**A hook that reads the command string is a parser, and parsers need tests (2026-08-19).** Both hooks
+work out which tree a command runs in by reading `cd` out of the command, and both took the LAST `cd`
+anywhere in it — wrong whenever the command changes directory again *after* the git verb, which is the
+everyday shape (`cd <worktree> && git push origin HEAD:main && cd <main> && git pull`). Each was wrong
+in both directions: the memory gate blocked pushes that DID carry a memory commit and passed pushes
+that did not, and `block-main-checkout-git` would allow a main-checkout commit laundered by a trailing
+`cd` into a worktree. They now anchor to the position of the matched git verb, covered by
+`customer-service/test/gitHooks.test.js` against a throwaway repo — a hook test that reads this repo's
+ambient state passes or fails for reasons unrelated to the hook. The design lesson beyond the parsing:
+**a guard that misfires on the correct workflow teaches people to reach for its override**, which is
+the exact habit it exists to prevent, so a false block is not a safe default but a slow failure.
+
 ## Memory commits never leave the main checkout — two tracks, branch-from-latest
 
 Memory (`.claude/memory/`) is committed to the repo, but `.claude/*` is *exempt* from the
