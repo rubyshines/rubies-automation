@@ -6,6 +6,7 @@
  */
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 const { deliveryMode } = require('./sendB2bEmail');
+const { upcomingMeetingsByCompany } = require('./scheduleMeeting');
 
 /** "https://www.foo.org/x" → "foo.org". Pure. */
 function companyDomain(website) {
@@ -88,6 +89,11 @@ async function buildContexts(sb, companies) {
   ) : [];
   const pendingSet = new Set(drafts.map(d => d.company_id));
   const engagedSiblings = await findEngagedSiblings(sb, companies);
+  // Booked calls. cadence.companyEligible reads `upcomingMeetingAt`, so it MUST
+  // be assembled here — seven branches once sat unreachable for months because
+  // the cadence table was written to the design and the context to what Tier 1
+  // happened to need.
+  const upcomingMeetings = await upcomingMeetingsByCompany(sb, ids);
 
   // How each company is reachable, resolved in bulk. Same pure decision the
   // send path uses per-company, so the panel can never offer a Send button for
@@ -118,6 +124,9 @@ async function buildContexts(sb, companies) {
       // A duplicate row for this same org already has a relationship — never
       // cold-intro them again on a second address.
       hasEngagedSibling: engagedSiblings.has(c.id),
+      // The next booked call, if any. Read by cadence.companyEligible.
+      upcomingMeetingAt: upcomingMeetings.get(c.id)?.starts_at || null,
+      upcomingMeeting: upcomingMeetings.get(c.id) || null,
       // 'email' | 'form' | 'none' — how this company can be reached.
       delivery: deliveryMode({
         hasContact: activeContactCompanies.has(c.id),

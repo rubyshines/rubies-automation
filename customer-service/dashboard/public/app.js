@@ -6814,7 +6814,10 @@ function renderOutreachDetail(entry, draft) {
             ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
                <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
             : `<button class="btn btn-primary" id="outreach-compose-send-btn" onclick="sendComposedDraft()">Send</button>`}
+          <button class="btn btn-ghost" onclick="openSchedulePanel()"
+            title="See when you are free across all your calendars, or book a call.">Schedule</button>
         </div>
+        <div id="outreach-schedule-panel" data-open="0"></div>
         <div id="outreach-send-panel"></div>
       </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
     return;
@@ -6856,10 +6859,13 @@ function renderOutreachDetail(entry, draft) {
           ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
              <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
           : `<button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>`}
+        <button class="btn btn-ghost" onclick="openSchedulePanel()"
+          title="See when you are free across all your calendars, or book a call.">Schedule</button>
         <button class="btn btn-ghost" id="outreach-test-btn" onclick="testSendOutreachDraft()"
           title="Sends the real email to you only. Nothing is recorded against the company.">Test send to me</button>
         <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
       </div>
+      <div id="outreach-schedule-panel" data-open="0"></div>
       <div id="outreach-send-panel"></div>
     </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
 
@@ -6971,6 +6977,257 @@ async function testSendOutreachDraft() {
     showToast(`Test send failed: ${err.message}`, 'error');
   }
   if (btn) { btn.disabled = false; btn.textContent = 'Test send to me'; }
+}
+
+// ── Scheduling ──────────────────────────────────────────────────────────────
+// One panel, two jobs. With no slot selected it is a read-only availability
+// LOOKUP — read it, type your own times into the draft. Select a slot and it
+// becomes a booking: one action creates the event with its Meet link, invites
+// them, and sends the reply. Nothing here writes proposed times into a draft;
+// that is deliberate, so the advisor can never name a time it has not checked.
+let scheduleState = null;      // last /availability payload
+let scheduleSelected = null;   // the chosen slot { start, label, theirLabel }
+let scheduleInsertedLine = ''; // the one sentence this panel owns in the draft
+
+function scheduleDurationOptions(selected) {
+  return [15, 20, 30, 45, 60, 90].map(m =>
+    `<option value="${m}"${m === selected ? ' selected' : ''}>${m} min</option>`).join('');
+}
+
+async function openSchedulePanel(duration, timezone) {
+  const el = document.getElementById('outreach-schedule-panel');
+  if (!el || !outreachSelectedId) return;
+  if (el.dataset.open === '1' && duration === undefined && timezone === undefined) {
+    el.dataset.open = '0';
+    el.innerHTML = '';
+    scheduleState = null;
+    scheduleSelected = null;
+    return;
+  }
+  el.dataset.open = '1';
+  el.innerHTML = '<div class="outreach-empty-note">Reading your calendars…</div>';
+  const companyId = outreachSelectedId;
+  try {
+    const qs = new URLSearchParams();
+    if (duration) qs.set('duration', duration);
+    if (timezone) qs.set('timezone', timezone);
+    const data = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/availability?${qs}`);
+    if (outreachSelectedId !== companyId) return; // moved on while loading
+    scheduleState = data;
+    scheduleSelected = null;
+    renderSchedulePanel();
+  } catch (err) {
+    el.innerHTML = `<div class="outreach-review-note">&#9888; Could not read your calendars: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderSchedulePanel() {
+  const el = document.getElementById('outreach-schedule-panel');
+  if (!el || !scheduleState) return;
+  const s = scheduleState;
+
+  const booked = s.booked ? `
+    <div class="schedule-booked">
+      <strong>Call booked</strong> — ${esc(fmtDateTimeET(s.booked.starts_at))}
+      ${s.booked.meet_url ? ` · <a href="${esc(s.booked.meet_url)}" target="_blank" rel="noopener">Meet link</a>` : ''}
+    </div>` : '';
+
+  // Where their timezone came from is always on screen: an inference must never
+  // be mistaken for something they actually told us.
+  const tzNote = s.their_timezone
+    ? `${esc(s.their_timezone.replace(/_/g, ' '))} <span class="schedule-tz-source">${esc(s.their_timezone_source)}</span>`
+    : '<span class="schedule-tz-unknown">unknown — set it to see their local time</span>';
+
+  const proposed = (s.proposed_times || []).filter(t => t.start);
+  const dayHints = (s.proposed_times || []).filter(t => !t.start);
+  const proposedHtml = proposed.length ? `
+    <div class="schedule-proposed">
+      <div class="schedule-label">They suggested</div>
+      ${proposed.map(t => {
+        const clash = findSlotState(t.start);
+        return `<button class="schedule-slot schedule-slot-proposed${clash.busy ? ' is-busy' : ''}${scheduleSelected?.start === t.start ? ' is-selected' : ''}"
+          ${clash.busy ? `title="${esc(clash.busyWith || 'Busy')}"` : ''}
+          onclick="selectScheduleSlot('${esc(t.start)}')">
+          ${esc(t.dayLabel || '')} ${esc(t.label || '')}
+          ${t.theirLabel ? `<span class="schedule-their">${esc(t.theirLabel)} their time</span>` : ''}
+          ${clash.busy ? `<span class="schedule-busy-tag">busy — ${esc(clash.busyWith || '')}</span>` : ''}
+        </button>`;
+      }).join('')}
+      ${dayHints.length ? `<div class="schedule-hint">Also mentioned: ${dayHints.map(d => esc(d.dayLabel || d.date)).join(', ')}</div>` : ''}
+    </div>` : (s.proposed_error
+      ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
+      : '');
+
+  const grid = s.days.map(day => {
+    const chips = day.slots.map(slot => {
+      const cls = ['schedule-slot'];
+      if (slot.busy) cls.push('is-busy');
+      if (slot.unsociableForThem) cls.push('is-unsociable');
+      if (scheduleSelected?.start === slot.start) cls.push('is-selected');
+      const title = slot.busy
+        ? `Busy — ${slot.busyWith}`
+        : slot.theirLabel ? `${slot.theirLabel} their time` : '';
+      return `<button class="${cls.join(' ')}" ${title ? `title="${esc(title)}"` : ''}
+        ${slot.busy ? 'disabled' : `onclick="selectScheduleSlot('${esc(slot.start)}')"`}>${esc(slot.label)}</button>`;
+    }).join('');
+    const notes = day.notes?.length
+      ? `<span class="schedule-day-note">${esc(day.notes.map(n => n.summary).join(' · '))}</span>` : '';
+    return `<div class="schedule-day">
+      <div class="schedule-day-label">${esc(day.label)}${notes}</div>
+      <div class="schedule-slots">${chips || '<span class="schedule-hint">nothing free</span>'}</div>
+    </div>`;
+  }).join('');
+
+  const footer = scheduleSelected ? `
+    <div class="schedule-footer">
+      <div class="schedule-chosen">
+        <strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern
+        ${scheduleSelected.theirLabel ? ` · ${esc(scheduleSelected.theirLabel)} their time` : ''}
+        <span class="schedule-hint">${esc(s.title)} · ${s.duration_minutes} min</span>
+      </div>
+      <div class="btn-row btn-row-primary">
+        <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()">Book &amp; Send</button>
+        <button class="btn btn-ghost" id="schedule-test-btn" onclick="bookMeetingAndSend(true)"
+          title="Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company's record.">Test booking (me only)</button>
+      </div>
+    </div>` : `
+    <div class="schedule-footer schedule-footer-lookup">
+      <span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot to book it.</span>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="schedule-panel">
+      <div class="schedule-head">
+        <strong>${esc(s.title)}</strong>
+        <label class="schedule-inline">Length
+          <select onchange="openSchedulePanel(this.value, scheduleState?.their_timezone)">
+            ${scheduleDurationOptions(s.duration_minutes)}
+          </select>
+        </label>
+        <label class="schedule-inline">Their timezone
+          <input type="text" id="schedule-tz-input" placeholder="America/Los_Angeles"
+            value="${esc(s.their_timezone || '')}"
+            onchange="openSchedulePanel(scheduleState?.duration_minutes, this.value)">
+        </label>
+      </div>
+      <div class="schedule-tz-note">Their time: ${tzNote}</div>
+      ${s.their_timezone_warning ? `<div class="schedule-warning">&#9888; ${esc(s.their_timezone_warning)}</div>` : ''}
+      ${booked}
+      ${proposedHtml}
+      <div class="schedule-grid">${grid}</div>
+      <div class="schedule-hint">Checked: ${(s.calendars || []).map(esc).join(', ')} · 9-5 Eastern, weekdays, from tomorrow</div>
+      ${footer}
+    </div>`;
+}
+
+/** The grid's view of an arbitrary instant — used to mark their suggestions. */
+function findSlotState(startIso) {
+  for (const day of scheduleState?.days || []) {
+    for (const slot of day.slots) {
+      if (slot.start === startIso) return slot;
+    }
+  }
+  return { busy: false, busyWith: null };
+}
+
+function selectScheduleSlot(startIso) {
+  const fromGrid = findSlotState(startIso);
+  const fromProposed = (scheduleState?.proposed_times || []).find(t => t.start === startIso);
+  scheduleSelected = {
+    start: startIso,
+    label: fromGrid.label || fromProposed?.label || fmtTimeET(startIso),
+    theirLabel: fromGrid.theirLabel || fromProposed?.theirLabel || null,
+    dayLabel: fromProposed?.dayLabel || dayLabelForSlot(startIso),
+  };
+  insertConfirmationLine();
+  renderSchedulePanel();
+}
+
+function dayLabelForSlot(startIso) {
+  for (const day of scheduleState?.days || []) {
+    if (day.slots.some(s => s.start === startIso)) return day.label;
+  }
+  return '';
+}
+
+/**
+ * The panel owns exactly ONE sentence in the draft. Selecting a different slot
+ * rewrites that sentence rather than adding a second one — a draft naming two
+ * different times is the obvious way for this to go wrong.
+ */
+function insertConfirmationLine() {
+  const editor = document.getElementById('outreach-draft-editor');
+  if (!editor || !scheduleSelected) return;
+  const their = scheduleSelected.theirLabel ? ` (${scheduleSelected.theirLabel} your time)` : '';
+  const line = `${scheduleSelected.dayLabel} at ${scheduleSelected.label} Eastern${their}, invite just sent.`;
+
+  if (scheduleInsertedLine && editor.value.includes(scheduleInsertedLine)) {
+    editor.value = editor.value.replace(scheduleInsertedLine, line);
+  } else {
+    const sigIdx = editor.value.indexOf('Jamie Alexander');
+    if (sigIdx > 0) {
+      editor.value = `${editor.value.slice(0, sigIdx).replace(/\s*$/, '')}\n\n${line}\n\n${editor.value.slice(sigIdx)}`;
+    } else {
+      editor.value = `${editor.value.replace(/\s*$/, '')}${editor.value.trim() ? '\n\n' : ''}${line}`;
+    }
+  }
+  scheduleInsertedLine = line;
+  autoExpandTextarea(editor);
+}
+
+async function bookMeetingAndSend(testMode) {
+  if (!scheduleSelected || !outreachSelectedId) return;
+  const body = document.getElementById('outreach-draft-editor')?.value || '';
+  const subject = document.getElementById('outreach-subject-editor')?.value || undefined;
+  if (!body.trim()) { showToast('Write the reply first — booking sends it.', 'error'); return; }
+
+  const btnId = testMode ? 'schedule-test-btn' : 'schedule-book-btn';
+  const btn = document.getElementById(btnId);
+  const original = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = testMode ? 'Booking test…' : 'Booking…'; }
+
+  const companyId = outreachSelectedId;
+  try {
+    const res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/schedule`, {
+      method: 'POST',
+      body: {
+        start: scheduleSelected.start,
+        duration_minutes: scheduleState?.duration_minutes || 30,
+        their_timezone: scheduleState?.their_timezone || undefined,
+        thread_id: outreachDraft?.thread_id || scheduleState?.inbound_thread_id || undefined,
+        subject, body, confirmed: true,
+        ...(testMode ? { test_mode: true } : {}),
+      },
+    });
+    if (res.ok && res.phase === 'test_booked') {
+      showToast(`Test booked — invite in your inbox. ${res.note}`, 'success');
+    } else if (res.ok) {
+      showToast(`Booked ${res.when_ours} and replied to ${(res.invited || []).join(', ')}`, 'success');
+      outreachAdvancePast(companyId);
+    } else if (res.phase === 'clash') {
+      showToast(res.error, 'error');
+      openSchedulePanel(scheduleState?.duration_minutes, scheduleState?.their_timezone);
+    } else {
+      showToast(res.error || 'Not booked', 'error');
+    }
+  } catch (err) {
+    showToast(`Booking failed: ${err.message}`, 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = original; }
+}
+
+/** "Tue 26 Aug, 2:00 PM ET" — display only. */
+function fmtDateTimeET(iso) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Toronto', weekday: 'short', day: 'numeric', month: 'short',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(new Date(iso)) + ' ET';
+}
+
+function fmtTimeET(iso) {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Toronto', hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(new Date(iso));
 }
 
 /** Persist edited To/Cc onto the draft so the send path uses them. */

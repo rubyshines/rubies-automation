@@ -114,9 +114,14 @@ const SAMPLES_CHECKIN_MAX_AGE_DAYS = 60;
  * not lost, not deferred (snoozed / paused / on me), contact known,
  * no pending draft.
  */
-function companyEligible(company, { hasPendingDraft } = {}, now = new Date()) {
+function companyEligible(company, { hasPendingDraft, upcomingMeetingAt } = {}, now = new Date()) {
   if (!company) return false;
   if (company.relationship_state === 'lost') return false;
+  // A call is booked. Nothing the cadence would START is appropriate underneath
+  // a scheduled conversation — the relationship is not stalled, it is waiting
+  // for a date. Same shape as On Me: it suppresses what the engine would begin,
+  // and (per computeQueueEntry) never suppresses a reply that arrives meanwhile.
+  if (upcomingMeetingAt && new Date(upcomingMeetingAt) > now) return false;
   // Paused: we have decided not to work this relationship for now. Distinct from
   // `lost` (they went away) and from snooze (a date we are waiting for) — this is
   // indefinite and ours to reverse. It stops everything the engine would START:

@@ -44,10 +44,37 @@ function gql(query, variables) {
   });
 }
 
+/**
+ * The Railway CLI's stored token expires (~90 days) and the failure is a
+ * GraphQL `Not Authorized` with `data: null`, which read as
+ * "TypeError: Cannot read properties of null" and sent a session diagnosing the
+ * wrong thing. Say what actually happened, and what to type.
+ */
+function unwrap(result, what) {
+  if (result?.errors?.length) {
+    const messages = result.errors.map(e => e.message).join('; ');
+    if (/not authorized|unauthorized/i.test(messages)) {
+      const expiresAt = config.user?.tokenExpiresAt;
+      const when = expiresAt ? new Date(expiresAt < 1e12 ? expiresAt * 1000 : expiresAt) : null;
+      const expired = when && when < new Date();
+      throw new Error(
+        `Railway rejected the request (${messages}).\n`
+        + (expired ? `The stored CLI token expired ${when.toISOString().slice(0, 10)}.\n` : '')
+        + 'Run:  railway login\nThen re-run this script.'
+      );
+    }
+    throw new Error(`Railway API error while ${what}: ${messages}`);
+  }
+  if (!result || result.data == null) {
+    throw new Error(`Railway returned no data while ${what}: ${JSON.stringify(result).slice(0, 300)}`);
+  }
+  return result.data;
+}
+
 (async () => {
   // Get vars from main service
   const varsResult = await gql(`query { variables(projectId: "${PROJECT_ID}", environmentId: "${ENV_ID}", serviceId: "${MAIN_SVC}") }`);
-  const allVars = varsResult.data.variables;
+  const allVars = unwrap(varsResult, 'reading vars from the main service').variables;
   const skipPrefixes = ['RAILWAY_', 'NPM_CONFIG', 'NODE_ENV', 'NIXPACKS'];
   const vars = {};
   for (const [k, v] of Object.entries(allVars)) {
