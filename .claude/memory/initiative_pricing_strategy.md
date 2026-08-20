@@ -3,7 +3,7 @@ name: Pricing Strategy 2026
 description: Price increases, fixed bundle pricing, DDP optimization
 type: project
 domains: [marketing, inventory]
-last_updated: 2026-04-28
+last_updated: 2026-08-13
 originSessionId: 92b09cb7-a9a6-4a53-89f7-c693b5fe3f65
 ---
 ## Goal
@@ -14,6 +14,12 @@ Execute 2026 pricing strategy to improve margins and simplify pricing.
 - **Apr 18 — US standard shipping rate $9 → $10.50** (+16.7%).
 - **~Apr 18 — DDP free shipping expanded.** Free-ship rate on DDP orders jumped from 8.6% → 48% of orders. Mechanism: free-shipping option added to DDP zones.
 - **Bundle repricing:** fixed dollar prices live ($79 bikini, $62 matching, $119 shaping). 3-pack skipped (youth/adult spread).
+
+## What Rolled Out (2026-08-12) — Nordics market
+- **Norway market renamed Nordics; Sweden and Denmark moved into it, out of the International catch-all.** Local currencies on (SEK/DKK/NOK off one market), price adjustment +10% → +20%. Net shelf effect: Sweden +20%, Denmark +20%, Norway +9%. Modelled at ~$1,240/yr contribution, with break-even at 24% (SE) / 27% (DK) volume loss.
+- **Done by editing the existing Norway market, not creating one.** The store is on the Shopify plan with 11 markets against a standard limit of 3, so the market slots look grandfathered and are treated as non-replaceable: never delete one to make room. Rollback state saved at the time of the change.
+- **Watch:** volume in SE/DK over the next quarter — 33 and 21 orders/yr respectively, so this reads slowly and a single month proves nothing.
+- **Poland is the same unclosed gap** — still International/USD at 0% while every EU neighbour is +10%. 8 orders/yr, not yet actioned.
 
 ## Initial 11-Day Results (PRE Apr 5-15 vs POST Apr 16-26, ex-China)
 - Orders 275 → 221 (-19.6%); revenue $23,182 → $21,324 (-8%)
@@ -44,3 +50,5 @@ Execute 2026 pricing strategy to improve margins and simplify pricing.
 - 3-pack can't work with single fixed price due to youth/adult spread
 - DDP free-shipping expansion shifted AU/DE conversion materially up — keep as-is
 - US shipping increase to $10.50 not rolled back (no demand evidence to justify)
+- **Market price uplift is set against the duty burden, not picked as a round number.** Duty is charged on declared value, so it scales with price and only ~70-75% of an uplift survives in high-VAT markets. Sizing an increase means starting from the country's customs-as-%-of-revenue, not from a target headline price.
+- **Switzerland is not a DDP decision to make.** It sits in the DDU zone and always has; Passport prepaid Swiss VAT anyway until ~May 2026 then stopped, at the same time its freight fell 66%. Customers now pay at the door. Nothing to configure, but it explains any Swiss customs complaints.

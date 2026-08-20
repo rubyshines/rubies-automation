@@ -26,6 +26,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 - **Production:** Daily finance sync runs as part of daily-sync-all.js pipeline. OAuth tokens persisted in Supabase (singleton pattern). Report snapshots populated every sync. Passport→Shopify resolver hits 99.4% (1511/1520) coverage. Margin snapshots written every Passport import.
 - **Partial:** Nitro fulfillment costs need related-party data cleanup. `syncCosts.js` (supplier COGS pull from Google Sheet) hangs intermittently from VPN connections — fall back to direct insert if needed.
+- **Manual:** the Passport customs import is the one cost pipeline with no scheduler — Nitro emails a master `.xlsx` and someone runs `importPassportInvoices.js` by hand. Staleness is guarded by a decision-queue item once the newest `invoice_date` passes three weeks (`finance/lib/passportImportFreshness.js`); until that fires, an un-imported window silently reads as $0 customs and flatters international landed margin.
 
 ## Key Files
 
