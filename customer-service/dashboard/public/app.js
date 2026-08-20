@@ -6034,16 +6034,35 @@ function outreachHistoryHtml() {
     });
     return `${esc(abs)} · ${esc(timeAgo(iso, 'short'))} ago`;
   };
+  // Gmail's shape: the newest message is open, everything before it is a
+  // one-line stub you can click. Reading a thread should not start with an
+  // archaeology exercise — the newest message is the one that changed something,
+  // and burying it under its own history made checking a reply awkward enough
+  // that a live contact change went unnoticed for a day.
   const threadHtml = (t, open) => {
-    const msgs = (t.messages || []).map(m => {
+    const list = t.messages || [];
+    const msgs = list.map((m, i) => {
       const out = m.direction === 'outbound';
       const who = out ? 'Jamie' : esc(m.from_email || 'them');
       const badge = (m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '')
         + (m.message_type === 'auto_reply' ? ' <span class="badge badge-muted">auto-reply</span>' : '');
-      return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
-        <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
-        <div class="msg-body">${esc(m.body_text || '(no text captured)')}</div>
-      </div>`;
+      const body = m.body_text || '(no text captured)';
+      const isLast = i === list.length - 1;
+      if (isLast) {
+        return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
+          <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
+          <div class="msg-body">${esc(body)}</div>
+        </div>`;
+      }
+      // Collapsed: sender, date and enough of the opening to recognise it.
+      return `<details class="msg-collapsed ${out ? 'msg-agent' : 'msg-customer'}">
+        <summary>
+          <span class="msg-collapsed-who">${who}</span>${badge}
+          <span class="msg-collapsed-snippet">${esc(body.replace(/\s+/g, ' ').slice(0, 90))}</span>
+          <span class="msg-collapsed-date">${msgDate(m.sent_at)}</span>
+        </summary>
+        <div class="msg-body">${esc(body)}</div>
+      </details>`;
     }).join('');
     const lastAt = t.last_message_at ? new Date(t.last_message_at).toLocaleDateString('en-US', {
       timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
@@ -6069,15 +6088,17 @@ function outreachHistoryHtml() {
       ${actions}
     </details>`;
   };
-  // Every thread starts collapsed now. The summary above is the primary read;
-  // this is the audit trail behind it, opened when you want to check the recap
-  // against what was actually said rather than as the only way to learn anything.
+  // The live conversation opens; concluded ones stay shut. `threads` arrives
+  // ordered by last_message_at desc, so this is the one that actually moved
+  // most recently — and if the newest thread is closed, nothing is live and
+  // there is nothing worth opening on arrival.
   const total = threads.reduce((n, t) => n + (t.messages || []).length, 0);
+  const openIdx = threads.findIndex(t => t.status !== 'closed');
   return `<div id="outreach-history" class="detail-section outreach-history">
     <h3>Conversation
       <span class="outreach-history-note">${total} message${total === 1 ? '' : 's'} · the record behind the summary above</span>
     </h3>
-    ${threads.map(t => threadHtml(t, false)).join('')}
+    ${threads.map((t, i) => threadHtml(t, i === openIdx)).join('')}
   </div>`;
 }
 
