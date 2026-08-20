@@ -6506,3 +6506,5 @@ main { height: calc(100vh - 56px); }
 .schedule-day-offered + .schedule-day-offered { border-top: 1px solid var(--border); }
 .schedule-day-offered .schedule-day-label { font-weight: 600; color: inherit; }
 .schedule-day-label .schedule-hint { display: block; font-weight: 400; margin-top: 2px; }
+/* Send while a time is selected: superseded by Book & Send, not merely off. */
+.btn-superseded { opacity: 0.45; cursor: not-allowed; }

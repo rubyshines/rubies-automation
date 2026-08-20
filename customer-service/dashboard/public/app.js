@@ -7016,6 +7016,7 @@ async function openSchedulePanel(duration, timezone) {
     el.innerHTML = '';
     scheduleState = null;
     scheduleSelected = null;
+    syncSendButtonsForSchedule();
     return;
   }
   el.dataset.open = '1';
@@ -7036,6 +7037,7 @@ async function openSchedulePanel(duration, timezone) {
     scheduleState = data;
     scheduleSelected = null;
     renderSchedulePanel();
+    syncSendButtonsForSchedule();
   } catch (err) {
     el.innerHTML = `<div class="outreach-review-note">&#9888; Could not read your calendars: ${esc(err.message)}</div>`;
   }
@@ -7232,6 +7234,26 @@ function findSlotState(startIso) {
   return { busy: false, busyWith: null };
 }
 
+/**
+ * While a slot is picked, the ordinary Send is disabled and points at Book &
+ * Send. Clicking a slot writes "I just created an invite for…" into the draft
+ * immediately, but only Book & Send creates the event — and plain Send sits
+ * right beside it, so on 2026-08-20 a partner was told about an invite that did
+ * not exist. Two buttons where one silently makes the other's promise false.
+ */
+function syncSendButtonsForSchedule() {
+  const armed = !!scheduleSelected;
+  for (const id of ['outreach-send-btn', 'outreach-compose-send-btn']) {
+    const btn = document.getElementById(id);
+    if (!btn) continue;
+    btn.disabled = armed;
+    btn.title = armed
+      ? 'A time is selected — use "Book & Send" so the calendar invite is actually created.'
+      : '';
+    btn.classList.toggle('btn-superseded', armed);
+  }
+}
+
 function selectScheduleSlot(startIso) {
   const fromGrid = findSlotState(startIso);
   const fromProposed = (scheduleState?.proposed_times || []).find(t => t.start === startIso);
@@ -7243,6 +7265,7 @@ function selectScheduleSlot(startIso) {
   };
   insertConfirmationLine();
   renderSchedulePanel();
+  syncSendButtonsForSchedule();
 }
 
 function dayLabelForSlot(startIso) {
