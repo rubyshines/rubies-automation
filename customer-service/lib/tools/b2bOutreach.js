@@ -43,7 +43,8 @@ async function handleQueue(input = {}) {
       if (!entries.length) return text('Nothing is on you right now.');
       const rows = entries.slice(0, input.limit || 25).map(e =>
         `${e.days_on_you}d · ${e.channel} · **${e.company_name}** (${e.company_id})`
-        + `${e.on_me_note ? ` — ${e.on_me_note}` : ''}${e.draft ? ' — draft ready' : ''}`);
+        + `${e.next_step ? ` — next: ${e.next_step}${e.next_step_owner === 'them' ? ' (waiting on them)' : ''}` : ''}`
+        + `${e.draft ? ' — draft ready' : ''}`);
       return text(`On you (${entries.length}, oldest first):\n${rows.join('\n')}`);
     }
 
@@ -321,13 +322,13 @@ module.exports = [
   },
   {
     name: 'b2b_triage',
-    description: "Vet a company for outreach WITHOUT generating a draft. keep (admit it to the Tier-4 first-touch queue), drop (they are gone or said no — marks lost), snooze (come back on a date: 'we just spoke, not yet'), pause (indefinite, ours to reverse: 'not working this market right now'), on_me (Jamie owes them an answer but not today — moves it out of the queue onto his own list, where it keeps ageing; the pending draft is kept, unlike snooze and pause which clear it), resume (put it back in the queue, lifting whichever of the three is set). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted, cohort by cohort. All three deferrals leave the company fully visible and searchable and stop it being chased; none of them can hide a reply that arrives afterwards.",
+    description: "Vet a company for outreach WITHOUT generating a draft. keep (admit it to the Tier-4 first-touch queue), drop (they are gone or said no — marks lost), snooze (come back on a date: 'we just spoke, not yet'), pause (indefinite, ours to reverse: 'not working this market right now'), on_me (Jamie owes them an answer but not today — moves it out of the queue onto his own list, where it keeps ageing and shows the relationship's suggested next step; the pending draft is kept, unlike snooze and pause which clear it), resume (put it back in the queue, lifting whichever of the three is set). Tier-4 first-touch only surfaces companies that have been kept, so this is how imported prospects are admitted, cohort by cohort. All three deferrals leave the company fully visible and searchable and stop it being chased; none of them can hide a reply that arrives afterwards.",
     inputSchema: {
       type: 'object',
       properties: {
         company_id: { type: 'string', description: 'b2b_companies id.' },
         action: { type: 'string', description: "'keep' | 'drop' | 'snooze' | 'pause' | 'on_me' | 'resume'." },
-        reason: { type: 'string', description: "Why. Required on drop and on pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise; on on_me it becomes the note shown beside the row ('waiting on pricing before I answer')." },
+        reason: { type: 'string', description: "Why. Required on drop and on pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise, and ignored on on_me (that row explains itself with the relationship's suggested next step)." },
         until: { type: 'string', description: 'Snooze only: YYYY-MM-DD, must be in the future.' },
       },
       required: ['company_id', 'action'],
@@ -374,7 +375,7 @@ module.exports = [
   },
   {
     name: 'b2b_queue',
-    description: "Today's B2B outreach queue across all channels (retailers, LGBTQ+ orgs, affiliates), 6-tier priority: T1 they-replied, T2 time-sensitive signals, T3 healthy cadence, T4 prospect first-touch, T5 overdue, T6 cold revival. Pass view:'on_me' instead for the companies Jamie has claimed out of the queue to answer himself, oldest first with how many days he has been holding each.",
+    description: "Today's B2B outreach queue across all channels (retailers, LGBTQ+ orgs, affiliates), 6-tier priority: T1 they-replied, T2 time-sensitive signals, T3 healthy cadence, T4 prospect first-touch, T5 overdue, T6 cold revival. Pass view:'on_me' instead for the companies Jamie has claimed out of the queue to answer himself, oldest first, each with how many days he has been holding it and the relationship summary's suggested next step.",
     inputSchema: {
       type: 'object',
       properties: {

@@ -5537,7 +5537,7 @@ async function loadOutreachOnMe() {
     channel: r.channel,
     tier: null,
     message_type: null,
-    reason: r.on_me_note || `on you ${r.age}`,
+    reason: r.next_step || `on you ${r.age}`,
   })));
   renderOutreachSidebar();
 }
@@ -5566,8 +5566,11 @@ function outreachOnMeRowHtml(r) {
         <span class="queue-item-name">${esc(r.company_name)}</span>
         <span class="outreach-channel-chip outreach-channel-${esc(r.channel)}">${esc(channelLabel)}</span>
       </div>
-      <div class="outreach-row-reason">${esc(r.on_me_note || `on you since ${new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`)}</div>
+      <div class="outreach-row-reason">${r.next_step
+        ? esc(r.next_step)
+        : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
       <div class="queue-item-row2">
+        ${r.next_step_owner === 'them' ? '<span class="badge badge-muted">waiting on them</span>' : ''}
         ${r.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
       </div>
       ${r.draft?.snippet ? `<div class="outreach-row-snippet">${esc(r.draft.snippet)}</div>` : ''}
@@ -6011,9 +6014,11 @@ function outreachRelationshipHtml(entry) {
     // Checked before the other two because it is the one where work is still
     // owed: a company that is somehow both should read as yours, not as parked.
     const days = Math.floor((Date.now() - new Date(c.on_me_at)) / 864e5);
+    // No next step echoed here: it is already rendered directly above, in the
+    // block this sits at the bottom of.
     deferral = `<div class="outreach-deferral">
       <span class="outreach-deferral-label">On you</span>
-      <span>${days}d${c.on_me_note ? ` &mdash; ${esc(c.on_me_note)}` : ''}</span>
+      <span>${days}d</span>
       <button class="btn btn-ghost" onclick="resumeOutreach()">Back to queue</button>
     </div>
     <div class="outreach-deferral-note">Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again it returns to the queue on its own.</div>`;
@@ -6206,14 +6211,13 @@ function snoozeOutreach(days) {
   applyOutreachTriage({ action: 'snooze', until }, `Snoozed for ${days} days — back ${label}`);
 }
 
-// No reason is asked for, unlike pause. This decision gets made in a second
-// while working the queue, and a prompt in front of it is exactly the friction
-// that makes you leave the row where it is instead. The note is there for when
-// there is genuinely something to remember, so it is offered, not demanded.
+// Nothing is asked for, unlike pause. This decision gets made in a second while
+// working the queue, and any prompt in front of it is the friction that makes
+// you leave the row where it is instead. What the claim is about is answered on
+// the list by the relationship's suggested next step, which stays current as
+// messages land — better than a note typed once and never revisited.
 function onMeOutreach() {
-  const note = prompt('On you. Anything to note?\n\n(e.g. "waiting on pricing from Natta first" — optional, leave blank)');
-  if (note === null) return;   // cancelled; empty string is a deliberate "no note"
-  applyOutreachTriage({ action: 'on_me', reason: note.trim() || null }, 'Moved to On Me');
+  applyOutreachTriage({ action: 'on_me' }, 'Moved to On Me');
 }
 
 function resumeOutreach() {

@@ -503,7 +503,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
         <a href="${dashboardBase}/#outreach-${encodeURIComponent(r.company_id)}" style="color:#2563eb;text-decoration:none;font-weight:bold;">${esc(r.company_name)}</a>
         <span style="${ageStyle}padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${r.days_on_you}d on you</span>
         ${r.draft ? '<span style="color:#6b7280;font-size:12px;margin-left:6px;">draft ready</span>' : ''}
-        ${r.on_me_note ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(r.on_me_note)}</div>` : ''}
+        ${r.next_step ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(r.next_step)}${r.next_step_owner === 'them' ? ' (waiting on them)' : ''}</div>` : ''}
       </div>`;
     });
     outreachOnMeHtml = section('Outreach — On Me', '#7c3aed', cards);

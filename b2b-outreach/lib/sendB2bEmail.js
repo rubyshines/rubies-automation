@@ -423,7 +423,6 @@ async function sendB2bEmail(p = {}) {
     last_outbound_at: sentAt,
     next_action_date: nextActionDateAfterSend(message_type, new Date(sentAt), next_touch_days ?? null),
     on_me_at: null,
-    on_me_note: null,
     updated_at: sentAt,
   }).eq('id', company_id);
 

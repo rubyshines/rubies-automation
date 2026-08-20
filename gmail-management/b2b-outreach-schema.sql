@@ -64,10 +64,11 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS snoozed_at TIMESTAMPTZ;
 -- keeps it, because that draft is exactly what you want in front of you when you
 -- come back. It exists so the queue can stay a list of things doable today
 -- without the ones you have claimed silently becoming things nobody is doing.
--- The note is optional on purpose: this decision is made in a second, and
--- demanding an essay for it would just make you leave it in the queue instead.
+-- A bare stamp and nothing else. It briefly carried a note typed at claim time;
+-- what the claim is ABOUT is answered better by relationship_next_step, which is
+-- derived from the conversation and rebuilt as messages land, where a note is
+-- written once and then decays.
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_at TIMESTAMPTZ;
-ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_note TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_next_action ON b2b_companies (next_action_date)
   WHERE next_action_date IS NOT NULL;

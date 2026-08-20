@@ -57,11 +57,18 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
     case 'on_me': {
       // "I owe them an answer, just not this minute." Unlike pause and snooze,
       // the work is still live — it moves to a list Jamie holds instead of
-      // leaving the system. No reason is required: the decision is made in a
-      // second while working the queue, and demanding a sentence for it would
-      // just mean leaving the row in the queue instead, which is the whole
-      // problem this exists to solve.
-      return { on_me_at: now.toISOString(), on_me_note: reason || null };
+      // leaving the system.
+      //
+      // Deliberately just a stamp. It briefly took an optional note, on the
+      // theory that the row needed to say what the claim was about — but the
+      // relationship summary already computes a next step from the actual
+      // conversation, which answers the same question better and without asking
+      // for anything: a hand-typed note is written once and then decays, while
+      // the next step is rebuilt as messages land. Claiming a company is a
+      // one-click decision made while working the queue, and any prompt in front
+      // of it is friction that makes you leave the row where it is instead,
+      // which is the whole problem this exists to solve.
+      return { on_me_at: now.toISOString() };
     }
     case 'resume':
       // Clears ALL of them, which is what the button means wherever it appears.
@@ -72,7 +79,7 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
       return {
         outreach_paused_at: null, outreach_paused_reason: null,
         snoozed_until: null, snoozed_at: null,
-        on_me_at: null, on_me_note: null,
+        on_me_at: null,
       };
     default:
       throw new Error(`unknown triage action '${action}' — expected keep, drop, snooze, pause, on_me or resume`);

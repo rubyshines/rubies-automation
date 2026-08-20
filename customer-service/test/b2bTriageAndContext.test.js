@@ -123,7 +123,6 @@ test('resume clears every deferral, not just the pause', () => {
   assert.equal(upd.snoozed_until, null);
   assert.equal(upd.snoozed_at, null);
   assert.equal(upd.on_me_at, null);
-  assert.equal(upd.on_me_note, null);
 });
 
 test('snooze now records when it was set, not just when it lifts', () => {
@@ -189,17 +188,13 @@ test('an unpaused company with the same overdue date still surfaces', () => {
 
 const { onMeHeld } = require('../../b2b-outreach/lib/queue');
 
-test('on_me records the stamp and takes an optional note', () => {
-  const upd = computeTriage('on_me', { reason: 'waiting on pricing first', now: NOW });
-  assert.equal(upd.on_me_at, NOW.toISOString());
-  assert.equal(upd.on_me_note, 'waiting on pricing first');
-  assert.equal(upd.relationship_state, undefined, 'claiming it must NOT mark them lost');
-});
-
-test('on_me needs no reason — the whole point is that it is one click', () => {
-  const upd = computeTriage('on_me', { now: NOW });
-  assert.equal(upd.on_me_at, NOW.toISOString());
-  assert.equal(upd.on_me_note, null);
+test('on_me records a bare stamp and nothing else', () => {
+  // What the claim is about comes from relationship_next_step, which is derived
+  // from the conversation and stays current. A note typed here would decay on a
+  // list whose whole problem is age, and asking for one puts friction in front
+  // of a one-click decision.
+  const upd = computeTriage('on_me', { reason: 'ignored', now: NOW });
+  assert.deepEqual(upd, { on_me_at: NOW.toISOString() });
 });
 
 test('claiming a company clears its stale waiting-on-us', () => {

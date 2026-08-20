@@ -209,6 +209,18 @@ async function fetchQueueCount(sb, { channel } = {}) {
  * whole surface — this list's failure mode is becoming a graveyard, and an age
  * is the only thing that makes that visible before it happens.
  *
+ * Each row carries the relationship summary's suggested next step, which is what
+ * tells you what the claim was about. That job first went to a note typed at
+ * claim time, and the next step is strictly better at it: it is derived from the
+ * conversation and rebuilt as messages land, where a note is written once and
+ * then quietly goes out of date on a list whose whole problem is age. It also
+ * costs nothing to produce, so claiming stays one click.
+ *
+ * It is ADVISORY (see relationshipSummary) — a recommendation read off the
+ * thread, not a record of why Jamie picked this up, and not something that
+ * drives what is due. Rows whose summary has no next step (never summarised, or
+ * a concluded relationship) simply carry none; the caller shows the claim date.
+ *
  * A company whose contact has replied since the claim is NOT here: that reply
  * put it back in the queue (computeQueueEntry), and a row cannot be in both
  * lists without one of them lying about who is holding it.
@@ -241,7 +253,11 @@ async function fetchOnMe(sb, { channel } = {}) {
       company_name: c.name,
       channel: c.relationship_type,
       on_me_at: c.on_me_at,
-      on_me_note: c.on_me_note || null,
+      next_step: c.relationship_next_step || null,
+      // 'them' when the summary judged the ball is in their court. Worth
+      // carrying: a next step that reads as an action for us, on a company that
+      // is actually waiting on them, would send you off to write a chaser.
+      next_step_owner: c.relationship_next_step_owner || null,
       age: humanAge(c.on_me_at, now),
       days_on_you: Math.floor((now - new Date(c.on_me_at)) / 86400000),
       last_inbound_at: ctx.lastInboundAt || null,
@@ -388,7 +404,7 @@ async function searchCompanies(sb, { q, stage = 'all', status = 'all', channel, 
   }
 
   let cq = sb.from('b2b_companies')
-    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until, snoozed_at, outreach_paused_at, outreach_paused_reason, on_me_at, on_me_note, relationship_summary, relationship_next_step, relationship_summary_at');
+    .select('id, name, relationship_type, relationship_state, website, general_email, city, region, country, order_count, total_sales, last_order_date, next_action_date, snoozed_until, snoozed_at, outreach_paused_at, outreach_paused_reason, on_me_at, relationship_summary, relationship_next_step, relationship_summary_at');
   if (channel) cq = cq.eq('relationship_type', channel);
   if (matchedIds) cq = cq.in('id', [...matchedIds]);
   const { data: companies, error } = await cq;
