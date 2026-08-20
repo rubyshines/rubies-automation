@@ -222,7 +222,31 @@ async function removeCompanyContact(sb, { company_id, email } = {}) {
   return { company_id, removed: found.email, promoted };
 }
 
+/**
+ * Put a retired contact back on the active list.
+ *
+ * Deliberately does NOT make them primary: undoing a removal and choosing who to
+ * write to are different decisions, and silently redirecting mail as a side
+ * effect of an undo is exactly the kind of surprise this module exists to avoid.
+ */
+async function restoreCompanyContact(sb, { company_id, email } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  const target = normalizeEmail(email);
+  if (!target) throw new Error('email required');
+
+  const { data: rows, error } = await sb.from('b2b_contacts')
+    .select('email, is_active').eq('company_id', company_id);
+  if (error) throw new Error(error.message);
+  const found = (rows || []).find(c => normalizeEmail(c.email) === target);
+  if (!found) throw new Error(`${target} is not a contact on '${company_id}'`);
+
+  const { error: uErr } = await sb.from('b2b_contacts')
+    .update({ is_active: true }).eq('email', found.email);
+  if (uErr) throw new Error(`restore: ${uErr.message}`);
+  return { company_id, restored: found.email };
+}
+
 module.exports = {
   updateCompanyContact, planContactUpdate, normalizeEmail,
-  setPrimaryContact, removeCompanyContact,
+  setPrimaryContact, removeCompanyContact, restoreCompanyContact,
 };

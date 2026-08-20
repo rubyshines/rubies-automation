@@ -6116,3 +6116,22 @@ main { height: calc(100vh - 56px); }
   white-space: pre-wrap;
   line-height: 1.55;
 }
+
+/* Former contacts — present but plainly past. Hidden entirely, retiring someone
+   erased them from the panel and made the "history is kept" promise unverifiable. */
+.outreach-former { margin-top: 6px; }
+.outreach-former > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 4px 0;
+  user-select: none;
+}
+.outreach-former > summary:hover { color: var(--text-secondary); }
+.outreach-contact-retired .outreach-contact-name,
+.outreach-contact-retired .outreach-contact-email,
+.outreach-contact-retired .outreach-contact-role {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-strong);
+}

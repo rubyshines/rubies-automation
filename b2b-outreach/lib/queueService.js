@@ -830,9 +830,14 @@ async function fetchCompanyThreads(sb, companyId) {
       .order('last_message_at', { ascending: false, nullsFirst: false }),
     sb.from('b2b_companies').select('*').eq('id', companyId).maybeSingle(),
     resolveDelivery(sb, companyId).catch(() => null),
+    // Retired contacts included, and separated in the panel rather than hidden.
+    // Filtering them out here meant that retiring someone erased them from the
+    // UI entirely: you could not see who you used to write to, could not check
+    // the claim that their history was kept, and could not undo a wrong click.
     sb.from('b2b_contacts')
       .select('email, full_name, role, title, is_primary, is_active')
-      .eq('company_id', companyId).eq('is_active', true)
+      .eq('company_id', companyId)
+      .order('is_active', { ascending: false })
       .order('is_primary', { ascending: false }),
     // The queue payload carries pending drafts, but the directory and activity
     // feed reach companies the queue never listed — without this a company with

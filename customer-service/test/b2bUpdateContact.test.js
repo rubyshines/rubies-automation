@@ -132,3 +132,21 @@ test('the last contact CAN go when a general inbox exists', async () => {
   assert.equal(r.removed, 'programs@masstpc.org');
   assert.equal(r.promoted, null);
 });
+
+const { restoreCompanyContact } = require('../../b2b-outreach/lib/updateContact');
+
+test('restoring a retired contact reactivates them', async () => {
+  const gone = { email: 'programs@masstpc.org', is_primary: false, is_active: false };
+  const { client, state } = sbWith([gone, charly]);
+  const r = await restoreCompanyContact(client, { company_id: 'mtpc', email: 'programs@masstpc.org' });
+  assert.equal(r.restored, 'programs@masstpc.org');
+  assert.deepEqual(state.updates.map(u => u.patch), [{ is_active: true }]);
+});
+
+// Undoing a removal and choosing who to write to are different decisions.
+test('restoring does not silently redirect mail to the restored person', async () => {
+  const gone = { email: 'programs@masstpc.org', is_primary: false, is_active: false };
+  const { client, state } = sbWith([gone, charly]);
+  await restoreCompanyContact(client, { company_id: 'mtpc', email: 'programs@masstpc.org' });
+  assert.ok(!state.updates.some(u => u.patch.is_primary === true), 'primary is untouched');
+});

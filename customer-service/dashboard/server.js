@@ -2878,7 +2878,8 @@ async function apiB2bContactAction(companyId, body = {}) {
   const sb = getSupabaseClient();
   if (body.action === 'primary') return lib.setPrimaryContact(sb, { company_id: companyId, email: body.email });
   if (body.action === 'remove') return lib.removeCompanyContact(sb, { company_id: companyId, email: body.email });
-  throw new Error(`unknown contact action '${body.action}' — expected primary or remove`);
+  if (body.action === 'restore') return lib.restoreCompanyContact(sb, { company_id: companyId, email: body.email });
+  throw new Error(`unknown contact action '${body.action}' — expected primary, remove or restore`);
 }
 
 // Pause / snooze / resume from the panel. Same triageCompany the b2b_triage

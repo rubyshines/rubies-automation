@@ -5856,8 +5856,8 @@ async function contactAction(action, email) {
     showToast(err.message, 'error');
     return;
   }
-  showToast(action === 'primary'
-    ? `Now writing to ${res.email}`
+  showToast(action === 'primary' ? `Now writing to ${res.email}`
+    : action === 'restore' ? `${res.restored} is back on the active list`
     : `Removed ${res.removed}${res.promoted ? ` — now writing to ${res.promoted}` : ''}`, 'success');
   if (outreachSelectedId !== companyId) return;
   await loadOutreachContext(companyId, false);
@@ -6246,7 +6246,7 @@ function renderOutreachSidebarContext() {
   // "Replace" carries the address it replaces, so retiring the person who left
   // and promoting the person who took over is one action rather than two edits
   // that can half-happen.
-  const contacts = (h.contacts || []).map(ct => `
+  const contactRow = (ct) => `
     <div class="outreach-contact-row">
       <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}${ct.is_primary ? ' <span class="badge badge-muted">primary</span>' : ''}</span>
       ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
@@ -6259,7 +6259,28 @@ function renderOutreachSidebarContext() {
         <button class="outreach-contact-danger" onclick="contactAction('remove', '${esc(ct.email)}')"
           title="Stop writing to them; their history stays on the record">remove</button>
       </span>
-    </div>`).join('');
+    </div>`;
+
+  // Former contacts are shown, muted, not hidden. Retiring someone used to erase
+  // them from the panel: you could not see who you had been writing to, could not
+  // check that their history really was kept, and could not undo a wrong click.
+  const active = (h.contacts || []).filter(c => c.is_active !== false);
+  const former = (h.contacts || []).filter(c => c.is_active === false);
+  const contacts = active.map(contactRow).join('');
+  const formerHtml = former.length ? `
+    <details class="outreach-former">
+      <summary>${former.length} former contact${former.length === 1 ? '' : 's'}</summary>
+      ${former.map(ct => `
+        <div class="outreach-contact-row outreach-contact-retired">
+          <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}</span>
+          ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
+          <span class="outreach-contact-email">${esc(ct.email)}</span>
+          <span class="outreach-contact-actions">
+            <button onclick="contactAction('restore', '${esc(ct.email)}')"
+              title="Put them back on the active list">restore</button>
+          </span>
+        </div>`).join('')}
+    </details>` : '';
 
   cardEl.innerHTML = `
     <div class="outreach-company-card">
@@ -6284,6 +6305,7 @@ function renderOutreachSidebarContext() {
       </div>
       <div class="context-section-label">Contacts</div>
       ${contacts || '<div class="outreach-contact-none">Nobody on file — mail falls back to the general inbox.</div>'}
+      ${formerHtml}
       <div id="outreach-contact-form"></div>
       <button class="outreach-contact-add" onclick="showContactForm(null)">+ Add contact</button>
     </div>`;
