@@ -123,11 +123,16 @@ function partnerAcceptsCategories(partner, categories) {
  *
  * Also understands the three legacy options still sitting in the sheet's
  * history, so re-ingesting an old row years from now still lands correctly.
- * The legacy mapping treats "Youth sizes 10-16" as LARGER only: that
- * combination (10-16 plus Adult, without 4-8) overlaps the smaller category at
- * exactly one size, 10, and the org explicitly declined 4-8 — so reading it as
- * teen-and-adult risks nothing worse than withholding a single size, whereas
- * the reverse risks shipping a box they cannot use.
+ *
+ * The legacy mapping treats "Youth sizes 10-16" as LARGER only. Note what that
+ * costs: sizes 10 and 11 sit on the smaller side of the new boundary, and they
+ * are ~10% of all units ever sold (size 10 alone is the third-biggest size),
+ * so those orgs stop receiving a real slice of volume they had said yes to.
+ * It is still the right read — the current smaller box is "4-11", which is
+ * mostly sizes they explicitly declined, and an org that said no to 4-8 would
+ * be unlikely to tick it. Confirmed with Jamie 2026-08-20. The alternative
+ * risks shipping boxes an org cannot use at all, which is the failure that
+ * prompted this whole split.
  */
 // Current form: "...4-11". Legacy: "Youth sizes 4-8".
 const SMALLER_PATTERN = /\b4\s*-\s*(11|8)\b/;

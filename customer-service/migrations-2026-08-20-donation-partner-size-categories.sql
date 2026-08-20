@@ -27,10 +27,12 @@ COMMENT ON COLUMN donation_partners.accepts_larger_sizes IS
 -- Backfill from the historical free text. Mirrors parseSizeAcceptance() in
 -- lib/sizeAcceptance.js — keep the two in step if either changes.
 --
--- "Youth sizes 10-16" maps to LARGER only. It overlaps the smaller category at
--- exactly one size (10) and those orgs explicitly declined 4-8, so reading it as
--- teen-and-adult costs at most one size, while the reverse ships boxes an org
--- cannot use. Confirmed with Jamie 2026-08-20.
+-- "Youth sizes 10-16" maps to LARGER only. This is NOT free: sizes 10 and 11
+-- fall on the smaller side of the new boundary and are ~10% of all units ever
+-- sold, so those orgs lose volume they had said yes to. Accepted anyway,
+-- because the smaller box is now "4-11" — mostly sizes they explicitly
+-- declined — and an org that said no to 4-8 would be unlikely to tick it.
+-- Confirmed with Jamie 2026-08-20.
 UPDATE donation_partners
 SET
   accepts_smaller_sizes = (
