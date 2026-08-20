@@ -6520,3 +6520,23 @@ main { height: calc(100vh - 56px); }
   color: inherit;
   font-family: inherit;
 }
+/* The meeting title is prefilled "RUBIES x <Company>" and editable in place —
+   it looks like the heading it replaced until you click into it. */
+.schedule-title-input {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 6px;
+  min-width: 260px;
+  flex: 1 1 260px;
+}
+.schedule-title-input:hover { border-color: var(--border); }
+.schedule-title-input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  outline: none;
+}

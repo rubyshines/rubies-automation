@@ -6994,6 +6994,9 @@ let scheduleShowAll = false;   // reveal full availability alongside their offer
 // and would otherwise wipe whatever had been typed. Blank by default — an event
 // with an invented purpose on it is worse than one with none.
 let scheduleNotes = '';
+// null = use the generated "RUBIES x <Company>". Only an actual edit sets it, so
+// the default keeps tracking the company rather than freezing at first render.
+let scheduleTitle = null;
 
 /**
  * When they have named times, the panel answers "which of their options works"
@@ -7022,10 +7025,15 @@ async function openSchedulePanel(duration, timezone) {
     scheduleState = null;
     scheduleSelected = null;
     scheduleNotes = '';
+    scheduleTitle = null;
     syncSendButtonsForSchedule();
     return;
   }
   el.dataset.open = '1';
+  if (scheduleState && scheduleState.company?.id !== outreachSelectedId) {
+    scheduleNotes = '';
+    scheduleTitle = null;
+  }
   // Three calendar reads plus a model pass over their last message — several
   // seconds, long enough that a static line of text reads as a stuck panel.
   el.innerHTML = `
@@ -7188,7 +7196,7 @@ function renderSchedulePanel() {
         ${scheduleSelected
           ? `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
             + (scheduleSelected.theirLabel && !sameZone ? ` · ${esc(scheduleSelected.theirLabel)} their time` : '')
-            + `<span class="schedule-hint">${esc(s.title)} · ${s.duration_minutes} min</span>`
+            + `<span class="schedule-hint">${esc((scheduleTitle ?? s.title) || s.title)} · ${s.duration_minutes} min</span>`
           : '<span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot above to book it.</span>'}
       </div>
       <div class="btn-row btn-row-primary">
@@ -7205,7 +7213,9 @@ function renderSchedulePanel() {
   el.innerHTML = `
     <div class="schedule-panel">
       <div class="schedule-head">
-        <strong>${esc(s.title)}</strong>
+        <input type="text" id="schedule-title-input" class="schedule-title-input"
+          value="${esc(scheduleTitle ?? s.title)}" aria-label="Meeting title"
+          oninput="scheduleTitle = this.value">
         <label class="schedule-inline">Length
           <select onchange="openSchedulePanel(this.value, scheduleState?.their_timezone)">
             ${scheduleDurationOptions(s.duration_minutes)}
@@ -7334,6 +7344,7 @@ async function bookMeetingAndSend(testMode) {
         duration_minutes: scheduleState?.duration_minutes || 30,
         their_timezone: scheduleState?.their_timezone || undefined,
         notes: scheduleNotes.trim() || undefined,
+        title: (scheduleTitle ?? '').trim() || undefined,
         thread_id: outreachDraft?.thread_id || scheduleState?.inbound_thread_id || undefined,
         subject, body, confirmed: true,
         ...(testMode ? { test_mode: true } : {}),
