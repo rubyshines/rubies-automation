@@ -457,6 +457,42 @@ function formatVariantReference(product, variant) {
   return `the ${shortName}`;
 }
 
+/**
+ * Which COLOURS of a set of same-size variants can actually ship, with counts.
+ *
+ * Pure. Takes the already-filtered variant matches for one product in one size
+ * (the shape `searchProducts` returns) and reduces them to the colour breakdown.
+ *
+ * Why it exists: a summed size total answers "can we send something?" and NOT
+ * "which colours can we send?", and those come apart constantly — the Sassy in
+ * 1X reads 38 units, all of them Pink, with Black and Sandstone at zero. Any
+ * caller holding only the sum has nothing truthful to say about colour, and a
+ * model handed a sum plus some OTHER product's colour list will reach for the
+ * list. That is exactly how a draft came to offer three colours of which two
+ * could not be fulfilled (2026-08-24).
+ *
+ * Size-only products (chest pads: variant title "S", no " / ") have no colour
+ * dimension at all, so they return [] rather than a colour named "S".
+ *
+ * @param {Array<{variantTitle?: string, title?: string, inventoryQuantity?: number}>} variants
+ * @returns {Array<{color: string, inventory: number}>} in-stock colours only
+ */
+function colorsInStock(variants) {
+  const byColor = new Map();
+  for (const v of variants || []) {
+    const title = (v.variantTitle || v.title || '').trim();
+    // No slash means no colour axis. Guessing one would invent "size 1X" as a
+    // colour, which reads as a real choice to a customer.
+    if (!title.includes('/')) continue;
+    const color = title.split('/')[0].trim();
+    if (!color) continue;
+    byColor.set(color, (byColor.get(color) || 0) + (v.inventoryQuantity || 0));
+  }
+  return [...byColor.entries()]
+    .map(([color, inventory]) => ({ color, inventory }))
+    .filter(c => c.inventory > 0);
+}
+
 function shortNameFromHandle(handle) {
   if (!handle) return null;
   const segments = handle.split('-').filter(Boolean);
@@ -469,4 +505,4 @@ function shortNameFromHandle(handle) {
   return raw[0].toUpperCase() + raw.slice(1).toLowerCase();
 }
 
-module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours, renderVariantForCustomer, _formatVariantReferenceForTesting: formatVariantReference };
+module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours, renderVariantForCustomer, colorsInStock, _formatVariantReferenceForTesting: formatVariantReference };

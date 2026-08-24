@@ -183,6 +183,9 @@ function buildStyleSwitchOptions({ inStock = [], arriving = [], recByNick = new 
       note: a.style_switch_note,
       ...(a.size ? { size: a.size } : {}),
       ...(a.size_note ? { size_note: a.size_note } : {}),
+      // Carried through so a leg-cut reply naming a colour has the colours for
+      // THIS style rather than the ones sitting elsewhere in the payload.
+      ...(a.available_colors ? { available_colors: a.available_colors } : {}),
       availability: 'in_stock',
     })),
     ...arriving.map(u => entry(u.product, {
