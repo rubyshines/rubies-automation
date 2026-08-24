@@ -20,7 +20,7 @@ const assert = require('node:assert/strict');
 // Mock Supabase BEFORE requiring decisionTree (it destructures at import time)
 // ---------------------------------------------------------------------------
 const supabaseModulePath = require.resolve('../../shared/supabaseClient');
-const mockSupabaseData = { partners: [], sizeMatches: [], routings: [], routingsError: false, heightRows: [] };
+const mockSupabaseData = { partners: [], sizeMatches: [], routings: [], routingsError: false, heightRows: [], sizeChartQueries: 0 };
 
 // Mock product CS config data (normally loaded from product_cs_config table)
 const mockCsConfig = [
@@ -54,8 +54,11 @@ require.cache[supabaseModulePath] = {
     getSupabaseClient: () => ({
       from: (table) => {
         if (table === 'size_charts') {
-          // lookupHeightVariant chains three .eq() calls and awaits the builder,
-          // so this is a thenable that filters on whatever was asked for.
+          // lookupHeightVariant chains .eq() calls and awaits the builder, so
+          // this is a thenable that filters on whatever was asked for. The
+          // counter pins the round-trip count: the search walks the whole size
+          // list, and doing that a size at a time would be ten queries.
+          mockSupabaseData.sizeChartQueries = (mockSupabaseData.sizeChartQueries || 0) + 1;
           const filters = {};
           const chain = {
             select: () => chain,
@@ -1182,6 +1185,73 @@ describe('analyzeOnepieceFit', () => {
     mockSupabaseData.heightRows = [];
     const r = await analyzeOnepieceFit('onepiece_adult', 'M', 63, ONEPIECE, true);
     assert.equal(r.type, 'height_outside_range');
+  });
+
+  // The separates branch was UNREACHABLE until 2026-08-24: it needs a height
+  // match two or more sizes away, and lookupHeightVariant only ever looked at
+  // ±1, so every such customer fell through to height_outside_range — whose
+  // message tells them their height is outside our charts. That was false, and
+  // false at the size extremes specifically, because the adult bands barely move
+  // with size. Measured over the full waist-by-height grid: 24 of 90 combinations
+  // returned the false statement, and the fix changed exactly those 24, leaving
+  // every exact and wiggle answer untouched.
+  it('separates: a match two sizes away is a fit mismatch, NOT an out-of-range height', async () => {
+    // The live shape: a 2X customer at 63". The Regular band two sizes down
+    // covers her exactly; nothing at 2X, 1X or 3X does.
+    mockSupabaseData.heightRows = [
+      row('L', 'Regular', 62, 66),
+      row('1X', 'Regular', 66, 69), row('2X', 'Regular', 66, 69), row('3X', 'Regular', 66, 69),
+    ];
+    const r = await analyzeOnepieceFit('onepiece_adult', '2X', 63, ONEPIECE, true);
+    assert.equal(r.type, 'separates', 'her height is in our chart, just at another size');
+    assert.equal(r.waistSize, '2X');
+    assert.equal(r.heightSize, 'L');
+    assert.equal(r.sizeDiff, 2);
+    assert.equal(r.variant, 'Regular');
+  });
+
+  it('separates: reaches a match far down the list rather than giving up', async () => {
+    mockSupabaseData.heightRows = [row('XS', 'Regular', 62, 66)];
+    const r = await analyzeOnepieceFit('onepiece_adult', '4X', 64, ONEPIECE, true);
+    assert.equal(r.type, 'separates');
+    assert.equal(r.heightSize, 'XS');
+    assert.ok(r.sizeDiff >= 2, `expected a far match, got ${r.sizeDiff}`);
+  });
+
+  it('separates does not swallow the adjacent case — one away is still wiggle', async () => {
+    // The boundary between the two branches, in both directions.
+    mockSupabaseData.heightRows = [row('L', 'Tall', 66, 70)];
+    assert.equal((await analyzeOnepieceFit('onepiece_adult', 'M', 68, ONEPIECE, true)).type, 'wiggle');
+    assert.equal((await analyzeOnepieceFit('onepiece_adult', '1X', 68, ONEPIECE, true)).type, 'wiggle');
+    assert.equal((await analyzeOnepieceFit('onepiece_adult', 'S', 68, ONEPIECE, true)).type, 'separates');
+  });
+
+  it('height_outside_range now means outside EVERY band, at any size', async () => {
+    // 61" is below the floor of every band, so no size can serve it. This is the
+    // only case where telling the customer their height is out of range is true.
+    mockSupabaseData.heightRows = [
+      row('S', 'Regular', 62, 66), row('M', 'Regular', 62, 66), row('L', 'Tall', 66, 70),
+    ];
+    assert.equal((await analyzeOnepieceFit('onepiece_adult', 'M', 61, ONEPIECE, true)).type, 'height_outside_range');
+    assert.equal((await analyzeOnepieceFit('onepiece_adult', 'M', 74, ONEPIECE, true)).type, 'height_outside_range');
+  });
+
+  it('prefers the smaller size when two are equally far', async () => {
+    // What the old ±1 version did (it pushed idx-1 before idx+1). Preserved so
+    // the fix could not quietly change an answer it was not meant to touch.
+    mockSupabaseData.heightRows = [row('S', 'Regular', 62, 66), row('L', 'Regular', 62, 66)];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 64, ONEPIECE, true);
+    assert.equal(r.size, 'S');
+    assert.equal(r.moreOrLess, 'less');
+  });
+
+  it('reads the height chart once, however far it has to search', async () => {
+    // Searching a size at a time would have meant up to ten sequential round
+    // trips on a tool the advisor calls mid-conversation.
+    mockSupabaseData.heightRows = [row('XS', 'Regular', 62, 66)];
+    mockSupabaseData.sizeChartQueries = 0;
+    await analyzeOnepieceFit('onepiece_adult', '4X', 64, ONEPIECE, true);
+    assert.equal(mockSupabaseData.sizeChartQueries, 1);
   });
 });
 

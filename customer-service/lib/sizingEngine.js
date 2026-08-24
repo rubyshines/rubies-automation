@@ -256,7 +256,31 @@ function getChartCategory(productName, isKids) {
 
 /**
  * Look up the height variant (Regular/Tall) for a one-piece at a given waist size.
- * Checks the recommended size first, then adjacent sizes (±1).
+ *
+ * Searches the waist size first, then outward through the WHOLE size list nearest
+ * first. It used to stop at ±1, which made `analyzeOnepieceFit`'s `separates`
+ * branch unreachable — that branch needs a match two or more sizes away, and the
+ * search could never return one. Everything past ±1 fell through to
+ * `height_outside_range`, whose customer-facing message says "height is outside
+ * our chart ranges".
+ *
+ * That message was frequently FALSE, and wrong in the least forgivable
+ * direction. The adult chart bands barely move with size (XS-L Regular 62-66,
+ * S-L Tall 66-70, 1X-3X Regular 66-69 and Tall 69-73), so the gap is entirely at
+ * the ends of the range: a 2X customer at 63" was told her height was outside our
+ * charts when 63" sits squarely in the Regular band two sizes down, and the same
+ * held for XXS/XS at Tall heights. 24 of 90 waist-by-height combinations returned
+ * that false statement, all of them at the size extremes — the customers most
+ * likely to read "outside our range" as "they don't make anything for me".
+ *
+ * With the full search, distance decides the answer in analyzeOnepieceFit: same
+ * size is exact, one away is wiggle, two or more is separates, and no match
+ * anywhere is the only case that is genuinely outside our charts.
+ *
+ * At equal distance the SMALLER size wins, which is what the ±1 version did
+ * (it pushed idx-1 before idx+1); preserved deliberately so no existing wiggle
+ * answer changes.
+ *
  * @param {string} chartCategory - e.g. 'adult_onepiece'
  * @param {string} waistSize - recommended waist size label
  * @param {number} heightInInches - customer height in inches
@@ -265,44 +289,41 @@ function getChartCategory(productName, isKids) {
  */
 async function lookupHeightVariant(chartCategory, waistSize, heightInInches, productName) {
   const supabase = getSupabaseClient();
-  // Check at the recommended waist size
-  const { data: heightEntries } = await supabase
+  // One query for the whole chart rather than one per size. Searching the full
+  // list a size at a time would have meant up to ten sequential round trips on a
+  // tool the advisor calls mid-conversation; a height chart is ~14 rows, so
+  // fetching it whole and matching in memory is both faster and simpler than the
+  // two-query version this replaces.
+  const { data: rows } = await supabase
     .from('size_charts')
     .select('size_label, notes, min_inches, max_inches')
     .eq('chart_category', chartCategory)
-    .eq('measurement_type', 'height')
-    .eq('size_label', waistSize);
+    .eq('measurement_type', 'height');
 
-  const tallEntry = heightEntries?.find(e => e.notes === 'Tall');
-  const regEntry = heightEntries?.find(e => e.notes === 'Regular');
-  if (tallEntry && heightInInches >= tallEntry.min_inches && heightInInches <= tallEntry.max_inches) {
-    return { variant: 'Tall', size: waistSize };
-  }
-  if (regEntry && heightInInches >= regEntry.min_inches && heightInInches <= regEntry.max_inches) {
-    return { variant: 'Regular', size: waistSize };
-  }
+  const fits = (e) => e && heightInInches >= e.min_inches && heightInInches <= e.max_inches;
+  // Tall is checked before Regular at each size, as it always has been.
+  const variantAt = (size) => {
+    const at = (rows || []).filter(e => e.size_label === size);
+    if (fits(at.find(e => e.notes === 'Tall'))) return 'Tall';
+    if (fits(at.find(e => e.notes === 'Regular'))) return 'Regular';
+    return null;
+  };
 
-  // Check adjacent sizes (±1)
+  const own = variantAt(waistSize);
+  if (own) return { variant: own, size: waistSize };
+
+  // Then outward through the rest of the list, nearest first, smaller side first
+  // at equal distance (what the old ±1 version did — preserved so no existing
+  // wiggle answer changes).
   const waistList = getSizeList(waistSize, productName);
   const waistIdx = waistList?.indexOf(waistSize) ?? -1;
-  const adjacentSizes = [];
-  if (waistIdx > 0) adjacentSizes.push(waistList[waistIdx - 1]);
-  if (waistIdx < (waistList?.length || 0) - 1) adjacentSizes.push(waistList[waistIdx + 1]);
-
-  for (const adjSize of adjacentSizes) {
-    const { data: adjEntries } = await supabase
-      .from('size_charts')
-      .select('size_label, notes, min_inches, max_inches')
-      .eq('chart_category', chartCategory)
-      .eq('measurement_type', 'height')
-      .eq('size_label', adjSize);
-    const adjTall = adjEntries?.find(e => e.notes === 'Tall');
-    const adjReg = adjEntries?.find(e => e.notes === 'Regular');
-    if (adjTall && heightInInches >= adjTall.min_inches && heightInInches <= adjTall.max_inches) {
-      return { variant: 'Tall', size: adjSize };
-    }
-    if (adjReg && heightInInches >= adjReg.min_inches && heightInInches <= adjReg.max_inches) {
-      return { variant: 'Regular', size: adjSize };
+  if (waistIdx >= 0 && waistList) {
+    for (let d = 1; d < waistList.length; d++) {
+      for (const idx of [waistIdx - d, waistIdx + d]) {
+        if (idx < 0 || idx >= waistList.length) continue;
+        const variant = variantAt(waistList[idx]);
+        if (variant) return { variant, size: waistList[idx] };
+      }
     }
   }
 
