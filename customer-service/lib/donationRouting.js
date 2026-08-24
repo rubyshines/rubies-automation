@@ -7,7 +7,9 @@
  * state/province, and only failing both does the box spread across the
  * 3 closest nationally. Every tier picks weighted-random by item volume
  * over a trailing window, so no nearby partner goes dark while a newly
- * added one catches up.
+ * added one catches up — and in the two tiers that can span real distance,
+ * the pick is pulled back toward the nearest partner so load can never send
+ * a box hundreds of kilometres past a closer org.
  */
 
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
@@ -18,6 +20,13 @@ const { shipmentSizeCategories, partnerAcceptsCategories } = require('./sizeAcce
 // partner monopolize its region until it caught up (Montgomery blacked out
 // Raleigh for two weeks in June 2026); a window keeps the comparison current.
 const LOAD_WINDOW_DAYS = 90;
+
+// Floor on the window a partner's volume is measured over. A partner added
+// three days ago has a three-day sample; projecting it to 90 days turns one
+// ordinary box into a career's worth of volume and shuts them off entirely.
+// Two weeks is long enough for the projection to mean something at the
+// national rate of roughly one partner-routed box a day.
+const MIN_EXPOSURE_DAYS = 14;
 
 // How far "same city or nearby city" reaches. 50 km covers a metro and its
 // commuter band (Framingham is local to a Boston customer) without stretching
@@ -86,12 +95,71 @@ async function fetchRecentPartnerLoads(supabase, partners) {
 }
 
 /**
- * Weighted-random pick, weight = 1 / (load + 1). A lightly loaded partner is
- * strongly preferred but never wins outright, so a new partner takes the
- * majority of its region's flow without blacking out established neighbors.
+ * How many days of the trailing window a partner was actually available for.
+ * A partner created inside the window has only been eligible for part of it.
+ * A missing `created_at` (legacy rows) reads as fully exposed, so nothing is
+ * adjusted on a partner whose age we don't know.
  */
-function pickWeightedByLoad(candidates, getLoad, rng = Math.random) {
-  const weights = candidates.map(c => 1 / ((getLoad(c) || 0) + 1));
+function partnerExposureDays(createdAt, now = Date.now()) {
+  if (!createdAt) return LOAD_WINDOW_DAYS;
+  const created = new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) return LOAD_WINDOW_DAYS;
+  const ageDays = (now - created) / (24 * 60 * 60 * 1000);
+  if (!(ageDays > 0)) return MIN_EXPOSURE_DAYS;
+  return Math.min(Math.max(ageDays, MIN_EXPOSURE_DAYS), LOAD_WINDOW_DAYS);
+}
+
+/**
+ * Raw item counts over a fixed 90-day window compare a new partner's few days
+ * against an established one's full quarter, which is the whole reason a new
+ * partner ran away with its region: 4 items in 5 days scored as "quieter than
+ * everybody" against 29 items in 90. Projecting the young partner's volume up
+ * to a full-window equivalent compares rates instead of totals, so a partner
+ * that is ALREADY taking more than its share is downweighted on day six rather
+ * than in six weeks. A partner older than the window is untouched (factor 1),
+ * so this changes nothing for the established network.
+ *
+ * The projection is self-limiting rather than a special case that has to be
+ * switched off later: a brand-new partner still starts at load 0 and takes the
+ * next box, and one ordinary box is enough to put it in the normal band.
+ */
+function exposureAdjustedLoad(items, createdAt, now = Date.now()) {
+  const load = items || 0;
+  if (!load) return 0;
+  return load * (LOAD_WINDOW_DAYS / partnerExposureDays(createdAt, now));
+}
+
+/**
+ * How much a candidate's distance pulls the pick toward it, relative to the
+ * nearest candidate in the same tier: 1 for the nearest, falling off with the
+ * SQUARE of how much farther away it is.
+ *
+ * Squared rather than linear because the penalty should track the extra
+ * distance disproportionately. Three partners at comparable distance still
+ * share the flow properly (a Chicago box sees Raleigh, Montgomery and Poughkeepsie
+ * within 10% of each other, and all three stay in play), while a partner at
+ * five times the distance drops to a couple of percent instead of winning
+ * outright on load alone.
+ */
+function proximityBoost(distanceKm, nearestKm) {
+  // Floor at 1 km: a customer geocoding to the partner's own coordinates would
+  // otherwise divide by zero.
+  const ratio = Math.max(nearestKm || 0, 1) / Math.max(distanceKm || 0, 1);
+  return ratio * ratio;
+}
+
+/**
+ * Weighted-random pick, weight = proximity boost / (load + 1). A lightly loaded
+ * partner is strongly preferred but never wins outright, so a new partner takes
+ * the majority of its region's flow without blacking out established neighbors.
+ *
+ * `getBoost` defaults to 1 for every candidate, which is the pure load balance
+ * used by the local tier (where every candidate is inside the same 50 km metro,
+ * and sharing it is the point) and by the country-wide fallback (where no
+ * distances exist at all).
+ */
+function pickWeightedByLoad(candidates, getLoad, rng = Math.random, getBoost = () => 1) {
+  const weights = candidates.map(c => (getBoost(c) || 0) / ((getLoad(c) || 0) + 1));
   const total = weights.reduce((sum, w) => sum + w, 0);
   let r = rng() * total;
   for (let i = 0; i < candidates.length; i++) {
@@ -127,7 +195,11 @@ function samePlace(a, b) {
  *   3. regional  — the closest 3 nationally, the long-standing spread rule.
  *
  * Each tier still picks weighted-random by trailing-window load, so a metro or
- * province holding several partners keeps sharing flow between them.
+ * province holding several partners keeps sharing flow between them. Tiers 2
+ * and 3 additionally weight by distance (see proximityBoost); tier 1 does not,
+ * because everything in it is inside the same 50 km metro and sharing that
+ * metro evenly is the point — and a partner matched on city name alone has no
+ * distance to weight by.
  *
  * Returns null when no partner has coordinates and no city matches, leaving the
  * caller's country-wide load-balanced pick in place.
@@ -162,16 +234,26 @@ function selectByProximity(partners, place, getLoad, rng) {
   }
 
   // Tier 2 — same state/province, gated on the nearest partner being in it.
+  // Distance-weighted: a state can be a thousand kilometres end to end, so an
+  // in-state partner an hour away should beat one at the far end of California.
   const nearest = withDistance[0];
   if (nearest && samePlace(nearest.region, place.region)) {
     const inState = withDistance.filter(p => samePlace(p.region, place.region));
-    const partner = pickWeightedByLoad(inState, getLoad, rng);
+    const boost = p => proximityBoost(p.distance_km, inState[0].distance_km);
+    const partner = pickWeightedByLoad(inState, getLoad, rng, boost);
     return { partner, method: `in-state (${partner.region} — ${Math.round(partner.distance_km)} km)` };
   }
 
-  // Tier 3 — national spread across the closest 3.
-  if (withDistance.length > 0) {
-    const partner = pickWeightedByLoad(withDistance.slice(0, 3), getLoad, rng);
+  // Tier 3 — national spread across the closest 3, pulled toward the nearest.
+  // Load alone used to decide this outright, which made the FARTHEST of the
+  // three the likeliest pick whenever it was the quietest: a Maine box went to
+  // Poughkeepsie with Boston 220 km closer. Distance now carries real weight
+  // here, so load balances between comparable options instead of overriding
+  // geography.
+  const top3 = withDistance.slice(0, 3);
+  if (top3.length > 0) {
+    const boost = p => proximityBoost(p.distance_km, top3[0].distance_km);
+    const partner = pickWeightedByLoad(top3, getLoad, rng, boost);
     return { partner, method: `geographic (${Math.round(partner.distance_km)} km away)` };
   }
 
@@ -240,7 +322,7 @@ async function prescribeDonationRouting(intake, context) {
   try {
     const { data } = await supabase
       .from('donation_partners')
-      .select('id, name, region, city, address, mailing_address, description, description_short, donations_routed, latitude, longitude, accepts_smaller_sizes, accepts_larger_sizes')
+      .select('id, name, region, city, address, mailing_address, description, description_short, donations_routed, created_at, latitude, longitude, accepts_smaller_sizes, accepts_larger_sizes')
       .eq('country_code', country)
       .eq('active', true);
     partners = data || [];
@@ -354,9 +436,28 @@ async function prescribeDonationRouting(intake, context) {
   // closest 3 nationally), weighted-random by recent item volume within
   // whichever tier fires (trailing window from the donation_routings log, NOT
   // the lifetime counter — see fetchRecentPartnerLoads).
+  // Raw items over the window, then scaled for how long each partner has
+  // actually been eligible (see exposureAdjustedLoad). The raw figure is kept
+  // for the audit line so the number a human reads is still a real item count.
+  // On the degraded fallback path inside fetchRecentPartnerLoads the map holds
+  // lifetime counters rather than windowed items; scaling those is directionally
+  // right (a young partner with lifetime volume is a busy one) and that path
+  // only fires when donation_routings cannot be read at all.
+  const now = Date.now();
   const loads = await fetchRecentPartnerLoads(supabase, partners);
-  const getLoad = p => loads.get(p.id) || 0;
+  const rawLoad = p => loads.get(p.id) || 0;
+  const getLoad = p => exposureAdjustedLoad(rawLoad(p), p.created_at, now);
   const rng = context._rng || Math.random;
+
+  // Says so explicitly when a partner was weighed as busier than its raw count,
+  // so "2 items and it still lost" is legible in the audit rather than looking
+  // like the balancer misfiring.
+  const loadNote = (p) => {
+    const adjusted = getLoad(p);
+    if (Math.round(adjusted) === rawLoad(p)) return '';
+    const days = Math.round(partnerExposureDays(p.created_at, now));
+    return ` (weighed as ${Math.round(adjusted)} over ${days}d active)`;
+  };
 
   let partner = pickWeightedByLoad(partners, getLoad, rng);
   let routingMethod = 'load_balance';
@@ -387,7 +488,7 @@ async function prescribeDonationRouting(intake, context) {
       washReminder,
       includeProofAsk ? (singleItem ? PROOF_ASK_TEXT_SINGULAR : PROOF_ASK_TEXT) : null,
     ),
-    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${getLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${sizeNote}${includeProofAsk ? ', proof ask included' : ''}`,
+    audit: `${itemCount} items → ${partner.name} (${partner.city}, ${country}) — routing: ${routingMethod}, ${rawLoad(partner)} items routed in last ${LOAD_WINDOW_DAYS}d${loadNote(partner)}${sizeNote}${includeProofAsk ? ', proof ask included' : ''}`,
   };
 }
 
@@ -432,4 +533,4 @@ async function logDonationRouting({ customer_email, order_number, partner_id, it
   }
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, selectByProximity, LOCAL_RADIUS_KM, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR };
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, selectByProximity, exposureAdjustedLoad, partnerExposureDays, proximityBoost, LOCAL_RADIUS_KM, LOAD_WINDOW_DAYS, MIN_EXPOSURE_DAYS, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR };
