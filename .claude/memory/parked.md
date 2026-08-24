@@ -307,26 +307,6 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
   reply-parser ate it — fix is a lazy raw-fetch in the tool that needs the
   address (refund_order, create_exchange_order), not a change to the shared parser.
 
-## Remove legacy walkTree/prescribe functions from sizingEngine.js
-- Parked: 2026-04-15
-- Last touched: 2026-08-23
-- Type: refactor
-- Domains: cs
-- Priority: medium
-- Notes: Requires migrating test assertions — ~1300 lines of `sizingEngine.test.js` reach real
-  utility functions through the legacy `prescribe*` API, so deleting the path means rewriting
-  that coverage, not dropping it. That is why it was left out of the 2026-08-23 arriving-soon
-  change rather than bundled with a customer-facing copy edit.
-- **This is now costing something, not just sitting there.** PR #143 put the only "coming in
-  stock soon" sentence into `prescribeSizingResolution` (`waitNote`), which runs in tests only —
-  so the fix shipped and no customer ever saw it, and the live gap stayed open until 2026-08-23.
-  The customer-facing wording lives in the advisor prompt; the dead copy in `sizingEngine` is
-  kept in sync by hand so a future reader cannot pick up the stale sentence. That hand-sync is
-  the recurring tax this deletion buys out.
-- Safe to delete without losing coverage of the behaviour: the LIVE arriving-soon path is now
-  pinned by `test/scenarios/arrivingSoonStyleSwitch.js` (2026-08-24), which stubs stock and
-  restock rather than reading either from the world.
-
 ## Clean up Nitro fulfillment cost data
 - Parked: 2026-04-15
 - Last touched: 2026-04-15
