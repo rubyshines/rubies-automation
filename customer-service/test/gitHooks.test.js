@@ -114,6 +114,60 @@ test('mirror-refresh and rollback verbs still pass in the main checkout', () => 
   }
 });
 
+// A verb has to be in SUBCOMMAND POSITION. Matching it anywhere after `git`
+// treats `-` and `.` as word boundaries, so read-only commands that merely
+// contain a verb were blocked. `git merge-base` is the one that surfaced it.
+test('read-only commands that merely contain a mutating verb are allowed', () => {
+  const readOnly = [
+    'git merge-base --is-ancestor abc HEAD',
+    'git merge-tree abc def',
+    'git commit-graph write',
+    'git config merge.ff false',
+    'git log --merge',
+    'git log --no-merges --oneline',
+    'git branch --merged main',
+    'git cherry origin/main',
+    'git show --stat HEAD',
+  ];
+  for (const cmd of readOnly) {
+    assert.equal(runHook('block-main-checkout-git.js', `cd ${MAIN} && ${cmd}`).code, 0, cmd);
+  }
+});
+
+test('the real verbs are still blocked in the main checkout', () => {
+  for (const cmd of [
+    'git commit -m x',
+    'git merge origin/main',
+    'git rebase origin/main',
+    'git cherry-pick abc123',
+    'git -c user.name=T commit -m x',   // a global option before the verb
+    'git --no-pager commit -m x',
+  ]) {
+    assert.equal(runHook('block-main-checkout-git.js', `cd ${MAIN} && ${cmd}`).code, 2, cmd);
+  }
+});
+
+// `git -C <dir>` relocates a command exactly like a cd, and the hook could not
+// see it: the shell stayed in a worktree while git committed in the mirror.
+test('git -C into the main checkout is blocked from anywhere', () => {
+  const cmd = `cd ${WORKTREE} && git -C ${MAIN} commit -m x`;
+  assert.equal(runHook('block-main-checkout-git.js', cmd).code, 2);
+});
+
+test('git -C into a worktree is allowed even when the shell sits in the mirror', () => {
+  const cmd = `cd ${MAIN} && git -C ${WORKTREE} commit -m x`;
+  assert.equal(runHook('block-main-checkout-git.js', cmd).code, 0);
+});
+
+test('git -C with a read-only verb is untouched', () => {
+  assert.equal(runHook('block-main-checkout-git.js', `git -C ${MAIN} pull --ff-only`).code, 0);
+  assert.equal(runHook('block-main-checkout-git.js', `git -C ${MAIN} worktree remove ${WORKTREE}`).code, 0);
+});
+
+test('a separator with no surrounding spaces still tokenises', () => {
+  assert.equal(runHook('block-main-checkout-git.js', `cd ${MAIN}&&git commit -m x`).code, 2);
+});
+
 // ── command text is not all instructions ────────────────────────────────────
 // A commit message documenting the worktree protocol contains example commands.
 // Reading those as real ones blocked a legitimate commit and, worse, could move

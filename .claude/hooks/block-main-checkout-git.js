@@ -47,8 +47,60 @@ const command = stripLiterals(rawCommand);
 
 // Only care about history-mutating git verbs. `reset`, `pull`, `fetch`, `push`
 // are deliberately allowed (mirror refresh + rollback escape hatch).
-const MUTATING = /\bgit\b[^\n;&|]*?\b(commit|merge|rebase|cherry-pick)\b/;
-const mutatingMatch = MUTATING.exec(command);
+//
+// The verb has to be matched in SUBCOMMAND POSITION, not anywhere after the word
+// `git`. A substring match treats `-` and `.` as word boundaries, so it blocked
+// read-only commands that merely CONTAIN a verb: `git merge-base --is-ancestor`
+// (a query — this is the one that surfaced it), `git merge-tree`,
+// `git commit-graph write`, `git config merge.ff false`, `git log --merge`.
+// A guard that misfires on the correct workflow teaches people to reach for its
+// override, which is the habit it exists to prevent, so a false block is not a
+// safe default — same lesson as the 2026-08-19 `cd`-position fix.
+const MUTATING_VERBS = new Set(['commit', 'merge', 'rebase', 'cherry-pick']);
+// Global options taking a SEPARATE value token, skipped while looking for the
+// subcommand: `git -c user.name=x commit` is still a commit.
+const VALUE_OPTS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env', '--super-prefix']);
+
+/**
+ * The first history-mutating git invocation, or null.
+ *
+ * `index` is the offset of the VERB in the original string, which the `cd`
+ * ordering below depends on. `dashC` is the argument to `git -C <dir>`, which
+ * relocates a command exactly like a `cd` and was previously invisible here —
+ * so `git -C <main checkout> commit` read as running wherever the shell was.
+ */
+function findMutatingGit(text) {
+  // Shell separators become spaces so `a&&git commit` tokenises. Replacing each
+  // character with a single space preserves every offset.
+  const scan = text.replace(/[;&|()]/g, ' ');
+  const tokens = [];
+  const tokenRe = /\S+/g;
+  let t;
+  while ((t = tokenRe.exec(scan)) !== null) tokens.push({ text: t[0], index: t.index });
+
+  for (let i = 0; i < tokens.length; i++) {
+    // `git`, or a path ending in it (/usr/bin/git).
+    if (tokens[i].text !== 'git' && !tokens[i].text.endsWith('/git')) continue;
+    let dashC = null;
+    let j = i + 1;
+    while (j < tokens.length) {
+      const tok = tokens[j].text;
+      if (VALUE_OPTS.has(tok)) {
+        if (tok === '-C' && tokens[j + 1]) dashC = tokens[j + 1].text;
+        j += 2;
+        continue;
+      }
+      if (tok.startsWith('-')) { j += 1; continue; } // --opt=value or a bare flag
+      break;
+    }
+    if (j < tokens.length && MUTATING_VERBS.has(tokens[j].text)) {
+      return { index: tokens[j].index, verb: tokens[j].text, dashC };
+    }
+  }
+  return null;
+}
+
+const mutatingMatch = findMutatingGit(command);
 if (!mutatingMatch) allow();
 
 // Resolve the directory the MUTATING command runs in: the last `cd` BEFORE it,
@@ -71,6 +123,12 @@ while ((m = cdRe.exec(command)) !== null) {
 if (lastCd) {
   const target = expandHome(lastCd[2] || lastCd[3] || lastCd[4]);
   dir = path.isAbsolute(target) ? target : path.resolve(cwd, target);
+}
+// `git -C <dir>` relocates the command and beats any preceding cd, exactly as
+// git itself resolves it.
+if (mutatingMatch.dashC) {
+  const target = expandHome(mutatingMatch.dashC);
+  dir = path.isAbsolute(target) ? target : path.resolve(dir, target);
 }
 
 // Walk up to the nearest existing directory (defensive).
