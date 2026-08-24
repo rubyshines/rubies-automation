@@ -48,6 +48,7 @@ const editOrderTools = require('./lib/tools/editOrder');
 const deliveryTimeReportTools = require('./lib/tools/deliveryTimeReport');
 const setPricesTools = require('./lib/tools/setPrices');
 const createProductTools = require('./lib/tools/createProduct');
+const colourwayTools = require('./lib/tools/colourway');
 const updateCustomerTools = require('./lib/tools/updateCustomer');
 const discountCodeTools = require('./lib/tools/discountCode');
 const cancelOrderTools = require('./lib/tools/cancelOrder');
@@ -108,6 +109,7 @@ const allTools = [
   ...deliveryTimeReportTools,
   ...setPricesTools,
   ...createProductTools,
+  ...colourwayTools,
   ...updateCustomerTools,
   ...discountCodeTools,
   ...cancelOrderTools,

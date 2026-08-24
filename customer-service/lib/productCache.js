@@ -493,6 +493,37 @@ function colorsInStock(variants) {
     .filter(c => c.inventory > 0);
 }
 
+/**
+ * The mirror image of colorsInStock: which colours of a same-size variant set
+ * are at ZERO, with the SKUs needed to look up whether anything is inbound.
+ *
+ * Why both halves are needed: a size total answers "can we send something",
+ * colorsInStock answers "in which colours", and neither can answer "is the
+ * colour they actually asked for coming back". The Sassy in 1X reads 38 units
+ * and three colours exist; Black and Sandstone are both zero with a container
+ * against them. Without this, a customer asking to exchange into Black 1X gets
+ * either silence or an offer of Pink, when the true answer is "Black is a
+ * couple of weeks out, want me to hold the exchange?".
+ *
+ * Pure and availability-only — it does not decide whether the wait is worth
+ * offering. That judgement belongs to restockEta's offer window, applied
+ * identically by every caller.
+ */
+function colorsOutOfStock(variants) {
+  const byColor = new Map();
+  for (const v of variants || []) {
+    const title = (v.variantTitle || v.title || '').trim();
+    if (!title.includes('/')) continue;
+    const color = title.split('/')[0].trim();
+    if (!color) continue;
+    const entry = byColor.get(color) || { color, inventory: 0, skus: [] };
+    entry.inventory += (v.inventoryQuantity || 0);
+    if (v.sku) entry.skus.push(v.sku);
+    byColor.set(color, entry);
+  }
+  return [...byColor.values()].filter(c => c.inventory <= 0);
+}
+
 function shortNameFromHandle(handle) {
   if (!handle) return null;
   const segments = handle.split('-').filter(Boolean);
@@ -505,4 +536,4 @@ function shortNameFromHandle(handle) {
   return raw[0].toUpperCase() + raw.slice(1).toLowerCase();
 }
 
-module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours, renderVariantForCustomer, colorsInStock, _formatVariantReferenceForTesting: formatVariantReference };
+module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours, renderVariantForCustomer, colorsInStock, colorsOutOfStock, _formatVariantReferenceForTesting: formatVariantReference };
