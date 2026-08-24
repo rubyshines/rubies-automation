@@ -6019,11 +6019,16 @@ function outreachRelationshipHtml(entry) {
   // Deliberately NOT one of the deferrals beside it. Pause and snooze also stop
   // the cadence, and "nothing more to say until the next check-in" is the exact
   // case where the next check-in must still happen.
+  //
+  // The explanation is a tooltip, not a line of body text, matching "On me"
+  // beside it. The first version spelled out the mechanism next to the button
+  // and named the thread it would close — but the thread name is only worth
+  // asking about when several are live, which is the rare case, and restating
+  // how the control works on every render is chrome around a one-click action.
   const waitingThreadId = entry?.tier === 1 ? entry.thread_id : null;
-  const waitingThread = waitingThreadId ? threads.find(t => t.id === waitingThreadId) : null;
   const conclude = waitingThreadId ? `<div class="outreach-conclude">
-    <button class="btn btn-secondary" onclick="concludeOutreachConversation(${waitingThreadId}, this)">Nothing to reply to</button>
-    <span class="outreach-conclude-note">Closes ${waitingThread ? `&ldquo;${esc(waitingThread.subject || 'this conversation')}&rdquo;` : 'the conversation that put this in the queue'} so it stops showing as waiting on us. The cadence still comes back on schedule.</span>
+    <button class="btn btn-secondary" onclick="concludeOutreachConversation(${waitingThreadId}, this)"
+      title="Closes the conversation holding this in the queue — the cadence still comes back on schedule">Nothing to reply to</button>
   </div>` : '';
 
   // Deferral state, and the control to change it. Stated plainly rather than as a
