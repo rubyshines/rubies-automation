@@ -6025,11 +6025,17 @@ function outreachRelationshipHtml(entry) {
   // and named the thread it would close — but the thread name is only worth
   // asking about when several are live, which is the rare case, and restating
   // how the control works on every render is chrome around a one-click action.
+  //
+  // It rides the SAME row as the deferrals despite not being one. The row
+  // answers "what do I want to do with this?", and giving the odd one out its
+  // own line spent a row of the block on a distinction the operator does not
+  // need spelled out — the tooltip carries it. The distinction still governs
+  // behaviour, just not layout.
   const waitingThreadId = entry?.tier === 1 ? entry.thread_id : null;
-  const conclude = waitingThreadId ? `<div class="outreach-conclude">
-    <button class="btn btn-secondary" onclick="concludeOutreachConversation(${waitingThreadId}, this)"
-      title="Closes the conversation holding this in the queue — the cadence still comes back on schedule">Nothing to reply to</button>
-  </div>` : '';
+  const concludeBtn = waitingThreadId
+    ? `<button class="btn btn-secondary" onclick="concludeOutreachConversation(${waitingThreadId}, this)"
+        title="Closes the conversation holding this in the queue — the cadence still comes back on schedule">Nothing to reply to</button>`
+    : '';
 
   // Deferral state, and the control to change it. Stated plainly rather than as a
   // quiet badge: a company the engine will never chase is exactly the thing you
@@ -6070,6 +6076,7 @@ function outreachRelationshipHtml(entry) {
     // not right now), where pause and snooze are decisions about the relationship
     // itself and get made far less often.
     deferral = `<div class="outreach-deferral-actions">
+      ${concludeBtn}
       <button class="btn btn-secondary" onclick="onMeOutreach()"
         title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
       <button class="btn btn-ghost" onclick="pauseOutreach()">Pause outreach</button>
@@ -6079,6 +6086,14 @@ function outreachRelationshipHtml(entry) {
           onclick="snoozeOutreach(${p.days})">${p.label}</button>`).join('')}
       </span>
     </div>`;
+  }
+
+  // A reply can land on top of a deferral — deferrals suppress one that was
+  // already sitting there, never one that arrives afterwards — and in that case
+  // the banner has replaced the actions row, so there is nothing for the
+  // conclude control to ride in. It gets its own line only there.
+  if (concludeBtn && (c.on_me_at || c.outreach_paused_at || snoozeLive)) {
+    deferral += `<div class="outreach-conclude">${concludeBtn}</div>`;
   }
 
   return `<div id="outreach-relationship" class="detail-section outreach-relationship">
@@ -6093,7 +6108,6 @@ function outreachRelationshipHtml(entry) {
     ${bodyHtml}
     ${nextStep}
     ${cadence}
-    ${conclude}
     ${deferral}
   </div>`;
 }

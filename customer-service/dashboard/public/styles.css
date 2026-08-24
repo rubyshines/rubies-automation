@@ -5757,7 +5757,9 @@ main { height: calc(100vh - 56px); }
 }
 .outreach-deferral-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;   /* four controls once a Tier-1 row adds "Nothing to reply to" */
   margin-top: 12px;
 }
 /* "Nothing to reply to" — reads as a normal action, not a warning state: this
