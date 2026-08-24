@@ -23,28 +23,73 @@ const supabaseModulePath = require.resolve('../../shared/supabaseClient');
 const mockSupabaseData = { partners: [], sizeMatches: [], routings: [], routingsError: false, heightRows: [], sizeChartQueries: 0 };
 
 // Mock product CS config data (normally loaded from product_cs_config table)
+// Product CS config + catalog size ranges, GENERATED FROM LIVE DATA 2026-08-24
+// (handles, keywords, categories and the kid_sizes/adult_sizes metafields).
+//
+// Regenerate rather than hand-edit. Every time this fixture was written by hand
+// it drifted from production and either hid a bug or invented one: the missing
+// generic no-tuck row hid the keyword-ranking defect, hand-typed size ranges
+// made the Sassy look like it had no XXS when it does, and invented handles
+// would have broken the products <-> cs_config join that the size range depends
+// on. The config handle and the product handle MUST be the same string, as they
+// are in production.
 const mockCsConfig = [
-  { product_handle: 'the-aj-no-tuck-shaping-underwear', nickname: 'AJ', category: 'underwear_bottom', keywords: ['aj'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-ava-seamless-shaping-bra', nickname: 'Ava', category: 'underwear_top', keywords: ['ava'], delta_wording: 'bra', sizes_override: null, style_switch: null },
-  { product_handle: 'the-brooke-shaping-bra', nickname: 'Brooke', category: 'underwear_top', keywords: ['brooke'], delta_wording: 'bra', sizes_override: null, style_switch: null },
-  { product_handle: 'the-charlie-no-tuck-extra-cute-shaping-underwear', nickname: 'Charlie', category: 'underwear_bottom', keywords: ['charlie'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-cheeky-no-tuck-shaping-bikini-bottom', nickname: 'Cheeky', category: 'swim_bottom', keywords: ['cheeky'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['swim_bottom'], recommendFor: { tightLegs: true, ageGroups: ['youth', 'adult'], sizedIn: 'adult', everyday: true } } },
-  { product_handle: 'the-flo-shaping-dance-underwear', nickname: 'Flo', category: 'underwear_bottom', keywords: ['flo'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['youth'], sizedIn: 'youth', everyday: true } } },
-  { product_handle: 'the-mia-halter-bikini-top', nickname: 'Mia', category: 'swim_top', keywords: ['mia'], delta_wording: 'bikini_top', sizes_override: null, style_switch: null },
-  { product_handle: 'the-ruby-no-tuck-shaping-bikini-bottom', nickname: 'Ruby', category: 'swim_bottom', keywords: ['ruby'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-sassy-no-tuck-shaping-underwear', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: true } } },
-  { product_handle: 'the-serena-no-tuck-shaping-shorty-short', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-sky-no-tuck-shaping-one-piece', nickname: 'Sky', category: 'onepiece', keywords: ['sky', 'one-piece'], delta_wording: 'bottom', sizes_override: ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X'], style_switch: null },
-  { product_handle: 'the-stella-high-waisted-shaping-bikini-bottom', nickname: 'Stella', category: 'swim_bottom', keywords: ['stella'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-sunny-queeny-tankini', nickname: 'Queeny', category: 'swim_top', keywords: ['queeny', 'sunny', 'tankini'], delta_wording: 'top', sizes_override: null, style_switch: null },
-  { product_handle: 'the-naomi-gaff-extra-strength-shaping-underwear', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom', sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'], style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: false } } },
-  { product_handle: 'rubies-shaping-chest-pads', nickname: 'Chest Pads', category: 'chest_pads', keywords: ['pad'], delta_wording: null, sizes_override: null, style_switch: null },
-  // Production has a generic legacy row whose 'no-tuck' keyword appears in most
-  // product titles. Its absence from this fixture is why the classification bug
-  // went uncaught: without it nothing competes with the specific keywords.
-  { product_handle: 'notuck-shaping-underwear', nickname: 'No-Tuck Underwear', category: 'underwear_bottom', keywords: ['no-tuck'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'rubies-gift-card', nickname: 'Gift Card', category: 'accessory', keywords: ['gift card'], delta_wording: null, sizes_override: null, style_switch: null },
-  { product_handle: 'progress-pride-pins', nickname: 'Pride Pins', category: 'accessory', keywords: ['pins'], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "every-girl-deserves-to-shine-gender-neutral-tee", nickname: "Adult Tee", category: "accessory", keywords: ["tee"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "the-aj-shaping-underwear", nickname: "AJ", category: "underwear_bottom", keywords: ["aj"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+  { product_handle: "the-ava-seamless-shaping-bra", nickname: "Ava", category: "underwear_top", keywords: ["ava"], delta_wording: "bra", sizes_override: null, style_switch: null },
+  { product_handle: "rubies-bikini-set", nickname: "Bikini Set", category: "accessory", keywords: ["bikini set"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "the-brooke-bra", nickname: "Brooke", category: "underwear_top", keywords: ["brooke"], delta_wording: "bra", sizes_override: null, style_switch: null },
+  { product_handle: "the-extra-cute-shaping-underwear", nickname: "Charlie", category: "underwear_bottom", keywords: ["charlie"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+  { product_handle: "the-cheeky-shaping-bikini-bottom", nickname: "Cheeky", category: "swim_bottom", keywords: ["cheeky"], delta_wording: "bottom", sizes_override: null, style_switch: {"note":"Roomier leg opening as it is cut higher, recommend for tight legs","isTarget":true,"recommendFor":{"sizedIn":"adult","everyday":true,"ageGroups":["youth","adult"],"tightLegs":true},"forCategories":["swim_bottom"]} },
+  { product_handle: "shaping_chest-pads", nickname: "Chest Pads", category: "chest_pads", keywords: ["pad"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "evey-shaping-sports-bra", nickname: "Evey", category: "underwear_top", keywords: ["evey","sports bra","sports"], delta_wording: "bra", sizes_override: null, style_switch: null },
+  { product_handle: "the-flo-shaping-dance-underwear", nickname: "Flo", category: "underwear_bottom", keywords: ["flo"], delta_wording: "bottom", sizes_override: null, style_switch: {"note":"Roomier leg opening as it is cut higher, recommend for tight legs (youth sizes only)","isTarget":true,"recommendFor":{"sizedIn":"youth","everyday":true,"ageGroups":["youth"],"tightLegs":true},"forCategories":["underwear_bottom"]} },
+  { product_handle: "magical-shaping-chest-pads", nickname: "Magical Chest Pads", category: "chest_pads", keywords: ["chest pad"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "rubies-matching-underwear-set", nickname: "Matching Set", category: "accessory", keywords: ["matching set"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "the-mia-halter-bikini-top", nickname: "Mia", category: "swim_top", keywords: ["mia"], delta_wording: "bikini_top", sizes_override: null, style_switch: null },
+  { product_handle: "the-naomi-gaff-extra-strength-shaping-underwear", nickname: "Naomi", category: "underwear_bottom", keywords: ["naomi","gaff"], delta_wording: "bottom", sizes_override: null, style_switch: {"note":"Roomier leg opening as it is cut higher; a gaff, so offer alongside the Sassy and never ahead of it","isTarget":true,"recommendFor":{"sizedIn":"adult","everyday":false,"ageGroups":["adult"],"tightLegs":true},"forCategories":["underwear_bottom"]} },
+  { product_handle: "notuck-shaping-underwear", nickname: "No-Tuck Underwear", category: "underwear_bottom", keywords: ["no-tuck"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+  { product_handle: "progress-pride-earings", nickname: "Pride Earrings", category: "accessory", keywords: ["earring"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "progress-pride-flag", nickname: "Pride Flag", category: "accessory", keywords: ["flag"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "progress-pride-pins", nickname: "Pride Pins", category: "accessory", keywords: ["pins"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "the-queeny-tankini", nickname: "Queeny", category: "swim_top", keywords: ["queeny","sunny","tankini"], delta_wording: "top", sizes_override: null, style_switch: null },
+  { product_handle: "the-ruby-no-tuck-shaping-bikini-bottom", nickname: "Ruby", category: "swim_bottom", keywords: ["ruby"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+  { product_handle: "the-sassy-no-tuck-shaping-underwear", nickname: "Sassy", category: "underwear_bottom", keywords: ["sassy"], delta_wording: "bottom", sizes_override: null, style_switch: {"note":"Roomier leg opening as it is cut higher, recommend for tight legs","isTarget":true,"recommendFor":{"sizedIn":"adult","everyday":true,"ageGroups":["adult"],"tightLegs":true},"forCategories":["underwear_bottom"]} },
+  { product_handle: "the-shaping-shorty-shorts", nickname: "Serena", category: "swim_bottom", keywords: ["serena"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+  { product_handle: "rubies-shaping-bundle", nickname: "Shaping Bundle", category: "accessory", keywords: ["bundle"], delta_wording: null, sizes_override: null, style_switch: null },
+  { product_handle: "the-sky-shaping-one-piece", nickname: "Sky", category: "onepiece", keywords: ["sky","one-piece"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+  { product_handle: "high-waisted-shaping-bikini-bottom", nickname: "Stella", category: "swim_bottom", keywords: ["stella"], delta_wording: "bottom", sizes_override: null, style_switch: null },
+];
+
+// Catalog size ranges — the Shopify kid_sizes/adult_sizes metafields as synced
+// into Supabase. This is where getSizeList gets a product's range from, so the
+// fixture has to mirror production or the tests validate a shape we do not have.
+const mockProducts = [
+  { title: "EVERY GIRL DESERVES TO SHINE ADULT TEE", handle: "every-girl-deserves-to-shine-gender-neutral-tee", kid_sizes: [], adult_sizes: ["S","M","L","XL","2XL"] },
+  { title: "AJ NO-TUCK SHAPING UNDERWEAR", handle: "the-aj-shaping-underwear", kid_sizes: ["4","6","8","10","12","14","16"], adult_sizes: ["XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "AVA SEAMLESS SHAPING BRA", handle: "the-ava-seamless-shaping-bra", kid_sizes: [], adult_sizes: ["XXS","XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "RUBIES BIKINI SET - BIKINI BOTTOM + BIKINI TOP", handle: "rubies-bikini-set", kid_sizes: [], adult_sizes: [] },
+  { title: "BROOKE SHAPING BRA", handle: "the-brooke-bra", kid_sizes: ["6","8","10","12","14","16"], adult_sizes: ["XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "CHARLIE NO-TUCK EXTRA CUTE SHAPING UNDERWEAR", handle: "the-extra-cute-shaping-underwear", kid_sizes: ["4","6","8","10","12","14","16"], adult_sizes: ["XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "CHEEKY NO-TUCK SHAPING BIKINI BOTTOM", handle: "the-cheeky-shaping-bikini-bottom", kid_sizes: [], adult_sizes: ["XXS","XXS+","XS","XS+","S","M","L","1X","2X","3X"] },
+  { title: "RUBIES SHAPING CHEST PADS", handle: "shaping_chest-pads", kid_sizes: [], adult_sizes: ["S","M"] },
+  { title: "EVEY SHAPING SPORTS BRA", handle: "evey-shaping-sports-bra", kid_sizes: [], adult_sizes: ["XXS","XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "FLO SHAPING DANCE UNDERWEAR", handle: "the-flo-shaping-dance-underwear", kid_sizes: ["6","8","10","12","13","14"], adult_sizes: [] },
+  { title: "MAGICAL SHAPING GEL CHEST PADS", handle: "magical-shaping-chest-pads", kid_sizes: [], adult_sizes: ["S","M","L"] },
+  { title: "RUBIES MATCHING SET - UNDERWEAR + BRA", handle: "rubies-matching-underwear-set", kid_sizes: [], adult_sizes: [] },
+  { title: "MIA HALTER BIKINI TOP", handle: "the-mia-halter-bikini-top", kid_sizes: ["4","6","8","10","12","14","16"], adult_sizes: ["XS","S","M","L","1X","2X","3X"] },
+  { title: "NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR", handle: "the-naomi-gaff-extra-strength-shaping-underwear", kid_sizes: [], adult_sizes: ["XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "NO-TUCK SHAPING UNDERWEAR", handle: "notuck-shaping-underwear", kid_sizes: ["4","6","8","10","12"], adult_sizes: [] },
+  { title: "PROGRESS PRIDE EARRINGS", handle: "progress-pride-earings", kid_sizes: [], adult_sizes: [] },
+  { title: "PROGRESS PRIDE FLAG", handle: "progress-pride-flag", kid_sizes: [], adult_sizes: [] },
+  { title: "PROGRESS PRIDE PINS", handle: "progress-pride-pins", kid_sizes: [], adult_sizes: [] },
+  { title: "SUNNY QUEENY TANKINI", handle: "the-queeny-tankini", kid_sizes: ["4","6","8","10","12","14","16"], adult_sizes: ["XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "RUBY NO-TUCK SHAPING BIKINI BOTTOM", handle: "the-ruby-no-tuck-shaping-bikini-bottom", kid_sizes: ["4","6","7","8","9","10","11","12","13","14","16"], adult_sizes: ["XS","XS+","S","M","L","1X","2X","3X","4X"] },
+  { title: "SASSY NO-TUCK SHAPING UNDERWEAR", handle: "the-sassy-no-tuck-shaping-underwear", kid_sizes: [], adult_sizes: ["XXS","XS","S","M","L","1X","2X","3X","4X"] },
+  { title: "SERENA NO-TUCK SHAPING SHORTY SHORT", handle: "the-shaping-shorty-shorts", kid_sizes: ["4","6","7","8","9","10","11","12","13","14","16"], adult_sizes: ["XS","XS+","S","M","L","1X","2X","3X","4X"] },
+  { title: "RUBIES SHAPING BUNDLE - 3 AJ UNDERWEAR + 1 BIKINI BOTTOM", handle: "rubies-shaping-bundle", kid_sizes: [], adult_sizes: [] },
+  { title: "SKY NO-TUCK SHAPING ONE-PIECE", handle: "the-sky-shaping-one-piece", kid_sizes: ["4","6","7","8","9","10","11","12","13","14","16"], adult_sizes: ["XS","XS+","S","M","L","1X","2X","3X"] },
+  { title: "STELLA HIGH WAISTED SHAPING BIKINI BOTTOM", handle: "high-waisted-shaping-bikini-bottom", kid_sizes: ["4","6","7","8","9","10","11","12","13","14","16"], adult_sizes: ["XS","XS+","S","M","L","1X","2X","3X","4X"] },
 ];
 require.cache[supabaseModulePath] = {
   id: supabaseModulePath,
@@ -69,6 +114,11 @@ require.cache[supabaseModulePath] = {
               error: null,
             }),
           };
+          return chain;
+        }
+        if (table === 'products') {
+          // initCsConfig awaits the builder directly, so this is a thenable.
+          const chain = { select: () => chain, then: (resolve) => resolve({ data: mockProducts, error: null }) };
           return chain;
         }
         if (table === 'donation_routings') {
@@ -126,7 +176,7 @@ const {
   analyzeOnepieceFit,
   getSeparatesText,
   initCsConfig,
-  PRODUCT_SIZE_OVERRIDES,
+  PRODUCT_SIZES,
   _activeProducts,
 } = require('../lib/sizingEngine');
 // Donation routing moved out of sizingEngine long ago and was only re-exported
@@ -352,7 +402,10 @@ describe('classifyProduct', () => {
   });
 
   it('classifies accessories', () => {
-    assert.equal(classifyProduct('RUBIES GIFT CARD'), 'accessory');
+    // Real accessories from the live config. There is no gift-card row in
+    // production; the old hand-written fixture invented one.
+    assert.equal(classifyProduct('PROGRESS PRIDE PINS'), 'accessory');
+    assert.equal(classifyProduct('EVERY GIRL DESERVES TO SHINE GENDER NEUTRAL TEE'), 'accessory');
   });
 
   it('returns null for unknown products', () => {
@@ -395,8 +448,28 @@ describe('getAdjacentSizes — category-based (even/odd split)', () => {
     assert.deepEqual(getAdjacentSizes('XS', 'up', 2, 'THE SASSY NO-TUCK SHAPING UNDERWEAR'), ['S', 'M']);
   });
 
-  it('underwear_bottom: letter S down → XS, XXS (no plus sizes)', () => {
-    assert.deepEqual(getAdjacentSizes('S', 'down', 2, 'THE SASSY NO-TUCK SHAPING UNDERWEAR'), ['XS', 'XXS']);
+  it('underwear_bottom: letter S down stops at the smallest size the product HAS', () => {
+    // The AJ's catalog range starts at XS, so there is nothing below it. Under
+    // the generic letter run this returned ['XS','XXS'] and offered a size the
+    // AJ is not made in. The Sassy, by contrast, really does have an XXS, and
+    // still returns both -- the range is per product, not a blanket rule.
+    assert.deepEqual(getAdjacentSizes('S', 'down', 2, 'AJ NO-TUCK SHAPING UNDERWEAR'), ['XS']);
+    assert.deepEqual(getAdjacentSizes('S', 'down', 2, 'SASSY NO-TUCK SHAPING UNDERWEAR'), ['XS', 'XXS']);
+  });
+
+  it('a product the catalog has no range for still gets the category run', () => {
+    // Cold start, a product whose size metafields were never filled in, or a
+    // catalog that failed to load: all must degrade to the old category
+    // behaviour rather than to "no sizes at all". Simulated by dropping the
+    // entry, since every live product currently has a range.
+    const HANDLE = 'the-aj-shaping-underwear';
+    const saved = PRODUCT_SIZES[HANDLE];
+    delete PRODUCT_SIZES[HANDLE];
+    try {
+      assert.deepEqual(getAdjacentSizes('S', 'down', 2, 'AJ NO-TUCK SHAPING UNDERWEAR'), ['XS', 'XXS']);
+    } finally {
+      PRODUCT_SIZES[HANDLE] = saved;
+    }
   });
 
   // ── underwear_top: even numeric only, letter no plus ──
@@ -457,12 +530,13 @@ describe('getAdjacentSizes — category-based (even/odd split)', () => {
 
   // ── chest_pads: only S, M, L ──
 
-  it('chest_pads: S up → M, L', () => {
-    assert.deepEqual(getAdjacentSizes('S', 'up', 2, 'RUBIES SHAPING CHEST PADS'), ['M', 'L']);
-  });
-
-  it('chest_pads: M up → L', () => {
-    assert.deepEqual(getAdjacentSizes('M', 'up', 1, 'RUBIES SHAPING CHEST PADS'), ['L']);
+  it('chest_pads: each pad product gets its own range', () => {
+    // The plain pads are made in S and M only; the Magical pads add L. The old
+    // hardcoded CHEST_PAD_SIZES said S/M/L for both, which offered an L pad that
+    // does not exist.
+    assert.deepEqual(getAdjacentSizes('S', 'up', 2, 'RUBIES SHAPING CHEST PADS'), ['M']);
+    assert.deepEqual(getAdjacentSizes('M', 'up', 1, 'RUBIES SHAPING CHEST PADS'), []);
+    assert.deepEqual(getAdjacentSizes('M', 'up', 1, 'MAGICAL SHAPING GEL CHEST PADS'), ['L']);
   });
 
   it('chest_pads: M down → S', () => {
@@ -497,11 +571,27 @@ describe('getSizeList — category-based', () => {
     assert.ok(!list.includes('11'));
   });
 
-  it('underwear_bottom: letter no plus', () => {
-    const list = getSizeList('S', 'THE SASSY NO-TUCK SHAPING UNDERWEAR');
-    assert.ok(list.includes('XXS'));
-    assert.ok(!list.includes('XXS+'));
-    assert.ok(!list.includes('XS+'));
+  it('underwear_bottom: the range is the product\'s own, not the category default', () => {
+    // Two products in one category with different ranges, which a category
+    // default cannot express: the AJ starts at XS, the Sassy at XXS.
+    const aj = getSizeList('S', 'AJ NO-TUCK SHAPING UNDERWEAR');
+    assert.equal(aj[0], 'XS');
+    assert.ok(!aj.includes('XXS'), 'the AJ is not made in XXS');
+    const sassy = getSizeList('S', 'SASSY NO-TUCK SHAPING UNDERWEAR');
+    assert.equal(sassy[0], 'XXS', 'the Sassy is');
+  });
+
+  it('the category default still applies when the catalog has no range', () => {
+    const HANDLE = 'the-aj-shaping-underwear';
+    const saved = PRODUCT_SIZES[HANDLE];
+    delete PRODUCT_SIZES[HANDLE];
+    try {
+      const list = getSizeList('S', 'AJ NO-TUCK SHAPING UNDERWEAR');
+      assert.ok(list.includes('XXS'));
+      assert.ok(!list.includes('XS+'), 'still the no-plus run for underwear');
+    } finally {
+      PRODUCT_SIZES[HANDLE] = saved;
+    }
   });
 
   it('swim_bottom: full numeric (even + odd)', () => {
@@ -534,9 +624,16 @@ describe('getSizeList — category-based', () => {
     assert.ok(list.includes('XS+'));
   });
 
-  it('chest_pads: only S, M, L', () => {
-    const list = getSizeList('M', 'RUBIES SHAPING CHEST PADS');
-    assert.deepEqual(list, ['S', 'M', 'L']);
+  it('accessories have no size axis at all', () => {
+    // The earrings' SKU ends in "S" and the pins' in "3", so both parse as a
+    // size and used to fall through to a garment run.
+    assert.equal(getSizeList('S', 'PROGRESS PRIDE EARRINGS'), null);
+    assert.equal(getSizeList('M', 'PROGRESS PRIDE PINS'), null);
+  });
+
+  it('chest_pads: the catalog range, not the hardcoded S/M/L', () => {
+    assert.deepEqual(getSizeList('M', 'RUBIES SHAPING CHEST PADS'), ['S', 'M']);
+    assert.deepEqual(getSizeList('M', 'MAGICAL SHAPING GEL CHEST PADS'), ['S', 'M', 'L']);
   });
 
   it('no product: full numeric list', () => {
@@ -678,8 +775,8 @@ describe('getProductNickname', () => {
     assert.equal(getProductNickname('Mystery Product'), 'Mystery Product');
   });
 
-  it('handles Gift Card', () => {
-    assert.equal(getProductNickname('RUBIES GIFT CARD'), 'Gift Card');
+  it('handles accessories', () => {
+    assert.equal(getProductNickname('PROGRESS PRIDE PINS'), 'Pride Pins');
   });
 
   it('handles Chest Pads', () => {
@@ -1073,7 +1170,7 @@ describe('advisor tool export contract', () => {
     ]) {
       assert.equal(typeof se[name], 'function', `${name} must stay exported`);
     }
-    for (const name of ['PRODUCT_NICKNAMES', 'PRODUCT_CATEGORIES', 'PRODUCT_SIZE_OVERRIDES', '_activeProducts', 'KEYWORD_MATCH_COUNT', 'KID_LABELS']) {
+    for (const name of ['PRODUCT_NICKNAMES', 'PRODUCT_CATEGORIES', 'PRODUCT_SIZES', '_activeProducts', 'KEYWORD_MATCH_COUNT', 'KID_LABELS']) {
       assert.ok(se[name], `${name} must stay exported`);
     }
   });
@@ -1334,8 +1431,11 @@ describe('getSizeList — per-product override spanning youth and adult', () => 
     assert.equal(getSizeList('4X', SKY), null);
   });
 
-  it('an adult-only override is unaffected by the filter', () => {
-    // The Naomi carried the only override before this change; it must not move.
-    assert.deepEqual(getSizeList('M', 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), ['XS', 'S', 'M', 'L', '1X', '2X']);
+  it('an adult-only product returns just its adult run', () => {
+    // The Naomi carried the last hand-written sizes_override (XS-2X), which was
+    // stale: it is made in XS-4X, so the override was hiding 3X and 4X from
+    // anyone who needed them. Deleting the override is what fixed that.
+    assert.deepEqual(getSizeList('M', 'NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), ['XS', 'S', 'M', 'L', '1X', '2X', '3X', '4X']);
+    assert.equal(getSizeList('12', 'NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), null, 'no youth run');
   });
 });

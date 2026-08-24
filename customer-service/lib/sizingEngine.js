@@ -27,8 +27,9 @@ const {
 
 const PRODUCT_NICKNAMES = {};
 const PRODUCT_CATEGORIES = {};
-const PRODUCT_SIZE_OVERRIDES = {};
 const TITLE_TO_HANDLE = {};  // Shopify product title (upper) → handle for exact lookups
+/** handle → { youth: [...], adult: [...] } — the catalog's size range, canonically ordered. */
+const PRODUCT_SIZES = {};
 let _activeProducts = {};
 /** keyword -> how many catalog titles contain it. Lower is more specific. */
 const KEYWORD_MATCH_COUNT = {};
@@ -36,7 +37,7 @@ const KEYWORD_MATCH_COUNT = {};
 /**
  * Load product CS config from Supabase product_cs_config table.
  * Must be called once at server startup before any exchange operations.
- * Populates PRODUCT_NICKNAMES, PRODUCT_CATEGORIES, PRODUCT_SIZE_OVERRIDES.
+ * Populates PRODUCT_NICKNAMES, PRODUCT_CATEGORIES, PRODUCT_SIZES.
  */
 async function initCsConfig() {
   const supabase = getSupabaseClient();
@@ -50,16 +51,31 @@ async function initCsConfig() {
   // Clear and repopulate (mutate in place to preserve exported references)
   for (const k of Object.keys(PRODUCT_NICKNAMES)) delete PRODUCT_NICKNAMES[k];
   for (const k of Object.keys(PRODUCT_CATEGORIES)) delete PRODUCT_CATEGORIES[k];
-  for (const k of Object.keys(PRODUCT_SIZE_OVERRIDES)) delete PRODUCT_SIZE_OVERRIDES[k];
   for (const k of Object.keys(TITLE_TO_HANDLE)) delete TITLE_TO_HANDLE[k];
+  for (const k of Object.keys(PRODUCT_SIZES)) delete PRODUCT_SIZES[k];
   for (const k of Object.keys(KEYWORD_MATCH_COUNT)) delete KEYWORD_MATCH_COUNT[k];
   for (const k of Object.keys(_activeProducts)) delete _activeProducts[k];
 
-  // Build title → handle map from products table for exact product resolution
-  const { data: products } = await supabase.from('products').select('title, handle');
+  // Build title → handle map from products table for exact product resolution,
+  // and the per-product size range in the same pass.
+  //
+  // The size range is the catalog's, not a copy: kid_sizes/adult_sizes are
+  // Shopify metafields synced by syncProducts.js, and compare_products already
+  // reads them. getSizeList was the one place that didn't, so it fell back to a
+  // generic run and offered sizes products are not made in. Loading them here
+  // keeps getSizeList synchronous — initCsConfig is already the async boundary
+  // and already re-runs on the products webhook, the daily sync and
+  // reload_products, so the range refreshes with the catalog.
+  const { data: products } = await supabase.from('products').select('title, handle, kid_sizes, adult_sizes');
   if (products) {
     for (const p of products) {
-      if (p.title && p.handle) TITLE_TO_HANDLE[p.title.toUpperCase()] = p.handle;
+      if (!p.handle) continue;
+      if (p.title) TITLE_TO_HANDLE[p.title.toUpperCase()] = p.handle;
+      // Canonical order, because adjacency is positional and a metafield array
+      // is not guaranteed to be sorted.
+      const youth = NUMERIC_SIZES.filter(s => (p.kid_sizes || []).map(normalizeSize).includes(s));
+      const adult = LETTER_SIZES.filter(s => (p.adult_sizes || []).map(normalizeSize).includes(s));
+      if (youth.length || adult.length) PRODUCT_SIZES[p.handle] = { youth, adult };
     }
   }
 
@@ -69,7 +85,6 @@ async function initCsConfig() {
       category: row.category,
       keywords: row.keywords,
       deltaWording: row.delta_wording,
-      sizes: row.sizes_override,
       styleSwitch: row.style_switch,
     };
 
@@ -80,13 +95,6 @@ async function initCsConfig() {
       PRODUCT_NICKNAMES[`RUBIES ${kw.toUpperCase()}`] = row.nickname;
       PRODUCT_NICKNAMES[kw.toUpperCase()] = row.nickname;
       PRODUCT_CATEGORIES[kw] = row.category;
-    }
-
-    // Per-product size overrides (only when non-standard)
-    if (row.sizes_override?.length) {
-      for (const kw of row.keywords) {
-        PRODUCT_SIZE_OVERRIDES[kw] = row.sizes_override;
-      }
     }
   }
 
@@ -108,6 +116,35 @@ async function initCsConfig() {
   }
 
   console.error(`[DecisionTree] Loaded ${data.length} products from product_cs_config`);
+}
+
+/**
+ * Product name (exact title, nickname, or customer free text) → catalog handle.
+ *
+ * Same resolution order as getProductNickname: exact title wins, then the most
+ * SPECIFIC matching keyword. Specificity rather than length, for the reason
+ * recorded on KEYWORD_MATCH_COUNT — "no-tuck" is in most titles and must never
+ * beat "ruby".
+ *
+ * Returns null when nothing matches, and callers treat that as "no catalog data"
+ * rather than "no sizes".
+ */
+function resolveHandle(productName) {
+  if (!productName) return null;
+  const upper = String(productName).toUpperCase();
+  if (TITLE_TO_HANDLE[upper]) return TITLE_TO_HANDLE[upper];
+
+  const lower = upper.toLowerCase();
+  const matches = Object.entries(_activeProducts)
+    .filter(([, cfg]) => (cfg.keywords || []).some(kw => lower.includes(kw.toLowerCase())))
+    .map(([handle, cfg]) => {
+      const best = (cfg.keywords || [])
+        .filter(kw => lower.includes(kw.toLowerCase()))
+        .sort((a, b) => (KEYWORD_MATCH_COUNT[a] || 1) - (KEYWORD_MATCH_COUNT[b] || 1) || b.length - a.length)[0];
+      return { handle, count: KEYWORD_MATCH_COUNT[best] || 1, len: best?.length || 0 };
+    })
+    .sort((a, b) => a.count - b.count || b.len - a.len);
+  return matches.length ? matches[0].handle : null;
 }
 
 /**
@@ -367,27 +404,39 @@ async function analyzeOnepieceFit(chartCategory, waistSize, heightInInches, prod
 function getSizeList(size, productName) {
   const s = normalizeSize(size);
 
-  // Check per-product size overrides first (e.g. Naomi: XS–2X only).
+  // The product's OWN range, from the catalog. Single source of truth: these are
+  // the Shopify kid_sizes/adult_sizes metafields synced into Supabase, which is
+  // also what compare_products reads, so the advisor's two answers to "what
+  // sizes does this come in" cannot disagree. The youth and adult runs are held
+  // separately rather than concatenated — joined end to end they make youth 16
+  // the size below adult XS, and a step down from XS walks out of adult sizing.
   //
-  // The override is filtered to the SIZE SYSTEM being asked about, so a product
-  // sold in both youth and adult sizes can carry one combined list. Without the
-  // filter, a combined list makes the two runs adjacent: the size below adult XS
-  // comes back as youth 16, and stepping down from XS walks into youth sizing.
-  // For an adult-only override (the Naomi) the filter is a no-op.
-  if (productName) {
-    const lower = productName.toLowerCase();
-    for (const [keyword, sizes] of Object.entries(PRODUCT_SIZE_OVERRIDES)) {
-      if (!lower.includes(keyword)) continue;
-      const sameSystem = LETTER_SIZES.includes(s)
-        ? sizes.filter(x => LETTER_SIZES.includes(x))
-        : sizes.filter(x => NUMERIC_SIZES.includes(x));
-      return sameSystem.includes(s) ? sameSystem : null;
-    }
+  // Falls through to the generic run when the catalog has nothing for this
+  // product: tests and cold start have no products table, and an accessory has
+  // no size axis. A missing range must degrade to the old behaviour, never to
+  // "no sizes at all".
+  const handle = resolveHandle(productName);
+  const range = handle ? PRODUCT_SIZES[handle] : null;
+  if (range) {
+    const wantsAdult = LETTER_SIZES.includes(s);
+    const own = wantsAdult ? range.adult : range.youth;
+    if (own.length) return own.includes(s) ? own : null;
+    // Empty run on a product that HAS the other one is a fact, not a gap: the
+    // Naomi is adult-only, so there is no youth Naomi to size anyone into.
+    // Falling through here would hand back a generic youth list and let the
+    // advisor offer one. A product with neither run has no PRODUCT_SIZES entry
+    // at all and never reaches this branch.
+    if ((wantsAdult ? range.youth : range.adult).length) return null;
   }
 
   const category = productName ? classifyProduct(productName) : null;
 
-  // Chest pads only have S, M, L
+  // An accessory has no size axis. Without this a pin or a pair of earrings
+  // falls through to a garment run, because its SKU's trailing segment happens
+  // to parse as a size ("S" on the earrings, "3" on the pins).
+  if (category === 'accessory') return null;
+
+  // Chest pads fall back to S, M, L when the catalog has no range for them.
   if (category === 'chest_pads') return CHEST_PAD_SIZES;
 
   if (LETTER_SIZES.includes(s)) {
@@ -515,7 +564,8 @@ module.exports = {
   KID_LABELS,
   // Config-driven products (populated by initCsConfig)
   initCsConfig,
-  PRODUCT_SIZE_OVERRIDES,
+  PRODUCT_SIZES,
+  resolveHandle,
   _activeProducts,
   KEYWORD_MATCH_COUNT,
 };
