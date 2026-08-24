@@ -1750,9 +1750,14 @@ async function prescribeSizingResolution(classifiedItems, intake, context, { ava
           // when a youth numeric crosses into the style's adult lettering.
           const sizeNote = lead.crossesToAdult && lead.size ? ` in size ${lead.size}` : '';
           // Out of stock but close enough to be worth waiting for: say so with
-          // the vague phrase, never a precise date.
+          // the vague phrase, never a precise date. It is an exchange, not a
+          // purchase, so we hold it rather than asking them to order.
+          // NOTE: the wording that reaches customers lives in the advisor prompt
+          // (the leg-cut rule in aiAdvisor.js) -- this path is legacy and runs
+          // only in tests. Kept in sync so a future reader cannot copy the
+          // stale sentence; the real fix is deleting this path (parked).
           const waitNote = lead.inStock === false && lead.restock?.sellable_phrase
-            ? ` It should be back in stock ${lead.restock.sellable_phrase.replace(/,\s*\d{4}$/, '')}.`
+            ? ` It is not in stock in that size right now, but the next shipment should be in ${lead.restock.sellable_phrase.replace(/,\s*\d{4}$/, '')}, and I can send it as soon as it arrives.`
             : '';
 
           // Founder wording: lead with the roomier leg opening, and give "cut
@@ -1762,8 +1767,8 @@ async function prescribeSizingResolution(classifiedItems, intake, context, { ava
           // it reads the same whether they are buying for themselves or someone
           // else.
           const why = (plural) => plural
-            ? 'have roomier leg openings as they are cut higher, so the thighs get more room without sizing up the waist'
-            : 'has a roomier leg opening as it is cut higher, so the thighs get more room without sizing up the waist';
+            ? 'have roomier leg openings as they are cut higher, so there should be more room for the thighs'
+            : 'has a roomier leg opening as it is cut higher, so there should be more room for the thighs';
 
           if (offered.length > 1) {
             // Two styles share the wider cut. Name the everyday pick rather than

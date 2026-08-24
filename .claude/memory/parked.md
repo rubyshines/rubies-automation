@@ -193,10 +193,19 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Advisor rule 7 promises a restock date `compare_products` cannot return
 - Parked: 2026-05-27
-- Last touched: 2026-08-10
+- Last touched: 2026-08-23
 - Type: bug
 - Domains: cs, inventory
 - Priority: medium
+- **Narrowed 2026-08-23 — closed for style-switch targets, still open everywhere else.**
+  `compare_products` now returns a real per-SKU restock (`restockEta`, reading
+  `inbound_shipments`) but ONLY for the tight-legs style-switch styles, and only via the
+  `unavailable` path. The source product and the ordinary same-category alternatives still come
+  back as bare inventory counts with no restock field, so "is my Ruby in M coming back?" is
+  exactly as unanswerable as when this was filed. The plumbing to close it now exists and the
+  authority question is settled (inbound row wins over the `pre_order_date` metafield — see
+  domain_cs.md); what remains is calling `withRestock` on the other two paths and deciding what
+  the reply says when the answer is a restock the customer has not already bought against.
 - Notes: Verified 2026-08-10. Advisor rule 7 tells the model to "use compare_products / check_unfulfilled_order for whether an item is in stock or on pre-order **and its restock date**", and instructs it, when an order holds an out-of-stock or pre-order item, to "look up its restock date and tell them when it ships". Only half of that is true:
   - `check_unfulfilled_order` **does** carry a date — `analyzeUnfulfilledOrder` returns `preOrderTarget` per pre_order issue ([fulfillmentChecker.js:165-169](../../customer-service/lib/tracking/fulfillmentChecker.js#L165)), the checkout-time attribute the customer already saw, and the prompt's pre-order scenario block uses it correctly.
   - `compare_products` **cannot**. It returns current counts only — `inventory_in_size`, `total_inventory`, `available_colors` — with no restock or incoming field anywhere in its response ([aiAdvisor.js:553-652](../../customer-service/lib/aiAdvisor.js#L553)). So a rule the prompt states as fact is unbackable by the named tool, which under the anti-hallucination rules leaves the advisor either inventing a date or stalling with "I'll check" — and the stall is exactly the shipping-category failure the accuracy work is trying to kill.
@@ -315,10 +324,20 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Remove legacy walkTree/prescribe functions from sizingEngine.js
 - Parked: 2026-04-15
-- Last touched: 2026-04-15
+- Last touched: 2026-08-23
 - Type: refactor
 - Domains: cs
-- Notes: Requires migrating test assertions.
+- Priority: medium
+- Notes: Requires migrating test assertions — ~1300 lines of `sizingEngine.test.js` reach real
+  utility functions through the legacy `prescribe*` API, so deleting the path means rewriting
+  that coverage, not dropping it. That is why it was left out of the 2026-08-23 arriving-soon
+  change rather than bundled with a customer-facing copy edit.
+- **This is now costing something, not just sitting there.** PR #143 put the only "coming in
+  stock soon" sentence into `prescribeSizingResolution` (`waitNote`), which runs in tests only —
+  so the fix shipped and no customer ever saw it, and the live gap stayed open until 2026-08-23.
+  The customer-facing wording lives in the advisor prompt; the dead copy in `sizingEngine` is
+  kept in sync by hand so a future reader cannot pick up the stale sentence. That hand-sync is
+  the recurring tax this deletion buys out.
 
 ## Clean up Nitro fulfillment cost data
 - Parked: 2026-04-15

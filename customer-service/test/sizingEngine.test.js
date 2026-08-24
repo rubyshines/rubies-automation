@@ -1260,8 +1260,14 @@ describe('prescribeSizingResolution', () => {
       const text = result.items[0].response_text;
       assert.match(text, /roomier leg opening/, 'leads with the roomier opening');
       assert.match(text, /cut higher/, 'gives the reason for it');
-    assert.match(text, /without sizing up the waist/, 'ties it to their waist fitting');
-    assert.ok(text.indexOf('roomier leg opening') < text.indexOf('cut higher'), 'opening first, reason second');
+      // Founder wording 2026-08-23, replacing "so the thighs get more room
+      // without sizing up the waist". The waist tie is not lost: the reply
+      // states it as its own sentence ("since the waist fits fine, sizing down
+      // would only make the thighs tighter"), and DO NOT SIZE DOWN is a separate
+      // instruction, so the template does not have to carry it.
+      assert.match(text, /so there should be more room for the thighs/, 'states the outcome for them');
+      assert.ok(!/without sizing up the waist/.test(text), 'the superseded clause is gone');
+      assert.ok(text.indexOf('roomier leg opening') < text.indexOf('cut higher'), 'opening first, reason second');
       assert.ok(!/higher leg cut/i.test(text), 'never leads with the trade phrasing, which reads as more revealing');
     });
 
