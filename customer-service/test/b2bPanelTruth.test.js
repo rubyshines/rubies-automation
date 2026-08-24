@@ -136,6 +136,101 @@ test('reconciler flags Auto-Submitted messages as auto_reply', () => {
   assert.equal(rows[0].message_type, 'auto_reply');
 });
 
+// ── calendar notifications ──────────────────────────────────────────────────
+// A calendar RSVP is sent FROM the contact's own address, so it correlates onto
+// the company like any reply — and it lands AFTER our outbound invite, which is
+// precisely the Tier-1 condition. Booking a call therefore put the company back
+// in the queue at the moment the scheduling was finished.
+const { detectCalendarNotice, classifyInbound, NON_REPLY_INBOUND_TYPES } = require('../../b2b-outreach/lib/replyCorrelation');
+
+test('detectCalendarNotice catches RSVPs, invitations, updates and cancellations', () => {
+  // The Lumenus case: over Pub/Sub the RSVP arrives with an EMPTY body, so the
+  // subject has to carry the decision on its own.
+  assert.ok(detectCalendarNotice({ subject: 'Accepted: RUBIES x Lumenus Foundation', body: '' }));
+  assert.ok(detectCalendarNotice({
+    subject: 'Accepted: RUBIES x BAGLY @ Mon Mar 18, 2024 11am - 11:30am (EDT) (jamie@rubyshines.com)',
+    body: 'Liz Flynn has accepted this invitation.\r\n\r\nRUBIES x BAGLY',
+  }));
+  assert.ok(detectCalendarNotice({ subject: 'Declined: RUBIES x Someone', body: '' }));
+  assert.ok(detectCalendarNotice({
+    subject: 'Invitation: TGV x Rubies @ Wed Apr 8, 2026 7pm - 7:30pm (EDT)',
+    body: 'TGV x Rubies\nWednesday Apr 8, 2026\nView all guest info\nhttps://calendar.google.com/calendar/event?action=VIEW&eid=abc',
+  }));
+  assert.ok(detectCalendarNotice({
+    subject: 'Updated invitation: TGV x Rubies @ Wed Apr 29, 2026 7pm - 7:30pm (EDT)',
+    body: 'This event has been updated\r\nChanged: time',
+  }));
+});
+
+test('detectCalendarNotice leaves real mail alone', () => {
+  // "Invitation:" is a subject an org could plausibly write by hand, which is
+  // why that half has to be corroborated by the body.
+  assert.ok(!detectCalendarNotice({
+    subject: 'Invitation: Pride Picnic 2026',
+    body: 'We would love to have RUBIES at our picnic in June! Can we send you the details?',
+  }));
+  // Gmail threads on subject, so a human answering inside the notification's
+  // own thread arrives as "Re: Accepted: …" and must stay a reply.
+  assert.ok(!detectCalendarNotice({
+    subject: 'Re: Accepted: RUBIES x Lumenus Foundation',
+    body: 'Actually, could we push this to Thursday?',
+  }));
+  assert.ok(!detectCalendarNotice({ subject: 'Re: Hi from RUBIES', body: 'Yes please, send the samples.' }));
+  assert.ok(!detectCalendarNotice({ subject: 'Accepted', body: 'We accepted your terms.' }));
+});
+
+test('classifyInbound prefers calendar_notice over auto_reply', () => {
+  // Some Google notices already tripped the auto-reply heuristic; the more
+  // specific label is the honest one and both are non-reply types anyway.
+  assert.equal(classifyInbound({ subject: 'Accepted: RUBIES x Org', body: 'Do not reply to this email.' }), 'calendar_notice');
+  assert.equal(classifyInbound({ subject: 'Re: Hi', body: 'I am out of office until Monday.' }), 'auto_reply');
+  assert.equal(classifyInbound({ subject: 'Re: Hi', body: 'Sounds great, Tuesday works.' }), null);
+  assert.ok(NON_REPLY_INBOUND_TYPES.has('calendar_notice'));
+  assert.ok(NON_REPLY_INBOUND_TYPES.has('auto_reply'));
+});
+
+test('reconciler flags a calendar RSVP as calendar_notice', () => {
+  const rows = partitionThreadMessages([gmailMsg('m10', ['INBOX'], {
+    payload: {
+      mimeType: 'text/plain',
+      body: { data: Buffer.from('Laura Champion has accepted this invitation.').toString('base64url') },
+      headers: [
+        { name: 'From', value: 'lchampion@lumenus.ca' }, { name: 'To', value: 'jamie@rubyshines.com' },
+        { name: 'Subject', value: 'Accepted: RUBIES x Lumenus Foundation' },
+      ],
+    },
+  })], new Set());
+  assert.equal(rows[0].message_type, 'calendar_notice');
+});
+
+test('reconciler uses the text/calendar part when the subject alone is ambiguous', () => {
+  const rows = partitionThreadMessages([gmailMsg('m11', ['INBOX'], {
+    payload: {
+      mimeType: 'multipart/alternative',
+      headers: [
+        { name: 'From', value: 'ez@tgv.org.au' }, { name: 'To', value: 'jamie@rubyshines.com' },
+        { name: 'Subject', value: 'Invitation: TGV x Rubies @ Wed Apr 8, 2026' },
+      ],
+      parts: [
+        { mimeType: 'text/plain', body: { data: Buffer.from('TGV x Rubies\nWednesday Apr 8').toString('base64url') } },
+        { mimeType: 'text/calendar; method=REQUEST', body: { data: Buffer.from('BEGIN:VCALENDAR').toString('base64url') } },
+      ],
+    },
+  })], new Set());
+  assert.equal(rows[0].message_type, 'calendar_notice');
+});
+
+test('an imported thread ending in a calendar notice does not open', () => {
+  const now = new Date('2026-07-24T12:00:00Z');
+  // Recent inbound, so without the message_type this would import as 'open'.
+  assert.equal(discoveredThreadStatus(
+    { direction: 'inbound', message_type: 'calendar_notice', sent_at: '2026-07-23T12:00:00Z' }, now), 'closed');
+  assert.equal(discoveredThreadStatus(
+    { direction: 'inbound', message_type: 'auto_reply', sent_at: '2026-07-23T12:00:00Z' }, now), 'closed');
+  assert.equal(discoveredThreadStatus(
+    { direction: 'inbound', message_type: null, sent_at: '2026-07-23T12:00:00Z' }, now), 'open');
+});
+
 // ── adaptive cadence ────────────────────────────────────────────────────────
 const { evaluateDue, nextActionDateAfterSend } = require('../../b2b-outreach/lib/cadence');
 

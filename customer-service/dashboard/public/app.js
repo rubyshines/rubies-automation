@@ -6005,6 +6005,27 @@ function outreachRelationshipHtml(entry) {
     ? `<div class="outreach-cadence-note">${entry.tier ? 'Due per cadence: ' : ''}${esc(entry.reason)}</div>`
     : '';
 
+  // "We are done here" — the everyday end of a correspondence, which had no
+  // company-level home.
+  //
+  // A Tier-1 row is in the queue because ONE conversation holds an unanswered
+  // reply, so closing that thread is what clears it — but the only control for
+  // that sat under each thread in the transcript below, repeated per thread,
+  // where picking the right one out of eight is a puzzle you have to solve
+  // before you can act, and closing the wrong one silently does nothing. The
+  // queue entry already knows which thread it means (it has to: the reply draft
+  // threads on it), so the panel can just say so.
+  //
+  // Deliberately NOT one of the deferrals beside it. Pause and snooze also stop
+  // the cadence, and "nothing more to say until the next check-in" is the exact
+  // case where the next check-in must still happen.
+  const waitingThreadId = entry?.tier === 1 ? entry.thread_id : null;
+  const waitingThread = waitingThreadId ? threads.find(t => t.id === waitingThreadId) : null;
+  const conclude = waitingThreadId ? `<div class="outreach-conclude">
+    <button class="btn btn-secondary" onclick="concludeOutreachConversation(${waitingThreadId}, this)">Nothing to reply to</button>
+    <span class="outreach-conclude-note">Closes ${waitingThread ? `&ldquo;${esc(waitingThread.subject || 'this conversation')}&rdquo;` : 'the conversation that put this in the queue'} so it stops showing as waiting on us. The cadence still comes back on schedule.</span>
+  </div>` : '';
+
   // Deferral state, and the control to change it. Stated plainly rather than as a
   // quiet badge: a company the engine will never chase is exactly the thing you
   // must not mistake for one it is quietly handling.
@@ -6067,6 +6088,7 @@ function outreachRelationshipHtml(entry) {
     ${bodyHtml}
     ${nextStep}
     ${cadence}
+    ${conclude}
     ${deferral}
   </div>`;
 }
@@ -6296,7 +6318,8 @@ function outreachHistoryHtml() {
       const out = m.direction === 'outbound';
       const who = out ? 'Jamie' : esc(m.from_email || 'them');
       const badge = (m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '')
-        + (m.message_type === 'auto_reply' ? ' <span class="badge badge-muted">auto-reply</span>' : '');
+        + (m.message_type === 'auto_reply' ? ' <span class="badge badge-muted">auto-reply</span>' : '')
+        + (m.message_type === 'calendar_notice' ? ' <span class="badge badge-muted">calendar notice</span>' : '');
       const body = m.body_text || '(no text captured)';
       const isLast = i === list.length - 1;
       if (isLast) {
@@ -6376,16 +6399,38 @@ async function reopenOutreachThread(threadId, btn) {
   if (entry) renderOutreachDetail(entry, outreachDraft);
 }
 
-async function closeOutreachThread(threadId) {
+async function closeOutreachThread(threadId, { refreshList = false, okMessage = 'Thread closed' } = {}) {
   const companyId = outreachSelectedId;
   try {
     await api(`/api/b2b/threads/${threadId}/status`, { method: 'POST', body: { status: 'closed' } });
   } catch (err) {
     showToast(`Could not close: ${err.message}`, 'error');
-    return;
+    return false;
   }
-  showToast('Thread closed', 'success');
-  if (outreachSelectedId === companyId) await loadOutreachContext(companyId, false);
+  showToast(okMessage, 'success');
+  if (outreachSelectedId === companyId) {
+    await loadOutreachContext(companyId, false);
+    // Closing the thread that held the Tier-1 signal takes the company out of
+    // the queue, so the list has to be redrawn or the row sits there unchanged
+    // and the click reads as having done nothing.
+    if (refreshList) loadOutreachSidebar();
+  }
+  return true;
+}
+
+/**
+ * "Nothing to reply to" — the company-level close, from the relationship block.
+ *
+ * Closing a thread is a couple of seconds of round trip and a redraw, so the
+ * button says what it is doing rather than sitting there looking unclicked.
+ */
+async function concludeOutreachConversation(threadId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
+  const ok = await closeOutreachThread(threadId, {
+    refreshList: true,
+    okMessage: 'Conversation closed — out of the queue until the cadence comes round',
+  });
+  if (btn && !ok) { btn.disabled = false; btn.textContent = 'Nothing to reply to'; }
 }
 
 /**

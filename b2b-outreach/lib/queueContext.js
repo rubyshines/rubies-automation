@@ -6,6 +6,7 @@
  */
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 const { deliveryMode } = require('./sendB2bEmail');
+const { NON_REPLY_INBOUND_TYPES } = require('./replyCorrelation');
 const { upcomingMeetingsByCompany } = require('./scheduleMeeting');
 
 /** "https://www.foo.org/x" → "foo.org". Pure. */
@@ -144,8 +145,9 @@ async function buildContexts(sb, companies) {
     if (!ctx) continue;
     if (m.direction === 'inbound') {
       if (closedThreadIds.has(m.thread_id)) continue;
-      // Auto-responders are history, not a human waiting on us.
-      if (m.message_type === 'auto_reply') continue;
+      // Auto-responders and calendar notifications are history, not a human
+      // waiting on us.
+      if (NON_REPLY_INBOUND_TYPES.has(m.message_type)) continue;
       const checkinAt = lastCheckinAt.get(m.company_id);
       if (checkinAt && new Date(m.sent_at) > new Date(checkinAt) && !ctx.postSamplesReplyAt) {
         ctx.postSamplesReplyAt = m.sent_at;

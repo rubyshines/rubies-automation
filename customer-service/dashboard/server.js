@@ -4247,9 +4247,17 @@ async function handleRequest(req, res) {
       return;
     }
 
+    // Read BEFORE writing the status line. With the order reversed, a request
+    // for a path that resolves inside STATIC_DIR but cannot be read (a
+    // directory, a deleted asset) threw after the 200 was already on the wire,
+    // and the catch's writeHead(404) then threw ERR_HTTP_HEADERS_SENT out of
+    // the request handler — which has no listener, so one bad static request
+    // took the whole dashboard down. Hit while loading the panel locally.
+    const content = fs.readFileSync(fullPath);
     res.writeHead(200);
-    res.end(fs.readFileSync(fullPath));
+    res.end(content);
   } catch {
+    if (res.headersSent) { res.end(); return; }
     res.writeHead(404);
     res.end('Not found');
   }

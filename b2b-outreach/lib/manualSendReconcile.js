@@ -25,6 +25,7 @@
  * Cooldown: per-thread in-memory (default 15 min) so queue loads stay cheap.
  */
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
+const { NON_REPLY_INBOUND_TYPES } = require('./replyCorrelation');
 
 const COOLDOWN_MS = 15 * 60 * 1000;
 const lastReconciled = new Map(); // gmail_thread_id -> epoch ms
@@ -44,6 +45,13 @@ function extractPlainText(payload) {
     if (found) return found;
   }
   return null;
+}
+
+/** Does this message carry a calendar part? The protocol-level tell. */
+function hasCalendarPart(payload) {
+  if (!payload) return false;
+  if (/^text\/calendar\b/i.test(payload.mimeType || '')) return true;
+  return (payload.parts || []).some(hasCalendarPart);
 }
 
 function header(msg, name) {
@@ -84,7 +92,7 @@ function messageInvolves(m, companyEmails) {
 }
 
 function partitionThreadMessages(gmailMessages, knownIds, companyEmails = null) {
-  const { detectAutoReply } = require('./replyCorrelation');
+  const { detectAutoReply, detectCalendarNotice } = require('./replyCorrelation');
   const rows = [];
   for (const m of gmailMessages || []) {
     const labels = m.labelIds || [];
@@ -93,6 +101,8 @@ function partitionThreadMessages(gmailMessages, knownIds, companyEmails = null) 
     // Another correspondent's message that Gmail merged in on a shared subject.
     if (!messageInvolves(m, companyEmails)) continue;
     const outbound = labels.includes('SENT');
+    const subject = header(m, 'Subject');
+    const body = extractPlainText(m.payload) || m.snippet || null;
     // Auto-responders: protocol headers first (Auto-Submitted / X-Autoreply /
     // Precedence), content fallback second. Labeled, kept in history, never
     // a Tier-1 signal.
@@ -101,16 +111,25 @@ function partitionThreadMessages(gmailMessages, knownIds, companyEmails = null) 
       (autoSubmitted && autoSubmitted !== 'no')
       || !!header(m, 'X-Autoreply') || !!header(m, 'X-Autorespond')
       || /^auto[_-]?repl/i.test(header(m, 'Precedence') || '')
-      || detectAutoReply({ subject: header(m, 'Subject'), body: extractPlainText(m.payload) || m.snippet })
+      || detectAutoReply({ subject, body })
+    );
+    // Calendar notifications, same treatment for the same reason: they come
+    // from the contact's own address and read as a reply to everything above.
+    // Here (unlike the Pub/Sub path) the MIME structure is available, so the
+    // subject only has to agree with a text/calendar part rather than carry the
+    // decision alone.
+    const isCalendar = !outbound && (
+      (hasCalendarPart(m.payload) && /^\s*(accepted|declined|tentative|invitation|updated invitation|new event|updated event|cancell?ed event|canceled event):\s+\S/i.test(subject || ''))
+      || detectCalendarNotice({ subject, body })
     );
     rows.push({
       direction: outbound ? 'outbound' : 'inbound',
-      message_type: isAuto ? 'auto_reply' : null,
+      message_type: isCalendar ? 'calendar_notice' : isAuto ? 'auto_reply' : null,
       gmail_message_id: m.id,
       gmail_thread_id: m.threadId,
       from_email: addressesIn(header(m, 'From'))[0] || null,
       to_email: addressesIn(header(m, 'To')).join(', ') || null,
-      body_text: extractPlainText(m.payload) || m.snippet || null,
+      body_text: body,
       sent_at: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : null,
       source: outbound ? 'manual_send' : 'gmail_backfill',
     });
@@ -224,10 +243,16 @@ const discoveryCooldown = new Map(); // company_id -> epoch ms
  * whose last message is outbound, or is older than `staleDays`, imports as
  * 'closed' (visible in history, invisible to Tier 1). Only a recent inbound
  * with no reply imports 'open' — that one genuinely IS waiting on us.
+ *
+ * An auto-responder or a calendar notification is not a person waiting, so it
+ * closes the thread on the same reasoning as an outbound. Without this an
+ * imported thread whose newest message is an RSVP opens, which is the whole
+ * defect one layer up.
  */
 function discoveredThreadStatus(lastMsg, now = new Date(), staleDays = 30) {
   if (!lastMsg) return 'closed';
   if (lastMsg.direction === 'outbound') return 'closed';
+  if (NON_REPLY_INBOUND_TYPES.has(lastMsg.message_type)) return 'closed';
   const age = now - new Date(lastMsg.sent_at);
   return age > staleDays * 86400000 ? 'closed' : 'open';
 }

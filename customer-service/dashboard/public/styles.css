@@ -5760,6 +5760,20 @@ main { height: calc(100vh - 56px); }
   gap: 8px;
   margin-top: 12px;
 }
+/* "Nothing to reply to" — reads as a normal action, not a warning state: this
+   is the ordinary end of a correspondence, unlike the deferrals below it. */
+.outreach-conclude {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.outreach-conclude-note {
+  flex: 1 1 220px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
 .outreach-history-note {
   font-weight: 400;
   font-size: 11px;
