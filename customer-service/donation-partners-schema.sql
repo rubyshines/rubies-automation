@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS donation_partners (
   latitude      double precision,
   longitude     double precision,
   active        boolean NOT NULL DEFAULT true,
+  -- Why routing stopped. Set together; both cleared on resume. See
+  -- lib/donationPartnerPause.js. Separate axis from the b2b outreach pause —
+  -- this stops donations, that one stops email.
+  paused_at     timestamptz,
+  paused_reason text,
   donations_routed integer NOT NULL DEFAULT 0,  -- lifetime counter (impact reporting; routing uses donation_routings)
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()

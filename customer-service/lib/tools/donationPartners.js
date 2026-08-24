@@ -9,7 +9,7 @@
  *   donation_partner_list                 — list partners (filter by country / active)
  *   donation_partner_create               — insert a partner; auto-geocodes + auto-extracts logo when fields missing
  *   donation_partner_update               — patch fields on an existing partner
- *   donation_partner_delete               — soft delete (active=false). hard=true to remove.
+ *   donation_partner_delete               — pause (active=false + reason). hard=true to remove.
  *   donation_partner_publish              — write rubies-ecom-v4/assets/donation-partners.json
  *   donation_partner_list_pending_survey  — list orgs in the survey sheet not yet in DB
  *   donation_partner_create_from_survey   — ingest one survey row by org name (or sheet_row)
@@ -23,6 +23,7 @@ const { generateShortDescription } = require('../donationDescriptionShort');
 const fs = require('fs');
 const { readSurveyRows, findSurveyRowByName, ensureRubiesReturnsPrefix } = require('../donationPartnerSurvey');
 const { parseSizeAcceptance, formatSizeAcceptance } = require('../sizeAcceptance');
+const { computePause, formatPauseState } = require('../donationPartnerPause');
 const { rehostImageOnShopify, rehostImageFromFile, isShopifyCdnUrl } = require('../shopifyFileUpload');
 
 function looksLikeLocalPath(s) {
@@ -38,7 +39,7 @@ function expandHome(p) {
   return p;
 }
 
-const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, description_short, accepts_smaller_sizes, accepts_larger_sizes, logo_url, website_url, latitude, longitude, active, donations_routed, updated_at';
+const SELECT_COLS = 'id, name, country_code, region, city, address, mailing_address, description, description_short, accepts_smaller_sizes, accepts_larger_sizes, logo_url, website_url, latitude, longitude, active, paused_at, paused_reason, donations_routed, updated_at';
 
 /**
  * Normalize a website URL down to its bare apex-ish domain so we can compare
@@ -57,7 +58,8 @@ function normalizeDomain(url) {
 }
 
 function fmtPartner(p) {
-  return `**${p.name}** (#${p.id}) ${p.active ? '' : '[inactive]'} — ${p.city || '?'}, ${p.country_code}
+  const pause = formatPauseState(p);
+  return `**${p.name}** (#${p.id}) ${pause ? `[${pause}]` : ''} — ${p.city || '?'}, ${p.country_code}
   lat/lng: ${p.latitude ?? '—'}, ${p.longitude ?? '—'}
   sizes: ${formatSizeAcceptance(p) || '— none (unroutable)'}
   donations_routed: ${p.donations_routed || 0}
@@ -312,6 +314,18 @@ async function handleUpdate(params) {
   const allowed = ['name', 'country_code', 'region', 'city', 'address', 'mailing_address',
     'description', 'description_short', 'accepts_smaller_sizes', 'accepts_larger_sizes',
     'logo_url', 'website_url', 'latitude', 'longitude', 'active'];
+  // Flipping `active` is a pause or a resume, never a bare boolean write — the
+  // reason has to be captured at the moment of the decision or it is captured
+  // never. Routed through the same pure function a panel would call.
+  if (params.active !== undefined) {
+    try {
+      Object.assign(params, computePause(params.active ? 'resume' : 'pause', { reason: params.paused_reason }));
+    } catch (e) {
+      return { content: [{ type: 'text', text: `${e.message}\n\nPass paused_reason with the update.` }], isError: true };
+    }
+    allowed.push('paused_at', 'paused_reason');
+  }
+
   const patch = { updated_at: new Date().toISOString() };
   for (const k of allowed) {
     if (params[k] !== undefined) patch[k] = params[k];
@@ -363,11 +377,22 @@ async function handleUpdate(params) {
 // delete (soft by default)
 // ---------------------------------------------------------------------------
 
-async function handleDelete({ id, name, hard }) {
+async function handleDelete({ id, name, hard, reason }) {
   if (!id && !name) {
     return { content: [{ type: 'text', text: 'Pass either id or name to identify the partner' }], isError: true };
   }
   const supabase = getSupabaseClient();
+
+  // Soft delete IS a pause — same state, same question six months later — so it
+  // carries the same mandatory reason rather than offering a way around it.
+  let pausePatch = null;
+  if (!hard) {
+    try {
+      pausePatch = computePause('pause', { reason });
+    } catch (e) {
+      return { content: [{ type: 'text', text: `${e.message}\n\nPass reason (or use hard: true to remove the row outright).` }], isError: true };
+    }
+  }
 
   if (hard) {
     let q = supabase.from('donation_partners').delete();
@@ -377,13 +402,13 @@ async function handleDelete({ id, name, hard }) {
     return { content: [{ type: 'text', text: `Hard-deleted partner ${id || name}.\n\nRun donation_partner_publish to push to the website.` }] };
   }
 
-  let q = supabase.from('donation_partners').update({ active: false, updated_at: new Date().toISOString() });
+  let q = supabase.from('donation_partners').update({ ...pausePatch, updated_at: new Date().toISOString() });
   if (id) q = q.eq('id', id); else q = q.eq('name', name);
   const { data, error } = await q.select(SELECT_COLS);
   if (error) return { content: [{ type: 'text', text: `Error: ${error.message}` }], isError: true };
   if (!data || data.length === 0) return { content: [{ type: 'text', text: 'No row matched.' }], isError: true };
 
-  return { content: [{ type: 'text', text: `Soft-deleted (active=false) ${data.length} partner(s):\n\n${data.map(fmtPartner).join('\n\n')}\n\nRun donation_partner_publish to push to the website.` }] };
+  return { content: [{ type: 'text', text: `Paused ${data.length} partner(s):\n\n${data.map(fmtPartner).join('\n\n')}\n\nRun donation_partner_publish to push to the website.` }] };
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +652,8 @@ const partnerFieldsSchema = {
   website_url: { type: 'string', description: 'Org\'s external website (used as the source for auto logo extraction).' },
   latitude: { type: 'number', description: 'Latitude. Auto-derived from mailing_address via Google if omitted.' },
   longitude: { type: 'number', description: 'Longitude. Auto-derived from mailing_address via Google if omitted.' },
-  active: { type: 'boolean', description: 'Whether the partner is currently accepting donations' },
+  active: { type: 'boolean', description: 'Whether the partner is currently accepting donations. Setting false pauses them and REQUIRES paused_reason; setting true resumes them and clears the pause.' },
+  paused_reason: { type: 'string', description: 'Why the partner was paused. Required when setting active=false. Cleared automatically on resume.' },
 };
 
 module.exports = [
@@ -670,13 +696,14 @@ module.exports = [
   },
   {
     name: 'donation_partner_delete',
-    description: 'Soft-delete (active=false) a donation partner. Pass hard=true to actually remove the row (rare — soft delete preserves historical donations_routed counts).',
+    description: 'Pause a donation partner — stops return routing to them and drops them from the website on the next publish. Requires a reason, which is stored on the row so "why did we stop sending here?" is answerable later. Resume with donation_partner_update({ active: true }). Pass hard=true to actually remove the row (rare — pausing preserves historical donations_routed counts). NOTE this stops DONATIONS only; outreach is a separate axis handled by b2b_triage.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Partner id' },
         name: { type: 'string', description: 'Partner name (alternative to id)' },
-        hard: { type: 'boolean', description: 'If true, actually DELETE the row instead of setting active=false. Default false.' },
+        reason: { type: 'string', description: 'Why this org is being paused, in enough detail to act on later (e.g. "Asked to stop 2026-08-20: oversupplied, stocked for years"). Required unless hard=true.' },
+        hard: { type: 'boolean', description: 'If true, actually DELETE the row instead of pausing. Default false.' },
       },
     },
     handler: handleDelete,
