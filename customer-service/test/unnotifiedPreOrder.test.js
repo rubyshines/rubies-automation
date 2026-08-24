@@ -127,13 +127,19 @@ stubModule(require.resolve('../lib/customerOutreach'), {
 
 stubModule(path.resolve(__dirname, '../../reports/lib/warehanceClient.js'), {
   fetchOrderByNumber: async () => null,
+  fetchUnfulfilledOrders: async () => new Map(),
+  fetchSkuStockMany: async () => new Map(),
 });
 
 const {
   pickAlternativesViaCompare,
   findEquivalentSwap,
   composeBody,
+  classifyOrder,
+  filterToNotReadyToShip,
+  reclassifyWithAllocation,
 } = require('../../reports/lib/unnotifiedPreOrder');
+const { buildAllocationIndex } = require('../../reports/lib/orderAllocation');
 
 // ---------------------------------------------------------------------------
 // findEquivalentSwap
@@ -353,5 +359,108 @@ describe('composeBody with autoSwaps', () => {
     const body = composeBody({ orderNumber: '32563', classification, alternatives: ['the Mia in Pink, size S'], daysSinceOrder: 1 });
     assert.match(body, /Here's what I can do/);
     assert.match(body, /Swap for the Mia in Pink, size S/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Allocation gate — the whole point of the detection step
+// ---------------------------------------------------------------------------
+//
+// Order #33009 (2026-08-24), the live false positive this replaced. Three paid
+// items: a disclosed pre-order bra with no stock anywhere, an in-stock bra, and
+// an AJ that Shopify shows at zero but the warehouse has RESERVED for this
+// order. Shopify's view alone makes the AJ a leak and the order a Case C. The
+// warehouse's view says nobody is waiting on the AJ at all, so there is no
+// leak, so there is no email.
+
+describe('reclassifyWithAllocation — #33009', () => {
+  const LINE_ITEMS = [
+    { sku: 'SPB-BLK-M', quantity: 1, unit_price: 42, custom_attributes: [{ key: 'Pre-order', value: 'Target availability end of August, 2026.' }] },
+    { sku: 'SB-BLK-M', quantity: 1, unit_price: 46, custom_attributes: null },
+    { sku: 'AJ-BLK-M', quantity: 1, unit_price: 32, custom_attributes: null },
+  ];
+  const SHOPIFY_STATE = new Map([
+    ['SPB-BLK-M', { inventory_quantity: 0, pre_order_date: '2026-08-31' }],
+    ['SB-BLK-M', { inventory_quantity: 166 }],
+    ['AJ-BLK-M', { inventory_quantity: 0, pre_order_date: '2026-08-31' }],
+  ]);
+  const whOrder = (num, date, items) => ({
+    order_number: `#${num}`,
+    order_date: `${date}T00:00:00Z`,
+    order_items: items.map(([sku, qty]) => ({ sku, quantity: qty, quantity_shipped: 0 })),
+  });
+  const OPEN_BOOK = [
+    whOrder(32310, '2026-07-10', [['AJ-BLK-M', 2]]),
+    whOrder(32809, '2026-08-01', [['AJ-BLK-M', 2]]),
+    whOrder(32951, '2026-08-08', [['AJ-BLK-M', 5]]),
+    whOrder(33009, '2026-08-11', [['AJ-BLK-M', 1], ['SPB-BLK-M', 1]]),
+    whOrder(33295, '2026-08-24', [['AJ-BLK-M', 6]]),
+  ];
+  const WH_STOCK = new Map([
+    ['AJ-BLK-M', { on_hand: 19, allocated: 10, available: 0, backordered: 1 }],
+    ['SPB-BLK-M', { on_hand: 0, allocated: 0, available: 0, backordered: 14 }],
+  ]);
+
+  it('Shopify alone flags the AJ as a leak and the order as Case C', () => {
+    const c = classifyOrder(LINE_ITEMS, SHOPIFY_STATE);
+    assert.equal(c.case, 'C');
+    assert.deepEqual(c.leaks.map(l => l.sku), ['AJ-BLK-M']);
+    assert.deepEqual(c.oosOther.map(l => l.sku), ['SPB-BLK-M']);
+  });
+
+  it('the warehouse says the AJ is reserved, so there is no leak and no email', () => {
+    const index = buildAllocationIndex(OPEN_BOOK, WH_STOCK);
+    const c = classifyOrder(LINE_ITEMS, SHOPIFY_STATE);
+    assert.equal(reclassifyWithAllocation(c, { orderNumber: '33009', allocationIndex: index }), null);
+  });
+
+  it('still drafts when the leak is genuinely unreserved', () => {
+    // Same order, but the AJ queue is now long enough that #33009 misses out.
+    const starved = buildAllocationIndex(
+      [whOrder(32000, '2026-07-01', [['AJ-BLK-M', 19]]), ...OPEN_BOOK],
+      WH_STOCK,
+    );
+    const c = classifyOrder(LINE_ITEMS, SHOPIFY_STATE);
+    const out = reclassifyWithAllocation(c, { orderNumber: '33009', allocationIndex: starved });
+    assert.equal(out.case, 'C');
+    assert.deepEqual(out.leaks.map(l => l.sku), ['AJ-BLK-M']);
+  });
+
+  it('keeps the Shopify verdict when allocation has nothing to say', () => {
+    const c = classifyOrder(LINE_ITEMS, SHOPIFY_STATE);
+    const out = reclassifyWithAllocation(c, { orderNumber: '33009', allocationIndex: new Map() });
+    assert.equal(out.case, 'C');
+    assert.deepEqual(out.leaks.map(l => l.sku), ['AJ-BLK-M']);
+  });
+});
+
+describe('filterToNotReadyToShip', () => {
+  const candidate = num => ({ order: { order_number: num }, classification: {} });
+  const notReady = (types = {}) => ({
+    ready_to_ship: false,
+    cancelled: false,
+    not_ready_to_ship_types: { has_unallocated_products: true, ...types },
+  });
+
+  it('keeps an order with unallocated products', () => {
+    const kept = filterToNotReadyToShip([candidate(1)], new Map([['1', notReady()]]));
+    assert.equal(kept.length, 1);
+  });
+
+  // An order held for address verification reports ready_to_ship false with
+  // every unit reserved. There is no stock news to send that customer.
+  it('drops a fully allocated order that is held for a non-stock reason', () => {
+    const wh = notReady({ has_unallocated_products: false, address_hold: true });
+    assert.deepEqual(filterToNotReadyToShip([candidate(1)], new Map([['1', wh]])), []);
+  });
+
+  it('drops cancelled and already-fulfilled orders', () => {
+    assert.deepEqual(filterToNotReadyToShip([candidate(1)], new Map([['1', notReady({ order_cancelled: true })]])), []);
+    assert.deepEqual(filterToNotReadyToShip([candidate(1)], new Map([['1', notReady({ order_is_already_fulfilled: true })]])), []);
+    assert.deepEqual(filterToNotReadyToShip([candidate(1)], new Map([['1', { ...notReady(), cancelled: true }]])), []);
+  });
+
+  it('drops orders Warehance has never heard of', () => {
+    assert.deepEqual(filterToNotReadyToShip([candidate(1)], new Map()), []);
   });
 });

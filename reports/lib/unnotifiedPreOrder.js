@@ -53,7 +53,7 @@ const {
   olderThanMinutes,
   UNALLOCATED_SHORTAGE_MINUTES,
 } = require('../../shared/businessDays');
-const { fetchOrderByNumber, fetchSkuStockMany } = require('./warehanceClient');
+const { fetchAllocationIndex, isLineAllocated, orderFullyAllocated } = require('./orderAllocation');
 const { initCsConfig, getProductNickname } = require('../../customer-service/lib/sizingEngine');
 const { executeToolCall } = require('../../customer-service/lib/aiAdvisor');
 const { formatPreOrderDate } = require('../../customer-service/lib/preOrderAttrs');
@@ -200,6 +200,13 @@ function classifyOrder(lineItems, variantStateBySku) {
 // order sync only pulls open orders, so a missed fulfillment webhook never
 // self-heals), which means a shipped order can still look unfulfilled upstream
 // of here — Warehance is the arbiter, and it says so in not_ready_to_ship_types.
+//
+// `ready_to_ship === false` alone is NOT evidence that anything is out of
+// stock: an order held for address verification, fraud review or an unmapped
+// shipping method reports exactly the same false with every unit reserved on
+// the shelf. `has_unallocated_products` is the warehouse stating which of those
+// it is, so an order that is fully allocated is dropped here regardless of why
+// it isn't shipping — there is no stock news to send that customer.
 function filterToNotReadyToShip(candidates, warehanceOrders) {
   return candidates.filter(c => {
     const orderNum = String(c.order.order_number).replace('#', '');
@@ -209,48 +216,53 @@ function filterToNotReadyToShip(candidates, warehanceOrders) {
     if (whOrder.cancelled) return false;
     const types = whOrder.not_ready_to_ship_types || {};
     if (types.order_cancelled || types.order_is_already_fulfilled) return false;
+    if (orderFullyAllocated(whOrder) === true) return false;
     return true;
   });
 }
 
-// Re-verify every Shopify-flagged item against physical warehouse stock.
-// Shopify "available" is net of allocations, so an item whose unit(s) are
-// already allocated to THIS order reads 0 on the website while sitting at the
-// warehouse ready to ship. The ready_to_ship gate above is order-level and
-// can't tell WHICH item blocks the order — a mixed order (one allocated item +
-// one genuine backorder) passes the gate and the allocated item wears the
-// blame. Warehouse-covered items reclassify as in-stock and the A/B/C case is
-// recomputed; an order whose every leak turns out to be allocated returns null
-// (no outreach). SKUs with no warehouse data keep their Shopify verdict.
+// Re-verify every Shopify-flagged item against what the warehouse has actually
+// reserved FOR THIS ORDER. Shopify "available" is net of allocations, so an
+// item whose unit is already allocated to this order reads 0 on the website
+// while sitting on the shelf with the order's name on it. The ready_to_ship
+// gate above is order-level and can't tell WHICH item blocks the order — a
+// mixed order (one allocated item + one genuine backorder) passes the gate and
+// the allocated item wears the blame. Reserved items reclassify as in-stock and
+// the A/B/C case is recomputed; an order whose every leak turns out to be
+// reserved returns null (no outreach).
 //
-// The test is `available < qty AND backordered > 0`, and it needs both halves:
+// The test is per-line allocation, from orderAllocation.js. It replaced
+// `available < qty AND backordered > 0`, which was built out of two SKU-GLOBAL
+// counters and so could not answer a per-order question at all:
 //
-//   available alone is wrong — a unit allocated to THIS order makes available
-//   read 0, which is the #32601 case (Sky on hand and allocated to the order,
-//   other items genuinely backordered). Blaming Sky there emails the customer
-//   about an item that was about to ship.
+//   `available` reads 0 precisely BECAUSE the units are allocated, possibly to
+//   this very order. It cannot separate "reserved for you" from "we don't have
+//   it" — that was already known, which is why the second half existed.
 //
-//   on_hand alone (the previous test) is wrong the other way — it can't see
-//   that the unit on the shelf is spoken for by a DIFFERENT order, which is
-//   the #32715 case (on_hand 1, allocated 1, available 0, backordered 1). That
-//   silently dropped 6 of 111 open orders when measured 2026-07-29.
+//   `backordered` was supposed to be that separator, on the reasoning that an
+//   item allocated to this order is never backordered. True per line item;
+//   false for the counter, which is one number per SKU that ANY single short
+//   order anywhere sets above zero. So the guard evaporated the moment one
+//   other customer was short, and every other order holding that SKU — fully
+//   reserved, about to ship — read as genuinely out of stock.
 //
-// backordered separates them: Warehance only records backordered demand it
-// cannot meet, so an item already allocated to this order is never backordered.
-// Measured against Warehance's own ready_to_ship verdict across all 111
-// non-held open orders, this test agrees on every one.
-function reclassifyWithWarehouseStock(classification, stockBySku) {
-  const genuinelyOOS = (li) => {
-    const wh = stockBySku.get(li.sku);
-    if (!wh) return true; // no warehouse data — trust the Shopify signal
-    const qty = Number(li.quantity ?? 1) || 1;
-    return (wh.available ?? 0) < qty && (wh.backordered ?? 0) > 0;
-  };
+// Live case that surfaced it (#33009, 2026-08-24): AJ-BLK-M at on_hand 19,
+// allocated 19, available 0, backordered 1. Nineteen units of open demand
+// across 7 orders, all covered, this order sitting at unit 10 of 19. Both
+// halves of the old test passed and the customer was drafted an email about an
+// item that was reserved for them. The order's real blocker was a different
+// line, the one item they HAD been told was a pre-order.
+function reclassifyWithAllocation(classification, { orderNumber, allocationIndex }) {
+  // Unknown (null) means the reconstruction has nothing to say about this line:
+  // no stock record, or the order missing from the open book. Keep the Shopify
+  // verdict there rather than inventing one — the old code's instinct to trust
+  // Shopify on missing data was right, it was the present-data path that lied.
+  const stillWaiting = (li) => isLineAllocated(allocationIndex, orderNumber, li.sku) !== true;
   const leaks = [];
   const inStockOther = [...classification.inStockOther];
   const oosOther = [];
-  for (const li of classification.leaks) (genuinelyOOS(li) ? leaks : inStockOther).push(li);
-  for (const li of classification.oosOther) (genuinelyOOS(li) ? oosOther : inStockOther).push(li);
+  for (const li of classification.leaks) (stillWaiting(li) ? leaks : inStockOther).push(li);
+  for (const li of classification.oosOther) (stillWaiting(li) ? oosOther : inStockOther).push(li);
   if (!leaks.length) return null;
   const caseLabel = oosOther.length > 0 ? 'C' : inStockOther.length > 0 ? 'B' : 'A';
   return { case: caseLabel, leaks, inStockOther, oosOther };
@@ -596,40 +608,41 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
 
   if (!fresh.length) return [];
 
-  // Look up each candidate in Warehance by order number and keep only those
-  // where ready_to_ship === false. Per-order fetch (not a bulk paginated pull)
-  // so we only call the API for the small set of candidates that made it here.
-  // Individual fetch failures are logged and treated as "skip" (unknown state).
-  const orderEntries = await Promise.all(fresh.map(async c => {
-    const orderNum = String(c.order.order_number).replace('#', '');
-    try {
-      const whOrder = await fetchOrderByNumber(orderNum);
-      return [orderNum, whOrder];
-    } catch (e) {
-      console.warn(`[unnotifiedPreOrder] Warehance lookup failed for #${orderNum}: ${e.message}`);
-      return [orderNum, null];
-    }
-  }));
-  const warehanceOrders = new Map(orderEntries);
-  const notReady = filterToNotReadyToShip(fresh, warehanceOrders);
-
-  if (!notReady.length) return [];
-
-  // Per-item warehouse verification (see reclassifyWithWarehouseStock). If the
-  // stock lookup fails, skip outreach this run rather than risk false
-  // positives — same posture as the per-order lookup above.
-  let stockBySku;
+  // One live read of the warehouse covering both questions: the per-order
+  // snapshots (is this order ready to ship, is anything on it unallocated) and
+  // the open demand queue that per-line allocation is reconstructed from. It
+  // has to be one read — an order counted in the demand queue but missing from
+  // the snapshots, or vice versa, produces a verdict about a state that never
+  // existed. If it fails, skip outreach this run rather than risk emailing
+  // customers about items that are reserved for them.
+  let allocationIndex;
+  let warehanceOrders;
   try {
-    const flaggedSkus = notReady.flatMap(c =>
+    const flaggedSkus = fresh.flatMap(c =>
       [...c.classification.leaks, ...c.classification.oosOther].map(li => li.sku));
-    stockBySku = await fetchSkuStockMany(flaggedSkus);
+    const alloc = await fetchAllocationIndex(flaggedSkus);
+    allocationIndex = alloc.index;
+    warehanceOrders = alloc.orders;
+    // Only the over-counting direction matters here. Finding MORE demand than
+    // the warehouse sees pushes orders down the queue and can report a reserved
+    // item as still waiting, which is the bug this replaced; finding less can
+    // only ever suppress an email. Warning on both would fire routinely and
+    // teach everyone to ignore it.
+    for (const m of alloc.mismatches.filter(m => m.shortfall < 0)) {
+      console.warn(`[unnotifiedPreOrder] allocation queue over-counts ${m.sku}: found ${m.demand} units of open demand, Warehance accounts for ${m.reportedAllocated + m.reportedBackordered}. Verdicts for this SKU may report reserved items as waiting.`);
+    }
   } catch (e) {
-    console.warn(`[unnotifiedPreOrder] Warehance stock lookup failed — skipping outreach this run: ${e.message}`);
+    console.warn(`[unnotifiedPreOrder] Warehance allocation lookup failed — skipping outreach this run: ${e.message}`);
     return [];
   }
+
+  const notReady = filterToNotReadyToShip(fresh, warehanceOrders);
+  if (!notReady.length) return [];
+
   const verified = [];
   for (const c of notReady) {
-    const reclassified = reclassifyWithWarehouseStock(c.classification, stockBySku);
+    const orderNumber = String(c.order.order_number).replace('#', '');
+    const reclassified = reclassifyWithAllocation(c.classification, { orderNumber, allocationIndex });
     if (reclassified) verified.push({ ...c, classification: reclassified });
   }
 
@@ -824,7 +837,7 @@ module.exports = {
   loadRecentUnfulfilledOrders,
   classifyOrder,
   filterToNotReadyToShip,
-  reclassifyWithWarehouseStock,
+  reclassifyWithAllocation,
   isPreOrderByTags,
   olderThanMinutes,
   MIN_ORDER_AGE_MINUTES,
