@@ -117,6 +117,17 @@ function renderMessage(m) {
   const who = m.direction === 'outbound' ? 'Us (Jamie)' : (m.from_email || 'Them');
   const date = String(m.sent_at || '').slice(0, 10);
   const body = (m.body_text || '').replace(/\s+/g, ' ').slice(0, BODY_CHARS);
+  // A send that bounced never reached them, so the recap must not narrate it as
+  // a check-in they received and ignored — that reads as "we chased, they went
+  // quiet" when the truth is "they never heard from us". Stated on the line
+  // itself rather than as a rule at the top of the prompt, because the model
+  // needs it exactly where it is deciding what the message means.
+  if (m.direction === 'outbound' && m.undelivered_at) {
+    return `[${date}] ${who} (NEVER DELIVERED — bounced, they did not receive this): ${body}`;
+  }
+  if (m.direction === 'inbound' && m.message_type === 'bounce') {
+    return `[${date}] Mail server: our message to them bounced.`;
+  }
   return `[${date}] ${who}: ${body}`;
 }
 
@@ -191,7 +202,7 @@ async function loadCompany(sb, companyId) {
 
   const messages = await fetchAllPaginated(() => sb
     .from('b2b_messages')
-    .select('direction, message_type, from_email, body_text, sent_at')
+    .select('direction, message_type, from_email, body_text, sent_at, undelivered_at')
     .eq('company_id', companyId)
     .order('sent_at', { ascending: true }));
 
