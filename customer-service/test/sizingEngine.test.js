@@ -1,8 +1,16 @@
 /**
- * Unit tests for decisionTree.js — pure deterministic exchange logic.
+ * Unit tests for sizingEngine.js — the deterministic sizing utilities the
+ * advisor's tools sit on: nicknames, product classification, size lists and
+ * adjacency, grading deltas, chart category, one-piece fit.
  *
- * Run: node --test customer-service/test/decisionTree.test.js
- *   or: npm run test:decision-tree
+ * The legacy decision tree that used to live in the same file (walkTree and the
+ * prescribe*() phases) was deleted 2026-08-24 along with the ~1,500 lines of
+ * tests that drove it. Those tests asserted reply wording no customer has seen
+ * since the advisor took over; what they incidentally covered of the LIVE
+ * utilities was moved onto those utilities directly rather than deleted with the
+ * caller. See the analyzeOnepieceFit block at the bottom.
+ *
+ * Run: node --test customer-service/test/sizingEngine.test.js
  */
 
 const { describe, it, before } = require('node:test');
@@ -12,7 +20,7 @@ const assert = require('node:assert/strict');
 // Mock Supabase BEFORE requiring decisionTree (it destructures at import time)
 // ---------------------------------------------------------------------------
 const supabaseModulePath = require.resolve('../../shared/supabaseClient');
-const mockSupabaseData = { partners: [], sizeMatches: [], routings: [], routingsError: false };
+const mockSupabaseData = { partners: [], sizeMatches: [], routings: [], routingsError: false, heightRows: [] };
 
 // Mock product CS config data (normally loaded from product_cs_config table)
 const mockCsConfig = [
@@ -45,6 +53,21 @@ require.cache[supabaseModulePath] = {
   exports: {
     getSupabaseClient: () => ({
       from: (table) => {
+        if (table === 'size_charts') {
+          // lookupHeightVariant chains three .eq() calls and awaits the builder,
+          // so this is a thenable that filters on whatever was asked for.
+          const filters = {};
+          const chain = {
+            select: () => chain,
+            eq: (col, val) => { filters[col] = val; return chain; },
+            then: (resolve) => resolve({
+              data: (mockSupabaseData.heightRows || [])
+                .filter(r => !filters.size_label || r.size_label === filters.size_label),
+              error: null,
+            }),
+          };
+          return chain;
+        }
         if (table === 'donation_routings') {
           // Chain used by fetchRecentPartnerLoads via fetchAllPaginated:
           // select().gte().not().order().range()
@@ -83,14 +106,6 @@ require.cache[supabaseModulePath] = {
 
 // Now require sizingEngine — it will get the mocked supabaseClient
 const {
-  walkTree,
-  checkSafetyOverride,
-  prescribeCustomerIdentification,
-  prescribeOrderIdentification,
-  prescribeActionClassification,
-  prescribeSizingResolution,
-  prescribeOrderCreation,
-  prescribeDonationRouting,
   getProductNickname,
   pluralizeNickname,
   PRODUCT_NICKNAMES,
@@ -102,15 +117,19 @@ const {
   getGradingDelta,
   formatDelta,
   getCumulativeDelta,
-  getIntermediateSizes,
   parseSizeVariant,
   getSizeModifier,
   getChartCategory,
-  prescribePrePurchaseSizing,
+  analyzeOnepieceFit,
+  getSeparatesText,
   initCsConfig,
   PRODUCT_SIZE_OVERRIDES,
   _activeProducts,
 } = require('../lib/sizingEngine');
+// Donation routing moved out of sizingEngine long ago and was only re-exported
+// from it. With the legacy tree gone the re-export went too, so these tests now
+// name the module that actually owns the logic.
+const { prescribeDonationRouting } = require('../lib/donationRouting');
 
 // ---------------------------------------------------------------------------
 // Initialize CS config from mock Supabase before tests run
@@ -179,17 +198,6 @@ function makeItem(overrides = {}) {
 }
 
 // Classified item (output of phase 3, input to phase 4)
-function makeClassified(overrides = {}) {
-  return {
-    product: 'THE AJ NO-TUCK SHAPING UNDERWEAR',
-    size: '10',
-    action: 'sizing_exchange',
-    direction: 'up',
-    audit: 'test',
-    ...overrides,
-  };
-}
-
 // ============================================================================
 // Size Utilities
 // ============================================================================
@@ -695,781 +703,6 @@ describe('pluralizeNickname', () => {
 });
 
 // ============================================================================
-// Phase 0: Safety Override
-// ============================================================================
-
-describe('checkSafetyOverride', () => {
-  it('returns override:true for "not safe"', () => {
-    const result = checkSafetyOverride({ _latestMessage: 'I am not safe at home' });
-    assert.equal(result.override, true);
-    assert.equal(result.action, 'immediate_refund');
-  });
-
-  it('returns override:true for "abusive"', () => {
-    const result = checkSafetyOverride({ _latestMessage: 'my partner is abusive' });
-    assert.equal(result.override, true);
-  });
-
-  it('returns override:true for "hiding"', () => {
-    const result = checkSafetyOverride({ _latestMessage: 'I need to hide them, hiding them from' });
-    assert.equal(result.override, true);
-  });
-
-  it('returns override:false for normal message', () => {
-    const result = checkSafetyOverride({ _latestMessage: 'The size is too big' });
-    assert.equal(result.override, false);
-  });
-
-  it('returns override:false for empty/missing message', () => {
-    assert.equal(checkSafetyOverride({}).override, false);
-    assert.equal(checkSafetyOverride({ _latestMessage: '' }).override, false);
-  });
-});
-
-// ============================================================================
-// Phase 1: Customer Identification
-// ============================================================================
-
-describe('prescribeCustomerIdentification', () => {
-  it('adds name_warning when no name given', () => {
-    const result = prescribeCustomerIdentification(makeIntake(), makeContext());
-    assert.ok(result.actions.some(a => a.type === 'name_warning'));
-    assert.ok(result.audit.some(a => a.includes('dead name risk')));
-  });
-
-  it('records explicit name without warning', () => {
-    const result = prescribeCustomerIdentification(makeIntake({ name: 'Alex' }), makeContext());
-    assert.ok(!result.actions.some(a => a.type === 'name_warning'));
-    assert.ok(result.audit.some(a => a.includes('Alex')));
-  });
-
-  it('defaults pronouns to they/them in audit', () => {
-    const result = prescribeCustomerIdentification(makeIntake(), makeContext());
-    assert.ok(result.audit.some(a => a.includes('they/them')));
-  });
-
-  it('adds third_party_adapt for third-party buying', () => {
-    const intake = makeIntake({ buying_for: 'third_party', third_party_label: 'partner' });
-    const result = prescribeCustomerIdentification(intake, makeContext());
-    assert.ok(result.actions.some(a => a.type === 'third_party_adapt'));
-  });
-
-  it('adds kid_sensitivity for daughter', () => {
-    const intake = makeIntake({ buying_for: 'third_party', third_party_label: 'daughter' });
-    const result = prescribeCustomerIdentification(intake, makeContext());
-    assert.ok(result.actions.some(a => a.type === 'kid_sensitivity'));
-  });
-
-  it('flags email mismatch', () => {
-    const intake = makeIntake({
-      email_mismatch: true,
-      conversation_email: 'a@test.com',
-      order_email: 'b@test.com',
-    });
-    const result = prescribeCustomerIdentification(intake, makeContext());
-    assert.ok(result.actions.some(a => a.type === 'email_mismatch'));
-  });
-
-  it('asks for info when customer not found', () => {
-    const result = prescribeCustomerIdentification(makeIntake(), makeContext({ customer: null }));
-    assert.ok(result.actions.some(a => a.type === 'ask_info'));
-    assert.deepEqual(result.still_needed, ['customer_identification']);
-  });
-});
-
-// ============================================================================
-// Phase 2: Order Identification
-// ============================================================================
-
-describe('prescribeOrderIdentification', () => {
-  it('auto-selects when only one fulfilled order', () => {
-    const order = makeOrder();
-    const result = prescribeOrderIdentification(
-      makeIntake(),
-      makeContext({ fulfilled: [order] }),
-    );
-    assert.ok(!result.actions.some(a => a.type === 'ask_order'));
-    assert.ok(result.audit.some(a => a.includes('Auto-selected')));
-  });
-
-  it('asks which order when multiple fulfilled', () => {
-    const result = prescribeOrderIdentification(
-      makeIntake(),
-      makeContext({ fulfilled: [makeOrder(), makeOrder({ name: '#1002' })] }),
-    );
-    assert.ok(result.actions.some(a => a.type === 'ask_order'));
-    assert.ok(result.still_needed.includes('order_number'));
-  });
-
-  it('asks for order number when none fulfilled', () => {
-    const result = prescribeOrderIdentification(makeIntake(), makeContext({ fulfilled: [] }));
-    assert.ok(result.actions.some(a => a.type === 'ask_order'));
-  });
-
-  it('records order in audit when order_number given', () => {
-    const result = prescribeOrderIdentification(
-      makeIntake({ order_number: '1001' }),
-      makeContext(),
-    );
-    assert.ok(result.audit.some(a => a.includes('#1001')));
-  });
-
-  it('order age: within 60 days = OK', () => {
-    const order = makeOrder({ createdAt: new Date(Date.now() - 30 * 86400000).toISOString() });
-    const result = prescribeOrderIdentification(
-      makeIntake({ order_number: '1001' }),
-      makeContext({ targetOrder: order }),
-    );
-    assert.ok(!result.actions.some(a => a.type === 'gentle_exception'));
-    assert.ok(result.audit.some(a => a.includes('within 60-day')));
-  });
-
-  it('order age: 61-180 days = gentle exception', () => {
-    const order = makeOrder({ createdAt: new Date(Date.now() - 90 * 86400000).toISOString() });
-    const result = prescribeOrderIdentification(
-      makeIntake({ order_number: '1001' }),
-      makeContext({ targetOrder: order }),
-    );
-    assert.ok(result.actions.some(a => a.type === 'gentle_exception'));
-  });
-
-  it('order age: 181-365 days = case by case', () => {
-    const order = makeOrder({ createdAt: new Date(Date.now() - 200 * 86400000).toISOString() });
-    const result = prescribeOrderIdentification(
-      makeIntake({ order_number: '1001' }),
-      makeContext({ targetOrder: order }),
-    );
-    assert.ok(result.actions.some(a => a.type === 'case_by_case'));
-  });
-
-  it('order age: >365 days = escalate', () => {
-    const order = makeOrder({ createdAt: new Date(Date.now() - 400 * 86400000).toISOString() });
-    const result = prescribeOrderIdentification(
-      makeIntake({ order_number: '1001' }),
-      makeContext({ targetOrder: order }),
-    );
-    assert.ok(result.actions.some(a => a.type === 'escalate'));
-  });
-
-  it('asks for items when none specified', () => {
-    const result = prescribeOrderIdentification(makeIntake({ items: [] }), makeContext());
-    assert.ok(result.actions.some(a => a.type === 'ask_items'));
-    assert.ok(result.still_needed.includes('items'));
-  });
-});
-
-// ============================================================================
-// Phase 3: Action Classification
-// ============================================================================
-
-describe('prescribeActionClassification', () => {
-  it('classifies defect', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'defect' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'defect');
-  });
-
-  it('classifies already confirmed exchange', () => {
-    const intake = makeIntake({ items: [makeItem({ resolved_size: 'M' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'exchange_confirmed');
-  });
-
-  it('classifies close_fit_tight as sizing_exchange up', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'close_fit_tight' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'sizing_exchange');
-    assert.equal(result.items[0].direction, 'up');
-  });
-
-  it('classifies close_fit_loose as sizing_exchange down', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'close_fit_loose' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'sizing_exchange');
-    assert.equal(result.items[0].direction, 'down');
-  });
-
-  it('classifies too_tight as sizing_exchange up', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'too_tight' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'sizing_exchange');
-    assert.equal(result.items[0].direction, 'up');
-  });
-
-  it('classifies too_loose as sizing_exchange down', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'too_loose' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'sizing_exchange');
-    assert.equal(result.items[0].direction, 'down');
-  });
-
-  it('classifies way_off as measurement needed', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'way_off' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'sizing_exchange_measurement');
-  });
-
-  it('classifies expectation_mismatch for bottoms', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'expectation_mismatch' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'expectation_mismatch');
-  });
-
-  it('classifies expectation_mismatch for tops as fit_direction_unclear', () => {
-    const intake = makeIntake({
-      items: [makeItem({ issue: 'expectation_mismatch', product: 'THE BROOKE SHAPING BRA' })],
-    });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'fit_direction_unclear');
-  });
-
-  it('classifies tight_legs as style_switch', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'tight_legs' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'style_switch');
-  });
-
-  it('classifies refund_request as refund', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'refund_request' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'refund');
-  });
-
-  it('classifies refund from message_type', () => {
-    const intake = makeIntake({ message_type: 'refund', items: [makeItem({ issue: 'none' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'refund');
-  });
-
-  it('classifies doesnt_fit as fit_direction_unclear', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'doesnt_fit' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'fit_direction_unclear');
-  });
-
-  it('classifies product_not_working as probe_needed', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'product_not_working' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'probe_needed');
-  });
-
-  it('classifies unknown issue as needs_clarification', () => {
-    const intake = makeIntake({ items: [makeItem({ issue: 'something_random' })] });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'needs_clarification');
-  });
-});
-
-// ============================================================================
-// Phase 4: Sizing Resolution
-// ============================================================================
-
-describe('prescribeSizingResolution', () => {
-  describe('sizing_exchange: auto-confirm path', () => {
-    it('auto-confirms "a bit tight" one size up', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'close_fit_tight', size: '10' })],
-        _latestMessage: 'it is a bit tight around the waist',
-      });
-      const classified = [makeClassified({ direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'CONFIRMED');
-      // AJ is underwear (even sizes), so next up from 10 is 12
-      assert.equal(intake.items[0].resolved_size, '12');
-    });
-
-    it('auto-confirms "next size" one size up', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'close_fit_tight', size: 'M' })],
-        _latestMessage: 'can I get the next size up',
-      });
-      const classified = [makeClassified({ product: 'THE AJ NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'CONFIRMED');
-      assert.equal(intake.items[0].resolved_size, 'L');
-    });
-  });
-
-  describe('sizing_exchange: options path', () => {
-    it('offers options for "too tight" without "a bit"', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_tight', size: '10' })],
-        _latestMessage: 'the waist is too tight',
-      });
-      const classified = [makeClassified({ direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-      assert.ok(result.items[0].options);
-      assert.ok(result.items[0].options.length >= 1);
-    });
-
-    it('includes fabric delta in inches for North America', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_tight', size: '10' })],
-        _latestMessage: 'too tight',
-      });
-      const classified = [makeClassified({ direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext({ isNorthAmerica: true }));
-      // Options should mention inches (via " character)
-      assert.ok(result.items[0].options[0].formatted.includes('"'));
-    });
-
-    it('includes fabric delta in cm for non-North America', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_tight', size: '10' })],
-        _latestMessage: 'too tight',
-      });
-      const classified = [makeClassified({ direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext({ isNorthAmerica: false }));
-      assert.ok(result.items[0].options[0].formatted.includes('cm'));
-    });
-
-    it('uses bra band wording for bra products', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_tight', size: 'M', product: 'THE BROOKE SHAPING BRA' })],
-        _latestMessage: 'too tight',
-      });
-      const classified = [makeClassified({ product: 'THE BROOKE SHAPING BRA', size: 'M', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].options[0].formatted.includes('bra band'));
-    });
-
-    it('uses torso wording for top products', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_tight', size: 'M', product: 'THE SUNNY QUEENY TANKINI' })],
-        _latestMessage: 'too tight',
-      });
-      const classified = [makeClassified({ product: 'THE SUNNY QUEENY TANKINI', size: 'M', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].options[0].formatted.includes('torso'));
-    });
-  });
-
-  describe('sizing_exchange: desired_size', () => {
-    it('auto-confirms when desired_size delta <= 2 inches', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ size: 'S', desired_size: 'M' })],
-      });
-      const classified = [makeClassified({ size: 'S', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'CONFIRMED');
-      assert.equal(intake.items[0].resolved_size, 'M');
-    });
-
-    it('asks confirmation when desired_size delta > 2 inches', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ size: 'S', desired_size: '1X' })],
-      });
-      const classified = [makeClassified({ size: 'S', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('1X'));
-    });
-  });
-
-  describe('sizing_exchange: boundary crossover', () => {
-    it('youth 16 going up → adult L with confirmation (lower confidence)', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_tight', size: '16' })],
-        _latestMessage: 'too tight',
-      });
-      const classified = [makeClassified({ size: '16', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('adult sizing'));
-    });
-
-    it('youth 16 going up → auto-confirm with "a bit"', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'close_fit_tight', size: '16' })],
-        _latestMessage: 'a bit tight',
-      });
-      const classified = [makeClassified({ size: '16', direction: 'up' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'CONFIRMED');
-      assert.equal(intake.items[0].resolved_size, 'L');
-    });
-
-    it('adult XXS going down → youth 16', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_loose', size: 'XXS' })],
-        _latestMessage: 'too loose',
-      });
-      const classified = [makeClassified({ size: 'XXS', direction: 'down' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('youth sizing'));
-    });
-
-    it('at bottom boundary (size 4 down) → asks for measurement', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'too_loose', size: '4' })],
-        _latestMessage: 'too loose',
-      });
-      const classified = [makeClassified({ size: '4', direction: 'down' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
-      assert.ok(result.items[0].response_text.includes('smallest'));
-    });
-  });
-
-  describe('sizing_exchange_measurement', () => {
-    it('asks for measurement when none provided', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'way_off' })],
-      });
-      const classified = [makeClassified({ action: 'sizing_exchange_measurement', size: '10' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
-      assert.ok(result.items[0].response_text.includes('measurement'));
-    });
-  });
-
-  describe('style_switch', () => {
-    it('recommends Cheeky for swim product', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M' })],
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('Cheeky'));
-    });
-
-    it('recommends Flo for kids product (numeric size)', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '10' })],
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('Flo'));
-    });
-
-    it('recommends Sassy for adult underwear (letter size)', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'M' })],
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('Sassy'));
-    });
-
-    it('recommends Sassy for size 16 (youth/adult boundary)', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '16', product: 'THE FLO SHAPING DANCE UNDERWEAR' })],
-        _latestMessage: 'The Flo size 16 is too tight on the legs.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE FLO SHAPING DANCE UNDERWEAR', size: '16' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('Sassy'), 'Size 16 should recommend Sassy (adult), not Flo');
-      assert.ok(!result.items[0].response_text.includes('Flo'), 'Size 16 should not recommend Flo (youth)');
-    });
-
-    it('offers both the Sassy and the Naomi for adult underwear, Sassy leading', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'M' })],
-        _latestMessage: 'The waist fits fine but the legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      const text = result.items[0].response_text;
-      assert.ok(text.includes('Sassy') && text.includes('Naomi'), 'both wider-cut styles offered');
-      // The Naomi is a gaff. It is offered, but the Sassy is the named all-day
-      // pick and must lead -- we convey the trade-off that way rather than
-      // telling the customer the Naomi is less comfortable.
-      assert.ok(text.indexOf('Sassy') < text.indexOf('Naomi'), 'Sassy must lead');
-      assert.match(text, /Sassy is better for all day wear/);
-      assert.ok(!/compression|less comfortable|sacrific/i.test(text), 'never states the compression trade-off outright');
-      assert.equal(result.items[0].recommendation.product, 'Sassy');
-    });
-
-    it('offers the Naomi when the customer is already on the Sassy', async () => {
-      // Used to dead-end at "already the widest, size up", which contradicts the
-      // rule that a right waist should not be sized up to fix the legs.
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'L', product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR' })],
-        _latestMessage: 'The Sassy is too tight around the legs.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'L' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_STYLE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('Naomi'));
-      assert.ok(!result.items[0].response_text.includes('Sassy'), 'never re-offers the style they already own');
-    });
-
-    it('offers the Sassy when the customer is already on the Naomi', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'M', product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR' })],
-        _latestMessage: 'The Naomi is too tight around the legs.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].response_text.includes('Sassy'));
-      assert.ok(!result.items[0].response_text.includes('Naomi'));
-    });
-
-    it('never offers the adult-only Naomi or Sassy to a youth size', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '10' })],
-        _latestMessage: 'The waist fits fine but the legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      const text = result.items[0].response_text;
-      assert.ok(text.includes('Flo'), 'youth answer is the Flo');
-      assert.ok(!text.includes('Naomi'), 'Naomi is adult-only');
-      assert.ok(!text.includes('Sassy'), 'Sassy is adult-only');
-    });
-
-    it('offers the Cheeky to a youth 10-16 swim size, naming the adult size', async () => {
-      // The Cheeky is sold only in adult letters, but youth 10-16 crosses to
-      // adult XXS-M, so it IS available to them and is the wider-leg answer.
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '10', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM' })],
-        _latestMessage: 'The waist fits fine but the legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '10' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      const text = result.items[0].response_text;
-      assert.ok(text.includes('Cheeky'), 'youth 10 crosses to adult XXS');
-      assert.ok(text.includes('XXS'), 'must name the adult size we would actually send');
-    });
-
-    it('does not offer the Cheeky to a youth size with no adult equivalent', async () => {
-      // Youth 4-9 have no entry in the numeric->letter map, so an adult-sized
-      // style genuinely cannot serve them.
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '6', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM' })],
-        _latestMessage: 'The waist fits fine but the legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '6' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(!result.items[0].response_text.includes('Cheeky'), 'no adult equivalent for youth 6');
-    });
-
-    it('leads with the roomier opening and gives cut-higher as the reason', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'M' })],
-        _latestMessage: 'The waist fits fine but the legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      const text = result.items[0].response_text;
-      assert.match(text, /roomier leg opening/, 'leads with the roomier opening');
-      assert.match(text, /cut higher/, 'gives the reason for it');
-      // Founder wording 2026-08-23, replacing "so the thighs get more room
-      // without sizing up the waist". The waist tie is not lost: the reply
-      // states it as its own sentence ("since the waist fits fine, sizing down
-      // would only make the thighs tighter"), and DO NOT SIZE DOWN is a separate
-      // instruction, so the template does not have to carry it.
-      assert.match(text, /so there should be more room for the thighs/, 'states the outcome for them');
-      assert.ok(!/without sizing up the waist/.test(text), 'the superseded clause is gone');
-      assert.ok(text.indexOf('roomier leg opening') < text.indexOf('cut higher'), 'opening first, reason second');
-      assert.ok(!/higher leg cut/i.test(text), 'never leads with the trade phrasing, which reads as more revealing');
-    });
-
-    it('falls back to sizing up when the category has no other target left', async () => {
-      // Swim has a single target, so a Cheeky owner has nowhere to switch to.
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'M', product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM' })],
-        _latestMessage: 'The Cheeky is too tight around the legs.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-      assert.ok(result.items[0].response_text.includes('Sizing up'));
-    });
-
-    it('customer-facing style-switch copy carries no em dash', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: 'M' })],
-        _latestMessage: 'The legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(!result.items[0].response_text.includes('\u2014'), 'brand guardrail: no em dashes in customer-facing copy');
-    });
-
-    it('asks for waist measurement when waist not mentioned', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '10' })],
-        _latestMessage: 'The leg holes are too tight on her thighs.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].response_text.includes('measurement'), 'Should ask for waist measurement when waist not mentioned');
-    });
-
-    it('skips measurement ask when waist confirmed fine', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'tight_legs', size: '10' })],
-        _latestMessage: 'The waist fits fine but the legs are too tight.',
-      });
-      const classified = [makeClassified({ action: 'style_switch', size: '10' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(!result.items[0].response_text.includes('measurement'), 'Should not ask for measurement when waist confirmed fine');
-    });
-  });
-
-  describe('refund', () => {
-    it('probes what went wrong on initial refund request', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'refund_request' })],
-      });
-      const classified = [makeClassified({ action: 'refund' })];
-      const ctx = makeContext({ targetOrder: makeOrder() });
-      const result = await prescribeSizingResolution(classified, intake, ctx);
-      assert.equal(result.items[0].state, 'AWAITING_CLARIFICATION');
-      assert.ok(result.items[0].response_text.includes('what didn'));
-      assert.ok(intake._returnProbed['THE AJ NO-TUCK SHAPING UNDERWEAR']);
-    });
-
-    it('offers exchange after probing', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'refund_request' })],
-        _returnProbed: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
-      });
-      const classified = [makeClassified({ action: 'refund' })];
-      const ctx = makeContext({ targetOrder: makeOrder() });
-      const result = await prescribeSizingResolution(classified, intake, ctx);
-      assert.equal(result.items[0].state, 'AWAITING_DECISION');
-      assert.ok(result.items[0].response_text.includes('swap'));
-      assert.ok(intake._exchangeOffered['THE AJ NO-TUCK SHAPING UNDERWEAR']);
-    });
-
-    it('confirms refund when exchange already offered', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'refund_request' })],
-        _returnProbed: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
-        _exchangeOffered: { 'THE AJ NO-TUCK SHAPING UNDERWEAR': true },
-      });
-      const classified = [makeClassified({ action: 'refund' })];
-      const ctx = makeContext({ targetOrder: makeOrder() });
-      const result = await prescribeSizingResolution(classified, intake, ctx);
-      assert.equal(result.items[0].state, 'REFUND_CONFIRMED');
-      assert.equal(result.items[0].refund_confirmed, true);
-    });
-  });
-
-  describe('defect', () => {
-    it('routes to human with apology and photo request', async () => {
-      const intake = makeIntake({ items: [makeItem({ issue: 'defect' })] });
-      const classified = [makeClassified({ action: 'defect' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'ESCALATE_TO_HUMAN');
-      assert.equal(result.items[0].route_to_human, true);
-      assert.equal(result.items[0].skip_donation, true);
-      assert.ok(result.items[0].response_text.includes('photo'));
-      assert.ok(result.items[0].response_text.includes('sorry'));
-    });
-  });
-
-  describe('fit_direction_unclear', () => {
-    it('asks about waist for bottom product', async () => {
-      const intake = makeIntake({ items: [makeItem({ issue: 'doesnt_fit' })] });
-      const classified = [makeClassified({ action: 'fit_direction_unclear' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_CLARIFICATION');
-      assert.ok(result.items[0].response_text.includes('waist'));
-    });
-
-    it('asks about top for bra product', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'doesnt_fit', product: 'THE BROOKE SHAPING BRA' })],
-      });
-      const classified = [makeClassified({ action: 'fit_direction_unclear', product: 'THE BROOKE SHAPING BRA' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].response_text.includes('up top'));
-    });
-
-    it('asks onepiece-specific question for Sky', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'doesnt_fit', product: 'THE SKY NO-TUCK SHAPING ONE-PIECE' })],
-      });
-      const classified = [makeClassified({ action: 'fit_direction_unclear', product: 'THE SKY NO-TUCK SHAPING ONE-PIECE' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].response_text.includes('bottom'));
-      assert.ok(result.items[0].response_text.includes('top'));
-    });
-  });
-
-  describe('expectation_mismatch', () => {
-    it('explains shaping vs tucking for bottoms', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ issue: 'expectation_mismatch' })],
-      });
-      const classified = [makeClassified({ action: 'expectation_mismatch' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'AWAITING_DECISION');
-      assert.ok(result.items[0].response_text.includes('shaping'));
-      assert.ok(result.items[0].response_text.includes('tucking'));
-    });
-  });
-
-  describe('third-party adaptation', () => {
-    it('adapts wording for third-party buying', async () => {
-      const intake = makeIntake({
-        buying_for: 'third_party',
-        third_party_label: 'daughter',
-        items: [makeItem({ issue: 'product_not_working' })],
-      });
-      const classified = [makeClassified({ action: 'probe_needed' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.ok(result.items[0].response_text.includes('daughter'));
-    });
-  });
-
-  describe('exchange_confirmed', () => {
-    it('state CONFIRMED with no response needed', async () => {
-      const intake = makeIntake({
-        items: [makeItem({ resolved_size: 'M' })],
-      });
-      const classified = [makeClassified({ action: 'exchange_confirmed' })];
-      const result = await prescribeSizingResolution(classified, intake, makeContext());
-      assert.equal(result.items[0].state, 'CONFIRMED');
-      assert.equal(result.items[0].response_text, null);
-    });
-  });
-});
-
-// ============================================================================
-// Phase 5: Order Creation
-// ============================================================================
-
-describe('prescribeOrderCreation', () => {
-  it('returns null when no items have resolved_size', () => {
-    const intake = makeIntake({ items: [makeItem()] });
-    assert.equal(prescribeOrderCreation(intake), null);
-  });
-
-  it('returns order creation for resolved items', () => {
-    const intake = makeIntake({
-      items: [makeItem({ resolved_size: '12' })],
-    });
-    const result = prescribeOrderCreation(intake);
-    assert.equal(result.phase, 'create_order');
-    assert.equal(result.items.length, 1);
-    assert.equal(result.items[0].from_size, '10');
-    assert.equal(result.items[0].to_size, '12');
-  });
-
-  it('includes only resolved items, skips unresolved', () => {
-    const intake = makeIntake({
-      items: [
-        makeItem({ resolved_size: '12' }),
-        makeItem({ product: 'THE BROOKE SHAPING BRA', size: 'M', resolved_size: null }),
-      ],
-    });
-    const result = prescribeOrderCreation(intake);
-    assert.equal(result.items.length, 1);
-    assert.equal(result.items[0].product, 'THE AJ NO-TUCK SHAPING UNDERWEAR');
-  });
-});
-
-// ============================================================================
 // Phase 6: Donation Routing
 // ============================================================================
 
@@ -1609,514 +842,6 @@ describe('pickWeightedByLoad', () => {
   });
 });
 
-// Phase 7: Positive Feedback — now handled by AI parser (intake._positiveFeedback)
-// No deterministic tests needed — the AI parser sets the flag
-
-// ============================================================================
-// walkTree Integration Tests
-// ============================================================================
-
-describe('walkTree', () => {
-  it('returns safety_override when AI parser detects safety concern', async () => {
-    const intake = makeIntake({ _safety_concern: true });
-    const result = await walkTree(intake, makeContext());
-    assert.equal(result.status, 'safety_override');
-    assert.ok(result.response_parts.length > 0);
-    assert.equal(result.response_parts[0].priority, 0);
-    // Should short-circuit — no other phases
-    assert.ok(!result.phases_completed.includes('identify_customer'));
-  });
-
-  it('does not trigger safety_override when no safety concern', async () => {
-    const intake = makeIntake({ _latestMessage: 'The size is too big' });
-    const result = await walkTree(intake, makeContext({ fulfilled: [makeOrder()] }));
-    assert.notEqual(result.status, 'safety_override');
-    assert.ok(result.phases_completed.includes('safety_check'));
-  });
-
-  it('returns gathering status when no items', async () => {
-    const intake = makeIntake();
-    const ctx = makeContext({
-      fulfilled: [makeOrder()],
-    });
-    const result = await walkTree(intake, ctx);
-    assert.equal(result.status, 'gathering');
-  });
-
-  it('full happy path: a bit tight → auto-confirm → ready', async () => {
-    const intake = makeIntake({
-      name: 'Alex',
-      items: [makeItem({ issue: 'close_fit_tight', size: '10' })],
-      _latestMessage: 'it is a bit tight',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', variantTitle: '10', quantity: 1 }],
-    });
-    const ctx = makeContext({
-      targetOrder: order,
-      fulfilled: [order],
-    });
-
-    // Mock partners for donation routing
-    mockSupabaseData.partners = [];
-
-    const result = await walkTree(intake, ctx);
-    assert.equal(result.status, 'ready');
-    assert.ok(result.phases_completed.includes('safety_check'));
-    assert.ok(result.phases_completed.includes('identify_customer'));
-    // AJ is underwear (even sizes: 4,6,8,10,12,14,16), so next up from 10 is 12
-    assert.equal(intake.items[0].resolved_size, '12');
-  });
-
-  it('"a bit short" in message does not trigger isABit for sizing confidence', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ issue: 'close_fit_tight', size: 'M', product: 'THE SKY NO-TUCK SHAPING ONE-PIECE' })],
-      _latestMessage: 'It\'s too tight around the waist but also a bit short in the torso',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'M Tall', sku: 'SKY2-BLK-MT', quantity: 1 }],
-    });
-    const ctx = makeContext({ targetOrder: order, fulfilled: [order] });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, ctx);
-    // Should NOT auto-confirm — "a bit short" is not "a bit tight"
-    assert.notEqual(result.status, 'ready');
-    const itemAction = result.response_parts.find(p => p.type === 'item_action');
-    assert.ok(itemAction);
-    assert.notEqual(itemAction.state, 'CONFIRMED');
-  });
-
-  it('sorts response_parts by priority', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ issue: 'too_tight', size: '10' })],
-      _latestMessage: 'I love rubies! but it is too tight',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE AJ NO-TUCK SHAPING UNDERWEAR', variantTitle: '10', quantity: 1 }],
-    });
-    const ctx = makeContext({
-      targetOrder: order,
-      fulfilled: [order],
-    });
-    mockSupabaseData.partners = [];
-
-    const result = await walkTree(intake, ctx);
-    // Check that parts are sorted by priority
-    for (let i = 1; i < result.response_parts.length; i++) {
-      assert.ok(
-        result.response_parts[i].priority >= result.response_parts[i - 1].priority,
-        `Part ${i} priority ${result.response_parts[i].priority} should be >= part ${i - 1} priority ${result.response_parts[i - 1].priority}`,
-      );
-    }
-  });
-
-  // ── End-to-end scenario tests ──
-  // These test the full chain: intake → all phases → status + response_parts + still_needed
-
-  it('swim bottom: desired size → presents half-step options, holds for confirmation, includes measurement ask', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
-      _latestMessage: 'too big, can I get a 10',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / 11', quantity: 2, sku: 'RUBY-BLK-11' }],
-    });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    // Should NOT be ready — waiting for size confirmation
-    assert.equal(result.status, 'needs_info');
-    assert.equal(intake.items[0].resolved_size, null);
-    // Should have item_action with options
-    const itemAction = result.response_parts.find(p => p.type === 'item_action');
-    assert.ok(itemAction);
-    assert.equal(itemAction.state, 'AWAITING_SIZE_CONFIRMATION');
-    assert.ok(itemAction.options);
-    assert.ok(itemAction.options.length <= 2);
-    // Options should reference the current size
-    assert.ok(itemAction.options[0].formatted.includes('compared to the 11'));
-    // Should include measurement ask
-    assert.ok(itemAction.text.includes('measurement'));
-  });
-
-  it('underwear: desired size → auto-confirms with measurement note + delta, creates order', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: 'M' }];
-    const intake = makeIntake({
-      name: 'Vera',
-      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
-      measurement: { value: 31, unit: 'inches', body_part: 'waist' },
-      _latestMessage: 'too tight, waist is 31 inches, want a large',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', variantTitle: 'Pink / M', quantity: 1, sku: 'HLA-PNK-M' }],
-    });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    assert.equal(result.status, 'ready');
-    assert.equal(intake.items[0].resolved_size, 'L');
-    // Should have measurement note in response parts
-    const measureNote = result.response_parts.find(p => p.type === 'item_action' && p.text?.includes('sizing chart'));
-    assert.ok(measureNote, 'Should include measurement note');
-    assert.ok(measureNote.text.includes('exceptions'));
-    assert.ok(measureNote.text.includes('compared to the M'));
-    mockSupabaseData.sizeMatches = [];
-  });
-
-  it('swim + underwear mixed order: exchanging underwear does NOT flag swim items', async () => {
-    const intake = makeIntake({
-      name: 'Vera',
-      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight' })],
-      _latestMessage: 'a bit tight',
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', variantTitle: 'Pink / M', quantity: 1, sku: 'HLA-PNK-M' },
-        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-      ],
-    });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    // Should auto-confirm (underwear, "a bit tight")
-    assert.equal(result.status, 'ready');
-    // Should NOT have multi-item flags (swim ≠ underwear body group)
-    const multiFlags = result.response_parts.filter(p => p.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 0);
-  });
-
-  it('swim order with multiple swim products: flags other swim items and holds order', async () => {
-    const intake = makeIntake({
-      name: 'Test',
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight', resolved_size: 'L' })],
-      _latestMessage: 'a bit tight',
-      resolution_sizes: [{ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', from_size: 'M', to_size: 'L' }],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-        { title: 'THE STELLA HIGH WAISTED SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'STL-BLK-M' },
-      ],
-    });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    // Multi-item flag should fire (both swim bottoms)
-    const multiFlags = result.response_parts.filter(p => p.type === 'multi_item_flag');
-    assert.ok(multiFlags.length > 0, 'Should flag Stella');
-    // Should hold order — needs_info, not ready
-    assert.equal(result.status, 'needs_info');
-  });
-
-  it('one-piece return: probes with measurement offer and alternative mention', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'refund_request' })],
-      _latestMessage: 'want to return the one-piece, not comfortable',
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / L', quantity: 1, sku: 'SKY2-BLK-L' },
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / L', quantity: 1, sku: 'RUBY-BLK-L' },
-      ],
-    });
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    assert.equal(result.status, 'needs_info');
-    // Should probe — not offer swap yet
-    const itemAction = result.response_parts.find(p => p.type === 'item_action');
-    assert.equal(itemAction.state, 'AWAITING_CLARIFICATION');
-    assert.ok(itemAction.text.includes('one-piece'));
-    assert.ok(itemAction.text.includes('height'));
-    assert.ok(itemAction.text.includes('alternative'));
-    // Should NOT flag the Ruby (one-piece ≠ swim_bottom body group)
-    const multiFlags = result.response_parts.filter(p => p.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 0);
-  });
-
-  it('one-piece doesnt fit → asks two-part question (waist + top)', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', issue: 'doesnt_fit' })],
-      _latestMessage: 'the one-piece doesnt fit right',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / M', quantity: 1, sku: 'SKY2-BLK-M' }],
-    });
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    assert.equal(result.status, 'needs_info');
-    const itemAction = result.response_parts.find(p => p.type === 'item_action');
-    assert.ok(itemAction.text.includes('waist'));
-    assert.ok(itemAction.text.includes('top'));
-  });
-
-  it('one-piece too_short → asks for height + waist', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_short' })],
-      _latestMessage: 'the one-piece is too short',
-    });
-    const order = makeOrder({
-      lineItems: [{ title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / L', quantity: 1, sku: 'SKY2-BLK-L' }],
-    });
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    assert.equal(result.status, 'needs_info');
-    const itemAction = result.response_parts.find(p => p.type === 'item_action');
-    assert.equal(itemAction.state, 'AWAITING_MEASUREMENT');
-    assert.ok(itemAction.text.includes('height'));
-    assert.ok(itemAction.text.includes('belly'));
-  });
-});
-
-// ============================================================================
-// Config-driven products (Naomi)
-// ============================================================================
-
-describe('Config-driven products', () => {
-  it('Naomi is loaded as active product', () => {
-    const naomi = _activeProducts['the-naomi-gaff-extra-strength-shaping-underwear'];
-    assert.ok(naomi, 'Naomi should be in active products');
-    assert.equal(naomi.nickname, 'Naomi');
-  });
-
-  it('Naomi nickname is registered', () => {
-    assert.equal(getProductNickname('THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), 'Naomi');
-  });
-
-  it('Naomi is classified as underwear_bottom', () => {
-    assert.equal(classifyProduct('THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), 'underwear_bottom');
-  });
-
-  it('classifyProduct matches "gaff" keyword too', () => {
-    assert.equal(classifyProduct('Some gaff product'), 'underwear_bottom');
-  });
-
-  it('Naomi has size override XS–2X', () => {
-    assert.ok(PRODUCT_SIZE_OVERRIDES.naomi, 'Should have naomi override');
-    assert.deepEqual(PRODUCT_SIZE_OVERRIDES.naomi, ['XS', 'S', 'M', 'L', '1X', '2X']);
-  });
-
-  it('getSizeList returns Naomi range for Naomi product', () => {
-    const list = getSizeList('M', 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
-    assert.deepEqual(list, ['XS', 'S', 'M', 'L', '1X', '2X']);
-  });
-
-  it('getSizeList returns null for size outside Naomi range', () => {
-    const list = getSizeList('XXS', 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
-    assert.equal(list, null);
-  });
-
-  it('getAdjacentSizes respects Naomi boundary at 2X going up', () => {
-    const result = getAdjacentSizes('2X', 'up', 2, 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
-    assert.deepEqual(result, []);
-  });
-
-  it('getAdjacentSizes respects Naomi boundary at XS going down', () => {
-    const result = getAdjacentSizes('XS', 'down', 2, 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
-    assert.deepEqual(result, []);
-  });
-
-  it('getAdjacentSizes works within Naomi range', () => {
-    const result = getAdjacentSizes('M', 'up', 2, 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR');
-    assert.deepEqual(result, ['L', '1X']);
-  });
-
-  it('auto-confirms "a bit tight" for Naomi within range', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight' })],
-      _latestMessage: 'it is a bit tight',
-    });
-    const classified = [makeClassified({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.equal(result.items[0].state, 'CONFIRMED');
-    assert.equal(intake.items[0].resolved_size, 'L');
-  });
-
-  it('hits boundary for Naomi at 2X going up', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: '2X', issue: 'too_tight' })],
-      _latestMessage: 'too tight',
-    });
-    const classified = [makeClassified({ product: 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR', size: '2X', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    // At boundary — should request measurement since no sizes available
-    assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
-  });
-
-  it('style switch for adult underwear recommends Sassy', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ issue: 'tight_legs', size: 'M' })],
-    });
-    const classified = [makeClassified({ action: 'style_switch', size: 'M' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('Sassy'));
-  });
-});
-
-// ============================================================================
-// Tier 4b: Swimwear — half-step sizing
-// ============================================================================
-
-describe('Half-step products (swim/onepiece) — desired size', () => {
-  it('swim bottom: always presents options even for adjacent size (11→10)', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
-      _latestMessage: 'too big, can I get a 10',
-    });
-    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', direction: 'down' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.equal(result.items[0].state, 'AWAITING_SIZE_CONFIRMATION');
-    assert.ok(result.items[0].options.length <= 2);
-  });
-
-  it('swim bottom: caps options at 2 max (9→7 shows 8 and 7, not 6)', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SERENA NO-TUCK SHAPING SHORTY SHORT', size: '9', issue: 'too_loose', desired_size: '7' })],
-      _latestMessage: 'too loose, want size 7',
-    });
-    const classified = [makeClassified({ product: 'THE SERENA NO-TUCK SHAPING SHORTY SHORT', size: '9', direction: 'down' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.equal(result.items[0].options.length, 2);
-    assert.equal(result.items[0].options[0].size, '8');
-    assert.equal(result.items[0].options[1].size, '7');
-  });
-
-  it('swim bottom: bridge text when requested size is not first option', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '9', issue: 'too_loose', desired_size: '7' })],
-      _latestMessage: 'too loose, want 7',
-    });
-    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '9', direction: 'down' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('half sizes'));
-    assert.ok(result.items[0].response_text.includes('7'));
-  });
-
-  it('swim bottom: includes measurement ask for uncertain issue (too_loose)', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
-      _latestMessage: 'too big',
-    });
-    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', direction: 'down' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('measurement'));
-  });
-
-  it('swim bottom: skips measurement ask when measurement already provided', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', issue: 'close_fit_loose', desired_size: '10' })],
-      _latestMessage: 'too big, waist is 24 inches',
-      measurement: { value: 24, unit: 'inches', body_part: 'waist' },
-    });
-    const classified = [makeClassified({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: '11', direction: 'down' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(!result.items[0].response_text.includes('send me'));
-  });
-
-  it('underwear: auto-confirms desired size (no half-steps)', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE AJ NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
-    });
-    const classified = [makeClassified({ product: 'THE AJ NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.equal(result.items[0].state, 'CONFIRMED');
-    assert.equal(intake.items[0].resolved_size, 'L');
-  });
-
-  it('underwear: auto-confirm includes delta FYI with reference size', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
-    });
-    const classified = [makeClassified({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('compared to the M'));
-  });
-
-  it('options include "compared to" reference size', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'too_tight', desired_size: 'L' })],
-      _latestMessage: 'too tight want L',
-    });
-    const classified = [makeClassified({ product: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].options[0].formatted.includes('compared to the M'));
-  });
-});
-
-describe('Measurement cross-reference with desired size', () => {
-  it('notes when chart matches current size (exceptions phrasing)', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: 'M' }];
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
-      measurement: { value: 31, unit: 'inches', body_part: 'waist' },
-    });
-    const classified = [makeClassified({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('sizing chart puts you in the M range'));
-    assert.ok(result.items[0].response_text.includes('exceptions'));
-    mockSupabaseData.sizeMatches = [];
-  });
-
-  it('notes when chart agrees with requested size', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: 'L' }];
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight', desired_size: 'L' })],
-      measurement: { value: 33, unit: 'inches', body_part: 'waist' },
-    });
-    const classified = [makeClassified({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('looks like a good fit'));
-    mockSupabaseData.sizeMatches = [];
-  });
-});
-
-// ============================================================================
-// Tier 4c: One-piece — height variant
-// ============================================================================
-
-describe('One-piece height variant (too_short / too_long)', () => {
-  it('classifies too_short as height_variant_check', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_short' })],
-    });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'height_variant_check');
-    assert.equal(result.items[0].heightDirection, 'tall');
-  });
-
-  it('classifies too_long as height_variant_check', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_long' })],
-    });
-    const result = prescribeActionClassification(intake);
-    assert.equal(result.items[0].action, 'height_variant_check');
-    assert.equal(result.items[0].heightDirection, 'regular');
-  });
-
-  it('asks for height + waist when no measurements', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'too_short' })],
-    });
-    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', action: 'height_variant_check', heightDirection: 'tall' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.equal(result.items[0].state, 'AWAITING_MEASUREMENT');
-    assert.ok(result.items[0].response_text.includes('height'));
-    assert.ok(result.items[0].response_text.includes('belly'));
-  });
-
-  it('one-piece "too tight" options include height ask', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', issue: 'too_tight' })],
-      _latestMessage: 'too tight',
-    });
-    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', direction: 'up' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('height'));
-  });
-
-  it('one-piece "way off" measurement ask includes height', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', issue: 'way_off' })],
-    });
-    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'M', action: 'sizing_exchange_measurement' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    assert.ok(result.items[0].response_text.includes('height'));
-  });
-});
-
 describe('parseSizeVariant and getSizeModifier', () => {
   it('parses LT as L + Tall', () => {
     const { base, modifier } = parseSizeVariant('LT');
@@ -2158,152 +883,6 @@ describe('parseSizeVariant and getSizeModifier', () => {
     assert.equal(getSizeModifier('LT'), 'Tall');
     assert.equal(getSizeModifier('L Tall'), 'Tall');
     assert.equal(getSizeModifier('L'), null);
-  });
-});
-
-// ============================================================================
-// Multi-item flags — body groups and order hold
-// ============================================================================
-
-describe('Multi-item flags — body group separation', () => {
-  it('does NOT flag swim bottom when exchanging underwear bottom', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', size: 'M', issue: 'close_fit_tight' })],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR', variantTitle: 'Pink / M', quantity: 1, sku: 'HLA-PNK-M' },
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-      ],
-    });
-    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
-    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 0);
-  });
-
-  it('flags same-category product (swim bottom with swim bottom)', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight' })],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
-      ],
-    });
-    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
-    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 1);
-    assert.ok(multiFlags[0].text.includes('Cheeky'));
-  });
-
-  it('does NOT flag one-piece when exchanging swim bottom', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'L', issue: 'close_fit_tight' })],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / L', quantity: 1, sku: 'RUBY-BLK-L' },
-        { title: 'THE SKY NO-TUCK SHAPING ONE-PIECE', variantTitle: 'Black / L', quantity: 1, sku: 'SKY2-BLK-L' },
-      ],
-    });
-    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
-    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 0);
-  });
-
-  it('suppresses flags when _crossProductComparison is set', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight' })],
-      _crossProductComparison: true,
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
-      ],
-    });
-    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
-    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 0);
-  });
-});
-
-describe('Multi-item flag holds order creation', () => {
-  it('status is needs_info when multi-item flags are pending', async () => {
-    const intake = makeIntake({
-      name: 'Test',
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight', resolved_size: 'L' })],
-      _latestMessage: 'a bit tight',
-      resolution_sizes: [{ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', from_size: 'M', to_size: 'L' }],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
-      ],
-    });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    assert.equal(result.status, 'needs_info');
-  });
-
-  it('status is ready when _multiItemAnswered is set', async () => {
-    const intake = makeIntake({
-      name: 'Test',
-      items: [makeItem({ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M', issue: 'close_fit_tight', resolved_size: 'L' })],
-      _latestMessage: 'a bit tight',
-      _multiItemAnswered: true,
-      resolution_sizes: [{ product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', from_size: 'M', to_size: 'L' }],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'RUBY-BLK-M' },
-        { title: 'THE CHEEKY NO-TUCK SHAPING BIKINI BOTTOM', variantTitle: 'Black / M', quantity: 1, sku: 'CKY-BLK-M' },
-      ],
-    });
-    mockSupabaseData.partners = [];
-    const result = await walkTree(intake, makeContext({ targetOrder: order, fulfilled: [order] }));
-    assert.equal(result.status, 'ready');
-  });
-});
-
-// ============================================================================
-// Refund probe before swap
-// ============================================================================
-
-describe('One-piece return probe', () => {
-  it('probes with measurement offer for one-piece return', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', issue: 'refund_request' })],
-    });
-    const classified = [makeClassified({ product: 'THE SKY NO-TUCK SHAPING ONE-PIECE', size: 'L', action: 'refund' })];
-    const ctx = makeContext({ targetOrder: makeOrder() });
-    const result = await prescribeSizingResolution(classified, intake, ctx);
-    assert.equal(result.items[0].state, 'AWAITING_CLARIFICATION');
-    assert.ok(result.items[0].response_text.includes('one-piece'));
-    assert.ok(result.items[0].response_text.includes('height'));
-    assert.ok(result.items[0].response_text.includes('alternative'));
-  });
-});
-
-// ============================================================================
-// Nickname-based isSameProduct matching
-// ============================================================================
-
-describe('isSameProduct — nickname matching', () => {
-  it('matches intake "Serena Shorty Shorts" to order "THE SERENA NO-TUCK SHAPING SHORTY SHORT"', () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'Serena Shorty Shorts', size: '9', issue: 'close_fit_loose' })],
-    });
-    const order = makeOrder({
-      lineItems: [
-        { title: 'THE SERENA NO-TUCK SHAPING SHORTY SHORT', variantTitle: 'Pink / 9', quantity: 1, sku: 'SHS-PNK-9' },
-      ],
-    });
-    const result = prescribeOrderIdentification(intake, makeContext({ targetOrder: order }));
-    const multiFlags = result.actions.filter(a => a.type === 'multi_item_flag');
-    assert.equal(multiFlags.length, 0, 'Should not flag the same product as multi-item');
   });
 });
 
@@ -2471,121 +1050,41 @@ describe('getChartCategory', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pre-purchase sizing
-// ---------------------------------------------------------------------------
-describe('prescribePrePurchaseSizing', () => {
-  it('asks for measurement when none provided', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
-      buying_for: 'self',
-    });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.equal(result.items[0].state, 'NEEDS_MEASUREMENT');
-    assert.ok(result.items[0].response_text.includes('measurement'));
-    assert.ok(result.still_needed.length > 0);
-  });
-
-  it('asks which product when no items', async () => {
-    const intake = makeIntake({ items: [] });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.equal(result.items[0].state, 'NEEDS_PRODUCT');
-    assert.ok(result.items[0].response_text.includes('Which product'));
-  });
-
-  it('recommends size from measurement (kids underwear)', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: '10' }];
-    const intake = makeIntake({
-      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
-      measurement: { value: 25, unit: 'inches', body_part: 'waist' },
-      buying_for: 'third_party',
-      third_party_label: 'daughter',
-    });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.equal(result.items[0].state, 'SIZE_RECOMMENDATION');
-    assert.equal(result.items[0].recommendedSize, '10');
-    assert.ok(result.items[0].response_text.includes('10'));
-    assert.ok(result.items[0].response_text.includes('AJ'));
-    assert.equal(result.still_needed.length, 0);
-  });
-
-  it('recommends size from measurement (adult underwear)', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: 'L' }];
-    const intake = makeIntake({
-      items: [makeItem({ product: 'Sassy', issue: 'none', size: null })],
-      measurement: { value: 34, unit: 'inches', body_part: 'waist' },
-      buying_for: 'self',
-    });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.equal(result.items[0].state, 'SIZE_RECOMMENDATION');
-    assert.equal(result.items[0].recommendedSize, 'L');
-  });
-
-  it('uses third_party_label in response text', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: '10' }];
-    const intake = makeIntake({
-      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
-      measurement: { value: 25, unit: 'inches', body_part: 'waist' },
-      buying_for: 'third_party',
-      third_party_label: 'daughter',
-    });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.ok(result.items[0].response_text.includes("your daughter's"));
-  });
-
-  it('asks for height for one-piece when only waist provided', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ product: 'Sky One-Piece', issue: 'none', size: null })],
-      measurement: { value: 30, unit: 'inches', body_part: 'waist' },
-      buying_for: 'self',
-    });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.equal(result.items[0].state, 'NEEDS_MEASUREMENT');
-    assert.ok(result.items[0].response_text.includes('height'));
-  });
-
-  it('handles multiple products in one inquiry', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: 'M' }];
-    const intake = makeIntake({
-      items: [
-        makeItem({ product: 'AJ', issue: 'none', size: null }),
-        makeItem({ product: 'Ruby', issue: 'none', size: null }),
-      ],
-      measurement: { value: 34, unit: 'inches', body_part: 'waist' },
-      buying_for: 'self',
-    });
-    const result = await prescribePrePurchaseSizing(intake, { isNorthAmerica: true });
-    assert.equal(result.items.length, 2);
-    assert.equal(result.items[0].state, 'SIZE_RECOMMENDATION');
-    assert.equal(result.items[1].state, 'SIZE_RECOMMENDATION');
-  });
-
-  it('walkTree routes to pre-purchase when context.isPrePurchase', async () => {
-    mockSupabaseData.sizeMatches = [{ size_label: '10' }];
-    const intake = makeIntake({
-      items: [makeItem({ product: 'AJ', issue: 'none', size: null })],
-      measurement: { value: 25, unit: 'inches', body_part: 'waist' },
-      buying_for: 'third_party',
-      third_party_label: 'daughter',
-    });
-    const ctx = makeContext({ isPrePurchase: true });
-    const result = await walkTree(intake, ctx);
-    assert.ok(result.phases_completed.includes('pre_purchase_sizing'));
-    const action = result.response_parts.find(p => p.type === 'item_action');
-    assert.equal(action.state, 'SIZE_RECOMMENDATION');
-    assert.ok(action.text.includes('10'));
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Export contract for the advisor's analyze_onepiece_fit tool — these were
 // missing from module.exports, so the tool threw TypeError when invoked.
 // ---------------------------------------------------------------------------
 
 describe('advisor tool export contract', () => {
-  it('exports analyzeOnepieceFit and getSeparatesText (used by aiAdvisor analyze_onepiece_fit)', () => {
+  // These were missing from the exports once before and the tool threw
+  // TypeError when invoked. Nothing imports them at module load, so only a
+  // customer hitting that branch would have found out.
+  it('exports everything the live callers destructure', () => {
     const se = require('../lib/sizingEngine');
-    assert.equal(typeof se.analyzeOnepieceFit, 'function');
-    assert.equal(typeof se.getSeparatesText, 'function');
+    // aiAdvisor: analyze_onepiece_fit + the sizing tools + prompt assembly.
+    for (const name of [
+      'analyzeOnepieceFit', 'getSeparatesText', 'getChartCategory',
+      'normalizeSize', 'getSizeList', 'getAdjacentSizes',
+      'getGradingDelta', 'getCumulativeDelta', 'formatDelta',
+      'getProductNickname', 'pluralizeNickname', 'classifyProduct',
+      'initCsConfig',
+    ]) {
+      assert.equal(typeof se[name], 'function', `${name} must stay exported`);
+    }
+    for (const name of ['PRODUCT_NICKNAMES', 'PRODUCT_CATEGORIES', 'PRODUCT_SIZE_OVERRIDES', '_activeProducts', 'KEYWORD_MATCH_COUNT', 'KID_LABELS']) {
+      assert.ok(se[name], `${name} must stay exported`);
+    }
+  });
+
+  it('no longer exports the deleted decision tree', () => {
+    // Deleting the tree is only finished if nothing can quietly re-import it.
+    const se = require('../lib/sizingEngine');
+    for (const name of [
+      'walkTree', 'checkSafetyOverride', 'prescribeCustomerIdentification',
+      'prescribeOrderIdentification', 'prescribeActionClassification',
+      'prescribeSizingResolution', 'prescribeOrderCreation', 'prescribePrePurchaseSizing',
+    ]) {
+      assert.equal(se[name], undefined, `${name} was deleted and must not come back`);
+    }
   });
 });
 
@@ -2622,18 +1121,91 @@ describe('generic keyword must not outrank a specific product', () => {
   });
 });
 
-describe('style-switch copy never emits a broken link', () => {
-  // A refactor moved link resolution out of the shared module and the reply
-  // shipped "Would you like to try that instead? undefined" to customers.
-  it('renders a real URL, never undefined', async () => {
-    const intake = makeIntake({
-      items: [makeItem({ issue: 'tight_legs', size: 'M', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM' })],
-      _latestMessage: 'The waist fits fine but the legs are too tight.',
-    });
-    const classified = [makeClassified({ action: 'style_switch', product: 'THE RUBY NO-TUCK SHAPING BIKINI BOTTOM', size: 'M' })];
-    const result = await prescribeSizingResolution(classified, intake, makeContext());
-    const text = result.items[0].response_text;
-    assert.ok(!/undefined/.test(text), `no undefined in customer copy: ${text}`);
-    assert.match(text, /https:\/\/rubyshines\.com\/products\//);
+// ============================================================================
+// One-piece fit — the LIVE path behind the advisor's analyze_onepiece_fit tool
+// ============================================================================
+// Migrated here when the legacy decision tree was deleted (2026-08-24). The tree
+// carried the only behavioural exercise of this function, and it reached it
+// sideways: those tests asserted the tree's reply wording, which no customer has
+// seen since the advisor took over. analyzeOnepieceFit itself is live, called by
+// a customer-facing tool, and had nothing but a `typeof === 'function'` check.
+// So the coverage moves onto the function rather than being deleted with the
+// caller — which is what the parked cleanup meant by "migrating assertions".
+
+describe('analyzeOnepieceFit', () => {
+  const ONEPIECE = 'THE SKY NO-TUCK SHAPING ONE-PIECE';
+  const row = (size_label, notes, min_inches, max_inches) => ({ size_label, notes, min_inches, max_inches });
+
+  it('exact: the height fits a variant at the waist size they already need', async () => {
+    mockSupabaseData.heightRows = [row('M', 'Regular', 60, 66), row('M', 'Tall', 66, 72)];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 63, ONEPIECE, true);
+    assert.equal(r.type, 'exact');
+    assert.equal(r.size, 'M');
+    assert.equal(r.variant, 'Regular');
+  });
+
+  it('exact: prefers Tall when the height lands in the Tall band', async () => {
+    mockSupabaseData.heightRows = [row('M', 'Regular', 60, 66), row('M', 'Tall', 66, 72)];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 70, ONEPIECE, true);
+    assert.equal(r.type, 'exact');
+    assert.equal(r.variant, 'Tall');
+  });
+
+  it('wiggle: falls to an adjacent size and reports the waist trade-off', async () => {
+    // Nothing fits at M; the height only works at L, one size away.
+    mockSupabaseData.heightRows = [row('M', 'Regular', 50, 55), row('L', 'Tall', 66, 72)];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 70, ONEPIECE, true);
+    assert.equal(r.type, 'wiggle');
+    assert.equal(r.size, 'L');
+    assert.equal(r.variant, 'Tall');
+    assert.equal(r.waistSize, 'M');
+    assert.equal(r.moreOrLess, 'more', 'going up a size gives MORE room in the waist');
+    assert.ok(r.unit.endsWith('"'), 'inches for a North American customer');
+  });
+
+  it('wiggle: going DOWN a size reports less room, and metric when asked', async () => {
+    mockSupabaseData.heightRows = [row('M', 'Regular', 50, 55), row('S', 'Regular', 58, 63)];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 60, ONEPIECE, false);
+    assert.equal(r.type, 'wiggle');
+    assert.equal(r.size, 'S');
+    assert.equal(r.moreOrLess, 'less');
+    assert.ok(r.unit.endsWith('cm'), 'centimetres outside North America');
+  });
+
+  it('height_outside_range: no variant at the waist size or either neighbour', async () => {
+    mockSupabaseData.heightRows = [row('M', 'Regular', 60, 66), row('L', 'Regular', 62, 68)];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 78, ONEPIECE, true);
+    assert.equal(r.type, 'height_outside_range');
+  });
+
+  it('height_outside_range: an empty chart never invents a fit', async () => {
+    mockSupabaseData.heightRows = [];
+    const r = await analyzeOnepieceFit('onepiece_adult', 'M', 63, ONEPIECE, true);
+    assert.equal(r.type, 'height_outside_range');
+  });
+});
+
+describe('getSeparatesText', () => {
+  it('names both measurements on a mismatch, height alone otherwise', () => {
+    assert.match(getSeparatesText('mismatch', 'your', false), /waist and height/);
+    assert.match(getSeparatesText('height_outside_range', 'your', false), /your height/);
+    assert.ok(!/waist and height/.test(getSeparatesText('height_outside_range', 'your', false)));
+  });
+
+  it('only asks the question when this is an exchange', () => {
+    assert.match(getSeparatesText('mismatch', 'your', true), /Would you like to explore that option instead\?$/);
+    assert.ok(!/\?$/.test(getSeparatesText('mismatch', 'your', false)));
+  });
+
+  it('carries the third-party phrasing through verbatim', () => {
+    // The caller passes "your daughter's" for a parent buying for someone else,
+    // so the sentence must not hardcode a pronoun.
+    assert.match(getSeparatesText('mismatch', "your daughter's", false), /your daughter's waist and height/);
+  });
+
+  it('customer-facing copy carries no em dash', () => {
+    for (const reason of ['mismatch', 'height_outside_range']) {
+      assert.ok(!getSeparatesText(reason, 'your', true).includes('—'), reason);
+    }
   });
 });
