@@ -261,6 +261,17 @@ ambient state passes or fails for reasons unrelated to the hook. The design less
 **a guard that misfires on the correct workflow teaches people to reach for its override**, which is
 the exact habit it exists to prevent, so a false block is not a safe default but a slow failure.
 
+**Second round, 2026-08-24 — the same parser was matching verbs in the wrong POSITION.** `git
+merge-base --is-ancestor` (a read-only query) was blocked, because a substring match treats `-` and
+`.` as word boundaries: `merge-base`, `merge-tree`, `commit-graph`, `config merge.ff` and `log
+--merge` all read as mutating. The hook now tokenises, skips git's global options (`-c`, `--no-pager`
+and friends) and requires the verb in SUBCOMMAND position. Fixing that surfaced a real hole beside it:
+`git -C <dir>` relocates a command exactly like a `cd` and the hook could not see it, so `git -C <main
+checkout> commit` ran unguarded from any worktree. `-C` is now resolved like a `cd`, and beats one.
+Generalises: **when a guard reads a command string, enumerate the ways that command can name its own
+target** — a directory can arrive by `cd`, by `-C`, or by `--git-dir`, and covering one of three is
+what makes a guard feel reliable while not being.
+
 ## Memory commits never leave the main checkout — two tracks, branch-from-latest
 
 Memory (`.claude/memory/`) is committed to the repo, but `.claude/*` is *exempt* from the

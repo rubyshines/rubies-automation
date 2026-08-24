@@ -323,6 +323,9 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
   The customer-facing wording lives in the advisor prompt; the dead copy in `sizingEngine` is
   kept in sync by hand so a future reader cannot pick up the stale sentence. That hand-sync is
   the recurring tax this deletion buys out.
+- Safe to delete without losing coverage of the behaviour: the LIVE arriving-soon path is now
+  pinned by `test/scenarios/arrivingSoonStyleSwitch.js` (2026-08-24), which stubs stock and
+  restock rather than reading either from the world.
 
 ## Clean up Nitro fulfillment cost data
 - Parked: 2026-04-15
