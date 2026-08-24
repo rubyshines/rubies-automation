@@ -187,7 +187,7 @@ const TOOLS = [
   },
   {
     name: 'compare_products',
-    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, inventory for a specific size, and `style_switch_options` — the styles in that category with a roomier leg opening because they are cut higher, for a customer whose waist size is right but whose legs or thighs feel tight. Each option carries `availability`: "in_stock" means it can ship now, "arriving" means it is out of stock in that size but the next shipment lands soon enough to be worth waiting for, and that entry carries the `back_in_stock` phrase to quote. Both are offerable. Anything genuinely not available appears separately under `style_switch_unavailable` and must not be offered. Use this when an item is out of stock and you need to suggest a swap, when a customer asks how products differ, and whenever you are about to say one style is cut higher or lower than another: state only what this returns, never a remembered comparison. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
+    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, inventory for a specific size, and `style_switch_options` — the styles in that category with a roomier leg opening because they are cut higher, for a customer whose waist size is right but whose legs or thighs feel tight. Each option carries `availability`: "in_stock" means it can ship now, "arriving" means it is out of stock in that size but the next shipment lands soon enough to be worth waiting for, and that entry carries the `back_in_stock` phrase to quote. Both are offerable. Anything genuinely not available appears separately under `style_switch_unavailable` and must not be offered. Separately, `source` and each `alternatives` entry may carry `arriving_colors` — colours at zero in that size whose next shipment lands soon enough to be worth waiting for, each with the `back_in_stock` phrase to quote. `available_colors` is what can ship today and `arriving_colors` is what is coming; a colour in neither has nothing inbound and must never be described as coming back. Use this when an item is out of stock and you need to suggest a swap, when a customer asks how products differ, and whenever you are about to say one style is cut higher or lower than another: state only what this returns, never a remembered comparison. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
     input_schema: {
       type: 'object',
       properties: {
@@ -680,6 +680,12 @@ async function executeToolCall(toolName, toolInput) {
           }
 
           const crossed = crossesToAdult(config.styleSwitch?.recommendFor, size);
+          // Same reasoning as available_colors one step further: a colour list
+          // that silently omits the zero colours answers "which can ship" but
+          // not "is the one they want coming back". The sibling asymmetry that
+          // let the Charlie's colours be read onto the Sassy applies here too,
+          // so source and alternatives must carry this field identically.
+          const altArriving = await arrivingColors(matches);
           alternatives.push({
             product: nick,
             fit_description: p.fit_description,
@@ -695,6 +701,7 @@ async function executeToolCall(toolName, toolInput) {
             // a draft offered the Sassy in 1X in "Black, Sandstone and Pink"
             // (the Charlie's colours) when the Sassy in 1X is Pink only.
             available_colors: colorsInStock(matches),
+            ...(altArriving.length ? { arriving_colors: altArriving } : {}),
           });
         } else {
           alternatives.push({
@@ -712,6 +719,7 @@ async function executeToolCall(toolName, toolInput) {
       // Check source product inventory for the requested size — per-color breakdown
       let sourceInventory = null;
       let sourceColorInventory = [];
+      let sourceArrivingColors = [];
       if (size && sourceProduct) {
         const srcVariants = searchProducts(`${sourceProduct.title} ${size}`);
         const srcMatches = srcVariants.filter(v => {
@@ -723,6 +731,7 @@ async function executeToolCall(toolName, toolInput) {
         // colour differently. It also drops the old "Unknown" fallback, which on
         // a size-only product (chest pads) named the SIZE as a colour.
         sourceColorInventory = colorsInStock(srcMatches);
+        sourceArrivingColors = await arrivingColors(srcMatches);
       }
 
       // Which styles in this category are the "fit is off, switch style" targets
@@ -748,6 +757,9 @@ async function executeToolCall(toolName, toolInput) {
           comparison_notes: sourceProduct?.comparison_notes,
           style_switch_note: styleSwitchNote(sourceConfig, category),
           ...(size ? { size, total_inventory: sourceInventory, available_colors: sourceColorInventory } : {}),
+          // Only when there is something to say. An empty array reads as a real
+          // answer ("nothing is coming") when it can also mean "we did not look".
+          ...(sourceArrivingColors.length ? { arriving_colors: sourceArrivingColors } : {}),
         },
         alternatives,
         style_switch_options: styleSwitchOptions,
@@ -884,6 +896,42 @@ async function executeToolCall(toolName, toolInput) {
  * worth recommending. Fail-soft, because a missing restock lookup must never
  * take down a product comparison.
  */
+/**
+ * Colours of one product-in-one-size that are at zero but have stock close
+ * enough to be worth waiting for, each with the phrase to quote.
+ *
+ * The gap this closes: `withRestock` below has only ever run on the style-switch
+ * `unavailable` list, so a restock was reachable only when the customer's
+ * problem was leg room. Every other exchange — "can I swap into Black", "is my
+ * size coming back" — got a bare zero and the advisor could only offer a
+ * different colour or say no, because under the anti-hallucination rules a date
+ * no tool returned cannot be stated. The data existed the whole time.
+ *
+ * Availability and offerability stay separate: colorsOutOfStock says what is at
+ * zero, restockEtaForSkus decides whether the wait is inside the offer window.
+ * A colour with no inbound, or one landing past the window, is simply absent
+ * from the result — never present with a hedge, which the model would quote.
+ */
+async function arrivingColors(matches) {
+  const { colorsOutOfStock } = require('./productCache');
+  const { restockEtaForSkus } = require('./restockEta');
+  const out = [];
+  for (const c of colorsOutOfStock(matches)) {
+    if (!c.skus.length) continue;
+    try {
+      const restock = await restockEtaForSkus(c.skus);
+      // Quote `back_in_stock` and nothing else — the other fields are internal
+      // and more precise than our confidence in them.
+      if (restock?.worth_offering) out.push({ color: c.color, back_in_stock: restock.sellable_phrase });
+    } catch (err) {
+      // Fail soft, exactly as withRestock does: a restock lookup that throws
+      // must never take down a product comparison.
+      console.warn(`[compare_products] restock lookup failed for ${c.color}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
 async function withRestock(unavailable, skusByProduct) {
   const { restockEtaForSkus } = require('./restockEta');
   return Promise.all(unavailable.map(async (u) => {
@@ -1092,6 +1140,8 @@ Before confirming a size exchange, call compare_products with the product name a
   1. **Youth/adult equivalent, same color (check this BEFORE offering a different color).** Adult M = youth 16, adult S = youth 14, adult XS/XXS = youth 12/10 — these are identical fits. If adult M Pink is OOS, call compare_products on youth 16 and check Pink availability. If Pink/16 is in stock, offer it instead of suggesting Black M. Example: "The Ruby in adult M Pink is out of stock, but size 16 is the same fit and available in Pink — would that work?"
   2. **Same product, different color.** Only reach for a color swap after confirming both the adult size AND the youth equivalent are OOS in the requested color.
   3. **Different product, same size.** Use the compare_products alternatives list to suggest the closest match.
+
+  **Before any of those three, check \`arriving_colors\`.** Both \`source\` and each entry in \`alternatives\` carry it when a colour is at zero but its next shipment lands soon enough to be worth waiting for. A colour listed there is a REAL option and it comes before swapping the customer to a colour they did not ask for: they chose that colour for a reason, and this is an exchange, not a purchase, so we can hold it until stock lands. Say it in these words, adapting only the colour, the size and the phrase: "The [colour] is out of stock in [size] right now, but the next shipment should be in [back_in_stock]. I can set up the exchange now and send it as soon as it arrives, or if you'd rather not wait I can see what's in stock now." Quote the \`back_in_stock\` phrase word for word and state no other date. A colour absent from \`arriving_colors\` has nothing inbound worth waiting for — treat it as unavailable and move down the ladder; never say a colour is coming back unless it is listed there. Set status to "needs_info" and wait for the customer to choose before creating any order.
 
 **Refunds — when to process vs when to nudge:**
 The key question is: has the customer received REAL sizing help from you (Jamie/agent) in this conversation? A "real" exchange offer means you suggested a specific size, mentioned fabric delta, or asked for measurements. The Gorgias bot's generic "would you like to exchange?" does NOT count.
