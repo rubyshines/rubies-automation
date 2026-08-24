@@ -8,6 +8,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Ask donation partners what volume they can absorb
+- Parked: 2026-08-24
+- Domains: community
+- Type: decision-needed
+- Priority: medium
+- Notes: Routing balances load between partners but has no idea what any of them can actually handle — a university student centre and a regional coalition are weighed identically. It surfaced when the first partner in the NY/NJ/PA/CT corridor was added: ~20% of US donation routings originate there and it is the only org in it, so it will legitimately carry about a fifth of US flow within days of onboarding, with nobody having asked whether that is welcome. The same gap produced the earlier complaint about receiving sizes an org could not distribute, which was fixed by making size a routing constraint; capacity is the same shape of problem and has no equivalent yet.
+- Two halves, separable: (1) the immediate ask — check in with the newest partner about volume, which fits the standing partner re-engagement round; (2) the systemic version — a capacity field on `donation_partners` (items/month, or small/medium/large) fed by the onboarding survey and read by the weighting, plus a way for a partner to say "pause us." Related to the "Partner feedback loop (items received, condition)" item in domain What's Next; a partner who can report what arrived is also the one who can say what they want.
+- Resume when: the partner check-in sweep goes out, or a partner asks us to slow down.
+
 ## Storefront kids/adults review filter
 - Parked: 2026-08-19
 - Domains: marketing, tech

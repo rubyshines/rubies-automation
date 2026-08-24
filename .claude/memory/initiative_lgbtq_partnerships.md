@@ -6,7 +6,7 @@ metadata:
   type: project
   domains: 
     - community
-  last_updated: 2026-08-20
+  last_updated: 2026-08-24
   originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -42,7 +42,16 @@ categories at the same time; the existing network was backfilled from the old an
 seven orgs landing on teen-and-adult only. Five of those seven were inferred rather than
 asked, so their check-in is the moment to confirm it.
 
+## Routing Weighting Fix (2026-08-24)
+The first partner in the NY/NJ/PA/CT corridor was taking ~73% of every nationally
+spread routing, including boxes from Maine, Atlanta and Chicago. Two causes, both
+fixed: the national tier ignored distance entirely, and load was a raw 90-day total
+that flattered any partner younger than the window. ~20% of US donation routings
+originate in that corridor, so the new partner should settle around a fifth of US
+flow rather than near zero. Open: nobody has asked them what volume they can absorb.
+
 ## Decisions Made
+- 2026-08-24 — Load balancing compares rates rather than totals, and distance weights the two tiers that can span it. The 2026-07 trailing-window change shortened a new partner's runaway but did not shallow it; measuring volume per day active ends it after a single box.
 - 2026-08-20 — Partner size acceptance recut into two categories and enforced in routing. The old three-checkbox survey question had overlapping ranges and was never read by anything, so an org's stated limits had no effect on what we sent them.
 - 2026-05-28 — Partner registry is the SSOT in rubies-automations. Theme reads a published JSON asset (`assets/donation-partners.json`); no more hand-edited section blocks. Updates flow only via MCP tools.
 - 2026-05-28 — New submissions ingest via MCP with preview/confirm. Auto-geocode (Google Maps), auto-extract logo (Haiku from org website), re-host logo on Shopify CDN, then auto-merge to theme main on publish (Shopify auto-deploys ~30s).
