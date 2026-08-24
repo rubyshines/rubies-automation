@@ -624,7 +624,7 @@ async function executeToolCall(toolName, toolInput) {
       const sourceProduct = catalog.find(p => p.handle === sourceHandle);
 
       // Ensure product cache is loaded for inventory lookups
-      const { searchProducts, loadFromSupabase, getProducts } = require('./productCache');
+      const { searchProducts, loadFromSupabase, getProducts, colorsInStock } = require('./productCache');
       if (!getProducts()?.length) await loadFromSupabase();
 
       // Which styles we would recommend for tight legs, by positioning and
@@ -689,6 +689,12 @@ async function executeToolCall(toolName, toolInput) {
             size: wanted,
             ...(crossed ? { requested_size: normalizeSize(size), size_note: `sold in adult sizing; youth ${normalizeSize(size)} is ${wanted}` } : {}),
             inventory_in_size: sizeInventory,
+            // The colour breakdown the source product has always carried, and
+            // the alternatives never did. Without it the only colour list in the
+            // payload belonged to a DIFFERENT product, and the model used it:
+            // a draft offered the Sassy in 1X in "Black, Sandstone and Pink"
+            // (the Charlie's colours) when the Sassy in 1X is Pink only.
+            available_colors: colorsInStock(matches),
           });
         } else {
           alternatives.push({
@@ -713,10 +719,10 @@ async function executeToolCall(toolName, toolInput) {
           return vSize === normalizeSize(size) && v.productTitle === sourceProduct.title;
         });
         sourceInventory = srcMatches.reduce((sum, v) => sum + (v.inventoryQuantity || 0), 0);
-        sourceColorInventory = srcMatches.map(v => ({
-          color: v.variantTitle?.split('/')[0]?.trim() || 'Unknown',
-          inventory: v.inventoryQuantity || 0,
-        })).filter(c => c.inventory > 0);
+        // Same helper as the alternatives above, so the two can never describe
+        // colour differently. It also drops the old "Unknown" fallback, which on
+        // a size-only product (chest pads) named the SIZE as a colour.
+        sourceColorInventory = colorsInStock(srcMatches);
       }
 
       // Which styles in this category are the "fit is off, switch style" targets
@@ -1030,7 +1036,7 @@ Every route_to_human comes with its reason. Whenever you set status to "route_to
 These rules override everything else. Violations cause real harm to customers.
 
 1. **Every donation sentence in a reply comes from a get_donation_partner call made in THIS conversation.** Before writing ANY donation wording — an address, a partner name, "donate locally", an offer to send donation info, or any statement about what happens to returned items (that returns get donated, that they don't come back to us, that there's nothing to send back) — call get_donation_partner and relay its response_text. If it isn't the moment to call the tool, it isn't the moment to say any of that either: leave return logistics out of the reply entirely rather than describing them in your own words. This applies to refunds exactly as much as exchanges. Only the tool decides the routing; the result depends on live partner data and load balancing, so you can never predict what the donation section should say, and there is no case where writing it without the call is correct. Do NOT guess or recall donation addresses from memory. Every donation address you remember is wrong.
-2. **To name any size, color, or variant, call get_adjacent_sizes / compare_products FIRST and say only what it returns.** Sizes and colors vary by product (some youth styles are even sizes only, others include odd sizes; one-pieces also come in Tall variants), so the tool is the only reliable source — check it, then state what's available. (Reinforcement: never assert from memory that "that's the largest size", "XS doesn't exist", or "it only comes in black", and never recommend a plain size when a Tall variant fits a taller customer, unless the tool confirmed it.)
+2. **To name any size, color, or variant, call get_adjacent_sizes / compare_products FIRST and say only what it returns.** Sizes and colors vary by product (some youth styles are even sizes only, others include odd sizes; one-pieces also come in Tall variants), so the tool is the only reliable source — check it, then state what's available. **Colours belong to the product you read them from.** compare_products returns available_colors in two places: on source (the product the customer already has) and on each entry in alternatives (the product you are offering). Name a colour ONLY from the available_colors of that same product's own entry, and name only the colours listed there, since a colour at zero is left out. The size total (inventory_in_size) says we can send something in that size, never which colours — a style can read 38 units in a size and be one colour. If an alternative has no available_colors, ask which colour they would like or leave colour out; do not carry the source product's colours across. (Reinforcement: never assert from memory that "that's the largest size", "XS doesn't exist", or "it only comes in black", and never recommend a plain size when a Tall variant fits a taller customer, unless the tool confirmed it.)
 3. **NEVER state a fabric delta number without calling get_fabric_delta first.** Do NOT estimate, round, or recall deltas from memory. Every delta you remember is wrong.
 4. **NEVER describe order contents from memory.** The order context in the system prompt tells you what's in the order. If the context says "2x AJ size M", trust it. Do NOT say "I see a one-piece" if the context says underwear.
 5. **To describe or compare what a product IS, call search_knowledge first and write only from what it returns.** The Product Links list below gives you names and URLs, nothing else — what a product is made of, what comes in the set, what it costs, who it suits, and how it differs from a similar product are NOT things you know, and recognising a product's name is not knowledge of the product. Any reply that recommends a product, names two or more products together, or states a product's composition, contents, price, or best use requires a search_knowledge call in the same turn; the KB carries founder-written use-case guidance written for exactly these comparisons, and it is better than anything you would compose. Draw the comparison from what comes back — the real difference between two similar products is rarely the one you would guess. Size availability and measurements go to the tools in rules 2 and 3. If the search returns nothing relevant, say you'll check rather than filling the gap.
