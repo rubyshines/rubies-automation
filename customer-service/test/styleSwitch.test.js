@@ -10,6 +10,7 @@ const assert = require('node:assert');
 
 const {
   styleSwitchNote, isYouthSize, offeredSizeFor, crossesToAdult, tightLegsTargets,
+  buildStyleSwitchOptions,
 } = require('../lib/styleSwitch');
 
 const PRODUCTS = {
@@ -251,4 +252,86 @@ test('omitting availability leaves every style offerable, as before', () => {
   const t = tightLegsTargets({ activeProducts: PRODUCTS, category: 'underwear_bottom', isKids: false, size: 'M', excludeNickname: 'AJ' });
   assert.deepStrictEqual(names(t), ['Sassy', 'Naomi']);
   assert.strictEqual(t[0].inStock, null, 'null means unknown, not in stock');
+});
+
+// ---------------------------------------------------------------------------
+// buildStyleSwitchOptions — the three supply states the advisor actually reads
+// ---------------------------------------------------------------------------
+
+/** recByNick as compare_products builds it: nickname -> tightLegsTargets entry. */
+const REC = new Map([
+  ['Sassy', { nickname: 'Sassy', note: 'Roomier leg opening as it is cut higher', everyday: true }],
+  ['Naomi', { nickname: 'Naomi', note: 'Roomier leg opening as it is cut higher; a gaff', everyday: false }],
+]);
+const ARRIVING_SASSY = {
+  product: 'Sassy', size: 'M',
+  restock: { worth_offering: true, sellable_phrase: 'end of August, 2026' },
+};
+
+test('an arriving style is offerable and says so on its face', () => {
+  const opts = buildStyleSwitchOptions({ inStock: [], arriving: [ARRIVING_SASSY], recByNick: REC });
+  assert.strictEqual(opts.length, 1, 'arriving is an option, not a rejection');
+  assert.strictEqual(opts[0].product, 'Sassy');
+  assert.strictEqual(opts[0].availability, 'arriving');
+  assert.strictEqual(opts[0].back_in_stock, 'end of August, 2026');
+  assert.ok(opts[0].note, 'carries the cut fact so the reply can still explain the fit');
+});
+
+test('an in-stock style is marked in_stock, never left unlabelled', () => {
+  // An unlabelled entry is what let the model describe an arriving style in the
+  // in-stock register: with no marker there was nothing to distinguish them.
+  const opts = buildStyleSwitchOptions({
+    inStock: [{ product: 'Sassy', style_switch_note: 'Roomier leg opening', size: 'M' }],
+    arriving: [], recByNick: REC,
+  });
+  assert.strictEqual(opts[0].availability, 'in_stock');
+  assert.ok(!('back_in_stock' in opts[0]), 'no restock phrase on something already on the shelf');
+});
+
+test('fit leads: the better-positioned style wins even when it is the arriving one', () => {
+  // The founder ruling. The Sassy is the all-day pick and is arriving; the Naomi
+  // is in stock and is a gaff. Offering the Naomi first because it happens to be
+  // on the shelf is the failure this ordering exists to prevent.
+  const opts = buildStyleSwitchOptions({
+    inStock: [{ product: 'Naomi', style_switch_note: 'Roomier leg opening; a gaff', size: 'M' }],
+    arriving: [ARRIVING_SASSY],
+    recByNick: REC,
+  });
+  assert.deepStrictEqual(opts.map(o => o.product), ['Sassy', 'Naomi']);
+  assert.deepStrictEqual(opts.map(o => o.availability), ['arriving', 'in_stock']);
+});
+
+test('stock breaks the tie only between equally-positioned styles', () => {
+  const rec = new Map([
+    ['Sassy', { note: 'n', everyday: true }],
+    ['Cheeky', { note: 'n', everyday: true }],
+  ]);
+  const opts = buildStyleSwitchOptions({
+    inStock: [{ product: 'Cheeky', style_switch_note: 'n', size: 'M' }],
+    arriving: [{ product: 'Sassy', size: 'M', restock: { worth_offering: true, sellable_phrase: 'end of August, 2026' } }],
+    recByNick: rec,
+  });
+  assert.deepStrictEqual(opts.map(o => o.product), ['Cheeky', 'Sassy'], 'same positioning, so what we can ship now leads');
+});
+
+test('an option list is never silently empty of its labels', () => {
+  // Every entry must carry an availability, or a consumer cannot tell the states
+  // apart and we are back to the bug.
+  const opts = buildStyleSwitchOptions({
+    inStock: [{ product: 'Naomi', style_switch_note: 'n', size: 'M' }],
+    arriving: [ARRIVING_SASSY], recByNick: REC,
+  });
+  for (const o of opts) assert.ok(['in_stock', 'arriving'].includes(o.availability), JSON.stringify(o));
+});
+
+test('an alternative with no style-switch note is not a leg-cut option', () => {
+  const opts = buildStyleSwitchOptions({
+    inStock: [{ product: 'Charlie', size: 'M' }], arriving: [], recByNick: REC,
+  });
+  assert.deepStrictEqual(opts, [], 'only styles carrying the cut fact belong in this list');
+});
+
+test('degenerate input returns an empty list rather than throwing', () => {
+  assert.deepStrictEqual(buildStyleSwitchOptions(), []);
+  assert.deepStrictEqual(buildStyleSwitchOptions({}), []);
 });

@@ -8,6 +8,13 @@
  * (arriving on KALI-2601) while the Naomi has no inbound at all, so the two must
  * not be reported the same way.
  *
+ * SOURCE OF TRUTH (founder ruling, 2026-08-23): `inbound_shipments` decides both
+ * whether a style is recommendable and which date we quote. The variant
+ * `pre_order_date` metafield is a different question — it is the promise the
+ * customer was shown at checkout for an item already ON their order, which is
+ * what check_unfulfilled_order quotes. Where the two disagree, the inbound row
+ * wins here. No inbound row means not recommendable, however the metafield reads.
+ *
  * IMPORTANT: `estimated_arrival_date` is arrival AT THE WAREHOUSE, not the date
  * the item can be sold. `in_inventory_date` is the sellable one, and receiving
  * plus putaway sits between them. So the ETA is returned with its basis
@@ -18,7 +25,23 @@
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
 const { formatPreOrderDate } = require('./preOrderAttrs');
 
-const OPEN_STATUSES = ['uploaded', 'in_transit', 'partially_received'];
+/**
+ * Statuses where stock is still on its way to being sellable, split by whether
+ * the shipment has physically landed — because the two are judged on different
+ * dates (see the candidate loop below).
+ *
+ * The legal set is the CHECK on inbound_shipments.status: draft, uploaded,
+ * in_transit, receiving, received, in_inventory. `receiving` means it has landed
+ * and is being put away, which is the state CLOSEST to sellable, and it was
+ * missing here: KALI-2601 flipped to `receiving` on arrival and every restock
+ * lookup went null, so an arriving style reported identically to the Naomi,
+ * which has no inbound at all. That is the one distinction this module exists to
+ * make. The old list also carried `partially_received`, which is not a legal
+ * status and could never match anything.
+ */
+const PENDING_STATUSES = ['uploaded', 'in_transit'];
+const ARRIVED_STATUSES = ['receiving'];
+const OPEN_STATUSES = [...PENDING_STATUSES, ...ARRIVED_STATUSES];
 
 /**
  * How soon a restock has to be SELLABLE before we suggest waiting for it.
@@ -64,18 +87,26 @@ async function restockEtaForSkus(skus, { today } = {}) {
     // reads zero, a future ETA is not the explanation.
     if (!OPEN_STATUSES.includes(s.status)) continue;
     const eta = s.estimated_arrival_date;
-    if (!eta || eta < cutoff) continue;
+    if (!eta) continue;
+    const sellable = sellableDate(s);
+    // Which date decides "is this still ahead of us" depends on whether the
+    // shipment has landed. A container that has NOT arrived and whose ETA is
+    // already past is stale data, not a restock we can quote. One that HAS
+    // arrived is past its ETA by definition, and the only question left is
+    // putaway — so it is judged on the sellable date instead. Judging both on
+    // the ETA is what made a shipment sitting on the receiving dock invisible.
+    const decidingDate = ARRIVED_STATUSES.includes(s.status) ? sellable : eta;
+    if (!decidingDate || decidingDate < cutoff) continue;
     const qty = matching
       .filter(i => i.inbound_shipment_id === s.id)
       .reduce((sum, i) => sum + (i.qty || 0), 0);
-    candidates.push({ ship: s, qty });
+    candidates.push({ ship: s, qty, sellable });
   }
   if (!candidates.length) return null;
 
-  candidates.sort((a, b) => String(a.ship.estimated_arrival_date).localeCompare(String(b.ship.estimated_arrival_date)));
-  const { ship, qty } = candidates[0];
+  candidates.sort((a, b) => String(a.sellable).localeCompare(String(b.sellable)));
+  const { ship, qty, sellable } = candidates[0];
 
-  const sellable = ship.in_inventory_date || addDays(ship.estimated_arrival_date, RECEIVING_BUFFER_DAYS);
   const daysUntil = daysBetween(cutoff, sellable);
 
   return {
@@ -104,6 +135,14 @@ async function restockEtaForSkus(skus, { today } = {}) {
 const RECEIVING_BUFFER_DAYS = 5;
 
 /**
+ * When this shipment's stock can actually be SOLD. A confirmed in_inventory_date
+ * wins; otherwise arrival plus the receiving buffer.
+ */
+function sellableDate(ship) {
+  return ship.in_inventory_date || addDays(ship.estimated_arrival_date, RECEIVING_BUFFER_DAYS);
+}
+
+/**
  * Extra days added ONLY before turning a date into a vague phrase, so the
  * phrase lands on the later third when the estimate sits near a boundary. A
  * date is a promise and this one is built on an ETA we do not control, so the
@@ -129,5 +168,6 @@ function addDays(isoDate, days) {
 
 module.exports = {
   restockEtaForSkus, addDays, daysBetween,
-  RECEIVING_BUFFER_DAYS, RESTOCK_OFFER_WINDOW_DAYS, PHRASE_CONSERVATISM_DAYS, OPEN_STATUSES,
+  RECEIVING_BUFFER_DAYS, RESTOCK_OFFER_WINDOW_DAYS, PHRASE_CONSERVATISM_DAYS,
+  OPEN_STATUSES, PENDING_STATUSES, ARRIVED_STATUSES,
 };

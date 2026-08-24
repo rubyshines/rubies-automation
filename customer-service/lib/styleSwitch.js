@@ -148,9 +148,56 @@ function isOfferable(entry) {
   return entry.restock?.worth_offering === true;
 }
 
+/**
+ * The one list of styles the advisor may offer, across BOTH supply states.
+ *
+ * Supply has three customer-visible states, not two: in stock now, arriving soon
+ * enough to be worth waiting for, and not available. The middle one used to live
+ * under a key named `style_switch_unavailable` with `worth_offering: true` buried
+ * in a nested object, and the model collapsed it into a neighbour — it either
+ * dropped the style or named it in the in-stock register, which was the only
+ * template it had. So an arriving style sits in the SAME list as an in-stock one
+ * and carries its state on its face.
+ *
+ * Ordering (founder ruling, 2026-08-23): fit leads. An arriving style is NOT
+ * demoted for arriving, or the better-fitting option loses to a worse one that
+ * happens to be on the shelf. At one to two weeks out we offer it first. Stock
+ * only breaks a tie between equally-positioned styles.
+ *
+ * Pure, so the ordering rule is testable without a catalog or a Supabase stub.
+ *
+ * @param {Array} inStock   alternatives that can ship now, each {product, style_switch_note, size?, size_note?}
+ * @param {Array} arriving  unavailable entries whose restock is worth offering, each {product, size?, restock}
+ * @param {Map}   recByNick nickname -> tightLegsTargets entry, for note + everyday
+ */
+function buildStyleSwitchOptions({ inStock = [], arriving = [], recByNick = new Map() } = {}) {
+  const entry = (product, extra) => ({
+    product,
+    note: recByNick.get(product)?.note || null,
+    best_for_all_day: recByNick.get(product)?.everyday === true,
+    ...extra,
+  });
+
+  return [
+    ...inStock.filter(a => a.style_switch_note).map(a => entry(a.product, {
+      note: a.style_switch_note,
+      ...(a.size ? { size: a.size } : {}),
+      ...(a.size_note ? { size_note: a.size_note } : {}),
+      availability: 'in_stock',
+    })),
+    ...arriving.map(u => entry(u.product, {
+      ...(u.size ? { size: u.size } : {}),
+      availability: 'arriving',
+      back_in_stock: u.restock?.sellable_phrase || null,
+    })),
+  ].sort((x, y) => (y.best_for_all_day === true) - (x.best_for_all_day === true)
+    || (x.availability === 'in_stock' ? 0 : 1) - (y.availability === 'in_stock' ? 0 : 1));
+}
+
 module.exports = {
   styleSwitchNote,
   isOfferable,
+  buildStyleSwitchOptions,
   isYouthSize,
   offeredSizeFor,
   crossesToAdult,

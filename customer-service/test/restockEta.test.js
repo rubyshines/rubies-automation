@@ -71,7 +71,7 @@ test('restockEtaForSkus: sellable estimate buffers past warehouse arrival', asyn
 test('restockEtaForSkus: a confirmed in_inventory_date wins over the buffer', async () => {
   const { restockEtaForSkus } = stubSupabase({
     items: [{ sku: 'HLA-BLK-M', qty: 10, inbound_shipment_id: 1 }],
-    shipments: [{ id: 1, transfer_number: 'T', status: 'partially_received', estimated_arrival_date: '2026-08-20', in_inventory_date: '2026-08-22' }],
+    shipments: [{ id: 1, transfer_number: 'T', status: 'receiving', estimated_arrival_date: '2026-08-20', in_inventory_date: '2026-08-22' }],
   });
   const r = await restockEtaForSkus(['HLA-BLK-M'], { today: TODAY });
   assert.strictEqual(r.sellable_estimate, '2026-08-22');
@@ -102,6 +102,42 @@ test('restockEtaForSkus: ignores ETAs already in the past', async () => {
     shipments: [{ id: 1, transfer_number: 'T', status: 'in_transit', estimated_arrival_date: '2026-07-01', in_inventory_date: null }],
   });
   assert.strictEqual(await restockEtaForSkus(['HLA-BLK-M'], { today: TODAY }), null);
+});
+
+test('restockEtaForSkus: a shipment on the receiving dock is still a restock', async () => {
+  // The regression this whole module exists to prevent. KALI-2601 flipped to
+  // `receiving` on arrival, `receiving` was missing from OPEN_STATUSES, and every
+  // lookup went null -- so an arriving style reported identically to one with no
+  // inbound at all. Its ETA is necessarily in the past by then, which is why the
+  // arrived case is judged on the SELLABLE date instead.
+  const { restockEtaForSkus } = stubSupabase({
+    items: [{ sku: 'HLA-BLK-M', qty: 10, inbound_shipment_id: 1 }],
+    shipments: [{ id: 1, transfer_number: 'KALI-2601', status: 'receiving', estimated_arrival_date: '2026-08-20', in_inventory_date: null }],
+  });
+  const r = await restockEtaForSkus(['HLA-BLK-M'], { today: '2026-08-23' });
+  assert.ok(r, 'a landed shipment being put away is not "no restock"');
+  assert.strictEqual(r.sellable_estimate, '2026-08-25');
+  assert.strictEqual(r.worth_offering, true);
+});
+
+test('restockEtaForSkus: an arrived shipment whose putaway window has passed is null', async () => {
+  // Sitting in `receiving` long past the buffer means something is wrong with
+  // that shipment, not that stock is imminent. Do not quote it.
+  const { restockEtaForSkus } = stubSupabase({
+    items: [{ sku: 'HLA-BLK-M', qty: 10, inbound_shipment_id: 1 }],
+    shipments: [{ id: 1, transfer_number: 'T', status: 'receiving', estimated_arrival_date: '2026-07-01', in_inventory_date: null }],
+  });
+  assert.strictEqual(await restockEtaForSkus(['HLA-BLK-M'], { today: TODAY }), null);
+});
+
+test('OPEN_STATUSES only contains statuses the schema can actually hold', async () => {
+  // The old list carried `partially_received`, which is not in the CHECK on
+  // inbound_shipments.status, so it could never match a row. A status list that
+  // silently matches nothing is indistinguishable from a working one.
+  const { OPEN_STATUSES } = stubSupabase({});
+  const LEGAL = ['draft', 'uploaded', 'in_transit', 'receiving', 'received', 'in_inventory'];
+  for (const s of OPEN_STATUSES) assert.ok(LEGAL.includes(s), `${s} is not a legal inbound_shipments.status`);
+  assert.ok(OPEN_STATUSES.includes('receiving'), 'the closest-to-sellable state must be open');
 });
 
 test('restockEtaForSkus: SKU matching is case and whitespace tolerant', async () => {

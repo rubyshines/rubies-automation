@@ -32,7 +32,7 @@ const {
   _activeProducts,
   PRODUCT_NICKNAMES,
 } = require('./sizingEngine');
-const { styleSwitchNote, tightLegsTargets, offeredSizeFor, crossesToAdult, isYouthSize } = require('./styleSwitch');
+const { styleSwitchNote, tightLegsTargets, offeredSizeFor, crossesToAdult, isYouthSize, buildStyleSwitchOptions } = require('./styleSwitch');
 const { prescribeDonationRouting } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
 const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker } = require('./advisorOutputSchema');
@@ -187,7 +187,7 @@ const TOOLS = [
   },
   {
     name: 'compare_products',
-    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, inventory for a specific size, and `style_switch_options` — the styles in that category with a roomier leg opening because they are cut higher, for a customer whose waist size is right but whose legs or thighs feel tight. Use this when an item is out of stock and you need to suggest a swap, when a customer asks how products differ, and whenever you are about to say one style is cut higher or lower than another: state only what this returns, never a remembered comparison. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
+    description: 'Find alternative products in the same category as a given product. Returns fit description, best use case, comparison notes, inventory for a specific size, and `style_switch_options` — the styles in that category with a roomier leg opening because they are cut higher, for a customer whose waist size is right but whose legs or thighs feel tight. Each option carries `availability`: "in_stock" means it can ship now, "arriving" means it is out of stock in that size but the next shipment lands soon enough to be worth waiting for, and that entry carries the `back_in_stock` phrase to quote. Both are offerable. Anything genuinely not available appears separately under `style_switch_unavailable` and must not be offered. Use this when an item is out of stock and you need to suggest a swap, when a customer asks how products differ, and whenever you are about to say one style is cut higher or lower than another: state only what this returns, never a remembered comparison. Do NOT use this for one-piece → separates swaps (use analyze_onepiece_fit instead).',
     input_schema: {
       type: 'object',
       properties: {
@@ -723,21 +723,15 @@ async function executeToolCall(toolName, toolInput) {
       // (today: the wider leg openings). Sourced from product_cs_config.style_switch
       // so one row edit updates every consumer — this used to be prose in
       // advisor_facts, one hand-written fact per product pair.
-      // Derived from the in-stock alternatives above, so `style_switch_options`
-      // can never name something the customer cannot actually buy. When a size
-      // is known and a wider style exists but is unavailable, say so explicitly
-      // in `style_switch_unavailable` -- silence would let the advisor conclude
-      // no wider cut exists, which is a different and false statement.
-      const styleSwitchOptions = alternatives
-        .filter(a => a.style_switch_note)
-        .map(a => ({
-          product: a.product,
-          note: a.style_switch_note,
-          ...(a.size ? { size: a.size } : {}),
-          ...(a.size_note ? { size_note: a.size_note } : {}),
-          best_for_all_day: recByNick.get(a.product)?.everyday === true,
-        }))
-        .sort((x, y) => (y.best_for_all_day === true) - (x.best_for_all_day === true));
+      // Three supply states, not two — see buildStyleSwitchOptions for why an
+      // arriving style shares the offerable list rather than sitting in one the
+      // model reads as "cannot have". It is an exchange, not a purchase: the
+      // customer already owns something that does not work and we hold the
+      // exchange until stock lands.
+      const withEta = unavailable.length ? await withRestock(unavailable, unavailableSkus) : [];
+      const arriving = withEta.filter(u => u.restock?.worth_offering === true);
+      const stillUnavailable = withEta.filter(u => u.restock?.worth_offering !== true);
+      const styleSwitchOptions = buildStyleSwitchOptions({ inStock: alternatives, arriving, recByNick });
 
       return {
         source: {
@@ -751,7 +745,10 @@ async function executeToolCall(toolName, toolInput) {
         },
         alternatives,
         style_switch_options: styleSwitchOptions,
-        ...(unavailable.length ? { style_switch_unavailable: await withRestock(unavailable, unavailableSkus) } : {}),
+        // Kept, and kept separate: silence here would let the advisor conclude no
+        // wider cut exists, which is a different and false statement. These are
+        // the ones with no inbound at all, or one landing past the offer window.
+        ...(stillUnavailable.length ? { style_switch_unavailable: stillUnavailable } : {}),
       };
     }
 
@@ -1366,7 +1363,7 @@ The operator's action panel is built from the structured items array. Every prod
 - "Doesn't hide" / "doesn't flatten" on BOTTOMS = expectation mismatch. RUBIES shapes, doesn't flatten. USE THE SHAPING EXPECTATIONS TEMPLATE (see above). This is one of the few cases where a longer response is appropriate — but never for a plain too-big/too-small fit complaint.
 - "Doesn't work" without specifics on BOTTOMS = USE THE SHAPING EXPECTATIONS TEMPLATE.
 - Tight legs = suggest Cheeky (swim), Sassy (adult underwear), or Flo Dance (kids).
-- **Waist and legs need different sizes — switch leg cut, DON'T refund (CRITICAL — DO NOT CREATE AN ORDER):** This fires whenever the waist is too loose while the legs do NOT have room to spare — i.e. the legs fit fine OR the legs are already too tight. Both sub-cases have the same root cause: the waist wants a smaller size but the legs need equal-or-more room, so no single size in the same product works. (This is NOT the same as "too big everywhere" — if the waist AND legs are both loose, that's a simple size-down. It only fires when the waist and legs pull toward different sizes.) DO NOT size down and DO NOT create an exchange order — sizing down only makes the legs worse. Instead, suggest a style with a roomier leg opening: [Flo Dance](https://rubyshines.com/products/the-flo-no-tuck-shaping-dance-underwear) (youth) or [Sassy](https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear) / [Naomi](https://rubyshines.com/products/the-naomi-gaff-extra-strength-shaping-underwear) (adult) for underwear, [Cheeky Bikini](https://rubyshines.com/products/the-cheeky-no-tuck-shaping-bikini-bottom) for swim. **Explain it in these words, adapting only the product name and the plural: "The [product] has a roomier leg opening as it is cut higher, so the thighs get more room without sizing up the waist."** Say the roomier opening FIRST and give "cut higher" as the reason for it. Never lead with "higher leg cut" on its own: alone it reads to a customer as more revealing rather than roomier, which is the opposite of the reassurance they are asking for. Call compare_products to confirm which styles that category actually offers and that the size is available before naming one. Set status to "needs_info" and item state to "AWAITING_DECISION" — wait for the customer to confirm they want the alternative before creating any order. Even if the customer requested a specific smaller size, override that and explain the trade-off: "If we size down for the waist, the legs will likely be too tight. I'd suggest the [product], which has a roomier leg opening as it is cut higher, so the thighs get more room without sizing up the waist." If the customer is leaning toward a refund (or has tentatively accepted one) but has NOT yet been offered this leg-cut alternative, offer it ONCE before processing the refund — only refund if they decline it or have already seen it. When the higher-cut product is also lower-coverage than what they bought (e.g. Serena shorts → Cheeky bikini), name that trade-off honestly so they can choose, rather than assuming no product works.
+- **Waist and legs need different sizes — switch leg cut, DON'T refund (CRITICAL — DO NOT CREATE AN ORDER):** This fires whenever the waist is too loose while the legs do NOT have room to spare — i.e. the legs fit fine OR the legs are already too tight. Both sub-cases have the same root cause: the waist wants a smaller size but the legs need equal-or-more room, so no single size in the same product works. (This is NOT the same as "too big everywhere" — if the waist AND legs are both loose, that's a simple size-down. It only fires when the waist and legs pull toward different sizes.) DO NOT size down and DO NOT create an exchange order — sizing down only makes the legs worse. Instead, suggest a style with a roomier leg opening: [Flo Dance](https://rubyshines.com/products/the-flo-no-tuck-shaping-dance-underwear) (youth) or [Sassy](https://rubyshines.com/products/the-sassy-no-tuck-shaping-underwear) / [Naomi](https://rubyshines.com/products/the-naomi-gaff-extra-strength-shaping-underwear) (adult) for underwear, [Cheeky Bikini](https://rubyshines.com/products/the-cheeky-no-tuck-shaping-bikini-bottom) for swim. **Explain it in these words, adapting only the product name and the plural: "The [product] has a roomier leg opening as it is cut higher, so there should be more room for the thighs."** Say the roomier opening FIRST and give "cut higher" as the reason for it. Never lead with "higher leg cut" on its own: alone it reads to a customer as more revealing rather than roomier, which is the opposite of the reassurance they are asking for. Call compare_products to confirm which styles that category actually offers and that the size is available before naming one. **Read the availability field on each style_switch_options entry — it is either "in_stock" or "arriving".** An "arriving" style is a real option and keeps its place in the list: recommend it first when it is the better fit, and never fall back to an in-stock style that fits worse just because it is on the shelf. Never describe an arriving style as in stock. Say it in these words, adapting only the product, the size and the phrase: "It is not in stock in size [size] right now, but the next shipment should be in [back_in_stock]. I can set up the exchange now and send it as soon as it arrives, or if you'd rather not wait I can see what's in stock now." That is an exchange, not a purchase, so never ask them to order or pre-order it. Quote the back_in_stock phrase word for word and state no other date; the tool's other fields (eta, sellable_estimate, days_until_sellable, basis, transfer_number, qty) are internal and never go to a customer. Set status to "needs_info" and item state to "AWAITING_DECISION" — wait for the customer to confirm they want the alternative before creating any order. Even if the customer requested a specific smaller size, override that and explain the trade-off: "If we size down for the waist, the legs will likely be too tight. I'd suggest the [product], which has a roomier leg opening as it is cut higher, so there should be more room for the thighs." If the customer is leaning toward a refund (or has tentatively accepted one) but has NOT yet been offered this leg-cut alternative, offer it ONCE before processing the refund — only refund if they decline it or have already seen it. When the higher-cut product is also lower-coverage than what they bought (e.g. Serena shorts → Cheeky bikini), name that trade-off honestly so they can choose, rather than assuming no product works.
 
 ### Outreach Classification
 When the message is NOT from a customer about an order, classify the intent:
