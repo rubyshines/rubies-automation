@@ -561,9 +561,25 @@ async function executeToolCall(toolName, toolInput) {
       } else if (fit.type === 'wiggle') {
         return { fit: 'wiggle', recommended_size: fit.size, variant: fit.variant, waist_size: fit.waistSize, delta: fit.unit, message: `Height suggests ${fit.size} ${fit.variant} (1 size ${fit.moreOrLess} than waist). Should work with a little wiggle room.` };
       } else if (fit.type === 'separates') {
-        return { fit: 'separates', waist_size: fit.waistSize, height_size: fit.heightSize, variant: fit.variant, size_diff: fit.sizeDiff, message: `Waist and height are ${fit.sizeDiff} sizes apart. The one-piece won't fit well. Suggest the Queeny tankini paired with the Ruby (standard) or Stella (high-waisted, more coverage) bikini bottom.` };
+        // customer_wording comes from getSeparatesText so the sentence a customer
+        // reads has one author. This handler used to paraphrase it inline while
+        // importing the real one and never calling it, which is how two versions
+        // of the same explanation end up drifting apart.
+        return {
+          fit: 'separates',
+          waist_size: fit.waistSize, height_size: fit.heightSize, variant: fit.variant, size_diff: fit.sizeDiff,
+          // No em dash: anything in a tool result can end up echoed into a reply.
+          message: `Waist and height are ${fit.sizeDiff} sizes apart, so no single one-piece size fits both. Their height IS in our range, just at a different size. Do not tell them their height is outside our range.`,
+          customer_wording: getSeparatesText('mismatch', 'your', true),
+          note: 'Swap "your" for the right possessive if they are buying for someone else.',
+        };
       } else {
-        return { fit: 'outside_range', message: 'Height is outside our chart ranges. Suggest the Queeny tankini paired with the Ruby (standard) or Stella (high-waisted, more coverage) bikini bottom as a safer option.' };
+        return {
+          fit: 'outside_range',
+          message: 'Height falls outside every band in the chart, at any size. This is the one case where saying so is accurate.',
+          customer_wording: getSeparatesText('height_outside_range', 'your', true),
+          note: 'Swap "your" for the right possessive if they are buying for someone else.',
+        };
       }
     }
 
