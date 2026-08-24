@@ -367,11 +367,21 @@ async function analyzeOnepieceFit(chartCategory, waistSize, heightInInches, prod
 function getSizeList(size, productName) {
   const s = normalizeSize(size);
 
-  // Check per-product size overrides first (e.g. Naomi: XS–2X only)
+  // Check per-product size overrides first (e.g. Naomi: XS–2X only).
+  //
+  // The override is filtered to the SIZE SYSTEM being asked about, so a product
+  // sold in both youth and adult sizes can carry one combined list. Without the
+  // filter, a combined list makes the two runs adjacent: the size below adult XS
+  // comes back as youth 16, and stepping down from XS walks into youth sizing.
+  // For an adult-only override (the Naomi) the filter is a no-op.
   if (productName) {
     const lower = productName.toLowerCase();
     for (const [keyword, sizes] of Object.entries(PRODUCT_SIZE_OVERRIDES)) {
-      if (lower.includes(keyword)) return sizes.includes(s) ? sizes : null;
+      if (!lower.includes(keyword)) continue;
+      const sameSystem = LETTER_SIZES.includes(s)
+        ? sizes.filter(x => LETTER_SIZES.includes(x))
+        : sizes.filter(x => NUMERIC_SIZES.includes(x));
+      return sameSystem.includes(s) ? sameSystem : null;
     }
   }
 

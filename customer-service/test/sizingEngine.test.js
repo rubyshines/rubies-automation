@@ -34,7 +34,7 @@ const mockCsConfig = [
   { product_handle: 'the-ruby-no-tuck-shaping-bikini-bottom', nickname: 'Ruby', category: 'swim_bottom', keywords: ['ruby'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
   { product_handle: 'the-sassy-no-tuck-shaping-underwear', nickname: 'Sassy', category: 'underwear_bottom', keywords: ['sassy'], delta_wording: 'bottom', sizes_override: null, style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: true } } },
   { product_handle: 'the-serena-no-tuck-shaping-shorty-short', nickname: 'Serena', category: 'swim_bottom', keywords: ['serena'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
-  { product_handle: 'the-sky-no-tuck-shaping-one-piece', nickname: 'Sky', category: 'onepiece', keywords: ['sky', 'one-piece'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
+  { product_handle: 'the-sky-no-tuck-shaping-one-piece', nickname: 'Sky', category: 'onepiece', keywords: ['sky', 'one-piece'], delta_wording: 'bottom', sizes_override: ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16', 'XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X'], style_switch: null },
   { product_handle: 'the-stella-high-waisted-shaping-bikini-bottom', nickname: 'Stella', category: 'swim_bottom', keywords: ['stella'], delta_wording: 'bottom', sizes_override: null, style_switch: null },
   { product_handle: 'the-sunny-queeny-tankini', nickname: 'Queeny', category: 'swim_top', keywords: ['queeny', 'sunny', 'tankini'], delta_wording: 'top', sizes_override: null, style_switch: null },
   { product_handle: 'the-naomi-gaff-extra-strength-shaping-underwear', nickname: 'Naomi', category: 'underwear_bottom', keywords: ['naomi', 'gaff'], delta_wording: 'bottom', sizes_override: ['XS', 'S', 'M', 'L', '1X', '2X'], style_switch: { isTarget: true, forCategories: ['underwear_bottom'], recommendFor: { tightLegs: true, ageGroups: ['adult'], sizedIn: 'adult', everyday: false } } },
@@ -1211,11 +1211,21 @@ describe('analyzeOnepieceFit', () => {
   });
 
   it('separates: reaches a match far down the list rather than giving up', async () => {
+    // 3X, not 4X: the Sky is not made in 4X, and once its size range was pinned
+    // the old version of this test started asserting on a size that cannot be
+    // ordered — which is the whole defect the range fix exists to prevent, found
+    // in the test suite rather than in a draft.
     mockSupabaseData.heightRows = [row('XS', 'Regular', 62, 66)];
-    const r = await analyzeOnepieceFit('onepiece_adult', '4X', 64, ONEPIECE, true);
+    const r = await analyzeOnepieceFit('onepiece_adult', '3X', 64, ONEPIECE, true);
     assert.equal(r.type, 'separates');
     assert.equal(r.heightSize, 'XS');
     assert.ok(r.sizeDiff >= 2, `expected a far match, got ${r.sizeDiff}`);
+  });
+
+  it('a size the product is not made in is out of range, not a fit', async () => {
+    mockSupabaseData.heightRows = [row('XS', 'Regular', 62, 66)];
+    const r = await analyzeOnepieceFit('onepiece_adult', '4X', 64, ONEPIECE, true);
+    assert.equal(r.type, 'height_outside_range', 'the Sky has no 4X to fit anyone into');
   });
 
   it('separates does not swallow the adjacent case — one away is still wiggle', async () => {
@@ -1277,5 +1287,55 @@ describe('getSeparatesText', () => {
     for (const reason of ['mismatch', 'height_outside_range']) {
       assert.ok(!getSeparatesText(reason, 'your', true).includes('—'), reason);
     }
+  });
+});
+
+// ============================================================================
+// Per-product size range — a product is only offered sizes it is made in
+// ============================================================================
+// The Sky one-piece had no sizes_override, so getSizeList fell back to the
+// generic adult run and getAdjacentSizes('XS','down') returned ['XXS+','XXS'] —
+// sizes the Sky has never been made in. Same family as offering a style we
+// cannot ship: the advisor could name a size that does not exist.
+// The override carries BOTH runs, because the Sky is sold youth 4-16 and adult
+// XS-3X, and getSizeList filters it to the system being asked about.
+
+describe('getSizeList — per-product override spanning youth and adult', () => {
+  const SKY = 'THE SKY NO-TUCK SHAPING ONE-PIECE';
+
+  it('an adult size gets only the adult part of the range', () => {
+    assert.deepEqual(getSizeList('M', SKY), ['XS', 'XS+', 'S', 'M', 'L', '1X', '2X', '3X']);
+  });
+
+  it('a youth size gets only the youth part, odd sizes included', () => {
+    assert.deepEqual(getSizeList('12', SKY), ['4', '6', '7', '8', '9', '10', '11', '12', '13', '14', '16']);
+  });
+
+  it('never steps out of the range the product is made in', () => {
+    // The bug, in both directions. XS is the smallest adult Sky and 3X the
+    // largest; the generic run would have offered XXS+/XXS below and 4X above.
+    assert.deepEqual(getAdjacentSizes('XS', 'down', 2, SKY), []);
+    assert.deepEqual(getAdjacentSizes('3X', 'up', 2, SKY), []);
+  });
+
+  it('never walks from adult sizing into youth sizing', () => {
+    // The reason the override is filtered rather than used whole: a combined
+    // list makes youth 16 the size "below" adult XS.
+    for (const s of getAdjacentSizes('XS', 'down', 3, SKY)) {
+      assert.ok(!/^\d+$/.test(s), `stepped down from adult XS into youth ${s}`);
+    }
+    for (const s of getAdjacentSizes('16', 'up', 3, SKY)) {
+      assert.ok(/^\d+$/.test(s), `stepped up from youth 16 into adult ${s}`);
+    }
+  });
+
+  it('a size the product is not made in has no list at all', () => {
+    assert.equal(getSizeList('XXS', SKY), null);
+    assert.equal(getSizeList('4X', SKY), null);
+  });
+
+  it('an adult-only override is unaffected by the filter', () => {
+    // The Naomi carried the only override before this change; it must not move.
+    assert.deepEqual(getSizeList('M', 'THE NAOMI GAFF EXTRA STRENGTH SHAPING UNDERWEAR'), ['XS', 'S', 'M', 'L', '1X', '2X']);
   });
 });
