@@ -58,26 +58,47 @@ require.cache[shopifyPath] = {
   exports: { shopifyGraphQL: stubShopifyGraphQL },
 };
 
-// Stub the Warehance client so the hold/stock checks in analyzeUnfulfilledOrder
-// never hit the network. Orders keyed by bare number; SKU stock keyed by SKU.
+// Stub the Warehance client so the hold/allocation checks in
+// analyzeUnfulfilledOrder never hit the network.
+//
+// The fixture has to carry the open ORDER BOOK, not just SKU totals. "Is this
+// item reserved for this order" is a per-order fact, and the SKU counters
+// cannot express it — `on_hand: 1, allocated: 1, available: 0` is identical
+// whether the unit is reserved for the order being asked about or for someone
+// who ordered first. A fixture that states only the totals is a fixture that
+// cannot state what the test is about.
 const warehancePath = require.resolve('../../reports/lib/warehanceClient');
-const WH_FIXTURE = {
-  '31353': { id: 'wh-31353', has_hold: true, warehouse_hold: true, address_hold: false },
-  '40001': { id: 'wh-40001', has_hold: false },
-};
 const WH_SKU_STOCK = {
-  // Physically at the warehouse, allocated to an order → site shows 0 available.
+  // One unit at the warehouse, and #40001 is first in line for it.
   'ALLOC-BLK-M': { sku: 'ALLOC-BLK-M', on_hand: 1, allocated: 1, available: 0, backordered: 2 },
   // Genuinely absent from the warehouse — awaiting inbound stock.
   'GONE-BLK-M': { sku: 'GONE-BLK-M', on_hand: 0, allocated: 0, available: 0, backordered: 12 },
-  'GAF-BLK-M': { sku: 'GAF-BLK-M', on_hand: 40, allocated: 2, available: 38, backordered: 0 },
+  'GAF-BLK-M': { sku: 'GAF-BLK-M', on_hand: 40, allocated: 3, available: 37, backordered: 0 },
+  // On hand, but every unit is spoken for by an order placed earlier. Reads
+  // identically to ALLOC-BLK-M at SKU level; the opposite answer per order.
+  'QUEUED-BLK-M': { sku: 'QUEUED-BLK-M', on_hand: 1, allocated: 1, available: 0, backordered: 1 },
 };
+const whOrder = (num, date, skus, extra = {}) => ({
+  id: `wh-${num}`,
+  order_number: `#${num}`,
+  order_date: `${date}T00:00:00Z`,
+  has_hold: false,
+  order_items: skus.map(sku => ({ sku, quantity: 1, quantity_shipped: 0 })),
+  ...extra,
+});
+const WH_ORDER_BOOK = new Map([
+  ['31353', whOrder('31353', '2026-06-01', ['GAF-BLK-M'], { has_hold: true, warehouse_hold: true, address_hold: false })],
+  ['40001', whOrder('40001', '2026-06-02', ['ALLOC-BLK-M', 'GONE-BLK-M', 'GAF-BLK-M'])],
+  // Placed BEFORE 40002 and takes the only QUEUED-BLK-M unit.
+  ['39000', whOrder('39000', '2026-05-01', ['QUEUED-BLK-M'])],
+  ['40002', whOrder('40002', '2026-06-03', ['QUEUED-BLK-M', 'GAF-BLK-M'])],
+]);
 require.cache[warehancePath] = {
   id: warehancePath,
   filename: warehancePath,
   loaded: true,
   exports: {
-    fetchOrderByNumber: async (num) => WH_FIXTURE[String(num).replace('#', '')] || null,
+    fetchUnfulfilledOrders: async () => WH_ORDER_BOOK,
     fetchSkuStockMany: async (skus) => {
       const map = new Map();
       for (const sku of skus || []) map.set(sku, WH_SKU_STOCK[sku] || null);
@@ -231,17 +252,37 @@ describe('analyzeUnfulfilledOrder — warehouse hold detection', () => {
   });
 });
 
-describe('analyzeUnfulfilledOrder — warehouse stock is the truth for what can ship', () => {
-  function buildWhOrder(lineItems) {
+describe('analyzeUnfulfilledOrder — warehouse allocation is the truth for what can ship', () => {
+  function buildWhOrder(lineItems, name = '#40001') {
     return {
-      name: '#40001', // in WH_FIXTURE (no hold) → warehouse stock path active
+      name, // in the open order book, no hold → allocation path active
       createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
       fulfillments: [],
       lineItems,
     };
   }
 
-  it('an item allocated to the order (site shows 0, warehouse has it on hand) is NOT out of stock', async () => {
+  // The case the SKU counters cannot distinguish and the reply gets wrong.
+  // QUEUED-BLK-M looks exactly like ALLOC-BLK-M at SKU level (one unit on hand,
+  // allocated, zero available) but #39000 ordered first and holds it. Judging by
+  // on_hand alone told this customer outright that the item "CAN ship with this
+  // order and is NOT a blocker" — an affirmative false claim in text they read.
+  it('an item on hand but reserved for an EARLIER order is out of stock, not shippable', async () => {
+    const order = buildWhOrder([{
+      title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR',
+      sku: 'QUEUED-BLK-M', quantity: 1,
+      variantId: 'gid://shopify/ProductVariant/100', // Shopify available: 0
+      customAttributes: [],
+    }], '#40002');
+    const result = await analyzeUnfulfilledOrder(order);
+    assert.equal(result.hasOutOfStockItems, true, 'a unit someone else holds cannot ship with this order');
+    assert.equal(result.issues.some(i => i.type === 'allocated'), false, 'must never claim it CAN ship');
+    const oos = result.issues.find(i => i.type === 'out_of_stock');
+    assert.ok(oos);
+    assert.match(oos.description, /reserved for earlier orders/);
+  });
+
+  it('an item reserved for this order (site shows 0, warehouse holds it) is NOT out of stock', async () => {
     const order = buildWhOrder([{
       title: 'THE SASSY NO-TUCK SHAPING UNDERWEAR',
       sku: 'ALLOC-BLK-M', quantity: 1,
@@ -269,6 +310,7 @@ describe('analyzeUnfulfilledOrder — warehouse stock is the truth for what can 
     const oos = result.issues.find(i => i.type === 'out_of_stock');
     assert.ok(oos);
     assert.match(oos.description, /awaiting stock/);
+    assert.match(oos.description, /on hand: 0/);
     assert.equal(result.issues.some(i => i.type === 'allocated'), false);
   });
 

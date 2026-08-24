@@ -3,9 +3,13 @@
  *
  * Checks:
  * 1. Pre-order/backorder (product tags/metafields)
- * 2. Warehouse stock per item (Warehance is the truth for what can ship —
- *    items allocated to this order can ship even when the website shows 0;
- *    Shopify availability is only the fallback when warehouse data is missing)
+ * 2. Warehouse allocation per item (Warehance is the truth for what can ship —
+ *    items reserved for this order can ship even when the website shows 0;
+ *    Shopify availability is only the fallback when warehouse data is missing).
+ *    "Reserved for this order" is a per-order fact and comes from
+ *    reports/lib/orderAllocation, the one place that answers it — the SKU-level
+ *    on_hand / available / backordered counters are totals across every order
+ *    and cannot.
  * 3. Order age (normal processing vs stuck)
  * 4. Partial fulfillment (some items shipped, some didn't)
  *
@@ -16,6 +20,7 @@ const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { callClaude } = require('../../../shared/aiClient');
 const { MODELS } = require('../../../shared/aiPricing');
 const { addBusinessDays, businessDaysBetween } = require('../../../shared/businessDays');
+const { isLineAllocated, orderFullyAllocated } = require('../../../reports/lib/orderAllocation');
 const { relativeDay } = require('./analyzer');
 
 // ---------------------------------------------------------------------------
@@ -128,14 +133,19 @@ async function analyzeUnfulfilledOrder(order) {
   // Classifying OOS from Shopify alone mis-reports those items as blockers.
   let whOrder = null;
   let whStock = new Map();
+  let whAllocation = new Map();
   let whError = null;
+  const orderNum = String(order.name || '').replace('#', '');
   try {
-    const { fetchOrderByNumber, fetchSkuStockMany } = require('../../../reports/lib/warehanceClient');
-    const orderNum = String(order.name || '').replace('#', '');
-    whOrder = orderNum ? await fetchOrderByNumber(orderNum) : null;
-    if (whOrder) {
+    const { fetchAllocationIndex } = require('../../../reports/lib/orderAllocation');
+    if (orderNum) {
       const skus = (order.lineItems || order.items || []).map(i => i.sku);
-      whStock = await fetchSkuStockMany(skus);
+      const alloc = await fetchAllocationIndex(skus);
+      whOrder = alloc.orders.get(orderNum) || null;
+      if (whOrder) {
+        whStock = alloc.stockBySku;
+        whAllocation = alloc.index;
+      }
     }
   } catch (e) {
     whError = e.message;
@@ -171,29 +181,41 @@ async function analyzeUnfulfilledOrder(order) {
       continue;
     }
 
-    const qtyNeeded = item.ordered || 1;
     if (wh) {
-      // Warehouse truth: an item only blocks the order if the warehouse
-      // physically lacks it. Units on hand but not "available" are allocated —
-      // for an unfulfilled order that's this order's own reservation.
-      if ((wh.on_hand ?? 0) < qtyNeeded) {
-        investigation.hasOutOfStockItems = true;
+      // Whether this item blocks the order is a question about THIS order, so
+      // it is answered per-order (orderAllocation.js), never from the SKU
+      // counters beside it. Stock on hand is not the same as stock reserved for
+      // this customer: units sitting at the warehouse can be entirely spoken
+      // for by orders placed earlier, and this branch previously read on_hand
+      // alone and told the customer outright that such an item "CAN ship with
+      // this order and is NOT a blocker" — an affirmative claim, made wrong,
+      // in the reply they read.
+      const allocated = orderFullyAllocated(whOrder) === true
+        ? true
+        : isLineAllocated(whAllocation, orderNum, item.sku);
+      if (allocated === true) {
         investigation.issues.push({
-          type: 'out_of_stock',
-          description: `${item.title} (${item.variant}) is not at the warehouse (on hand: ${wh.on_hand ?? 0}, backordered: ${wh.backordered ?? 0}) — awaiting stock.`,
+          type: 'allocated',
+          description: `${item.title} (${item.variant}) shows out of stock on the website, but its unit(s) are reserved for this order at the warehouse — it CAN ship with this order and is NOT a blocker.`,
           item: item.title,
           variant: item.variant,
           sku: item.sku,
         });
-      } else if (item.available <= 0) {
+      } else if (allocated === false) {
+        investigation.hasOutOfStockItems = true;
+        const reason = (wh.on_hand ?? 0) > 0
+          ? `on hand: ${wh.on_hand}, but reserved for earlier orders`
+          : `on hand: 0, backordered: ${wh.backordered ?? 0}`;
         investigation.issues.push({
-          type: 'allocated',
-          description: `${item.title} (${item.variant}) shows out of stock on the website, but its unit(s) are on hand at the warehouse allocated to this order — it CAN ship with this order and is NOT a blocker.`,
+          type: 'out_of_stock',
+          description: `${item.title} (${item.variant}) is not reserved for this order (${reason}) — awaiting stock.`,
           item: item.title,
           variant: item.variant,
           sku: item.sku,
         });
       }
+      // allocated === null: the reconstruction has nothing to say about this
+      // line. Claiming either way would be a guess in customer-facing text.
     } else if (item.available <= 0) {
       // No warehouse data for this SKU/order — fall back to Shopify availability.
       investigation.hasOutOfStockItems = true;
