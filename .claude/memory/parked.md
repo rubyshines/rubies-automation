@@ -17,6 +17,31 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Two halves, separable: (1) the immediate ask — check in with the newest partner about volume, which fits the standing partner re-engagement round; (2) the systemic version — a capacity field on `donation_partners` (items/month, or small/medium/large) fed by the onboarding survey and read by the weighting, plus a way for a partner to say "pause us." Related to the "Partner feedback loop (items received, condition)" item in domain What's Next; a partner who can report what arrived is also the one who can say what they want.
 - Resume when: the partner check-in sweep goes out, or a partner asks us to slow down.
 
+## 14 active products still offer sizes they are not made in
+- Parked: 2026-08-24
+- Domains: cs, inventory
+- Type: bug
+- Priority: medium
+- Notes: `getSizeList` falls back to a generic size run whenever a product has no
+  `sizes_override`, so the advisor can name a size that has never existed as a variant. The Sky
+  one-piece was fixed 2026-08-24 (see domain_cs.md); an audit of the other 21 active products
+  found **14 more**, e.g. Ruby / Serena / Stella offered XXS and XXS+, Mia XXS and 4X, Flo 4 and
+  16, Cheeky 4X. Fix per product is one `sizes_override` row derived from its live variants, the
+  same shape the Sky now has.
+- **Verify each before writing.** The audit compares the generic list against variants that
+  actually exist, so a missing size can also mean a sync gap or an archived variant rather than a
+  size we do not make. Some rows are noise by construction: Pride Earrings is an accessory with no
+  size axis, and Chest Pads use their own S/M/L list. Do not bulk-write config off the signal.
+- **Better than 14 config rows would be deriving the range from the catalog**, which already
+  carries `kid_sizes` / `adult_sizes` per product and is what `compare_products` reads. The blocker
+  is that `getSizeList` is synchronous and config-driven while the catalog is loaded async, so it
+  is a real change rather than a swap. Worth costing before doing the manual version, since a
+  hand-maintained size range in config is a second source of truth that will drift.
+- Reproduce: the audit script is scratch, not committed. It joins `product_variants` to `products`
+  via `shopify_product_id` (there is NO `product_handle` column on variants — a first version
+  joined on one, matched nothing, and reported a clean bill of health; assert the checked-product
+  count before trusting any run of it).
+
 ## Storefront kids/adults review filter
 - Parked: 2026-08-19
 - Domains: marketing, tech
