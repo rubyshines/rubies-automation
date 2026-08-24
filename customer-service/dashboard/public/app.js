@@ -6335,11 +6335,21 @@ function outreachHistoryHtml() {
     const list = t.messages || [];
     const msgs = list.map((m, i) => {
       const out = m.direction === 'outbound';
-      const who = out ? 'Jamie' : esc(m.from_email || 'them');
+      const bounce = m.message_type === 'bounce';
+      // A failed send rendered like a successful one is the whole problem in
+      // miniature: the thread read as "we checked in, they went quiet" when they
+      // never received it. Mark the send itself, not just the DSN under it.
+      const who = bounce ? 'Mail server' : (out ? 'Jamie' : esc(m.from_email || 'them'));
       const badge = (m.source === 'manual_send' ? ' <span class="badge badge-muted">sent from Gmail</span>' : '')
         + (m.message_type === 'auto_reply' ? ' <span class="badge badge-muted">auto-reply</span>' : '')
-        + (m.message_type === 'calendar_notice' ? ' <span class="badge badge-muted">calendar notice</span>' : '');
-      const body = m.body_text || '(no text captured)';
+        + (m.message_type === 'calendar_notice' ? ' <span class="badge badge-muted">calendar notice</span>' : '')
+        + (bounce ? ' <span class="badge badge-warn">bounced</span>' : '')
+        + (m.undelivered_at ? ' <span class="badge badge-warn">never delivered</span>' : '');
+      // The DSN's own text is machine boilerplate. What matters is which address
+      // died, which the badge and the queue reason already say.
+      const body = bounce
+        ? 'This message could not be delivered.'
+        : (m.body_text || '(no text captured)');
       const isLast = i === list.length - 1;
       if (isLast) {
         return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
@@ -6591,9 +6601,10 @@ function renderOutreachSidebarContext() {
           <span class="outreach-contact-name">${esc(ct.full_name || ct.email)}</span>
           ${ct.title || ct.role ? `<span class="outreach-contact-role">${esc(ct.title || ct.role)}</span>` : ''}
           <span class="outreach-contact-email">${esc(ct.email)}</span>
+          ${ct.bounced_at ? '<span class="badge badge-warn" title="Mail to this address was rejected by their server. Restoring it will bounce again.">address dead</span>' : ''}
           <span class="outreach-contact-actions">
             <button onclick="contactAction('restore', '${esc(ct.email)}')"
-              title="Put them back on the active list">restore</button>
+              title="${ct.bounced_at ? 'Their mail server rejected this address — restoring it will bounce again' : 'Put them back on the active list'}">restore</button>
           </span>
         </div>`).join('')}
     </details>` : '';

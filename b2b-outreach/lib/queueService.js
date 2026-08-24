@@ -915,7 +915,7 @@ async function fetchCompanyThreads(sb, companyId) {
     // UI entirely: you could not see who you used to write to, could not check
     // the claim that their history was kept, and could not undo a wrong click.
     sb.from('b2b_contacts')
-      .select('email, full_name, role, title, is_primary, is_active')
+      .select('email, full_name, role, title, is_primary, is_active, bounced_at')
       .eq('company_id', companyId)
       .order('is_active', { ascending: false })
       .order('is_primary', { ascending: false }),
@@ -932,7 +932,7 @@ async function fetchCompanyThreads(sb, companyId) {
   const [messagesRes, ordersRes, msgCountRes, donation] = await Promise.all([
     threads.length
       ? sb.from('b2b_messages')
-        .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source')
+        .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source, undelivered_at')
         .in('thread_id', threads.map(t => t.id))
         .order('sent_at', { ascending: true })
       : Promise.resolve({ data: [] }),
