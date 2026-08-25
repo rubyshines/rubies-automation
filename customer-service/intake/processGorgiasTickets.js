@@ -1467,6 +1467,84 @@ async function releaseDraftSlot(supabase, claimId) {
   }
 }
 
+// Don't resurrect an ancient claim: past this age the conversation has moved on
+// (or been handled by hand) and re-drafting it would answer a question the
+// customer stopped asking. Recent enough to still owe them a reply, though.
+const CLAIM_SWEEP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Sweep intake claims that never became drafts, and re-draft the message.
+ *
+ * `reclaimIfStale` only fires when a NEW delivery of the SAME message collides
+ * at 23505, so it recovers a stranded claim only if Gorgias happens to redeliver
+ * — which it does not once the original webhook has been ACKed. That leaves the
+ * recovery path purely reactive, and a claim nothing retries suppresses its
+ * message forever: the row is `superseded`, which is exactly what keeps it out
+ * of the dashboard queues, so the customer goes silent on both sides. Only the
+ * daily drift digest can see it, and drift deliberately never auto-drafts.
+ * (Live: ticket 113280513, claimed 3 seconds after a Railway deploy commit
+ * landed. The worker died mid-draft; the customer waited 5 days.)
+ *
+ * Deleting the claim is not enough on its own — nothing would re-draft it — so
+ * this reprocesses the ticket through the normal intake path, which re-claims,
+ * refreshes the snapshot and files a draft like any other message.
+ *
+ * Idempotent and normally a no-op. Matches only OUR unfilled intake claims
+ * (`draft_response` still empty, `intake_claim` still set), so a committed
+ * draft and the auto-close claim's different marker can never be swept.
+ */
+async function sweepStaleDraftClaims({ write = true } = {}) {
+  const supabase = getSupabaseClient();
+  const now = Date.now();
+
+  const { data: stale, error } = await supabase
+    .from('cs_ai_drafts')
+    .select('id, gorgias_ticket_id, gorgias_message_id, created_at')
+    .eq('draft_response', '')
+    .contains('structured_output', { intake_claim: true })
+    .lt('created_at', new Date(now - STALE_CLAIM_MS).toISOString())
+    .gt('created_at', new Date(now - CLAIM_SWEEP_MAX_AGE_MS).toISOString())
+    .order('created_at');
+
+  if (error) {
+    console.error(`[claim-sweep] query failed: ${error.message}`);
+    return { swept: [] };
+  }
+  if (!stale?.length) return { swept: [] };
+
+  const swept = [];
+  const aiBotId = await getAiBotUserId();
+
+  for (const claim of stale) {
+    const entry = { claimId: claim.id, ticketId: claim.gorgias_ticket_id, messageId: claim.gorgias_message_id, status: 'found' };
+    if (!write) { swept.push(entry); continue; }
+
+    try {
+      // Drop the claim FIRST: while it exists the re-claim inside processTicket
+      // collides with it, and reclaimIfStale would have to win the same race.
+      await supabase.from('cs_ai_drafts').delete().eq('id', claim.id);
+
+      const ticket = await gorgias.getTicket(claim.gorgias_ticket_id);
+      const { data: drafts } = await supabase
+        .from('cs_ai_drafts')
+        .select('gorgias_message_id')
+        .eq('gorgias_ticket_id', claim.gorgias_ticket_id);
+      const existingMessageIds = new Set((drafts || []).map(d => d.gorgias_message_id).filter(Boolean));
+
+      const result = await processTicket(supabase, ticket, aiBotId, existingMessageIds);
+      entry.status = result?.skipped ? 'redrafted_skipped' : 'redrafted';
+      console.warn(`[claim-sweep] ticket ${claim.gorgias_ticket_id}: stranded claim ${claim.id} (message ${claim.gorgias_message_id}, ${Math.round((now - new Date(claim.created_at)) / 60000)}m old) → ${entry.status}`);
+    } catch (e) {
+      entry.status = 'failed';
+      entry.error = e.message;
+      console.error(`[claim-sweep] ticket ${claim.gorgias_ticket_id}: re-draft FAILED after clearing claim ${claim.id} — ${e.message}`);
+    }
+    swept.push(entry);
+  }
+
+  return { swept };
+}
+
 async function commitDraft(supabase, { ticketRowId, gorgiasTicketId, draftFields, claimId = null }) {
   // With a claim held, the row already exists and owns the unique key — filling
   // it in is an UPDATE. Inserting here would collide with our own claim.
@@ -1663,6 +1741,9 @@ module.exports = {
   commitDraft,
   claimDraftSlot,
   releaseDraftSlot,
+  sweepStaleDraftClaims,
+  STALE_CLAIM_MS,
+  CLAIM_SWEEP_MAX_AGE_MS,
   getAiBotUserId,
   buildConversationContext,
   buildPreviousDraftContext,

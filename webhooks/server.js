@@ -225,6 +225,30 @@ const preOrderSweepTimer = setInterval(async () => {
 }, PREORDER_SWEEP_MS);
 preOrderSweepTimer.unref();
 
+// Stranded intake claims: the atomic draft claim is taken BEFORE the advisor
+// call, so a worker that dies mid-draft (a Railway redeploy is the realistic
+// case) leaves a claim nothing fills in. The takeover inside claimDraftSlot only
+// fires if Gorgias redelivers that same message, which it doesn't once the
+// original webhook was ACKed — so without this sweep the claim suppresses one
+// customer's message permanently, and invisibly, since a claim row is
+// 'superseded' and never renders in the dashboard queues. Normally a no-op.
+// See customer-service/intake/processGorgiasTickets.js.
+const { sweepStaleDraftClaims } = require('../customer-service/intake/processGorgiasTickets');
+const CLAIM_SWEEP_MS = 5 * 60 * 1000;
+let claimSweepRunning = false;
+const claimSweepTimer = setInterval(async () => {
+  if (claimSweepRunning) return; // never overlap a slow sweep with the next tick
+  claimSweepRunning = true;
+  try {
+    await sweepStaleDraftClaims({ write: true });
+  } catch (e) {
+    console.error(`[claim-sweep] sweep error: ${e.message}`);
+  } finally {
+    claimSweepRunning = false;
+  }
+}, CLAIM_SWEEP_MS);
+claimSweepTimer.unref();
+
 // Graceful shutdown
 function shutdown(signal) {
   console.log(`[webhook] ${signal} received, shutting down...`);
