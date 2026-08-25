@@ -34,7 +34,7 @@ const {
   PRODUCT_NICKNAMES,
 } = require('./sizingEngine');
 const { styleSwitchNote, tightLegsTargets, offeredSizeFor, crossesToAdult, isYouthSize, buildStyleSwitchOptions } = require('./styleSwitch');
-const { prescribeDonationRouting } = require('./donationRouting');
+const { prescribeDonationRouting, findPriorPartnerDonation } = require('./donationRouting');
 const { analyzeUnfulfilledOrder } = require('./tracking/fulfillmentChecker');
 const { ADVISOR_OUTPUT_SCHEMA, createCustomerReplyStreamExtractor, STRUCTURED_OUTPUT_PROMPT_NOTE, LEGACY_STRUCTURED_TEMPLATE, isDegenerateReply, createLoadShedBreaker } = require('./advisorOutputSchema');
 
@@ -132,6 +132,7 @@ const TOOLS = [
         has_defect: { type: 'boolean', description: 'True if any item has a defect (skip donation for defects)' },
         customer_requested_partner: { type: 'boolean', description: 'Set true ONLY when the customer has explicitly accepted a prior offer of partner org info on a single-item donation. Bypasses the default "donate locally" response and returns a partner address. Leave false/omitted otherwise — the tool handles the default single vs multi-item routing.' },
         include_proof_ask: { type: 'boolean', description: 'Set true ONLY when this same draft raises a "Refund-pattern:" flag. Routes the donation to a partner org even for a single item and appends the photo/receipt request to the donation text. The tool automatically omits the ask when no partner org exists (local-donation fallback) — never compose the ask yourself.' },
+        customer_asked_for_address_again: { type: 'boolean', description: 'Set true ONLY when the customer explicitly asks to be re-sent the donation address they were already given ("what was that address again?", "can you resend where to ship it?"). Returns the full address block a second time. Leave false/omitted for every other follow-up, including "can I send these other items there too?" — the tool already knows this ticket has the address and answers that in one line.' },
       },
       required: ['customer_country', 'item_count'],
     },
@@ -400,7 +401,7 @@ async function executeToolCall(toolName, toolInput) {
     }
 
     case 'get_donation_partner': {
-      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner, include_proof_ask, sizes } = toolInput;
+      const { customer_country, item_count, customer_address, has_defect, customer_requested_partner, include_proof_ask, customer_asked_for_address_again, sizes } = toolInput;
       // Reuse the deterministic donation routing from decisionTree
       const intake = {
         items: has_defect
@@ -414,6 +415,10 @@ async function executeToolCall(toolName, toolInput) {
         customerRequestedPartner: !!customer_requested_partner,
         includeProofAsk: !!include_proof_ask,
         donationSizes: Array.isArray(sizes) ? sizes : [],
+        // Injected at dispatch (see __priorDonation below) — the ticket's own
+        // history, which the model cannot look up for itself.
+        priorPartnerDonation: toolInput.__priorDonation || null,
+        customerAskedForAddressAgain: !!customer_asked_for_address_again,
       };
       const result = await prescribeDonationRouting(intake, context);
       // Side-channel: stash routing metadata (partner_id + items_count) on the
@@ -435,12 +440,19 @@ async function executeToolCall(toolName, toolInput) {
       // trimmed here so word-for-word pasting composes with the signature.
       const responseText = (result.response_text || '')
         .replace(/\n+Take care,\s*$/, '') || null;
+      // Two instructions, because the two states ask for opposite things. The
+      // full-block instruction below is the strongest positive template in the
+      // advisor's context and it arrives at the moment of writing, so on a
+      // follow-up question it beat the "boilerplate appears ONCE per
+      // conversation" rule sitting elsewhere in the prompt and the address was
+      // re-sent. The tool now decides which of the two the model is holding.
+      const instruction = result.already_given
+        ? 'This ticket has ALREADY been given the partner address, in a message the customer has read. Paste response_text word-for-word as the whole donation section. Do NOT repeat the address, the org description, the wash reminder or the appreciation line — the customer has them. Write your own warm opening around it if the moment calls for one (thanking them for donating), then this line, then sign off.'
+        : 'Paste response_text into your reply word-for-word as the donation section — every line, including the "can you please send the item(s) you are returning to:" ask, the full address block, and the appreciation line. Do not paraphrase, shorten, reorder, or soften any of it, and keep its singular/plural exactly as written (the tool already matches the wording to how many items are coming back). When a partner address is given, sending the item(s) there is the standard next step we ask of every customer: never present it as optional ("you\'re welcome to", "if you\'d like") and never write "no need to send anything back" — they do send the item(s), just to the partner org instead of us.';
       return {
         type: routingType,
         response_text: responseText,
-        ...(responseText ? {
-          instruction: 'Paste response_text into your reply word-for-word as the donation section — every line, including the "can you please send the item(s) you are returning to:" ask, the full address block, and the appreciation line. Do not paraphrase, shorten, reorder, or soften any of it, and keep its singular/plural exactly as written (the tool already matches the wording to how many items are coming back). When a partner address is given, sending the item(s) there is the standard next step we ask of every customer: never present it as optional ("you\'re welcome to", "if you\'d like") and never write "no need to send anything back" — they do send the item(s), just to the partner org instead of us.',
-        } : {}),
+        ...(responseText ? { instruction } : {}),
         audit: result.audit,
       };
     }
@@ -1605,6 +1617,7 @@ When a customer says they were charged customs duties or import taxes on deliver
 - Single item with partners available: the tool will suggest donating locally but offer our partner org info. Relay that.
 - Single item — customer accepts the partner offer: when the customer's reply explicitly asks for the partner info we offered (e.g. "yes please send the info", "I'd appreciate the donation address"), call get_donation_partner again with customer_requested_partner=true. The tool will return a real partner name and address — include the full address block, just like the multi-item case. Do NOT re-relay the "donate locally" offer.
 - Multiple items with partners available: the tool returns the specific partner name, address, and description. Include the full address block.
+- Follow-up donation question after the address was already given: still call get_donation_partner, and still relay its response_text word-for-word. It knows this ticket already has the address and returns one line confirming the same one, so the customer gets an answer rather than the whole block again. The only exception is a customer explicitly asking to be re-sent the address itself, which is what customer_asked_for_address_again=true is for.
 
 ### Kids & Third-Party Purchases
 - When a parent/guardian is buying for a child: take a measurements-only approach. Ask for waist/chest measurement.
@@ -2082,6 +2095,29 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
   // send-time logger can call logDonationRouting() with the right partner.
   const donationRoutingSink = {};
 
+  // Has this ticket already been given a partner address? Fetched once per run
+  // rather than per dispatch, and fail-soft: on any error the tool routes as it
+  // always did, which is the safe direction (a repeated address is noise, a
+  // missing one strands the customer's return). ticket_id is the GORGIAS id at
+  // every production call site (intake passes ticketId, the dashboard passes
+  // draft.gorgias_ticket_id).
+  let priorDonation = null;
+  if (ticket_id) {
+    try {
+      const { data: priorDrafts } = await getSupabaseClient()
+        .from('cs_ai_drafts')
+        .select('sent_response, sent_at, created_at, structured_output')
+        .eq('gorgias_ticket_id', ticket_id)
+        .not('sent_response', 'is', null);
+      priorDonation = findPriorPartnerDonation(priorDrafts || []);
+      if (priorDonation) {
+        audit.push(`Donation address already given on this ticket${priorDonation.partner_name ? ` (${priorDonation.partner_name})` : ''} — follow-up will confirm, not re-send`);
+      }
+    } catch (err) {
+      console.warn(`[aiAdvisor] prior donation lookup failed: ${err.message}`);
+    }
+  }
+
   // Output mode. Default legacy (see SCHEMA_OUTPUT_ENABLED above) — the
   // <structured>-text path is fast (1-2s) and not load-shed. Schema mode, when
   // enabled, still flips to legacy on a 529 (onApiError below) and starts in
@@ -2199,6 +2235,7 @@ async function aiAdvisor({ customer_email, customer_name, issue_description, ord
       // routing type for post-loop attachment to prescription.donation.
       if (name === 'get_donation_partner') {
         input.__routingSink = donationRoutingSink;
+        input.__priorDonation = priorDonation;
       }
 
       return executeToolCall(name, input);

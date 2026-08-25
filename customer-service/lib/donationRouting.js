@@ -270,6 +270,53 @@ function selectByProximity(partners, place, getLoad, rng) {
 const PROOF_ASK_TEXT = "When you've dropped them off, can you send over a photo with the receipt so I can let the org know to expect the donation?";
 const PROOF_ASK_TEXT_SINGULAR = "When you've dropped it off, can you send over a photo with the receipt so I can let the org know to expect the donation?";
 
+// Every partner mailing_address block opens with this line on its own, and the
+// local-donation copy never contains it ("all RUBIES returns will be donated
+// to organizations..." — lowercase, mid-sentence). Case and line anchoring are
+// both load-bearing: a case-insensitive match reads the local-donation offer as
+// an address and would suppress the block a customer is owed.
+const ADDRESS_BLOCK_MARKER = /^RUBIES Returns\r?$/m;
+
+// Confirmation copy for a follow-up donation question on a ticket that has
+// already been given a partner address. The address, the wash reminder and the
+// appreciation line were all in the message the customer is replying to, so
+// re-pasting the block answers a question they did not ask. Kept in the tool
+// (not the prompt) because the advisor's contract is to relay response_text
+// word-for-word — the state-conditional part is the tool's job, not framing the
+// model applies on top.
+const SAME_ADDRESS_TEXT = 'Yes, please send them to the same address.';
+const SAME_ADDRESS_TEXT_SINGULAR = 'Yes, please send it to the same address.';
+
+/**
+ * The partner whose address this ticket has ALREADY been given, or null.
+ *
+ * Reads the drafts that were actually SENT, not merely composed: a draft can
+ * route to a partner and have the operator delete the block before sending, in
+ * which case the customer never saw an address and the next reply owes them the
+ * full one. So the sent TEXT is the evidence, and prescription.donation only
+ * supplies which partner it was (for volume logging).
+ *
+ * Pure — the caller fetches the ticket's drafts. Oldest-first or newest-first
+ * both work; the most recent qualifying send wins.
+ */
+function findPriorPartnerDonation(drafts) {
+  const sent = (drafts || [])
+    .filter(d => d && typeof d.sent_response === 'string' && ADDRESS_BLOCK_MARKER.test(d.sent_response))
+    .sort((a, b) => new Date(a.sent_at || a.created_at || 0) - new Date(b.sent_at || b.created_at || 0));
+  const latest = sent[sent.length - 1];
+  if (!latest) return null;
+  const donation = latest.structured_output?.prescription?.donation;
+  // An address demonstrably reached the customer even when the routing metadata
+  // is missing (pre-2026-06 rows, or a hand-composed reply). Report it as
+  // already-given with an unknown partner rather than re-sending the block; the
+  // customer has the address either way, and unknown volume is a smaller error
+  // than a second address.
+  return {
+    partner_id: donation?.partner_id ?? null,
+    partner_name: donation?.partner_name ?? null,
+  };
+}
+
 async function prescribeDonationRouting(intake, context) {
   const customerRequestedPartner = !!context.customerRequestedPartner;
   // Refund-pattern proof ask: route even single items to a partner org (a
@@ -307,6 +354,28 @@ async function prescribeDonationRouting(intake, context) {
     }
   }
   if (itemCount === 0) itemCount = nonDefectItems.length;
+
+  // This ticket has already been given a partner address. Confirm the same one
+  // instead of routing again. Two reasons, and the second is the sharper: the
+  // block is boilerplate the customer just read, AND routing is weighted-random,
+  // so a second call can legitimately return a DIFFERENT partner and split one
+  // customer's return across two orgs. The items still count as volume for the
+  // partner they are going to, so the caller's routing sink is filled in below
+  // exactly as a fresh routing would fill it.
+  const priorPartner = context.priorPartnerDonation;
+  if (priorPartner && !context.customerAskedForAddressAgain) {
+    const single = itemCount <= 1;
+    const proofAsk = includeProofAsk ? (single ? PROOF_ASK_TEXT_SINGULAR : PROOF_ASK_TEXT) : null;
+    return {
+      phase: 'donation_routing',
+      type: 'partner',
+      already_given: true,
+      partner: priorPartner.partner_id ? { id: priorPartner.partner_id, name: priorPartner.partner_name } : null,
+      proof_ask: includeProofAsk,
+      response_text: [single ? SAME_ADDRESS_TEXT_SINGULAR : SAME_ADDRESS_TEXT, ...(proofAsk ? ['', proofAsk] : [])].join('\n'),
+      audit: `${itemCount} item(s) → ${priorPartner.partner_name || 'same partner as earlier in this ticket'} — address already given in this conversation, confirmed rather than re-sent`,
+    };
+  }
 
   if (!country) {
     return {
@@ -533,4 +602,4 @@ async function logDonationRouting({ customer_email, order_number, partner_id, it
   }
 }
 
-module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, selectByProximity, exposureAdjustedLoad, partnerExposureDays, proximityBoost, LOCAL_RADIUS_KM, LOAD_WINDOW_DAYS, MIN_EXPOSURE_DAYS, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR };
+module.exports = { prescribeDonationRouting, geocodeAddress, haversineDistance, logDonationRouting, pickWeightedByLoad, fetchRecentPartnerLoads, selectByProximity, exposureAdjustedLoad, partnerExposureDays, proximityBoost, findPriorPartnerDonation, LOCAL_RADIUS_KM, LOAD_WINDOW_DAYS, MIN_EXPOSURE_DAYS, PROOF_ASK_TEXT, PROOF_ASK_TEXT_SINGULAR, SAME_ADDRESS_TEXT, SAME_ADDRESS_TEXT_SINGULAR, ADDRESS_BLOCK_MARKER };
