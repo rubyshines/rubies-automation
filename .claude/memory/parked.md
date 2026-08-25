@@ -8,6 +8,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Gmail historical backfill has never run — pre-March-2026 B2B history is unsynced
+- Parked: 2026-08-24
+- Domains: b2b_sales, tech
+- Type: bug
+- Priority: medium
+- Notes: `gmail_sync_state.backfill_pass` is 0 with `messages_synced` 0 and `backfill_newest_date` null, so `email_messages` only holds mail from roughly 2026-03 onward. Every established retailer relationship (Sock Drawer Heroes, Illusions/Tuck and Bind, Early to Bed, underDARE, Transting) predates that window, so first-touch → first-order timing is unobservable for all of them and no un-referred cold intro exists in the synced data at all. The consequence is that opener reply-rate and conversion baselines cannot be computed from our own history — any such figure today rests on a handful of in-window threads. The full history is sitting in Gmail; it was simply never pulled.
+- Resume when: someone wants B2B outreach baselines, message-type A/B evaluation, or conversion timing grounded in real history. Running the backfill is cheaper than any workaround that infers the same thing from partial data.
+- Provenance: the one still-live finding from the 2026-06-10 historical B2B conversation analysis (`.claude/plans/b2b-historical-findings.md`, deleted 2026-08-24). Its other two findings are resolved — the ~12 live org relationships missing from `b2b_contacts` are all present now via `email_detected`, and the Gmail auto-save draft-checkpoint pollution that made raw `email_messages` reply rates meaningless is superseded by `b2b_messages` holding final sends only.
+
 ## Ask Warehance to expose per-line-item allocation in the API
 - Parked: 2026-08-25
 - Domains: logistics, cs, tech
