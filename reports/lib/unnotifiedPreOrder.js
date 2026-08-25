@@ -389,17 +389,27 @@ ${SIGNOFF}`;
 // original" offer and no opt-out paragraph at all (a straight swap needs no
 // menu), the fit equivalence is stated exactly once, and price is never
 // mentioned (findEquivalentSwap already guarantees same price).
-function bodySwapDone({ orderNumber, leakPhrase, plural, swaps, apology }) {
+//
+// The closing sentence has to track what the order is ACTUALLY waiting on. When
+// something else on it is still backordered (case C) the swap does not release
+// the order, and claiming it ships right away would be a plainly false promise
+// to someone who then watches it not ship. In that case we name the remaining
+// item instead — which is always one the customer was already told about, since
+// an undisclosed one would be a leak and would have been swapped or offered too.
+function bodySwapDone({ orderNumber, leakPhrase, plural, swaps, apology, remainingPhrase, remainingEta }) {
   const verb = plural ? 'are' : 'is';
   const swapFacts = joinList(swaps.map(s =>
     `size ${s.toSize} on our ${s.chart} size chart is the exact same fit as the ${s.fromSize}`));
   const stockVerb = swaps.length > 1 ? "they're" : "it's";
   const swapActions = joinList(swaps.map(s => `your ${s.nickname} to ${s.color}, size ${s.toSize}`));
+  const closer = remainingPhrase
+    ? `So I went ahead and swapped ${swapActions}. Your order is now just waiting on ${remainingPhrase}${remainingEta ? `, due ${remainingEta}` : ''}.`
+    : `So I went ahead and swapped ${swapActions}, and your full order can now ship right away.`;
   return `Hi,
 
 I'm writing about your RUBIES order #${orderNumber}. ${capitalizeFirst(leakPhrase)} you ordered ${verb} on pre-order. Our inventory got out of sync. ${apology}
 
-Good news: ${swapFacts}, and ${stockVerb} in stock. So I went ahead and swapped ${swapActions}, and your full order can now ship right away.
+Good news: ${swapFacts}, and ${stockVerb} in stock. ${closer}
 
 ${SIGNOFF}`;
 }
@@ -409,7 +419,17 @@ function composeBody({ orderNumber, classification, alternatives = [], autoSwaps
   const eta = bestETA(classification.leaks);
   const plural = classification.leaks.length > 1;
   const apology = apologyLine(daysSinceOrder);
-  if (autoSwaps.length) return bodySwapDone({ orderNumber, leakPhrase, plural, swaps: autoSwaps, apology });
+  if (autoSwaps.length) {
+    return bodySwapDone({
+      orderNumber,
+      leakPhrase,
+      plural,
+      swaps: autoSwaps,
+      apology,
+      remainingPhrase: classification.oosOther.length ? joinList(classification.oosOther.map(renderItem)) : null,
+      remainingEta: bestETA(classification.oosOther),
+    });
+  }
   if (classification.case === 'A') return bodyCaseA({ orderNumber, leakPhrase, eta, plural, alternatives, apology });
   if (classification.case === 'B') return bodyCaseB({ orderNumber, leakPhrase, eta, plural, alternatives, apology });
   const otherPhrase = joinList(classification.oosOther.map(renderItem));
@@ -577,8 +597,10 @@ async function fetchOrdersWithUnresolvedNotes(supabase, orderNumbers) {
   );
 }
 
-async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
+async function detectUnnotifiedPreOrders(supabase, unfulfilledResults, { exemptOrders = null, warehanceOrderBook = null } = {}) {
   const orders = unfulfilledResults.map(r => r.order);
+  const isExempt = (orderNumber) => !!exemptOrders
+    && exemptOrders.has(String(orderNumber).replace('#', ''));
 
   // Collect all SKUs across all unfulfilled orders to do one bulk variant lookup.
   const allSkus = [];
@@ -594,7 +616,16 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
   for (const r of unfulfilledResults) {
     const o = r.order;
     // Skip orders older than STALENESS_DAYS (predate the auto-drafter).
-    if (o.created_at && new Date(o.created_at).getTime() < staleCutoff) continue;
+    //
+    // The window is measured from the ORDER date, which is the right anchor for
+    // a disclosure gap — that leak exists from the moment of purchase, so an old
+    // order with one is an old order nobody looked at. It is the wrong anchor for
+    // a de-allocation, where the leak is created long after the sale and an
+    // order can be well past 14 days on the day it first becomes a candidate.
+    // Those orders arrive here already identified by deallocationWatch and are
+    // exempt: the question the gate exists to ask ("has this been sitting
+    // unnoticed?") has been answered by the transition that flagged them.
+    if (o.created_at && new Date(o.created_at).getTime() < staleCutoff && !isExempt(o.order_number)) continue;
     // Skip orders too fresh to distinguish a shortage from allocation lag
     // (and orders with no usable created_at — olderThanMinutes fails closed).
     if (!olderThanMinutes(o.created_at, MIN_ORDER_AGE_MINUTES)) continue;
@@ -627,7 +658,7 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
   try {
     const flaggedSkus = fresh.flatMap(c =>
       [...c.classification.leaks, ...c.classification.oosOther].map(li => li.sku));
-    const alloc = await fetchAllocationIndex(flaggedSkus);
+    const alloc = await fetchAllocationIndex(flaggedSkus, { orders: warehanceOrderBook });
     allocationIndex = alloc.index;
     warehanceOrders = alloc.orders;
     // Only the over-counting direction matters here. Finding MORE demand than
@@ -657,12 +688,9 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
 
   // Attach swap data per order. Done-for-you swap: when EVERY leak has an
   // in-stock, same-price, identical-fit youth/adult equivalent in the ordered
-  // color AND the swap unblocks the whole order (cases A/B), the outreach
-  // states the swap as already made and stages the order edit as the draft's
-  // paired operator action. Case C keeps the options email — other items are
-  // still backordered, so the swap wouldn't unblock shipping and the
-  // customer's choice matters more. Otherwise: rendered alternatives for the
-  // options email.
+  // color, the outreach states the swap as already made and stages the order
+  // edit as the draft's paired operator action. Otherwise: rendered
+  // alternatives for the options email.
   await attachSwapData(verified);
   return verified;
 }
@@ -676,17 +704,26 @@ async function attachSwapData(candidates) {
   for (const c of candidates) {
     c.alternatives = [];
     c.autoSwaps = [];
-    if (c.classification.case !== 'C') {
-      const swaps = [];
-      for (const li of c.classification.leaks) {
-        const s = await findEquivalentSwap(li.sku);
-        if (!s) { swaps.length = 0; break; }
-        swaps.push(s);
-      }
-      if (swaps.length) {
-        c.autoSwaps = swaps;
-        continue;
-      }
+    // Tried for EVERY case, including C. The swap used to be withheld when
+    // something else on the order was also backordered, on the reasoning that it
+    // would not release the order so the customer's choice mattered more. That
+    // reads the swap as a choice, and it isn't one: an identical-fit, same-price,
+    // in-stock equivalent is the same garment on the other size chart. Withholding
+    // it sent an options email that asked someone to pick between waiting until
+    // October and a size that fits identically and is on the shelf — for an item
+    // they never agreed to wait for in the first place. Doing it regardless turns
+    // the order into one that waits only on the item the customer WAS told about,
+    // which is the best available outcome and needs no reply. (Founder call,
+    // 2026-08-25, on order #32951.)
+    const swaps = [];
+    for (const li of c.classification.leaks) {
+      const s = await findEquivalentSwap(li.sku);
+      if (!s) { swaps.length = 0; break; }
+      swaps.push(s);
+    }
+    if (swaps.length) {
+      c.autoSwaps = swaps;
+      continue;
     }
     const perLeakAlts = [];
     for (const li of c.classification.leaks) {
@@ -848,10 +885,10 @@ async function draftLeakOutreach({ leaks, write = false }) {
   return results;
 }
 
-async function detectAndDraftUnnotifiedPreOrders(supabase, unfulfilledResults, { write = false } = {}) {
+async function detectAndDraftUnnotifiedPreOrders(supabase, unfulfilledResults, { write = false, exemptOrders = null, warehanceOrderBook = null } = {}) {
   await productCache.loadFromSupabase();
   try { await initCsConfig(); } catch (e) { console.warn(`[unnotifiedPreOrder] initCsConfig: ${e.message}`); }
-  const leaks = await detectUnnotifiedPreOrders(supabase, unfulfilledResults);
+  const leaks = await detectUnnotifiedPreOrders(supabase, unfulfilledResults, { exemptOrders, warehanceOrderBook });
   if (!leaks.length) return { drafted: [], skipped: 0 };
   const results = await draftLeakOutreach({ leaks, write });
   return { drafted: results, skipped: 0 };
@@ -906,6 +943,74 @@ async function sweepUnnotifiedPreOrders({ write = true, supabase = null } = {}) 
   return detectAndDraftUnnotifiedPreOrders(sb, candidates, { write });
 }
 
+/**
+ * Load specific orders from the mirror by order number, in the `[{ order }]`
+ * shape the detector expects.
+ *
+ * The de-allocation path cannot use loadRecentUnfulfilledOrders: that query is
+ * bounded to the last SWEEP_LOOKBACK_DAYS, and an order whose allocation
+ * disappears is by construction likely to be older than that (the case that
+ * surfaced this was 16 days out). Here the candidate set is already small and
+ * named, so fetching exactly those rows is both cheaper and unbounded in age.
+ */
+async function loadOrdersByNumber(supabase, orderNumbers) {
+  const nums = [...new Set(orderNumbers.map(n => parseInt(String(n).replace('#', ''), 10)))]
+    .filter(Number.isFinite);
+  if (!nums.length) return [];
+  const results = [];
+  for (let i = 0; i < nums.length; i += 200) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('order_number, created_at, customer_email, tags, fulfillment_status, cancelled_at, order_line_items(sku, title, variant_title, quantity, unit_price, custom_attributes)')
+      .in('order_number', nums.slice(i, i + 200))
+      .is('cancelled_at', null)
+      .neq('fulfillment_status', 'FULFILLED');
+    if (error) throw new Error(`orders lookup failed: ${error.message}`);
+    for (const o of (data || [])) results.push({ order: o });
+  }
+  return results;
+}
+
+/**
+ * One de-allocation tick: observe per-line allocation across the open order
+ * book, and draft outreach for any order that LOST an allocation since the last
+ * observation.
+ *
+ * Deliberately a separate sweep from sweepUnnotifiedPreOrders rather than a
+ * widening of it. The two answer the same customer-facing question from opposite
+ * directions and want opposite settings: the disclosure gap is detectable at
+ * order time and wants a fast tick with an order-age window; a de-allocation is
+ * only ever detectable as a transition, wants the full open book regardless of
+ * age, and costs a stock call per distinct SKU. Folding them together would mean
+ * paying the expensive read every ten minutes to serve the cheap case.
+ *
+ * Everything downstream of detection is shared, so a de-allocated order gets the
+ * same A/B/C classification, the same live re-verification, the same
+ * order_alert_notes idempotency (an order auto-drafted once is never drafted
+ * again) and the same email as any other candidate.
+ */
+async function sweepDeallocations({ write = true, supabase = null } = {}) {
+  const sb = supabase || getSupabaseClient();
+  const { observeAllocations } = require('./deallocationWatch');
+
+  const { flipped, flips, observed, untrustedSkus, orders, skipped } = await observeAllocations({ write, supabase: sb });
+  if (skipped) return { drafted: [], flips: [], observed, untrustedSkus, skipped };
+  if (!flipped.size) return { drafted: [], flips: [], observed, untrustedSkus };
+
+  const candidates = await loadOrdersByNumber(sb, [...flipped]);
+  if (!candidates.length) return { drafted: [], flips, observed, untrustedSkus };
+
+  // Pass the SAME order book the observation was made against. Re-fetching here
+  // would leave the flip and the verification describing two different moments,
+  // and the whole point of a transition is that the two moments are the subject.
+  const { drafted } = await detectAndDraftUnnotifiedPreOrders(sb, candidates, {
+    write,
+    exemptOrders: flipped,
+    warehanceOrderBook: orders,
+  });
+  return { drafted, flips, observed, untrustedSkus };
+}
+
 // ---------------------------------------------------------------------------
 // Standalone CLI
 // ---------------------------------------------------------------------------
@@ -945,7 +1050,9 @@ module.exports = {
   detectUnnotifiedPreOrders,
   detectAndDraftUnnotifiedPreOrders,
   sweepUnnotifiedPreOrders,
+  sweepDeallocations,
   loadRecentUnfulfilledOrders,
+  loadOrdersByNumber,
   classifyOrder,
   filterToNotReadyToShip,
   reclassifyWithAllocation,

@@ -127,9 +127,14 @@ stubModule(require.resolve('../lib/customerOutreach'), {
 
 stubModule(path.resolve(__dirname, '../../reports/lib/warehanceClient.js'), {
   fetchOrderByNumber: async () => null,
-  fetchUnfulfilledOrders: async () => new Map(),
-  fetchSkuStockMany: async () => new Map(),
+  // Mutable so the detection tests below can put an order in the warehouse's
+  // open book. Default empty keeps every pre-existing test unchanged.
+  fetchUnfulfilledOrders: async () => warehanceOrderBook,
+  fetchSkuStockMany: async () => warehanceStock,
 });
+
+let warehanceOrderBook = new Map();
+let warehanceStock = new Map();
 
 const {
   pickAlternativesViaCompare,
@@ -140,6 +145,7 @@ const {
   reclassifyWithAllocation,
   attachSwapData,
   buildSummary,
+  detectUnnotifiedPreOrders,
 } = require('../../reports/lib/unnotifiedPreOrder');
 const { buildAllocationIndex } = require('../../reports/lib/orderAllocation');
 
@@ -362,6 +368,32 @@ describe('composeBody with autoSwaps', () => {
     assert.match(body, /Here's what I can do/);
     assert.match(body, /Swap for the Mia in Pink, size S/);
   });
+
+  // The closing promise has to track what the order is actually waiting on. A
+  // swap on a case C order does not release it, and "ships right away" would be
+  // a false promise the customer watches not come true.
+  it('names the remaining backorder instead of promising the order ships', () => {
+    const caseC = {
+      case: 'C',
+      leaks: [{ sku: 'MIA-BLK-S', _variant: { pre_order_date: '2026-10-15' } }],
+      inStockOther: [],
+      oosOther: [{ sku: 'MIA-BLK-L', _variant: { pre_order_date: '2026-08-31' } }],
+    };
+    const body = composeBody({ orderNumber: '32951', classification: caseC, autoSwaps, daysSinceOrder: 16 });
+    assert.match(body, /I went ahead and swapped your Mia to Black, size 14/);
+    assert.match(body, /Your order is now just waiting on the Mia in Black, size L, due end of August, 2026/);
+    assert.doesNotMatch(body, /ship right away/, 'the order does not ship yet; saying so would be false');
+    // Still a straight swap: no menu, no reply needed.
+    assert.doesNotMatch(body, /Here's what I can do/);
+    assert.doesNotMatch(body, /just reply/i);
+    assert.doesNotMatch(body, /—/);
+  });
+
+  it('still promises the order ships when nothing else is backordered', () => {
+    const body = composeBody({ orderNumber: '33234', classification, autoSwaps, daysSinceOrder: 2 });
+    assert.match(body, /your full order can now ship right away/);
+    assert.doesNotMatch(body, /just waiting on/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -495,16 +527,19 @@ describe('outreach composition is shared between the sweep and Refresh', () => {
     );
   });
 
-  it('attachSwapData leaves Case C on the options email, never a done-for-you swap', async () => {
+  // Case C used to be held back from the done-for-you swap, on the reasoning
+  // that swapping would not release the order so the choice was the customer's
+  // to make. That reads an identical-fit, same-price, in-stock equivalent as a
+  // choice, and it is not one — it is the same garment on the other size chart.
+  // Founder call 2026-08-25 (order #32951): do the swap regardless.
+  it('attachSwapData does the done-for-you swap on Case C too', async () => {
     compareResponses = {};
     compareCalls = [];
     compareResponses['14'] = { source: { available_colors: [{ color: 'Black', inventory: 9 }] }, alternatives: [] };
-    compareResponses['S'] = { source: { available_colors: [{ color: 'Pink', inventory: 25 }] }, alternatives: [] };
     const [c] = await attachSwapData([{ classification }]);
-    // Case C means other items are backordered too, so swapping the leak would
-    // not unblock the order — the customer's choice matters more.
-    assert.deepEqual(c.autoSwaps, []);
-    assert.ok(c.alternatives.length > 0);
+    assert.equal(c.autoSwaps.length, 1);
+    assert.equal(c.autoSwaps[0].toSku, 'MIA-BLK-14');
+    assert.deepEqual(c.alternatives, [], 'a staged swap needs no options list');
   });
 
   it('the recomposed body is the A/B/C template, with no SKUs in customer copy', () => {
@@ -519,5 +554,141 @@ describe('outreach composition is shared between the sweep and Refresh', () => {
     assert.match(body, /Swap for the Mia in Pink, size S/);
     assert.doesNotMatch(body, /MIA-BLK-S|MIA-BLK-L/, 'raw SKUs must never reach customer copy');
     assert.doesNotMatch(body, /—/, 'no em dashes in customer copy');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Staleness gate + de-allocation exemption
+// ---------------------------------------------------------------------------
+//
+// The 14-day window is measured from the ORDER date. That is the right anchor
+// for a disclosure gap, which exists from the moment of purchase, and the wrong
+// one for a de-allocation, which is created long afterwards — order #32951 was
+// placed on 2026-08-08 and lost its Serena allocation on 2026-08-24, so it was
+// already 16 days old on the first day it was detectable at all, and the sweep
+// dropped it before classification ever ran. `exemptOrders` carries the orders
+// deallocationWatch has independently identified past that gate.
+
+function fakeSupabase({ variants = [], notes = [] }) {
+  const rows = { product_variants: variants, order_alert_notes: notes };
+  return {
+    from(table) {
+      const q = {
+        select: () => q,
+        in: async () => ({ data: rows[table] || [], error: null }),
+      };
+      return q;
+    },
+  };
+}
+
+function orderFixture(orderNumber, daysAgo) {
+  return {
+    order: {
+      order_number: orderNumber,
+      created_at: new Date(Date.now() - daysAgo * 864e5).toISOString(),
+      customer_email: 'someone@example.com',
+      tags: [],
+      fulfillment_status: 'UNFULFILLED',
+      cancelled_at: null,
+      order_line_items: [
+        { sku: 'MIA-BLK-S', title: 'MIA HALTER BIKINI TOP', variant_title: 'Black / S', quantity: 1, unit_price: 42, custom_attributes: null },
+      ],
+    },
+  };
+}
+
+function warehanceFixture(orderNumber, daysAgo) {
+  warehanceOrderBook = new Map([[String(orderNumber), {
+    order_number: `#${orderNumber}`,
+    order_date: new Date(Date.now() - daysAgo * 864e5).toISOString(),
+    cancelled: false,
+    ready_to_ship: false,
+    not_ready_to_ship_types: { has_unallocated_products: true },
+    order_items: [{ sku: 'MIA-BLK-S', quantity: 1, quantity_shipped: 0, cancelled: false }],
+  }]]);
+  // No stock, one unit of demand: allocated 0 / backordered 1 is exactly what
+  // the reconstruction should produce, so the counter check passes and the line
+  // reads as genuinely waiting.
+  warehanceStock = new Map([['MIA-BLK-S', { sku: 'MIA-BLK-S', on_hand: 0, allocated: 0, available: 0, backordered: 1 }]]);
+}
+
+describe('detectUnnotifiedPreOrders — staleness gate', () => {
+  const OOS_VARIANT = [{ sku: 'MIA-BLK-S', shopify_product_id: 'p1', inventory_quantity: 0, pre_order_incoming: null, pre_order_date: null }];
+
+  beforeEach(() => {
+    compareResponses = {};
+    compareCalls = [];
+    warehanceOrderBook = new Map();
+    warehanceStock = new Map();
+  });
+
+  // Control arm. Without this the exemption test proves nothing — a detector
+  // returning [] for every input would pass it.
+  it('detects a fresh order with an undisclosed out-of-stock line', async () => {
+    warehanceFixture(33234, 2);
+    const found = await detectUnnotifiedPreOrders(
+      fakeSupabase({ variants: OOS_VARIANT }),
+      [orderFixture(33234, 2)],
+    );
+    assert.equal(found.length, 1);
+    assert.equal(found[0].classification.case, 'A');
+  });
+
+  it('drops the same order once it is past the staleness window', async () => {
+    warehanceFixture(32951, 16);
+    const found = await detectUnnotifiedPreOrders(
+      fakeSupabase({ variants: OOS_VARIANT }),
+      [orderFixture(32951, 16)],
+    );
+    assert.deepEqual(found, [], 'a 16-day-old order must not be picked up by the ordinary sweep');
+  });
+
+  it('keeps a past-window order when it is exempt as a de-allocation', async () => {
+    warehanceFixture(32951, 16);
+    const found = await detectUnnotifiedPreOrders(
+      fakeSupabase({ variants: OOS_VARIANT }),
+      [orderFixture(32951, 16)],
+      { exemptOrders: new Set(['32951']) },
+    );
+    assert.equal(found.length, 1, 'a de-allocated order must survive the order-age window');
+    assert.equal(found[0].order.order_number, 32951);
+  });
+
+  it('matches exempt order numbers with or without a leading #', async () => {
+    warehanceFixture(32951, 16);
+    const found = await detectUnnotifiedPreOrders(
+      fakeSupabase({ variants: OOS_VARIANT }),
+      [{ order: { ...orderFixture(32951, 16).order, order_number: '#32951' } }],
+      { exemptOrders: new Set(['32951']) },
+    );
+    assert.equal(found.length, 1);
+  });
+
+  // The exemption is scoped to the staleness gate alone. Every gate about
+  // whether the customer is actually waiting still applies, or a de-allocation
+  // flag would become a way to email someone about a reserved item.
+  it('still drops an exempt order the warehouse reports fully allocated', async () => {
+    warehanceFixture(32951, 16);
+    warehanceOrderBook.get('32951').not_ready_to_ship_types.has_unallocated_products = false;
+    const found = await detectUnnotifiedPreOrders(
+      fakeSupabase({ variants: OOS_VARIANT }),
+      [orderFixture(32951, 16)],
+      { exemptOrders: new Set(['32951']) },
+    );
+    assert.deepEqual(found, []);
+  });
+
+  it('still drops an exempt order that already has an auto-draft note', async () => {
+    warehanceFixture(32951, 16);
+    const found = await detectUnnotifiedPreOrders(
+      fakeSupabase({
+        variants: OOS_VARIANT,
+        notes: [{ order_number: 32951, note: '[auto-draft] Unnotified pre-order outreach drafted', resolved: true }],
+      }),
+      [orderFixture(32951, 16)],
+      { exemptOrders: new Set(['32951']) },
+    );
+    assert.deepEqual(found, [], 'an order auto-drafted once is never drafted again');
   });
 });

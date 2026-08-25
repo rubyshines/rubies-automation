@@ -225,6 +225,51 @@ const preOrderSweepTimer = setInterval(async () => {
 }, PREORDER_SWEEP_MS);
 preOrderSweepTimer.unref();
 
+// De-allocation watch: the OTHER route to "waiting on an item nobody told me
+// about". The sweep above catches a line that was never allocated, which is
+// visible at order time. This one catches a line that WAS allocated and stopped
+// being — a stock recount comes up short and the warehouse hands the unit back —
+// which has no signal at order time at all and routinely lands after the sweep's
+// 14-day window has closed (found via #32951, de-allocated on day 16, never
+// contacted). It is a transition, so it needs the previous observation:
+// order_line_allocation_state. Hourly rather than every ten minutes because
+// reconstructing the whole open book costs a stock call per distinct SKU and the
+// customer has already been waiting days. See reports/lib/deallocationWatch.js.
+const { sweepDeallocations } = require('../reports/lib/unnotifiedPreOrder');
+const { WATCH_MS: DEALLOC_WATCH_MS } = require('../reports/lib/deallocationWatch');
+let deallocSweepRunning = false;
+const deallocSweepTimer = setInterval(async () => {
+  if (deallocSweepRunning) return; // never overlap a slow sweep with the next tick
+  deallocSweepRunning = true;
+  try {
+    const { drafted, flips, untrustedSkus, skipped } = await sweepDeallocations({ write: true });
+    if (skipped) {
+      console.warn(`[dealloc-watch] ${skipped}`);
+      return;
+    }
+    for (const f of (flips || [])) {
+      console.log(`[dealloc-watch] #${f.orderNumber} lost allocation on ${f.sku} (on_hand ${f.onHandBefore} -> ${f.onHandAfter})`);
+    }
+    // Reported, not silent: a SKU whose reconstruction doesn't tie back to
+    // Warehance's counters is one we deliberately refuse to raise flips on, so
+    // it is a blind spot for as long as it lasts.
+    if (untrustedSkus?.length) {
+      console.warn(`[dealloc-watch] ${untrustedSkus.length} SKU(s) excluded from flip detection (reconstruction disagrees with Warehance counters): ${untrustedSkus.join(', ')}`);
+    }
+    for (const d of (drafted || []).filter(d => d.status === 'drafted')) {
+      console.log(`[dealloc-watch] drafted #${d.order_number} (Case ${d.case}) → cs_ticket ${d.cs_ticket_id}`);
+    }
+    for (const d of (drafted || []).filter(d => d.status === 'failed')) {
+      console.error(`[dealloc-watch] seed FAILED for #${d.order_number}: ${d.error}`);
+    }
+  } catch (e) {
+    console.error(`[dealloc-watch] sweep error: ${e.message}`);
+  } finally {
+    deallocSweepRunning = false;
+  }
+}, DEALLOC_WATCH_MS);
+deallocSweepTimer.unref();
+
 // Stranded intake claims: the atomic draft claim is taken BEFORE the advisor
 // call, so a worker that dies mid-draft (a Railway redeploy is the realistic
 // case) leaves a claim nothing fills in. The takeover inside claimDraftSlot only

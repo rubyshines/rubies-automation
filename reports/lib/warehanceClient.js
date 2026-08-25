@@ -331,12 +331,64 @@ async function fetchSkuStock(sku) {
 
 /**
  * Bulk variant of fetchSkuStock. Returns a Map keyed by SKU.
+ *
+ * One search call per SKU, fired in parallel. That is fine for the handful of
+ * flagged SKUs the pre-order drafter asks about and NOT fine at catalog scale —
+ * Warehance rate-limits per minute and 152 concurrent searches trips it (hit
+ * 2026-08-25 building the de-allocation watch). Above the threshold this defers
+ * to fetchAllSkuStock, which reads the whole catalog in cursor pages instead:
+ * fewer calls, and the cost stops scaling with the number of SKUs asked for.
  */
+const BULK_STOCK_THRESHOLD = 25;
+
 async function fetchSkuStockMany(skus) {
   const unique = [...new Set((skus || []).filter(Boolean))];
+  if (unique.length > BULK_STOCK_THRESHOLD) {
+    const all = await fetchAllSkuStock();
+    return new Map(unique.map(sku => [sku, all.get(sku) || null]));
+  }
   const results = await Promise.all(unique.map(fetchSkuStock));
   const map = new Map();
   unique.forEach((sku, i) => map.set(sku, results[i]));
+  return map;
+}
+
+/**
+ * Every product's stock, read in cursor pages. Returns a Map keyed by SKU.
+ *
+ * `/products` is cursor-paginated like `/orders` (`has_next_page` +
+ * `next_cursor`) and NOT page-numbered like `/tickets/{id}/messages` — do not
+ * assume a shared envelope across a vendor's endpoints, which is exactly how the
+ * Gorgias paginator silently returned the oldest 30 messages of every thread.
+ * The endpoint publishes `total_count`, so the collected count is compared
+ * against it: a paginator that stops early otherwise looks identical to one that
+ * finished, and the check costs nothing.
+ */
+async function fetchAllSkuStock() {
+  const map = new Map();
+  let cursor = null;
+  let page = 0;
+  let totalCount = null;
+
+  while (true) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (cursor) params.set('cursor', cursor);
+    const json = await apiFetch(`/products?${params}`);
+    const data = json.data || json;
+    for (const p of (data.products || [])) {
+      if (p?.sku) map.set(p.sku, p);
+    }
+    if (totalCount === null && Number.isFinite(Number(data.total_count))) {
+      totalCount = Number(data.total_count);
+    }
+    page++;
+    if (!data.has_next_page || !data.next_cursor || page > 50) break;
+    cursor = data.next_cursor;
+  }
+
+  if (totalCount !== null && map.size < totalCount) {
+    console.warn(`[warehance] product pagination collected ${map.size} of ${totalCount} — stock lookups may be incomplete`);
+  }
   return map;
 }
 
@@ -420,6 +472,7 @@ module.exports = {
   warehanceOrderUrl,
   fetchSkuStock,
   fetchSkuStockMany,
+  fetchAllSkuStock,
   fetchCompletedBills,
   fetchBillLineItems,
   parseCsv,

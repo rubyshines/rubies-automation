@@ -39,6 +39,21 @@ async function loadFromSupabase() {
       .select('*')
       .order('shopify_variant_id', { ascending: true }));
 
+    // Curated customer-facing short names, keyed by handle. This is the same
+    // column getProductNickname reads, so the two cannot disagree. Loaded here
+    // (rather than reached for via sizingEngine) so renderVariantForCustomer
+    // stays synchronous and refreshes on the catalog's own cadence.
+    //
+    // Deliberately unfiltered by status: an archived product's nickname is
+    // still its name, and order history references products long after they
+    // stop being ACTIVE.
+    const { data: csConfig } = await supabase
+      .from('product_cs_config')
+      .select('product_handle, nickname');
+    const nicknameByHandle = new Map(
+      (csConfig || []).filter(r => r.product_handle && r.nickname)
+        .map(r => [r.product_handle, r.nickname]));
+
     // Group variants by product
     const variantsByProduct = new Map();
     for (const v of variants) {
@@ -60,6 +75,7 @@ async function loadFromSupabase() {
       id: p.shopify_product_id,
       title: p.title,
       handle: p.handle,
+      nickname: nicknameByHandle.get(p.handle) || null,
       status: p.status,
       productType: p.product_type,
       vendor: p.vendor,
@@ -414,17 +430,24 @@ function getCacheAgeHours() {
  * names. Three traps the codebase has hit before:
  *   1. Some Shopify variant `selectedOptions` are named "Option 1" / "Option 2"
  *      generically, not "Color" / "Size" — don't rely on option names.
- *   2. Product titles are verbose all-caps (e.g. "SASSY NO-TUCK SHAPING
- *      UNDERWEAR"). Handles may still have a "the-" prefix (e.g. "the-sassy-
- *      no-tuck-shaping-underwear") — use the handle's first non-"the" segment
- *      for short name.
+ *   2. The short name is CURATED (`product_cs_config.nickname`), never derived
+ *      from the handle. A handle is an SEO slug describing the garment, not the
+ *      product's name, and the two come apart constantly: the Serena lives at
+ *      `the-shaping-shorty-shorts`, the Charlie at
+ *      `the-extra-cute-shaping-underwear`, the Stella at
+ *      `high-waisted-shaping-bikini-bottom`. Deriving from the first non-"the"
+ *      segment called those the Shaping, the Extra and the High, and collapsed
+ *      three separate products onto "Rubies" and three more onto "Progress" —
+ *      measured wrong on 13 of 25 active products (2026-08-25). A handle can
+ *      also be renamed for SEO at any time, which silently changes what we call
+ *      a product to a customer.
  *   3. SKU prefix is a reliable cross-system key today (verified all unique
  *      across products as of Apr 2026). Don't try to parse SKU shape; use
  *      getVariantBySku() and read structured fields.
  *
- * Strategy: look up the variant by exact SKU, derive short name from product
- * handle, derive color+size from variant.title (which is consistently formatted
- * as "Color / Size", or just "Size" for size-only products).
+ * Strategy: look up the variant by exact SKU, read the curated short name off
+ * the product, derive color+size from variant.title (which is consistently
+ * formatted as "Color / Size", or just "Size" for size-only products).
  *
  * Returns null if SKU is not found in the cache (caller decides fallback).
  */
@@ -441,7 +464,13 @@ function renderVariantForCustomer(sku) {
 }
 
 function formatVariantReference(product, variant) {
-  const shortName = shortNameFromHandle(product.handle) || product.title || 'item';
+  // Curated nickname, else the product's own title. Never the handle: a wrong
+  // short name is indistinguishable from a real one to a customer, whereas a
+  // verbose title only reads as clumsy. Same reasoning as getSizeList returning
+  // null rather than falling through to a generic size run.
+  const shortName = product.nickname
+    || (product.title || '').replace(/^THE\s+/i, '').trim()
+    || 'item';
   const variantTitle = (variant.title || '').trim();
   // Variant title patterns:
   //   "Black / S"          -> color=Black, size=S
@@ -522,18 +551,6 @@ function colorsOutOfStock(variants) {
     byColor.set(color, entry);
   }
   return [...byColor.values()].filter(c => c.inventory <= 0);
-}
-
-function shortNameFromHandle(handle) {
-  if (!handle) return null;
-  const segments = handle.split('-').filter(Boolean);
-  if (!segments.length) return null;
-  const idx = segments[0].toLowerCase() === 'the' ? 1 : 0;
-  const raw = segments[idx];
-  if (!raw) return null;
-  // Short acronyms (length <= 2) like "AJ" stay all-caps; otherwise title-case.
-  if (raw.length <= 2) return raw.toUpperCase();
-  return raw[0].toUpperCase() + raw.slice(1).toLowerCase();
 }
 
 module.exports = { loadFromSupabase, loadProducts, startRefresh, getProducts, searchProducts, getVariantById, getVariantBySku, getVariantBySkuFuzzy, getSiblingVariant, getCacheAgeHours, renderVariantForCustomer, colorsInStock, colorsOutOfStock, _formatVariantReferenceForTesting: formatVariantReference };
