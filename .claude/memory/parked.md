@@ -8,6 +8,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Ask Warehance to expose per-line-item allocation in the API
+- Parked: 2026-08-25
+- Domains: logistics, cs, tech
+- Owner: Jamie (reaching out to the Warehance team)
+- Notes: The UI shows which items on an order are allocated; the API does not. Verified against the full OpenAPI spec — the only allocation keys anywhere are the per-SKU `allocated` total, `allocation_hold`, `stop_allocation`, and the order-level `has_unallocated_products` boolean. `GET /orders/{id}` takes no include/expand param, and `/reports/backordered-skus` is SKU-centric (its `orders` field is a count, not a list). The ask: an allocated/backordered quantity on `order_items`.
+- Resume when: they confirm. If it ships, `reports/lib/orderAllocation.js` gets deleted and its three callers (pre-order drafter, `get_order_allocation`, `fulfillmentChecker`) read the field instead. Keep the arithmetic self-check as cross-validation during the swap.
+
 ## Ask donation partners what volume they can absorb
 - Parked: 2026-08-24
 - Domains: community
