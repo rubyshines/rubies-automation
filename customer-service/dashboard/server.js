@@ -815,6 +815,23 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
   const { gorgiasTicket, lastCustomer, senderName, issueDescription } =
     await buildAdvisorInputFromGorgias(draft.gorgias_ticket_id);
   if (!lastCustomer) {
+    // An outbound draft that has already gone to the customer is a RECORD, not
+    // a draft. Every regeneration path below rewrites draft_response and flips
+    // status back to 'pending', which puts a sent email back in the send queue:
+    // the operator sees something awaiting send that the customer already has,
+    // and sending it again is one click. (Done to three live rows on
+    // 2026-08-25, recovered from sent_response + draft_history.)
+    //
+    // The guard belongs HERE rather than in either composer, because both do
+    // the same thing and the hazard is the branch, not the generator. Note the
+    // inbound path below deliberately DOES reset a sent draft to pending — a
+    // customer replying after we sent reopens the ticket and there is exactly
+    // one draft row per message to reuse. What makes that safe is the reply,
+    // and an outbound ticket has none, which is precisely why it is unsafe here.
+    if (draft.sent_at) {
+      throw new Error('This outreach has already been sent. Refreshing it would put a sent email back in the send queue.');
+    }
+
     // A templated outreach regenerates through ITS OWN generator. The A/B/C
     // pre-order email is a deterministic template whose case classification
     // decides what the customer is offered; sending it through the general
