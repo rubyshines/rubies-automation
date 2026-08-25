@@ -677,8 +677,18 @@ async function recomposeOutboundDraft({ ticketId, draftId, existingDraft, custom
  *
  * lastCustomer is null for operator-initiated outbound tickets — callers
  * route those to recomposeOutboundDraft.
+ *
+ * A null gorgiasTicketId is one of those tickets, not an error: outreach
+ * drafts stage with `gorgias_ticket_id: null` and the Gorgias ticket is
+ * created lazily on send. Answering "no messages" without a round-trip is
+ * what the id means; interpolating it produced GET /tickets/null/messages,
+ * a 404 that surfaced to the operator as a page of Gorgias HTML.
  */
 async function buildAdvisorInputFromGorgias(gorgiasTicketId) {
+  if (!gorgiasTicketId) {
+    return { messages: [], gorgiasTicket: null, lastCustomer: null, senderName: null, issueDescription: null };
+  }
+
   const gorgiasClient = require('../import/gorgiasClient');
   const { extractCleanBody, buildConversationContext } = require('../intake/processGorgiasTickets');
 
@@ -899,8 +909,12 @@ async function apiReleaseDraft(id, body) {
     .single();
   if (fetchErr) throw fetchErr;
 
-  // Unassign from AI Bot in Gorgias FIRST — if this fails, operation fails
-  await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+  // Unassign from AI Bot in Gorgias FIRST — if this fails, operation fails.
+  // An unsent outreach draft has no Gorgias ticket to release (created at send
+  // time), so there is no assignee to clear — local only, same as close/delete.
+  if (draft.gorgias_ticket_id) {
+    await gorgias.assignTicket(draft.gorgias_ticket_id, null);
+  }
 
   // Update draft (terminal — clear the action-chat scratchpad, see apiSendDraft)
   const draftUpdate = {
@@ -1856,7 +1870,10 @@ async function createFreshDraftForTicket(ticketId, { steer, onStream } = {}) {
   const { data: t } = await supabase.from('cs_tickets')
     .select('gorgias_ticket_id, customer_email, order_number')
     .eq('id', ticketId).single();
-  if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
+  // Guard on the ROW, not on gorgias_ticket_id — an outreach ticket has no
+  // Gorgias id until it is sent, and reporting that as "Ticket not found"
+  // hides a ticket that is sitting right there in the queue.
+  if (!t) throw new Error('Ticket not found');
 
   const { aiAdvisor } = require('../lib/aiAdvisor');
 
@@ -3414,10 +3431,15 @@ async function apiReopenTicket(ticketId) {
     .eq('id', ticketId)
     .single();
   if (error) throw error;
-  if (!t?.gorgias_ticket_id) throw new Error('Ticket not found');
+  if (!t) throw new Error('Ticket not found');
 
-  // Gorgias first — if this fails, Supabase stays consistent with Gorgias
-  await gorgias.reopenTicket(t.gorgias_ticket_id);
+  // Gorgias first — if this fails, Supabase stays consistent with Gorgias.
+  // An outreach ticket closed before it was ever sent has no Gorgias ticket
+  // (it closes locally only), so reopening is a local status flip. Without
+  // this it threw "Ticket not found" for a ticket sitting in the Closed tab.
+  if (t.gorgias_ticket_id) {
+    await gorgias.reopenTicket(t.gorgias_ticket_id);
+  }
 
   await supabase.from('cs_tickets').update({
     status: 'open',
@@ -4295,4 +4317,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
+module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, apiReleaseDraft, apiReopenTicket, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
