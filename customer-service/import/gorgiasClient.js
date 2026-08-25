@@ -147,28 +147,60 @@ async function getTickets({ cursor, limit = 30, order_by = 'created_datetime:des
 /**
  * Fetch ALL messages for a specific ticket, oldest first.
  *
- * Paginates via the cursor like getViewItems — the old single 50-message page
- * silently returned only the OLDEST 50, so "did the customer reply?" checks
- * that read messages[length-1] looked at message #50, not the latest one.
- * MAX_PAGES bounds a pathological thread (500 messages) without truncating
- * any real conversation.
+ * This endpoint paginates by PAGE, not by cursor. Its meta is
+ * `{page, per_page, item_count, nb_pages, next_page}` and it never returns a
+ * `next_cursor` — unlike its siblings /tickets and /views/{id}/items, which
+ * genuinely are cursor-based. `limit` is ignored outright: `per_page` is fixed
+ * at 30 whatever you ask for.
+ *
+ * That has now cost two versions of this function. First a single 50-message
+ * page, then a cursor loop copied from getViewItems, which read a
+ * `meta.next_cursor` that is always undefined here and so exited after page
+ * one. Both silently returned only the OLDEST messages, which is the worst
+ * possible shape of failure for the callers that read `messages[length-1]` to
+ * answer "did the customer reply?" — every thread past 30 messages looked
+ * frozen at message 30 forever. (Live: ticket 109556554, 32 messages. The
+ * customer's newest reply sat on page 2, intake resolved the latest customer
+ * message to one that already had a draft, logged "draft exists for this
+ * message", and left them unanswered for nine days.)
+ *
+ * Both shapes are honoured rather than assumed, since the sibling endpoints
+ * really do use cursors and Gorgias could align them at any point.
  */
 async function getTicketMessages(ticketId) {
-  const MAX_PAGES = 10;
+  const MAX_PAGES = 20; // 600 messages at the fixed per_page of 30
   const all = [];
   let cursor = null;
-  let pages = 0;
-  do {
+  let page = 1;
+  let itemCount = null;
+
+  for (let fetched = 0; fetched < MAX_PAGES; fetched++) {
     const params = new URLSearchParams();
     params.set('limit', '50');
     params.set('order_by', 'created_datetime:asc');
     if (cursor) params.set('cursor', cursor);
+    else params.set('page', String(page));
+
     const result = await apiFetch(`/tickets/${ticketId}/messages?${params}`);
     if (result.data) all.push(...result.data);
-    cursor = result.meta?.next_cursor || null;
-    pages++;
-    if (cursor && pages < MAX_PAGES) await delay(300);
-  } while (cursor && pages < MAX_PAGES);
+
+    const meta = result.meta || {};
+    if (itemCount === null && Number.isFinite(meta.item_count)) itemCount = meta.item_count;
+
+    cursor = meta.next_cursor || null;
+    const morePages = !cursor && Number.isFinite(meta.nb_pages) && page < meta.nb_pages;
+    if (!cursor && !morePages) break;
+    page++;
+    await delay(300);
+  }
+
+  // The endpoint states its own total, so a short read is checkable. Silent
+  // truncation is the exact defect this function has now shipped twice; a
+  // conversation missing its newest turns must never be handed back quietly.
+  if (itemCount !== null && all.length < itemCount) {
+    console.warn(`[Gorgias] ticket ${ticketId}: fetched ${all.length} of ${itemCount} messages — pagination stopped early, newest messages may be missing`);
+  }
+
   return all;
 }
 
