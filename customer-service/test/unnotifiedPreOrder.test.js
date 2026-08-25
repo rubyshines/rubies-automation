@@ -138,6 +138,8 @@ const {
   classifyOrder,
   filterToNotReadyToShip,
   reclassifyWithAllocation,
+  attachSwapData,
+  buildSummary,
 } = require('../../reports/lib/unnotifiedPreOrder');
 const { buildAllocationIndex } = require('../../reports/lib/orderAllocation');
 
@@ -462,5 +464,60 @@ describe('filterToNotReadyToShip', () => {
 
   it('drops orders Warehance has never heard of', () => {
     assert.deepEqual(filterToNotReadyToShip([candidate(1)], new Map()), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared composition — the sweep and Refresh must produce the same email
+// ---------------------------------------------------------------------------
+//
+// recomposeOutreachForOrder exists so the dashboard's Refresh re-runs THIS
+// template rather than the general outbound composer. The first attempt at
+// Refresh went through the composer and produced a different kind of email
+// entirely — raw SKUs and the shipping address quoted into customer copy, and
+// the A/B/C case dropped. The guard against that regressing is that both paths
+// build their body from the same helpers.
+
+describe('outreach composition is shared between the sweep and Refresh', () => {
+  const classification = {
+    case: 'C',
+    leaks: [{ sku: 'MIA-BLK-S', _variant: { pre_order_date: '2026-10-15' } }],
+    inStockOther: [],
+    oosOther: [{ sku: 'MIA-BLK-L' }],
+  };
+
+  it('buildSummary matches the summary the sweep files on the ticket', () => {
+    assert.equal(buildSummary(classification, false), 'Unnotified pre-order (Case C) — 1 pre-order item');
+    assert.equal(buildSummary(classification, true), 'Unnotified pre-order (Case C) — 1 pre-order item; identical-fit swap staged');
+    assert.equal(
+      buildSummary({ ...classification, leaks: [{ sku: 'A' }, { sku: 'B' }] }, false),
+      'Unnotified pre-order (Case C) — 2 pre-order items',
+    );
+  });
+
+  it('attachSwapData leaves Case C on the options email, never a done-for-you swap', async () => {
+    compareResponses = {};
+    compareCalls = [];
+    compareResponses['14'] = { source: { available_colors: [{ color: 'Black', inventory: 9 }] }, alternatives: [] };
+    compareResponses['S'] = { source: { available_colors: [{ color: 'Pink', inventory: 25 }] }, alternatives: [] };
+    const [c] = await attachSwapData([{ classification }]);
+    // Case C means other items are backordered too, so swapping the leak would
+    // not unblock the order — the customer's choice matters more.
+    assert.deepEqual(c.autoSwaps, []);
+    assert.ok(c.alternatives.length > 0);
+  });
+
+  it('the recomposed body is the A/B/C template, with no SKUs in customer copy', () => {
+    const body = composeBody({
+      orderNumber: '33220',
+      classification,
+      alternatives: ['the Mia in Pink, size S'],
+      autoSwaps: [],
+      daysSinceOrder: 3,
+    });
+    assert.match(body, /Here's what I can do for the pre-order items specifically:/);
+    assert.match(body, /Swap for the Mia in Pink, size S/);
+    assert.doesNotMatch(body, /MIA-BLK-S|MIA-BLK-L/, 'raw SKUs must never reach customer copy');
+    assert.doesNotMatch(body, /—/, 'no em dashes in customer copy');
   });
 });

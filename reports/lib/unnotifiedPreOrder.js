@@ -64,6 +64,10 @@ const DELAY_ACKNOWLEDGE_DAYS = 3;
 const MAX_ALTERNATIVES = 2;
 
 const NOTE_PREFIX = '[auto-draft] Unnotified pre-order outreach drafted';
+// Written to structured_output.outreach_kind so the dashboard's Refresh can
+// identify these drafts and regenerate them through this module's A/B/C
+// template rather than the general outbound composer.
+const OUTREACH_KIND = 'unnotified_pre_order';
 const SUBJECT = 'ACTION required on your recent RUBIES order';
 // Swap-done drafts require no customer action, so no ACTION-required subject.
 const SUBJECT_SWAPPED = 'Good news about your recent RUBIES order';
@@ -286,7 +290,10 @@ function leakItemsPhrase(leaks) {
 function apologyLine(daysSinceOrder) {
   const base = 'Sorry for the mixup';
   if (daysSinceOrder >= DELAY_ACKNOWLEDGE_DAYS) {
-    return `${base}, and apologies for the delay reaching out — I only just caught this while reviewing orders.`;
+    // No em dashes in customer copy (CLAUDE.md guardrail). This line carried
+    // one from the day it was written and shipped in every delayed-outreach
+    // email until a test asserted the rule.
+    return `${base}, and apologies for the delay reaching out. I only just caught this while reviewing orders.`;
   }
   return `${base}.`;
 }
@@ -656,7 +663,19 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
   // still backordered, so the swap wouldn't unblock shipping and the
   // customer's choice matters more. Otherwise: rendered alternatives for the
   // options email.
-  for (const c of verified) {
+  await attachSwapData(verified);
+  return verified;
+}
+
+/**
+ * Attach `alternatives` / `autoSwaps` to each candidate in place, and return
+ * the array. Shared by the sweep and by recomposeOutreachForOrder so a
+ * regenerated email offers exactly what the original would have.
+ */
+async function attachSwapData(candidates) {
+  for (const c of candidates) {
+    c.alternatives = [];
+    c.autoSwaps = [];
     if (c.classification.case !== 'C') {
       const swaps = [];
       for (const li of c.classification.leaks) {
@@ -666,7 +685,6 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
       }
       if (swaps.length) {
         c.autoSwaps = swaps;
-        c.alternatives = [];
         continue;
       }
     }
@@ -677,7 +695,98 @@ async function detectUnnotifiedPreOrders(supabase, unfulfilledResults) {
     }
     c.alternatives = [...new Set(perLeakAlts)].slice(0, MAX_ALTERNATIVES);
   }
-  return verified;
+  return candidates;
+}
+
+/** Ticket summary line for an outreach draft. */
+function buildSummary(classification, swapped) {
+  const n = classification.leaks.length;
+  return `Unnotified pre-order (Case ${classification.case}) — ${n} pre-order item${n > 1 ? 's' : ''}${swapped ? '; identical-fit swap staged' : ''}`;
+}
+
+/** Paired operator action for a done-for-you swap email. */
+function buildSwapActionSummary(orderNumber, autoSwaps) {
+  return `Order #${orderNumber}: swap ${joinList(autoSwaps.map(s => `${s.fromSku} to ${s.toSku}`))} via edit_order (identical-fit ${joinList([...new Set(autoSwaps.map(s => s.chart))])} equivalent, in stock, same price). The outreach email states the swap is already done, so execute the swap before sending.`;
+}
+
+/**
+ * Re-run the A/B/C composition for ONE order against live warehouse state.
+ *
+ * This is what the dashboard's Refresh button calls on an auto-drafted
+ * unnotified-pre-order ticket. The A/B/C email is a deterministic template, so
+ * regenerating it must re-run the template — handing the order to the general
+ * outbound composer instead produces a different kind of email entirely (it
+ * quoted raw SKUs and the shipping address into customer copy on the first
+ * attempt), and loses the case classification that decides which options the
+ * customer is offered.
+ *
+ * Deliberately skips the sweep's *eligibility* gates — order age, the 14-day
+ * staleness cutoff, the order-level pre-order tag, and the already-drafted
+ * check in order_alert_notes. Those exist to decide whether to start an
+ * outreach unprompted; an operator pressing Refresh on a draft that already
+ * exists has answered that question. What it keeps is every gate about whether
+ * the customer is actually waiting: ready-to-ship, full allocation, and
+ * per-line allocation.
+ *
+ * @returns {Promise<{applies: boolean, reason?: string, case?: string,
+ *   plain?: string, html?: string, subject?: string, summary?: string,
+ *   actionType?: string|null, operatorActionSummary?: string|null}>}
+ *   `applies: false` means there is no longer an unnotified pre-order on this
+ *   order — the draft is stale and must not be sent.
+ */
+async function recomposeOutreachForOrder(orderNumber, { supabase = null } = {}) {
+  const sb = supabase || getSupabaseClient();
+  const orderNum = String(orderNumber).replace('#', '');
+
+  await productCache.loadFromSupabase();
+  try { await initCsConfig(); } catch (e) { console.warn(`[unnotifiedPreOrder] initCsConfig: ${e.message}`); }
+
+  const { data: order, error } = await sb
+    .from('orders')
+    .select('order_number, created_at, customer_email, tags, fulfillment_status, cancelled_at, order_line_items(sku, title, variant_title, quantity, unit_price, custom_attributes)')
+    .eq('order_number', parseInt(orderNum, 10))
+    .maybeSingle();
+  if (error) throw new Error(`orders lookup failed: ${error.message}`);
+  if (!order) return { applies: false, reason: `Order #${orderNum} is not in the order mirror.` };
+  if (order.cancelled_at) return { applies: false, reason: `Order #${orderNum} is cancelled.` };
+  if (order.fulfillment_status === 'FULFILLED') return { applies: false, reason: `Order #${orderNum} has shipped.` };
+
+  const lineItems = order.order_line_items || [];
+  const variantStateBySku = await loadVariantStateBySku(sb, lineItems.map(li => li.sku).filter(Boolean));
+  const shopifyClassification = classifyOrder(lineItems, variantStateBySku);
+  if (!shopifyClassification) {
+    return { applies: false, reason: 'No unnotified out-of-stock item on this order — every item is either in stock or already disclosed as a pre-order.' };
+  }
+
+  const flaggedSkus = [...shopifyClassification.leaks, ...shopifyClassification.oosOther].map(li => li.sku);
+  const { index: allocationIndex, orders: warehanceOrders } = await fetchAllocationIndex(flaggedSkus);
+  const whOrder = warehanceOrders.get(orderNum);
+  if (!whOrder) return { applies: false, reason: `Order #${orderNum} is not in the warehouse's open order book (shipped, cancelled, or not yet synced).` };
+  if (whOrder.ready_to_ship !== false) return { applies: false, reason: `The warehouse reports order #${orderNum} ready to ship.` };
+  if (orderFullyAllocated(whOrder) === true) {
+    return { applies: false, reason: `Every item on order #${orderNum} is reserved at the warehouse, so nothing is waiting on stock.` };
+  }
+
+  const classification = reclassifyWithAllocation(shopifyClassification, { orderNumber: orderNum, allocationIndex });
+  if (!classification) {
+    return { applies: false, reason: `The item(s) flagged as out of stock are reserved for order #${orderNum} at the warehouse, so the customer is not waiting on them.` };
+  }
+
+  const [{ alternatives, autoSwaps }] = await attachSwapData([{ classification }]);
+  const daysSinceOrder = order.created_at ? businessDaysSince(order.created_at) || 0 : 0;
+  const plain = composeBody({ orderNumber: orderNum, classification, alternatives, autoSwaps, daysSinceOrder });
+  const swapped = autoSwaps.length > 0;
+
+  return {
+    applies: true,
+    case: classification.case,
+    plain,
+    html: plainToHtml(plain),
+    subject: swapped ? SUBJECT_SWAPPED : SUBJECT,
+    summary: buildSummary(classification, swapped),
+    actionType: swapped ? 'order_modification' : null,
+    operatorActionSummary: swapped ? buildSwapActionSummary(orderNum, autoSwaps) : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -692,14 +801,12 @@ async function draftLeakOutreach({ leaks, write = false }) {
     const plain = composeBody({ orderNumber, classification, alternatives, autoSwaps, daysSinceOrder });
     const html = plainToHtml(plain);
     const swapped = autoSwaps.length > 0;
-    const summary = `Unnotified pre-order (Case ${classification.case}) — ${classification.leaks.length} pre-order item${classification.leaks.length > 1 ? 's' : ''}${swapped ? '; identical-fit swap staged' : ''}`;
+    const summary = buildSummary(classification, swapped);
     const noteText = `${NOTE_PREFIX} — awaiting send/customer choice (Case ${classification.case})`;
     // The swap-done email states the swap as already made, so the order edit is
     // staged as the draft's paired operator action (Execute & Send runs the
     // action before the send, keeping the past tense true).
-    const operatorActionSummary = swapped
-      ? `Order #${orderNumber}: swap ${joinList(autoSwaps.map(s => `${s.fromSku} to ${s.toSku}`))} via edit_order (identical-fit ${joinList([...new Set(autoSwaps.map(s => s.chart))])} equivalent, in stock, same price). The outreach email states the swap is already done, so execute the swap before sending.`
-      : null;
+    const operatorActionSummary = swapped ? buildSwapActionSummary(orderNumber, autoSwaps) : null;
 
     if (!write) {
       results.push({ order_number: orderNumber, case: classification.case, status: 'dry_run', summary });
@@ -718,6 +825,10 @@ async function draftLeakOutreach({ leaks, write = false }) {
         steer: `Auto-drafted unnotified pre-order outreach. Case ${classification.case}.${swapped ? ' Identical-fit swap staged as operator action.' : ''}`,
         noteText,
         author: 'auto',
+        // Durable marker so Refresh re-runs THIS template rather than the
+        // general outbound composer. Matching on the steer text instead would
+        // break the moment the wording changes.
+        outreachKind: OUTREACH_KIND,
         actionType: swapped ? 'order_modification' : null,
         operatorActionSummary,
       });
@@ -838,6 +949,10 @@ module.exports = {
   classifyOrder,
   filterToNotReadyToShip,
   reclassifyWithAllocation,
+  recomposeOutreachForOrder,
+  attachSwapData,
+  buildSummary,
+  OUTREACH_KIND,
   isPreOrderByTags,
   olderThanMinutes,
   MIN_ORDER_AGE_MINUTES,

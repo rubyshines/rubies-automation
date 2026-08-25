@@ -721,6 +721,84 @@ async function buildAdvisorInputFromGorgias(gorgiasTicketId) {
   return { messages, gorgiasTicket, lastCustomer, senderName, issueDescription: contextParts.join('\n\n') };
 }
 
+/**
+ * Regenerate a templated outreach draft through the generator that produced it.
+ *
+ * Returns null when this draft is not a templated outreach, so the caller falls
+ * through to the general outbound composer. An operator steer is respected as a
+ * redirect and hands off to that composer too — the template takes no
+ * instructions, so honouring a steer means leaving the template behind.
+ *
+ * When the detection no longer applies (the item turned out to be reserved, the
+ * order shipped), the draft body is REPLACED with a plain statement of why and
+ * the draft is flagged rather than left looking sendable. A stale outreach that
+ * still reads like a normal email is the failure mode worth engineering
+ * against: the operator's only signal would be remembering that the code
+ * changed underneath it.
+ */
+async function refreshTemplatedOutreach({ draft, steer, emit = () => {} }) {
+  const kind = draft.structured_output?.outreach_kind;
+  const { OUTREACH_KIND, recomposeOutreachForOrder } = require('../../reports/lib/unnotifiedPreOrder');
+  // Drafts seeded before outreach_kind existed carry only the steer text.
+  const legacy = !kind && /^Auto-drafted unnotified pre-order outreach/i.test(draft.operator_steer || '');
+  if (kind !== OUTREACH_KIND && !legacy) return null;
+  if (steer) return null;
+  if (!draft.order_number) return null;
+
+  const supabase = getSupabaseClient();
+  emit({ type: 'status', text: 'Re-checking warehouse allocation...' });
+  const result = await recomposeOutreachForOrder(draft.order_number);
+
+  const structured = {
+    ...(draft.structured_output || {}),
+    status: 'outbound_draft',
+    source: 'operator_outreach',
+    outreach_kind: OUTREACH_KIND,
+  };
+  const history = Array.isArray(draft.draft_history) ? draft.draft_history : [];
+  const updates = {
+    status: 'pending',
+    draft_history: draft.draft_response?.trim()
+      ? [...history, { regenerated_at: new Date().toISOString(), draft_response: draft.draft_response, operator_steer: draft.operator_steer || null }]
+      : history,
+  };
+
+  if (!result.applies) {
+    const body = `This outreach no longer applies.\n\n${result.reason}\n\nNothing needs to be sent. Close or delete this draft.`;
+    structured.status = 'stale_outreach';
+    structured.prescription = {
+      ...(structured.prescription || {}),
+      flags: [`Outreach no longer applies: ${result.reason}`],
+    };
+    Object.assign(updates, {
+      draft_response: body,
+      structured_output: structured,
+      advisor_status: 'needs_info',
+      confidence: 'low',
+      action_type: null,
+      audit_trail: [...(Array.isArray(draft.audit_trail) ? draft.audit_trail : []), `[Outreach re-checked] No longer applies: ${result.reason}`],
+    });
+    await supabase.from('cs_ai_drafts').update(updates).eq('id', draft.id);
+    return { draft_response: body, draft_id: draft.id, structured };
+  }
+
+  structured.subject = result.subject;
+  if (result.operatorActionSummary) structured.operator_action_summary = result.operatorActionSummary;
+  Object.assign(updates, {
+    draft_response: result.plain,
+    structured_output: structured,
+    advisor_status: 'ready',
+    confidence: 'high',
+    action_type: result.actionType,
+    audit_trail: [...(Array.isArray(draft.audit_trail) ? draft.audit_trail : []), `[Outreach re-composed] Case ${result.case} against live allocation.`],
+  });
+  await supabase.from('cs_ai_drafts').update(updates).eq('id', draft.id);
+  if (draft.ticket_id) {
+    await supabase.from('cs_tickets').update({ summary: result.summary, active_draft_id: draft.id }).eq('id', draft.ticket_id);
+  }
+  return { draft_response: result.plain, draft_id: draft.id, structured };
+}
+
 async function apiRefreshDraft(id, { steer, onStream } = {}) {
   const warnings = [];
   const _emit = onStream || (() => {});
@@ -737,8 +815,24 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
   const { gorgiasTicket, lastCustomer, senderName, issueDescription } =
     await buildAdvisorInputFromGorgias(draft.gorgias_ticket_id);
   if (!lastCustomer) {
-    // No customer reply yet — operator-initiated outbound ticket.
-    if (!steer) throw new Error('No customer message yet. Add a steer to update the outbound draft.');
+    // A templated outreach regenerates through ITS OWN generator. The A/B/C
+    // pre-order email is a deterministic template whose case classification
+    // decides what the customer is offered; sending it through the general
+    // outbound composer produces a different kind of email entirely and drops
+    // the case. An unsteered refresh here is the operator asking "does this
+    // still hold?", which is exactly what re-running the detection answers.
+    const templated = await refreshTemplatedOutreach({ draft, steer, emit: _emit });
+    if (templated) return templated;
+
+    // No customer reply yet — operator-initiated outbound ticket. A bare
+    // refresh re-runs the draft's ORIGINAL steer rather than refusing: the
+    // reason to press refresh on an outbound draft is usually that the world
+    // moved (stock arrived, an order shipped, the code that composed it was
+    // fixed), not that the instruction was wrong. Requiring a steer made the
+    // button a dead end in exactly that case, and forced the operator to
+    // retype an instruction that is already stored on the row.
+    const effectiveSteer = steer || draft.operator_steer;
+    if (!effectiveSteer) throw new Error('No customer message and no stored steer on this draft. Add a steer to update the outbound draft.');
     return recomposeOutboundDraft({
       draftId: id,
       existingDraft: draft,
@@ -746,7 +840,7 @@ async function apiRefreshDraft(id, { steer, onStream } = {}) {
       orderNumber: draft.order_number,
       gorgiasTicketId: draft.gorgias_ticket_id,
       gorgiasTicket,
-      steer,
+      steer: effectiveSteer,
       emit: _emit,
     });
   }

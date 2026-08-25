@@ -398,6 +398,7 @@ async function seedOutboundDraft({
   author = 'operator',
   actionType = null,
   operatorActionSummary = null,
+  outreachKind = null,
 } = {}) {
   if (!customerEmail) throw new Error('seedOutboundDraft: customerEmail is required');
   if (!subject) throw new Error('seedOutboundDraft: subject is required');
@@ -459,6 +460,11 @@ async function seedOutboundDraft({
         subject,
         recipient_email: customerEmail,
         operator_steer: steer || null,
+        // Identifies which generator produced this draft, so Refresh can
+        // regenerate it with the SAME one. Without it the dashboard can only
+        // fall back to the general outbound composer, which writes a different
+        // kind of email than a templated outreach.
+        ...(outreachKind ? { outreach_kind: outreachKind } : {}),
         ...(actionType && operatorActionSummary
           ? { operator_action_summary: operatorActionSummary }
           : {}),
