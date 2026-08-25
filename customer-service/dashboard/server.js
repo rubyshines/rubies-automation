@@ -42,7 +42,7 @@ function computeBuildInfo() {
   }
   // Hash the bytes of every file the browser actually runs.
   const publicDir = path.join(__dirname, 'public');
-  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'intakeParse.js', 'messageBody.js', 'sw.js', 'receipts.html', 'receipts.js', 'receipts.css'];
+  const assetFiles = ['index.html', 'app.js', 'styles.css', 'voiceInput.js', 'intakeParse.js', 'queueSuppression.js', 'messageBody.js', 'sw.js', 'receipts.html', 'receipts.js', 'receipts.css'];
   const h = crypto.createHash('sha256');
   for (const f of assetFiles) {
     try { h.update(fs.readFileSync(path.join(publicDir, f))); } catch { /* file optional */ }
@@ -4426,7 +4426,7 @@ async function handleRequest(req, res) {
       // content hash so a new deploy busts any cached app.js/styles.css.
       const v = GIT_VERSION.assetHash;
       let html = fs.readFileSync(fullPath, 'utf8')
-        .replace(/(href|src)="(\/(?:app|styles|voiceInput|intakeParse|messageBody|receipts)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
+        .replace(/(href|src)="(\/(?:app|styles|voiceInput|intakeParse|queueSuppression|messageBody|receipts)\.(?:js|css))"/g, `$1="$2?v=${v}"`)
         .replace('</head>', `<script>window.__BUILD__=${JSON.stringify({
           commit: GIT_VERSION.short, assetHash: v, started: GIT_VERSION.started,
         })};</script>\n</head>`);

@@ -707,14 +707,16 @@ async function loadTicketQueue() {
     // Otherwise keep filtering it out (the flip hasn't caught up yet) until the
     // TTL backstop expires. This is what stops a just-actioned ticket from
     // resurrecting into the cycle order on the next poll.
+    //
+    // Both halves are scoped to the CYCLING queues — see queueSuppression.js. A
+    // tombstone says "gone from the work cycle", which is a claim about nothing
+    // at all on the Bug tab, where a ticket you just answered by hand is exactly
+    // what belongs.
     pruneSuppressed();
-    const serverIds = new Set(tickets.map(t => t.id));
-    for (const id of [..._suppressedTicketIds.keys()]) {
-      if (!serverIds.has(id)) unsuppressTicket(id);
+    for (const id of queueSuppression.idsToUnsuppress(tickets, tab, _suppressedTicketIds)) {
+      unsuppressTicket(id);
     }
-    const visibleTickets = _suppressedTicketIds.size
-      ? tickets.filter(t => !_suppressedTicketIds.has(t.id))
-      : tickets;
+    const visibleTickets = queueSuppression.filterSuppressed(tickets, tab, _suppressedTicketIds);
 
     currentQueueTicketIds = visibleTickets.map(t => t.id);
 
@@ -723,8 +725,8 @@ async function loadTicketQueue() {
     // still-drafting tickets counted as a dot rather than an actionable number.
     updateActiveTabCount(visibleTickets);
 
-    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets' };
-    const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets' };
+    const emptyLabels = { new: 'No new tickets', followup: 'No follow-ups', onme: 'Nothing waiting on you', parked: 'No parked tickets', snoozed: 'No snoozed tickets', closed: 'No closed tickets', bug: 'Nothing blocked on a fix' };
+    const allClearLabels = { new: 'All clear', followup: 'No follow-ups pending', onme: 'Nothing waiting on you', parked: 'Nothing parked', snoozed: 'All snoozed tickets waiting', closed: 'No closed tickets', bug: 'Nothing blocked on a fix' };
     // Closed tab gets a filter row (the "AUTO only" chip) above the cards
     const filterHtml = tab === 'closed' ? closedAutoFilterHtml() : '';
     if (!visibleTickets.length) {
