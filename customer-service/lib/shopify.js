@@ -1411,9 +1411,15 @@ async function orderEditAddLineItemDiscount(calculatedOrderId, lineItemId, disco
 
 /**
  * Commit a staged order edit. Returns the final order.
+ *
+ * notifyCustomer defaults to FALSE: Shopify's edit notification is an INVOICE when the
+ * edit leaves a balance, and it is sent at commit, ahead of any settlement the caller
+ * does afterwards. #33295 (2026-08-25) was billed that way for a swap the customer had
+ * just been told was free. Every caller here composes its own customer message, so opt in
+ * explicitly if you ever want Shopify to send one.
  */
 async function orderEditCommit(calculatedOrderId, staffNote, options = {}) {
-  const notifyCustomer = options.notifyCustomer !== false;
+  const notifyCustomer = options.notifyCustomer === true;
   const variables = { id: calculatedOrderId, notifyCustomer };
   if (staffNote) variables.staffNote = staffNote;
   const data = await shopifyGraphQL(`

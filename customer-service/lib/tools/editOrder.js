@@ -87,8 +87,24 @@ function lineItemNumericId(id) {
  * line receives it automatically; manual/script/bundle line discounts do not carry over.
  * Anything in this set must be excluded from the base a replacement line is priced
  * against, or the same discount comes off twice.
+ *
+ * AUTOMATIC discounts are NOT in this set, measured both ways (2026-08-25): staging an
+ * add on a live order entitled to the "10% Back to School Sale" returned
+ * `calculatedDiscountAllocations: []` on the added line, and on all three even swaps
+ * committed the night before, the added line carried only the manual even-swap
+ * allocation while every original line kept its 10%. Listing it here priced every
+ * replacement against the UNDISCOUNTED unit price, which on a storewide sale means the
+ * customer is short the whole sale percentage on a swap we told them was free.
  */
-const REAPPLIED_BY_SHOPIFY = new Set(['DiscountCodeApplication', 'AutomaticDiscountApplication']);
+const REAPPLIED_BY_SHOPIFY = new Set(['DiscountCodeApplication']);
+
+/**
+ * How far a swap declared `even_swap` may settle from zero before it is not an even swap.
+ * Absorbs sub-cent rounding on the percentage discount and tax recalculation; anything
+ * larger is a pricing miss, and a pricing miss on an even swap must never reach the
+ * customer as an invoice — we told them it costs them nothing.
+ */
+const EVEN_SWAP_TOLERANCE = 0.05;
 
 /**
  * Calculate effective discount percentage on a line item from its allocations.
@@ -131,6 +147,7 @@ const tools = [
       'Phase 1 (confirmed omitted or false): Validates the order is editable (not fulfilled, not in-progress at Warehance),',
       'stages the edit in Shopify to get exact price calculations, and returns a detailed preview.',
       'Phase 2 (confirmed=true): Commits the staged edit, then auto-sends invoice (if customer owes more) or auto-refunds (if customer is owed money).',
+      'An edit containing an even_swap entry NEVER moves money: Phase 1 refuses to stage it if Shopify does not price it to zero, and Phase 2 reports any residual balance for manual settlement instead of invoicing or refunding.',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
       'Each swap_items entry can: swap (remove_sku + add_query), remove only (remove_sku, no add), or add only (add_query, no remove_sku).',
       'Target the remove side by remove_line_item_id when the same SKU appears on more than one line (bundle orders routinely carry a variant twice — once at bundle price, once at full price); remove_sku errors on an ambiguous match rather than guessing a line.',
@@ -158,7 +175,7 @@ const tools = [
               add_query: { type: 'string', description: 'Product search query for replacement/addition (e.g. "Pink AJ Medium")' },
               add_variant_id: { type: 'string', description: 'Variant ID of replacement item (if known, skips search)' },
               add_quantity: { type: 'number', description: 'Quantity to add (default: same as removed, or 1 for add-only)' },
-              even_swap: { type: 'boolean', description: 'If true, auto-calculates discount on the added item so the swap is cost-neutral (new item priced same as the removed item after discounts). Requires both remove_sku and add_query/add_variant_id.' },
+              even_swap: { type: 'boolean', description: 'If true, auto-calculates a percentage discount on the added item so the swap is cost-neutral (new item priced same as the removed item after discounts). Requires both remove_sku and add_query/add_variant_id. Declaring it is a promise the customer pays nothing: the edit is refused rather than staged if it does not price to zero, and it can never produce an invoice or a refund.' },
               discount: {
                 type: 'object',
                 description: 'Custom discount to apply to the added item. Use percent (e.g. 100 for free) or fixed_amount (per-item dollar amount off). Overrides preserved discount from removed item. Ignored if even_swap is true.',
@@ -218,10 +235,16 @@ const tools = [
           }
         }
 
-        // Commit the edit
+        // Commit the edit. notifyCustomer: false — Shopify's own edit notification is an
+        // INVOICE when the edit leaves a balance, and it goes out at commit, before any of
+        // the settlement logic below has run. That is how #33295's customer was billed for
+        // a swap our email had just told them was free. Every customer-facing message on
+        // this path is one we compose or explicitly trigger (sendOrderInvoice / refund
+        // notify), so Shopify must never mail on our behalf here.
         const committedOrder = await orderEditCommit(
           _edit_data.calculated_order_id,
           note || _edit_data.note || 'Order edited via CS MCP tool',
+          { notifyCustomer: false },
         );
 
         // Update shipping address if one was staged in Phase 1 (or re-passed on
@@ -289,7 +312,24 @@ const tools = [
         const currency = committedOrder.currentTotalPriceSet.shopMoney.currencyCode;
         const delta = currentTotal - netPayment;
 
-        if (delta > 0.01) {
+        // An edit containing a swap declared even NEVER moves money, in either direction.
+        // Phase 1 refuses to stage one that does not settle to zero, so reaching here means
+        // the miss only became visible at commit (a discount code Shopify allocates on
+        // commit, or tax recalculation). Invoicing would bill the customer for our own
+        // pricing error on a swap they were told was free; auto-refunding would push money
+        // out on the same wrong arithmetic, which is what the -$177.84 attempt on #33295
+        // was. Report it and let an operator settle it.
+        const declaredEven = (_edit_data.swaps || []).some(s => s.even_swap);
+        const evenSwapBreach = declaredEven && Math.abs(delta) > 0.01;
+
+        if (evenSwapBreach) {
+          lines.push(`**⚠️ NOT AN EVEN SWAP — no invoice sent, no refund processed**`);
+          lines.push(delta > 0
+            ? `The order is **$${delta.toFixed(2)} ${currency} short** of what the customer has paid.`
+            : `The customer has paid **$${Math.abs(delta).toFixed(2)} ${currency} more** than the order is now worth.`);
+          lines.push('This edit was requested as an even swap, so the customer has been told it costs them nothing.');
+          lines.push(`Settle it by hand in Shopify (usually: write the balance off): ${getAdminUrl(committedOrder.id)}`);
+        } else if (delta > 0.01) {
           // Customer owes more — send invoice
           try {
             await sendOrderInvoice(committedOrder.id);
@@ -369,6 +409,7 @@ const tools = [
               added: s.add_title ? `${s.add_quantity}x ${s.add_title}` : null,
             })),
             price_delta: delta.toFixed(2),
+            even_swap_breach: evenSwapBreach || undefined,
             note: note || _edit_data.note,
           },
         });
@@ -680,17 +721,22 @@ const tools = [
 
             if (discountNeeded > 0.01) {
               try {
-                // Round to 2 decimals for Shopify
-                const fixedOff = Math.round(discountNeeded * 100) / 100;
-                const currency = order.totalPriceSet.shopMoney.currencyCode;
+                // PERCENT, never a fixed amount. A fixed-amount discount is denominated in
+                // the shop currency here and applied by Shopify in the order's PRESENTMENT
+                // currency — on #33295 (CAD) a $5.01 USD even-swap discount landed as CAD
+                // 5.01 ≈ USD 3.62, leaving the customer $8.35 short on a swap we had already
+                // told them was free, and Shopify invoiced them for it. A percentage carries
+                // no currency, so it cannot be reinterpreted. Same reasoning as the wholesale
+                // rule that line prices are overridden rather than discounted.
+                const percentOff = Math.min(100, Math.round((discountNeeded / addedPrice) * 1e6) / 1e4);
                 await orderEditAddLineItemDiscount(calcOrder.id, addedLineItem.id, {
                   description: `Even swap discount — matching original item price`,
-                  fixedValue: { amount: fixedOff.toFixed(2), currencyCode: currency },
+                  percentValue: percentOff,
                 });
                 discountApplied = true;
-                discountDescription = `$${fixedOff.toFixed(2)} off (even swap)`;
+                discountDescription = `${percentOff}% off (even swap — matches $${removedEffective.toFixed(2)} each)`;
                 // Store as custom_discount for preview/estimate consistency
-                swap.custom_discount = { fixed_amount: fixedOff, description: 'Even swap' };
+                swap.custom_discount = { percent: percentOff, description: 'Even swap' };
               } catch (e) {
                 discountDescription = `Failed to apply even swap discount: ${e.message}`;
               }
@@ -919,14 +965,30 @@ const tools = [
         estimatedDelta = stagedTotal - paidSoFar;
       }
 
+      // A swap the caller declared even is a PROMISE already made to the customer, so the
+      // staged total is the last point at which a pricing miss costs nothing to undo.
+      // Refuse to stage rather than commit an edit that would leave a balance behind.
+      // Exception: when a re-applying code is in play the estimate is knowingly blind
+      // (Shopify only allocates the code on commit), so it cannot be the thing that
+      // refuses — Phase 2's no-money-movement rule covers that case instead.
+      const declaredEven = stagedSwaps.some(s => s.even_swap);
+      const estimateBlindToCode = reapplyingCodes.length > 0 && addsLines;
+      const evenSwapBreach = declaredEven
+        && Math.abs(estimatedDelta) > EVEN_SWAP_TOLERANCE
+        && !estimateBlindToCode;
+
       if (Math.abs(estimatedDelta) < 0.01) {
         lines.push('**Estimated Price Impact:** Even swap — no payment action needed');
       } else if (estimatedDelta > 0) {
         lines.push(`**Estimated Price Impact:** Customer owes ~$${estimatedDelta.toFixed(2)} ${currency} more`);
-        lines.push('  → Invoice will be sent to customer automatically');
+        lines.push(declaredEven
+          ? '  → Declared an even swap, so NO invoice will be sent — see below'
+          : '  → Invoice will be sent to customer automatically');
       } else {
         lines.push(`**Estimated Price Impact:** Customer is owed ~$${Math.abs(estimatedDelta).toFixed(2)} ${currency} refund`);
-        lines.push('  → Refund will be processed automatically');
+        lines.push(declaredEven
+          ? '  → Declared an even swap, so NO refund will be processed — see below'
+          : '  → Refund will be processed automatically');
       }
       if (reapplyingCodes.length && addsLines) {
         lines.push(
@@ -938,8 +1000,27 @@ const tools = [
       lines.push('');
       lines.push('*Note: Final amounts are calculated by Shopify after commit (may differ slightly due to tax recalculation).*');
 
+      if (evenSwapBreach) {
+        lines.push(
+          '',
+          `**⚠️ NOT AN EVEN SWAP — refusing to stage this edit.**`,
+          `This was requested as an even swap, but Shopify prices it ${estimatedDelta > 0 ? `$${estimatedDelta.toFixed(2)} ${currency} ABOVE` : `$${Math.abs(estimatedDelta).toFixed(2)} ${currency} BELOW`} what the customer has paid.`,
+          'Committing it would leave a balance on an order the customer was told costs them nothing.',
+          'Nothing was committed. Usual causes: the replacement is not the same price as the original,',
+          'or the original line carried a discount the added line does not inherit. Re-issue with an',
+          'explicit `discount` once you know the right price, or swap to a genuinely equivalent variant.',
+        );
+      }
+
       if (dry_run) {
         lines.push('', '**DRY RUN complete.** The staged edit has NOT been committed and will be auto-cleaned by Shopify.');
+      } else if (evenSwapBreach) {
+        // Deliberately no pendingEdits entry — Phase 2 cannot be reached for this edit.
+        // Clear any earlier staging for this order too: the slot is keyed by order number,
+        // so leaving a previous Phase 1 in it means a later `confirmed: true` commits an
+        // edit the operator did not just see, having been told this one was refused.
+        pendingEdits.delete(order_number);
+        lines.push('', 'The staged edit was abandoned and will be auto-cleaned by Shopify.');
       } else {
         // Store edit data server-side for Phase 2 retrieval
         pendingEdits.set(order_number, editData);

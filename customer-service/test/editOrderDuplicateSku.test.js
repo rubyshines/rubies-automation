@@ -265,7 +265,7 @@ test('a discount code is excluded from the replacement-line base; a manual one i
   assert.strictEqual(getLineItemDiscountPercent(manual, { excludeReapplied: true }), 30);
 });
 
-test('mixed allocations keep only the discount that will not be re-applied', () => {
+test('mixed allocations drop the code and keep everything Shopify will not put back', () => {
   // AJ bundle line as it actually stood on #32310: $22.40 line price, 15% code on top.
   const mixed = {
     quantity: 1,
@@ -273,10 +273,14 @@ test('mixed allocations keep only the discount that will not be re-applied', () 
     discountAllocations: [
       alloc('ManualDiscountApplication', '9.60'),      // bundle price, does not carry over
       alloc('DiscountCodeApplication', '3.36'),        // KL-WELCOME…, comes back by itself
-      alloc('AutomaticDiscountApplication', '1.00'),   // also re-applied by Shopify
+      alloc('AutomaticDiscountApplication', '1.00'),   // a storewide sale — does NOT come back
     ],
   };
-  // Only the manual 9.60 of 32.00 survives → 30%, so the replacement is priced off $22.40
-  // and the code then brings it to the $19.04 the customer actually paid.
-  assert.strictEqual(getLineItemDiscountPercent(mixed, { excludeReapplied: true }), 30);
+  // The code's 3.36 is dropped (Shopify re-applies it on commit); the manual 9.60 and the
+  // automatic 1.00 both stay in the base, because neither reaches a line added by an edit.
+  // Measured 2026-08-25 against the live "10% Back to School Sale": an added line came back
+  // with no automatic allocation at stage time and none after commit. Treating an automatic
+  // discount as re-applied priced replacements off the full $32.00 and left the customer
+  // owing the sale percentage on a swap they were told was free.
+  assert.strictEqual(getLineItemDiscountPercent(mixed, { excludeReapplied: true }), 33.13);
 });
