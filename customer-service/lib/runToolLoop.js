@@ -50,8 +50,15 @@ const { callClaude: sharedCallClaude } = require('../../shared/aiClient');
  * @param {Function} [opts.callClaude] - Injectable for tests; defaults to shared/aiClient.
  * @returns {Promise<{response: object, messages: Array, iterations: number, toolCallCount: number}>}
  *          response is the LAST API response (its text blocks are the final output).
- *          messages includes tool rounds but NOT the final assistant message (matches
- *          the historical loops — callers append it themselves where needed).
+ *          messages includes tool rounds but NOT the final assistant message (the loop
+ *          breaks on the no-tool_use round before appending it, matching the historical
+ *          loops — callers append it themselves where needed).
+ *          ⚠️ Any caller that PERSISTS these messages as conversation history must append
+ *          the closing assistant reply itself, or the next turn replays a conversation in
+ *          which the agent never answered — two user messages back to back. That silently
+ *          erased every operator-agent phase 1 preview, so a following "confirm" had only
+ *          a tool_result to work from and the model re-previewed instead of executing.
+ *          Callers using only `response` (aiAdvisor) are unaffected.
  */
 async function runToolLoop({
   buildApiParams,

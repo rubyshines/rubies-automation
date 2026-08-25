@@ -123,7 +123,7 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
   const toolResults = [];
   const emit = onEvent || (() => {});
 
-  const { messages: currentMessages } = await runToolLoop({
+  const { messages: loopMessages } = await runToolLoop({
     messages: [...history, { role: 'user', content: userContent }],
     maxIterations: 10,
     buildApiParams: () => ({
@@ -174,6 +174,13 @@ async function operatorAgentStandalone(message, history = [], onEvent, opts = {}
   });
 
   _t.total_ms = Date.now() - _t.start;
+
+  // See operatorAgent: runToolLoop's returned messages stop at the last
+  // tool_result, so the agent's closing reply has to be appended or every
+  // follow-up turn replays a conversation the agent never answered.
+  const currentMessages = finalResponse.trim()
+    ? [...loopMessages, { role: 'assistant', content: finalResponse }]
+    : loopMessages;
 
   return {
     response: finalResponse,

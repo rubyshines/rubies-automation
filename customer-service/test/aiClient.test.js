@@ -81,7 +81,7 @@ require.cache[supabasePath] = {
   exports: { getSupabaseClient: () => makeSupabaseStub() },
 };
 
-const { callClaude, embedTexts, _resetTableProbe } = require('../../shared/aiClient');
+const { callClaude, embedTexts, withToolCaching, _resetTableProbe } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 
 function resetState() {
@@ -495,5 +495,48 @@ describe('embedTexts — Voyage', () => {
 
     global.fetch = origFetch;
     if (origKey === undefined) delete process.env.VOYAGE_API_KEY; else process.env.VOYAGE_API_KEY = origKey;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withToolCaching — cache breakpoint placement on the tool catalog.
+//
+// The cached prefix is ordered tools → system → messages, so a single breakpoint
+// at the end of the system block is only as stable as the system prompt. On the
+// operator agent that meant ~49.5k tokens of tool schemas were rewritten every
+// time a few hundred tokens of ticket context moved: ~$0.36 a turn instead of
+// ~$0.04. Tagging the last tool splits the two.
+// ---------------------------------------------------------------------------
+describe('withToolCaching', () => {
+  it('puts an ephemeral breakpoint on the last tool only', () => {
+    const tools = [{ name: 'a' }, { name: 'b' }, { name: 'c' }];
+    const out = withToolCaching(tools);
+    assert.equal(out.length, 3);
+    assert.deepEqual(out[2].cache_control, { type: 'ephemeral' });
+    assert.equal(out[0].cache_control, undefined);
+    assert.equal(out[1].cache_control, undefined);
+  });
+
+  it('does not mutate the input — tool defs come from a shared cache', () => {
+    const tools = [{ name: 'a' }, { name: 'b' }];
+    const out = withToolCaching(tools);
+    assert.equal(tools[1].cache_control, undefined, 'the caller\'s array must be untouched');
+    assert.notEqual(out, tools);
+    assert.notEqual(out[1], tools[1]);
+    // Every other field on the tagged tool survives.
+    assert.equal(out[1].name, 'b');
+  });
+
+  it('is idempotent so a double-wrapped catalog keeps exactly one breakpoint', () => {
+    const once = withToolCaching([{ name: 'a' }, { name: 'b' }]);
+    const twice = withToolCaching(once);
+    assert.equal(twice, once);
+    assert.equal(twice.filter(t => t.cache_control).length, 1);
+  });
+
+  it('passes empty and non-array input straight through', () => {
+    assert.deepEqual(withToolCaching([]), []);
+    assert.equal(withToolCaching(undefined), undefined);
+    assert.equal(withToolCaching(null), null);
   });
 });

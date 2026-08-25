@@ -6,7 +6,7 @@
  * The AI decides which tool to call and how — no manual routing.
  */
 
-const { callClaude } = require('../../shared/aiClient');
+const { callClaude, withToolCaching } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { PRODUCT_NICKNAMES } = require('./sizingEngine');
 const { runToolLoop } = require('./runToolLoop');
@@ -214,12 +214,27 @@ Never estimate prices or the difference yourself, never put items in \`exchange_
  */
 async function operatorAgent(message, context, history = [], onEvent, signal) {
   const _t = { start: Date.now(), api_calls: [] };
-  const { tools, handlers } = loadAllOperatorTools();
+  const { tools: rawTools, handlers } = loadAllOperatorTools();
   const systemPrompt = buildSystemPrompt(context);
 
-  // Prompt caching — system prompt is static for the duration of an action-chat session
-  // (same ticket context across preview → confirm). Reliable win since operator always
-  // makes 2+ API calls within seconds.
+  // Prompt caching, two breakpoints. The cached prefix is ordered tools → system →
+  // messages, so a single breakpoint at the end of the system block made the whole
+  // prefix only as stable as its most volatile part. And the system prompt is NOT
+  // static across a session, despite what this comment used to claim: it embeds the
+  // completed-actions timeline (which grows the moment an action is filed) and the
+  // operator's in-flight draft text (re-sent as `body.current_draft` whenever the
+  // textarea is edited). Any such change invalidated everything before it.
+  //
+  // That mattered because of the split: measured at 126 tools / 49,533 tokens of
+  // schemas against 6,173 tokens of system prompt — 89% of the prefix was tool
+  // definitions being rewritten because a few hundred tokens of ticket context moved.
+  // A rewrite bills at 1.25x input and a read at 0.1x, so each avoidable miss cost
+  // ~$0.32 (observed: $0.363 on a missed turn vs $0.040 on a hit).
+  //
+  // Breakpoint 1 sits on the last tool, so schemas cache on their own and survive
+  // every context change. Breakpoint 2 keeps the system block cached for the tool
+  // rounds within a turn. Worst case is now a 6k re-read instead of a 56k rewrite.
+  const tools = withToolCaching(rawTools);
   const systemBlocks = [
     { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
   ];
@@ -243,7 +258,7 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
   // is only known to be marker-free when the stream is complete).
   let _flushStreamTail = null;
 
-  const { messages: currentMessages } = await runToolLoop({
+  const { messages: loopMessages } = await runToolLoop({
     messages: [...history, { role: 'user', content: message }],
     maxIterations: 10,
     abort: { signal, timeoutMs: API_CALL_TIMEOUT_MS },
@@ -364,6 +379,21 @@ async function operatorAgent(message, context, history = [], onEvent, signal) {
   // flow; null means no clean phase-1 verdict was emitted (treated as HOLD).
   const { clean, verdict } = stripAutoConfirm(finalResponse);
   finalResponse = clean;
+
+  // runToolLoop breaks out of its loop BEFORE appending the round that carried no
+  // tool_use, so the messages it returns end at the last tool_result and never
+  // contain the agent's own closing reply — which on a two-phase action IS the
+  // phase 1 preview. Persisting that as `history` meant the next operator turn
+  // replayed a conversation where the agent had never previewed anything, so a
+  // bare "confirm" arrived with only a tool_result to key off and the model
+  // re-narrated the preview instead of calling phase 2. Its re-narration was then
+  // dropped the same way, which is what made it repeat rather than self-correct.
+  // Append the CLEANED text: the raw content still carries the AUTO_CONFIRM
+  // verdict line, and feeding the model its own verdicts teaches it to emit them
+  // on phase 2 turns, where the prompt says they must never appear.
+  const currentMessages = finalResponse.trim()
+    ? [...loopMessages, { role: 'assistant', content: finalResponse }]
+    : loopMessages;
 
   // Fire shadow Sonnet evaluation in background (diagnostic mode)
   runOperatorShadowEval({
