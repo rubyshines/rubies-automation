@@ -456,6 +456,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   if (autoDraftedRows.length) summaryParts.push(`<span style="color:#6366f1;">Auto-drafted: ${autoDraftedRows.length}</span>`);
   if (autoResolvedRows.length) summaryParts.push(`Auto-resolved: ${autoResolvedRows.length}`);
   if (waitingRows.length) summaryParts.push(`Waiting: ${waitingRows.length}`);
+  if ((extra.bugs || []).length) summaryParts.push(`<strong style="color:#dc2626;">Bugs: ${extra.bugs.length}</strong>`);
   if ((extra.onMe || []).length) summaryParts.push(`<strong style="color:#7c3aed;">On Me: ${extra.onMe.length}</strong>`);
   if ((extra.outreachOnMe || []).length) summaryParts.push(`<strong style="color:#7c3aed;">Outreach On Me: ${extra.outreachOnMe.length}</strong>`);
   if (ufNormal.length) summaryParts.push(`Normal: ${ufNormal.length}`);
@@ -466,6 +467,32 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   let allClearHtml = '';
   if (totalIssues === 0 && autoResolvedRows.length === 0) {
     allClearHtml = `<p style="color:#22c55e;font-weight:bold;font-size:16px;margin:24px 0;">All clear \u2014 no issues detected.</p>`;
+  }
+
+  // --- Bugs: tickets blocked on an advisor fix, with age ---
+  // Above On Me because it is the more forgettable list of the two: an On Me
+  // ticket is at least something you decided to answer, while a bug you moved on
+  // from has no other surface at all once the customer has been handled. Which is
+  // also why an already-CLOSED ticket still shows here — the flag outlives the
+  // conversation on purpose.
+  let bugsHtml = '';
+  const bugs = extra.bugs || [];
+  if (bugs.length > 0) {
+    const dashboardBase = process.env.DASHBOARD_URL || 'https://ops.rubyshines.com';
+    const bugCards = bugs.map(t => {
+      const days = ageDaysSince(t.bug_flagged_at);
+      const ageStyle = days > 5 ? 'background:#991b1b;color:#fff;' : 'background:#fee2e2;color:#dc2626;';
+      return `<div style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+        <a href="${dashboardBase}/#ticket-${t.id}" style="color:#2563eb;text-decoration:none;font-weight:bold;">Ticket #${t.id}</a>
+        <span style="${ageStyle}padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${days}d flagged</span>
+        ${t.status && t.status !== 'open' ? `<span style="color:#6b7280;font-size:11px;margin-left:6px;">${esc(t.status)}</span>` : ''}
+        ${t.order_number ? `<span style="color:#6b7280;font-size:12px;margin-left:6px;">order #${esc(String(t.order_number).replace(/^#/, ""))}</span>` : ''}
+        <div style="font-size:13px;margin-top:2px;">${esc(t.customer_email || '?')}</div>
+        ${t.bug_note ? `<div style="font-size:12px;color:#dc2626;margin-top:2px;">${esc(t.bug_note)}</div>` : ''}
+        ${t.summary ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(t.summary)}</div>` : ''}
+      </div>`;
+    });
+    bugsHtml = section('Bugs (waiting on a fix)', '#dc2626', bugCards);
   }
 
   // --- On Me: tickets parked on Jamie (pending_operator), with age ---
@@ -479,7 +506,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       return `<div style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
         <a href="${dashboardBase}/#ticket-${t.id}" style="color:#2563eb;text-decoration:none;font-weight:bold;">Ticket #${t.id}</a>
         <span style="${ageStyle}padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">${days}d on you</span>
-        ${t.order_number ? `<span style="color:#6b7280;font-size:12px;margin-left:6px;">order #${esc(t.order_number)}</span>` : ''}
+        ${t.order_number ? `<span style="color:#6b7280;font-size:12px;margin-left:6px;">order #${esc(String(t.order_number).replace(/^#/, ""))}</span>` : ''}
         <div style="font-size:13px;margin-top:2px;">${esc(t.customer_email || '?')}</div>
         ${t.summary ? `<div style="font-size:12px;color:#6b7280;margin-top:2px;">${esc(t.summary)}</div>` : ''}
       </div>`;
@@ -554,6 +581,7 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
       ${stockHtml}
       ${section('Drafted in CS Advisor (auto)', '#6366f1', autoDraftedRows)}
       ${section('Waiting on Response', '#f97316', waitingRows)}
+      ${bugsHtml}
       ${onMeHtml}
       ${outreachOnMeHtml}
       ${section('Auto-Resolved (review)', '#0891b2', autoResolvedRows)}
@@ -768,6 +796,21 @@ async function run() {
     console.warn(`[alerts] Could not fetch pending_operator tickets: ${err.message}`);
   }
 
+  // Tickets flagged as blocked on an advisor fix. No status filter, deliberately:
+  // the flag is orthogonal to status, and a bug on a ticket that has already been
+  // answered and closed is the one nothing else would ever surface again.
+  let bugs = [];
+  try {
+    const { data } = await supabase
+      .from('cs_tickets')
+      .select('id, customer_email, order_number, summary, status, bug_flagged_at, bug_note')
+      .not('bug_flagged_at', 'is', null)
+      .order('bug_flagged_at', { ascending: true });
+    bugs = data || [];
+  } catch (err) {
+    console.warn(`[alerts] Could not fetch bug-flagged tickets: ${err.message}`);
+  }
+
   // B2B companies claimed out of the outreach queue — same reason as above, and
   // fail-soft for the same one: a missing outreach table must never cost Jamie
   // the whole order digest.
@@ -814,7 +857,7 @@ async function run() {
   }
 
   // Email — always send
-  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, outreachOnMe, reconciled, activeSales, ticketsByOrder });
+  const { subject, html, totalIssues } = formatCombinedHtml(unfulfilled, shipping, opts, { autoFollowUps, orphanWaiting, onMe, bugs, outreachOnMe, reconciled, activeSales, ticketsByOrder });
 
   const sgMail = opts.noEmail ? null : getSendgridClient();
   if (opts.noEmail) console.log('Email skipped (--no-email)');

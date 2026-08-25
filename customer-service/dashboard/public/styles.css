@@ -218,6 +218,7 @@ header h1 {
 }
 .nav-more-menu .tab:hover { background: var(--surface-inset); }
 .nav-more-menu .tab.tab-onme { color: #d97706; }
+.nav-more-menu .tab.tab-bug { color: #dc2626; }
 .nav-more-menu .tab.active { background: var(--surface-inset); }
 
 .tab-count {
@@ -265,6 +266,15 @@ header h1 {
 .tab-onme.active .tab-count { background: #d97706; color: white; }
 .btn-onme { color: #d97706; border-color: #fcd34d; }
 .btn-onme:hover { background: #fef3c7; }
+
+/* Bug: On Me's amber one notch louder. Red because this is broken, not merely
+   owed, and it sits leftmost so it is the first thing read. */
+.tab-bug { color: #dc2626; }
+.tab-bug.active { color: var(--text); }
+.tab-bug .tab-count { background: #fee2e2; color: #dc2626; }
+.tab-bug.active .tab-count { background: #dc2626; color: white; }
+.btn-bug { color: #dc2626; border-color: #fca5a5; }
+.btn-bug:hover { background: #fee2e2; }
 
 #btn-poll {
   background: var(--text);
@@ -676,6 +686,10 @@ main { height: calc(100vh - 56px); }
 }
 .reopen-card-btn:hover { background: var(--accent-hover); }
 .reopen-card-btn-icon { font-size: 16px; line-height: 1; }
+/* The bug flag on a closed/snoozed ticket — quieter than the reopen call to
+   action above it, but present, because this is where an answered-and-closed
+   ticket gets flagged. */
+.reopen-card-bug { margin-top: 12px; }
 
 /* ─── Customer Context Panel ─────────────────────────────── */
 
@@ -3660,6 +3674,13 @@ main { height: calc(100vh - 56px); }
 .badge-parked-aging { background: var(--yellow-bg); color: var(--yellow); }
 .badge-parked-stale { background: var(--red-bg); color: var(--red); }
 
+/* Bug: the flat marker carried into every other queue, plus the aged version
+   the Bug tab shows in place of the ticket clock. */
+.badge-bug { background: #fee2e2; color: #dc2626; font-weight: 600; }
+.badge-bug-fresh { background: #fee2e2; color: #dc2626; }
+.badge-bug-aging { background: #fecaca; color: #b91c1c; }
+.badge-bug-stale { background: #991b1b; color: #fff; }
+
 /* Queue item left border by age tier */
 .queue-item-parked-fresh { border-left: 3px solid var(--green); padding-left: 17px; }
 .queue-item-parked-aging { border-left: 3px solid var(--yellow); padding-left: 17px; }
@@ -5308,6 +5329,11 @@ main { height: calc(100vh - 56px); }
     line-height: 1.4;
   }
   .bottom-tab-count:empty { display: none; }
+
+  /* Bug only occupies a slot while something is flagged, and when it does it
+     should be the loudest thing in the bar. */
+  .bottom-tab-bug .bottom-tab-label { color: #dc2626; font-weight: 600; }
+  .bottom-tab-bug .bottom-tab-count { background: #dc2626; }
 
   /* In-progress dot for the mobile bottom nav — corner dot so it reads even
      when the actionable count is 0. */

@@ -94,6 +94,18 @@ CREATE INDEX IF NOT EXISTS idx_tickets_auto_close_path ON cs_tickets (auto_close
 ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS initiated_by text DEFAULT 'customer';
 CREATE INDEX IF NOT EXISTS idx_tickets_initiated_by ON cs_tickets (initiated_by);
 
+-- bug_flagged_at / bug_note: the ticket is blocked on an advisor fix. Deliberately
+-- a flag rather than a status value, because a bug outlives the conversation state
+-- it was found in — the common case is a draft the operator rewrites and sends, and
+-- a status could not hold both "answered" and "still broken". Orthogonal to status
+-- means nothing in the status machine (drift reconciler, follow-up sweep, autosend)
+-- has to know this exists. bug_note is the operator's one-line "what looked wrong",
+-- the only part of a diagnosis that cannot be recovered from the stored draft.
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS bug_flagged_at timestamptz;
+ALTER TABLE cs_tickets ADD COLUMN IF NOT EXISTS bug_note text;
+CREATE INDEX IF NOT EXISTS idx_tickets_bug ON cs_tickets (bug_flagged_at)
+  WHERE bug_flagged_at IS NOT NULL;
+
 -- gorgias_ticket_id + gorgias_message_id nullable: ad-hoc operator outreach
 -- drafts (composed by the standalone operator console via create_outreach_ticket)
 -- stage as cs_tickets + cs_ai_drafts rows BEFORE any Gorgias ticket or message

@@ -50,6 +50,10 @@
          they live. -->
     <nav id="primary-nav" aria-label="Sections">
       <div class="nav-tabs" id="nav-tabs">
+        <!-- Bug is FIRST on purpose, and hidden while nothing is flagged.
+             layoutNavOverflow() harvests from the end of the row, so the first
+             button can never end up behind the More caret. -->
+        <button class="tab tab-bug" data-tab="bug" onclick="switchTab('bug')" hidden>Bug <span class="tab-count" id="tab-count-bug"></span></button>
         <button class="tab active" data-tab="new" onclick="switchTab('new')">New <span class="tab-count" id="tab-count-new"></span></button>
         <button class="tab" data-tab="followup" onclick="switchTab('followup')">Follow-up <span class="tab-count" id="tab-count-followup"></span></button>
         <button class="tab tab-onme" data-tab="onme" onclick="switchTab('onme')">On Me <span class="tab-count" id="tab-count-onme"></span></button>
@@ -196,6 +200,16 @@
               <span class="reopen-card-btn-icon">↺</span>
               <span id="reopen-card-btn-label">Reopen ticket</span>
             </button>
+            <!-- The bug flag has to be reachable HERE, not only in the draft
+                 action row: closing a ticket nulls its active_draft_id, so an
+                 answered-and-closed ticket renders this card instead — and that
+                 is the single most forgettable case the flag exists for. Class
+                 rather than id because the pair exists in both places and
+                 renderBugButtons drives every copy. -->
+            <div class="reopen-card-bug">
+              <button class="btn btn-ghost btn-bug btn-flag-bug" onclick="flagBug()" title="Mark this as blocked on an advisor fix — stays visible in the Bug tab whatever happens to the ticket">Bug</button>
+              <button class="btn btn-ghost btn-bug btn-clear-bug" onclick="clearBug()" style="display:none">Bug fixed</button>
+            </div>
           </div>
 
           <!-- AI Draft (editable) -->
@@ -238,6 +252,8 @@
                 <button id="btn-unpend" class="btn btn-ghost btn-onme" onclick="unpendTicket()" style="display:none">Back to Queue</button>
                 <button id="btn-park" class="btn btn-ghost" onclick="parkTicket()">Park</button>
                 <button id="btn-unpark" class="btn btn-ghost" onclick="unparkTicket()" style="display:none">Unpark</button>
+                <button class="btn btn-ghost btn-bug btn-flag-bug" onclick="flagBug()" title="Mark this as blocked on an advisor fix — stays visible in the Bug tab whatever happens to the ticket">Bug</button>
+                <button class="btn btn-ghost btn-bug btn-clear-bug" onclick="clearBug()" style="display:none">Bug fixed</button>
                 <span class="btn-row-divider"></span>
                 <button id="btn-forward" class="btn btn-ghost" onclick="forwardTicket()">Forward</button>
                 <div id="btn-return-wrap" class="btn-return-wrap" style="display:none">
@@ -343,6 +359,14 @@
 
   <!-- Mobile bottom nav (hidden on desktop) -->
   <nav id="bottom-nav" class="bottom-nav" aria-label="Primary navigation">
+    <!-- Bug only exists here while something is flagged, and when it appears it
+         displaces Closed into the More popover rather than adding a sixth slot —
+         five is already the practical maximum on a phone, and Closed is the one
+         tab with no badge and no urgency. applyBugTabVisibility() owns both. -->
+    <button class="bottom-tab bottom-tab-bug" data-bottom-tab="bug" onclick="switchTab('bug')" hidden>
+      <span class="bottom-tab-label">Bug</span>
+      <span class="bottom-tab-count" id="bottom-count-bug"></span>
+    </button>
     <button class="bottom-tab" data-bottom-tab="new" onclick="switchTab('new')">
       <span class="bottom-tab-label">New</span>
       <span class="bottom-tab-count" id="bottom-count-new"></span>
@@ -351,7 +375,7 @@
       <span class="bottom-tab-label">Follow-up</span>
       <span class="bottom-tab-count" id="bottom-count-followup"></span>
     </button>
-    <button class="bottom-tab" data-bottom-tab="closed" onclick="switchTab('closed')">
+    <button class="bottom-tab" id="bottom-tab-closed" data-bottom-tab="closed" onclick="switchTab('closed')">
       <span class="bottom-tab-label">Closed</span>
     </button>
     <button class="bottom-tab" data-bottom-tab="adhoc" onclick="switchTab('adhoc')">
@@ -361,6 +385,8 @@
       <span class="bottom-tab-label">More</span>
     </button>
     <div id="bottom-more-popover" class="bottom-more-popover" style="display:none">
+      <!-- Only visible while Bug has taken Closed's slot in the bar above. -->
+      <button id="bottom-more-closed" onclick="bottomMoreSelect('closed')" hidden>Closed</button>
       <button onclick="bottomMoreSelect('onme')" class="bottom-more-onme">On Me <span class="bottom-tab-count" id="bottom-count-onme"></span></button>
       <button onclick="bottomMoreSelect('parked')">Parked <span class="bottom-tab-count" id="bottom-count-parked"></span></button>
       <button onclick="bottomMoreSelect('snoozed')">Snoozed <span class="bottom-tab-count" id="bottom-count-snoozed"></span></button>

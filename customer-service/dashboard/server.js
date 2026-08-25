@@ -2640,7 +2640,7 @@ async function updateTicketStatusCore(supabase, { column, value }, status, extra
 // have gone out, in shadow) without operator review".
 const AUTO_SEND_PATHS = ['autosend', 'autosend_shadow'];
 
-const TICKET_TABS = ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed'];
+const TICKET_TABS = ['bug', 'new', 'followup', 'onme', 'parked', 'snoozed', 'closed'];
 
 async function apiGetTickets(query) {
   const supabase = getSupabaseClient();
@@ -2657,18 +2657,24 @@ async function apiGetTickets(query) {
   // Ordering: the active work queues (new/followup/onme/snoozed) sort
   // oldest-first so the longest-waiting item sits at the top and normal
   // top-down cycling clears them FIFO. Parked keeps its parked_at oldest-first
-  // ordering. Closed is a history log, so it stays newest-first — oldest-first
-  // there would bury today's closures under years-old ones.
-  const orderCol = tab === 'parked' ? 'parked_at' : 'updated_at';
+  // ordering, and Bug its bug_flagged_at, so each ages on the clock that
+  // matters to it. Closed is a history log, so it stays newest-first —
+  // oldest-first there would bury today's closures under years-old ones.
+  const orderCol = tab === 'parked' ? 'parked_at' : tab === 'bug' ? 'bug_flagged_at' : 'updated_at';
   const orderAsc = tab !== 'closed';
 
   let q = supabase
     .from('cs_tickets')
-    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at, last_customer_message_at, auto_close_path')
+    .select('id, gorgias_ticket_id, customer_email, customer_name, customer_country, order_number, message_type, confidence, advisor_status, has_agent_reply, message_count, status, active_draft_id, updated_at, created_at, parked_at, snoozed_at, source, summary, viewed_at, last_customer_message_at, auto_close_path, bug_flagged_at, bug_note')
     .order(orderCol, { ascending: orderAsc })
     .limit(limit);
 
   switch (tab) {
+    // Deliberately no status filter: a bug outlives the conversation state it
+    // was found in, so this tab spans open, On Me and already-closed tickets.
+    case 'bug':
+      q = q.not('bug_flagged_at', 'is', null);
+      break;
     case 'new':
       q = q.eq('status', 'open').eq('has_agent_reply', false);
       break;
@@ -2827,7 +2833,7 @@ async function apiGetTicketStats() {
     navCount('outreach', () => getOutreachCount()),
   ]);
 
-  const [newResult, followupResult, onmeResult, parkedResult, snoozedResult, newGenResult, followupGenResult] = await Promise.all([
+  const [newResult, followupResult, onmeResult, parkedResult, snoozedResult, bugResult, newGenResult, followupGenResult] = await Promise.all([
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'open').eq('has_agent_reply', false),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
@@ -2838,6 +2844,10 @@ async function apiGetTicketStats() {
       .eq('status', 'parked'),
     supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
       .eq('status', 'snoozed'),
+    // Bug spans every status on purpose (see the tab query), so this counts the
+    // flag and nothing else.
+    supabase.from('cs_tickets').select('id', { count: 'exact', head: true })
+      .not('bug_flagged_at', 'is', null),
     // In-progress = the advisor is still drafting (open ticket, no active draft
     // yet: fresh intake or a reopened ticket awaiting regen). These are counted
     // separately so the dashboard shows them as a "working" dot, not folded into
@@ -2868,6 +2878,7 @@ async function apiGetTicketStats() {
     onme: onmeResult.count || 0,
     parked: parkedResult.count || 0,
     snoozed: snoozedResult.count || 0,
+    bug: bugResult.count || 0,
     new_in_progress: newGenResult.count || 0,
     followup_in_progress: followupGenResult.count || 0,
     away_mode: away,
@@ -3715,6 +3726,48 @@ async function apiUnpendTicket(ticketId, body = {}) {
   return { success: true };
 }
 
+// ── Bug flag ────────────────────────────────────────────────────────────────
+//
+// "This ticket is blocked on an advisor fix." A flag rather than a status,
+// because the bug outlives the conversation state it was found in: the common
+// case is a draft the operator rewrites and sends, and a status could only hold
+// one of "answered" and "still broken". These two handlers therefore write
+// NOTHING but the two bug columns — no status, no active_draft_id, no Gorgias
+// call, and no focus_time_seconds (unlike pend/park, flagging is not a terminal
+// action; the ticket stays open in front of you, so capturing the timer here
+// would truncate a live one). `updated_at` is left alone for the same reason —
+// the work queues sort on it, and flagging a bug is not activity on the
+// conversation, so bumping it would silently reshuffle New and On Me.
+
+async function apiFlagBug(ticketId, body = {}) {
+  const supabase = getSupabaseClient();
+  const { data: t } = await supabase
+    .from('cs_tickets')
+    .select('id, bug_flagged_at')
+    .eq('id', ticketId)
+    .maybeSingle();
+  if (!t) throw new Error('Ticket not found');
+
+  const updates = {};
+  // Re-flagging an already-flagged ticket must not reset the clock — the age is
+  // the whole nag. It only ever adds or replaces the note.
+  if (!t.bug_flagged_at) updates.bug_flagged_at = new Date().toISOString();
+  if (body.note !== undefined) updates.bug_note = body.note || null;
+  if (Object.keys(updates).length) {
+    await supabase.from('cs_tickets').update(updates).eq('id', ticketId);
+  }
+  return { success: true, bug_flagged_at: updates.bug_flagged_at || t.bug_flagged_at };
+}
+
+async function apiClearBug(ticketId) {
+  const supabase = getSupabaseClient();
+  await supabase
+    .from('cs_tickets')
+    .update({ bug_flagged_at: null, bug_note: null })
+    .eq('id', ticketId);
+  return { success: true };
+}
+
 // ---------------------------------------------------------------------------
 // Expense receipts
 //
@@ -4031,6 +4084,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpark$/, handler: (body, id) => apiUnparkTicket(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/pend$/, handler: (body, id) => apiPendTicket(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/unpend$/, handler: (body, id) => apiUnpendTicket(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/flag-bug$/, handler: (body, id) => apiFlagBug(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/clear-bug$/, handler: (body, id) => apiClearBug(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/tickets\/(\d+)\/forward$/, handler: (body, id) => apiForwardTicket(parseInt(id), body) },
 ];
 
@@ -4428,4 +4483,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, apiReleaseDraft, apiReopenTicket, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
+module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, apiReleaseDraft, apiReopenTicket, apiFlagBug, apiClearBug, apiGetTickets, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };

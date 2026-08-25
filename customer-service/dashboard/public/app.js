@@ -262,12 +262,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     switchTab('outreach'); // loadOutreachQueue picks up pendingOutreachRestore
   } else if (pendingTicketRestore) {
     // Restoring a ticket — coerce adhoc back to a ticket tab since we're showing the ticket panel
-    currentTab = savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
+    currentTab = savedTab && ['bug', 'new', 'followup', 'onme', 'parked', 'snoozed', 'closed'].includes(savedTab) ? savedTab : 'new';
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     const tabBtn = document.querySelector(`[data-tab="${currentTab}"]`);
     if (tabBtn) tabBtn.classList.add('active');
     document.getElementById('panel-tickets').style.display = 'flex';
-  } else if (savedTab && ['new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach', 'swimwear', 'reviews'].includes(savedTab)) {
+  } else if (savedTab && ['bug', 'new', 'followup', 'onme', 'parked', 'snoozed', 'closed', 'adhoc', 'outreach', 'swimwear', 'reviews'].includes(savedTab)) {
     switchTab(savedTab);
   }
 
@@ -393,16 +393,7 @@ function switchTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
-  // Sync mobile bottom nav active state
-  document.querySelectorAll('.bottom-tab').forEach(t => t.classList.remove('active'));
-  const bottomDirect = document.querySelector(`.bottom-tab[data-bottom-tab="${tab}"]`);
-  if (bottomDirect) {
-    bottomDirect.classList.add('active');
-  } else {
-    // Tab lives under "More" (e.g. onme, parked, snoozed) — highlight the More button
-    const more = document.querySelector('.bottom-tab[data-bottom-tab="more"]');
-    if (more) more.classList.add('active');
-  }
+  syncBottomNavActive();
   // Hide the more popover when switching
   const pop = document.getElementById('bottom-more-popover');
   if (pop) pop.style.display = 'none';
@@ -506,6 +497,21 @@ function switchTab(tab) {
   document.getElementById('detail-content').style.display = 'none';
   showSidebarQueue();
   loadTicketQueue();
+}
+
+// Highlight the mobile bottom tab for the current section, falling back to the
+// More button when that section has no slot in the bar. A HIDDEN slot counts as
+// no slot: Closed gives up its place while Bug is showing, and without this it
+// would sit invisibly "active" while More stayed unlit.
+function syncBottomNavActive() {
+  document.querySelectorAll('.bottom-tab').forEach(t => t.classList.remove('active'));
+  const direct = document.querySelector(`.bottom-tab[data-bottom-tab="${currentTab}"]`);
+  if (direct && !direct.hidden) {
+    direct.classList.add('active');
+  } else {
+    const more = document.querySelector('.bottom-tab[data-bottom-tab="more"]');
+    if (more) more.classList.add('active');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -751,6 +757,9 @@ function ticketCardHtml(t) {
   const isParked = t.status === 'parked';
   const parked = isParked ? parkedAge(t.parked_at) : null;
   const parkedBorderClass = parked ? `queue-item-parked-${parked.tier}` : '';
+  // In the Bug tab the flag's own age replaces the ticket clock — what matters
+  // there is how long the fix has been outstanding, not how old the email is.
+  const bugged = t.bug_flagged_at ? bugAge(t.bug_flagged_at) : null;
   const categoryClass = getCategoryClass(t.message_type);
   const categoryLabel = isSpam ? 'spam' : isCommunity ? 'community' : (t.message_type || 'general').replace(/_/g, ' ');
   const statusClass = `status-dot-${t.status || 'open'}`;
@@ -760,7 +769,9 @@ function ticketCardHtml(t) {
   const ageTier = ticketAgeTier(t.created_at);
   const lastReply = t.snoozed_at || t.updated_at;
   const lastReplyAgo = lastReply ? timeAgo(lastReply, 'short') : null;
-  const timeStr = parked
+  const timeStr = currentTab === 'bug' && bugged
+    ? `<span class="badge badge-bug-${bugged.tier}">${bugged.label}</span>`
+    : parked
     ? `<span class="badge badge-parked-${parked.tier}">${parked.label}</span>`
     : `<span class="queue-item-age age-${ageTier}">${ticketAge}</span>${lastReplyAgo && t.snoozed_at ? `<span class="queue-item-replied">replied ${lastReplyAgo}</span>` : ''}`;
 
@@ -776,6 +787,12 @@ function ticketCardHtml(t) {
 
   // Row 2: secondary badges (only shown when there's content)
   const row2Parts = [];
+  // Everywhere EXCEPT the Bug tab (where every row is one): a bugged ticket has
+  // to read as bugged while it sits in New, On Me or Closed, or the flag only
+  // works when you go looking for it — which is the problem it exists to solve.
+  if (bugged && currentTab !== 'bug') {
+    row2Parts.push(`<span class="badge badge-bug" title="${esc(t.bug_note || 'Blocked on an advisor fix')}">bug</span>`);
+  }
   if (isGenerating) row2Parts.push('<span class="badge badge-generating"><span class="badge-spinner"></span>working</span>');
   if (ticketChannel === 'facebook-messenger') row2Parts.push('<span class="badge badge-facebook">via Facebook</span>');
   else if (isGmail) row2Parts.push('<span class="badge badge-gmail">via email</span>');
@@ -1060,6 +1077,8 @@ function renderTicketDetail(ticket) {
   const btnUnpark = document.getElementById('btn-unpark');
   if (btnPark) btnPark.style.display = (ticket.status === 'open' || ticket.status === 'snoozed') ? '' : 'none';
   if (btnUnpark) btnUnpark.style.display = ticket.status === 'parked' ? '' : 'none';
+
+  renderBugButtons(ticket);
 
   // Return button — only for gmail-sourced tickets
   const btnReturnWrap = document.getElementById('btn-return-wrap');
@@ -3732,7 +3751,7 @@ async function returnToInbox(classification) {
 // Tabs whose badge is a rendered ticket queue. The active one is owned by
 // loadTicketQueue (client-derived actionable count + tombstones); loadStats sets
 // the rest from the server so it never fights loadTicketQueue on the live tab.
-const QUEUE_TABS = ['new', 'followup', 'onme', 'parked', 'snoozed'];
+const QUEUE_TABS = ['bug', 'new', 'followup', 'onme', 'parked', 'snoozed'];
 
 // Does the open tab's own loader currently own its badge? While you are looking
 // at a list, the number must match the rows in front of you — including an
@@ -3760,6 +3779,43 @@ function writeTabCount(tab, value) {
   // A badge appearing or clearing changes how wide the tab is, so what fits in
   // the header has to be recomputed. Hooked here rather than at each caller so
   // a new count source can't forget it.
+  layoutNavOverflow();
+}
+
+// Bug is the only tab that comes and goes. With nothing flagged it is not a
+// place you would ever navigate to, and a permanent zero would read as a
+// standing reproach; with something flagged it has to be the first thing in
+// the row, because the whole point is that a bug you have moved on from is
+// invisible otherwise.
+//
+// Mobile is a swap rather than a sixth button: five slots is already the
+// practical maximum on a phone, and the More popover carries no badge, so a
+// count parked in there would be exactly as forgettable as no count at all.
+// Closed is what yields — it is the one tab with no badge and no urgency.
+function applyBugTabVisibility(count) {
+  if (count === null || count === undefined) return; // server couldn't compute — leave it be
+  const active = count > 0;
+
+  // Never yank the tab out from under an open list: if you cleared the last bug
+  // while looking at it, move to New first, then hide.
+  if (!active && currentTab === 'bug') {
+    switchTab('new');
+    return; // switchTab → loadTicketQueue → loadStats will come back through here
+  }
+
+  const tabBtn = document.querySelector('.tab[data-tab="bug"]');
+  if (tabBtn) tabBtn.hidden = !active && currentTab !== 'bug';
+
+  const bottomBug = document.querySelector('.bottom-tab[data-bottom-tab="bug"]');
+  const bottomClosed = document.getElementById('bottom-tab-closed');
+  const moreClosed = document.getElementById('bottom-more-closed');
+  if (bottomBug) bottomBug.hidden = !active;
+  if (bottomClosed) bottomClosed.hidden = active;
+  if (moreClosed) moreClosed.hidden = !active;
+  syncBottomNavActive(); // Closed may have just lost (or regained) its slot
+
+  // writeTabCount recomputes overflow when a number changes; a pure
+  // show/hide changes the row width just as much and has to do it too.
   layoutNavOverflow();
 }
 
@@ -3810,6 +3866,8 @@ async function loadStats() {
     setTabCount('onme', s.onme);
     setTabCount('parked', s.parked);
     setTabCount('snoozed', s.snoozed);
+    setTabCount('bug', s.bug);
+    applyBugTabVisibility(s.bug);
     // Free Swimwear / Reviews / Outreach: these used to load only when their tab
     // was opened, so the badge was blank exactly when it was supposed to be
     // telling you whether opening the tab was worth it.
@@ -3888,6 +3946,64 @@ function pendTicket() {
   executeBackgroundAction(ticketId, `${ticketRef} — On Me`,
     () => api(`/api/tickets/${ticketId}/pend`, { method: 'POST', body: { focus_time_seconds: focusSeconds } })
   );
+}
+
+// Flag / unflag "blocked on an advisor fix". Unlike On Me and Park this is NOT
+// a terminal action: you are usually still reading the draft that went wrong, so
+// it does not advance to the next ticket and does not bank the focus timer.
+async function flagBug() {
+  const ticket = currentTicket;
+  if (!ticket) return;
+  // The note is optional and the prompt is skippable — the fast path has to stay
+  // one click, because this gets used in the middle of a queue run.
+  const note = prompt('What went wrong? (optional — leave blank to just flag it)', ticket.bug_note || '');
+  try {
+    await api(`/api/tickets/${ticket.id}/flag-bug`, {
+      method: 'POST',
+      body: note === null ? {} : { note: note.trim() },
+    });
+    ticket.bug_flagged_at = ticket.bug_flagged_at || new Date().toISOString();
+    if (note !== null) ticket.bug_note = note.trim() || null;
+    showToast('Flagged as a bug', 'success', { ticketId: ticket.id });
+    renderBugButtons(ticket);
+    loadStats();
+    if (!NON_QUEUE_TABS.includes(currentTab)) loadTicketQueue();
+  } catch (err) {
+    alert('Could not flag: ' + err.message);
+  }
+}
+
+async function clearBug() {
+  const ticket = currentTicket;
+  if (!ticket) return;
+  try {
+    await api(`/api/tickets/${ticket.id}/clear-bug`, { method: 'POST', body: {} });
+    ticket.bug_flagged_at = null;
+    ticket.bug_note = null;
+    showToast('Bug cleared', 'success', { ticketId: ticket.id });
+    renderBugButtons(ticket);
+    loadStats();
+    if (!NON_QUEUE_TABS.includes(currentTab)) loadTicketQueue();
+  } catch (err) {
+    alert('Could not clear: ' + err.message);
+  }
+}
+
+// Which of the pair shows. No status condition on purpose — an already-closed
+// ticket can still be flagged, which is the case the flag exists for. The pair
+// is rendered twice (draft action row + reopen card, since closing a ticket
+// nulls its draft and swaps which one is on screen), so this drives every copy.
+function renderBugButtons(ticket) {
+  const flagged = !!ticket?.bug_flagged_at;
+  document.querySelectorAll('.btn-flag-bug').forEach(btn => {
+    btn.style.display = flagged ? 'none' : '';
+  });
+  document.querySelectorAll('.btn-clear-bug').forEach(btn => {
+    btn.style.display = flagged ? '' : 'none';
+    btn.title = ticket?.bug_note
+      ? `Flagged: ${ticket.bug_note}`
+      : 'The fix has shipped — take this off the Bug list';
+  });
 }
 
 function unpendTicket() {
@@ -4201,6 +4317,14 @@ function parkedAge(dateStr) {
   const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
   const tier = days <= 2 ? 'fresh' : days <= 5 ? 'aging' : 'stale';
   const label = days === 0 ? 'Parked today' : days === 1 ? 'Parked 1 day ago' : `Parked ${days} days ago`;
+  return { label, tier };
+}
+
+function bugAge(dateStr) {
+  if (!dateStr) return { label: 'Flagged', tier: 'fresh' };
+  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  const tier = days <= 2 ? 'fresh' : days <= 5 ? 'aging' : 'stale';
+  const label = days === 0 ? 'Flagged today' : days === 1 ? 'Flagged 1 day ago' : `Flagged ${days} days ago`;
   return { label, tier };
 }
 
