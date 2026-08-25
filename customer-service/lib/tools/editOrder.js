@@ -67,10 +67,39 @@ function buildMergedShippingAddress(baseAddr, override) {
 }
 
 /**
- * Calculate effective discount percentage on a line item from its allocations.
+ * Numeric portion of a LineItem / CalculatedLineItem gid, used as the join key between
+ * the two. Shopify mints a CalculatedLineItem with the same numeric id as the LineItem it
+ * derives from, so this is what lets an edit address one specific line on an order that
+ * carries the same SKU more than once. Accepts a bare numeric id too.
+ * Returns null for empty input so a missing id never matches a real line.
  */
-function getLineItemDiscountPercent(lineItem) {
-  const allocations = lineItem.discountAllocations || [];
+function lineItemNumericId(id) {
+  if (id === null || id === undefined) return null;
+  const str = String(id).trim();
+  if (!str) return null;
+  const match = str.match(/(\d+)\s*$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Discount applications Shopify re-applies on its own to lines added during an order
+ * edit. An order-level code keeps applying to whatever is on the order, so a replacement
+ * line receives it automatically; manual/script/bundle line discounts do not carry over.
+ * Anything in this set must be excluded from the base a replacement line is priced
+ * against, or the same discount comes off twice.
+ */
+const REAPPLIED_BY_SHOPIFY = new Set(['DiscountCodeApplication', 'AutomaticDiscountApplication']);
+
+/**
+ * Calculate effective discount percentage on a line item from its allocations.
+ * Pass excludeReapplied when the figure will be used to price a REPLACEMENT line —
+ * see REAPPLIED_BY_SHOPIFY.
+ */
+function getLineItemDiscountPercent(lineItem, { excludeReapplied = false } = {}) {
+  let allocations = lineItem.discountAllocations || [];
+  if (excludeReapplied) {
+    allocations = allocations.filter(a => !REAPPLIED_BY_SHOPIFY.has(a.discountApplication?.__typename));
+  }
   if (!allocations.length) return 0;
 
   const originalUnitPrice = parseFloat(lineItem.originalUnitPriceSet?.shopMoney?.amount || '0');
@@ -104,6 +133,7 @@ const tools = [
       'Phase 2 (confirmed=true): Commits the staged edit, then auto-sends invoice (if customer owes more) or auto-refunds (if customer is owed money).',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
       'Each swap_items entry can: swap (remove_sku + add_query), remove only (remove_sku, no add), or add only (add_query, no remove_sku).',
+      'Target the remove side by remove_line_item_id when the same SKU appears on more than one line (bundle orders routinely carry a variant twice — once at bundle price, once at full price); remove_sku errors on an ambiguous match rather than guessing a line.',
       'To increase the quantity of a variant already on the order, use an add-only entry for that variant — it is added as a second line (duplicates allowed).',
       'Lines added in an edit do not inherit bundle pricing, and the order\'s discount code may or may not auto-apply to them (it can also STACK on top of a custom discount) — after staging, verify the added line\'s calculated net price rather than assuming.',
       'Discounts from original items are automatically preserved on replacement items. You can also apply a custom discount (percent or fixed amount) to any added item — e.g. discount: { percent: 100 } to make it free.',
@@ -122,7 +152,8 @@ const tools = [
           items: {
             type: 'object',
             properties: {
-              remove_sku: { type: 'string', description: 'SKU of the item to remove (optional — omit for add-only)' },
+              remove_sku: { type: 'string', description: 'SKU of the item to remove (optional — omit for add-only). If the order carries the same SKU on more than one line (common on bundle orders, where a variant appears once at bundle price and again at full price), this is ambiguous and the tool will error listing the candidate lines — use remove_line_item_id instead.' },
+              remove_line_item_id: { type: 'string', description: 'Line item ID to remove (e.g. "gid://shopify/LineItem/17874555863318" or the bare numeric ID). Takes precedence over remove_sku and is the only way to target a specific line when a SKU appears more than once on the order.' },
               remove_quantity: { type: 'number', description: 'Quantity to remove (default: all of that line item)' },
               add_query: { type: 'string', description: 'Product search query for replacement/addition (e.g. "Pink AJ Medium")' },
               add_variant_id: { type: 'string', description: 'Variant ID of replacement item (if known, skips search)' },
@@ -245,10 +276,18 @@ const tools = [
         // was even, silently skipping the invoice/refund owed on the other
         // swaps.) The |delta| <= 0.01 thresholds below absorb tax rounding noise
         // on a genuinely even swap.
-        const originalTotal = parseFloat(committedOrder.totalPriceSet.shopMoney.amount);
+        // Settle against what the customer has actually PAID, not against totalPriceSet.
+        // totalPriceSet GROWS to include lines added by the edit (#32310: $403.92 →
+        // $747.26 after one swap pass), so a delta measured off it is meaningless — it
+        // reported a $403.92 refund owed on an edit that settled to zero. netPayment is
+        // the only figure that answers "what is this customer up or down".
+        const netPayment = parseFloat(
+          committedOrder.netPaymentSet?.shopMoney?.amount
+            ?? committedOrder.totalPriceSet.shopMoney.amount,
+        );
         const currentTotal = parseFloat(committedOrder.currentTotalPriceSet.shopMoney.amount);
-        const currency = committedOrder.totalPriceSet.shopMoney.currencyCode;
-        const delta = currentTotal - originalTotal;
+        const currency = committedOrder.currentTotalPriceSet.shopMoney.currencyCode;
+        const delta = currentTotal - netPayment;
 
         if (delta > 0.01) {
           // Customer owes more — send invoice
@@ -460,8 +499,8 @@ const tools = [
 
       // Validate each swap has at least a remove or add operation
       for (const swap of swap_items) {
-        if (!swap.remove_sku && !swap.add_query && !swap.add_variant_id) {
-          return { content: [{ type: 'text', text: 'Error: Each swap_items entry must have at least remove_sku (to remove) or add_query/add_variant_id (to add).' }] };
+        if (!swap.remove_sku && !swap.remove_line_item_id && !swap.add_query && !swap.add_variant_id) {
+          return { content: [{ type: 'text', text: 'Error: Each swap_items entry must have at least remove_sku/remove_line_item_id (to remove) or add_query/add_variant_id (to add).' }] };
         }
       }
 
@@ -506,15 +545,37 @@ const tools = [
         let removeUnitPrice = '0';
         let discountPercent = 0;
 
-        // Handle remove side
-        if (swap.remove_sku) {
-          removeSku = swap.remove_sku;
-          const matchedLine = order.lineItems.find(li => li.sku === removeSku);
-          if (!matchedLine) {
-            const available = order.lineItems.map(li => `${li.sku} (${li.title} - ${li.variantTitle})`).join(', ');
-            return { content: [{ type: 'text', text: `Error: SKU "${removeSku}" not found in order ${order.name}. Available: ${available}` }] };
+        // Handle remove side — line item ID wins over SKU, and an ambiguous SKU is an
+        // error rather than a silent pick of whichever line happens to come first.
+        if (swap.remove_sku || swap.remove_line_item_id) {
+          let matchedLine = null;
+
+          if (swap.remove_line_item_id) {
+            const wantedId = lineItemNumericId(swap.remove_line_item_id);
+            matchedLine = order.lineItems.find(li => lineItemNumericId(li.id) === wantedId);
+            if (!matchedLine) {
+              const available = order.lineItems.map(li => `${li.id} = ${li.sku} x${li.quantity}`).join(', ');
+              return { content: [{ type: 'text', text: `Error: Line item "${swap.remove_line_item_id}" not found in order ${order.name}. Available: ${available}` }] };
+            }
+            if (swap.remove_sku && matchedLine.sku !== swap.remove_sku) {
+              return { content: [{ type: 'text', text: `Error: Line item "${swap.remove_line_item_id}" is SKU "${matchedLine.sku}", but remove_sku said "${swap.remove_sku}". Refusing to guess which you meant.` }] };
+            }
+          } else {
+            const candidates = order.lineItems.filter(li => li.sku === swap.remove_sku);
+            if (!candidates.length) {
+              const available = order.lineItems.map(li => `${li.sku} (${li.title} - ${li.variantTitle})`).join(', ');
+              return { content: [{ type: 'text', text: `Error: SKU "${swap.remove_sku}" not found in order ${order.name}. Available: ${available}` }] };
+            }
+            if (candidates.length > 1) {
+              const lines = candidates
+                .map(li => `  remove_line_item_id: "${li.id}" — ${li.title}${li.variantTitle ? ` (${li.variantTitle})` : ''}, qty ${li.quantity} @ ${li.originalUnitPriceSet?.shopMoney?.amount ?? '?'}`)
+                .join('\n');
+              return { content: [{ type: 'text', text: `Error: SKU "${swap.remove_sku}" appears on ${candidates.length} lines of order ${order.name}, so it does not identify one line. Re-issue this entry with remove_line_item_id:\n${lines}` }] };
+            }
+            matchedLine = candidates[0];
           }
 
+          removeSku = matchedLine.sku;
           removeQty = swap.remove_quantity || matchedLine.quantity;
           if (removeQty > matchedLine.quantity) {
             return { content: [{ type: 'text', text: `Error: Cannot remove ${removeQty} of SKU "${removeSku}" — order only has ${matchedLine.quantity}.` }] };
@@ -523,7 +584,9 @@ const tools = [
           removeLineItemId = matchedLine.id;
           removeTitle = `${matchedLine.title}${matchedLine.variantTitle ? ` - ${matchedLine.variantTitle}` : ''}`;
           removeUnitPrice = matchedLine.originalUnitPriceSet?.shopMoney?.amount || '0';
-          discountPercent = getLineItemDiscountPercent(matchedLine);
+          // Excludes order-level codes: Shopify puts those back on the replacement line
+          // itself, so counting them here would discount the new line twice.
+          discountPercent = getLineItemDiscountPercent(matchedLine, { excludeReapplied: true });
         }
 
         // Handle add side
@@ -576,14 +639,15 @@ const tools = [
       const stagedSwaps = [];
       for (const swap of swapPlan) {
         // Remove side
-        if (swap.remove_sku) {
-          const calcLineItem = calcOrder.lineItems.find(cli =>
-            cli.sku === swap.remove_sku ||
-            cli.variant?.id === order.lineItems.find(li => li.id === swap.remove_line_item_id)?.variant?.id
-          );
+        if (swap.remove_line_item_id) {
+          // CalculatedLineItem ids carry the same numeric suffix as the LineItem they
+          // derive from, so this addresses the exact line the plan resolved — matching on
+          // SKU here would re-collapse duplicate lines onto whichever came first.
+          const wantedId = lineItemNumericId(swap.remove_line_item_id);
+          const calcLineItem = calcOrder.lineItems.find(cli => lineItemNumericId(cli.id) === wantedId);
 
           if (!calcLineItem) {
-            return { content: [{ type: 'text', text: `Error: Could not find calculated line item for SKU "${swap.remove_sku}" in edit session.` }] };
+            return { content: [{ type: 'text', text: `Error: Could not find calculated line item for line "${swap.remove_line_item_id}" (SKU "${swap.remove_sku}") in edit session.` }] };
           }
 
           const newQty = calcLineItem.quantity - swap.remove_quantity;
@@ -694,11 +758,14 @@ const tools = [
           node(id: $id) {
             ... on CalculatedOrder {
               id
+              subtotalPriceSet { shopMoney { amount currencyCode } }
+              totalPriceSet { shopMoney { amount currencyCode } }
               originalOrder {
                 id
                 name
                 totalPriceSet { shopMoney { amount currencyCode } }
                 currentTotalPriceSet { shopMoney { amount currencyCode } }
+                netPaymentSet { shopMoney { amount currencyCode } }
               }
               addedLineItems(first: 50) {
                 edges {
@@ -806,7 +873,7 @@ const tools = [
       }
 
       // Price delta estimate
-      let estimatedDelta = 0;
+      let estimatedDelta = 0; // replaced below by Shopify's staged total when available
       for (const swap of stagedSwaps) {
         const preservedMult = swap.discount_percent > 0 ? (1 - swap.discount_percent / 100) : 1;
         if (swap.remove_title) {
@@ -827,6 +894,31 @@ const tools = [
         }
       }
 
+      // An order-level code re-applies itself to lines added by the edit, and Shopify
+      // only does that on commit — so this estimate cannot see it and will overstate what
+      // an added line costs. Say so rather than presenting a confident wrong number.
+      const reapplyingCodes = (order.discountApplications || [])
+        .filter(da => REAPPLIED_BY_SHOPIFY.has(da.__typename))
+        .map(da => da.code || da.title)
+        .filter(Boolean);
+      const addsLines = stagedSwaps.some(s => s.add_title);
+
+      // Shopify's own staged total already reflects discounts it will re-apply to the
+      // added lines, which the per-swap arithmetic above cannot see. Prefer it, and
+      // measure against what the customer has PAID rather than the original order total
+      // (which grows as lines are added). Falls back to the arithmetic if absent.
+      const stagedTotal = parseFloat(calcState.node?.totalPriceSet?.shopMoney?.amount ?? 'NaN');
+      // netPayment, not currentTotal — the question is what the customer has PAID against
+      // the staged total, and Phase 2 settles on exactly this figure. Comparing against
+      // currentTotal would disagree with the settlement and threaten an invoice that
+      // Phase 2 will not send.
+      const paidSoFar = parseFloat(
+        calcState.node?.originalOrder?.netPaymentSet?.shopMoney?.amount ?? 'NaN',
+      );
+      if (Number.isFinite(stagedTotal) && Number.isFinite(paidSoFar)) {
+        estimatedDelta = stagedTotal - paidSoFar;
+      }
+
       if (Math.abs(estimatedDelta) < 0.01) {
         lines.push('**Estimated Price Impact:** Even swap — no payment action needed');
       } else if (estimatedDelta > 0) {
@@ -835,6 +927,12 @@ const tools = [
       } else {
         lines.push(`**Estimated Price Impact:** Customer is owed ~$${Math.abs(estimatedDelta).toFixed(2)} ${currency} refund`);
         lines.push('  → Refund will be processed automatically');
+      }
+      if (reapplyingCodes.length && addsLines) {
+        lines.push(
+          `  ⚠️ Estimate excludes ${reapplyingCodes.join(', ')}, which Shopify re-applies to added lines on commit —`,
+          '     the real impact will be lower. Verify the committed totals before acting on this figure.',
+        );
       }
 
       lines.push('');
@@ -860,3 +958,5 @@ module.exports = tools;
 // same-country address changes (processGorgiasTickets.autoExecuteAddressChange)
 // can call it directly with { order_number, shipping_address }.
 module.exports.handleEditOrder = tools.find((t) => t.name === 'edit_order').handler;
+module.exports.lineItemNumericId = lineItemNumericId;
+module.exports.getLineItemDiscountPercent = getLineItemDiscountPercent;

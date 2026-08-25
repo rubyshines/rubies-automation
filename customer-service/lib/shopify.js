@@ -895,7 +895,7 @@ async function fetchOrdersForSync(since = null, cursor = null) {
 
             # --- Discounts ---
             discountCodes
-            discountApplications(first: 10) {
+            discountApplications(first: 50) {
               edges {
                 node {
                   allocationMethod
@@ -1195,7 +1195,7 @@ async function getOrderForEdit(orderNumber) {
             subtotalPriceSet { shopMoney { amount currencyCode } }
             currentTotalPriceSet { shopMoney { amount currencyCode } }
             discountCodes
-            discountApplications(first: 10) {
+            discountApplications(first: 50) {
               edges {
                 node {
                   allocationMethod
@@ -1225,6 +1225,7 @@ async function getOrderForEdit(orderNumber) {
                   discountAllocations {
                     allocatedAmountSet { shopMoney { amount currencyCode } }
                     discountApplication {
+                      __typename
                       allocationMethod
                       targetType
                       value {
@@ -1295,6 +1296,13 @@ async function orderEditBegin(orderId) {
 
 /**
  * Set line item quantity in an edit session (0 to remove).
+ *
+ * Marked idempotent: it sets an ABSOLUTE quantity on one line of an uncommitted edit
+ * session, so replaying it converges on the same state. That lets a dropped connection
+ * retry instead of aborting the edit — Shopify resets the connection partway through a
+ * long staging run (ECONNRESET during a 22-mutation repair of #32310), and a half-staged
+ * session is useless. orderEditAddVariant must NOT get the same treatment: a replay there
+ * adds a second line.
  */
 async function orderEditSetQuantity(calculatedOrderId, lineItemId, quantity) {
   const data = await shopifyGraphQL(`
@@ -1323,7 +1331,7 @@ async function orderEditSetQuantity(calculatedOrderId, lineItemId, quantity) {
         userErrors { field message }
       }
     }
-  `, { id: calculatedOrderId, lineItemId, quantity });
+  `, { id: calculatedOrderId, lineItemId, quantity }, { idempotent: true });
   return data.orderEditSetQuantity;
 }
 
@@ -1414,6 +1422,7 @@ async function orderEditCommit(calculatedOrderId, staffNote, options = {}) {
           name
           totalPriceSet { shopMoney { amount currencyCode } }
           currentTotalPriceSet { shopMoney { amount currencyCode } }
+          netPaymentSet { shopMoney { amount currencyCode } }
           displayFinancialStatus
         }
         userErrors { field message }
