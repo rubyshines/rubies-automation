@@ -4,6 +4,8 @@
  * Uses the same env vars: SHOPIFY_STORE_URL + SHOPIFY_ACCESS_TOKEN/SHOPIFY_PASSWORD.
  */
 
+require('dotenv').config();
+
 const SHOPIFY_API_VERSION = '2025-10';
 
 function getConfig() {

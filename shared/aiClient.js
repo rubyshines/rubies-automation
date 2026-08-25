@@ -34,6 +34,7 @@
  * path. This mirrors the cs_diagnostic_runs probe in aiAdvisor.runShadowEvaluation.
  */
 
+require('dotenv').config();
 const Anthropic = require('@anthropic-ai/sdk');
 const { getSupabaseClient } = require('./supabaseClient');
 const { computeCost } = require('./aiPricing');

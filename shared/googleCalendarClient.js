@@ -14,6 +14,7 @@
  *   const { getCalendar, BUSY_CALENDAR_IDS } = require('./googleCalendarClient');
  *   const cal = await getCalendar();
  */
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
