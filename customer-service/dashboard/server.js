@@ -1682,6 +1682,31 @@ const WRITE_TOOLS = new Set([
   'set_product_prices',
 ]);
 
+const ORDER_NUM_RE = /#\d{4,6}/g;
+const DRAFT_NUM_RE = /#D\d+/g;
+const DISCOUNT_CODE_RE = /`[A-F0-9]{10}`/gi;
+
+/**
+ * Resolve the identifier that belongs to a URL inside a tool result: the LAST
+ * one written before it, not the first one in the text.
+ *
+ * A tool that touches two entities puts both URLs in one result — split_shipment
+ * emits "**Original order:** #33328 — <url1>" and then "**New pre-order:**
+ * #33332 — <url2>" — and reading the first `#NNNN` labelled every button with
+ * the first order. Live on ticket #3331 the timeline rendered two buttons both
+ * reading "Order #33328"; the second one linked to the right page under the
+ * wrong name, which is worse than no button because the operator has no reason
+ * to click it. Falls back to the first match anywhere for the tools that print
+ * the URL ahead of its number.
+ */
+function identifierForUrl(text, urlIndex, pattern) {
+  let nearest = null;
+  for (const m of text.slice(0, urlIndex).matchAll(pattern)) nearest = m[0];
+  if (nearest) return nearest;
+  for (const m of text.matchAll(pattern)) return m[0];
+  return null;
+}
+
 function extractActionLinks(toolResults) {
   const links = [];
   for (const tr of (toolResults || [])) {
@@ -1690,20 +1715,20 @@ function extractActionLinks(toolResults) {
     const orderMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+orders\/(\d+)/g);
     for (const m of orderMatches) {
       if (m[0].includes('draft_orders/')) continue; // handled by draft regex below
-      const orderNum = text.match(/#(\d{4,6})/);
-      links.push({ type: 'order', label: `Order ${orderNum ? orderNum[0] : ''}`, url: m[0] });
+      const orderNum = identifierForUrl(text, m.index, ORDER_NUM_RE);
+      links.push({ type: 'order', label: `Order ${orderNum || ''}`, url: m[0] });
     }
     // Shopify draft order links
     const draftMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+draft_orders\/(\d+)/g);
     for (const m of draftMatches) {
-      const draftNum = text.match(/#D(\d+)/);
-      links.push({ type: 'draft', label: `Draft ${draftNum ? draftNum[0] : ''}`, url: m[0] });
+      const draftNum = identifierForUrl(text, m.index, DRAFT_NUM_RE);
+      links.push({ type: 'draft', label: `Draft ${draftNum || ''}`, url: m[0] });
     }
     // Shopify discount code links — code string is on a separate line in tool output
     const discountMatches = text.matchAll(/https:\/\/admin\.shopify\.com\/store\/[^\s)]+\/discounts\/(\d+)/g);
     for (const m of discountMatches) {
-      const codeMatch = text.match(/`([A-F0-9]{10})`/i);
-      links.push({ type: 'discount', label: codeMatch ? `Code ${codeMatch[1]}` : 'Discount code', url: m[0] });
+      const code = identifierForUrl(text, m.index, DISCOUNT_CODE_RE);
+      links.push({ type: 'discount', label: code ? `Code ${code.replace(/`/g, '')}` : 'Discount code', url: m[0] });
     }
   }
   // Dedupe by URL
@@ -4570,4 +4595,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, apiReleaseDraft, apiReopenTicket, apiFlagBug, apiClearBug, apiGetTickets, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS };
+module.exports = { apiSendDraft, apiRefreshDraft, apiCloseDraft, apiReleaseDraft, apiReopenTicket, apiFlagBug, apiClearBug, apiGetTickets, evaluateExecuteSendGate, orchestrateExecuteAndSend, apiExecuteAndSend, unionTicketActions, executedActionTypes, resolveChatPendingPreview, actionTypeFromTool, WRITE_TOOLS, extractActionLinks };
