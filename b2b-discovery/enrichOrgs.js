@@ -127,6 +127,87 @@ function buildCompanyUpdate({ company, analysis, contacts, geo, geoApprox }) {
   return update;
 }
 
+// Country names we already store in b2b_companies, mapped to the ISO codes the
+// Geocoding API wants. Only the values that actually occur in the table.
+const COUNTRY_NAME_TO_CODE = {
+  'united states': 'US', usa: 'US', 'u.s.a.': 'US', 'united states of america': 'US',
+  canada: 'CA', 'united kingdom': 'GB', uk: 'GB', england: 'GB', scotland: 'GB', wales: 'GB',
+  germany: 'DE', deutschland: 'DE', switzerland: 'CH', australia: 'AU', sweden: 'SE',
+  denmark: 'DK', spain: 'ES', italy: 'IT', france: 'FR', ireland: 'IE', netherlands: 'NL',
+  'new zealand': 'NZ', 'puerto rico': 'PR', mexico: 'MX', colombia: 'CO', india: 'IN',
+};
+
+/** ISO code to constrain a lookup to, or null when we genuinely don't know. Pure. */
+function countryBias(analysis, company) {
+  const stated = String(analysis?.basedInCountry || '').trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(stated)) return stated;
+  const stored = String(company?.country || '').trim();
+  if (/^[A-Za-z]{2}$/.test(stored)) return stored.toUpperCase();
+  return COUNTRY_NAME_TO_CODE[stored.toLowerCase()] || null;
+}
+
+/**
+ * The string to hand the geocoder for a stated address. Pure.
+ *
+ * A street line alone is ambiguous in a way that resolves silently and wrongly.
+ * Montgomery Pride United's footer reads "635 Madison Avenue" with an Alabama
+ * phone number and no state anywhere on the page; geocoding that bare string
+ * returns 635 Madison Ave, NEW YORK — a real address, cleanly resolved, 900
+ * miles from the org. The analyzer had already worked out the state from the
+ * rest of the page and put it in basedInRegion. Dropping that on the floor and
+ * asking Google to guess is the whole bug.
+ *
+ * So the region and country are appended whenever the address text does not
+ * already carry them.
+ */
+function buildGeocodeQuery(analysis) {
+  const address = String(analysis?.addressText || '').trim();
+  if (!address) return null;
+  const flat = address.toLowerCase();
+  const parts = [address];
+
+  const region = String(analysis?.basedInRegion || '').trim();
+  if (region && !flat.includes(region.toLowerCase())) parts.push(region);
+
+  const country = String(analysis?.basedInCountry || '').trim();
+  if (country && !new RegExp(`\\b${country.toLowerCase()}\\b`).test(flat)) parts.push(country);
+
+  return parts.join(', ');
+}
+
+/** Loose comparison of two region names — "CA" vs "California", case, padding. Pure. */
+function sameRegion(a, b) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+  const x = norm(a); const y = norm(b);
+  if (!x || !y) return true; // nothing to disagree about
+  return x === y || x.startsWith(y) || y.startsWith(x);
+}
+
+/**
+ * Reason to refuse a geocode outright, or null to accept it. Pure.
+ *
+ * The components filter biases the lookup but does not hard-constrain every
+ * input shape, so the RESULT is checked too — against both the country and the
+ * region the org states about itself. Writing nothing and flagging beats
+ * writing a confident wrong location: nothing downstream would question it,
+ * and a wrong region eventually routes a donor's parcel to another state.
+ */
+function crossCountryReject({ geo, geoApprox, bias, statedRegion }) {
+  const hit = geo || geoApprox;
+  if (!hit) return null;
+  const what = geo ? 'address' : 'service area';
+
+  if (bias && hit.country_code && hit.country_code.toUpperCase() !== bias.toUpperCase()) {
+    return `org states country ${bias} but ${what} geocoded to ` +
+      `${[hit.city, hit.region, hit.country_code].filter(Boolean).join(', ')} — refusing to overwrite, needs a human`;
+  }
+  if (statedRegion && hit.region && !sameRegion(hit.region, statedRegion)) {
+    return `org states region ${statedRegion} but ${what} geocoded to ` +
+      `${[hit.city, hit.region, hit.country_code].filter(Boolean).join(', ')} — refusing to overwrite, needs a human`;
+  }
+  return null;
+}
+
 /** One-line human summary of what a pass found, stored on the row. Pure. */
 function buildEnrichNotes({ analysis, geo, geoApprox, scrapeError, thinContent }) {
   if (scrapeError) return `scrape: ${scrapeError}`.slice(0, 400);
@@ -139,7 +220,7 @@ function buildEnrichNotes({ analysis, geo, geoApprox, scrapeError, thinContent }
   else if (a.addressText) parts.push(`address "${a.addressText}" did not geocode`);
   else if (a.serviceAreaText) parts.push(`no address; service area "${a.serviceAreaText}" did not geocode`);
   else parts.push('no address published on site');
-  if (a.addressRejected) parts.push(`rejected ungrounded address "${a.addressRejected}"`);
+  if (a.addressRejected) parts.push(`rejected address "${a.addressRejected}" (${a.addressRejectedReason || 'ungrounded'})`);
   if (a.appearsActive === false) parts.push(`site may be inactive (${a.appearsActiveReason || 'no reason given'})`);
   if (a.confidence) parts.push(`confidence ${a.confidence}`);
   return parts.join(' | ').slice(0, 400);
@@ -204,7 +285,7 @@ async function main() {
   }
 
   const counts = {
-    located: 0, located_approx: 0, no_address: 0, scrape_thin: 0,
+    located: 0, located_approx: 0, no_address: 0, scrape_thin: 0, conflict: 0,
     scrape_failed: 0, no_website: 0, analysis_failed: 0, errors: 0,
   };
   const foundStates = {};
@@ -260,13 +341,32 @@ async function main() {
         // area"), and for the question this run exists to answer — which state
         // is this org in — that is a perfectly good answer. It is kept
         // strictly separate from a real address; see buildCompanyUpdate.
+        //
+        // Both lookups are constrained to the country the org says it operates
+        // from. Free text is full of place names that belong to somewhere else:
+        // an unconstrained service area put a German org in Minnesota.
+        const bias = countryBias(analysis, row);
         let geo = null;
         let geoApprox = null;
         try {
-          if (analysis.addressText) geo = await geocode(analysis.addressText);
-          if (!geo && analysis.serviceAreaText) geoApprox = await geocode(analysis.serviceAreaText);
+          const addressQuery = buildGeocodeQuery(analysis);
+          if (addressQuery) geo = await geocode(addressQuery, { country: bias });
+          if (!geo && analysis.serviceAreaText) geoApprox = await geocode(analysis.serviceAreaText, { country: bias });
         } catch (geoErr) {
           console.log(`${tag} → geocode error: ${geoErr.message}`);
+        }
+
+        // A geocode that lands in a different country than the org states is
+        // wrong, whatever the API's confidence. Refuse it rather than write it.
+        const crossCountry = crossCountryReject({ geo, geoApprox, bias, statedRegion: analysis.basedInRegion });
+        if (crossCountry) {
+          await sb.from('b2b_companies').update({
+            enriched_at: new Date().toISOString(), enrich_status: 'conflict',
+            enrich_notes: crossCountry.slice(0, 400),
+          }).eq('id', row.id);
+          counts.conflict++;
+          console.log(`${tag} → CONFLICT: ${crossCountry} ${secs()}`);
+          continue;
         }
 
         const thin = scrape.content.length < MIN_CONTENT_CHARS ? scrape.content.length : null;
@@ -308,7 +408,7 @@ async function main() {
 
   console.log(
     `\nDone. located=${counts.located} (+${counts.located_approx} approx from service area) | ` +
-    `no-address=${counts.no_address} | scrape-thin=${counts.scrape_thin} | ` +
+    `no-address=${counts.no_address} | scrape-thin=${counts.scrape_thin} | conflict=${counts.conflict} | ` +
     `scrape-failed=${counts.scrape_failed} | no-website=${counts.no_website} | ` +
     `analysis-failed=${counts.analysis_failed} | errors=${counts.errors}`
   );
@@ -334,4 +434,8 @@ if (require.main === module) {
     .finally(() => closePuppeteer());
 }
 
-module.exports = { buildCompanyUpdate, buildEnrichNotes, nameLooksLikeDomainSlug, UNCOVERED_PRIORITY };
+module.exports = {
+  buildCompanyUpdate, buildEnrichNotes, nameLooksLikeDomainSlug,
+  countryBias, crossCountryReject, buildGeocodeQuery, sameRegion,
+  COUNTRY_NAME_TO_CODE, UNCOVERED_PRIORITY,
+};

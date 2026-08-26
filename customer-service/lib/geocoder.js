@@ -22,13 +22,22 @@ function cleanMailingAddress(mailingAddress) {
 
 /**
  * Geocode a free-form address string.
+ *
+ * `country` (an ISO-3166 alpha-2 code) constrains the search to that country.
+ * Pass it whenever the country is known independently of the string being
+ * geocoded: free text routinely contains place names that resolve somewhere
+ * else entirely. A German org describing where it ships ("Based in Germany;
+ * ships worldwide including ... Finland ...") geocoded to Finland, MINNESOTA
+ * without it — a confident, plausible, completely wrong answer.
+ *
  * @returns {Promise<null | {lat, lng, country_code, region, city, formatted_address}>}
  */
-async function geocode(addressString) {
+async function geocode(addressString, { country } = {}) {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) throw new Error('GOOGLE_MAPS_API_KEY is not set');
 
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressString)}&key=${apiKey}`;
+  const countryFilter = country ? `&components=country:${encodeURIComponent(country)}` : '';
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressString)}${countryFilter}&key=${apiKey}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Google geocode HTTP ${res.status}`);
   const data = await res.json();

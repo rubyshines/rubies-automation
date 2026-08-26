@@ -35,7 +35,11 @@ Return ONLY a JSON object, no other text:
   "orgName": "The organization's name exactly as they write it on their own site",
   "addressText": "The org's full street address on one line, exactly as published, including city, state/province, postal code and country. null if the site does not state one.",
   "addressEvidence": "The sentence or block you took the address from, verbatim. null if addressText is null.",
+  "addressBelongsToOrg": true/false,
+  "addressBelongsToOrgReason": "Why you believe the address is or is not this organization's own operating address",
   "serviceAreaText": "Any stated service area or region when there is no street address, e.g. 'serving the Greater Kansas City area'. null if none.",
+  "basedInCountry": "The ISO-3166 two-letter code of the country the org OPERATES FROM, e.g. US, CA, DE, GB. null if the site does not make it clear.",
+  "basedInRegion": "The state, province or region the org operates from, spelled out, e.g. Alabama, Ontario, Nordrhein-Westfalen. null if not stated.",
   "servesTransCommunity": true/false,
   "runsClothingProgram": true/false,
   "programNotes": "One or two sentences on any clothing closet, gender-affirming wardrobe, clothing bank or similar program. null if they run none.",
@@ -51,7 +55,12 @@ Rules for addressText, which matter more than everything else here:
 - NEVER derive an address from the organization's name, its web domain, a phone area code, or your own knowledge of the organization. If you find yourself recalling where this org is, the answer is null.
 - A PO Box or mailing address is fine. Prefer a street address when both appear.
 - If several locations appear, use the one presented as the main or administrative office, and say so in addressEvidence.
-- If the address you find belongs to somebody else (a partner org, a venue for one event, a web designer's footer credit), addressText is null.
+- An address printed on a page is not automatically the org's own. Nonprofit sites routinely print a FISCAL SPONSOR's address, a donation processor's remittance address, a parent or partner organization, a venue for a single event, or a web designer's footer credit. Set addressBelongsToOrg false for any of these and explain which it is. A real example: an Alabama org's site printed a New York donation-processing address, and taking it moved the org 900 miles.
+- The strongest tell is disagreement with the rest of the page. If the org's name, its programs, or its stated service area point at one place and the address points at another, addressBelongsToOrg is false.
+
+basedInCountry and basedInRegion describe where the ORGANIZATION IS, never where it sends things or who it serves. An org that says "based in Germany, ships worldwide including Finland, Italy and the USA" is in Germany: basedInCountry "DE". Read a list of destinations as destinations.
+
+serviceAreaText likewise describes the area the org SERVES. Do not put a shipping or coverage list in it.
 
 Set appearsActive false when the site reads as abandoned: a copyright year several years old with no dated content, an explicit closure notice, or a parked domain.`;
 
@@ -150,17 +159,30 @@ async function analyzeOrg({ orgName, website, content, model }) {
     }
   }
 
-  // Drop an address the page cannot corroborate. Recorded rather than silently
-  // nulled, because "the model produced an address that isn't on the site" is
-  // exactly the signal worth seeing if it ever becomes common.
+  // Two independent ways an address gets dropped, recorded rather than silently
+  // nulled because each is a signal worth seeing if it becomes common.
+  //
+  // Ungrounded: the model produced an address with no counterpart on the page —
+  // it recalled the org rather than reading it.
+  //
+  // Not the org's: the address is on the page and belongs to someone else. The
+  // grounding check cannot catch this by construction, and it is the more
+  // dangerous of the two, because the address is real and geocodes cleanly.
   let addressRejected = null;
+  let addressRejectedReason = null;
   if (parsed.addressText && !addressIsGrounded(parsed.addressText, content)) {
     addressRejected = parsed.addressText;
+    addressRejectedReason = 'not present on the scraped page';
+  } else if (parsed.addressText && parsed.addressBelongsToOrg === false) {
+    addressRejected = parsed.addressText;
+    addressRejectedReason = parsed.addressBelongsToOrgReason || 'stated to belong to another party';
+  }
+  if (addressRejected) {
     parsed.addressText = null;
     parsed.addressEvidence = null;
   }
 
-  return { ...parsed, addressRejected, analysisStatus: 'success' };
+  return { ...parsed, addressRejected, addressRejectedReason, analysisStatus: 'success' };
 }
 
 module.exports = { analyzeOrg, addressIsGrounded, normalizeForEvidence, SYSTEM_PROMPT };

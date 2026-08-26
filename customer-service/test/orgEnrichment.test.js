@@ -248,9 +248,14 @@ test('a real address still wins and still fills the address field', () => {
 
 test('buildEnrichNotes surfaces a rejected address and an inactive site', () => {
   const notes = buildEnrichNotes({
-    analysis: { addressText: null, addressRejected: '1035 Market St, San Francisco, CA', appearsActive: false, appearsActiveReason: 'copyright 2019, no dated content' },
+    analysis: {
+      addressText: null, addressRejected: '1035 Market St, San Francisco, CA',
+      addressRejectedReason: 'not present on the scraped page',
+      appearsActive: false, appearsActiveReason: 'copyright 2019, no dated content',
+    },
   });
-  assert.match(notes, /rejected ungrounded address/);
+  assert.match(notes, /rejected address/);
+  assert.match(notes, /not present on the scraped page/, 'why it was rejected must be recoverable');
   assert.match(notes, /site may be inactive/);
 });
 
@@ -261,4 +266,109 @@ test('buildEnrichNotes reports a scrape failure ahead of anything else', () => {
 test('buildEnrichNotes stays within the column bound', () => {
   const notes = buildEnrichNotes({ scrapeError: 'x'.repeat(900) });
   assert.ok(notes.length <= 400);
+});
+
+// ── Country bias and the cross-country refusal ───────────────────────────────
+// Both regressions come from one live run. An Alabama org's site printed a New
+// York donation-processing address and the org moved 900 miles. A German org
+// described where it ships ("Based in Germany; ships worldwide including ...
+// Finland ...") and landed in Finland, MINNESOTA. Neither failed loudly; both
+// wrote a confident wrong location that nothing downstream would question.
+
+const { countryBias, crossCountryReject } = require('../../b2b-discovery/enrichOrgs');
+
+test('countryBias prefers the country the org states about itself', () => {
+  assert.equal(countryBias({ basedInCountry: 'DE' }, { country: 'United States' }), 'DE');
+});
+
+test('countryBias falls back to the stored country, code or name', () => {
+  assert.equal(countryBias({}, { country: 'US' }), 'US');
+  assert.equal(countryBias({}, { country: 'Germany' }), 'DE');
+  assert.equal(countryBias({}, { country: 'united kingdom' }), 'GB');
+  assert.equal(countryBias({}, { country: 'Canada' }), 'CA');
+});
+
+test('countryBias returns null rather than guessing', () => {
+  assert.equal(countryBias({}, {}), null);
+  assert.equal(countryBias({}, { country: 'Neverland' }), null);
+  assert.equal(countryBias({ basedInCountry: 'Germany' }, {}), null, 'a name in the ISO field is not an ISO code');
+});
+
+test('crossCountryReject refuses a geocode that leaves the stated country', () => {
+  const reason = crossCountryReject({
+    geoApprox: { city: 'Finland', region: 'Minnesota', country_code: 'US' },
+    bias: 'DE',
+  });
+  assert.ok(reason, 'a German org geocoded to the US must be refused');
+  assert.match(reason, /DE/);
+  assert.match(reason, /Minnesota/);
+  assert.match(reason, /needs a human/);
+});
+
+test('crossCountryReject accepts a geocode inside the stated country', () => {
+  assert.equal(crossCountryReject({
+    geo: { city: 'Chicago', region: 'Illinois', country_code: 'US' }, bias: 'US',
+  }), null);
+});
+
+test('crossCountryReject stays out of the way when there is nothing to compare', () => {
+  assert.equal(crossCountryReject({ geo: { country_code: 'US' }, bias: null }), null, 'no bias, no opinion');
+  assert.equal(crossCountryReject({ geo: null, geoApprox: null, bias: 'US' }), null, 'nothing geocoded');
+  assert.equal(crossCountryReject({ geo: { country_code: null }, bias: 'US' }), null);
+});
+
+// ── Geocoding a street line without its region ───────────────────────────────
+// Montgomery Pride United's footer reads "635 Madison Avenue" beside an Alabama
+// phone number, and the page never spells out the state. Geocoding that bare
+// string returns 635 Madison Ave, NEW YORK: a real address, cleanly resolved,
+// 900 miles from the org. The analyzer had already derived Alabama from the
+// rest of the page — the defect was discarding it before the lookup.
+
+const { buildGeocodeQuery, sameRegion } = require('../../b2b-discovery/enrichOrgs');
+
+test('buildGeocodeQuery appends the region the address line omits', () => {
+  const q = buildGeocodeQuery({ addressText: '635 Madison Avenue', basedInRegion: 'Alabama', basedInCountry: 'US' });
+  assert.equal(q, '635 Madison Avenue, Alabama, US');
+});
+
+test('buildGeocodeQuery does not duplicate a region the address already carries', () => {
+  const q = buildGeocodeQuery({
+    addressText: '128 East Cabarrus Street, Raleigh, North Carolina 27601, US',
+    basedInRegion: 'North Carolina', basedInCountry: 'US',
+  });
+  assert.equal(q, '128 East Cabarrus Street, Raleigh, North Carolina 27601, US');
+});
+
+test('buildGeocodeQuery works with whatever context exists', () => {
+  assert.equal(buildGeocodeQuery({ addressText: '1 High St' }), '1 High St');
+  assert.equal(buildGeocodeQuery({ addressText: '1 High St', basedInRegion: 'Ohio' }), '1 High St, Ohio');
+  assert.equal(buildGeocodeQuery({ addressText: null, basedInRegion: 'Ohio' }), null);
+  assert.equal(buildGeocodeQuery({}), null);
+});
+
+test('crossCountryReject refuses a geocode that leaves the stated region', () => {
+  // The Montgomery case as it would arrive if the query fix ever regressed.
+  const reason = crossCountryReject({
+    geo: { city: 'New York', region: 'New York', country_code: 'US' },
+    bias: 'US', statedRegion: 'Alabama',
+  });
+  assert.ok(reason, 'an Alabama org geocoded to New York must be refused');
+  assert.match(reason, /Alabama/);
+  assert.match(reason, /New York/);
+});
+
+test('crossCountryReject accepts a region match despite formatting', () => {
+  assert.equal(crossCountryReject({
+    geo: { city: 'Los Angeles', region: 'California', country_code: 'US' }, bias: 'US', statedRegion: 'CA',
+  }), null);
+});
+
+test('sameRegion compares loosely but does not call two real states equal', () => {
+  assert.equal(sameRegion('California', 'CA'), true);
+  assert.equal(sameRegion('North Carolina', 'north carolina'), true);
+  assert.equal(sameRegion('Alabama', 'New York'), false);
+  assert.equal(sameRegion('Minnesota', 'Nordrhein-Westfalen'), false);
+  // Nothing stated on one side is not a disagreement.
+  assert.equal(sameRegion('Alabama', null), true);
+  assert.equal(sameRegion(null, 'Alabama'), true);
 });
