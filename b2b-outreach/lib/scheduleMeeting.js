@@ -9,17 +9,26 @@
  *   1. resolve the recipient and check the send gate — BEFORE touching the calendar
  *   2. re-check the slot is still free
  *   3. create the event (this is what emails them the invite + Meet link)
- *   4. send the reply through sendB2bEmail, the one send path
+ *   4. send the reply through sendDraftById, the one send path
  * If step 4 fails after step 3, the event STAYS. They already hold the invite;
  * deleting it would fire a cancellation and read as chaos. The caller is told to
  * send the reply by hand.
+ *
+ * The reply goes out by CONSUMING the company's pending draft rather than as a
+ * loose body, because the composer autosaves into that row as the operator types
+ * and everything else about the send lives on it. Sending around it left the row
+ * `pending` after a successful Book & Send, and `mergePendingDraftEntries` puts
+ * any company holding a pending draft straight back in the queue — so a booked,
+ * answered call read as outstanding work. Same shape as the empty-state Send bug
+ * (2026-08-26): a path that sends without consuming the draft silently discards
+ * the operator state accumulated on it.
  */
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 const {
   getCalendar, ORGANIZER_CALENDAR_ID, BUSINESS_TIMEZONE,
 } = require('../../shared/googleCalendarClient');
-const { sendB2bEmail, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
+const { sendB2bEmail, resolveDelivery, addressList, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
 const { fetchCalendarEvents, checkSlotFree, formatTimeInZone, formatDayInZone } = require('./availability');
 const { isValidTimeZone } = require('./meetingTimezone');
 
@@ -103,8 +112,20 @@ async function scheduleMeeting(p = {}) {
 
   const title = titleOverride || meetingTitle(company.name);
 
+  // The pending draft is read BEFORE the recipient, because a To/Cc the operator
+  // typed into the panel lives on it — and the invite must go to whoever the
+  // email goes to. Resolving them separately is how you book a call with one
+  // person and tell a different one about it.
+  const { data: pendingDraft } = await sb.from('b2b_drafts')
+    .select('id, thread_id, structured')
+    .eq('company_id', company_id).eq('status', 'pending').maybeSingle();
+  const toOverride = pendingDraft?.structured?.to || null;
+  const ccList = cc ?? pendingDraft?.structured?.cc ?? null;
+
   // --- 1. recipient + gate, before the calendar is touched --------------------
-  const delivery = await resolveDelivery(sb, company_id);
+  const delivery = toOverride
+    ? { mode: 'email', email: addressList(toOverride) }
+    : await resolveDelivery(sb, company_id);
   if (delivery.mode === 'form') {
     return {
       ok: false,
@@ -125,9 +146,13 @@ async function scheduleMeeting(p = {}) {
   }
 
   const theirTz = isValidTimeZone(their_timezone) ? their_timezone : null;
+  // A To override may name several people; addressList joins them, so split
+  // again for the attendee array — one attendee holding "a@x, b@y" invites
+  // nobody and Google reports it as a bad request, after the send has gone.
+  const splitAddrs = v => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
   const attendees = test_mode
     ? [FROM_EMAIL]
-    : [delivery.email, ...String(cc || '').split(',').map(s => s.trim()).filter(Boolean)];
+    : [...splitAddrs(delivery.email), ...splitAddrs(ccList)];
 
   const preview = {
     ok: true,
@@ -220,15 +245,28 @@ async function scheduleMeeting(p = {}) {
     send = { ok: true, phase: 'no_reply_sent', thread_id: thread_id || null };
   } else {
     try {
-      send = await sendB2bEmail({
-        company_id, thread_id, subject, body, cc,
-        message_type,
-        confirmed: true,
-        // The event exists as of a moment ago; its b2b_meetings row is written
-        // after this call, so the row cannot be the evidence here.
-        invite_created: true,
-        ...(test_mode ? { test_send: true } : {}),
-      });
+      // The event exists as of a moment ago; its b2b_meetings row is written
+      // after this call, so the row cannot be the evidence for invite_created.
+      // Required lazily: queueService pulls in the advisor and the whole queue
+      // stack, which this module has no other reason to load.
+      const { sendDraftById } = require('./queueService');
+      const common = { confirmed: true, invite_created: true, ...(test_mode ? { test_send: true } : {}) };
+      send = pendingDraft
+        // Consuming the draft is what marks it sent, so a booked call leaves the
+        // queue. It also carries the attachments, To/Cc and next_touch_days the
+        // operator set, and records sent_body for the edit-rate signal.
+        ? await sendDraftById(sb, {
+          ...common,
+          draft_id: pendingDraft.id,
+          body, subject,
+          thread_id: thread_id || pendingDraft.thread_id || undefined,
+          message_type,
+          // The same list the invite went to, so the two can never name
+          // different people.
+          cc: ccList ?? undefined,
+        })
+        // No draft exists when this is driven from the console or the MCP tool.
+        : await sendB2bEmail({ ...common, company_id, thread_id, subject, body, cc: ccList ?? undefined, message_type });
     } catch (e) {
       send = { ok: false, error: e.message };
     }

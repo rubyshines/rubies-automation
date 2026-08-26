@@ -758,8 +758,18 @@ async function composeDraft(sb, { company_id, body, subject, message_type, threa
  * A blank subject override is NOT an empty subject: it falls back to the
  * draft's, and a reply whose draft subject is null still inherits the thread
  * subject downstream in sendB2bEmail.
+ *
+ * `thread_id`, `message_type`, `cc` and `invite_created` exist for scheduleMeeting,
+ * which sends the operator's composed text as a meeting confirmation on the
+ * thread the panel had open. They override the draft rather than replacing this
+ * function's job: consuming the draft row is the point, so that everything else
+ * living on it (attachments, To/Cc, next_touch_days, the sent_body edit signal)
+ * still applies to a booked reply.
  */
-async function sendDraftById(sb, { draft_id, confirmed, body, subject, test_send } = {}) {
+async function sendDraftById(sb, {
+  draft_id, confirmed, body, subject, test_send,
+  thread_id, message_type, cc, invite_created,
+} = {}) {
   if (!draft_id) throw new Error('draft_id required');
   const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', draft_id).maybeSingle();
   if (error) throw new Error(error.message);
@@ -779,17 +789,18 @@ async function sendDraftById(sb, { draft_id, confirmed, body, subject, test_send
 
   const res = await sendB2bEmail({
     company_id: draft.company_id,
-    thread_id: draft.thread_id || undefined,
-    message_type: draft.message_type,
+    thread_id: thread_id || draft.thread_id || undefined,
+    message_type: message_type || draft.message_type,
     variant_id: draft.variant_id || undefined,
     subject: sendSubject || undefined,
     body: sendBody,
     confirmed: !!confirmed,
     next_touch_days: draft.structured?.next_touch_days ?? null,
     attachments,
-    cc: draft.structured?.cc ?? undefined,
+    cc: cc ?? draft.structured?.cc ?? undefined,
     to_override: draft.structured?.to ?? undefined,
     test_send: !!test_send,
+    invite_created: !!invite_created,
   });
 
   if (res.phase === 'preview') {
