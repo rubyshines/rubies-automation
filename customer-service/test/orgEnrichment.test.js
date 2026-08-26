@@ -372,3 +372,18 @@ test('sameRegion compares loosely but does not call two real states equal', () =
   assert.equal(sameRegion('Alabama', null), true);
   assert.equal(sameRegion(null, 'Alabama'), true);
 });
+
+test('sameRegion tolerates the ways a correct region is spelled differently', () => {
+  // Every case here misfired on the first live run. A guard that cries wolf on
+  // correct data gets dismissed wholesale, taking the real catches with it.
+  assert.equal(sameRegion('Quebec', 'Québec'), true, 'accents must fold, not break the comparison');
+  assert.equal(sameRegion('England and Wales', 'Wales'), true, 'one name containing the other is agreement');
+  assert.equal(sameRegion('Wales', 'England and Wales'), true, 'containment must work in both directions');
+});
+
+test('sameRegion still catches the ambiguities that matter', () => {
+  // Both from the same run. There is a Tri-Cities in Tennessee and in
+  // Washington; Thorne Harbour is Victoria with a South Australia branch.
+  assert.equal(sameRegion('Tennessee', 'Washington'), false);
+  assert.equal(sameRegion('Victoria', 'South Australia'), false);
+});

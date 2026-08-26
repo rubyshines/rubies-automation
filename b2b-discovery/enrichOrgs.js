@@ -175,12 +175,26 @@ function buildGeocodeQuery(analysis) {
   return parts.join(', ');
 }
 
-/** Loose comparison of two region names — "CA" vs "California", case, padding. Pure. */
+/**
+ * Loose comparison of two region names. Pure.
+ *
+ * Deliberately generous, because a guard that misfires on correct data teaches
+ * whoever reads it to dismiss the whole signal — and then the two real catches
+ * get dismissed with the noise. Three misfires from the first live run are
+ * encoded here as cases:
+ *   "Quebec" vs "Québec"          — accents; the strip must fold them, not drop them
+ *   "England and Wales" vs "Wales" — one name contains the other
+ *   "CA" vs "California"           — an abbreviation is a prefix
+ * What it must still catch, also from that run: Tennessee vs Washington (there
+ * is a Tri-Cities in both), and Victoria vs South Australia.
+ */
 function sameRegion(a, b) {
-  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+  const norm = (s) => String(s || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // é → e
+    .toLowerCase().replace(/[^a-z]/g, '');
   const x = norm(a); const y = norm(b);
   if (!x || !y) return true; // nothing to disagree about
-  return x === y || x.startsWith(y) || y.startsWith(x);
+  return x === y || x.includes(y) || y.includes(x);
 }
 
 /**
