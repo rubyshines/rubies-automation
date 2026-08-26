@@ -65,4 +65,19 @@ async function uploadOperatorBase64(base64, opts = {}) {
   return uploadOperatorBytes(bytes, opts);
 }
 
-module.exports = { uploadOperatorBytes, uploadOperatorBase64, BUCKET, PREFIX };
+/**
+ * Public URL → the storage path inside BUCKET, or null if the URL doesn't point
+ * into this bucket at all. The ad-hoc operator console hands Claude a public URL
+ * for every file dropped into it, so a URL is often the only handle an agent
+ * has on a file it wants to attach somewhere. Pure.
+ */
+function storagePathFromUrl(url) {
+  const s = String(url || '');
+  const marker = `/object/public/${BUCKET}/`;
+  const i = s.indexOf(marker);
+  if (i === -1) return null;
+  const path = s.slice(i + marker.length).split('?')[0];
+  return path ? decodeURIComponent(path) : null;
+}
+
+module.exports = { uploadOperatorBytes, uploadOperatorBase64, storagePathFromUrl, BUCKET, PREFIX };

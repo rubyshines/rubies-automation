@@ -6149,6 +6149,19 @@ main { height: calc(100vh - 56px); }
   text-decoration: underline;
 }
 .outreach-attach-remove:hover { color: var(--red, #c0392b); }
+.outreach-attach-size {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding-left: 6px;
+}
+.outreach-attach-actions { gap: 8px; margin-top: 2px; }
+
+/* Drop a file straight onto the message box, the way the CS draft editor takes
+   them. The outline is the only signal that the box will accept the file. */
+#outreach-draft-editor.drag-over {
+  border-color: var(--accent, #1a7f64);
+  box-shadow: 0 0 0 2px rgba(26, 127, 100, 0.18);
+}
 
 /* To/Cc are editable and always shown — seeing exactly who an email goes to is
    the last check before sending. */

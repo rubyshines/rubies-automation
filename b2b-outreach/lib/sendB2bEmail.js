@@ -85,6 +85,27 @@ function encodeFilename(name) {
   return `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
 }
 
+/**
+ * Gmail rejects a message over 25 MB, and that ceiling is on the ENCODED
+ * message — base64 inflates every attachment by a third — so the raw bytes have
+ * to stay under roughly 18 MB. Refusing here, with the numbers, beats letting
+ * the operator hit Send and get an opaque API error back from Google.
+ */
+const MAX_ATTACHMENT_TOTAL_BYTES = 18 * 1024 * 1024;
+
+/** Why these attachments cannot be sent, or null if they can. Pure. */
+function attachmentSizeError(attachments, { max = MAX_ATTACHMENT_TOTAL_BYTES } = {}) {
+  const files = Array.isArray(attachments) ? attachments : [];
+  if (!files.length) return null;
+  const total = files.reduce((n, a) => n + (a?.content?.length || 0), 0);
+  if (total <= max) return null;
+  const mb = (n) => `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${files.length} attachment${files.length === 1 ? '' : 's'} total ${mb(total)}, over the ${mb(max)} `
+    + `that fits in an email (Gmail's limit is 25 MB once encoded). Remove one, or send a link instead. `
+    + `Largest: ${files.slice().sort((a, b) => (b?.content?.length || 0) - (a?.content?.length || 0))
+      .slice(0, 2).map(a => `${a.filename} (${mb(a.content?.length || 0)})`).join(', ')}.`;
+}
+
 /** One or many addresses → a header value. Drops blanks and dedupes. Pure. */
 function addressList(v) {
   const list = (Array.isArray(v) ? v : [v])
@@ -363,7 +384,13 @@ async function sendB2bEmail(p = {}) {
     threading: inReplyTo ? `reply (In-Reply-To ${inReplyTo})` : 'new thread',
   };
 
+  // Checked ahead of BOTH sends, and reported on the preview rather than only
+  // at the moment of sending: an oversized attachment is a fact about the draft,
+  // not about the click.
+  const sizeError = attachmentSizeError(attachments);
+  if (sizeError) preview.attachment_error = sizeError;
   if (!confirmed) return preview;
+  if (sizeError) return { ok: false, phase: 'too_large', error: sizeError, preview };
 
   // ---- TEST SEND -----------------------------------------------------------
   // The real email — same body, same HTML, same attachments — addressed to
@@ -472,4 +499,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, assertInviteClaimIsBacked, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, assertInviteClaimIsBacked, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES, FROM_EMAIL, SEND_FLAG };
