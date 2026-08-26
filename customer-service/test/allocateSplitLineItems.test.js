@@ -101,4 +101,23 @@ describe('allocateSplitLineItems', () => {
     assert.equal(errors.length, 1);
     assert.match(errors[0], /no variant id/);
   });
+
+  it('stamps the Pre-order property when given a resolver, and none when given null', () => {
+    const lines = [foLine(1, 10, 'UNW-BLK-3XL', 1)];
+    const req = [{ sku: 'UNW-BLK-3XL', quantity: 1 }];
+
+    const preOrder = allocateSplitLineItems(lines, req, sku => `Target availability end of October, 2026. (${sku})`);
+    assert.deepEqual(preOrder.newOrderLineItems[0].customAttributes, [
+      { key: 'Pre-order', value: 'Target availability end of October, 2026. (UNW-BLK-3XL)' },
+    ]);
+
+    // A hold split passes null: the new order must carry no pre-order claim at
+    // all, not an empty attribute list that later reads as one.
+    const held = allocateSplitLineItems(lines, req, null);
+    assert.equal('customAttributes' in held.newOrderLineItems[0], false);
+    assert.deepEqual(held.newOrderLineItems[0], {
+      variantId: 'gid://shopify/ProductVariant/1',
+      quantity: 1,
+    });
+  });
 });
