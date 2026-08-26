@@ -5658,8 +5658,11 @@ function entryFromCompany(c) {
 
 // ── On Me ───────────────────────────────────────────────────────────────────
 // Work you took out of the queue on purpose. It keeps its pending draft (unlike
-// pause and snooze, which clear it), keeps ageing, and comes back on its own the
-// moment they write again.
+// pause and snooze, which clear it) and keeps ageing until you send or hand it
+// back. A reply landing meanwhile returns them to the queue at Tier 1 without
+// ending the claim — the row is badged "they replied since" and appears on both
+// lists, because "they are waiting" and "you took this on" are two different
+// facts and only one of them is settled by an inbound message.
 
 async function fetchOnMeRows() {
   const params = outreachChannel ? `?channel=${encodeURIComponent(outreachChannel)}` : '';
@@ -5713,6 +5716,13 @@ function outreachOnMeRowHtml(r) {
         ? esc(r.next_step)
         : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
       <div class="queue-item-row2">
+        ${r.replied_since_claim
+    // Same class the queue gives its Tier-1 "reply needed" rows, because it is
+    // the same fact — this company is on both lists and the badge is what says
+    // so. A muted badge would read as a footnote about a claim you already
+    // understand, when the point is that something arrived after you made it.
+    ? '<span class="category-badge category-order" title="They have written since you claimed this — also in the queue at Tier 1">they replied since</span>'
+    : ''}
         ${r.next_step_owner === 'them' ? '<span class="badge badge-muted">waiting on them</span>' : ''}
         ${r.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
       </div>
@@ -6196,7 +6206,7 @@ function outreachRelationshipHtml(entry) {
       <span>${days}d</span>
       <button class="btn btn-ghost" onclick="resumeOutreach()">Back to queue</button>
     </div>
-    <div class="outreach-deferral-note">Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again it returns to the queue on its own.</div>`;
+    <div class="outreach-deferral-note">Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again they also return to the queue, and this stays yours until you send or hand it back.</div>`;
   } else if (c.outreach_paused_at) {
     deferral = `<div class="outreach-deferral">
       <span class="outreach-deferral-label">Paused</span>

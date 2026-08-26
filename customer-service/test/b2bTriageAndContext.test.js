@@ -186,7 +186,7 @@ test('an unpaused company with the same overdue date still surfaces', () => {
 // this, just not in the queue" — so it must hold the same never-silence-a-live-
 // correspondent rule, and must NOT clear the draft the way the other two do.
 
-const { onMeHeld } = require('../../b2b-outreach/lib/queue');
+const { replyLandedAfter } = require('../../b2b-outreach/lib/queue');
 
 test('on_me records a bare stamp and nothing else', () => {
   // What the claim is about comes from relationship_next_step, which is derived
@@ -215,12 +215,16 @@ test('a claimed company is off the cadence too, not just off Tier 1', () => {
   assert.equal(computeQueueEntry(co, {}, NOW), null, 'no Tier 5 nag underneath work Jamie has picked up');
 });
 
-test('onMeHeld follows the same boundary the queue uses', () => {
+// The claim itself is NOT decided by that reply (2026-08-26). It returns them to
+// the queue, and they stay claimed: an acknowledgement is not the work. What
+// replyLandedAfter still decides is suppression — and, on the On Me row, whether
+// to badge it "they replied since".
+test('replyLandedAfter only judges the mail against the decision', () => {
   const co = paused({ on_me_at: '2026-08-01T00:00:00Z' });
-  assert.equal(onMeHeld(co, {}), true, 'no reply at all — still held');
-  assert.equal(onMeHeld(co, { lastInboundAt: '2026-07-20T00:00:00Z' }), true, 'the reply he claimed');
-  assert.equal(onMeHeld(co, { lastInboundAt: '2026-08-04T00:00:00Z' }), false, 'superseded — back in the queue');
-  assert.equal(onMeHeld(paused({}), { lastInboundAt: '2026-08-04T00:00:00Z' }), false, 'never claimed');
+  assert.equal(replyLandedAfter({}, co.on_me_at), false, 'no reply at all');
+  assert.equal(replyLandedAfter({ lastInboundAt: '2026-07-20T00:00:00Z' }, co.on_me_at), false, 'the reply he claimed');
+  assert.equal(replyLandedAfter({ lastInboundAt: '2026-08-04T00:00:00Z' }, co.on_me_at), true, 'newer than the claim');
+  assert.equal(replyLandedAfter({ lastInboundAt: '2026-08-04T00:00:00Z' }, null), false, 'no decision to be newer than');
 });
 
 test('the latest deferral judges staleness when more than one is set', () => {

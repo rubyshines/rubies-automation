@@ -20,7 +20,7 @@
  *   sendDraftById            — load a pending draft → sendB2bEmail (two-phase,
  *                              gate pass-through); marks the draft sent
  */
-const { assembleQueue, deferredSince, onMeHeld, humanAge } = require('./queue');
+const { assembleQueue, deferredSince, replyLandedAfter, humanAge } = require('./queue');
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
@@ -221,21 +221,31 @@ async function fetchQueueCount(sb, { channel } = {}) {
  * drives what is due. Rows whose summary has no next step (never summarised, or
  * a concluded relationship) simply carry none; the caller shows the claim date.
  *
- * A company whose contact has replied since the claim is NOT here: that reply
- * put it back in the queue (computeQueueEntry), and a row cannot be in both
- * lists without one of them lying about who is holding it.
+ * A company that has replied since the claim IS still here, and is also back in
+ * the queue at Tier 1 (2026-08-26). The original rule dropped it from this list
+ * on the reasoning that a row cannot be in both without one of them lying about
+ * who is holding it — but the two lists answer different questions. The queue
+ * asks what is DUE; this one records what Jamie has personally taken on. GSRC
+ * replied "Awesome, thanks so much!" three minutes after being claimed, and that
+ * retired a claim whose actual subject was the tabling cards he had just
+ * promised them. A claim is discharged by DOING the thing, so it is cleared by
+ * sending or by Back to queue, and by nothing else — an acknowledgement from the
+ * other side is not the work.
+ *
+ * `replied_since_claim` is what keeps the list honest instead: the row says they
+ * have written since, because what you owe them may have just changed and it is
+ * the one thing the claim stamp cannot tell you.
  */
 async function fetchOnMe(sb, { channel } = {}) {
   let q = sb.from('b2b_companies').select('*').not('on_me_at', 'is', null);
   if (channel) q = q.eq('relationship_type', channel);
   const { data: claimed, error } = await q;
   if (error) throw new Error(error.message);
-  if (!claimed?.length) return { entries: [], returned: [] };
+  if (!claimed?.length) return { entries: [] };
 
   // Full context build rather than a bare inbound lookup: the Tier-1 rule
-  // ignores messages on CLOSED threads, and a list that used a different
-  // definition of "they replied" than the queue does would drop rows the queue
-  // never picked up — the one state where a company is on neither surface.
+  // ignores messages on CLOSED threads, so a bare "newest inbound" would badge a
+  // row as having replied over a message the queue itself does not count.
   const contexts = await buildContexts(sb, claimed);
   const { data: drafts } = await sb.from('b2b_drafts')
     .select('id, company_id, subject, body, generated_at, message_type, queue_tier, queue_reason')
@@ -244,7 +254,6 @@ async function fetchOnMe(sb, { channel } = {}) {
 
   const now = new Date();
   const entries = [];
-  const returned = [];
   for (const c of claimed) {
     const ctx = contexts.get(c.id) || {};
     const d = draftBy.get(c.id);
@@ -261,13 +270,17 @@ async function fetchOnMe(sb, { channel } = {}) {
       age: humanAge(c.on_me_at, now),
       days_on_you: Math.floor((now - new Date(c.on_me_at)) / 86400000),
       last_inbound_at: ctx.lastInboundAt || null,
+      // They have written since you claimed it, so this company is ALSO sitting
+      // in the queue at Tier 1. Not a reason to drop the row — a reason to read
+      // the reply before acting on what you thought you owed them.
+      replied_since_claim: replyLandedAfter(ctx, c.on_me_at),
       draft: d ? { id: d.id, subject: d.subject, snippet: draftSnippet(d.body), generated_at: d.generated_at } : null,
     };
-    (onMeHeld(c, ctx) ? entries : returned).push(row);
+    entries.push(row);
   }
 
   entries.sort((a, b) => String(a.on_me_at).localeCompare(String(b.on_me_at)));
-  return { entries, returned };
+  return { entries };
 }
 
 // ── Directory search ───────────────────────────────────────────────────────

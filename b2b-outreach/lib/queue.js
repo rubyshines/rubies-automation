@@ -87,26 +87,18 @@ function deferredSince(company, now = new Date()) {
  *
  * The single expression of the rule that governs every deferral: deciding not to
  * chase someone clears the mail that was already sitting there, and can never
- * silence a human who writes afterwards. Both the queue (below) and the On Me
- * list read it from here rather than each spelling out the comparison, because
- * two copies of this rule is exactly how one of them ends up hiding a reply.
+ * silence a human who writes afterwards. Every caller reads it from here rather
+ * than spelling out the comparison, because two copies of this rule is exactly
+ * how one of them ends up hiding a reply.
+ *
+ * Note what it does NOT decide (2026-08-26): whether an On Me claim survives.
+ * That was its second job, and it was the wrong one — see fetchOnMe. This
+ * function only ever answers "is the mail newer than the decision", which is a
+ * question about SUPPRESSION and nothing else.
  */
 function replyLandedAfter(ctx, stamp) {
   if (!stamp || !ctx?.lastInboundAt) return false;
   return new Date(ctx.lastInboundAt) > new Date(stamp);
-}
-
-/**
- * Is this company's On Me claim still standing? PURE.
- *
- * False once they reply: what you claimed was answering their last message, and
- * a newer one supersedes it. The company goes back to Tier 1 through the normal
- * path and off the On Me list, with nothing written anywhere — deriving it means
- * the two surfaces cannot disagree and no sweep has to remember to clear a flag.
- */
-function onMeHeld(company, ctx = {}) {
-  if (!company?.on_me_at) return false;
-  return !replyLandedAfter(ctx, company.on_me_at);
 }
 
 /**
@@ -247,5 +239,5 @@ function assembleQueue(items, now = new Date()) {
 
 module.exports = {
   computeQueueEntry, assembleQueue, humanAge, deferredSince,
-  replyLandedAfter, onMeHeld, TIER_BY_TYPE,
+  replyLandedAfter, TIER_BY_TYPE,
 };
