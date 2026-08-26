@@ -165,6 +165,30 @@ const PIPELINES = [
     run: () => require('./b2b-outreach/lib/relationshipSummary').run(),
   },
   {
+    name: 'Follow-up Drafts',
+    // AFTER Relationship Summaries on purpose: the advisor reads the recap when
+    // it drafts, so running first would chase using yesterday's understanding of
+    // a conversation whose newest message landed overnight. Also after Thread
+    // Discovery, so a reply imported tonight ends the ladder rather than being
+    // chased in the morning.
+    //
+    // This only DRAFTS and schedules. Nothing leaves the building here — the
+    // send pass on the webhook server picks drafts up when their moment
+    // arrives, in the recipient's business hours, and runs the guards then.
+    run: async () => {
+      const r = await require('./b2b-outreach/lib/autoFollowUp').runDraftPass(
+        require('./shared/supabaseClient').getSupabaseClient(), {});
+      if (r.schema_missing) return { skipped: r.schema_missing };
+      return {
+        scheduled: r.scheduled.length,
+        retired: r.retired.length,
+        handed_off: r.handed_off.length,
+        skipped: r.skipped.length,
+        errors: r.errors.length,
+      };
+    },
+  },
+  {
     name: 'Ticket Reconciliation',
     run: () => require('./customer-service/sync/gorgiasAdvisorResync').runPipeline(),
   },

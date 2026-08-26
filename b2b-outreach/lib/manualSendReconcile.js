@@ -286,7 +286,13 @@ async function discoverCompanyThreads(sb, { companyId, emails, maxThreads = 10, 
     listing = await gmail.users.threads.list({ userId: 'me', q, maxResults: maxThreads });
   } catch (err) {
     console.error(`[discover] ${companyId} thread list failed: ${err.message}`);
-    return { discovered: 0 };
+    // Marked, not bare. A bare `{ discovered: 0 }` is indistinguishable from
+    // "looked, found nothing" — the same self-certifying silence the `failed`
+    // counter below exists to prevent. It matters more now than it did: the
+    // auto-send reply guard treats this call as evidence that nobody has
+    // written back, and evidence that could not be gathered must never read as
+    // evidence of absence.
+    return { discovered: 0, error: 'list_failed' };
   }
   const found = listing.data?.threads || [];
   if (!found.length) return { discovered: 0 };

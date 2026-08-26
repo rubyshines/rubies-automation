@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-08-20
+last_updated: 2026-08-26
 ---
 
 ## Goal
@@ -16,6 +16,8 @@ Grow retailer partnerships and wholesale revenue.
 4. Tier 3 custom searches — not started
 
 ## Current Status
+**2026-08-26: the follow-up ladder runs itself, and it had never been able to run at all.** Push-mode is now live for follow-ups only, superseding the 2026-07-23 pull-mode-only decision — everything else in the queue still waits for an operator. An unanswered engine send is chased once after 5 business days (10 for a relationship check-in), once more 10 business days later, then the ladder ends: a lead is retired, a live partner is handed to Jamie. Sends are scheduled into the recipient's mid-morning and go unattended behind three guards (fresh reply re-check, address health, daily cap of 10). Two causes had kept the existing ladder silent — nothing ran the sweep, and `answered` counted any inbound ever, so no company we had ever corresponded with could be chased. Three UK orgs were 29-33 days overdue against a 5-business-day trigger; the 19 Aug partner round was booked for its next touch in **February 2027**. Scope is engine-sent threads under 90 days: the 51 companies whose last outbound is a manual Gmail send (including a ~32-retailer batch from 189 days ago) stay a case-by-case call and are parked. Timezone coverage went 53% → 91% via a geocode backfill of 25 rows. Next: watch the first automatic sends land, then decide whether the manual-send cohort gets a re-approach round.
+
 **2026-08-20: two partners were unreachable and the engine reported success.** The 19 Aug check-in round sent 17 emails; two bounced permanently (BAGLY's and Valid USA's primary contacts) and **12% of a round is six times the rate that damages sender reputation on rubyshines.com**, the domain Klaviyo shares. Nothing surfaced it: BAGLY was booked for its next touch in **February 2027** off a message nobody received. Bounces now come back as Tier-1 work carrying the draft Jamie already approved, so repointing at a live address is one edit rather than a fresh Opus call. Both cases repaired by the build itself. Standing risk this confirms: **contact churn is the org failure mode** — Valid USA's only same-domain alternate was last used in 2024 and they are renaming to Reach Pluto, so the queue entry dates stale suggestions rather than presenting them as live. Next: the bulk address-verification pass over all 242 companies (parked), which turns "12% surprise" into a known list before the next round goes out.
 
 **2026-08-19: the engine can finally see its own correspondence.** Thread discovery only ever ran when someone opened a company, so 197 of 242 companies held zero messages. A nightly sweep now searches Gmail for them: 165 searched, **70 had history**, 238 threads and 489 messages imported. Companies with history went 45 → 120. The queue did NOT grow, and that is the correct outcome — almost all the recovered history is concluded (472 of 530 threads closed; a thread whose last inbound is over 30 days old is not "waiting on us"). The value is in what the advisor reads: it reasons from real history for 120 companies now instead of 45, so it can no longer open a cold intro to an org we have corresponded with for years. Remaining blind spots: 27 companies have no address to search with, and ~120 genuinely have no history.
@@ -31,6 +33,8 @@ Grow retailer partnerships and wholesale revenue.
 Active again after a month dormant. 2026-07-23/24 re-entry: queue triaged against Gmail ground truth (16 threads → 2 real items), `b2b_send_enabled` flipped ON (go-live), first real drafts staged (Transgender Victoria reply, Uniting Pride org onboarding). Panel hardened so it stays trustworthy: manual Gmail replies auto-reconcile into the engine, conversation history visible in the panel, company order/program state synced daily from Shopify. Next: work the warm queue (partners + existing retailers), then UK org outreach (first objective: establish UK donation partners — none exist today; partner-referred org list pending from Jamie).
 
 ## Decisions Made
+- 2026-08-26 — Follow-ups auto-send with no click and no shadow period, guarded on targeting rather than prose. The review a human would do is not what makes a chase safe; a reply that landed since, a dead address and an oversized batch are. Scheduling into their business hours leaves a review window anyway.
+- 2026-08-26 — Prospects retire (a reversible cadence-set pause, never `lost`); active partners are handed to Jamie's On Me list with a note. An org we ship boxes to going quiet must be visible now, not next season.
 - 2026-06-10 — Warm-first migration order: partners → re-routed orgs → cold retailers. Cold sends only after the engine proves itself on friendlies.
 - 2026-07-23 — Send flag ON. Operating model: pull-mode first (Tier-1 replies + operator-initiated outreach only; daily cadence sweep stays unscheduled), push-mode cadence earned later.
 - 2026-08-05 — Prospect supply is admitted by cohort, not switched on. Tier-4 first touch requires `vetted_at`, so ~200 imported rows of wildly uneven quality can't arrive in the panel at once. Vetting is a triage decision (keep/drop/snooze, no draft), applied only where the machine genuinely can't decide.

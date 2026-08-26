@@ -125,6 +125,27 @@ test('org with affiliate program flag gets affiliate cadence too', () => {
 /** ctx defaults for a company with no message history at all. */
 const freshCtx = (over = {}) => ({ sentTypes: new Set(), lastTypeSentAt: () => null, ...over });
 
+/**
+ * ctx for a company whose NEWEST message is an engine send of `type` at `at`,
+ * unanswered since.
+ *
+ * The ladder anchors on the last outbound message, so these fields — not
+ * `sentTypes` — are what arms it. The old anchor was "the first-touch type ever
+ * sent", which is why a ctx carrying only sentTypes no longer chases.
+ */
+const afterSend = (type, at, over = {}) => freshCtx({
+  sentTypes: new Set([type]),
+  lastTypeSentAt: t => (t === type ? at : null),
+  lastOutboundType: type,
+  lastOutboundSource: 'send_tool',
+  lastOutboundMessageAt: at,
+  lastOutboundThreadId: 'th-1',
+  lastOutboundAt: at,
+  unansweredRun: 1,
+  unansweredRunSince: at,
+  ...over,
+});
+
 test('a vetted prospect gets the first touch for its channel', () => {
   assert.equal(evaluateDue(retailer({ relationship_state: 'prospect', vetted_at: '2026-06-01T00:00:00Z' }), freshCtx(), NOW).message_type, 'intro_pitch');
   assert.equal(evaluateDue(org({ relationship_state: 'prospect', vetted_at: '2026-06-01T00:00:00Z' }), freshCtx(), NOW).message_type, 'intro_outreach');
@@ -149,44 +170,46 @@ test('a vetted prior relationship with no engine history gets re_approach, not a
 test('follow-up 1 after 5 business days of silence, follow-up 2 after 10 more', () => {
   const c = retailer({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
   // Intro sent Wed Jun 3 → Wed Jun 10 is 5 business days.
-  const afterIntro = freshCtx({ sentTypes: new Set(['intro_pitch']), lastTypeSentAt: t => t === 'intro_pitch' ? '2026-06-03T00:00:00Z' : null });
-  assert.equal(evaluateDue(c, afterIntro, NOW).message_type, 'followup_1');
+  assert.equal(evaluateDue(c, afterSend('intro_pitch', '2026-06-03T00:00:00Z'), NOW).message_type, 'followup_1');
   // Too soon: only 2 business days.
-  const tooSoon = freshCtx({ sentTypes: new Set(['intro_pitch']), lastTypeSentAt: () => '2026-06-08T00:00:00Z' });
-  assert.equal(evaluateDue(c, tooSoon, NOW), null);
+  assert.equal(evaluateDue(c, afterSend('intro_pitch', '2026-06-08T00:00:00Z'), NOW), null);
   // followup_1 sent Mon May 25 → Wed Jun 10 is 12 business days.
-  const afterF1 = freshCtx({
-    sentTypes: new Set(['intro_pitch', 'followup_1']),
-    lastTypeSentAt: t => t === 'followup_1' ? '2026-05-25T00:00:00Z' : '2026-05-01T00:00:00Z',
-  });
-  assert.equal(evaluateDue(c, afterF1, NOW).message_type, 'followup_2');
+  assert.equal(evaluateDue(c, afterSend('followup_1', '2026-05-25T00:00:00Z'), NOW).message_type, 'followup_2');
+});
+
+test('the chase threads the message it chases', () => {
+  // Without the thread the follow-up goes out as a brand-new email, so "just
+  // following up on my note below" arrives with no note below it.
+  const c = retailer({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
+  assert.equal(evaluateDue(c, afterSend('intro_pitch', '2026-06-03T00:00:00Z'), NOW).thread_id, 'th-1');
 });
 
 test('the ladder stops after followup_2 — we stop asking', () => {
   const c = retailer({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
-  const done = freshCtx({
-    sentTypes: new Set(['intro_pitch', 'followup_1', 'followup_2']),
-    lastTypeSentAt: () => '2026-05-01T00:00:00Z',
-  });
-  assert.equal(evaluateDue(c, done, NOW), null);
+  assert.equal(evaluateDue(c, afterSend('followup_2', '2026-05-01T00:00:00Z'), NOW), null);
 });
 
 test('a reply stops the ladder — chasing someone who answered is wrong', () => {
   const c = retailer({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
-  const answered = freshCtx({
-    sentTypes: new Set(['intro_pitch']),
-    lastTypeSentAt: () => '2026-06-01T00:00:00Z',
-    lastInboundAt: '2026-06-02T00:00:00Z', // they replied; Tier 1 or a live thread owns this now
-  });
+  // They replied; Tier 1 or a live thread owns this now.
+  const answered = afterSend('intro_pitch', '2026-06-01T00:00:00Z', { lastInboundAt: '2026-06-02T00:00:00Z' });
   assert.equal(evaluateDue(c, answered, NOW), null);
+});
+
+test('an OLD reply does not stop the ladder — the comparison is against the anchor', () => {
+  // The regression this whole change exists for. `answered` used to be
+  // `!!lastInboundAt` — any inbound EVER — so a partner who wrote to us in 2022
+  // could never be chased about a check-in sent last week, and the queue showed
+  // nothing rather than showing a bug.
+  const partner = org({ relationship_state: 'active', program_flags: { donation_closet: true } });
+  const ctx = afterSend('community_checkin', '2026-05-20T00:00:00Z', { lastInboundAt: '2022-05-12T00:00:00Z' });
+  assert.equal(evaluateDue(partner, ctx, NOW).message_type, 'followup_1');
 });
 
 test('follow-up outranks the ongoing-relationship tracks', () => {
   // An unanswered intro must never sit behind a reorder nudge.
   const c = retailer({ relationship_state: 'active', vetted_at: '2026-05-01T00:00:00Z', metadata: {} });
-  const ctx = freshCtx({
-    sentTypes: new Set(['intro_pitch']),
-    lastTypeSentAt: () => '2026-06-03T00:00:00Z',
+  const ctx = afterSend('intro_pitch', '2026-06-03T00:00:00Z', {
     lastOrderAt: '2025-01-01T00:00:00Z', orderCount: 3, // reorder_nudge would otherwise fire
   });
   assert.equal(evaluateDue(c, ctx, NOW).message_type, 'followup_1');
@@ -245,11 +268,7 @@ test('the sibling guard never blocks an in-flight follow-up', () => {
   // Suppressing the OPENER is right; abandoning a sequence we already started
   // would leave a prospect hanging mid-conversation.
   const c = org({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
-  const ctx = freshCtx({
-    hasEngagedSibling: true,
-    sentTypes: new Set(['intro_outreach']),
-    lastTypeSentAt: () => '2026-06-03T00:00:00Z',
-  });
+  const ctx = afterSend('intro_outreach', '2026-06-03T00:00:00Z', { hasEngagedSibling: true });
   assert.equal(evaluateDue(c, ctx, NOW).message_type, 'followup_1');
 });
 

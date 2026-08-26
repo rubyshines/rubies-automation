@@ -15,9 +15,11 @@ const NEXT_ACTION_DAYS = {
   affiliate_intro: 7,
   re_approach: 7,
   followup_1: 14,
-  // After a second unanswered follow-up we stop asking. 180d puts the company
-  // back on the Tier-5 overdue list next season rather than dropping it
-  // silently — quiet, but still on the books.
+  // After a second unanswered follow-up the ladder ENDS — see exhaustedDecision,
+  // which retires a lead or hands a live relationship to the operator. This 180d
+  // is only the backstop for the window between that send and the next draft
+  // pass, and for the case where the pass has not run at all: it keeps the
+  // company on the books at Tier 5 rather than dropping it silently.
   followup_2: 180,
   // Replying to a decline. Without an entry this inherits the 30-day default
   // and Tier 5 resurfaces an org that just said no, a month later, as an
@@ -110,6 +112,67 @@ function firstTouchType(company) {
 const SAMPLES_CHECKIN_MAX_AGE_DAYS = 60;
 
 /**
+ * The follow-up ladder chases an ASK that went unanswered. These are the message
+ * types that constitute one, mapped to how long we wait (in BUSINESS days)
+ * before chasing.
+ *
+ * Two families, deliberately different beats. A cold opener is a lead being
+ * worked and a week is already generous. A seasonal check-in to a partner we
+ * ship donation boxes to is not a sales sequence — "how are things going?"
+ * chased after five days reads as pestering, so relationship types wait twice as
+ * long.
+ *
+ * Absent on purpose: `price_change_notice` and `new_collection` are notices
+ * rather than questions, `content_prompt` already repeats monthly,
+ * `event_donation_response` is us answering THEM, and `reply_close` is the
+ * graceful end of a conversation they declined. Chasing that last one is the
+ * exact failure the all-time `answered` flag was introduced to prevent, and
+ * excluding it here is what lets that flag be narrowed back to something useful
+ * (see followUpRung).
+ */
+const CHASE_AFTER_BUSINESS_DAYS = {
+  intro_pitch: 5,
+  intro_outreach: 5,
+  affiliate_intro: 5,
+  re_approach: 5,
+  community_checkin: 10,
+  donation_closet_pitch: 10,
+  post_samples_checkin: 10,
+  first_order_checkin: 10,
+  reorder_nudge: 10,
+  sample_feedback_request: 10,
+  referral_ask: 10,
+};
+
+/** Business days between rungs, and between the last rung and giving up. */
+const FOLLOWUP_2_AFTER_BUSINESS_DAYS = 10;
+const EXHAUSTED_AFTER_BUSINESS_DAYS = 10;
+
+/**
+ * How old the unanswered ask may be before chasing it stops making sense.
+ *
+ * Past this it is not a follow-up, it is a re-approach — a different message
+ * that opens a new door rather than pretending the last one is still swinging.
+ * Same reasoning as SAMPLES_CHECKIN_MAX_AGE_DAYS above. It is also the guard
+ * that keeps the imported backlog out: threads whose last outbound is 189 or
+ * 1575 days old are a case-by-case operator decision, not cadence work.
+ */
+const FOLLOWUP_MAX_AGE_DAYS = 90;
+
+/**
+ * Which outbound sources the ladder is willing to chase.
+ *
+ * A manual Gmail send reconciles in with `message_type` null and `source`
+ * 'manual_send', so it carries no statement of what was asked — it could be an
+ * intro, a shipping answer, or a goodbye. Chasing one means guessing, and the
+ * cost of guessing wrong is "just following up!" landing on a conversation that
+ * ended. Restricting the anchor to engine sends is what makes the rest of this
+ * safe to run unattended. Widening it is a deliberate decision that needs the
+ * manual sends classified first, not a config change.
+ */
+const CHASEABLE_SOURCES = new Set(['send_tool']);
+
+/**
  * Gate conditions every cadence message shares (locked + drafted spec):
  * not lost, not deferred (snoozed / paused / on me), contact known,
  * no pending draft.
@@ -137,6 +200,121 @@ function companyEligible(company, { hasPendingDraft, upcomingMeetingAt } = {}, n
   if (hasPendingDraft) return false;
   if (company.snoozed_until && new Date(company.snoozed_until) > now) return false;
   return true;
+}
+
+/**
+ * Has a human answered the ask we are about to chase? PURE.
+ *
+ * Scoped to the anchor, NOT to all of history. It used to be `!!lastInboundAt` —
+ * any inbound ever — which silently disabled the ladder for every company we
+ * have ever had a conversation with. P10 Qc last wrote in 2022, RISE @ LA in
+ * 2025; both were sent a seasonal check-in in August 2026 and both were
+ * permanently ineligible for a follow-up on the strength of those old replies.
+ * The queue showed nothing, so it read as "nothing due" rather than as a bug.
+ *
+ * The all-time version existed to stop one real failure: an org declines, we
+ * send a graceful close, our close is newer than their reply, and a timestamp
+ * comparison re-arms the ladder to chase someone who already said no. That case
+ * is now handled where it belongs — `reply_close` is not a chaseable anchor at
+ * all — which lets the comparison be a comparison again.
+ *
+ * Auto-replies, calendar RSVPs and DSNs are already excluded from lastInboundAt
+ * upstream, so a vacation responder still counts as silence.
+ */
+function answeredSince(ctx, anchorAt) {
+  if (!anchorAt || !ctx?.lastInboundAt) return false;
+  return new Date(ctx.lastInboundAt) > new Date(anchorAt);
+}
+
+/**
+ * A live relationship is handed to the operator; a lead is retired. PURE.
+ *
+ * `active` is the line because it is the state that means a real relationship
+ * exists — an org we ship donation boxes to, or a retailer who buys. Retiring
+ * one of those because a seasonal check-in went unread would mute the engine on
+ * exactly the relationship worth keeping.
+ */
+function isLiveRelationship(company) {
+  return company?.relationship_state === 'active';
+}
+
+/**
+ * The follow-up ladder: one rung per call, or null. PURE.
+ *
+ * Anchored on the last outbound MESSAGE rather than on "the first-touch type
+ * ever sent". The old anchor meant the ladder only ever chased an intro, so
+ * `community_checkin`, `donation_closet_pitch`, `reorder_nudge` and the rest got
+ * no chase at all — the August 2026 partner round was booked for its next touch
+ * in February 2027.
+ *
+ * Returns null (rather than the exhausted decision) once both rungs are spent;
+ * see exhaustedDecision, which is an ACTION the draft pass takes and not queue
+ * work to show an operator.
+ */
+function followUpRung(company, ctx, now = new Date()) {
+  const type = ctx.lastOutboundType;
+  const at = ctx.lastOutboundMessageAt;
+  if (!type || !at) return null;
+  if (!CHASEABLE_SOURCES.has(ctx.lastOutboundSource)) return null;
+  if (daysSince(at, now) > FOLLOWUP_MAX_AGE_DAYS) return null;
+  if (answeredSince(ctx, at)) return null;
+
+  // Thread the chase. Without this the follow-up goes out as a brand-new email
+  // and "just following up on my note below" arrives with no note below it.
+  const thread_id = ctx.lastOutboundThreadId || null;
+  const waited = daysSince(at, now);
+
+  if (type === 'followup_2') return null; // exhausted — see exhaustedDecision
+  if (type === 'followup_1') {
+    if (businessDaysSince(at, now) < FOLLOWUP_2_AFTER_BUSINESS_DAYS) return null;
+    return { message_type: 'followup_2', reason: `no reply ${waited}d after first follow-up`, thread_id };
+  }
+  const wait = CHASE_AFTER_BUSINESS_DAYS[type];
+  if (!wait) return null;
+  if (businessDaysSince(at, now) < wait) return null;
+  return { message_type: 'followup_1', reason: `no reply ${waited}d after ${type}`, thread_id };
+}
+
+/**
+ * Both rungs spent and still silent — what now? Returns
+ * { decision: 'retire'|'hand_off', reason, note } or null. PURE.
+ *
+ * Deliberately NOT part of evaluateDue: neither outcome is a message, so neither
+ * belongs in a queue of things to say. The draft pass applies it.
+ *
+ * `retire` writes an indefinite outreach pause, never `relationship_state`.
+ * `lost` would claim they went away or said no, which is false for someone who
+ * simply never replied, and it destroys the state we would need to resume.
+ *
+ * `hand_off` claims the company for the operator with a note. The note carries
+ * only the durable fact — a count and a date, true forever — because what to DO
+ * about it comes live from the relationship summary's next step, and a sentence
+ * written once decays on the one list whose defining problem is age.
+ */
+function exhaustedDecision(company, ctx, now = new Date()) {
+  if (ctx.lastOutboundType !== 'followup_2') return null;
+  const at = ctx.lastOutboundMessageAt;
+  if (!at) return null;
+  if (!CHASEABLE_SOURCES.has(ctx.lastOutboundSource)) return null;
+  if (answeredSince(ctx, at)) return null;
+  if (businessDaysSince(at, now) < EXHAUSTED_AFTER_BUSINESS_DAYS) return null;
+
+  const run = ctx.unansweredRun || 0;
+  const since = ctx.unansweredRunSince || at;
+  const when = new Date(since).toISOString().slice(0, 10);
+  if (isLiveRelationship(company)) {
+    return {
+      decision: 'hand_off',
+      reason: `${run} unanswered since ${when} — engine has nothing left to try`,
+      // Points at the likely cause: for an org, a run of unanswered messages
+      // usually means the person we had on file has moved on.
+      note: `${run} unanswered since ${when}; contact may have moved on`,
+    };
+  }
+  return {
+    decision: 'retire',
+    reason: `no reply to ${run} messages since ${when}`,
+  };
 }
 
 /**
@@ -188,18 +366,25 @@ function evaluateDue(company, ctx, now = new Date()) {
   // ongoing-relationship tracks below. An unanswered intro must never sit
   // behind a reorder nudge.
   const firstTouch = FIRST_TOUCH_TYPES.find(t => sent.has(t));
-  const firstTouchAt = firstTouch ? lastSent(firstTouch) : null;
-  // The ladder chases SILENCE, so any genuine human reply ever ends it — not
-  // just one newer than our last send. The timestamp comparison this replaces
-  // was wrong in the case that matters most: an org declines, we send a
-  // graceful close, and our close is now newer than their reply, so the ladder
-  // would resume and chase someone who already said no. (Made concrete when a
-  // Tier-1 close came back labelled `intro_outreach` — a first-touch type —
-  // which re-armed the whole sequence.) Auto-replies are already excluded from
-  // lastInboundAt upstream, so a vacation responder still counts as silence.
-  const answered = !!ctx.lastInboundAt;
 
-  if (!firstTouch) {
+  // Is an engine outreach sequence in flight (or just spent) on this company?
+  //
+  // `firstTouch` alone cannot answer that: it looks for a first-touch type in
+  // sentTypes, and once the newest send is `followup_1`/`followup_2` — or a
+  // seasonal check-in to a partner we never formally introduced ourselves to —
+  // there may be no first-touch type there at all. Without this guard a company
+  // mid-ladder falls into the branch below and gets a cold "let me introduce
+  // RUBIES" underneath its own follow-up sequence.
+  //
+  // Keyed on the engine having sent it, so a prospect whose only history is an
+  // old manual email still gets its first touch — that cohort is deliberately
+  // out of the ladder's scope, not out of the queue.
+  const ladderOwns = CHASEABLE_SOURCES.has(ctx.lastOutboundSource)
+    && (ctx.lastOutboundType === 'followup_1'
+      || ctx.lastOutboundType === 'followup_2'
+      || !!CHASE_AFTER_BUSINESS_DAYS[ctx.lastOutboundType]);
+
+  if (!firstTouch && !ladderOwns) {
     // The imports created duplicate rows per org (BAGLY exists twice: an active
     // donation partner AND a bare CenterLink row with a different address).
     // Introducing ourselves to an existing partner at their info@ is the worst
@@ -220,15 +405,13 @@ function evaluateDue(company, ctx, now = new Date()) {
         return { message_type: 're_approach', reason: 'prior relationship, re-admitted after review' };
       }
     }
-  } else if (!answered) {
-    if (!sent.has('followup_1') && businessDaysSince(firstTouchAt, now) >= 5) {
-      return { message_type: 'followup_1', reason: `no reply ${daysSince(firstTouchAt, now)}d after ${firstTouch}` };
-    }
-    const f1At = lastSent('followup_1');
-    if (sent.has('followup_1') && !sent.has('followup_2') && f1At && businessDaysSince(f1At, now) >= 10) {
-      return { message_type: 'followup_2', reason: `no reply ${daysSince(f1At, now)}d after first follow-up` };
-    }
   }
+
+  // The ladder runs whether or not a typed first touch exists: what it chases is
+  // the last unanswered ASK, and for a partner we have shipped boxes to for
+  // years that is a seasonal check-in, not an introduction we never sent.
+  const rung = followUpRung(company, ctx, now);
+  if (rung) return rung;
 
   // --- retailer track ------------------------------------------------------
   if (isRetailer) {
@@ -295,11 +478,20 @@ module.exports = {
   NEXT_ACTION_DAYS,
   SAMPLES_CHECKIN_MAX_AGE_DAYS,
   FIRST_TOUCH_TYPES,
+  CHASE_AFTER_BUSINESS_DAYS,
+  CHASEABLE_SOURCES,
+  FOLLOWUP_MAX_AGE_DAYS,
+  FOLLOWUP_2_AFTER_BUSINESS_DAYS,
+  EXHAUSTED_AFTER_BUSINESS_DAYS,
   firstTouchType,
   nextActionDateAfterSend,
   businessDaysSince,
   daysSince,
   seasonalWindow,
   companyEligible,
+  answeredSince,
+  isLiveRelationship,
+  followUpRung,
+  exhaustedDecision,
   evaluateDue,
 };

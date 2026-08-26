@@ -188,13 +188,44 @@ test('an unpaused company with the same overdue date still surfaces', () => {
 
 const { replyLandedAfter } = require('../../b2b-outreach/lib/queue');
 
-test('on_me records a bare stamp and nothing else', () => {
+test('an operator claim records a bare stamp — no note', () => {
   // What the claim is about comes from relationship_next_step, which is derived
   // from the conversation and stays current. A note typed here would decay on a
   // list whose whole problem is age, and asking for one puts friction in front
   // of a one-click decision.
   const upd = computeTriage('on_me', { reason: 'ignored', now: NOW });
-  assert.deepEqual(upd, { on_me_at: NOW.toISOString() });
+  assert.deepEqual(upd, { on_me_at: NOW.toISOString(), on_me_source: 'operator', on_me_note: null });
+});
+
+test('a cadence hand-off carries its reason, because nobody had to type it', () => {
+  // The reasoning that removed the note was about the cost of ASKING A HUMAN.
+  // There is no click to slow down when the engine hands over a relationship it
+  // has run out of moves on, and the note it writes is a count and a date —
+  // durable facts that cannot go stale the way an intent does.
+  const upd = computeTriage('on_me', {
+    now: NOW, source: 'cadence', note: '3 unanswered since 2026-08-19; contact may have moved on',
+  });
+  assert.equal(upd.on_me_source, 'cadence');
+  assert.match(upd.on_me_note, /3 unanswered since 2026-08-19/);
+});
+
+test('pause records who set it, so an auto-retired cohort is reviewable in bulk', () => {
+  assert.equal(computeTriage('pause', { reason: 'not working Canada', now: NOW }).outreach_paused_source, 'operator');
+  const retired = computeTriage('pause', { reason: 'no reply to 3 messages', now: NOW, source: 'cadence' });
+  assert.equal(retired.outreach_paused_source, 'cadence');
+  assert.equal(retired.relationship_state, undefined, 'retiring must never claim they said no');
+});
+
+test('resume clears every column the three deferrals write, including the new ones', () => {
+  // The original bug here nulled only the pause columns, so "Resume now" beside
+  // a live snooze reported success and changed nothing. A leftover
+  // on_me_source='cadence' would make the NEXT operator claim render as an
+  // engine hand-off — the same class of bug, one layer along.
+  const upd = computeTriage('resume', { now: NOW });
+  for (const col of ['outreach_paused_at', 'outreach_paused_reason', 'outreach_paused_source',
+    'snoozed_until', 'snoozed_at', 'on_me_at', 'on_me_source', 'on_me_note']) {
+    assert.equal(upd[col], null, `${col} must be cleared`);
+  }
 });
 
 test('claiming a company clears its stale waiting-on-us', () => {

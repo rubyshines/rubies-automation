@@ -269,6 +269,12 @@ async function fetchOnMe(sb, { channel } = {}) {
       next_step_owner: c.relationship_next_step_owner || null,
       age: humanAge(c.on_me_at, now),
       days_on_you: Math.floor((now - new Date(c.on_me_at)) / 86400000),
+      // Did the CADENCE hand this over, or did Jamie pick it up? An engine
+      // hand-off is a different thing to read: nobody has looked at it yet, and
+      // the note says why the engine gave up. Blurring the two would make the
+      // list stop meaning "things I have taken on".
+      claimed_by: c.on_me_source || 'operator',
+      claim_note: c.on_me_note || null,
       last_inbound_at: ctx.lastInboundAt || null,
       // They have written since you claimed it, so this company is ALSO sitting
       // in the queue at Tier 1. Not a reason to drop the row — a reason to read
@@ -1013,7 +1019,21 @@ async function fetchCompanyThreads(sb, companyId) {
     orders: ordersRes.data || [],
     // Derived here rather than in the panel so the detail pane and the directory
     // rows can never disagree about what stage a company is at.
-    company: company ? { ...company, stage: companyStage(company) } : null,
+    //
+    // send_time_zone is the zone a scheduled follow-up is timed against, so the
+    // panel can render "sends Thu 09:47 (Europe/London)" rather than converting
+    // to Jamie's clock — where the email LANDS is the question the schedule
+    // exists to answer. Null when we genuinely do not know, and the panel then
+    // says "your time" rather than implying we know theirs.
+    company: company
+      ? {
+        ...company,
+        stage: companyStage(company),
+        send_time_zone: require('./meetingTimezone').timezoneFromLocation({
+          region: company.region, country: company.country, address: company.address,
+        }).timeZone,
+      }
+      : null,
     contacts: contactsRes.error ? [] : (contactsRes.data || []),
     pending_draft: draftRes.error ? null : (draftRes.data || null),
     logo_url: logoUrl,

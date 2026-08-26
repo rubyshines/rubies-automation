@@ -70,6 +70,36 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS snoozed_at TIMESTAMPTZ;
 -- written once and then decays.
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_at TIMESTAMPTZ;
 
+-- Who set the deferral: the operator, or the cadence.
+--
+-- The follow-up ladder ends by RETIRING a lead (an indefinite outreach pause —
+-- never relationship_state='lost', which would claim they said no) or, for a
+-- live relationship, by HANDING IT OVER: an active partner that ignored a
+-- check-in and two chases is not a dead lead, it is a partner going quiet, and
+-- that has to be visible now rather than next season.
+--
+-- These columns keep machine decisions distinguishable from Jamie's own, so the
+-- On Me list can badge engine hand-offs and an auto-retired cohort can be
+-- reviewed or reversed in bulk without string-matching a reason.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS outreach_paused_source TEXT;  -- 'operator' | 'cadence'
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_source TEXT;            -- 'operator' | 'cadence'
+-- An OPERATOR claim stays a bare stamp (see above). A CADENCE claim carries a
+-- note, because the reasoning that removed the note was about friction in front
+-- of a one-click decision, which does not apply to a machine that already knows
+-- why. It holds only the durable fact — a count and a date, true forever — while
+-- what to DO about it keeps coming from relationship_next_step.
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS on_me_note TEXT;
+
+-- Scheduled auto-send. The draft pass stamps the moment the follow-up should
+-- land in the recipient's own business hours; the send pass picks it up once it
+-- passes. Nullable: an operator-composed or Tier-1 draft has no schedule and is
+-- sent by hand, exactly as before.
+ALTER TABLE b2b_drafts ADD COLUMN IF NOT EXISTS scheduled_send_at TIMESTAMPTZ;
+ALTER TABLE b2b_drafts ADD COLUMN IF NOT EXISTS schedule_reason TEXT;
+-- The send pass polls this every 15 minutes, so it must not be a seq scan.
+CREATE INDEX IF NOT EXISTS idx_b2b_drafts_scheduled ON b2b_drafts (scheduled_send_at)
+  WHERE status = 'pending' AND scheduled_send_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_next_action ON b2b_companies (next_action_date)
   WHERE next_action_date IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_b2b_companies_rel_state ON b2b_companies (relationship_state);

@@ -8,6 +8,16 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## The 51 manual-send threads nobody answered — re-approach, retire, or leave
+- Parked: 2026-08-26
+- Domains: b2b_sales, community
+- Type: decision-needed
+- Priority: medium
+- Notes: Deliberately left out of the automatic follow-up ladder (2026-08-26), which only chases engine sends under 90 days old. 60 companies have an unanswered last outbound; **51 of them are manual Gmail sends**, which reconcile in carrying `message_type` null — so nothing records what was actually asked, and chasing one means guessing whether it was an intro, a shipping answer or a goodbye. The largest block is a **~32-retailer batch sent ~189 days ago**, all silent, all `in_contact` with `vetted_at` null and no `next_action_date` — which makes them invisible to the queue entirely, not merely unchased (the first-touch branch needs `vetted_at`, `re_approach` needs no prior outbound, Tier 5 needs a next-action date). Beyond that, org threads running back to 2022.
+- The shape of the decision, per Jamie: these are case by case, not a campaign. Three plausible routes — a `re_approach` round (the cadence type already exists and opens a new door rather than pretending the old one is still swinging), bulk retire via `b2b_triage` action `pause` with `source:'cadence'`, or leaving them. The 32-retailer batch also has an open vetting decision underneath it (see *B2B lead supply — remaining plan phases*, phase 2: the panel has no keep/drop/snooze UI, which is why those 41 sheet retailers stay invisible).
+- Resume when: Jamie wants to work the retailer channel again, or the automatic ladder has run long enough to trust with a wider anchor. Widening `CHASEABLE_SOURCES` in `cadence.js` is NOT the fix — it needs the manual sends classified first.
+- Related: the daily auto-send cap (10/day, in `autoFollowUp.js`) partially discharges the send-rate half of *Bulk address verification across b2b_contacts*; the pre-send bounce check discharges none of it, since it only knows about addresses that have already failed.
+
 ## Gmail historical backfill has never run — pre-March-2026 B2B history is unsynced
 - Parked: 2026-08-24
 - Domains: b2b_sales, tech

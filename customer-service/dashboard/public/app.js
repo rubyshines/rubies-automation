@@ -5712,10 +5712,18 @@ function outreachOnMeRowHtml(r) {
         <span class="queue-item-name">${esc(r.company_name)}</span>
         <span class="outreach-channel-chip outreach-channel-${esc(r.channel)}">${esc(channelLabel)}</span>
       </div>
-      <div class="outreach-row-reason">${r.next_step
-        ? esc(r.next_step)
-        : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
+      <div class="outreach-row-reason">${r.claimed_by === 'cadence' && r.claim_note
+    // The engine's note wins the reason line on a hand-off: it says why the
+    // company is here at all, which on this row is the thing you do not know.
+    // The suggested next step is still shown in the detail pane.
+    ? esc(r.claim_note)
+    : r.next_step
+      ? esc(r.next_step)
+      : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
       <div class="queue-item-row2">
+        ${r.claimed_by === 'cadence'
+    ? '<span class="badge badge-muted" title="The follow-up ladder ran out of moves and handed this to you — you did not claim it">handed over</span>'
+    : ''}
         ${r.replied_since_claim
     // Same class the queue gives its Tier-1 "reply needed" rows, because it is
     // the same fact — this company is on both lists and the badge is what says
@@ -6201,11 +6209,16 @@ function outreachRelationshipHtml(entry) {
     const days = Math.floor((Date.now() - new Date(c.on_me_at)) / 864e5);
     // No next step echoed here: it is already rendered directly above, in the
     // block this sits at the bottom of.
+    // A hand-off is labelled differently because it is a different fact: you did
+    // not claim this, the ladder ran out of moves and gave it to you. Reading it
+    // as something you picked up and forgot would be actively misleading.
+    const handedOver = c.on_me_source === 'cadence';
     deferral = `<div class="outreach-deferral">
-      <span class="outreach-deferral-label">On you</span>
+      <span class="outreach-deferral-label">${handedOver ? 'Handed to you' : 'On you'}</span>
       <span>${days}d</span>
       <button class="btn btn-ghost" onclick="resumeOutreach()">Back to queue</button>
     </div>
+    ${handedOver && c.on_me_note ? `<div class="outreach-deferral-note">${esc(c.on_me_note)} — the follow-up ladder is spent, so nothing further will be sent automatically.</div>` : ''}
     <div class="outreach-deferral-note">Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again they also return to the queue, and this stays yours until you send or hand it back.</div>`;
   } else if (c.outreach_paused_at) {
     deferral = `<div class="outreach-deferral">
@@ -6948,6 +6961,59 @@ function outreachFileSize(n) {
  * uses — for an uploaded file that means you are checking the bytes that will
  * actually go out, not the one you meant to pick.
  */
+/**
+ * "Sends Thu 09:47 (Europe/London)" — the scheduled auto-send, and the two ways
+ * to override it.
+ *
+ * Rendered at the TOP of the draft rather than beside the Send button, because
+ * the fact that changes how you read everything below is that this email is
+ * going out on its own. A quiet note next to a button you were not going to
+ * press is not a warning.
+ *
+ * Times are rendered in the RECIPIENT's zone with the zone named. Showing it in
+ * Jamie's own time would answer the wrong question: the whole point of the
+ * schedule is where the email lands, not when he is at his desk.
+ */
+function outreachScheduleBannerHtml(draft) {
+  if (!draft?.scheduled_send_at) return '';
+  const at = new Date(draft.scheduled_send_at);
+  const tz = outreachHistory?.company?.send_time_zone || null;
+  let when;
+  try {
+    when = new Intl.DateTimeFormat('en-GB', {
+      ...(tz ? { timeZone: tz } : {}),
+      weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(at) + (tz ? ` (${tz})` : ' (your time)');
+  } catch {
+    when = at.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  }
+  const due = at <= new Date();
+  return `<div class="outreach-review-note outreach-scheduled">
+    &#9200; ${due ? 'Due now' : 'Sends automatically'} <strong>${esc(when)}</strong>${due ? ' — the next sweep will send it' : ''}.
+    ${draft.schedule_reason ? `<span class="badge badge-muted">${esc(draft.schedule_reason)}</span>` : ''}
+    <button class="btn btn-ghost" onclick="cancelOutreachSchedule()"
+      title="Unschedule this send. The draft stays here for you to send by hand.">Cancel auto-send</button>
+  </div>`;
+}
+
+/**
+ * Stop this draft sending itself. It stays pending, so the company keeps its
+ * place in the queue and the text is not thrown away — the only thing removed is
+ * the clock. Deliberately not a Dismiss: "not automatically" and "not at all"
+ * are different decisions and the panel already has a control for the second.
+ */
+async function cancelOutreachSchedule() {
+  if (!outreachDraft?.id) return;
+  try {
+    const res = await fetch(`/api/b2b/drafts/${outreachDraft.id}/unschedule`, { method: 'POST' });
+    if (!res.ok) throw new Error(`${res.status}`);
+    showToast('Auto-send cancelled — the draft is still here.');
+    await selectOutreachEntry(outreachSelectedId);
+  } catch (e) {
+    showToast(`Could not cancel: ${e.message}`, true);
+  }
+}
+
 function outreachAttachmentsHtml(draft) {
   const specs = Array.isArray(draft?.structured?.attachments) ? draft.structured.attachments : [];
   const org = outreachHistory?.company?.name || 'this organization';
@@ -7209,6 +7275,7 @@ function renderOutreachDetail(entry, draft) {
           : '<span class="badge badge-muted">written by you</span>'}
       </h3>
       ${s.needs_review_reason ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
+      ${outreachScheduleBannerHtml(draft)}
       ${steerBlock}
       <div class="outreach-subject">
         <span class="outreach-field-label">Subject</span>

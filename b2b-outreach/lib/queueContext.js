@@ -73,7 +73,7 @@ async function buildContexts(sb, companies) {
   const ids = (companies || []).map(c => c.id);
   const messages = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_messages')
-      .select('company_id, direction, message_type, sent_at, thread_id, undelivered_at')
+      .select('company_id, direction, message_type, sent_at, thread_id, undelivered_at, source')
       .in('company_id', ids)
       .order('sent_at', { ascending: true })
   ) : [];
@@ -116,6 +116,27 @@ async function buildContexts(sb, companies) {
       // Newest send that came back undelivered. Null for almost every company.
       lastUndeliveredAt: null,
       lastOutboundAt: c.last_outbound_at || null,
+      // The follow-up ANCHOR: the newest outbound that is an actual message, in a
+      // thread that is still open. Deliberately separate from lastOutboundAt,
+      // which is seeded from the denormalized b2b_companies column and so can be
+      // set for a company holding no messages at all — a ladder hung off that
+      // would chase a send it cannot see, in a thread it cannot name.
+      //
+      // Scoped to OPEN threads because closing one is how the operator says "we
+      // are done here" (2026-08-24). Chasing inside a concluded conversation is
+      // the same mistake as chasing someone who declined.
+      lastOutboundType: null,
+      lastOutboundSource: null,
+      lastOutboundMessageAt: null,
+      // Without this the follow-up sends as a BRAND-NEW email: computeQueueEntry
+      // only ever carried a thread for Tier 1, so "just following up on my note
+      // below" would arrive with no note below it.
+      lastOutboundThreadId: null,
+      // How many times in a row we have written with no human answer, and when
+      // that run started. Derived here rather than stored so it can never
+      // disagree with the transcript.
+      unansweredRun: 0,
+      unansweredRunSince: null,
       lastOrderAt: c.last_order_date || null,
       orderCount: c.order_count || 0,
       lastTypeSent: new Map(),
@@ -170,8 +191,24 @@ async function buildContexts(sb, companies) {
       // Carry the inbound's thread so Tier-1 reply drafts send IN the thread
       // (without it every reply went out as a brand-new email).
       ctx.lastInboundThreadId = m.thread_id || ctx.lastInboundThreadId;
+      // A human answered, so whatever run of unanswered sends preceded this is
+      // over. Messages arrive oldest-first, so a later run rebuilds from zero.
+      ctx.unansweredRun = 0;
+      ctx.unansweredRunSince = null;
     } else {
       ctx.lastOutboundAt = ctx.lastOutboundAt && ctx.lastOutboundAt > m.sent_at ? ctx.lastOutboundAt : m.sent_at;
+      ctx.unansweredRun += 1;
+      if (!ctx.unansweredRunSince) ctx.unansweredRunSince = m.sent_at;
+      // The anchor only advances on open threads — see the field comment above.
+      // The run count above deliberately does NOT apply that filter: "we have
+      // written three times and heard nothing" is true regardless of which
+      // threads were later closed, and that count is what the hand-off note says.
+      if (!closedThreadIds.has(m.thread_id)) {
+        ctx.lastOutboundType = m.message_type || null;
+        ctx.lastOutboundSource = m.source || null;
+        ctx.lastOutboundMessageAt = m.sent_at;
+        ctx.lastOutboundThreadId = m.thread_id || null;
+      }
       if (m.message_type) {
         ctx.sentTypes.add(m.message_type);
         ctx.lastTypeSent.set(m.message_type, m.sent_at);

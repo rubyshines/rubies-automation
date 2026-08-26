@@ -30,7 +30,7 @@
  * @param opts    { reason, until (snooze only, YYYY-MM-DD), now }
  * @returns the b2b_companies patch
  */
-function computeTriage(action, { reason = null, until = null, now = new Date() } = {}) {
+function computeTriage(action, { reason = null, until = null, now = new Date(), source = 'operator', note = null } = {}) {
   switch (action) {
     case 'keep':
       // Reason is optional on keep — "yes, this one is fine" needs no essay.
@@ -52,7 +52,18 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
       // "not working Canadian retailers this year" has no date attached, and
       // inventing one produces a queue item on a day nobody chose.
       if (!reason) throw new Error('pause requires a reason — in six months "why is this paused?" is the only question that matters');
-      return { outreach_paused_at: now.toISOString(), outreach_paused_reason: reason };
+      // RETIRING a lead is this same operation with source 'cadence': the ladder
+      // ran out of rungs and nobody ever answered. Deliberately not a new action
+      // and emphatically not relationship_state='lost', which would claim they
+      // went away or said no — false for someone who simply never replied, and
+      // it destroys the state we would need to resume. What makes it a
+      // retirement rather than an operator decision is who set it, which is
+      // exactly what `source` records.
+      return {
+        outreach_paused_at: now.toISOString(),
+        outreach_paused_reason: reason,
+        outreach_paused_source: source,
+      };
     }
     case 'on_me': {
       // "I owe them an answer, just not this minute." Unlike pause and snooze,
@@ -68,7 +79,16 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
       // one-click decision made while working the queue, and any prompt in front
       // of it is friction that makes you leave the row where it is instead,
       // which is the whole problem this exists to solve.
-      return { on_me_at: now.toISOString() };
+      //
+      // A CADENCE claim is the exception, and it does not contradict the above:
+      // that reasoning was about the cost of ASKING A HUMAN to type something,
+      // and there is no click to slow down when the engine hands a relationship
+      // over because it has run out of rungs. The note it writes carries only
+      // the durable fact — a count and a date — so it cannot decay the way a
+      // hand-typed intent does, while what to DO about it still comes from
+      // relationship_next_step. `source` keeps the two kinds distinguishable so
+      // the list can badge a hand-off rather than blur it into Jamie's own.
+      return { on_me_at: now.toISOString(), on_me_source: source, on_me_note: note || null };
     }
     case 'resume':
       // Clears ALL of them, which is what the button means wherever it appears.
@@ -76,10 +96,14 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
       // beside a live snooze was a no-op — it reported success and the company
       // stayed snoozed. One action for "put this back in the queue" cannot know
       // which flavour the operator is looking at, so it lifts whatever is there.
+      // Every column each deferral writes, including the source markers and the
+      // hand-off note — a resume that left `on_me_source='cadence'` behind would
+      // make the NEXT operator claim render as an engine hand-off, which is the
+      // same class of bug as the version that nulled only the pause columns.
       return {
-        outreach_paused_at: null, outreach_paused_reason: null,
+        outreach_paused_at: null, outreach_paused_reason: null, outreach_paused_source: null,
         snoozed_until: null, snoozed_at: null,
-        on_me_at: null,
+        on_me_at: null, on_me_source: null, on_me_note: null,
       };
     default:
       throw new Error(`unknown triage action '${action}' — expected keep, drop, snooze, pause, on_me or resume`);
@@ -87,14 +111,14 @@ function computeTriage(action, { reason = null, until = null, now = new Date() }
 }
 
 /** Apply a triage decision to one company. */
-async function triageCompany(sb, { company_id, action, reason, until, now = new Date() } = {}) {
+async function triageCompany(sb, { company_id, action, reason, until, now = new Date(), source = 'operator', note = null } = {}) {
   if (!company_id) throw new Error('company_id required');
   const { data: company, error } = await sb.from('b2b_companies')
     .select('id, name, relationship_state').eq('id', company_id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!company) throw new Error(`company '${company_id}' not found`);
 
-  const patch = computeTriage(action, { reason, until, now });
+  const patch = computeTriage(action, { reason, until, now, source, note });
   const { error: uErr } = await sb.from('b2b_companies')
     .update({ ...patch, updated_at: now.toISOString() }).eq('id', company_id);
   if (uErr) throw new Error(uErr.message);

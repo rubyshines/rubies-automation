@@ -205,10 +205,107 @@ async function handleTriage(input = {}) {
       drop: `marked lost — ${res.triage_reason}`,
       snooze: `snoozed until ${res.snoozed_until} — no outreach until then, and any reply already sitting there stops showing as waiting on us`,
       pause: `outreach paused — ${res.outreach_paused_reason}. Still fully visible and searchable; nothing will be drafted or chased, but a NEW reply still surfaces.`,
+      // Was missing, so `on_me` rendered "undefined" — the one action whose
+      // whole point is that it is a one-click decision worth confirming.
+      on_me: 'claimed by you — off the queue, still ageing on your On Me list, and the pending draft is kept',
       resume: 'outreach resumed — back on the normal cadence',
     }[input.action];
     return text(`**${res.name}** (${res.company_id}) — ${detail}. No draft generated.`);
   } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
+/** Local-time rendering for a scheduled slot, or a plain hint if unscheduled. */
+function scheduleLine(draft) {
+  if (!draft.scheduled_send_at) return 'not scheduled — waiting for an operator';
+  const { describeSlot } = require(path.join(B2B_LIB, 'sendWindow'));
+  const { timezoneFromLocation } = require(path.join(B2B_LIB, 'meetingTimezone'));
+  const tz = timezoneFromLocation({ region: draft.region, country: draft.country }).timeZone;
+  const when = describeSlot({ at: draft.scheduled_send_at, timeZone: tz })
+    || new Date(draft.scheduled_send_at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const due = new Date(draft.scheduled_send_at) <= new Date() ? ' — DUE, next sweep will send it' : '';
+  return `sends ${when}${due}`;
+}
+
+async function handleFollowUps(input = {}) {
+  try {
+    const sb = getSupabaseClient();
+    const { runDraftPass, runSendPass } = require(path.join(B2B_LIB, 'autoFollowUp'));
+
+    if (input.action === 'preview') {
+      const r = await runDraftPass(sb, { dry: true });
+      const lines = ['**Follow-up preview** (nothing written)', ''];
+      if (!r.scheduled.length && !r.retired.length && !r.handed_off.length) lines.push('Nothing due.');
+      for (const s of r.scheduled) lines.push(`- **${s.name}** → ${s.message_type}: ${s.reason}. ${s.sends || ''}`);
+      for (const s of r.retired) lines.push(`- **${s.name}** → RETIRE: ${s.reason}`);
+      for (const s of r.handed_off) lines.push(`- **${s.name}** → ON ME: ${s.note}`);
+      for (const s of r.skipped) lines.push(`- ${s.name} — skipped: ${s.why}`);
+      for (const e of r.errors) lines.push(`- ${e.name || e.company_id} — ERROR: ${e.error}`);
+      return text(lines.join('\n'));
+    }
+
+    if (input.action === 'run_now') {
+      // The manual override for "send it now, do not wait for their morning".
+      // Guards still run — this skips the CLOCK, not the checks.
+      const r = await runSendPass(sb, { cap: input.cap || undefined });
+      const lines = [`**Follow-up send pass** — sent ${r.sent.length}, held ${r.held.length}, errors ${r.errors.length}`, ''];
+      if (r.capped) lines.push(`_${r.capped}_`, '');
+      for (const s of r.sent) lines.push(`- sent #${s.draft_id} ${s.company_id} → ${s.to}`);
+      for (const h of r.held) lines.push(`- held #${h.draft_id} ${h.company_id}: ${h.why}${h.withdrawn ? ' (draft withdrawn)' : ''}`);
+      for (const e of r.errors) lines.push(`- error #${e.draft_id} ${e.company_id}: ${e.error}`);
+      return text(lines.join('\n'));
+    }
+
+    if (input.action === 'cancel') {
+      if (!input.draft_id) return text('draft_id required to cancel a scheduled send.');
+      const { error } = await sb.from('b2b_drafts')
+        .update({ scheduled_send_at: null, schedule_reason: 'cancelled by operator' })
+        .eq('id', input.draft_id).eq('status', 'pending');
+      if (error) throw new Error(error.message);
+      return text(`Draft #${input.draft_id} unscheduled — it stays pending in the queue and will not auto-send.`);
+    }
+
+    // Default: list what is scheduled, plus what the cadence has retired or claimed.
+    const { data: drafts, error } = await sb.from('b2b_drafts')
+      .select('id, company_id, message_type, subject, scheduled_send_at, schedule_reason, queue_reason')
+      .eq('status', 'pending').not('scheduled_send_at', 'is', null)
+      .order('scheduled_send_at', { ascending: true });
+    if (error) throw new Error(error.message);
+
+    const ids = [...new Set((drafts || []).map(d => d.company_id))];
+    const { data: cos } = ids.length
+      ? await sb.from('b2b_companies').select('id, name, region, country').in('id', ids)
+      : { data: [] };
+    const byId = new Map((cos || []).map(c => [c.id, c]));
+
+    const lines = [`**Scheduled follow-ups** — ${drafts?.length || 0}`, ''];
+    for (const d of drafts || []) {
+      const c = byId.get(d.company_id) || {};
+      lines.push(`- **${c.name || d.company_id}** #${d.id} [${d.message_type}] — ${scheduleLine({ ...d, region: c.region, country: c.country })}`);
+      if (d.queue_reason) lines.push(`  _${d.queue_reason}_`);
+    }
+
+    const { data: retired } = await sb.from('b2b_companies')
+      .select('id, name, outreach_paused_at, outreach_paused_reason')
+      .eq('outreach_paused_source', 'cadence').order('outreach_paused_at', { ascending: false }).limit(25);
+    if (retired?.length) {
+      lines.push('', `**Retired by the cadence** — ${retired.length} (reversible: b2b_triage action:'resume')`, '');
+      for (const c of retired) lines.push(`- ${c.name} — ${c.outreach_paused_reason} (${String(c.outreach_paused_at).slice(0, 10)})`);
+    }
+    const { data: handed } = await sb.from('b2b_companies')
+      .select('id, name, on_me_at, on_me_note')
+      .eq('on_me_source', 'cadence').order('on_me_at', { ascending: false }).limit(25);
+    if (handed?.length) {
+      lines.push('', `**Handed to you by the cadence** — ${handed.length}`, '');
+      for (const c of handed) lines.push(`- ${c.name} — ${c.on_me_note} (claimed ${String(c.on_me_at).slice(0, 10)})`);
+    }
+    return text(lines.join('\n'));
+  } catch (err) {
+    if (/column .* does not exist|scheduled_send_at|outreach_paused_source|on_me_source/.test(err?.message || '')) {
+      return text('Follow-up scheduling columns not yet applied — run the b2b_drafts / b2b_companies ALTERs '
+        + 'in gmail-management/b2b-outreach-schema.sql in the Supabase SQL Editor first.');
+    }
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
   }
 }
@@ -351,6 +448,19 @@ module.exports = [
       required: ['company_id', 'action'],
     },
     handler: handleTriage,
+  },
+  {
+    name: 'b2b_followups',
+    description: "The automatic follow-up ladder: what is scheduled to chase itself, what the cadence retired, and what it handed to Jamie. An unanswered engine send is chased once after 5 business days (10 for a relationship check-in — a partner is not a lead being worked), once more 10 business days later, and then the ladder ENDS: a lead is retired (an indefinite, reversible outreach pause — never relationship_state 'lost', which would claim they said no) while a live partner is claimed onto Jamie's On Me list with a note, because a partner going quiet has to be visible now rather than next season. Sends are scheduled into the RECIPIENT's mid-morning and go out unattended, but only after a fresh reply re-check, an address-health check and a daily cap. Only engine-sent threads under 90 days old are ever chased — manual Gmail sends carry no record of what was asked, so chasing one would be guessing. Actions: list (default), preview (what a draft pass would do, writes nothing), run_now (run the send pass immediately — skips the clock, NOT the guards), cancel (unschedule one draft; it stays pending for a human).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: "'list' (default) | 'preview' | 'run_now' | 'cancel'." },
+        draft_id: { type: 'number', description: 'Required for cancel: the b2b_drafts id to unschedule.' },
+        cap: { type: 'number', description: 'run_now only: override the daily auto-send cap (default 10).' },
+      },
+    },
+    handler: handleFollowUps,
   },
   {
     name: 'b2b_update_contact',

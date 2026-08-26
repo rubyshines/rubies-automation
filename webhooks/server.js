@@ -225,6 +225,43 @@ const preOrderSweepTimer = setInterval(async () => {
 }, PREORDER_SWEEP_MS);
 preOrderSweepTimer.unref();
 
+// B2B follow-up send pass. The daily sync writes a scheduled_send_at on each
+// due follow-up, in the RECIPIENT's business hours; this is what notices the
+// moment has arrived. Fifteen minutes is fine granularity for a slot inside a
+// two-hour window, and the interval lives here rather than in a cron service
+// for the same reason the two sweeps above do: it needs to tick all day.
+//
+// It is deliberately the sending half and not the drafting half. Every guard
+// that makes unattended sending safe — the fresh reply re-check, the address
+// check, the daily cap — runs HERE, against the world as it is at the moment of
+// sending, not as it was when the draft was written hours earlier.
+const FOLLOWUP_SEND_SWEEP_MS = 15 * 60 * 1000;
+let followUpSweepRunning = false;
+const followUpSweepTimer = setInterval(async () => {
+  if (followUpSweepRunning) return;
+  followUpSweepRunning = true;
+  try {
+    const { runSendPass } = require('../b2b-outreach/lib/autoFollowUp');
+    const { getSupabaseClient } = require('../shared/supabaseClient');
+    const r = await runSendPass(getSupabaseClient(), {});
+    // Deploy-before-migration is the ordinary case (DDL is a hand-run step), so
+    // the sweep says so rather than quietly doing nothing forever.
+    if (r.schema_missing) { console.warn(`[b2b-followup] ${r.schema_missing}`); return; }
+    for (const s of r.sent) console.log(`[b2b-followup] sent #${s.draft_id} ${s.company_id} (${s.message_type}) → ${s.to}`);
+    // Holds are logged too: a guard that silently declines to send is
+    // indistinguishable from a queue with nothing in it, which is the failure
+    // this whole feature exists to fix.
+    for (const h of r.held) console.log(`[b2b-followup] held #${h.draft_id} ${h.company_id}: ${h.why}`);
+    for (const e of r.errors) console.error(`[b2b-followup] error #${e.draft_id} ${e.company_id}: ${e.error}`);
+    if (r.capped) console.warn(`[b2b-followup] ${r.capped}`);
+  } catch (e) {
+    console.error(`[b2b-followup] send sweep error: ${e.message}`);
+  } finally {
+    followUpSweepRunning = false;
+  }
+}, FOLLOWUP_SEND_SWEEP_MS);
+followUpSweepTimer.unref();
+
 // De-allocation watch: the OTHER route to "waiting on an item nobody told me
 // about". The sweep above catches a line that was never allocated, which is
 // visible at order time. This one catches a line that WAS allocated and stopped

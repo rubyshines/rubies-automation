@@ -190,6 +190,9 @@ function computeQueueEntry(company, ctx, now = new Date()) {
       tier: TIER_BY_TYPE[due.message_type] ?? 3,
       message_type: due.message_type,
       reason: due.reason,
+      // Follow-ups carry the thread of the message they chase. Dropping it here
+      // is how a chase becomes a brand-new email that refers to one.
+      ...(due.thread_id ? { thread_id: due.thread_id } : {}),
     };
   }
 

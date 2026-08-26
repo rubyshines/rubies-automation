@@ -3235,6 +3235,23 @@ async function apiB2bScheduleMeeting(companyId, body = {}) {
   return scheduleMeeting({ ...body, company_id: companyId });
 }
 
+/**
+ * Stop a draft sending itself, without throwing it away.
+ *
+ * "Not automatically" and "not at all" are different decisions — Dismiss covers
+ * the second. Clearing only the clock leaves the draft pending, so the company
+ * keeps its place in the queue and the text survives for a hand send.
+ */
+async function apiB2bUnschedule(id) {
+  const sb = getSupabaseClient();
+  const { data, error } = await sb.from('b2b_drafts')
+    .update({ scheduled_send_at: null, schedule_reason: 'auto-send cancelled by operator' })
+    .eq('id', id).eq('status', 'pending').select('id').maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error(`draft #${id} is not pending — nothing to unschedule`);
+  return { ok: true, draft_id: id };
+}
+
 async function apiB2bSetRecipients(id, body = {}) {
   return b2bQueueService.setDraftRecipients(getSupabaseClient(), {
     draft_id: id, to: body.to, cc: body.cc,
@@ -4025,6 +4042,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/upload$/, handler: (body, id) => apiB2bDraftUpload(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/recipients$/, handler: (body, id) => apiB2bSetRecipients(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/test-send$/, handler: (body, id) => apiB2bTestSend(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/unschedule$/, handler: (_, id) => apiB2bUnschedule(parseInt(id)) },
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id, req) => apiB2bAttachmentPreview(parseInt(id), new URL(req.url, 'http://localhost').searchParams.get('key')) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
