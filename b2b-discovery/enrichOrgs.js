@@ -114,14 +114,20 @@ function buildCompanyUpdate({ company, analysis, contacts, geo, geoApprox }) {
   if (!company.phone && c.phone) update.phone = c.phone;
   if (!company.description && a.descriptionShort) update.description = a.descriptionShort;
 
-  // What triage needs to rank a row, kept alongside the row rather than in a
-  // separate store so the panel and the console tools see the same facts.
-  const flags = { ...(company.program_flags || {}) };
+  // What triage needs to rank a row. Deliberately NOT `program_flags`: that
+  // column answers "which RUBIES programs is this org in", and two readers
+  // depend on that meaning — the cadence shortens the check-in interval for
+  // orgs in a program, and the advisor renders it as "Programs:", which on a
+  // first touch would tell it a stranger is already a partner. These are
+  // observations about the org, made from their own website, and assert
+  // nothing about their relationship with us.
   if (a.analysisStatus === 'success') {
-    flags.runs_clothing_program = !!a.runsClothingProgram;
-    flags.serves_trans_community = !!a.servesTransCommunity;
-    flags.site_appears_active = a.appearsActive !== false;
-    update.program_flags = flags;
+    update.enrich_facts = {
+      ...(company.enrich_facts || {}),
+      runs_clothing_program: !!a.runsClothingProgram,
+      serves_trans_community: !!a.servesTransCommunity,
+      site_appears_active: a.appearsActive !== false,
+    };
   }
 
   return update;
@@ -242,7 +248,7 @@ function buildEnrichNotes({ analysis, geo, geoApprox, scrapeError, thinContent }
 
 async function fetchTargets(sb, { limit, source, companyId, retryFailed }) {
   let q = sb.from('b2b_companies')
-    .select('id,name,website,general_email,contact_form_url,phone,description,program_flags,city,region,country,source,enrich_status')
+    .select('id,name,website,general_email,contact_form_url,phone,description,program_flags,enrich_facts,city,region,country,source,enrich_status')
     .eq('relationship_type', 'lgbtq_org');
 
   if (companyId) {

@@ -158,23 +158,37 @@ test('buildCompanyUpdate never sets vetted_at or touches ai_summary', () => {
   assert.ok(!('ai_summary' in u), 'the sheet-era summary is the only history some orgs have');
 });
 
-test('buildCompanyUpdate merges program flags without dropping existing ones', () => {
+test('observations about the org never touch program_flags', () => {
+  // program_flags answers "which RUBIES programs is this org in". The cadence
+  // shortens the check-in interval for orgs in a programme, and the advisor
+  // renders it as "Programs:" — so an observation written there tells a first
+  // touch that a stranger is already a partner.
   const u = buildCompanyUpdate({
     company: { name: 'Outcenter', website: 'https://outcenter.org', program_flags: { donation_partner: true } },
     analysis: ANALYSIS, contacts: CONTACTS, geo: GEO,
   });
-  assert.equal(u.program_flags.donation_partner, true, 'existing flags must survive');
-  assert.equal(u.program_flags.runs_clothing_program, true);
-  assert.equal(u.program_flags.serves_trans_community, true);
-  assert.equal(u.program_flags.site_appears_active, true);
+  assert.ok(!('program_flags' in u), 'enrichment must not write to the programme column at all');
+  assert.equal(u.enrich_facts.runs_clothing_program, true);
+  assert.equal(u.enrich_facts.serves_trans_community, true);
+  assert.equal(u.enrich_facts.site_appears_active, true);
 });
 
-test('buildCompanyUpdate writes no program flags when the analysis failed', () => {
+test('buildCompanyUpdate merges enrich_facts without dropping existing ones', () => {
+  const u = buildCompanyUpdate({
+    company: { name: 'Outcenter', website: 'https://outcenter.org', enrich_facts: { some_earlier_note: true } },
+    analysis: ANALYSIS, contacts: CONTACTS, geo: GEO,
+  });
+  assert.equal(u.enrich_facts.some_earlier_note, true, 'existing facts must survive');
+  assert.equal(u.enrich_facts.runs_clothing_program, true);
+});
+
+test('buildCompanyUpdate writes no observations when the analysis failed', () => {
   const u = buildCompanyUpdate({
     company: { name: 'Outcenter', website: 'https://outcenter.org' },
     analysis: { analysisStatus: 'failed', failureReason: 'timeout' }, contacts: {}, geo: null,
   });
-  assert.ok(!('program_flags' in u), 'a failed read must not assert facts about the org');
+  assert.ok(!('enrich_facts' in u), 'a failed read must not assert facts about the org');
+  assert.ok(!('program_flags' in u));
 });
 
 test('buildCompanyUpdate always stamps enriched_at so a re-run skips the row', () => {
