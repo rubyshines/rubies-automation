@@ -38,6 +38,15 @@
   --mic-denied-bg: rgba(176, 122, 26, 0.10);
 }
 
+/* `[hidden]` only gets `display:none` from the UA stylesheet, so ANY author rule
+   that sets `display` on the same element outranks it and the element renders
+   permanently. This file had been paying for that one element at a time — seven
+   `.thing[hidden]` rules, and the two that were missed (`.bottom-tab`, the More
+   popover's buttons) left the Bug tab standing in the mobile bar with nothing
+   flagged, which is exactly what it exists not to do. One rule, before anything
+   that sets `display`, covers the class. */
+[hidden] { display: none !important; }
+
 /* ─── Status Dots ───────────────────────────────────────── */
 .status-dot {
   display: inline-block;
@@ -851,6 +860,19 @@ main { height: calc(100vh - 56px); }
 }
 .order-link-tracking:hover {
   background: #2563eb;
+  color: white;
+}
+
+/* The one pill in this row that doesn't leave the dashboard, so it reads neutral
+   rather than as another outbound link — and it carries its own cursor, since it
+   navigates by handler and has no href to get one from. */
+.order-link-ticket {
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.order-link-ticket:hover {
+  background: var(--text-secondary);
   color: white;
 }
 

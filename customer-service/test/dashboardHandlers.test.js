@@ -140,6 +140,34 @@ test('every nav badge is filled by the background stats poll, and vice versa', (
     + 'that is not in the nav is silently dropped');
 });
 
+/**
+ * Third instance of the same shape: the JS toggles `hidden` and the stylesheet
+ * silently overrules it. `[hidden]` gets `display:none` from the UA stylesheet
+ * only, so any author rule setting `display` on the element wins and the thing
+ * stays on screen with every line of JS behaving correctly. This file used to be
+ * patched one element at a time; the two that were missed (`.bottom-tab`, the
+ * More popover's buttons) left the Bug tab standing in the mobile bar with
+ * nothing flagged. The global rule fixes the class, so what needs guarding is
+ * that it exists and still comes FIRST.
+ */
+test('the global [hidden] rule sits ahead of every rule that sets display', () => {
+  // Blank out comments (keeping length, so offsets still line up) — the rule's
+  // own explanation quotes `display:none`, which would otherwise read as the
+  // earliest declaration in the file and fail this on itself.
+  const css = fs.readFileSync(path.join(PUBLIC_DIR, 'styles.css'), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, m => ' '.repeat(m.length));
+  const rule = /\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important[^}]*\}/.exec(css);
+  assert.ok(rule, 'styles.css must carry a global `[hidden] { display: none !important; }`');
+
+  const ruleEnd = rule.index + rule[0].length;
+  const decls = [...css.matchAll(/display\s*:/g)].map(m => m.index);
+  const firstElsewhere = decls.find(i => i < rule.index || i > ruleEnd);
+  assert.ok(decls.length > 50, `expected many display declarations to check, found ${decls.length}`);
+  assert.ok(firstElsewhere !== undefined && rule.index < firstElsewhere,
+    'the global rule must precede every other `display` declaration — CSS of equal '
+    + 'specificity is won by whichever comes last, so a rule above it is unguarded');
+});
+
 test('the guards can actually see something', () => {
   // A regex that silently matched nothing would keep both tests above green
   // forever while checking exactly zero things.
