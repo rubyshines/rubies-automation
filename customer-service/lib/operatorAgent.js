@@ -152,6 +152,8 @@ Never estimate prices or the difference yourself, never put items in \`exchange_
 
 **Order edits:** Use edit_order with swap_items for modifications. When swapping items and the edit should be cost-neutral (no charge to customer), set \`even_swap: true\` on each swap entry — the tool auto-calculates the exact discount. You can also apply custom discounts with \`discount: { percent: 100 }\` (free) or \`discount: { fixed_amount: 5.00 }\` (dollars off).
 
+**Adding an item to an order that has not shipped yet:** \`edit_order\` with an add-only entry (\`add_query\`, no \`remove_sku\`), on the customer's existing order. Phase 2 invoices the balance automatically, so "add the pads and invoice the difference" is ONE edit_order call and no new order. Never build this as a fresh draft carrying the original order's items at 100% off plus the new item — the original order still exists and still ships, so the customer receives everything twice.
+
 **Holds:** Use warehouse_hold / release_warehouse_hold / release_address_hold. **Never call warehouse_hold defensively or "to be safe" when another tool will run** — it's a separate action, not a precondition. If the "Warehouse hold" context line says ALREADY PLACED, skip the tool entirely (the dashboard already filed it). Calling it redundantly clears the action-chat history mid-flow and breaks Phase 2 confirmations on edit_order / create_invoice_order / cancel_order. Only call warehouse_hold when the operator explicitly asks to place a hold AND it isn't already placed.
 
 **Split shipment for pre-order:** Use split_shipment when the customer has agreed to split their order so in-stock items ship now and pre-order/OOS items follow. Pass the SKUs of the HELD items (the pre-order/OOS ones being moved to a new $0 pre-order), not the in-stock items being shipped now. Two-phase: preview, then confirm.
@@ -167,13 +169,14 @@ Never estimate prices or the difference yourself, never put items in \`exchange_
 - **Free replacement / goodwill send / defect replacement / OOS substitution (existing customer):** create_exchange_order (no return story needed — this is action_type free_order)
 - **Replacements + genuinely extra items (more items than returned):** create_invoice_order with exchange_items + paid_items
 - **Exchange for DIFFERENT items (any price difference, either direction):** call exchange_difference FIRST, then follow its recommended_action (invoice / refund / free_exchange). Invoice only when you explicitly asked to charge the difference; refund is automatic when the customer is owed.
-- **Unfulfilled order changes:** edit_order (auto-handles invoice/refund for price diff)
+- **Unfulfilled order changes, including ADDING an item and invoicing the difference:** edit_order (auto-handles invoice/refund for price diff). The word "invoice" in the request does not make this create_invoice_order — what decides is whether the customer already has an order that hasn't shipped.
 - **Pure refund:** refund_order
 - **New standalone paid order OR gift/sample to someone with no prior order context:** create_order
 - **Discount code (>10% or free product):** create_discount_code
 - **Invalidate one code / diagnose a code that won't apply:** revoke_discount_code (removes only that code, never the whole discount)
 - **Split a pre-order shipment:** split_shipment (placeholder-fulfills held SKUs on original, creates $0 pre-order for them)
 - **Invoice for kept items (after refund or no-show return):** create_invoice_order with paid_items only (action_type = invoice_kept_items)
+- **Never:** create_invoice_order whose \`exchange_items\` are items still sitting on an order the customer hasn't received. Those free lines are only for goods they no longer have (returning, or already refunded). The tool checks this and will flag it.
 - **Consolidate / merge two orders for the same customer into one shipment:** consolidate_orders. Use this whenever the operator says "consolidate", "merge", "combine these orders", "put on one order", "one shipment". Do NOT hand-roll consolidation with edit_order + cancel_order + manual fulfillment — consolidate_orders does the whole thing in one two-phase call: adds the dropped order's items onto the keeper at 100% discount, placeholder-fulfills the dropped order, cross-tags both, and refunds shipping when combined subtotal qualifies for free shipping. Pass keep_order_number + drop_order_number; either order can be the keeper if both are unfulfilled.
 
 ## Rules

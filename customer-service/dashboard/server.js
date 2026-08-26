@@ -1653,6 +1653,8 @@ async function apiGetHistory(query) {
 // Action Chat — Claude-powered tool execution via chat
 // ---------------------------------------------------------------------------
 
+const { LIVE_ORDER_OVERLAP_MARKER } = require('../lib/orderUtils');
+
 // Tools that write/modify Shopify state. Used by the completing-tool detector
 // to decide whether a tool result counts as a completed action worth filing in
 // the timeline. Read-only tools (lookup_customer, search_products, etc.) are
@@ -2058,6 +2060,15 @@ function evaluateExecuteSendGate(phase1Result) {
   const previews = (phase1Result?.tool_results || []).filter(
     tr => WRITE_TOOLS.has(tr.tool) && typeof tr.result === 'string' && /awaiting confirmation/i.test(tr.result)
   );
+  // Checked before the model's own verdict, and independently of it: a tool that
+  // has detected it is about to duplicate an order the customer is still waiting
+  // on must never auto-confirm, however the agent graded its own preview.
+  const dup = (phase1Result?.tool_results || []).find(
+    tr => typeof tr.result === 'string' && tr.result.includes(LIVE_ORDER_OVERLAP_MARKER)
+  );
+  if (dup) {
+    return { safe: false, reason: 'Draft duplicates items on a live unshipped order — needs review.' };
+  }
   if (phase1Result?.auto_confirm?.safe !== true) {
     return { safe: false, reason: phase1Result?.auto_confirm?.reason || 'Flagged for review.' };
   }

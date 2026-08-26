@@ -59,6 +59,22 @@ test('gate HOLD: no verdict emitted (e.g. a clarifying question)', () => {
   assert.equal(g.safe, false);
 });
 
+test('gate HOLD: preview duplicates a live order, even when the agent graded itself SAFE', () => {
+  // The whole point of reading the marker rather than the verdict: on ticket
+  // 3138 the agent was confident about the wrong tool. A self-graded SAFE must
+  // not be able to auto-send a draft the tool has already identified as a
+  // duplicate shipment.
+  const { LIVE_ORDER_OVERLAP_MARKER } = require('../lib/orderUtils');
+  const p = safePhase1();
+  p.tool_results = [{
+    tool: 'create_invoice_order',
+    result: `⚠️ **STOP — THIS DRAFT ${LIVE_ORDER_OVERLAP_MARKER}.**\nDraft created. Awaiting confirmation.`,
+  }];
+  const g = evaluateExecuteSendGate(p);
+  assert.equal(g.safe, false);
+  assert.match(g.reason, /live unshipped order/);
+});
+
 test('gate HOLD: SAFE verdict but no awaiting-confirmation preview', () => {
   const g = evaluateExecuteSendGate({ auto_confirm: { safe: true }, tool_results: [{ tool: 'get_order_details', result: 'order info' }] });
   assert.equal(g.safe, false);

@@ -7,7 +7,7 @@
  * for "return items + order new items" scenarios.
  */
 
-const { createDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl } = require('../shopify');
+const { createDraftOrder, sendDraftOrderInvoice, normalizeGid, getAdminUrl, getCustomerOrders } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
 const { preOrderLineAttributes } = require('../preOrderAttrs');
 const {
@@ -20,6 +20,8 @@ const {
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
   normalizeCountryCode,
   unknownDestinationWarning,
+  findLiveOrderOverlap,
+  liveOrderOverlapWarning,
 } = require('../orderUtils');
 const { formatAddressBlock } = require('../addressUtils');
 
@@ -30,6 +32,10 @@ const tools = [
       'Create a draft order with a mix of free exchange items ($0) and paid items (full price), then send an invoice.',
       'Use this when a customer needs replacements AND wants to add/pay for additional items.',
       'Also use this for "return + new order" scenarios: set return_credit to deduct the return value from the invoice total.',
+      'NOT for adding an item to an order that has not shipped yet — that is edit_order with an add-only entry,',
+      'which invoices the balance on confirmation. This tool creates a SEPARATE order and has no source order to',
+      'draw from, so exchange_items here are only ever goods the customer no longer has (returning, or already',
+      'refunded). Staging a line the customer is still waiting on ships it to them twice.',
       'Two-phase flow: Phase 1 (confirmed omitted or false) creates the draft and returns a preview.',
       'Phase 2 (confirmed=true + draft_order_id) sends the invoice to the customer.',
       'IMPORTANT: Present Phase 1 preview to the user and get explicit confirmation before calling Phase 2.',
@@ -146,6 +152,28 @@ const tools = [
         return { content: [{ type: 'text', text: resolvedPaid.error }] };
       }
 
+      // Duplicate-shipment guard. This tool has no source order — its free lines
+      // are meant to REPLACE goods the customer is returning or was refunded for.
+      // Staged against items still live on an unshipped order they become a
+      // second copy, and nothing here placeholder-fulfills the source the way
+      // consolidate_orders / split_shipment do. Checked deterministically rather
+      // than left to tool choice: the one live occurrence (#32992 → #33003) had
+      // the agent preview the correct edit_order first and then pick this tool.
+      let overlapWarning = null;
+      let overlapCheckError = null;
+      if (resolvedExchange.length > 0) {
+        try {
+          const { orders } = await getCustomerOrders(customerGid, 20);
+          overlapWarning = liveOrderOverlapWarning(
+            findLiveOrderOverlap(orders, resolvedExchange.map(r => r.sku))
+          );
+        } catch (err) {
+          // Surfaced, never swallowed — a guard that fails quietly reads exactly
+          // like a guard that passed.
+          overlapCheckError = err.message;
+        }
+      }
+
       // Resolve customer details. An explicit shipping_address override
       // takes precedence over the customer default address on file.
       let { customerName, addressBlock, shippingAddress } = await resolveCustomerForDraft(customerGid);
@@ -218,8 +246,19 @@ const tools = [
       const draftOrder = await createDraftOrder(draftInput);
       const draftAdminUrl = getAdminUrl(draftOrder.id);
 
-      // Build preview output
-      const lines = [
+      // Build preview output. The overlap warning leads, ahead of the draft
+      // details — it is the one line that decides whether this draft should
+      // exist at all.
+      const lines = [];
+      if (overlapWarning) lines.push(overlapWarning, '');
+      if (overlapCheckError) {
+        lines.push(
+          `⚠️ **Could not check for duplicate live orders** (${overlapCheckError}). ` +
+          'Confirm by hand that these free items are not still on an unshipped order.',
+          ''
+        );
+      }
+      lines.push(
         '**Invoice Draft Order Created — Awaiting Confirmation**',
         '',
         `**Draft Order:** ${draftOrder.name} — ${draftAdminUrl}`,
@@ -227,8 +266,8 @@ const tools = [
         `**Customer:** ${customerName}`,
         '**Ship to:**',
         addressBlock,
-        '',
-      ];
+        ''
+      );
       if (!normalizeCountryCode(shipCountry)) {
         lines.push(unknownDestinationWarning(shippingTitle), '');
       }

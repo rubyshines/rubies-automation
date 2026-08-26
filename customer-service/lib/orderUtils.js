@@ -237,6 +237,85 @@ function unknownDestinationWarning(shippingTitle) {
     'or fix it with update_shipping_speed before sending — the warehouse picks the carrier from this title.';
 }
 
+// Stable marker embedded in any preview that stages free lines duplicating an
+// order the customer is still waiting on. The Execute & Send gate greps for it,
+// so the hold does not depend on the model emitting AUTO_CONFIRM: HOLD.
+const LIVE_ORDER_OVERLAP_MARKER = 'DUPLICATES A LIVE ORDER';
+
+// An order is "live" while the customer is still owed goods from it: not
+// cancelled, and not fully shipped. PARTIALLY_FULFILLED is included even though
+// the specific line may already have gone out — this feeds a warning, and
+// over-warning on a partial costs a glance while under-warning ships a
+// duplicate parcel.
+const LIVE_FULFILLMENT_STATUSES = new Set([
+  'UNFULFILLED',
+  'PARTIALLY_FULFILLED',
+  'ON_HOLD',
+  'SCHEDULED',
+  'IN_PROGRESS',
+]);
+
+/**
+ * Find SKUs that are about to be added to a NEW order while still sitting on an
+ * order the customer has not received yet.
+ *
+ * The case this exists for: "add an item to my order" executed as a fresh draft
+ * carrying the original order's items at 100% off plus the new item. Both orders
+ * then ship, because nothing placeholder-fulfilled the source (unlike
+ * consolidate_orders / split_shipment, which own that step).
+ *
+ * Pure — callers pass the orders they already fetched. Returns one entry per
+ * overlapping order, or [] when there is nothing to warn about.
+ *
+ * @param {Array} orders - as returned by getCustomerOrders().orders
+ * @param {string[]} skus - SKUs staged as free lines on the new draft
+ * @returns {Array<{ name: string, skus: string[] }>}
+ */
+function findLiveOrderOverlap(orders, skus) {
+  const wanted = new Set((skus || []).filter(Boolean).map(s => String(s).toUpperCase()));
+  if (wanted.size === 0) return [];
+
+  const overlaps = [];
+  for (const order of orders || []) {
+    if (!order || order.cancelledAt) continue;
+    if (!LIVE_FULFILLMENT_STATUSES.has(String(order.displayFulfillmentStatus || '').toUpperCase())) continue;
+
+    // currentQuantity reflects removals and refunds; a line edited off the order
+    // is not something the customer is still waiting on.
+    const hit = new Set();
+    for (const li of order.lineItems || []) {
+      const qty = li.currentQuantity != null ? li.currentQuantity : li.quantity;
+      if (!li.sku || !(qty > 0)) continue;
+      const sku = String(li.sku).toUpperCase();
+      if (wanted.has(sku)) hit.add(sku);
+    }
+    if (hit.size > 0) overlaps.push({ name: order.name, skus: [...hit] });
+  }
+  return overlaps;
+}
+
+/**
+ * Operator-facing warning block for findLiveOrderOverlap results. Names the
+ * order and the SKUs, and points at the tool that should have been used, since
+ * "this is wrong" without "do this instead" just stalls the operator.
+ */
+function liveOrderOverlapWarning(overlaps) {
+  if (!overlaps || overlaps.length === 0) return null;
+  const detail = overlaps
+    .map(o => `  ${o.name} — ${o.skus.join(', ')}`)
+    .join('\n');
+  return [
+    `⚠️ **STOP — THIS DRAFT ${LIVE_ORDER_OVERLAP_MARKER}.**`,
+    'These free lines are still on an order the customer has not received:',
+    detail,
+    '',
+    'If the customer paid this invoice, both orders would ship and they would get two of each.',
+    'To ADD an item to an order that has not shipped, cancel this draft and use `edit_order`',
+    '(add-only entry) — it invoices the balance on confirmation. To merge two orders, use',
+    '`consolidate_orders`. Only continue here if those items are genuinely coming back to us.',
+  ].join('\n');
+}
+
 module.exports = {
   resolveCustomerForDraft,
   buildShippingAddress,
@@ -249,4 +328,8 @@ module.exports = {
   normalizeShippingPrice,
   shippingPreviewLine,
   shippingChargeError,
+  findLiveOrderOverlap,
+  liveOrderOverlapWarning,
+  LIVE_ORDER_OVERLAP_MARKER,
+  LIVE_FULFILLMENT_STATUSES,
 };
