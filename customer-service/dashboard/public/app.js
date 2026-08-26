@@ -1351,6 +1351,18 @@ async function loadCustomerContext(email, orderNumber) {
       </div>
     `;
 
+    // The customer's most recent OTHER ticket. Computed here rather than with the
+    // Past Tickets list below because the order card's links row wants it too, and
+    // the current ticket is filtered out of both for the same reason: a link to
+    // the page you are already on is not a link.
+    const currentGorgiasId = String(currentTicket?.gorgias_ticket_id || '');
+    const filteredPastTickets = (ctx.past_tickets || []).filter(t =>
+      !currentGorgiasId || String(t.gorgias_ticket_id) !== currentGorgiasId
+    );
+    // past_tickets arrives newest-first; one without a ticket id has nothing to
+    // navigate to, so it is skipped rather than rendered as a dead link.
+    const lastTicket = filteredPastTickets.find(t => t.gorgias_ticket_id);
+
     // Update ticket order with full detail + links
     const to = ctx.ticket_order;
     if (to) {
@@ -1359,6 +1371,15 @@ async function loadCustomerContext(email, orderNumber) {
       if (shopifyUrl) linksHtml += `<a href="${shopifyUrl}" target="_blank" class="order-link">Shopify</a>`;
       if (to.warehance_url) linksHtml += `<a href="${to.warehance_url}" target="_blank" class="order-link">Warehance</a>`;
       if (to.tracking_url) linksHtml += `<a href="${to.tracking_url}" target="_blank" class="order-link order-link-tracking">Tracking</a>`;
+      // Stays inside this dashboard — navigateToPastTicket only leaves for Gorgias
+      // when we hold no local row for the ticket — so no target=_blank. The mobile
+      // copy of this card is a clone of its innerHTML, which carries the handler
+      // with it; there is no second render path to keep in step.
+      if (lastTicket) {
+        const when = lastTicket.created_at ? timeAgo(lastTicket.created_at) : '';
+        const tip = [`#${lastTicket.gorgias_ticket_id}`, when, lastTicket.summary || lastTicket.subject].filter(Boolean).join(' — ');
+        linksHtml += `<a class="order-link order-link-ticket" title="${esc(tip)}" onclick="event.stopPropagation(); navigateToPastTicket('${esc(String(lastTicket.gorgias_ticket_id))}')">Last ticket</a>`;
+      }
 
       const trackingInfo = (to.tracking_url || to.tracking_number) ? {
         url: to.tracking_url,
@@ -1388,11 +1409,7 @@ async function loadCustomerContext(email, orderNumber) {
       renderOtherOrders(5);
     }
 
-    // Render past tickets (exclude the current ticket)
-    const currentGorgiasId = String(currentTicket?.gorgias_ticket_id || '');
-    const filteredPastTickets = (ctx.past_tickets || []).filter(t =>
-      !currentGorgiasId || String(t.gorgias_ticket_id) !== currentGorgiasId
-    );
+    // Render past tickets (already filtered to exclude the current ticket, above)
     // Always show past tickets section (with count, even if 0)
     const pastSection = document.getElementById('past-tickets-section');
     pastSection.style.display = '';
