@@ -62,7 +62,7 @@ function computeBuildInfo() {
 const GIT_VERSION = computeBuildInfo();
 
 const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseClient');
-const { uploadOperatorBase64 } = require('../../shared/operatorUploads');
+const { uploadOperatorBase64, uploadOperatorBytes } = require('../../shared/operatorUploads');
 const gorgias = require('../import/gorgiasClient');
 const { fetchOrderByNumber, warehanceOrderUrl } = require('../../reports/lib/warehanceClient');
 const { autoLinkProducts } = require('../lib/autoLinker');
@@ -3127,20 +3127,27 @@ async function apiB2bRegenerateDraft(id, body = {}) {
 // as the b2b_draft console tool.
 // Store an email the operator typed themselves as a pending draft, so it sends
 // down the same path as an AI one. No model call.
-// Attach / detach a file spec on a pending draft. Bytes are never stored; the
-// document is rendered at send time.
-// Stream a draft's attachment so the operator can read it before sending.
-// Rendered on demand from the same code the send path uses, so what you see is
-// exactly what goes out — not a preview that could drift from the real file.
-async function apiB2bAttachmentPreview(id, kind) {
+// Attach / detach a file spec on a pending draft. A generated document stores
+// only its recipe and is rendered at send time; an uploaded file's bytes go to
+// Supabase Storage at attach time and the spec points at them.
+// Stream one of a draft's attachments so the operator can read it before
+// sending. Resolved on demand through the same code the send path uses, so what
+// you see is exactly what goes out — not a preview that could drift from the
+// real file. `key` names WHICH one (attachmentKey); no key means the first,
+// which is what the single-attachment link has always meant.
+async function apiB2bAttachmentPreview(id, key) {
   const sb = getSupabaseClient();
   const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!draft) throw new Error(`draft #${id} not found`);
-  const { resolveDraftAttachments } = require('../../b2b-outreach/lib/draftAttachments');
-  const files = await resolveDraftAttachments(sb, draft);
-  const file = files.find(f => !kind || f.filename.toLowerCase().includes('agreement')) || files[0];
-  if (!file) throw new Error('no attachment on this draft');
+  const { draftAttachmentSpecs, attachmentKey, resolveAttachmentSpec } =
+    require('../../b2b-outreach/lib/draftAttachments');
+  const specs = draftAttachmentSpecs(draft);
+  const spec = key ? specs.find(s => attachmentKey(s) === key) : specs[0];
+  if (!spec) throw new Error('no attachment on this draft');
+  const { data: company } = await sb.from('b2b_companies')
+    .select('id, name, country').eq('id', draft.company_id).maybeSingle();
+  const file = await resolveAttachmentSpec(sb, spec, company);
   return { __raw: true, contentType: file.mimeType, filename: file.filename, body: file.content };
 }
 
@@ -3239,8 +3246,76 @@ async function apiB2bDraftAttach(id, body = {}) {
   const sb = getSupabaseClient();
   const kind = body.kind || 'partner_agreement';
   return body.remove
-    ? detachFromDraft(sb, { draft_id: id, kind })
-    : attachToDraft(sb, { draft_id: id, kind, org_name: body.org_name, country: body.country });
+    // Uploads are plural, so removal names the file by key rather than by kind;
+    // for the generated documents the two are the same string.
+    ? detachFromDraft(sb, { draft_id: id, key: body.key || kind })
+    : attachToDraft(sb, {
+      draft_id: id, kind, org_name: body.org_name, country: body.country,
+      path: body.path, filename: body.filename, mime_type: body.mime_type, size: body.size,
+    });
+}
+
+// A single file may not exceed this. Gmail's own ceiling is 25 MB for the whole
+// message, so the real limit is the sum — but a per-file cap is what the
+// operator can act on at the moment they pick the file, and the send-time total
+// check below covers the rest.
+const B2B_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Upload one or more operator-picked files and attach them to a pending draft.
+ *
+ * The bytes land in Supabase Storage immediately rather than being held in the
+ * browser until Send — same reasoning as the composer's autosave: a refresh, a
+ * closed tab or a failed send must not lose work the operator has already done.
+ *
+ * Per-file outcomes are REPORTED, never swallowed. A file that silently failed
+ * to upload is exactly the case where a body saying "I've attached our
+ * pricelist" goes out with nothing on it.
+ */
+async function apiB2bDraftUpload(id, body = {}) {
+  const { attachToDraft } = require('../../b2b-outreach/lib/draftAttachments');
+  const sb = getSupabaseClient();
+  const files = Array.isArray(body.files) ? body.files : (body.base64 ? [body] : []);
+  if (!files.length) {
+    const err = new Error('no files in the request');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let attachments = null;
+  const failed = [];
+  for (const f of files) {
+    const name = f?.name || 'file';
+    try {
+      if (!f?.base64) throw new Error('no file data');
+      const bytes = Buffer.from(f.base64, 'base64');
+      if (!bytes.length) throw new Error('the file is empty');
+      if (bytes.length > B2B_MAX_ATTACHMENT_BYTES) {
+        throw new Error(`${(bytes.length / (1024 * 1024)).toFixed(1)} MB exceeds the 10 MB limit`);
+      }
+      const { path } = await uploadOperatorBytes(bytes, { filename: name, mimeType: f.content_type });
+      const res = await attachToDraft(sb, {
+        draft_id: id,
+        kind: 'upload',
+        path,
+        filename: name,
+        mime_type: f.content_type,
+        size: bytes.length,
+      });
+      attachments = res.attachments;
+    } catch (e) {
+      failed.push(`${name}: ${e.message}`);
+    }
+  }
+
+  // Nothing landed and every file failed — that is an error, not a partial
+  // success with an empty list.
+  if (!attachments && failed.length) {
+    const err = new Error(failed.join('; '));
+    err.statusCode = 400;
+    throw err;
+  }
+  return { draft_id: id, attachments: attachments || [], failed };
 }
 
 async function apiB2bComposeDraft(companyId, body = {}) {
@@ -3947,9 +4022,10 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/dismiss$/, handler: (_, id) => apiB2bDismissDraft(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/fact-verified$/, handler: (body, id) => apiB2bFactVerified(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attach$/, handler: (body, id) => apiB2bDraftAttach(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/upload$/, handler: (body, id) => apiB2bDraftUpload(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/recipients$/, handler: (body, id) => apiB2bSetRecipients(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/drafts\/(\d+)\/test-send$/, handler: (body, id) => apiB2bTestSend(parseInt(id), body) },
-  { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id) => apiB2bAttachmentPreview(parseInt(id)) },
+  { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id, req) => apiB2bAttachmentPreview(parseInt(id), new URL(req.url, 'http://localhost').searchParams.get('key')) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },

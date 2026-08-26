@@ -35,7 +35,7 @@ require.cache[flagsPath] = {
   exports: { isFlagEnabled: async () => state.flagEnabled, setFlag: async () => true },
 };
 
-const { sendB2bEmail, buildRawMessage, encodeSubject } = require('../../b2b-outreach/lib/sendB2bEmail');
+const { sendB2bEmail, buildRawMessage, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES } = require('../../b2b-outreach/lib/sendB2bEmail');
 
 test('buildRawMessage produces decodable RFC822 with threading headers', () => {
   const raw = buildRawMessage({
@@ -82,6 +82,49 @@ test('phase 2 is HARD-BLOCKED when b2b_send_enabled is off', async () => {
   assert.equal(res.phase, 'blocked');
   assert.match(res.error, /b2b_send_enabled/);
   assert.equal(res.preview.phase, 'preview');
+});
+
+// ── attachment size ─────────────────────────────────────────────────────────
+
+test('attachments within the limit raise nothing', () => {
+  assert.equal(attachmentSizeError([]), null);
+  assert.equal(attachmentSizeError(undefined), null);
+  assert.equal(attachmentSizeError([{ filename: 'a.pdf', content: Buffer.alloc(1024) }]), null);
+});
+
+test('the limit is on the TOTAL, and the message names the biggest offenders', () => {
+  // Gmail rejects a message over 25 MB once encoded, so two 10 MB files each
+  // pass a per-file check and still cannot be sent together.
+  const err = attachmentSizeError([
+    { filename: 'lookbook.pdf', content: Buffer.alloc(10 * 1024 * 1024) },
+    { filename: 'pricelist.pdf', content: Buffer.alloc(9 * 1024 * 1024) },
+  ]);
+  assert.ok(err, 'two 10 MB-ish files must not go out together');
+  assert.match(err, /lookbook\.pdf/);
+  assert.match(err, /19\.0 MB/);
+});
+
+test('a draft over the limit previews but refuses to send', async () => {
+  // Left with sending DISABLED deliberately: the size check has to come before
+  // the gate, so a regression shows up as 'blocked' here rather than as a real
+  // Gmail call from the test suite.
+  state.flagEnabled = false;
+  state.contacts = [{ email: 'ez@transgendervictoria.com', full_name: 'Ez', is_primary: true, is_active: true }];
+  const big = [{ filename: 'huge.pdf', mimeType: 'application/pdf', content: Buffer.alloc(MAX_ATTACHMENT_TOTAL_BYTES + 1) }];
+
+  const preview = await sendB2bEmail({
+    company_id: 'transgender-victoria', message_type: 'community_checkin',
+    subject: 'Checking in', body: 'Hi Ez, ...', attachments: big,
+  });
+  assert.equal(preview.phase, 'preview');
+  assert.match(preview.attachment_error, /over the/, 'the problem is a fact about the draft, not about the click');
+
+  const sent = await sendB2bEmail({
+    company_id: 'transgender-victoria', message_type: 'community_checkin',
+    subject: 'Checking in', body: 'Hi Ez, ...', attachments: big, confirmed: true,
+  });
+  assert.equal(sent.ok, false);
+  assert.equal(sent.phase, 'too_large');
 });
 
 test('missing contact AND general_email fails gracefully', async () => {

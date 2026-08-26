@@ -6913,38 +6913,71 @@ function outreachReasoningHtml(draft) {
   </details>`;
 }
 
+/** Per-file identity — mirrors attachmentKey in draftAttachments.js. */
+function outreachAttachmentKey(spec) {
+  return spec.kind === 'upload' ? `upload:${spec.path}` : spec.kind;
+}
+
+/** "2.4 MB" / "812 KB", or '' when the size is unknown. */
+function outreachFileSize(n) {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /**
- * Files that will go out with this draft, plus the one-click way to add the
- * partnership agreement.
+ * Files that will go out with this draft: the one-click partnership agreement,
+ * plus anything the operator has dropped on.
  *
  * Shown even when empty, because the failure this prevents is silent: a draft
  * whose body says "I have attached the agreement" sending with nothing on it.
  * Seeing the attachment row is how you catch that before hitting Send.
+ *
+ * Every row links to the real file, resolved through the same code the send path
+ * uses — for an uploaded file that means you are checking the bytes that will
+ * actually go out, not the one you meant to pick.
  */
 function outreachAttachmentsHtml(draft) {
   const specs = Array.isArray(draft?.structured?.attachments) ? draft.structured.attachments : [];
   const org = outreachHistory?.company?.name || 'this organization';
-  const rows = specs.map(a => a.kind === 'partner_agreement'
-    ? `<li>&#128206; <a href="/api/b2b/drafts/${draft.id}/attachment" target="_blank" rel="noopener">Partnership agreement &mdash; ${esc(a.org_name || org)}</a>
-         <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(a.kind)}')">remove</button></li>`
-    : `<li>&#128206; <a href="/api/b2b/drafts/${draft.id}/attachment" target="_blank" rel="noopener">${esc(a.filename || a.kind)}</a>
-         <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(a.kind)}')">remove</button></li>`);
+  const rows = specs.map(a => {
+    const key = outreachAttachmentKey(a);
+    const href = `/api/b2b/drafts/${draft?.id}/attachment?key=${encodeURIComponent(key)}`;
+    const label = a.kind === 'partner_agreement'
+      ? `Partnership agreement &mdash; ${esc(a.org_name || org)}`
+      : esc(a.filename || a.kind);
+    const size = a.kind === 'upload' ? outreachFileSize(a.size) : '';
+    return `<li>&#128206; <a href="${href}" target="_blank" rel="noopener">${label}</a>
+      ${size ? `<span class="outreach-attach-size">${esc(size)}</span>` : ''}
+      <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(key)}')">remove</button></li>`;
+  });
 
   return `<div class="outreach-list outreach-attachments">
     <div class="outreach-field-label">Attachments</div>
     ${rows.length
       ? `<ul>${rows.join('')}</ul>`
-      : '<div class="outreach-empty-note">None. Generated fresh when you send.</div>'}
-    ${specs.some(a => a.kind === 'partner_agreement') ? '' :
-      `<button class="btn btn-ghost" onclick="attachPartnerAgreement()">Attach partnership agreement</button>`}
+      : '<div class="outreach-empty-note">None. Drop a file on the message box, or use the buttons below.</div>'}
+    <div class="btn-row outreach-attach-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('outreach-attach-input').click()"
+        title="Up to 10 MB per file. Uploaded straight away, so it survives a refresh.">Attach file</button>
+      ${specs.some(a => a.kind === 'partner_agreement') ? '' :
+        `<button class="btn btn-ghost" onclick="attachPartnerAgreement()">Attach partnership agreement</button>`}
+    </div>
+    <input type="file" id="outreach-attach-input" multiple style="display:none"
+      onchange="uploadOutreachFiles(this.files);this.value=''">
   </div>`;
 }
 
 /** Attach the partnership agreement to the open draft. */
 async function attachPartnerAgreement() {
-  if (!outreachDraft) return;
   try {
-    await api(`/api/b2b/drafts/${outreachDraft.id}/attach`, { method: 'POST', body: { kind: 'partner_agreement' } });
+    const draftId = await ensureOutreachDraftId();
+    if (!draftId) {
+      showToast('Write your message first — the agreement attaches to the draft', 'error');
+      return;
+    }
+    await api(`/api/b2b/drafts/${draftId}/attach`, { method: 'POST', body: { kind: 'partner_agreement' } });
     showToast('Agreement attached — rendered when you send', 'success');
     await selectOutreachEntry(outreachSelectedId);
   } catch (err) {
@@ -6952,15 +6985,126 @@ async function attachPartnerAgreement() {
   }
 }
 
-async function detachOutreachFile(kind) {
+/**
+ * The draft row an attachment can hang off.
+ *
+ * In the empty state there is no draft until the composer autosaves, so picking
+ * a file before the autosave timer fires would have nothing to attach to. Flush
+ * the save first. An empty box genuinely has no draft — say so plainly rather
+ * than creating a blank one, which would put the company back in the queue
+ * advertising a message with nothing in it.
+ */
+async function ensureOutreachDraftId() {
+  if (outreachDraft?.id) return outreachDraft.id;
+  const body = document.getElementById('outreach-draft-editor')?.value || '';
+  if (!body.trim()) return null;
+  const subject = document.getElementById('outreach-subject-editor')?.value || '';
+  clearTimeout(composerSaveTimer);
+  const res = await api(`/api/b2b/companies/${encodeURIComponent(outreachSelectedId)}/save-draft`, {
+    method: 'POST', body: { body, subject },
+  });
+  return res.draft_id || null;
+}
+
+/**
+ * Upload operator-picked files and attach them to the open draft.
+ *
+ * The bytes go to storage immediately rather than being held in the browser
+ * until Send, so a refresh or a failed send cannot lose them — the same
+ * guarantee the composer's autosave gives the text.
+ */
+async function uploadOutreachFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  let draftId;
+  try {
+    draftId = await ensureOutreachDraftId();
+  } catch (err) {
+    showToast(`Could not save the draft to attach to: ${err.message}`, 'error');
+    return;
+  }
+  if (!draftId) {
+    showToast('Write your message first — the file attaches to the draft', 'error');
+    return;
+  }
+
+  const oversized = files.filter(f => f.size > 10 * 1024 * 1024);
+  if (oversized.length) {
+    showToast(`${oversized.map(f => f.name).join(', ')} — over the 10 MB limit`, 'error');
+  }
+  const sending = files.filter(f => f.size <= 10 * 1024 * 1024);
+  if (!sending.length) return;
+
+  showToast(`Uploading ${sending.length} file${sending.length === 1 ? '' : 's'}…`);
+  try {
+    const payload = await Promise.all(sending.map(file => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error(`could not read ${file.name}`));
+      reader.onload = () => resolve({
+        base64: String(reader.result).split(',')[1],
+        name: file.name,
+        content_type: file.type || 'application/octet-stream',
+      });
+      reader.readAsDataURL(file);
+    })));
+
+    const res = await api(`/api/b2b/drafts/${draftId}/upload`, { method: 'POST', body: { files: payload } });
+    // A file that failed is named, never swallowed: an email whose body promises
+    // an attachment that quietly never uploaded is the failure worth shouting about.
+    if (res.failed?.length) showToast(`Not attached — ${res.failed.join('; ')}`, 'error');
+    else showToast(`Attached ${sending.length} file${sending.length === 1 ? '' : 's'}`, 'success');
+    await selectOutreachEntry(outreachSelectedId);
+  } catch (err) {
+    showToast(`Upload failed: ${err.message}`, 'error');
+  }
+}
+
+async function detachOutreachFile(key) {
   if (!outreachDraft) return;
   try {
-    await api(`/api/b2b/drafts/${outreachDraft.id}/attach`, { method: 'POST', body: { kind, remove: true } });
+    await api(`/api/b2b/drafts/${outreachDraft.id}/attach`, { method: 'POST', body: { key, remove: true } });
     showToast('Attachment removed', 'success');
     await selectOutreachEntry(outreachSelectedId);
   } catch (err) {
     showToast(`Could not remove: ${err.message}`, 'error');
   }
+}
+
+/**
+ * Drag-and-drop and paste onto the outreach message box, matching how the CS
+ * draft editor takes files. Re-bound after every render because the detail pane
+ * is rebuilt with innerHTML.
+ */
+function initOutreachDropzone() {
+  const editor = document.getElementById('outreach-draft-editor');
+  if (!editor) return;
+  let dragCounter = 0;
+
+  editor.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    editor.classList.add('drag-over');
+  });
+  editor.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; editor.classList.remove('drag-over'); }
+  });
+  editor.addEventListener('dragover', (e) => e.preventDefault());
+  editor.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    editor.classList.remove('drag-over');
+    if (e.dataTransfer?.files?.length) uploadOutreachFiles(e.dataTransfer.files);
+  });
+  editor.addEventListener('paste', (e) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length) {
+      e.preventDefault();
+      uploadOutreachFiles(files);
+    }
+  });
 }
 
 function outreachListHtml(title, items, cls) {
@@ -7026,6 +7170,7 @@ function renderOutreachDetail(entry, draft) {
           oninput="autoExpandTextarea(this); queueComposerAutosave()"
           placeholder="Type your message here. Saved as you write."></textarea>
         <div id="outreach-autosave" class="outreach-autosave"></div>
+        ${outreachAttachmentsHtml(null)}
         ${outreachRecipientHtml()}
         <div class="btn-row btn-row-primary outreach-actions">
           ${outreachHistory?.delivery?.mode === 'form'
@@ -7038,6 +7183,7 @@ function renderOutreachDetail(entry, draft) {
         <div id="outreach-schedule-panel" data-open="0"></div>
         <div id="outreach-send-panel"></div>
       </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
+    initOutreachDropzone();
     return;
   }
 
@@ -7094,6 +7240,7 @@ function renderOutreachDetail(entry, draft) {
   editor.value = draft.body || '';
   autoExpandTextarea(editor);
   document.getElementById('outreach-subject-editor').value = draft.subject || '';
+  initOutreachDropzone();
 }
 
 async function regenerateOutreachDraft() {
@@ -7658,12 +7805,17 @@ async function saveComposerDraft() {
 /**
  * Send a message the operator wrote themselves, from the empty state.
  *
- * Compose FIRST, then send. The order is the point: composing persists the text
- * as a b2b_drafts row, so if the send then fails the words survive and come back
- * with the company. Until this was restored the Send button in the empty state
- * threw ReferenceError — it was deleted by an unrelated commit and stayed broken
- * for twelve days — so a message typed here existed only in the textarea, and a
+ * Persist FIRST, then send. The order is the point: the draft row holds the
+ * text, so if the send then fails the words survive and come back with the
+ * company. Until this was restored the Send button in the empty state threw
+ * ReferenceError — it was deleted by an unrelated commit and stayed broken for
+ * twelve days — so a message typed here existed only in the textarea, and a
  * failed send plus a refresh lost it outright.
+ *
+ * It saves rather than composes because compose SUPERSEDES the pending row and
+ * inserts a fresh one with empty `structured` — which would silently drop every
+ * attachment the operator had just added to the row the autosave created. Saving
+ * updates that same row, so the file list survives the trip to Send.
  */
 async function sendComposedDraft() {
   const body = document.getElementById('outreach-draft-editor')?.value || '';
@@ -7675,9 +7827,17 @@ async function sendComposedDraft() {
   const companyId = outreachSelectedId;
   let composed = null;
   try {
-    composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/compose`, {
+    clearTimeout(composerSaveTimer);
+    composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/save-draft`, {
       method: 'POST', body: { body, subject },
     });
+    // save-draft declines to overwrite an advisor draft, and returns no row when
+    // it does. Nothing to send down that path but a fresh one.
+    if (!composed?.draft_id) {
+      composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/compose`, {
+        method: 'POST', body: { body, subject },
+      });
+    }
     const res = await api('/api/b2b/send', {
       method: 'POST', body: { draft_id: composed.draft_id, confirmed: true, body, subject },
     });
@@ -7686,7 +7846,7 @@ async function sendComposedDraft() {
       outreachAdvancePast(companyId);
       return;
     }
-    if (res.phase === 'blocked') {
+    if (res.phase === 'blocked' || res.phase === 'too_large') {
       document.getElementById('outreach-send-panel').innerHTML =
         `<div class="outreach-empty-note">${esc(res.error)}</div>`;
     } else {
@@ -7737,8 +7897,10 @@ async function sendOutreachDraft() {
   if (res.phase === 'sent') {
     showToast(`Sent to ${res.to}`, 'success');
     outreachAdvancePast(outreachSelectedId);
-  } else if (res.phase === 'blocked') {
-    // Gate off — plain statement, not an error.
+  } else if (res.phase === 'blocked' || res.phase === 'too_large') {
+    // Gate off, or too much attached — a plain statement that stays on screen.
+    // Both name a specific thing to go and change, which a toast that fades
+    // while you are still reading it cannot.
     document.getElementById('outreach-send-panel').innerHTML =
       `<div class="outreach-gate-note">${esc(res.error)}</div>`;
     if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
