@@ -71,7 +71,11 @@ function isSampleOrder(order) {
  * @param orders   matched orders [{ created_at, total_price, cancelled_at, financial_status, tags }]
  * @param isDonationPartner  company matches an active donation_partners row
  */
-function computeCompanyState(company, orders, isDonationPartner) {
+// The only flags that mean "in a RUBIES programme". Anything else written to
+// program_flags is somebody else's data and must not promote a relationship.
+const PROGRAMME_FLAGS = ['donation_closet', 'purchases', 'affiliate'];
+
+function computeCompanyState(company, orders, isDonationPartner, messageCount = 0) {
   const valid = (orders || []).filter(o => !o.cancelled_at);
   // Purchases drive order_count / revenue / cadence; $0 orders never do.
   const purchases = valid.filter(o => Number(o.total_price || 0) > 0);
@@ -127,15 +131,36 @@ function computeCompanyState(company, orders, isDonationPartner) {
   // State promotion only — 'lost' is operator-owned, 'active' never downgrades
   // here, dormancy is computed at queue time.
   const state = company.relationship_state;
+  // Only flags that describe a RUBIES programme count. `Object.values(flags)`
+  // would count anything anyone ever wrote here, and enrichment briefly wrote
+  // observations about the org into this column — which would have promoted
+  // ~130 untouched prospects to 'active' on the next nightly run, a state this
+  // function deliberately never reverses.
+  const inAnyProgramme = PROGRAMME_FLAGS.some((k) => flags[k]);
   const shouldBeActive = isOrg
-    ? (isDonationPartner || orderCount > 0 || Object.values(flags).some(Boolean))
+    ? (isDonationPartner || orderCount > 0 || inAnyProgramme)
     : orderCount > 0;
   if (shouldBeActive && state !== 'active' && state !== 'lost') upd.relationship_state = 'active';
+
+  // `prospect` claims we have never approached them, and the queue turns that
+  // claim into a cold introduction. It was only ever set by a one-off repair,
+  // so the nightly Gmail sweep — which imports history for companies we have
+  // corresponded with for years — kept re-creating the lie underneath it.
+  // Eleven vetted rows sat queued for a first touch, one of them an org that
+  // had already been offered a partnership in 2024.
+  //
+  // Any evidence of a relationship is enough, matching the documented rule.
+  // Deliberately only promotes OUT of prospect: 'in_contact' is the weakest
+  // honest thing we can say, and inferring anything warmer from a message
+  // count would overstate relationships that went nowhere.
+  if (state === 'prospect' && (messageCount > 0 || company.last_outbound_at || company.ai_summary)) {
+    upd.relationship_state = upd.relationship_state || 'in_contact';
+  }
 
   return Object.keys(upd).length ? upd : null;
 }
 
-const COMPANY_COLUMNS = 'id, name, website, relationship_type, relationship_state, program_flags, order_count, last_order_date, total_sales, general_email, metadata, samples_shipped_at, first_order_fulfilled_at, vetted_at';
+const COMPANY_COLUMNS = 'id, name, website, relationship_type, relationship_state, program_flags, order_count, last_order_date, total_sales, general_email, metadata, samples_shipped_at, first_order_fulfilled_at, vetted_at, ai_summary, last_outbound_at';
 
 /**
  * Match the orders mirror to companies via every known email (contacts +
@@ -181,6 +206,14 @@ async function run() {
   const partnerDomains = new Set((partners || []).map(p => normalizeDomain(p.website_url)).filter(Boolean));
   const partnerNames = new Set((partners || []).map(p => (p.name || '').toLowerCase().trim()));
 
+  // How many messages we hold per company — the evidence that decides whether
+  // 'prospect' is still an honest claim. Paginated: there are already well over
+  // the 1000-row default, and a truncated count reads as "no history", which is
+  // precisely the wrong answer to be confident about here.
+  const allMessages = await fetchAllPaginated(() => sb.from('b2b_messages').select('company_id'));
+  const messageCounts = new Map();
+  for (const m of allMessages) messageCounts.set(m.company_id, (messageCounts.get(m.company_id) || 0) + 1);
+
   let updated = 0;
   const changes = [];
   for (const c of companies) {
@@ -189,7 +222,7 @@ async function run() {
     if (c.relationship_state === 'lost') continue;
     const isPartner = (normalizeDomain(c.website) && partnerDomains.has(normalizeDomain(c.website)))
       || partnerNames.has((c.name || '').toLowerCase().trim());
-    const upd = computeCompanyState(c, ordersByCompany.get(c.id), isPartner);
+    const upd = computeCompanyState(c, ordersByCompany.get(c.id), isPartner, messageCounts.get(c.id) || 0);
     if (!upd) continue;
     const { error } = await sb.from('b2b_companies')
       .update({ ...upd, updated_at: new Date().toISOString() }).eq('id', c.id);
@@ -209,7 +242,7 @@ async function run() {
 }
 
 module.exports = {
-  run, computeCompanyState, reorderThresholdDays, normalizeDomain,
+  run, computeCompanyState, reorderThresholdDays, normalizeDomain, PROGRAMME_FLAGS,
   isSampleOrder, orderTags, matchOrdersToCompanies, COMPANY_COLUMNS,
 };
 
