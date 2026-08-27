@@ -8,6 +8,41 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## The 354 stored balance-sheet snapshots are all wrong and need re-running
+- Parked: 2026-08-27
+- Domains: finance
+- Type: bug
+- Priority: medium
+- Notes: `getBalanceSheet` sent `end_date` with `start_date: undefined`, and QBO silently ignores the as-of date unless both are present — so it returned its default period (fiscal year to date) every time. Every stored `BalanceSheet` snapshot from the 2022 backfill onward therefore holds the balances as of *whenever the sync ran*, not its labelled `period_end`. Verified live: a request for 2024-12-31 came back stamped `2026-01-01..2026-08-27`. The call is fixed (`BALANCE_SHEET_EPOCH` in `finance/lib/qbo.js`) so new snapshots are correct, but the existing rows were never rewritten.
+- Resume when: someone needs balance-sheet *history* — trend analysis, a real equity or loan-balance time series, or `runway_projection` / `financial_health` over anything but the present. Point-in-time queries against live QBO are correct today and are the workaround.
+- Fix shape: re-run the BalanceSheet leg of `finance/sync/backfillHistory.js` over the full period range. Transactions and P&L snapshots are unaffected, so only that one report type needs rewriting.
+
+## `product_costs` holds one cost snapshot, so historical margin is un-computable
+- Parked: 2026-08-27
+- Domains: finance, inventory
+- Type: gap
+- Priority: medium
+- Notes: 26 rows, essentially all dated 2026-03-11 (plus GAF at 2025-01-01 and SB at 2026-04-16). The time-of-order COGS lookup is built to pick the row with the latest `effective_date <= order.created_at` and falls back to the earliest known cost, so **every historical order is priced at current cost**. That makes any pre-2026 margin figure an approximation, and it skews in a known direction: the current rows carry a 23% duty rate from the tariff era, so applying them to 2024–25 volume overstates COGS for those years. Surfaced while trying to restate 2025 profitability, where it forced a $50K-wide band on the answer instead of a number.
+- Resume when: a margin or valuation question needs defensible historical figures. Also worth doing before any sale process — a buyer's quality-of-earnings review restates COGS, and being able to demonstrate normalized earnings rather than argue for them is worth real multiple.
+- Fix shape: backfill `product_costs` with dated rows from supplier invoices per cost change. The lookup logic already handles multiple effective dates correctly; it just has nothing to choose between.
+
+## In-year capital-flow tracking straight from the bank feeds
+- Parked: 2026-08-27
+- Domains: finance, tech
+- Type: idea
+- Priority: medium
+- Notes: Because the books are written up annually (see `domain_finance.md` Key Decisions), a flush that happens in June is not visible anywhere in our tooling until the year-end write-up. Jamie is doing capital planning against figures that can be up to twelve months stale, and moved roughly $70K in June 2026 that no query can see. The transactions exist in the bank feeds (Wise, TD) the whole time; only the *categorization* is annual.
+- The idea: read transfers to the known related-party destinations (the trust, JATA, shareholder) directly from the bank feed rather than waiting on QBO categorization, so the flush ledger is current year-round. Alternative considered and cheaper: ask AZ Accounting for a mid-year or quarterly catch-up — an open question with Jamie as of 2026-08-27, and it may make this build unnecessary.
+- Resume when: the annual-cadence question is settled and it turns out AZ will not catch up more often.
+
+## Size the 2025 dual-3PL overlap properly
+- Parked: 2026-08-27
+- Domains: finance, logistics
+- Type: gap
+- Priority: low
+- Notes: 2025 carried a one-time event — tariff-driven inventory movement from Canada to the US, and Think Logistics running alongside Nitrologistics for several months. Fulfillment-related spend went $187,221 (2024) → $265,238 (2025); volume-adjusting at 2024's 24.97%-of-revenue rate puts the abnormal portion at roughly $41K, and UPS appears at $26,414 against $0 the prior year. That $41K is an estimate from payment data alone: the true duplicate cost cannot be separated without knowing how shipment volume split between the two providers, which is in Warehance and not in QBO.
+- Resume when: a normalized-earnings figure needs to be defensible rather than indicative (valuation, a sale process, or a lender). Pull per-provider shipment counts for Mar–Sep 2025 from Warehance.
+
 ## The 51 manual-send threads nobody answered — re-approach, retire, or leave
 - Parked: 2026-08-26
 - Domains: b2b_sales, community

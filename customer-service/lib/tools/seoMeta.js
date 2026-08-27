@@ -166,7 +166,7 @@ async function handleUpdate({ type, handle, new_handle, title, description, desc
 
 // ─── seo_meta_draft ──────────────────────────────────────────────────────────
 
-const HOUSE_STYLE_PROMPT = `You are drafting SEO meta tags for a RUBIES collection or product page. RUBIES makes gender-affirming underwear and swimwear for trans girls and women — patented no-tuck shaping that looks and feels like regular clothing.
+const HOUSE_STYLE_PROMPT = `You are drafting SEO meta tags for a RUBIES collection or product page. RUBIES makes gender-affirming underwear and swimwear for trans girls and women — signature no-tuck shaping that looks and feels like regular clothing. RUBIES holds no patent: never write "patented" or "patent-pending" in a meta tag.
 
 CATEGORY ANCHORING (most important rule):
 The page's display title and handle define the category this page is about. The SEO title and description MUST stay within that category. Do not broaden to adjacent categories even if some products span them.

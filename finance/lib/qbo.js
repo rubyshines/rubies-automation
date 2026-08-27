@@ -111,10 +111,16 @@ function getQboClient() {
     return getReport('ProfitAndLoss', params);
   }
 
+  // QBO silently ignores end_date on BalanceSheet unless start_date is also
+  // present, and falls back to its default period (this fiscal year to date).
+  // Every "as of <historical date>" call therefore returned TODAY's balances —
+  // which is how 354 stored snapshots all ended up holding the same figures.
+  // The epoch just has to predate the company; balances are cumulative to end_date.
+  const BALANCE_SHEET_EPOCH = '2000-01-01';
+
   async function getBalanceSheet(asOfDate, { accountingMethod = 'Accrual' } = {}) {
     return getReport('BalanceSheet', {
-      date_macro: undefined,
-      start_date: undefined,
+      start_date: BALANCE_SHEET_EPOCH,
       end_date: asOfDate,
       accounting_method: accountingMethod,
     });

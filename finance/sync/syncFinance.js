@@ -99,13 +99,13 @@ async function syncTransactions(qbo, supabase) {
       txn_type: txn._txnType,
       txn_date: txn.TxnDate || null,
       doc_number: txn.DocNumber || null,
-      total_amount: txn.TotalAmt != null ? parseFloat(txn.TotalAmt) : null,
+      total_amount: extractTotalAmount(txn),
       currency_code: txn.CurrencyRef?.value || 'USD',
       account_id: extractAccountId(txn),
       entity_name: extractEntityName(txn),
       entity_id: extractEntityId(txn),
       memo: txn.PrivateNote || null,
-      line_items: txn.Line || null,
+      line_items: normalizeLines(txn),
       raw_json: txn,
       created_at: meta.CreateTime || null,
       updated_at: updatedAt,
@@ -135,10 +135,51 @@ async function syncTransactions(qbo, supabase) {
   return { success: true, rowsWritten: rows.length, error: null };
 }
 
+// A Transfer carries neither TotalAmt nor Line: the amount is `Amount` and the
+// two sides are ToAccountRef/FromAccountRef. Reading only TotalAmt/Line left
+// every Transfer row with total_amount = null and line_items = null, so an
+// entire transaction class was invisible to any query that walks line items.
+// That silently hid years of related-party loan repayments from capital-flow
+// analysis while the rows themselves looked present. Normalise a Transfer into
+// the same debit/credit line shape a JournalEntry uses so one traversal works
+// for every type; raw_json keeps the original either way.
+function normalizeLines(txn, txnType = txn._txnType) {
+  if (Array.isArray(txn.Line)) return txn.Line;
+  if (txnType !== 'Transfer') return txn.Line || null;
+
+  const amount = txn.Amount != null ? parseFloat(txn.Amount) : null;
+  if (amount == null || !txn.ToAccountRef || !txn.FromAccountRef) return null;
+
+  // Money moves FROM FromAccount TO ToAccount: debit the destination, credit the source.
+  return [
+    {
+      Amount: amount,
+      DetailType: 'JournalEntryLineDetail',
+      Description: txn.PrivateNote || null,
+      JournalEntryLineDetail: { PostingType: 'Debit', AccountRef: txn.ToAccountRef },
+      _synthesized: 'Transfer',
+    },
+    {
+      Amount: amount,
+      DetailType: 'JournalEntryLineDetail',
+      Description: txn.PrivateNote || null,
+      JournalEntryLineDetail: { PostingType: 'Credit', AccountRef: txn.FromAccountRef },
+      _synthesized: 'Transfer',
+    },
+  ];
+}
+
+function extractTotalAmount(txn) {
+  if (txn.TotalAmt != null) return parseFloat(txn.TotalAmt);
+  if (txn.Amount != null) return parseFloat(txn.Amount); // Transfer
+  return null;
+}
+
 function extractAccountId(txn) {
   // Different transaction types store the primary account in different fields
   if (txn.AccountRef?.value) return String(txn.AccountRef.value);
   if (txn.DepositToAccountRef?.value) return String(txn.DepositToAccountRef.value);
+  if (txn.ToAccountRef?.value) return String(txn.ToAccountRef.value); // Transfer destination
   // For invoices/bills, take from the first line item
   const firstLine = txn.Line?.[0];
   if (firstLine?.AccountBasedExpenseLineDetail?.AccountRef?.value) {
@@ -294,7 +335,7 @@ function formatDate(date) {
   return `${y}-${m}-${d}`;
 }
 
-module.exports = { run };
+module.exports = { run, normalizeLines, extractTotalAmount, extractAccountId };
 
 if (require.main === module) {
   run().catch(err => {

@@ -23,6 +23,10 @@ if (!process.env.SUPABASE_URL) {
 const { getQboClient } = require('../lib/qbo');
 const { parseReport } = require('../lib/reportParser');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
+// Shared with syncFinance so the two writers to qbo_transactions cannot drift:
+// they previously held separate copies of this extraction, and the Transfer bug
+// had to be fixed in both.
+const { normalizeLines, extractTotalAmount, extractAccountId } = require('./syncFinance');
 
 const BATCH_SIZE = 100;
 const CHUNK_DELAY_MS = 2000; // pause between 3-month chunks to respect rate limits
@@ -231,13 +235,13 @@ async function backfillTransactions(qbo, supabase, startDate, endDate) {
           txn_type: type,
           txn_date: txn.TxnDate || null,
           doc_number: txn.DocNumber || null,
-          total_amount: txn.TotalAmt != null ? parseFloat(txn.TotalAmt) : null,
+          total_amount: extractTotalAmount(txn),
           currency_code: txn.CurrencyRef?.value || 'USD',
-          account_id: txn.AccountRef?.value ? String(txn.AccountRef.value) : null,
+          account_id: extractAccountId({ ...txn, _txnType: type }),
           entity_name: txn.CustomerRef?.name || txn.VendorRef?.name || txn.EntityRef?.name || null,
           entity_id: txn.CustomerRef?.value || txn.VendorRef?.value || txn.EntityRef?.value || null,
           memo: txn.PrivateNote || null,
-          line_items: txn.Line || null,
+          line_items: normalizeLines(txn, type),
           raw_json: txn,
           created_at: txn.MetaData?.CreateTime || null,
           updated_at: txn.MetaData?.LastUpdatedTime || null,

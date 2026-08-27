@@ -2,7 +2,7 @@
 
 ## RUBIES & Mission
 
-RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Our patented no-tuck shaping technology creates a feminine silhouette without compression, tucking, or gaffing — clothing that looks, wears, and feels like regular underwear and swimwear.
+RUBIES makes gender-affirming underwear and swimwear for trans girls and women. Our signature no-tuck shaping technology creates a feminine silhouette without compression, tucking, or gaffing — clothing that looks, wears, and feels like regular underwear and swimwear. **RUBIES holds no patent** — never describe the technology as "patented" or "patent-pending" anywhere, least of all in customer-facing copy.
 
 **"Every girl deserves to shine."**
 
