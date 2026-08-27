@@ -1060,6 +1060,7 @@ module.exports = {
   fetchQueueCount,
   fetchOnMe,
   fetchCompanyThreads,
+  getCompanyEmails,
   generateDraftForCompany,
   composeDraft,
   saveOperatorDraft,
