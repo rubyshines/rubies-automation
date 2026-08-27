@@ -105,6 +105,51 @@ describe('bucketPendingOrders — note + isPreOrder precedence (mirrors daily re
   });
 });
 
+describe('bucketPendingOrders — shipping-update notes are context, not waiting triggers', () => {
+  const shippingNote = {
+    note: 'Shipping updated to US Expedited Shipping: Customer requested pre-order ship expedited when in stock.',
+    resolved: false,
+    author: 'operator',
+  };
+
+  it('a pre-order with an unresolved shipping-update note STAYS in pre_orders', () => {
+    const r = row({ orderNumber: 200, isPreOrder: true, note: shippingNote, severity: 'attention' });
+    const out = bucket({ results: [r] });
+    assert.equal(out.pre_orders.length, 1, 'should stay in pre_orders');
+    assert.equal(out.waiting_on_response.length, 0, 'must not surface as waiting');
+    assert.equal(out.pre_orders[0].note, shippingNote, 'note rides along as context');
+  });
+
+  it('a non-pre-order with an unresolved shipping-update note follows its severity, not waiting', () => {
+    const r = row({ orderNumber: 201, note: shippingNote, severity: 'normal' });
+    const out = bucket({ results: [r] });
+    assert.equal(out.waiting_on_response.length, 0);
+    assert.equal(out.normal.length, 1);
+  });
+
+  it('a hold note is still a waiting trigger (only shipping-update notes are exempt)', () => {
+    const r = row({
+      orderNumber: 202,
+      isPreOrder: true,
+      note: { note: 'Warehouse hold placed: Hold pending customer response on sizing.', resolved: false, author: 'operator' },
+      severity: 'normal',
+    });
+    const out = bucket({ results: [r] });
+    assert.equal(out.pre_orders.length, 0);
+    assert.equal(out.waiting_on_response.length, 1);
+  });
+
+  it('a free-form note mentioning shipping mid-sentence is still a waiting trigger (prefix-anchored)', () => {
+    const r = row({
+      orderNumber: 203,
+      note: { note: 'Expedited after split — shipping updated to Fedex, watching for reply', resolved: false, author: 'operator' },
+      severity: 'normal',
+    });
+    const out = bucket({ results: [r] });
+    assert.equal(out.waiting_on_response.length, 1);
+  });
+});
+
 describe('bucketPendingOrders — bucket arg filter', () => {
   const data = {
     results: [
@@ -191,6 +236,11 @@ describe('buildOrphanRows — fulfilled orders with unresolved operator notes', 
 
   it('excludes resolved notes', () => {
     const rows = buildOrphanRows([note(29270, { resolved: true })], new Set());
+    assert.equal(rows.length, 0);
+  });
+
+  it('excludes shipping-update notes — a shipped order awaiting the R1d sweep is not waiting on anyone', () => {
+    const rows = buildOrphanRows([note(33328, { note: 'Shipping updated to Fedex: ship the L Ruby expedited.' })], new Set());
     assert.equal(rows.length, 0);
   });
 

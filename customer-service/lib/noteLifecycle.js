@@ -54,6 +54,29 @@ const HOLD_NOTE_RE = /hold placed/i;
 // safe to auto-resolve are the machine-written ones with a known format.
 const SHIPPING_UPDATE_NOTE_RE = /^shipping updated to /i;
 
+/**
+ * A shipping-update note records a mechanical change we already applied, not a
+ * question anyone owes us an answer on. Report surfaces treat it as CONTEXT:
+ * it never puts an order in "Waiting on Response", never overrides pre-order
+ * classification, and never triggers stale-note aging. Resolution stays with
+ * the reconciler (R1d: moot once the order ships; R1a: order cancelled).
+ */
+function isShippingUpdateNote(note) {
+  return SHIPPING_UPDATE_NOTE_RE.test((note && note.note) || '');
+}
+
+/**
+ * THE predicate for "does this note put its order in Waiting on Response?" —
+ * an unresolved operator note representing an open question (someone owes us
+ * a reply), not a record of applied work. Auto-author notes have their own
+ * surface (Drafted in CS Advisor), and shipping-update notes are context.
+ * Shared by the daily report (HTML + text) and list_pending_orders so the
+ * bucket's meaning cannot drift between surfaces.
+ */
+function isWaitingNote(note) {
+  return !!note && !note.resolved && note.author !== 'auto' && !isShippingUpdateNote(note);
+}
+
 function isOutreachNote(note) {
   if (!note) return false;
   if (note.author === 'auto') return true;
@@ -296,7 +319,7 @@ async function reconcileNotes({ supabase = getSupabaseClient(), fetchWhOrder } =
           reason = 'Warehouse hold released and conversation closed — hold note moot (reconciler)';
         }
       }
-    } else if (SHIPPING_UPDATE_NOTE_RE.test(note.note || '') && orderShipped) {
+    } else if (isShippingUpdateNote(note) && orderShipped) {
       // Sibling of the hold rule above, and deliberately NOT gated on tickets:
       // an expedite either happened or it didn't, and once the order has shipped
       // that question is closed no matter what the conversation is doing. R3
@@ -335,6 +358,8 @@ async function reconcileNotes({ supabase = getSupabaseClient(), fetchWhOrder } =
 
 module.exports = {
   isOutreachNote,
+  isShippingUpdateNote,
+  isWaitingNote,
   fetchLatestNotes,
   markOutreachSent,
   resolveOnTicketClose,
