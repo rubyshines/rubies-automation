@@ -67,18 +67,48 @@ async function fetchOutreachQueue(sb, { channel } = {}) {
 }
 
 /**
+ * How long past its slot a scheduled follow-up may sit unsent before it stops
+ * being machine work and becomes the operator's problem.
+ *
+ * The window a slot is picked inside is two hours wide and the send sweep ticks
+ * every fifteen minutes, so six hours cannot be normal lateness — it means a
+ * guard is refusing, the daily cap is full, or the sweep is not running. The
+ * grace exists only so a draft is not called stuck while its own send is in
+ * flight.
+ */
+const SCHEDULED_STALE_HOURS = 6;
+
+/**
  * Companies with a pending draft are excluded from assembleQueue (the sweep
  * must never double-draft — companyEligible returns false). The dashboard
  * queue must still SHOW them: the pending draft is exactly what the operator
  * needs to review. Synthesize their entries from the draft's stored queue
  * fields (queue_tier/queue_reason captured at generation time) and merge in
  * tier order. Pure.
+ *
+ * The exception is a draft the follow-up ladder has already scheduled. That one
+ * is not review waiting to happen — it goes on its own, in the recipient's
+ * mid-morning, and every guard that makes it safe runs at send time rather than
+ * here. Showing it as queue work asks for a decision that has already been
+ * taken, which is the thing the automatic ladder exists to remove.
+ *
+ * It is hidden only while it is ON schedule. A scheduled draft still sitting
+ * here hours after its slot is the exact shape of the 2026-08-27 outage — three
+ * follow-ups held on every tick by a guard that could never pass — and that day
+ * the panel was the only place it could have been noticed. So an overdue one
+ * comes BACK, saying it is stuck rather than presenting itself as fresh work.
+ * Hiding scheduled sends must not also hide scheduled sends that are failing.
  */
-function mergePendingDraftEntries(queue, drafts, companiesById) {
+function mergePendingDraftEntries(queue, drafts, companiesById, now = new Date()) {
   const inQueue = new Set((queue || []).map(e => e.company_id));
-  const withDraft = new Set((drafts || []).map(d => d.company_id));
+  const staleBefore = new Date(now.getTime() - SCHEDULED_STALE_HOURS * 60 * 60 * 1000);
+  const visible = (drafts || []).filter(d => {
+    if (!d.scheduled_send_at) return true;
+    return new Date(d.scheduled_send_at) <= staleBefore;
+  });
+  const withDraft = new Set(visible.map(d => d.company_id));
   const synthetic = [];
-  for (const d of drafts || []) {
+  for (const d of visible) {
     if (inQueue.has(d.company_id)) continue;
     const c = companiesById.get(d.company_id);
     if (!c) continue;
@@ -102,7 +132,10 @@ function mergePendingDraftEntries(queue, drafts, companiesById) {
       channel: c.relationship_type,
       tier: d.queue_tier || 3,
       message_type: d.message_type,
-      reason: d.queue_reason || 'pending draft awaiting review',
+      reason: d.scheduled_send_at
+        ? `scheduled to send ${new Date(d.scheduled_send_at).toISOString().slice(0, 16).replace('T', ' ')}Z and still unsent — the automatic send is stuck`
+        : d.queue_reason || 'pending draft awaiting review',
+      ...(d.scheduled_send_at ? { scheduled_send_at: d.scheduled_send_at, send_stuck: true } : {}),
     });
   }
   return [...(queue || []), ...synthetic].sort((a, b) => {
@@ -167,7 +200,7 @@ async function buildQueueEntries(sb, { channel, onCompanies } = {}) {
   let drafts = [];
   if (companies.length) {
     const { data, error } = await sb.from('b2b_drafts')
-      .select('id, company_id, subject, body, generated_at, message_type, queue_tier, queue_reason')
+      .select('id, company_id, subject, body, generated_at, message_type, queue_tier, queue_reason, scheduled_send_at')
       .eq('status', 'pending').in('company_id', companies.map(c => c.id));
     if (error) throw new Error(error.message);
     drafts = data || [];
@@ -1055,6 +1088,7 @@ module.exports = {
   draftSnippet,
   attachDrafts,
   mergePendingDraftEntries,
+  SCHEDULED_STALE_HOURS,
   fetchOutreachQueue,
   fetchQueueWithDrafts,
   fetchQueueCount,

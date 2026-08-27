@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  draftSnippet, attachDrafts, mergePendingDraftEntries,
+  draftSnippet, attachDrafts, mergePendingDraftEntries, SCHEDULED_STALE_HOURS,
   sanitizeSearchTerm, rollupThreads, companyThreadStatus, companyStage, matchReason,
 } = require('../../b2b-outreach/lib/queueService');
 
@@ -104,6 +104,55 @@ test('mergePendingDraftEntries defaults tier/reason when the draft has none', ()
   );
   assert.equal(out[0].tier, 3);
   assert.equal(out[0].reason, 'pending draft awaiting review');
+});
+
+// ── scheduled follow-ups are machine work, not queue work ───────────────────
+//
+// The automatic ladder writes a `scheduled_send_at` and sends the draft itself,
+// in the recipient's mid-morning, behind guards that all run at send time. It is
+// not a decision waiting on an operator, so it must not render as one.
+test('a scheduled follow-up still on schedule is hidden from the queue', () => {
+  const now = new Date('2026-08-27T12:00:00Z');
+  const out = mergePendingDraftEntries([],
+    [{ id: 137, company_id: 'org-c', message_type: 'followup_1', queue_tier: 4, queue_reason: 'no reply 33d after intro_outreach', scheduled_send_at: '2026-08-27T14:00:00Z' }],
+    companiesById, now,
+  );
+  assert.deepEqual(out, [], 'a send that is going to happen on its own is not the operator’s plate');
+});
+
+// The other half, and the one that matters more: on 2026-08-27 three scheduled
+// follow-ups were held on every fifteen-minute tick by a guard that could never
+// pass, and the panel was the only surface where that was visible at all.
+// Hiding scheduled sends must never hide scheduled sends that are FAILING.
+test('a scheduled follow-up long past its slot comes back, marked stuck', () => {
+  const now = new Date('2026-08-27T20:00:00Z');
+  const out = mergePendingDraftEntries([],
+    [{ id: 137, company_id: 'org-c', message_type: 'followup_1', queue_tier: 4, queue_reason: 'no reply 33d after intro_outreach', scheduled_send_at: '2026-08-27T09:46:00Z' }],
+    companiesById, now,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].send_stuck, true);
+  assert.match(out[0].reason, /stuck/, 'it must not present itself as fresh work');
+});
+
+test('the stale grace is wide enough that a send in flight is not called stuck', () => {
+  const scheduled = new Date('2026-08-27T09:46:00Z');
+  const justInside = new Date(scheduled.getTime() + (SCHEDULED_STALE_HOURS - 1) * 3600 * 1000);
+  const out = mergePendingDraftEntries([],
+    [{ id: 137, company_id: 'org-c', message_type: 'followup_1', queue_tier: 4, scheduled_send_at: scheduled.toISOString() }],
+    companiesById, justInside,
+  );
+  assert.deepEqual(out, []);
+});
+
+test('an unscheduled pending draft is unaffected — it IS review waiting to happen', () => {
+  const out = mergePendingDraftEntries([],
+    [{ id: 136, company_id: 'org-c', message_type: 'followup_1', queue_tier: 4, queue_reason: 'no reply 28d after intro_outreach', scheduled_send_at: null }],
+    companiesById, new Date('2026-08-27T20:00:00Z'),
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].reason, 'no reply 28d after intro_outreach');
+  assert.ok(!out[0].send_stuck);
 });
 
 // A draft-ready row is one click from sent; an empty row is work not started.
