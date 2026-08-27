@@ -75,6 +75,14 @@ The rules above make concurrent writes *correct*. They do not make them *cheap*.
 - **A stubbed-client unit test cannot catch a schema violation in the claim row.** The first version of this claim omitted a `NOT NULL` column, which would have made every claim fail and *nothing* ever draft. Round-trip the claim against the real table before shipping, and assert N concurrent claims yield exactly one winner.
 - Watch for the symptom rather than the cause: **more API calls than there are outputs to show for them.** A calls-per-output ratio is the cheap tripwire for this whole class.
 
+## A repair script's "has this row changed?" check cannot compare stored JSON with `JSON.stringify`
+
+Postgres `jsonb` does not preserve key order — it stores keys sorted by length then bytewise. A value we wrote and read back therefore has its keys rearranged, so `JSON.stringify(stored) !== JSON.stringify(computed)` is true for rows whose content is identical. Canonicalise both sides (recursively sort keys) before comparing.
+
+**Why:** the 2026-08-27 Transfer repair reported all 221 rows as still needing repair on a re-run immediately *after* it had fixed them, and would have rewritten every row on every invocation forever. The data was already correct; the comparison was lying. This is invisible in the worst way — the script appears to run, appears to find work, and does no damage, so nothing ever surfaces it. The over-reporting dry run is the real hazard, because the dry run is precisely what you trust before writing to production.
+
+**How to apply:** any backfill, migration, or reconciler deciding whether to write by comparing against a stored JSON/JSONB column needs a stable serialisation, plus a test asserting that (a) key order alone is not a difference and (b) a genuine difference still is. Arrays must keep their order — in a debit/credit pair, position is meaning. Same caution for any equality filter against a `jsonb` column in a query.
+
 ## Always paginate Supabase queries
 
 **Why:** Supabase default limit is 1000 rows. Queries without pagination silently truncate, causing wrong analysis and missed data.
