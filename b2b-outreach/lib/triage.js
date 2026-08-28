@@ -38,15 +38,17 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
     case 'drop':
       if (!reason) throw new Error('drop requires a reason — an unexplained lost row gets re-litigated later');
       return { relationship_state: 'lost', triage_reason: reason, vetted_at: null };
-    case 'snooze': {
-      if (!until) throw new Error('snooze requires an until date (YYYY-MM-DD)');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(until)) throw new Error(`snooze until must be YYYY-MM-DD, got '${until}'`);
-      if (new Date(`${until}T00:00:00Z`) <= now) throw new Error(`snooze until must be in the future, got '${until}'`);
-      // snoozed_at, not just snoozed_until: the queue needs to know WHEN the
-      // decision was made to tell an already-stale "waiting on us" apart from a
-      // reply that lands during the snooze.
-      return { snoozed_until: until, snoozed_at: now.toISOString(), triage_reason: reason || null };
-    }
+    case 'snooze':
+      // DEPRECATED 2026-08-27. Snooze asked the operator to invent a date for a
+      // question the cadence already answers, and every real use turned out to
+      // be "don't let the system start something yet" — which is the cadence's
+      // own job. The nine rows that carried one were cleared to run on the
+      // normal rhythm. Reading logic stays (pause shares deferredSince, and a
+      // stray value must still behave), but nothing new can be set.
+      throw new Error(
+        'snooze is deprecated — the cadence decides when a company is next due, and the '
+        + 'next-contact date on the company shows it. Use pause for an indefinite decision '
+        + 'not to work a relationship, or leave it to the cadence.');
     case 'pause': {
       // Indefinite by design — the whole reason snooze does not fit is that
       // "not working Canadian retailers this year" has no date attached, and

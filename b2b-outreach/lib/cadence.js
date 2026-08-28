@@ -35,7 +35,7 @@ const NEXT_ACTION_DAYS = {
   referral_ask: 180,
   reorder_nudge: 90,
   new_collection: 30,
-  community_checkin: 180,
+  community_checkin: 365,
   affiliate_invite: 60,
   content_prompt: 30,
   performance_checkin: 30,
@@ -80,13 +80,21 @@ function daysSince(from, now = new Date()) {
 }
 
 /** Seasonal windows for community_checkin (locked catalog entry). */
+/**
+ * Partner check-ins happen once a year, in October, as one sitting.
+ *
+ * The old three-window calendar (Pride, back-to-school, year-end) paired with a
+ * 180-day threshold produced roughly two check-ins a year on a rolling per-org
+ * date. Two things were wrong with that. Pride is when these orgs are least
+ * able to reply, and summer is when student-run ones are empty — so two of the
+ * three windows were poorly chosen. And a rolling date scatters twenty
+ * check-ins across the year at one every few weeks, which is the shape of work
+ * that never gets done; a single annual sitting does.
+ *
+ * October clears Pride, the summer, and the start of the school year.
+ */
 function seasonalWindow(now = new Date()) {
-  const m = now.getUTCMonth() + 1; // 1-12
-  const d = now.getUTCDate();
-  if (m >= 3 && m <= 6) return 'pride';
-  if ((m === 8) || (m === 9 && d <= 15)) return 'back_to_school';
-  if (m >= 11) return 'year_end';
-  return null;
+  return now.getUTCMonth() + 1 === 10 ? 'annual_checkin' : null;
 }
 
 /**
@@ -447,8 +455,10 @@ function evaluateDue(company, ctx, now = new Date()) {
     const window = seasonalWindow(now);
     if (state === 'active' && window) {
       const last = ctx.lastOutboundAt ? daysSince(ctx.lastOutboundAt, now) : Infinity;
-      const hasProgram = company.program_flags && Object.values(company.program_flags).some(Boolean);
-      const threshold = hasProgram ? 180 : 330;
+      // ~10 months, so a partner checked in last October is due again this
+      // October and one contacted since is not. Deliberately below 365 so the
+      // window cannot be missed by a few days and slip a whole year.
+      const threshold = 300;
       if (last >= threshold) {
         return { message_type: 'community_checkin', reason: `${window} window, ${last === Infinity ? 'no prior' : last + 'd since'} outbound` };
       }

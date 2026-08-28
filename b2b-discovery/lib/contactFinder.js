@@ -12,6 +12,46 @@ const EMAIL_NOISE_DOMAINS = [
 
 const EMAIL_NOISE_PREFIXES = ['noreply', 'no-reply', 'bounce', 'mailer-daemon', 'postmaster'];
 
+// Unfilled template placeholders. These are worse than ordinary noise: the
+// local part of a placeholder ("user", "youremail", "john.doe") is not in
+// GENERIC_PREFIXES, so it classifies as *personal*, and pickBestEmail ranks
+// personal above generic — a placeholder therefore beats the org's real info@
+// address and becomes the contact we would write to. Observed live:
+// user@domain.com harvested from two org sites, outranking a working address.
+//
+// Sending to one of these is not a wasted email, it is a bounce, and bounces
+// land on rubyshines.com — the same sending domain Klaviyo uses to reach
+// customers. Same reasoning as the standing rule never to guess an address.
+const EMAIL_PLACEHOLDER_DOMAINS = [
+  'domain.com', 'yourdomain.com', 'your-domain.com', 'mydomain.com',
+  'email.com', 'youremail.com', 'yoursite.com', 'mysite.com', 'sitename.com',
+  'company.com', 'yourcompany.com', 'domain.tld', 'domain.net', 'domain.org',
+  'test.com', 'sample.com', 'placeholder.com', 'address.com',
+];
+
+const EMAIL_PLACEHOLDER_PREFIXES = [
+  'user', 'username', 'youremail', 'your-email', 'yourname', 'your-name',
+  'email', 'name', 'firstname', 'lastname', 'someone', 'somebody', 'anyone',
+  'john.doe', 'jane.doe', 'johndoe', 'janedoe', 'test', 'sample',
+  'placeholder', 'yourusername', 'address',
+];
+
+/**
+ * Is this an unfilled template placeholder rather than a real address? A hit on
+ * EITHER half is enough: `user@realorg.org` is as unsendable as
+ * `info@yourdomain.com`. Pure.
+ */
+function isPlaceholderEmail(email) {
+  const lower = String(email || '').toLowerCase().trim();
+  const [prefix, domain] = lower.split('@');
+  if (!prefix || !domain) return false;
+  if (EMAIL_PLACEHOLDER_DOMAINS.includes(domain)) return true;
+  if (EMAIL_PLACEHOLDER_PREFIXES.includes(prefix)) return true;
+  // "example" as a bare label in any position — example.org, example.co.uk.
+  if (/^example\./.test(domain) || domain === 'example') return true;
+  return false;
+}
+
 // Generic vs personal email classification
 const GENERIC_PREFIXES = [
   'info', 'hello', 'contact', 'support', 'help', 'sales', 'wholesale',
@@ -45,6 +85,9 @@ function extractEmails(html) {
     // Filter noise prefixes
     const prefix = lower.split('@')[0];
     if (EMAIL_NOISE_PREFIXES.some((np) => prefix === np || prefix.startsWith(np + '.'))) continue;
+
+    // Filter unfilled template placeholders
+    if (isPlaceholderEmail(lower)) continue;
 
     // Classify personal vs generic
     const isGeneric = GENERIC_PREFIXES.some((gp) => prefix === gp || prefix.startsWith(gp + '.'));
@@ -225,4 +268,5 @@ module.exports = {
   pickBestEmail,
   extractPhone,
   findContactForm,
+  isPlaceholderEmail,
 };

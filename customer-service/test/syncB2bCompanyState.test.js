@@ -184,3 +184,63 @@ test('org sent samples gets no purchases flag and no active promotion', () => {
   assert.equal(upd.program_flags, undefined);
   assert.equal(upd.relationship_state, undefined);
 });
+
+// ── 'prospect' has to keep being true ────────────────────────────────────────
+// The queue turns 'prospect' into a cold introduction, so a stale one is not a
+// cosmetic error. It was set by a one-off repair on 5 Aug; the nightly Gmail
+// sweep then imported 489 messages across 70 companies on the 19th and nothing
+// re-ran the classification. Eleven vetted rows sat queued for a first touch,
+// one of them an org already offered a partnership in 2024.
+
+const coldOrg = (over = {}) => ({
+  id: 'lgbtq-x', name: 'X', relationship_type: 'lgbtq_org',
+  relationship_state: 'prospect', program_flags: null, order_count: 0, total_sales: 0,
+  ...over,
+});
+
+test('imported messages take a company out of prospect', () => {
+  const upd = computeCompanyState(coldOrg(), [], false, 3);
+  assert.equal(upd.relationship_state, 'in_contact');
+});
+
+test('a prior-history summary or an outbound stamp is also evidence', () => {
+  assert.equal(computeCompanyState(coldOrg({ ai_summary: 'Spoke in 2024 about a closet.' }), [], false, 0).relationship_state, 'in_contact');
+  assert.equal(computeCompanyState(coldOrg({ last_outbound_at: '2024-04-06T00:00:00Z' }), [], false, 0).relationship_state, 'in_contact');
+});
+
+test('a genuinely untouched prospect stays a prospect', () => {
+  assert.equal(computeCompanyState(coldOrg(), [], false, 0), null, 'no evidence, no change');
+});
+
+test('promotion out of prospect never overstates the relationship', () => {
+  // in_contact is the weakest honest thing we can say. A message count says
+  // nothing about whether the conversation went anywhere.
+  const upd = computeCompanyState(coldOrg(), [], false, 40);
+  assert.equal(upd.relationship_state, 'in_contact', '40 messages is still only in_contact');
+});
+
+test('being in a programme still wins over the prospect promotion', () => {
+  const upd = computeCompanyState(coldOrg(), [], true, 5);
+  assert.equal(upd.relationship_state, 'active', 'a donation partner is active, not in_contact');
+});
+
+test('lost is never resurrected by message evidence', () => {
+  const upd = computeCompanyState(coldOrg({ relationship_state: 'lost' }), [], false, 25);
+  assert.ok(!upd || upd.relationship_state === undefined, 'lost is operator-owned');
+});
+
+// ── program_flags must only be read for RUBIES programmes ────────────────────
+
+test('a non-programme flag does not promote a company to active', () => {
+  // Enrichment briefly wrote observations here. The old
+  // `Object.values(flags).some(Boolean)` would have promoted ~130 untouched
+  // prospects to 'active' on the next nightly run — a state never reversed.
+  const upd = computeCompanyState(
+    org({ program_flags: { serves_trans_community: true, site_appears_active: true } }), [], false, 0);
+  assert.ok(!upd || upd.relationship_state !== 'active', 'observations are not programme membership');
+});
+
+test('real programme flags still promote', () => {
+  assert.equal(computeCompanyState(coldOrg({ program_flags: { donation_closet: true } }), [], false, 0).relationship_state, 'active');
+  assert.equal(computeCompanyState(coldOrg({ program_flags: { purchases: true } }), [], false, 0).relationship_state, 'active');
+});

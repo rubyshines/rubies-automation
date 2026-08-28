@@ -24,11 +24,17 @@ test('businessDaysSince skips weekends', () => {
   assert.equal(businessDaysSince(new Date('2026-06-05T00:00:00Z'), NOW), 3);
 });
 
-test('seasonalWindow maps the locked windows', () => {
-  assert.equal(seasonalWindow(new Date('2026-06-10T00:00:00Z')), 'pride');
-  assert.equal(seasonalWindow(new Date('2026-08-20T00:00:00Z')), 'back_to_school');
-  assert.equal(seasonalWindow(new Date('2026-11-15T00:00:00Z')), 'year_end');
-  assert.equal(seasonalWindow(new Date('2026-10-05T00:00:00Z')), null);
+test('partner check-ins happen once a year, in October', () => {
+  // Was three windows (Pride, back-to-school, year-end) on a rolling per-org
+  // date. Pride is when these orgs are least able to reply and summer is when
+  // student-run ones are empty, so two of the three were badly chosen; and a
+  // rolling date scatters twenty check-ins across the year at one every few
+  // weeks, which is the shape of work that never gets done.
+  assert.equal(seasonalWindow(new Date('2026-10-05T00:00:00Z')), 'annual_checkin');
+  assert.equal(seasonalWindow(new Date('2026-10-31T00:00:00Z')), 'annual_checkin');
+  ['2026-06-10', '2026-08-20', '2026-09-30', '2026-11-01'].forEach((d) => {
+    assert.equal(seasonalWindow(new Date(d + 'T00:00:00Z')), null, d);
+  });
 });
 
 test('gates: lost, snoozed, contact_unknown, pending draft all block', () => {
@@ -83,14 +89,27 @@ test('reactivation only when no new_collection intervened', () => {
   assert.equal(evaluateDue(c, { sentTypes: new Set(), newCollectionSinceDormant: true }, NOW), null);
 });
 
-test('community_checkin: seasonal window + 180d for program orgs, 330d for giveaway-only', () => {
-  const programOrg = org({ program_flags: { donation_closet: true } });
-  const due = evaluateDue(programOrg, { sentTypes: new Set(), lastOutboundAt: '2025-11-01T00:00:00Z' }, NOW);
+test('community_checkin: October, and only ~10 months since we last wrote', () => {
+  const OCT = new Date('2026-10-08T00:00:00Z');
+  const partner = org({ program_flags: { donation_closet: true } });
+
+  const due = evaluateDue(partner, { sentTypes: new Set(), lastOutboundAt: '2025-10-01T00:00:00Z' }, OCT);
   assert.equal(due.message_type, 'community_checkin');
-  assert.match(due.reason, /pride/);
-  // giveaway-only org, 200d since touch: not due (threshold 330)
-  const giveawayOrg = org({ program_flags: {} });
-  assert.equal(evaluateDue(giveawayOrg, { sentTypes: new Set(), lastOutboundAt: '2025-11-22T00:00:00Z' }, NOW), null);
+  assert.match(due.reason, /annual_checkin/);
+
+  // Contacted in the August sweep: nowhere near due, and must not fire in the
+  // very next window. This is the case that decides whether the annual rhythm
+  // actually holds.
+  assert.equal(evaluateDue(partner, { sentTypes: new Set(), lastOutboundAt: '2026-08-20T00:00:00Z' }, OCT), null);
+
+  // Long overdue, but it is not October: wait for the sitting.
+  assert.equal(evaluateDue(partner, { sentTypes: new Set(), lastOutboundAt: '2025-01-01T00:00:00Z' },
+    new Date('2026-06-10T00:00:00Z')), null);
+
+  // The threshold no longer depends on which programmes they are in.
+  const giveawayOnly = org({ program_flags: {} });
+  assert.equal(evaluateDue(giveawayOnly, { sentTypes: new Set(), lastOutboundAt: '2025-10-01T00:00:00Z' }, OCT).message_type,
+    'community_checkin');
 });
 
 test('removed branches stay removed — they never had context to fire on', () => {
@@ -98,7 +117,9 @@ test('removed branches stay removed — they never had context to fire on', () =
   // gated on ctx fields buildContexts never set. Deleted 2026-07-29; this test
   // exists so reinstating one without its context fails loudly.
   const at = '2026-05-01T00:00:00Z';
-  const now = new Date('2026-10-10T00:00:00Z');
+  // Deliberately NOT October: this test is about branches that can never fire,
+  // and October is now the partner check-in window, which fires legitimately.
+  const now = new Date('2026-07-10T00:00:00Z');
   assert.equal(evaluateDue(org(), { sentTypes: new Set(), purchaseSignalAt: at }, now), null);
   assert.equal(evaluateDue(org(), { sentTypes: new Set(), lastPurchaseAt: '2025-07-01T00:00:00Z' }, now), null);
   assert.equal(evaluateDue(org({ relationship_state: 'active' }),
@@ -278,9 +299,10 @@ test('the sibling guard suppresses only the opener, not ongoing cadence', () => 
   const partner = org({
     relationship_state: 'active', program_flags: { donation_closet: true },
   });
+  // In the October window, and last written to a year before it.
   const due = evaluateDue(partner, freshCtx({
-    hasEngagedSibling: true, lastOutboundAt: '2025-11-01T00:00:00Z',
-  }), NOW);
+    hasEngagedSibling: true, lastOutboundAt: '2025-10-01T00:00:00Z',
+  }), new Date('2026-10-08T00:00:00Z'));
   assert.equal(due.message_type, 'community_checkin');
 });
 

@@ -45,9 +45,20 @@ function looksLikeOrder(body = '') {
  * recoverable (the message stays in history either way), so favor precision.
  * Pure.
  */
+const AUTO_REPLY_PATTERN = /\b(automatic reply|auto[- ]?repl(y|ied)|out of (the )?office|this (inbox|mailbox) is not monitored|do not reply to this (e-?mail|message)|we('|’)?ll (get|be) back to you within [^.\n]{0,30}(business |working )?days)\b/i;
+
 function detectAutoReply({ subject, body }) {
-  const s = `${subject || ''}\n${body || ''}`;
-  return /\b(automatic reply|auto[- ]?repl(y|ied)|out of (the )?office|this (inbox|mailbox) is not monitored|do not reply to this (e-?mail|message)|we('|’)?ll (get|be) back to you within [^.\n]{0,30}(business |working )?days)\b/i.test(s);
+  const s = String(subject || '');
+  const b = String(body || '');
+  // A subject that OPENS with "Re:" is a person writing into an existing
+  // thread — including into an auto-responder's own thread, which Gmail gives
+  // its own subject ("Out of Office Re: ..."). Judging that on the subject
+  // would file their reply as machine-generated, and since such a thread is
+  // now born closed, the reply would be invisible twice over. So judge it on
+  // the body alone: a genuine responder announces itself there too. Same
+  // reasoning detectCalendarNotice already applies to "Re: Accepted: ...".
+  if (/^\s*re:\s*/i.test(s)) return AUTO_REPLY_PATTERN.test(b);
+  return AUTO_REPLY_PATTERN.test(`${s}\n${b}`);
 }
 
 /**
@@ -202,16 +213,30 @@ async function correlateInbound(msg) {
   // one conversation regularly holds two orgs — an unscoped lookup found the OTHER
   // company's row and filed this message under their relationship. That is how 105
   // messages ended up mis-parented. A company now only ever matches its own row.
+  const inboundType = classifyInbound({ subject, body: body_text, from: sender });
+
   let threadId = null;
   const { data: thread } = await sb.from('b2b_threads')
     .select('id').eq('gmail_thread_id', gmail_thread_id).eq('company_id', companyId).maybeSingle();
   if (thread) {
     threadId = thread.id;
   } else {
+    // A thread whose FIRST message is machine-generated is born concluded.
+    // Gmail threads on subject, so an out-of-office ("Out of office RE: ...")
+    // opens a thread of its own, and there is nothing for a person to do with
+    // it. discoveredThreadStatus has always applied this rule on the Gmail
+    // discovery path; live Pub/Sub inbound never did, so every auto-reply that
+    // arrived in real time left an open thread to be closed by hand.
+    //
+    // Only ever at CREATION. An auto-reply landing inside a live conversation
+    // must not close it — they are still mid-thread with us, and the responder
+    // says nothing about that.
+    const bornClosed = NON_REPLY_INBOUND_TYPES.has(inboundType);
     const { data: created, error } = await sb.from('b2b_threads').insert({
       company_id: companyId, thread_type: 'other',
       subject: (subject || '').slice(0, 300), gmail_thread_id,
       last_message_at: received_at || new Date().toISOString(),
+      ...(bornClosed ? { status: 'closed' } : {}),
     }).select('id').single();
     if (error) {
       // unique race: another worker created it — refetch
@@ -232,7 +257,7 @@ async function correlateInbound(msg) {
   // exactly how two dead partner addresses stayed invisible.
   const { error: mErr } = await sb.from('b2b_messages').insert({
     thread_id: threadId, company_id: companyId, direction: 'inbound',
-    message_type: classifyInbound({ subject, body: body_text, from: sender }),
+    message_type: inboundType,
     gmail_message_id, gmail_thread_id,
     from_email: sender, to_email: to_email || null,
     body_text: (body_text || '').slice(0, 20000),

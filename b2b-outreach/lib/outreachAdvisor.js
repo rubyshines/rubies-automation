@@ -177,8 +177,25 @@ function renderMetadataFacts(metadata) {
  * advisor writing a breezy "hope the packages are useful" to an org that has
  * received one.
  */
-function renderDonationFacts(donation) {
-  if (!donation) return [];
+function renderDonationFacts(donation, company) {
+  if (!donation) {
+    // Silence is not a safe default here. Two matchers disagree about whether
+    // an org is a donation partner: syncB2bCompanyState sets
+    // program_flags.donation_closet by domain OR name, while this module's
+    // lookup is domain-ONLY (a name match once fused a German org onto an
+    // American clinic, so it stays strict). When the flag says partner and the
+    // records did not load, the advisor previously got NOTHING — and filled the
+    // gap with the opposite claim, offering to start a programme that had been
+    // running for a year and had already delivered 23 items. An absent record
+    // and a record of absence are different answers; say which one this is.
+    if (company && company.program_flags && company.program_flags.donation_closet) {
+      return ['', '## Donation closet: they ARE a partner, but the shipment records did not load',
+        '- This org receives donation routing from us. We could not retrieve how much or when.',
+        '- NEVER offer to add them to the programme, never say packages "will start" heading their way, and never state or imply any count or date.',
+        '- If the email touches donations at all, ask an open question they can answer — "how have the boxes been landing?" — rather than asserting anything.'];
+    }
+    return [];
+  }
   const { shipments, items, firstAt, lastAt } = donation;
   const lines = ['', '## Donation closet: what we have actually shipped them'];
   if (!shipments) {
@@ -193,6 +210,33 @@ function renderDonationFacts(donation) {
     lines.push('- This is a low volume. Acknowledge it directly rather than talking up the program.');
   }
   return lines;
+}
+
+/**
+ * One line describing what an automated pass read off the org's own website.
+ * Pure; returns null when there is nothing to say.
+ *
+ * Deliberately hedged and deliberately separate from "Programs". These facts
+ * are about the ORG, gathered without ever speaking to them, and most rows
+ * carrying them are strangers. The phrasing has to leave the advisor in no
+ * doubt that a clothing closet found here is one THEY run, not one we supply —
+ * the reverse reading would open a first email to a stranger as if they were
+ * an established partner.
+ */
+function describeEnrichFacts(facts) {
+  if (!facts || typeof facts !== 'object' || !Object.keys(facts).length) return null;
+  const notes = [];
+  if (facts.runs_clothing_program === true) {
+    notes.push('they appear to run their OWN gender-affirming clothing closet (this is their programme, not ours, and it does not mean we have ever sent them anything)');
+  }
+  if (facts.serves_trans_community === false) {
+    notes.push('nothing on their site indicates they serve trans or gender-diverse people, so do not assume they do');
+  }
+  if (facts.site_appears_active === false) {
+    notes.push('their website looks dormant, so treat any programme described on it as unconfirmed');
+  }
+  if (!notes.length) return null;
+  return `From their website, read automatically and never verified with them: ${notes.join('; ')}.`;
 }
 
 function renderContext({ company, contacts, messages, donation }, queueEntry, steer, now = new Date()) {
@@ -229,6 +273,13 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   }
   if (company.order_count) lines.push(`Orders: ${company.order_count} (total $${company.total_sales || 0}, last ${company.last_order_date || '—'})`);
   if (company.program_flags && Object.keys(company.program_flags).length) lines.push(`Programs: ${JSON.stringify(company.program_flags)}`);
+  // Rendered separately from Programs, and labelled as observation rather than
+  // relationship. "Programs" means what this org is IN with us; these are notes
+  // read off their own website by an automated pass, about an org we may never
+  // have spoken to. Collapsing the two would let a first touch open as though a
+  // stranger were already a partner.
+  const enrichLine = describeEnrichFacts(company.enrich_facts);
+  if (enrichLine) lines.push(enrichLine);
   // The rate is a country lookup, and quoting the wrong one in a partner email
   // is a promise we then have to walk back (it has happened: a Canadian partner
   // was quoted 50% and had to be corrected to 30% mid-thread). State it here so
@@ -245,7 +296,7 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
     + ' If the thread shows a different rate, quote THIS one anyway and raise the discrepancy'
     + ' in needs_review_reason rather than settling it yourself.');
   lines.push(...renderMetadataFacts(company.metadata));
-  lines.push(...renderDonationFacts(donation));
+  lines.push(...renderDonationFacts(donation, company));
   lines.push('');
   lines.push('## Contacts');
   for (const c of contacts) {
@@ -333,5 +384,5 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
 
 module.exports = {
   generateDraft, buildCompanyContext, renderContext, renderMetadataFacts,
-  renderDonationFacts, fetchDonationRouting, pickAdvisor, OUTPUT_SCHEMA,
+  renderDonationFacts, describeEnrichFacts, fetchDonationRouting, pickAdvisor, OUTPUT_SCHEMA,
 };
