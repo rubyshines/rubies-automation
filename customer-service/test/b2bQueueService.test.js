@@ -382,3 +382,30 @@ test('an unpaused company with a pending draft still shows', () => {
   const merged = mergePendingDraftEntries([], [{ company_id: 'x', queue_tier: 4 }], companies);
   assert.equal(merged.length, 1, 'control: the deferral is what excluded the others');
 });
+
+// ── a thread born from a machine ────────────────────────────────────────────
+// Gmail threads on subject, so an out-of-office ("Out of Office Re: ...")
+// opens a thread of its own with nothing in it a person can act on. The Gmail
+// discovery path has always created those closed; live Pub/Sub inbound never
+// did, so every auto-reply arriving in real time left a thread to close by
+// hand. Four had accumulated, including a calendar acceptance for a call that
+// was already booked.
+const { classifyInbound, NON_REPLY_INBOUND_TYPES } = require('../../b2b-outreach/lib/replyCorrelation');
+
+test('an out-of-office is classified as a non-reply', () => {
+  assert.equal(classifyInbound({ subject: 'Out of Office Re: Donation partner inquiry',
+    body: 'Hello! Thank you for reaching out! I am out of town due to a family emergency.' }), 'auto_reply');
+  assert.ok(NON_REPLY_INBOUND_TYPES.has('auto_reply'));
+});
+
+test('a calendar acceptance is a non-reply, so booking a call cannot queue itself', () => {
+  assert.equal(classifyInbound({ subject: 'Accepted: RUBIES x Lumenus Foundation', body: '' }), 'calendar_notice');
+});
+
+test('a human reply inside an auto-reply thread stays a reply', () => {
+  // The guard that keeps this safe: only a thread whose FIRST message is
+  // machine-generated is born closed. A person writing back must never be
+  // swallowed by the subject line they happen to be replying under.
+  assert.equal(classifyInbound({ subject: 'Re: Out of Office Re: Donation partner inquiry',
+    body: 'Hi Jamie, back now — Wednesday works for the call.' }), null);
+});

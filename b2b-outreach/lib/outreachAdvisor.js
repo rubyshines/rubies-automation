@@ -177,8 +177,25 @@ function renderMetadataFacts(metadata) {
  * advisor writing a breezy "hope the packages are useful" to an org that has
  * received one.
  */
-function renderDonationFacts(donation) {
-  if (!donation) return [];
+function renderDonationFacts(donation, company) {
+  if (!donation) {
+    // Silence is not a safe default here. Two matchers disagree about whether
+    // an org is a donation partner: syncB2bCompanyState sets
+    // program_flags.donation_closet by domain OR name, while this module's
+    // lookup is domain-ONLY (a name match once fused a German org onto an
+    // American clinic, so it stays strict). When the flag says partner and the
+    // records did not load, the advisor previously got NOTHING — and filled the
+    // gap with the opposite claim, offering to start a programme that had been
+    // running for a year and had already delivered 23 items. An absent record
+    // and a record of absence are different answers; say which one this is.
+    if (company && company.program_flags && company.program_flags.donation_closet) {
+      return ['', '## Donation closet: they ARE a partner, but the shipment records did not load',
+        '- This org receives donation routing from us. We could not retrieve how much or when.',
+        '- NEVER offer to add them to the programme, never say packages "will start" heading their way, and never state or imply any count or date.',
+        '- If the email touches donations at all, ask an open question they can answer — "how have the boxes been landing?" — rather than asserting anything.'];
+    }
+    return [];
+  }
   const { shipments, items, firstAt, lastAt } = donation;
   const lines = ['', '## Donation closet: what we have actually shipped them'];
   if (!shipments) {
@@ -279,7 +296,7 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
     + ' If the thread shows a different rate, quote THIS one anyway and raise the discrepancy'
     + ' in needs_review_reason rather than settling it yourself.');
   lines.push(...renderMetadataFacts(company.metadata));
-  lines.push(...renderDonationFacts(donation));
+  lines.push(...renderDonationFacts(donation, company));
   lines.push('');
   lines.push('## Contacts');
   for (const c of contacts) {

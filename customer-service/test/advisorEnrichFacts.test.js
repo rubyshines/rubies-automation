@@ -35,3 +35,38 @@ test('describeEnrichFacts is silent on empty or malformed input', () => {
     assert.equal(describeEnrichFacts(v), null, String(v));
   });
 });
+
+// ── an absent record vs a record of absence ─────────────────────────────────
+// Two matchers disagree about donation-partner status: syncB2bCompanyState
+// sets program_flags.donation_closet by domain OR name, while the routing
+// lookup is domain-only (a name match once fused a German org onto an American
+// clinic). McMinnville has the flag, no website, and a partner row whose
+// website is a bit.ly — so the flag said partner and the records said nothing.
+// The advisor got silence and offered to START a programme that had already
+// delivered 23 items across seven boxes.
+
+const { renderDonationFacts } = require('../../b2b-outreach/lib/outreachAdvisor');
+
+const partnerCo = { program_flags: { donation_closet: true } };
+
+test('a partner whose shipment records did not load is flagged, not passed over', () => {
+  const lines = renderDonationFacts(null, partnerCo).join('\n');
+  assert.match(lines, /they ARE a partner/i);
+  assert.match(lines, /NEVER offer to add them/);
+  assert.match(lines, /never state or imply any count or date/i);
+});
+
+test('an org that is simply not a partner still gets nothing', () => {
+  // A cold prospect must stay pitchable — the caution is only for the
+  // ambiguous case, or it would suppress the donation-closet pitch entirely.
+  assert.deepEqual(renderDonationFacts(null, { program_flags: {} }), []);
+  assert.deepEqual(renderDonationFacts(null, {}), []);
+  assert.deepEqual(renderDonationFacts(null, null), []);
+});
+
+test('real shipment records still win over the caution', () => {
+  const lines = renderDonationFacts(
+    { shipments: 7, items: 23, firstAt: '2026-06-03', lastAt: '2026-08-18' }, partnerCo).join('\n');
+  assert.match(lines, /7 packages routed, 23 items/);
+  assert.doesNotMatch(lines, /did not load/);
+});
