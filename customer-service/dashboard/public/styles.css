@@ -4567,6 +4567,19 @@ main { height: calc(100vh - 56px); }
   }
   .mobile-panel-back:active { background: var(--surface-inset); }
 
+  /* Tickets deliberately run edge to edge on a phone — their detail is a stack
+     of full-bleed sticky bars and sections that carry their own padding. The
+     list-only panels have no such structure: on desktop their content sits
+     inside .detail's `padding: 24px 32px`, which the mobile rule above zeroes
+     out, leaving text flush against both edges. Pad the panes rather than
+     .detail so the back bar and its divider still span the full width. */
+  #panel-outreach .detail > :not(.mobile-panel-back),
+  #panel-swimwear .detail > :not(.mobile-panel-back),
+  #panel-reviews .detail > :not(.mobile-panel-back) {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
   /* Combined back + summary: one sticky bar */
   .mobile-header-bar {
     display: flex;
