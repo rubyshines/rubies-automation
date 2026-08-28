@@ -223,7 +223,7 @@ async function handle(payload, gmailPush) {
         received_at: m.date,
       });
       if (r.matched && !r.duplicate) {
-        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}`);
+        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}${r.thankyou_closed ? ' (thank-you — thread closed)' : ''}`);
       }
     } catch (err) {
       console.warn(`[gmail-push] b2b correlation skipped: ${err.message}`);
