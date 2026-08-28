@@ -308,6 +308,8 @@ header h1 {
 main { height: calc(100vh - 56px); }
 .panel { height: 100%; }
 #panel-tickets { display: flex; }
+/* Shown only in the mobile block — desktop shows list and detail side by side. */
+.mobile-panel-back { display: none; }
 
 /* ─── Sidebar (Queue List) ───────────────────────────────── */
 
@@ -4499,7 +4501,14 @@ main { height: calc(100vh - 56px); }
 
   /* ── Sidebar / Detail Toggle ───────────────────────────── */
 
-  #panel-tickets {
+  /* Every panel with a .sidebar list and a .detail pane needs to be the
+     containing block for them — both are position:absolute below. Tickets had
+     this; Outreach, Free Swimwear and Reviews were added later without it, so
+     their layers resolved against the viewport and sat under the header. */
+  #panel-tickets,
+  #panel-outreach,
+  #panel-swimwear,
+  #panel-reviews {
     position: relative;
     overflow: hidden;
     height: 100%;
@@ -4532,6 +4541,31 @@ main { height: calc(100vh - 56px); }
   body.mobile-detail-view #detail-placeholder {
     display: none;
   }
+
+  /* Outreach / Free Swimwear / Reviews render their detail with innerHTML, so
+     the way back sits outside that in static markup. Tickets don't use this —
+     their back arrow lives in the combined mobile header bar below. */
+  .mobile-panel-back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--surface);
+    border: none;
+    border-bottom: 1px solid var(--border);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: -0.01em;
+    text-align: left;
+    cursor: pointer;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .mobile-panel-back:active { background: var(--surface-inset); }
 
   /* Combined back + summary: one sticky bar */
   .mobile-header-bar {

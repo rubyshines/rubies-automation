@@ -391,6 +391,14 @@ function handleSteerKeydown(e) {
 
 function switchTab(tab) {
   currentTab = tab;
+  // Mobile: every section switch leaves the detail layer. This has to happen
+  // before the per-tab branches — outreach/swimwear/reviews/adhoc all return
+  // early, so a switch out of a ticket used to carry mobile-detail-view into
+  // the next panel and reveal its (empty) detail pane instead of its list.
+  // Drops the class only: history.back() here would land asynchronously, after
+  // the branches below have already rewritten the URL, and undo them. The
+  // leftover entry is harmless — mobileEnterDetail() won't stack a second one.
+  document.body.classList.remove('mobile-detail-view');
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
   syncBottomNavActive();
@@ -489,8 +497,6 @@ function switchTab(tab) {
   currentDraft = null;
   ticketNavStack = [];
   location.hash = '';
-  // Mobile: exit detail view so sidebar is visible and clickable
-  document.body.classList.remove('mobile-detail-view');
   const ph = document.getElementById('detail-placeholder');
   ph.style.display = 'flex';
   ph.textContent = 'Select a ticket to review';
@@ -1007,10 +1013,7 @@ async function selectTicket(id) {
     updateNavArrows();
     showSidebarContext();
     // Mobile: switch to detail view
-    if (isMobile()) {
-      document.body.classList.add('mobile-detail-view');
-      history.pushState({ mobileDetail: true }, '');
-    }
+    mobileEnterDetail();
     updateSummaryBar(currentTicket);
   } catch (err) {
     console.error('Failed to load ticket:', err);
@@ -6012,6 +6015,7 @@ async function selectOutreachEntry(companyId) {
   const detailEl = document.getElementById('outreach-detail');
   document.getElementById('outreach-placeholder').style.display = 'none';
   detailEl.style.display = 'block';
+  mobileEnterDetail();
 
   // Conversation history + orders load in parallel with the draft. The
   // response returns at DB speed; Gmail sync (thread discovery + manual-send
@@ -8025,16 +8029,34 @@ function autoExpandTextarea(el) {
   }
 }
 
-function mobileBackToQueue() {
+// ── Mobile master/detail ───────────────────────────────────────────────────
+// On a phone a panel's .sidebar list and .detail pane are stacked layers, and
+// body.mobile-detail-view is the only thing that reveals the detail one (see
+// the mobile block in styles.css). Every panel that opens a row has to go
+// through these. Outreach, Free Swimwear and Reviews each painted their detail
+// into a pane that stayed display:none, so a row tap looked like a dead tap.
+function mobileEnterDetail() {
+  if (!isMobile()) return;
+  document.body.classList.add('mobile-detail-view');
+  // One entry however many rows get opened: back means "leave the detail", not
+  // "walk back through everything I looked at".
+  if (!history.state?.mobileDetail) history.pushState({ mobileDetail: true }, '');
+}
+
+function mobileExitDetail() {
   document.body.classList.remove('mobile-detail-view');
+  // Pop history state so browser back doesn't re-enter detail
+  if (history.state?.mobileDetail) history.back();
+}
+
+function mobileBackToQueue() {
   // The sidebar behind the detail sits on the customer-context pane whenever
   // a ticket is selected (desktop's middle column). On a phone that pane is a
   // dead end — its only control leads to the queue — so back skips it and
   // lands on the queue list directly.
   document.getElementById('sidebar-context').style.display = 'none';
   document.getElementById('sidebar-queue').style.display = 'block';
-  // Pop history state so browser back doesn't re-enter detail
-  if (history.state?.mobileDetail) history.back();
+  mobileExitDetail();
 }
 
 // Populate the sticky customer summary bar on mobile
@@ -8185,9 +8207,13 @@ function setupHistoryNavigation() {
   window.addEventListener('popstate', (e) => {
     if (isMobile() && document.body.classList.contains('mobile-detail-view')) {
       document.body.classList.remove('mobile-detail-view');
-      // Same as mobileBackToQueue: skip the customer-context pane on mobile
-      document.getElementById('sidebar-context').style.display = 'none';
-      document.getElementById('sidebar-queue').style.display = 'block';
+      // Same as mobileBackToQueue: skip the customer-context pane on mobile.
+      // Only tickets have that second sidebar view — the other panels are a
+      // single list, so reaching for it there would be a no-op at best.
+      if (document.getElementById('panel-tickets').style.display !== 'none') {
+        document.getElementById('sidebar-context').style.display = 'none';
+        document.getElementById('sidebar-queue').style.display = 'block';
+      }
     }
   });
 }
@@ -8437,6 +8463,7 @@ async function selectSwimwear(id) {
   const detailEl = document.getElementById('swimwear-detail');
   document.getElementById('swimwear-placeholder').style.display = 'none';
   detailEl.style.display = 'block';
+  mobileEnterDetail();
   detailEl.innerHTML = `<div class="swimwear-loading">Loading&hellip;</div>`;
   try {
     const r = await api(`/api/swimwear/${id}`);
@@ -8512,6 +8539,7 @@ function swimwearAdvancePast(id) {
     swimwearSelectedId = null;
     document.getElementById('swimwear-detail').style.display = 'none';
     document.getElementById('swimwear-placeholder').style.display = 'flex';
+    mobileExitDetail();
   }
 }
 
@@ -8676,6 +8704,7 @@ function selectReview(id) {
   document.getElementById('reviews-placeholder').style.display = 'none';
   const detailEl = document.getElementById('reviews-detail');
   detailEl.style.display = 'block';
+  mobileEnterDetail();
   if (!row) { detailEl.innerHTML = `<div class="swimwear-loading">Not in the loaded queue.</div>`; return; }
   renderReviewDetail(row);
 }
@@ -8730,6 +8759,7 @@ function reviewsAdvancePast(id) {
     reviewsSelectedId = null;
     document.getElementById('reviews-detail').style.display = 'none';
     document.getElementById('reviews-placeholder').style.display = 'flex';
+    mobileExitDetail();
   }
 }
 

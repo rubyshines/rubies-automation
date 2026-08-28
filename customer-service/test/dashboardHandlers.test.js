@@ -168,6 +168,56 @@ test('the global [hidden] rule sits ahead of every rule that sets display', () =
     + 'specificity is won by whichever comes last, so a rule above it is unguarded');
 });
 
+/**
+ * Fourth instance of the same shape, and the most expensive to notice: on a
+ * phone a panel's .sidebar list and .detail pane are stacked layers, and
+ * `body.mobile-detail-view` is the ONLY thing that reveals the detail one. Any
+ * panel that opens a row therefore has to set it, and has to offer a way back
+ * — the detail covers the list, so without one the panel is a trap.
+ *
+ * Only tickets ever did. Outreach, Free Swimwear and Reviews were each added
+ * later with the same markup and neither half of the wiring, so on mobile they
+ * painted a fully-rendered detail into a pane that stayed `display:none`. Every
+ * layer was correct: the row's onclick fired, the API answered, the HTML was
+ * built. It read as a dead tap, and it shipped that way in three panels because
+ * nothing joins the CSS to the JS.
+ */
+test('every list + detail panel is wired into mobile detail view', () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(PUBLIC_DIR, 'app.js'), 'utf8');
+
+  const panels = html.split('<div id="panel-').slice(1).map(chunk => ({
+    id: 'panel-' + chunk.slice(0, chunk.indexOf('"')),
+    markup: chunk.split('<div id="panel-')[0],
+  })).filter(p => /class="sidebar"/.test(p.markup) && /class="detail"/.test(p.markup));
+
+  assert.ok(panels.length >= 4,
+    `expected several list+detail panels, found ${panels.length} — if this dropped, `
+    + 'the check below is passing on an empty set');
+
+  for (const p of panels) {
+    assert.match(p.markup, /mobileExitDetail\(\)|mobileBackToQueue\(\)/,
+      `${p.id} has no mobile back control — on a phone its detail pane covers the `
+      + 'list, so there is no way back to it');
+  }
+
+  // The way IN. Every row-opener that reveals a detail pane has to enter mobile
+  // detail view; selectTicket does it without the display toggle, so it is
+  // named directly rather than inferred.
+  const openers = app.split(/\n(?=(?:async )?function )/)
+    .map(fn => ({ name: (fn.match(/^(?:async )?function ([A-Za-z0-9_$]+)/) || [])[1], body: fn }))
+    .filter(fn => fn.name && /^select[A-Z]/.test(fn.name) && /\.style\.display = 'block'/.test(fn.body));
+
+  assert.ok(openers.length >= 3, `expected several row-openers, found ${openers.length}`);
+  for (const fn of openers) {
+    assert.match(fn.body, /mobileEnterDetail\(\)/,
+      `${fn.name}() reveals a detail pane but never calls mobileEnterDetail() — on `
+      + 'mobile it will paint into a pane that stays display:none');
+  }
+  assert.match(app.split(/\n(?=(?:async )?function )/).find(f => /^async function selectTicket\b/.test(f)) || '',
+    /mobileEnterDetail\(\)/, 'selectTicket must go through the shared helper too');
+});
+
 test('the guards can actually see something', () => {
   // A regex that silently matched nothing would keep both tests above green
   // forever while checking exactly zero things.
