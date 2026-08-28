@@ -216,11 +216,13 @@ async function correlateInbound(msg) {
   const inboundType = classifyInbound({ subject, body: body_text, from: sender });
 
   let threadId = null;
+  let threadWasNew = false;
   const { data: thread } = await sb.from('b2b_threads')
     .select('id').eq('gmail_thread_id', gmail_thread_id).eq('company_id', companyId).maybeSingle();
   if (thread) {
     threadId = thread.id;
   } else {
+    threadWasNew = true;
     // A thread whose FIRST message is machine-generated is born concluded.
     // Gmail threads on subject, so an out-of-office ("Out of office RE: ...")
     // opens a thread of its own, and there is nothing for a person to do with
@@ -313,6 +315,25 @@ async function correlateInbound(msg) {
     await sb.from('b2b_companies').update({ contact_unknown: true, updated_at: nowIso }).eq('id', companyId);
   }
 
+  // 5. Thank-you closer: a human reply that is pure courtesy ("Thanks so
+  // much!") concludes the conversation — close the thread the way the operator
+  // would, so it never surfaces as Tier-1 "waiting on us". The companion of the
+  // born-closed rule above: that one handles machine mail at thread creation,
+  // this one handles human sign-offs mid-thread. The idempotent message insert
+  // is the claim — only the worker that actually inserted the message runs the
+  // classifier, so Pub/Sub redelivery cannot double-spend it. Fail-soft: any
+  // error leaves the thread open, which is the status quo.
+  let thankyou_closed = false;
+  if (!duplicate && !inboundType) {
+    try {
+      const { maybeCloseThankYou } = require('./thankYouCloser');
+      const closed = await maybeCloseThankYou(sb, { thread_id: threadId, inboundType, threadWasNew });
+      thankyou_closed = closed.closed;
+    } catch (err) {
+      console.warn(`[correlate] thank-you closer skipped on thread ${threadId}: ${err.message}`);
+    }
+  }
+
   return {
     matched: true,
     company_id: companyId,
@@ -320,6 +341,7 @@ async function correlateInbound(msg) {
     duplicate,
     contact_loss: loss,
     bounce,
+    thankyou_closed,
     looks_like_order: looksLikeOrder(body_text || ''),
   };
 }
