@@ -73,6 +73,15 @@ async function addProspect(sb, {
     if (cErr) throw new Error(`contact upsert: ${cErr.message}`);
   }
 
+  // Verify the address the moment it enters the book, so the sweep stays a
+  // catch-up rather than a pre-round chore. Fail-soft by design: a vendor
+  // outage must not break intake.
+  let verification = null;
+  if (email) {
+    const { verifyEmail } = require('./emailVerify');
+    verification = await verifyEmail(sb, email, { source: 'intake' });
+  }
+
   // A draft we have no way to deliver is a queue row that looks like work and
   // isn't. Drafting is fine for a form company (the operator submits it by
   // hand); it is not fine when we have no address AND no form.
@@ -107,6 +116,11 @@ async function addProspect(sb, {
     draft_id: draftResult?.draft_id || null,
     delivery: delivery.mode,
     ...(delivery.mode === 'form' ? { form_url: delivery.url } : {}),
+    // Surfaced so the operator hears "that address is dead" at intake, when
+    // fixing it costs one question to the referrer, not a bounced first touch.
+    ...(verification?.status === 'undeliverable'
+      ? { warning: `${email} verified UNDELIVERABLE (${verification.reason || 'no reason given'}) — get a working address before sending.` }
+      : {}),
   };
 }
 

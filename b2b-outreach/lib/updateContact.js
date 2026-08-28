@@ -129,6 +129,12 @@ async function updateCompanyContact(sb, { company_id, email, full_name, title, r
     .update({ contact_unknown: false, updated_at: new Date().toISOString() }).eq('id', company_id);
   if (coErr) throw new Error(`clear contact_unknown: ${coErr.message}`);
 
+  // A hand-entered address is exactly where a typo enters the book (retyping is
+  // where wrong send addresses come from) — probe it now, while the operator
+  // who can fix it is still looking. Fail-soft; the contact change stands.
+  const { verifyEmail } = require('./emailVerify');
+  const verification = await verifyEmail(sb, plan.contact.email, { source: 'operator_update' });
+
   return {
     company_id,
     company_name: company.name,
@@ -136,6 +142,9 @@ async function updateCompanyContact(sb, { company_id, email, full_name, title, r
     demoted: plan.demote,
     deactivated: plan.deactivate,
     previous_recipient: previous?.email || null,
+    ...(verification?.status === 'undeliverable'
+      ? { warning: `${plan.contact.email} verified UNDELIVERABLE (${verification.reason || 'no reason given'}) — check for a typo before writing to them.` }
+      : {}),
   };
 }
 

@@ -278,6 +278,32 @@ async function resolveDelivery(sb, companyId) {
  */
 const INVITE_CLAIM = /\bI just created an invite for\b/i;
 
+/**
+ * A recipient verified undeliverable gets refused BEFORE the Gmail call: the
+ * bounce it would produce is already on record, so sending anyway only spends
+ * sender reputation to relearn it. Deliberately fail-open in every other case —
+ * no verification row, a failed lookup, the table not yet migrated — because
+ * unverified is the book's default state and blocking real mail over missing
+ * infrastructure is worse than what this guards against. Bypass with
+ * `allow_undeliverable: true` when the operator knows better (e.g. the mailbox
+ * was just fixed and the stale verdict hasn't been re-probed).
+ */
+async function assertRecipientDeliverable(sb, toField) {
+  const { fetchVerifications, isUndeliverable, normalizeEmail } = require('./emailVerify');
+  const addresses = String(toField || '').split(',').map(normalizeEmail).filter(Boolean);
+  if (!addresses.length) return null;
+  const { byEmail } = await fetchVerifications(sb, addresses);
+  const dead = addresses.filter(a => isUndeliverable(byEmail.get(a)));
+  if (!dead.length) return null;
+  const detail = dead.map(a => `${a} (${byEmail.get(a)?.reason || 'no reason recorded'}, verified ${byEmail.get(a)?.verified_at})`).join('; ');
+  return {
+    ok: false,
+    phase: 'undeliverable_address',
+    error: `Refusing to send: ${detail} is verified undeliverable. Fix the contact record `
+      + '(b2b_update_contact), or re-send with allow_undeliverable: true if you know the mailbox works.',
+  };
+}
+
 async function assertInviteClaimIsBacked(sb, { company_id, body }) {
   if (!INVITE_CLAIM.test(body || '')) return null;
   const { data, error } = await sb.from('b2b_meetings')
@@ -436,6 +462,11 @@ async function sendB2bEmail(p = {}) {
     if (unbacked) return unbacked;
   }
 
+  if (!p.allow_undeliverable) {
+    const dead = await assertRecipientDeliverable(sb, recipient.email);
+    if (dead) return dead;
+  }
+
   if (!(await isFlagEnabled(SEND_FLAG))) {
     return {
       ok: false,
@@ -499,4 +530,4 @@ async function sendB2bEmail(p = {}) {
   return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
 }
 
-module.exports = { sendB2bEmail, assertInviteClaimIsBacked, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES, FROM_EMAIL, SEND_FLAG };
+module.exports = { sendB2bEmail, assertInviteClaimIsBacked, assertRecipientDeliverable, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES, FROM_EMAIL, SEND_FLAG };

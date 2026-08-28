@@ -400,6 +400,17 @@ async function main() {
         const { error: upErr } = await sb.from('b2b_companies').update(update).eq('id', row.id);
         if (upErr) throw new Error(upErr.message);
 
+        // A scraped address goes into the book verified, so a round built on
+        // this cohort never needs a separate verification pass first. Fail-soft:
+        // enrichment's job is done whether or not the probe succeeds.
+        if (update.general_email) {
+          const { verifyEmail } = require('../b2b-outreach/lib/emailVerify');
+          const v = await verifyEmail(sb, update.general_email, { source: 'enrich' });
+          if (v?.status === 'undeliverable') {
+            console.log(`${tag}   general_email ${update.general_email} verified UNDELIVERABLE (${v.reason || '?'})`);
+          }
+        }
+
         const hit = geo || geoApprox;
         if (hit) {
           if (geo) counts.located++; else counts.located_approx++;

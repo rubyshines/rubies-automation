@@ -365,16 +365,32 @@ async function replyGuard(sb, draft, { now = new Date() } = {}) {
 /** Is every address this send would reach known to be alive? */
 async function addressGuard(sb, draft) {
   const { data: company } = await sb.from('b2b_companies')
-    .select('id, contact_unknown').eq('id', draft.company_id).maybeSingle();
+    .select('id, contact_unknown, general_email').eq('id', draft.company_id).maybeSingle();
   if (company?.contact_unknown) {
     return { ok: false, why: 'contact_unknown — no working address on file' };
   }
   const { data: contacts, error } = await sb.from('b2b_contacts')
     .select('email, is_primary, bounced_at').eq('company_id', draft.company_id).eq('is_active', true);
   if (error) return { ok: false, why: `contact lookup failed (${error.message})` };
-  const live = (contacts || []).filter(c => !c.bounced_at);
+
+  // Verified-undeliverable is a recorded bounce we didn't have to send to get.
+  // The lookup itself FAILS OPEN (unverified addresses are the whole book's
+  // starting state, and a verification guard that blocks on its own
+  // infrastructure being missing is the fail-closed-forever trap) — only a
+  // positive 'undeliverable' row removes an address from consideration.
+  const { fetchVerifications, filterUndeliverable, isUndeliverable, normalizeEmail } =
+    require('./emailVerify');
+  const { byEmail } = await fetchVerifications(sb,
+    [...(contacts || []).map(c => c.email), company?.general_email].filter(Boolean));
+
+  const live = filterUndeliverable(contacts, byEmail);
   if ((contacts || []).length && !live.length) {
-    return { ok: false, why: 'every active contact has bounced — needs a new address' };
+    return { ok: false, why: 'every active contact has bounced or verified undeliverable — needs a new address' };
+  }
+  // No contacts → the send falls through to general_email; a dead one blocks.
+  if (!(contacts || []).length && company?.general_email
+    && isUndeliverable(byEmail.get(normalizeEmail(company.general_email)))) {
+    return { ok: false, why: `general_email ${company.general_email} verified undeliverable — needs a new address` };
   }
   return { ok: true };
 }
