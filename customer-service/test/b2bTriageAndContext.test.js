@@ -21,11 +21,12 @@ test('drop marks lost and demands a reason', () => {
   assert.throws(() => computeTriage('drop', { now: NOW }), /requires a reason/);
 });
 
-test('snooze validates the date', () => {
-  assert.equal(computeTriage('snooze', { until: '2026-12-01', now: NOW }).snoozed_until, '2026-12-01');
-  assert.throws(() => computeTriage('snooze', { now: NOW }), /requires an until date/);
-  assert.throws(() => computeTriage('snooze', { until: '01/12/2026', now: NOW }), /YYYY-MM-DD/);
-  assert.throws(() => computeTriage('snooze', { until: '2026-01-01', now: NOW }), /must be in the future/);
+test('snooze is refused — the cadence owns when a company is next due', () => {
+  // Deprecated 2026-08-27. It asked the operator to invent a date for a
+  // question the cadence already answers, and every real use meant "do not
+  // start something yet", which is the cadence's own job.
+  assert.throws(() => computeTriage('snooze', { until: '2026-12-01', now: NOW }), /deprecated/);
+  assert.throws(() => computeTriage('snooze', { now: NOW }), /deprecated/);
 });
 
 test('an unknown action is refused rather than silently ignored', () => {
@@ -125,10 +126,10 @@ test('resume clears every deferral, not just the pause', () => {
   assert.equal(upd.on_me_at, null);
 });
 
-test('snooze now records when it was set, not just when it lifts', () => {
-  const upd = computeTriage('snooze', { until: '2026-12-01', now: NOW });
-  assert.equal(upd.snoozed_until, '2026-12-01');
-  assert.equal(upd.snoozed_at, NOW.toISOString());
+test('a stray snooze value still defers, even though none can be set', () => {
+  // The reading path deliberately survives deprecation: pause shares
+  // deferredSince, and a value left on a row must keep behaving until cleared.
+  assert.ok(deferredSince({ id: 'x', snoozed_until: '2026-12-01', snoozed_at: '2026-08-01T00:00:00Z' }, NOW));
 });
 
 const paused = (over = {}) => ({ id: 'x', relationship_state: 'in_contact', ...over });
