@@ -8,6 +8,7 @@
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { processTicket, getAiBotUserId } = require('../../customer-service/intake/processGorgiasTickets');
+const { hasOrderHistory } = require('../../customer-service/lib/knownCustomer');
 const gorgias = require('../../customer-service/import/gorgiasClient');
 
 async function handle(payload) {
@@ -57,21 +58,28 @@ async function handle(payload) {
     return;
   }
 
-  // Skip spam (may be boolean or string from Gorgias templates)
-  if (ticket.spam === true || ticket.spam === 'True' || ticket.spam === 'true') {
-    console.log(`[gorgias-webhook] Skip ${ticketId}: spam`);
-    return;
-  }
-
-  // Gorgias templates may send tags as a JSON string
+  // Spam-flagged tickets (flag may be boolean or string from Gorgias
+  // templates; tags may arrive as a JSON string): a known customer overrides
+  // the flag. Gorgias's spam detector mislabels real customers — a refund
+  // request sat invisible for six weeks in 2026-07 because this handler
+  // hard-skipped on the flag and the nightly sweep shared the blind spot.
+  // Someone who has placed an order with us is never spam. Unknown senders
+  // stay skipped here; the nightly sweep's vendor-spam triage decides them
+  // (person → drafted, pitch → closed with a note) so nothing is dropped
+  // silently anymore.
+  const isSpamFlagged = ticket.spam === true || ticket.spam === 'True' || ticket.spam === 'true';
   let rawTags = ticket.tags || [];
   if (typeof rawTags === 'string') {
     try { rawTags = JSON.parse(rawTags); } catch { rawTags = []; }
   }
   const tags = (Array.isArray(rawTags) ? rawTags : []).map(tag => (tag.name || tag).toLowerCase());
-  if (tags.includes('spam')) {
-    console.log(`[gorgias-webhook] Skip ${ticketId}: spam tag`);
-    return;
+  if (isSpamFlagged || tags.includes('spam')) {
+    const known = await hasOrderHistory(supabase, ticket.customer.email);
+    if (!known) {
+      console.log(`[gorgias-webhook] Skip ${ticketId}: spam-flagged, sender unknown — deferred to nightly triage`);
+      return;
+    }
+    console.log(`[gorgias-webhook] Ticket ${ticketId}: spam-flagged but ${ticket.customer.email} has order history — overriding spam flag`);
   }
 
   // Check assignee — skip if assigned to another agent
