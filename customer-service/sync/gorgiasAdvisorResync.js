@@ -23,6 +23,7 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const {
   fetchOpenGorgiasTickets,
+  fetchOpenSpamTickets,
   fetchAdvisorTicketsFor,
   findAdvisorOnlyOpen,
   countGorgiasMessages,
@@ -213,6 +214,80 @@ async function run({ execute = false } = {}) {
         realMisses.push(item);
       }
       await gorgias.delay(300);
+    }
+  }
+
+  // ── Step 4b¾: Spam-flagged open tickets — the population the views hide ──
+  //    Gorgias's spam detector mislabels real customers, the views exclude
+  //    spam upstream, and the webhook skips unknown spam-flagged senders on
+  //    purpose (known customers override the flag there in real time). This
+  //    step is the designed home for everyone else: a known customer or a
+  //    triage-CUSTOMER verdict gets DRAFTED via normal intake — unlike a
+  //    regular real miss, which is report-only, because a spam-flagged miss
+  //    is a deferral by design, not an intake bug to keep visible. Pitches
+  //    get closed with a note by triage, so the junk stops accumulating and
+  //    nothing is dropped silently. Everything lands in the digest.
+
+  const spamRecovered = [];
+  {
+    // Read-only in dry runs: list candidates, spend nothing, write nothing.
+    const spamTickets = await fetchOpenSpamTickets(gorgias);
+    // Cost cap, not a coverage cap: each unknown sender costs an Opus classify.
+    // Steady state is a handful/day; a flood waits for the next night's run.
+    const MAX_SPAM_GATE_PER_RUN = 30;
+    const gated = spamTickets.slice(0, MAX_SPAM_GATE_PER_RUN);
+    if (spamTickets.length > gated.length) {
+      console.log(`  [spam-gate] ${spamTickets.length} open spam-flagged tickets; gating first ${gated.length}, rest deferred to next run`);
+    }
+    if (gated.length) {
+      const { hasOrderHistory } = require('../lib/knownCustomer');
+      const { triageDriftTicket } = require('../lib/driftTriage');
+      const spamIds = gated.map(t => t.id);
+      const { byGorgiasId: spamAdvisorMap } = await fetchAdvisorTicketsFor(supabase, spamIds, 'id, gorgias_ticket_id');
+      const { data: spamDrafts } = await supabase
+        .from('cs_ai_drafts')
+        .select('gorgias_ticket_id, gorgias_message_id')
+        .in('gorgias_ticket_id', spamIds);
+      const spamDraftIds = new Map();
+      for (const d of (spamDrafts || [])) {
+        if (!spamDraftIds.has(d.gorgias_ticket_id)) spamDraftIds.set(d.gorgias_ticket_id, new Set());
+        spamDraftIds.get(d.gorgias_ticket_id).add(d.gorgias_message_id);
+      }
+
+      for (const sTicket of gated) {
+        const email = sTicket.customer?.email || null;
+        try {
+          const known = email ? await hasOrderHistory(supabase, email) : false;
+          if (dryRun) {
+            console.log(`  [spam-gate] #${sTicket.id} ${email || '?'} — would ${known ? 'draft (known customer)' : 'triage (unknown sender)'}`);
+            continue;
+          }
+          if (!known) {
+            if (spamAdvisorMap.get(sTicket.id)) continue; // already in our system — regular drift machinery owns it
+            const messages = await gorgias.getTicketMessages(sTicket.id);
+            const { disposition, reason } = await triageDriftTicket({
+              supabase, gorgias, ticket: sTicket, messages,
+            });
+            if (disposition !== 'real_miss') {
+              autoResolved.push({ ticketId: sTicket.id, email: email || '?', disposition, reason: `spam-flagged: ${reason}` });
+              console.log(`  [spam-gate] #${sTicket.id}: auto-resolved (${disposition}) — ${reason}`);
+              await gorgias.delay(300);
+              continue;
+            }
+          }
+          const existingIds = spamDraftIds.get(sTicket.id) || new Set();
+          const result = await processTicket(supabase, sTicket, aiBotId, existingIds);
+          if (result?.skipped) {
+            console.log(`  [spam-gate] #${sTicket.id}: skipped by intake (${result.reason || 'no new message'})`);
+          } else {
+            spamRecovered.push({ ticketId: sTicket.id, email: email || '?', via: known ? 'known customer' : 'triage: customer' });
+            console.log(`  [spam-gate] #${sTicket.id}: drafted (${known ? 'known customer' : 'triage said customer'})`);
+          }
+        } catch (e) {
+          console.warn(`  [spam-gate] #${sTicket.id}: failed (${e.message}) — will retry next run`);
+        }
+        await gorgias.delay(300);
+      }
     }
   }
 
@@ -442,6 +517,11 @@ Example: NO | exchange confirmed and created, no reply needed`;
     console.log('  ✓ Everything in sync — nothing to do.\n');
   }
 
+  if (spamRecovered.length) {
+    console.log(`\n  ${spamRecovered.length} spam-flagged ticket(s) rescued and drafted:`);
+    for (const s of spamRecovered) console.log(`    #${s.ticketId}  ${s.email}  → ${s.via}`);
+  }
+
   return {
     openTickets: gorgiasTickets.length,
     driftIssues: realMisses.map(({ ticket, reason }) => ({
@@ -450,6 +530,7 @@ Example: NO | exchange confirmed and created, no reply needed`;
       reason,
     })),
     autoResolved,
+    spamRecovered,
     undelivered: undelivered.map(({ ticket, failedMessages, autoclosed }) => ({
       ticketId: ticket.id,
       email: ticket.customer?.email || '?',
@@ -552,13 +633,16 @@ async function runPipeline() {
     const detection = await run({ execute: true });
     const driftCount = detection.driftIssues.length;
     const autoResolvedCount = (detection.autoResolved || []).length;
+    const spamRecoveredCount = (detection.spamRecovered || []).length;
     const undeliveredCount = detection.undelivered.length;
     const followUpCount = detection.followUps.length;
     const followUpErrorCount = detection.followUps.filter(f => typeof f.action === 'string' && f.action.startsWith('error:')).length;
-    // Real misses are the only thing that ALARMS — auto-resolved noise is just informational.
+    // Real misses are the only thing that ALARMS — auto-resolved noise is just
+    // informational, and a spam rescue is a handled draft awaiting review.
     const hasIssues = driftCount > 0 || undeliveredCount > 0 || followUpErrorCount > 0;
     const detailParts = [`${detection.openTickets} open`];
     if (driftCount) detailParts.push(`${driftCount} real miss${driftCount === 1 ? '' : 'es'}`);
+    if (spamRecoveredCount) detailParts.push(`${spamRecoveredCount} rescued from spam`);
     if (autoResolvedCount) detailParts.push(`${autoResolvedCount} auto-resolved`);
     if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
     if (followUpCount) {
@@ -572,15 +656,16 @@ async function runPipeline() {
       sources: {
         ticket_reconciliation: {
           success: true,
-          rowsWritten: driftCount + autoResolvedCount + undeliveredCount + followUpCount,
+          rowsWritten: driftCount + autoResolvedCount + spamRecoveredCount + undeliveredCount + followUpCount,
           detail: detailParts.join(', '),
           driftIssues: detection.driftIssues,
           autoResolved: detection.autoResolved || [],
+          spamRecovered: detection.spamRecovered || [],
           undelivered: detection.undelivered,
           followUps: detection.followUps,
         },
       },
-      status: hasIssues ? 'warning' : (followUpCount || autoResolvedCount) ? 'success' : 'ok',
+      status: hasIssues ? 'warning' : (followUpCount || autoResolvedCount || spamRecoveredCount) ? 'success' : 'ok',
     };
   } catch (e) {
     console.error('Ticket reconciliation error:', e.message);

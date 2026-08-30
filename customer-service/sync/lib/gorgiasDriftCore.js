@@ -24,9 +24,53 @@ async function fetchOpenGorgiasTickets(gorgias) {
   const unassigned = await gorgias.getViewItems(VIEW_UNASSIGNED);
   const map = new Map();
   for (const t of [...open, ...unassigned]) {
+    // Defensive only — the views exclude spam upstream (verified 2026-08-28:
+    // 23 open spam-flagged tickets existed, the views returned none of them).
+    // Spam-flagged tickets are fetched separately by fetchOpenSpamTickets.
     if (!t.spam) map.set(t.id, t);
   }
   return [...map.values()];
+}
+
+/**
+ * Fetch open, spam-flagged tickets — the population the views hide.
+ *
+ * Gorgias's spam detector mislabels real customers (a refund request sat
+ * invisible for six weeks in 2026-07), and because the views exclude spam,
+ * neither the webhook nor this sweep ever saw those tickets — the safety net
+ * shared the fast path's blind spot. The generic /tickets list DOES return
+ * them, so this walks it newest-first and collects open+spam until the page
+ * crosses the date floor.
+ *
+ * The floor exists because open spam accumulates forever (nothing closes
+ * junk that nothing reads); without it the first run would trawl years of
+ * backlog. Anything older than the floor predates the current intake era
+ * and is handled by the one-off backfill, not the nightly sweep.
+ */
+async function fetchOpenSpamTickets(gorgias, { sinceDays = 60, maxPages = 30 } = {}) {
+  const floor = new Date(Date.now() - sinceDays * 86400000);
+  const found = [];
+  let cursor = null;
+  for (let page = 0; page < maxPages; page++) {
+    const { data: tickets, nextCursor } = await gorgias.getTickets({
+      cursor,
+      limit: 100,
+      order_by: 'created_datetime:desc',
+    });
+    if (!tickets.length) break;
+    for (const t of tickets) {
+      const spam = t.spam === true || t.spam === 'True' || t.spam === 'true';
+      if (spam && t.status === 'open' && new Date(t.created_datetime) >= floor) {
+        found.push(t);
+      }
+    }
+    const oldest = tickets[tickets.length - 1];
+    if (new Date(oldest.created_datetime) < floor) break;
+    cursor = nextCursor;
+    if (!cursor) break;
+    await gorgias.delay(300);
+  }
+  return found;
 }
 
 /**
@@ -142,6 +186,7 @@ module.exports = {
   VIEW_ALL_OPEN,
   VIEW_UNASSIGNED,
   fetchOpenGorgiasTickets,
+  fetchOpenSpamTickets,
   fetchAdvisorTicketsFor,
   findAdvisorOnlyOpen,
   countGorgiasMessages,

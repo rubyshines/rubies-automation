@@ -423,11 +423,30 @@ function buildTicketDriftHtml(results) {
 
   const driftIssues = src.driftIssues || [];
   const autoResolved = src.autoResolved || [];
+  const spamRecovered = src.spamRecovered || [];
   const undelivered = src.undelivered || [];
   const followUps = src.followUps || [];
-  if (!driftIssues.length && !autoResolved.length && !undelivered.length && !followUps.length) return '';
+  if (!driftIssues.length && !autoResolved.length && !spamRecovered.length && !undelivered.length && !followUps.length) return '';
 
   let html = '';
+
+  // Spam-flagged tickets rescued by the gate — a draft is waiting in the
+  // dashboard for each. Informational (handled), but worth a visible line:
+  // every one is a real customer the spam filter would have silently dropped.
+  if (spamRecovered.length) {
+    const rows = spamRecovered.map(s => `
+      <div style="padding:6px 12px;border-bottom:1px solid #d1fae5;font-size:13px;">
+        #${esc(String(s.ticketId))} <span style="color:#6b7280;">${esc(s.email)}</span> — <em>${esc(s.via)}</em>: drafted, awaiting review
+      </div>`).join('');
+
+    html += `
+      <div style="margin:20px 0 0;">
+        <div style="background:#ecfdf5;padding:8px 12px;border-radius:6px 6px 0 0;border:1px solid #d1fae5;">
+          <strong style="color:#047857;">Rescued from spam filter (${spamRecovered.length})</strong>
+        </div>
+        <div style="border:1px solid #d1fae5;border-top:0;border-radius:0 0 6px 6px;">${rows}</div>
+      </div>`;
+  }
 
   // Real misses — genuine customer tickets with no draft. The only part that alarms.
   if (driftIssues.length) {
