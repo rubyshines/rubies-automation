@@ -524,6 +524,71 @@ async function updateCustomer(customerId, input) {
   return data.customerUpdate.customer;
 }
 
+/**
+ * Can this customer participate in a customerMerge? Shopify refuses merges when
+ * either side has gift cards, store credit, subscriptions, payment methods, a
+ * company contact, a multipass identifier, or a pending data request/redaction.
+ */
+async function getCustomerMergeable(customerId) {
+  const data = await shopifyGraphQL(`
+    query customerMergeable($id: ID!) {
+      customer(id: $id) {
+        id
+        mergeable {
+          isMergeable
+          reason
+          errorFields
+          mergeInProgress { jobId }
+        }
+      }
+    }
+  `, { id: normalizeGid(customerId, 'Customer') });
+  return data.customer?.mergeable || null;
+}
+
+/**
+ * Merge two customers into one. Async on Shopify's side — returns
+ * { jobId, resultingCustomerId }; poll the job with pollShopifyJob.
+ * overrideFields picks which side's email/name survive
+ * (customerIdOfEmailToKeep, customerIdOfFirstNameToKeep, customerIdOfLastNameToKeep).
+ */
+async function customerMerge(customerOneId, customerTwoId, overrideFields = {}) {
+  const data = await shopifyGraphQL(`
+    mutation customerMerge($customerOneId: ID!, $customerTwoId: ID!, $overrideFields: CustomerMergeOverrideFields) {
+      customerMerge(customerOneId: $customerOneId, customerTwoId: $customerTwoId, overrideFields: $overrideFields) {
+        job { id done }
+        resultingCustomerId
+        userErrors { field message }
+      }
+    }
+  `, {
+    customerOneId: normalizeGid(customerOneId, 'Customer'),
+    customerTwoId: normalizeGid(customerTwoId, 'Customer'),
+    overrideFields,
+  });
+  return {
+    jobId: data.customerMerge.job?.id || null,
+    done: data.customerMerge.job?.done || false,
+    resultingCustomerId: data.customerMerge.resultingCustomerId,
+  };
+}
+
+/**
+ * Poll an async Shopify job until done or timeout. Returns true when the job
+ * completed, false on timeout (the job keeps running server-side either way).
+ */
+async function pollShopifyJob(jobId, { timeoutMs = 20000, intervalMs = 2000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const data = await shopifyGraphQL(`
+      query job($id: ID!) { job(id: $id) { id done } }
+    `, { id: jobId });
+    if (data.job?.done) return true;
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
 // --- Draft order mutations ---
 
 async function createDraftOrder(input) {
@@ -2322,6 +2387,9 @@ module.exports = {
   isTipLineItem,
   createCustomer,
   updateCustomer,
+  getCustomerMergeable,
+  customerMerge,
+  pollShopifyJob,
   createDiscountCode,
   findDiscountNodeByTitle,
   randomDiscountCode,

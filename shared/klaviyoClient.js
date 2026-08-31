@@ -342,6 +342,48 @@ function getKlaviyoClient() {
   }
 
   /**
+   * Change a profile's email address in place. Returns { ok: true } on success.
+   * If the new email already belongs to ANOTHER profile, Klaviyo rejects the
+   * PATCH with a duplicate_profile error carrying the conflicting profile's id —
+   * returned here as { ok: false, duplicate_profile_id } so the caller can
+   * merge instead. Any other failure throws.
+   */
+  async function updateProfileEmail(profileId, email) {
+    const body = {
+      data: { type: 'profile', id: profileId, attributes: { email: email.toLowerCase().trim() } },
+    };
+    try {
+      await apiFetch(`/api/profiles/${profileId}`, { method: 'PATCH', body: JSON.stringify(body) });
+      return { ok: true };
+    } catch (err) {
+      const dup = /duplicate_profile/.test(err.message)
+        && /"duplicate_profile_id"\s*:\s*"([^"]+)"/.exec(err.message);
+      if (dup) return { ok: false, duplicate_profile_id: dup[1] };
+      throw err;
+    }
+  }
+
+  /**
+   * Merge one profile into another. The SOURCE profile's data folds into the
+   * DESTINATION and the source is deleted (async on Klaviyo's side). The
+   * destination's identity (email) and subscription consent survive — merging
+   * never grants consent the destination didn't already have.
+   */
+  async function mergeProfiles(destinationProfileId, sourceProfileId) {
+    const body = {
+      data: {
+        type: 'profile-merge',
+        id: destinationProfileId,
+        relationships: {
+          profiles: { data: [{ type: 'profile', id: sourceProfileId }] },
+        },
+      },
+    };
+    await apiFetch('/api/profile-merge', { method: 'POST', body: JSON.stringify(body) });
+    return { ok: true, destinationProfileId };
+  }
+
+  /**
    * Subscribe or unsubscribe a profile from email/SMS marketing.
    *
    * action: 'subscribe' | 'unsubscribe'
@@ -437,6 +479,8 @@ function getKlaviyoClient() {
     getProfileLists,
     getProfiles,
     getProfileSubscriptionData,
+    updateProfileEmail,
+    mergeProfiles,
     updateSubscription,
     stripHtml,
   };

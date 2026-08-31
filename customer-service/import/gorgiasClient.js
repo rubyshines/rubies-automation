@@ -266,6 +266,30 @@ async function findOrCreateCustomer({ email, name }) {
 }
 
 /**
+ * Find an existing Gorgias customer by email. Returns the customer object or null.
+ */
+async function findCustomerByEmail(email) {
+  if (!email) return null;
+  const existing = await apiFetch(`/customers?email=${encodeURIComponent(email)}`);
+  return existing.data?.[0] || null;
+}
+
+/**
+ * Change a Gorgias customer's email address so replies (and follow-ups) route to
+ * the new address. Sets the primary email and adds a preferred email channel —
+ * Gorgias sends agent replies to the customer's preferred email channel.
+ */
+async function updateCustomerEmail(customerId, newEmail) {
+  return apiFetch(`/customers/${customerId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      email: newEmail,
+      channels: [{ type: 'email', address: newEmail, preferred: true }],
+    }),
+  });
+}
+
+/**
  * Re-point a ticket's customer (requester) to a different person. Used when a ticket
  * was created from a customer email forwarded to us by internal RUBIES staff — Gorgias
  * sets the requester to the forwarder, so replies (and the ticket's identity) would
@@ -659,6 +683,8 @@ module.exports = {
   findUser,
   // Write
   findOrCreateCustomer,
+  findCustomerByEmail,
+  updateCustomerEmail,
   setTicketCustomer,
   createTicket,
   createOutboundTicket,

@@ -7,6 +7,7 @@
 
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { normalizeOrderRow, normalizeLineItemRows, toGid } = require('../lib/normalize');
+const { upsertCustomerRow } = require('../lib/customerUpsert');
 
 async function handle(topic, payload) {
   const supabase = getSupabaseClient();
@@ -14,19 +15,18 @@ async function handle(topic, payload) {
 
   console.log(`[shopify-orders] ${topic} #${orderRow.order_number} (${orderRow.customer_email || 'no email'})`);
 
-  // Ensure customer exists
+  // Ensure customer exists (id-first upsert so an email change renames the
+  // existing row instead of forking a duplicate — see lib/customerUpsert.js)
   if (orderRow.customer_email) {
-    const { error: custErr } = await supabase
-      .from('customers')
-      .upsert({
+    try {
+      await upsertCustomerRow(supabase, {
         email: orderRow.customer_email,
         shopify_customer_id: payload.customer?.id ? toGid('Customer', payload.customer.id) : null,
         first_name: payload.customer?.first_name || null,
         last_name: payload.customer?.last_name || null,
         synced_at: new Date().toISOString(),
-      }, { onConflict: 'email' });
-
-    if (custErr) {
+      });
+    } catch (custErr) {
       console.error(`[shopify-orders] Customer upsert error: ${custErr.message}`);
     }
   }

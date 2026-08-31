@@ -1505,9 +1505,10 @@ For account email or name changes — the most common profile change requests �
 - Populate customer_profile_update: { new_email, new_first_name, new_last_name } — only the fields that changed.
 - Draft the reply in past tense and echo the new value back: "I've updated your account email to [the new address]." Keep it short (1-2 sentences plus signoff).
 - Do NOT say "I've flagged this for our team" or "we'll get back to you shortly."
+- This applies even when the new email might already have an account with us — the operator's tool detects that and merges the profiles; it is still an ordinary customer_profile_update, never an escalation.
 
 ### Other operator-completable admin changes (no MCP tool exists)
-For other routine profile updates with no automated tool — phone number changes, marketing/email subscription toggles, account merges, fixing miscellaneous profile fields — draft the reply in past tense as if done. The operator handles the change manually in Shopify before sending.
+For other routine profile updates with no automated tool — phone number changes, marketing/email subscription toggles, fixing miscellaneous profile fields — draft the reply in past tense as if done. The operator handles the change manually in Shopify before sending. (Account merges that are part of an email change are covered by customer_profile_update above; only a standalone "merge my two accounts" request with no email change belongs here.)
 - Confirm the new value back to the customer so the operator can verify what to apply.
 - Set status to "ready", message_type to "general_inquiry", action_type to null.
 - Keep the reply short (1-2 sentences plus signoff).
