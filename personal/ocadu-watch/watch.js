@@ -26,7 +26,7 @@ const { execFile } = require('child_process');
 const { sendEmail } = require('../../shared/sendgridClient');
 
 const BASE = 'https://selfservice.ocadu.ca/SelfService';
-const WATCHED_COURSES = ['ENGL-1003', 'IVCV-1001', 'VISC-1001', 'VISC-1002', 'VISC-1004'];
+const WATCHED_COURSES = ['ENGL-1003', 'IVCV-1001', 'VISC-1001', 'VISC-1002', 'VISC-1004', 'GART-1025'];
 const WATCHED_TERM = 'Fall 2026';
 const ALERT_TO = 'jamie@rubyshines.com';
 const REALERT_MINUTES = 30; // while a seat stays open
