@@ -1265,6 +1265,7 @@ async function getOrderForEdit(orderNumber) {
             discountApplications(first: 50) {
               edges {
                 node {
+                  __typename
                   allocationMethod
                   targetType
                   value {
