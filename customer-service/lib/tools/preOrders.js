@@ -3,7 +3,9 @@
  *
  * Pushes incoming-inventory dates/quantities from the pre-order Google Sheet
  * to the website (Shopify pre-order metafields + inventory policy), and clears
- * variants whose incoming dates have passed. See lib/merchandising/preOrderSync.js.
+ * variants whose incoming dates have passed. Enabling pre-order for a variant
+ * not already live is an explicit `enable` step, decoupled from the sheet.
+ * See lib/merchandising/preOrderSync.js.
  */
 
 const { syncPreOrders } = require('../merchandising/preOrderSync');
@@ -12,9 +14,11 @@ function fmtRow(o) {
   return `${o.sku} → ${o.date} (${o.incoming} incoming)`;
 }
 
-async function handleSyncPreOrders({ sku_filter, dry_run } = {}) {
+async function handleSyncPreOrders({ sku_filter, enable, disable, dry_run } = {}) {
   const result = await syncPreOrders({
     skuFilter: sku_filter || null,
+    enable: enable || [],
+    disable: disable || [],
     dryRun: dry_run ?? false,
   });
 
@@ -32,7 +36,7 @@ async function handleSyncPreOrders({ sku_filter, dry_run } = {}) {
     lines.push('', '**Set / updated:**', ...result.set.map(o => `- ${fmtRow(o)}`));
   }
   if (result.cleared.length) {
-    lines.push('', '**Cleared (incoming date passed / removed from sheet):**',
+    lines.push('', '**Cleared (arrival passed, removed from sheet, or disabled):**',
       ...result.cleared.map(o => `- ${o.sku}`));
   }
   if (result.skipped.length) {
@@ -52,13 +56,23 @@ module.exports = [
   {
     name: 'sync_pre_orders',
     description:
-      'Push incoming-inventory dates and quantities from the pre-order Google Sheet to the website. For each variant with a future-dated arrival it sets the Shopify pre-order metafields (pre_order_incoming_us / pre_order_date_us) and flips inventory policy to "continue" so the product shows as available for pre-order. Also clears variants whose arrival dates have passed (or were removed from the sheet). Pass sku_filter to scope to a SKU prefix (e.g. "MPAD" does only MPAD-* variants). Use dry_run=true to preview before applying.',
+      'Reconcile website pre-order state against the incoming-inventory Google Sheet. Variants ALREADY live on pre-order get their date/quantity metafields (pre_order_incoming_us / pre_order_date_us) refreshed, and variants whose arrival dates have passed (or were removed from the sheet) are cleared (inventory policy back to "deny"). A plain run never turns pre-order ON for a new variant — recording a production order in the sheet does not put products on pre-order. Turning pre-order ON is the explicit separate step: pass enable with SKU prefixes (e.g. ["GAF"]) once the operator decides to open pre-orders for those products. Pass disable to force pre-order OFF for live variants even though their arrivals are still upcoming (pausing a pre-order). Pass sku_filter to scope the whole run to a SKU prefix. Use dry_run=true to preview before applying.',
     inputSchema: {
       type: 'object',
       properties: {
         sku_filter: {
           type: 'string',
           description: 'Optional SKU prefix (case-insensitive). Only variants whose SKU starts with this are set/cleared (e.g. "MPAD", "AJ-BLK"). Omit to process the whole sheet.',
+        },
+        enable: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'SKU prefixes to newly turn ON pre-order for (e.g. ["GAF"]; "*" = every sheet SKU). Only needed the first time a product goes on pre-order; already-live variants stay updated without it. Cannot be combined with disable.',
+        },
+        disable: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'SKU prefixes to force pre-order OFF for (e.g. ["GAF"]; "*" = everything currently live), even though the sheet still shows upcoming arrivals. Cannot be combined with enable.',
         },
         dry_run: {
           type: 'boolean',

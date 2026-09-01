@@ -102,23 +102,68 @@ function run(incomingBySku, opts = {}) {
 }
 
 describe('syncPreOrders (dry run)', () => {
-  it('sets a new pre-order, updates a changed one, clears an expired one', async () => {
+  it('updates an already-live pre-order and clears an expired one, but does NOT newly enable without opt-in', async () => {
     const incoming = new Map([
-      ['MPAD-BLK-S', { incoming: [{ date: '2026-08-01', quantity: 30 }] }], // new
-      ['MPAD-BLK-M', { incoming: [{ date: '2026-09-01', quantity: 99 }] }], // changed
+      ['MPAD-BLK-S', { incoming: [{ date: '2026-08-01', quantity: 30 }] }], // new — needs enable
+      ['MPAD-BLK-M', { incoming: [{ date: '2026-09-01', quantity: 99 }] }], // already live, changed
       // OLD-BLK-XL absent from sheet AND already past-dated -> cleared
     ]);
     const r = await run(incoming);
     assert.equal(r.dryRun, true);
 
-    const setSkus = r.set.map(o => o.sku).sort();
-    assert.deepEqual(setSkus, ['MPAD-BLK-M', 'MPAD-BLK-S']);
-
-    const newOne = r.set.find(o => o.sku === 'MPAD-BLK-S');
-    assert.deepEqual({ date: newOne.date, incoming: newOne.incoming }, { date: '2026-08-01', incoming: 30 });
+    // Only the already-live variant is touched; the new one is withheld.
+    assert.deepEqual(r.set.map(o => o.sku), ['MPAD-BLK-M']);
+    assert.ok(r.skipped.some(s => s.sku === 'MPAD-BLK-S' && /not enabled/.test(s.reason)));
 
     const clearedSkus = r.cleared.map(o => o.sku);
     assert.deepEqual(clearedSkus, ['OLD-BLK-XL']);
+  });
+
+  it('enable turns pre-order ON for matching new SKUs', async () => {
+    const incoming = new Map([
+      ['MPAD-BLK-S', { incoming: [{ date: '2026-08-01', quantity: 30 }] }], // new
+      ['SWS-BLK-L', { incoming: [{ date: '2026-08-01', quantity: 10 }] }],  // new, not in enable list
+    ]);
+    const r = await run(incoming, { enable: ['MPAD'] });
+    assert.deepEqual(r.set.map(o => o.sku), ['MPAD-BLK-S']);
+    const newOne = r.set.find(o => o.sku === 'MPAD-BLK-S');
+    assert.deepEqual({ date: newOne.date, incoming: newOne.incoming }, { date: '2026-08-01', incoming: 30 });
+    assert.ok(r.skipped.some(s => s.sku === 'SWS-BLK-L' && /not enabled/.test(s.reason)));
+  });
+
+  it("enable '*' turns on every sheet SKU with a catalog match", async () => {
+    const incoming = new Map([
+      ['MPAD-BLK-S', { incoming: [{ date: '2026-08-01', quantity: 30 }] }],
+      ['SWS-BLK-L', { incoming: [{ date: '2026-08-01', quantity: 10 }] }],
+    ]);
+    const r = await run(incoming, { enable: ['*'] });
+    assert.deepEqual(r.set.map(o => o.sku).sort(), ['MPAD-BLK-S', 'SWS-BLK-L']);
+  });
+
+  it('disable force-clears a live variant even though its arrival is still upcoming', async () => {
+    const incoming = new Map([
+      ['MPAD-BLK-M', { incoming: [{ date: '2026-09-01', quantity: 99 }] }], // live + future arrival
+    ]);
+    const r = await run(incoming, { disable: ['MPAD'] });
+    assert.equal(r.set.length, 0);
+    // Both the disabled live variant and the expired one clear.
+    assert.deepEqual(r.cleared.map(o => o.sku).sort(), ['MPAD-BLK-M', 'OLD-BLK-XL']);
+  });
+
+  it("disable '*' clears everything currently live", async () => {
+    const incoming = new Map([
+      ['MPAD-BLK-M', { incoming: [{ date: '2026-09-01', quantity: 99 }] }],
+    ]);
+    const r = await run(incoming, { disable: ['*'] });
+    assert.equal(r.set.length, 0);
+    assert.deepEqual(r.cleared.map(o => o.sku).sort(), ['MPAD-BLK-M', 'OLD-BLK-XL']);
+  });
+
+  it('rejects enable and disable in the same run', async () => {
+    await assert.rejects(
+      () => run(new Map(), { enable: ['MPAD'], disable: ['SWS'] }),
+      /either enable or disable/
+    );
   });
 
   it('skips a variant whose web state already matches the sheet', async () => {
@@ -136,7 +181,7 @@ describe('syncPreOrders (dry run)', () => {
       ['MPAD-BLK-S', { incoming: [{ date: '2026-08-01', quantity: 30 }] }],
       ['MPAD-BLK-M', { incoming: [{ date: '2026-07-30', quantity: 20 }] }], // unchanged, keeps it
     ]);
-    const r = await run(incoming, { skuFilter: 'MPAD' });
+    const r = await run(incoming, { skuFilter: 'MPAD', enable: ['MPAD'] });
     assert.deepEqual(r.set.map(o => o.sku), ['MPAD-BLK-S']);
     // OLD-BLK-XL is expired but outside the MPAD filter -> NOT cleared
     assert.equal(r.cleared.length, 0);

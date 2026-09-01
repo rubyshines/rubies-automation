@@ -16,6 +16,16 @@
  * (inventory_policy = DENY + the _us metafields deleted). Scope both the set and
  * the clear to a SKU prefix with skuFilter (e.g. "MPAD").
  *
+ * Enabling is DECOUPLED from the sheet (2026-09-01): recording a production
+ * order's incoming inventory must not itself put a product on pre-order. A sync
+ * run only UPDATES variants already live on pre-order and CLEARS stale ones.
+ * Turning pre-order ON for new variants is an explicit step: pass
+ * `enable: ['GAF', ...]` (SKU prefixes, '*' for all). Sheet SKUs with upcoming
+ * arrivals that aren't enabled are reported as skipped, never silently applied.
+ * `disable: ['GAF', ...]` (or '*') force-clears live variants even while their
+ * arrivals are still upcoming — for pausing a pre-order that was turned on.
+ * One run does one thing: enable and disable cannot be combined.
+ *
  * Catalog source of truth for SKU -> variant/product resolution is the Supabase
  * `product_variants` mirror, so this runs without loading the in-memory cache.
  */
@@ -86,12 +96,21 @@ function setVariantInput(variantId, date, incoming) {
  *
  * @param {object} opts
  * @param {string|null} opts.skuFilter  Only act on SKUs starting with this prefix (case-insensitive). Omit for all.
+ * @param {string[]} [opts.enable]  SKU prefixes ('*' = all) to newly turn ON pre-order for.
+ *   Without a match here, a sheet SKU that isn't already live is skipped, not set.
+ * @param {string[]} [opts.disable]  SKU prefixes ('*' = all) to force-clear even
+ *   while their sheet arrivals are still upcoming. Cannot be combined with enable.
  * @param {boolean} opts.dryRun  When true, compute the plan but make no writes.
  * @param {string} [opts.today]  Override today (YYYY-MM-DD); defaults to ET today.
  * @param {object} [opts.deps]  Injectable deps for testing.
- * @returns {Promise<object>} summary { dryRun, today, skuFilter, set, cleared, skipped, errors }
+ * @returns {Promise<object>} summary { dryRun, today, skuFilter, enable, disable, set, cleared, skipped, errors }
  */
-async function syncPreOrders({ skuFilter = null, dryRun = false, today = null, onProgress = null, deps = {} } = {}) {
+async function syncPreOrders({ skuFilter = null, enable = [], disable = [], dryRun = false, today = null, onProgress = null, deps = {} } = {}) {
+  if (enable.length && disable.length) {
+    throw new Error('pass either enable or disable, not both — one run does one thing');
+  }
+  const matchesAny = (sku, prefixes) => prefixes.some(p =>
+    p === '*' || sku.trim().toUpperCase().startsWith(String(p).trim().toUpperCase()));
   const day = today || todayET();
   const report = msg => { if (typeof onProgress === 'function') onProgress(msg); };
   const fetchIncoming = deps.fetchIncomingOrders
@@ -115,12 +134,18 @@ async function syncPreOrders({ skuFilter = null, dryRun = false, today = null, o
   const set = [];
   const skipped = [];
 
-  // SET / update: every desired SKU within filter whose web state is stale.
+  // SET / update: desired SKUs within filter that are already live on
+  // pre-order (keep them accurate) or explicitly enabled this run.
   for (const [sku, d] of desired) {
     if (!matchesFilter(sku)) continue;
     const row = bySku.get(sku.trim().toUpperCase());
     if (!row) {
       skipped.push({ sku, reason: 'no matching variant in catalog' });
+      continue;
+    }
+    if (matchesAny(sku, disable)) continue; // force-off below via the clear branch
+    if (row.pre_order_date == null && !matchesAny(sku, enable)) {
+      skipped.push({ sku, reason: 'upcoming arrival in sheet but pre-order not enabled — pass enable to turn on' });
       continue;
     }
     const same =
@@ -137,12 +162,13 @@ async function syncPreOrders({ skuFilter = null, dryRun = false, today = null, o
     });
   }
 
-  // CLEAR: currently-marked variants (within filter) with no future arrival left.
+  // CLEAR: currently-marked variants (within filter) with no future arrival
+  // left, plus any the operator is force-disabling this run.
   const cleared = [];
   for (const row of rows) {
     if (row.pre_order_date == null) continue;
     if (!row.sku || !matchesFilter(row.sku)) continue;
-    if (desiredUpper.has(row.sku.trim().toUpperCase())) continue;
+    if (!matchesAny(row.sku, disable) && desiredUpper.has(row.sku.trim().toUpperCase())) continue;
     cleared.push({
       sku: row.sku,
       variantId: row.shopify_variant_id,
@@ -155,7 +181,7 @@ async function syncPreOrders({ skuFilter = null, dryRun = false, today = null, o
   report(`Plan: ${set.length} to set/update, ${cleared.length} to clear` +
     (skipped.length ? `, ${skipped.length} skipped` : '') + '.');
   if (dryRun) {
-    return { dryRun: true, today: day, skuFilter, set, cleared, skipped, errors };
+    return { dryRun: true, today: day, skuFilter, enable, disable, set, cleared, skipped, errors };
   }
 
   // --- Execute: Shopify writes grouped by product, then mirror to Supabase. ---
@@ -241,6 +267,8 @@ async function syncPreOrders({ skuFilter = null, dryRun = false, today = null, o
     dryRun: false,
     today: day,
     skuFilter,
+    enable,
+    disable,
     set: setDone,
     cleared: clearDone,
     skipped,
