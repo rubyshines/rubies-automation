@@ -8,7 +8,8 @@
  *     --target "Target availability middle of August, 2026." \
  *     --target "Will ship when in stock" \
  *     [--stale-target "Target availability beginning of April, 2026."] \
- *     [--exclude 32455] [--test-send | --send] [--resend] [--test-recipient x@y]
+ *     [--exclude 32455] [--offer-refund] \
+ *     [--test-send | --send] [--resend] [--test-recipient x@y]
  *
  * Default is a dry run: prints counts, one example body per variant, and the
  * full would-send list. --test-send emails one example per variant to the test
@@ -40,6 +41,7 @@ async function main() {
     waveTargets: collect(args, '--target'),
     staleTargets: collect(args, '--stale-target'),
     excludeOrders: collect(args, '--exclude').map(Number),
+    offerRefund: args.includes('--offer-refund'),
     mode,
     testRecipient: single(args, '--test-recipient') || undefined,
     resend: args.includes('--resend'),

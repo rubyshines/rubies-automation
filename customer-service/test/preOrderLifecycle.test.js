@@ -151,6 +151,56 @@ test('composeUpdateEmail: past promise adds the apology line', () => {
   assert.match(text, /We are sorry for the wait\./);
 });
 
+test('classifyOrderLines: a no-SKU line (checkout Tip) is neither pre-order nor in-stock', () => {
+  const { preItems, inStockItems } = classifyOrderLines(
+    [
+      { sku: 'GAF-BLK-M', title: 'NAOMI GAFF', variantTitle: 'Black / M', qty: 1,
+        customAttributes: [{ key: 'Pre-order', value: 'Target availability middle of October, 2026.' }] },
+      { sku: null, title: 'Tip', variantTitle: null, qty: 1, customAttributes: [] },
+    ],
+    { waveTargets: ['Target availability middle of October, 2026.'] },
+    NOW
+  );
+  assert.equal(preItems.length, 1);
+  assert.equal(inStockItems.length, 0); // Tip must not flip the order to B_mixed
+});
+
+test('composeUpdateEmail: offerRefund on variant A adds refund option + upfront apology', () => {
+  const { text, variant } = composeUpdateEmail({
+    preItems: [preLine('Target availability middle of October, 2026.')],
+    inStockItems: [],
+    newDatePhrase: 'the end of November',
+    offerRefund: true,
+  }, NOW);
+  assert.equal(variant, 'A_pre_only');
+  assert.match(text, /We are so sorry for the extra wait\./);
+  assert.match(text, /closer to the end of November\./);
+  assert.match(text, /full refund, no questions asked/);
+  assert.match(text, /happy to wait, you do not need to do a thing/);
+});
+
+test('composeUpdateEmail: offerRefund on variant B adds the refund as option 3', () => {
+  const { text, variant } = composeUpdateEmail({
+    preItems: [preLine('Target availability middle of October, 2026.')],
+    inStockItems: [line('AJ-BLK-M', null)],
+    newDatePhrase: 'the end of November',
+    offerRefund: true,
+  }, NOW);
+  assert.equal(variant, 'B_mixed');
+  assert.match(text, /1\. Have us split your order/);
+  assert.match(text, /2\. Swap your pre-order/);
+  assert.match(text, /3\. Get a refund on your pre-order/);
+});
+
+test('composeUpdateEmail: without offerRefund no refund language appears', () => {
+  const { text } = composeUpdateEmail({
+    preItems: [preLine('Target availability middle of October, 2026.')],
+    inStockItems: [],
+    newDatePhrase: 'the end of November',
+  }, NOW);
+  assert.doesNotMatch(text, /refund/i);
+});
+
 test('composeUpdateEmail: no-date promise uses the timing framing', () => {
   const { text } = composeUpdateEmail({
     preItems: [preLine('Will ship when in stock')],

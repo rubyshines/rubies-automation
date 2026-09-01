@@ -64,6 +64,7 @@ async function handleUpdateNotice(args = {}) {
     waveTargets: args.wave_targets,
     staleTargets: args.stale_targets || [],
     excludeOrders: args.exclude_orders || [],
+    offerRefund: args.offer_refund ?? false,
     mode: args.mode || 'dry_run',
     testRecipient: args.test_recipient || undefined,
     resend: args.resend ?? false,
@@ -116,6 +117,10 @@ module.exports = [
           type: 'array',
           items: { type: 'number' },
           description: 'Order numbers to leave out (e.g. handled individually).',
+        },
+        offer_refund: {
+          type: 'boolean',
+          description: 'Add a full-refund option and an upfront apology to the emails (use when the slip is big). Default false (swap/split offer only).',
         },
         mode: {
           type: 'string',

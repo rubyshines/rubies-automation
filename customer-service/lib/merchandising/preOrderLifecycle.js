@@ -117,6 +117,7 @@ function classifyOrderLines(lines, { waveTargets, staleTargets = [] }, now = new
   const unhandledTargets = [];
 
   for (const li of lines) {
+    if (!li.sku) continue; // Tip / no-SKU lines are not shippable items — never "in stock"
     const target = ((li.customAttributes || []).find(a => a.key === 'Pre-order') || {}).value?.trim() || null;
     if (!target || stale.has(target)) { inStockItems.push(li); continue; }
     if (wave.has(target)) { preItems.push({ ...li, target }); continue; }
@@ -129,9 +130,11 @@ function classifyOrderLines(lines, { waveTargets, staleTargets = [] }, now = new
  * Compose the update email. Variant A (no in-stock items) offers a swap;
  * variant B (mixed) offers split-or-swap. Opener + apology derive from the
  * earliest promised target. newDatePhrase reads like "the end of August".
+ * offerRefund adds a full-refund option and an upfront apology, for waves
+ * where the slip is big enough to warrant a stronger make-good.
  * No em dashes anywhere — customer-facing copy rule.
  */
-function composeUpdateEmail({ preItems, inStockItems, newDatePhrase }, now = new Date()) {
+function composeUpdateEmail({ preItems, inStockItems, newDatePhrase, offerRefund = false }, now = new Date()) {
   const itemLines = preItems.map(describeItem);
   const plural = preItems.length > 1;
   const preNoun = `pre-order${plural ? ' items' : ''}`;
@@ -149,6 +152,9 @@ function composeUpdateEmail({ preItems, inStockItems, newDatePhrase }, now = new
   } else if (earliest.isPast) {
     opener = `When you placed your order, the target availability for your ${preNoun} was ${earliest.phrase}:`;
     update = `We are sorry for the wait. Our new inventory is on its way, and it is now looking like your order will ship closer to ${newDatePhrase}.`;
+  } else if (offerRefund) {
+    opener = `When you placed your order, the target availability for your ${preNoun} was ${earliest.phrase}:`;
+    update = `We are so sorry for the extra wait. Production is taking longer than we hoped, and it is now looking like your order will ship closer to ${newDatePhrase}.`;
   } else {
     opener = `When you placed your order, the target availability for your ${preNoun} was ${earliest.phrase}:`;
     update = `Our new inventory is on its way, but it is now looking like your order will ship closer to ${newDatePhrase}.`;
@@ -162,8 +168,16 @@ function composeUpdateEmail({ preItems, inStockItems, newDatePhrase }, now = new
       'If you need something from your order more urgently, you can:\n\n' +
       '1. Have us split your order and ship the in-stock items right away. ' +
       `The ${preNoun} will follow as soon as ${plural ? 'they arrive' : 'it arrives'}.\n` +
-      `2. Swap your ${preNoun} for something that is in stock, so your whole order ships now.\n\n` +
-      'Just reply to this email and let us know. Otherwise we will ship everything together as soon as your pre-order arrives.';
+      `2. Swap your ${preNoun} for something that is in stock, so your whole order ships now.\n` +
+      (offerRefund
+        ? `3. Get a refund on your ${preNoun} if you would rather not wait, no questions asked.\n`
+        : '') +
+      '\nJust reply to this email and let us know. Otherwise we will ship everything together as soon as your pre-order arrives.';
+  } else if (offerRefund) {
+    middle =
+      'If you would rather not wait, we completely understand. We would be happy to swap your pre-order for something we have in stock ' +
+      '(we have inventory in most styles, colours and sizes), or give you a full refund, no questions asked. ' +
+      'Just reply to this email and we will get you sorted. And if you are happy to wait, you do not need to do a thing.';
   } else {
     middle =
       'If you need something from your order more urgently, we would be happy to swap your pre-order for something we have in stock. ' +
@@ -455,6 +469,8 @@ async function previouslyNotified(communicatedTarget) {
  * @param {string[]} [args.staleTargets] promised texts whose stock arrived
  *   (operator judgment) — lines treated as in-stock
  * @param {number[]} [args.excludeOrders]
+ * @param {boolean} [args.offerRefund=false]  add a full-refund option + upfront
+ *   apology to the composed emails (for waves with a big slip)
  * @param {'dry_run'|'test_send'|'send'} [args.mode='dry_run']
  * @param {string} [args.testRecipient]
  * @param {boolean} [args.resend=false]  include orders already told this date
@@ -464,6 +480,7 @@ async function sendPreOrderUpdateNotices({
   waveTargets,
   staleTargets = [],
   excludeOrders = [],
+  offerRefund = false,
   mode = 'dry_run',
   testRecipient = DEFAULT_TEST_RECIPIENT,
   resend = false,
@@ -498,7 +515,7 @@ async function sendPreOrderUpdateNotices({
       continue;
     }
 
-    const email = composeUpdateEmail({ preItems, inStockItems, newDatePhrase });
+    const email = composeUpdateEmail({ preItems, inStockItems, newDatePhrase, offerRefund });
     candidates.push({
       order_number: row.order_number,
       customer_email: row.customer_email,
