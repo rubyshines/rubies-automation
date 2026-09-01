@@ -3,7 +3,7 @@ const assert = require('node:assert');
 
 const {
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText, volumeMetafieldText,
-  giftSentenceClause, giftShortClause, saleHasGift,
+  giftSentenceClause, giftShortClause, saleHasGift, saleIsActive, expiredActiveSales,
 } = require('../../promotions/discounts');
 
 // The manage_discount tool's start_sale guards short-circuit BEFORE any Shopify/DB
@@ -151,4 +151,43 @@ test('volumeMetafieldText: sorted, bolded thresholds', () => {
     volumeMetafieldText([{ threshold: 5, percentage: 15 }, { threshold: 3, percentage: 10 }]),
     '<b>3+</b> 10% off, <b>5+</b> 15% off'
   );
+});
+
+// --- saleIsActive / expiredActiveSales — the status-vs-dates distinction -----
+// Shopify auto-expires the discount nodes at ends_at, but the registry row
+// stays status 'active' until end_sale (or the daily sweep) runs. Anything
+// surfacing "the sale is on" must check dates, not status alone.
+
+const saleRow = (over = {}) => ({
+  kind: 'sale', name: 'Test Sale', status: 'active',
+  starts_at: '2026-08-21T04:00:00Z', ends_at: '2026-09-01T07:00:00Z', ...over,
+});
+
+test('saleIsActive: within the window', () => {
+  assert.equal(saleIsActive(saleRow(), new Date('2026-08-25T12:00:00Z')), true);
+});
+
+test('saleIsActive: false before start and after end, even with status active', () => {
+  assert.equal(saleIsActive(saleRow(), new Date('2026-08-20T12:00:00Z')), false);
+  assert.equal(saleIsActive(saleRow(), new Date('2026-09-01T07:00:01Z')), false);
+});
+
+test('saleIsActive: false once status is ended, even inside the window', () => {
+  assert.equal(saleIsActive(saleRow({ status: 'ended' }), new Date('2026-08-25T12:00:00Z')), false);
+});
+
+test('saleIsActive: open-ended sale (no ends_at) stays active', () => {
+  assert.equal(saleIsActive(saleRow({ ends_at: null }), new Date('2027-01-01T00:00:00Z')), true);
+});
+
+test('expiredActiveSales: picks only active sales past their end', () => {
+  const rows = [
+    saleRow({ name: 'Long Over' }),                                              // expired, still active → sweep
+    saleRow({ name: 'Still On', ends_at: '2026-12-01T08:00:00Z' }),              // live → leave
+    saleRow({ name: 'Already Ended', status: 'ended' }),                         // closed out → leave
+    saleRow({ name: 'Open Ended', ends_at: null }),                              // no end → leave
+    { kind: 'volume', name: 'AJ Volume', status: 'active', ends_at: '2026-01-01T00:00:00Z' }, // not a sale
+  ];
+  const names = expiredActiveSales(rows, new Date('2026-09-02T00:00:00Z')).map((r) => r.name);
+  assert.deepEqual(names, ['Long Over']);
 });

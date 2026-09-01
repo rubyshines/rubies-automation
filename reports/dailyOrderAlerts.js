@@ -36,7 +36,7 @@ const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
 const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
 const { reconcileNotes } = require('../customer-service/lib/noteLifecycle');
-const { listRegistry } = require('../promotions/discounts');
+const { listRegistry, saleIsActive } = require('../promotions/discounts');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -826,7 +826,9 @@ async function run() {
   // breaks the daily email. Surfaces "this sale is still on, ends X (N days left)".
   let activeSales = [];
   try {
-    activeSales = (await listRegistry()).filter((r) => r.kind === 'sale' && r.status === 'active');
+    // Date-checked, not status-only: an expired sale stays status 'active' until
+    // the daily expiry sweep closes it, and this email must never show it as on.
+    activeSales = (await listRegistry()).filter((r) => r.kind === 'sale' && saleIsActive(r));
   } catch (err) {
     console.warn(`[alerts] Could not fetch active sales: ${err.message}`);
   }

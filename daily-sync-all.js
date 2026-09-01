@@ -50,6 +50,24 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncCollections').run(),
   },
   {
+    name: 'Expired Sales Sweep',
+    // Shopify expires sale discount nodes on its own at ends_at; everything
+    // else end_sale owns (registry status, theme banner metafields, attached
+    // free gift) waits for end_sale to run. This closes out any sale whose
+    // scheduled end has passed, so nobody has to remember the ritual.
+    run: async () => {
+      const { sweepExpiredSales } = require('./promotions/discounts');
+      const { closed, failed } = await sweepExpiredSales((msg) => console.log(`  ${msg}`));
+      return {
+        sources: {
+          sales: { success: failed.length === 0, rowsWritten: closed.length,
+            ...(failed.length && { error: failed.map((f) => `${f.name}: ${f.error}`).join('; ') }) },
+        },
+        status: failed.length ? 'failure' : 'success',
+      };
+    },
+  },
+  {
     name: 'Inventory',
     run: () => require('./inventory-tracking/daily-inventory-tracking').run(),
   },

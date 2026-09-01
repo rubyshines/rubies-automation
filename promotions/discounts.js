@@ -103,6 +103,27 @@ function resolveDates(startDate, endDate) {
   return { startsAt, endsAt };
 }
 
+/**
+ * Is a registry sale/volume row live right now? Status alone lies: Shopify
+ * auto-expires the discount nodes at ends_at, but nothing flips the row to
+ * 'ended' until end_sale (or the expiry sweep) runs, so date bounds must be
+ * checked wherever "active" reaches a human or a price.
+ */
+function saleIsActive(row, now = new Date()) {
+  if (!row || row.status !== 'active') return false;
+  const start = row.starts_at ? new Date(row.starts_at) : null;
+  const end = row.ends_at ? new Date(row.ends_at) : null;
+  if (start && now < start) return false;
+  if (end && now > end) return false;
+  return true;
+}
+
+/** Registry sale rows still marked active whose end has passed — what the expiry sweep closes out. */
+function expiredActiveSales(rows, now = new Date()) {
+  return rows.filter((r) => r.kind === 'sale' && r.status === 'active'
+    && r.ends_at && new Date(r.ends_at) <= now);
+}
+
 // ---------------------------------------------------------------------------
 // Shopify helpers
 // ---------------------------------------------------------------------------
@@ -558,8 +579,36 @@ async function endSale(name, log = () => {}) {
   await clearSaleMetafields();
   log('✓ Cleared sale store metafields.');
   if (saleHasGift(row)) { await disableOffer(log); log('✓ Disabled attached free gift.'); }
-  await upsertRegistryRow({ ...row, status: 'ended', ends_at: new Date().toISOString() });
+  // Ending early records now; ending after the scheduled close keeps the real
+  // end date rather than stamping the cleanup time over it.
+  const endedAt = row.ends_at && new Date(row.ends_at) < new Date() ? row.ends_at : new Date().toISOString();
+  await upsertRegistryRow({ ...row, status: 'ended', ends_at: endedAt });
   log(`✓ Sale "${name}" ended.`);
+}
+
+/**
+ * Close out any sale whose scheduled end has passed. Shopify expires the
+ * discount nodes on its own at ends_at, but everything else end_sale owns —
+ * registry status, the theme banner metafields, an attached free gift — waits
+ * for someone to run end_sale, and nobody is forced to (2026-09-01: the Pride
+ * Sale sat "active" for two months and its free-gift offer stayed enabled).
+ * Runs daily from daily-sync-all; per-sale failures don't stop the rest and
+ * leave the row active so the next run retries.
+ */
+async function sweepExpiredSales(log = () => {}) {
+  const expired = expiredActiveSales(await listRegistry());
+  const closed = [];
+  const failed = [];
+  for (const row of expired) {
+    try {
+      await endSale(row.name, log);
+      closed.push(row.name);
+    } catch (err) {
+      failed.push({ name: row.name, error: err.message });
+      log(`✗ Failed to end "${row.name}": ${err.message}`);
+    }
+  }
+  return { closed, failed };
 }
 
 // ---------------------------------------------------------------------------
@@ -621,9 +670,10 @@ async function auditAutomatic() {
 module.exports = {
   // engine ops
   addVolumeDiscount, removeVolumeDiscount,
-  startSale, extendSale, endSale, updateSaleGift,
+  startSale, extendSale, endSale, updateSaleGift, sweepExpiredSales,
   listRegistry, auditAutomatic, getRegistryRow,
   // pure helpers (tested)
+  saleIsActive, expiredActiveSales,
   parseTiers, resolveDates, etToUtcISO, constructSaleText, convertToRichText,
   volumeMetafieldText, giftSentenceClause, giftShortClause, saleHasGift,
   // constants

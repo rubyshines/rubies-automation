@@ -15,21 +15,12 @@
 
 const { getOrderByNumber, calculateRefund, normalizeGid } = require('../shopify');
 const { resolveLineItems } = require('../resolveLineItems');
-const { listRegistry } = require('../../../promotions/discounts');
+const { listRegistry, saleIsActive } = require('../../../promotions/discounts');
 const {
   computeExchangeDifference,
   recommendExchangeAction,
   itemSetsIdentical,
 } = require('../exchangeMath');
-
-function saleIsActive(row, now) {
-  if (!row || row.status !== 'active') return false;
-  const start = row.starts_at ? new Date(row.starts_at) : null;
-  const end = row.ends_at ? new Date(row.ends_at) : null;
-  if (start && now < start) return false;
-  if (end && now > end) return false;
-  return true;
-}
 
 async function loadActiveDiscounts(now) {
   const rows = await listRegistry();
