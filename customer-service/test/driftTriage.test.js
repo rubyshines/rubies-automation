@@ -16,9 +16,20 @@ stub('../intake/processGorgiasTickets', {
   extractCleanBody: (m) => ({ text: m.body_text || m.body || '' }),
   checkForDuplicateTicket: async () => null,
 });
-stub('../../shared/aiClient', { callClaude: async () => ({ content: [{ text: 'CUSTOMER | shopper' }] }) });
+// Dynamic stub: classifyVendorSpam tests set the response text and inspect the
+// args the classifier sent (system prompt, metadata).
+let claudeResponse = 'CUSTOMER | shopper';
+let claudeError = null;
+let lastClaudeArgs = null;
+stub('../../shared/aiClient', {
+  callClaude: async (args) => {
+    lastClaudeArgs = args;
+    if (claudeError) throw claudeError;
+    return { content: [{ text: claudeResponse }] };
+  },
+});
 
-const { triageDriftTicket, isReactionMessage } = require('../lib/driftTriage');
+const { triageDriftTicket, isReactionMessage, classifyVendorSpam } = require('../lib/driftTriage');
 
 // --- isReactionMessage ------------------------------------------------------
 
@@ -43,6 +54,58 @@ test('isReactionMessage: plain short text is NOT a reaction', () => {
 test('isReactionMessage: empty is NOT a reaction', () => {
   assert.equal(isReactionMessage({ body_text: '' }), false);
   assert.equal(isReactionMessage({}), false);
+});
+
+// --- classifyVendorSpam -----------------------------------------------------
+//
+// The regression these pin: the spam gate (2026-08-30) reused this classifier
+// on the Gorgias-flagged population with the drift tie-break ("uncertain →
+// CUSTOMER") and a two-category taxonomy, so phishing blasts and generic bot
+// probes — neither shopper nor sales pitch — defaulted to CUSTOMER and were
+// drafted into the operator queue. The flag must flip the tie-break, and JUNK
+// must exist as a verdict.
+
+test('classifyVendorSpam: JUNK verdict is parsed', async () => {
+  claudeResponse = 'JUNK | phishing email impersonating SendGrid';
+  claudeError = null;
+  const res = await classifyVendorSpam({ subject: 'Verify your account', body: 'click here', ticketId: 1 });
+  assert.equal(res.verdict, 'JUNK');
+  assert.equal(res.isVendorSpam, false);
+  assert.match(res.reason, /phishing/);
+});
+
+test('classifyVendorSpam: VENDOR and CUSTOMER verdicts still parse', async () => {
+  claudeError = null;
+  claudeResponse = 'VENDOR | SEO cold pitch';
+  assert.equal((await classifyVendorSpam({ subject: 's', body: 'b' })).verdict, 'VENDOR');
+  claudeResponse = 'CUSTOMER | sizing question';
+  assert.equal((await classifyVendorSpam({ subject: 's', body: 'b' })).verdict, 'CUSTOMER');
+});
+
+test('classifyVendorSpam: spamFlagged flips the tie-break in the prompt', async () => {
+  claudeError = null;
+  claudeResponse = 'JUNK | generic probe';
+  await classifyVendorSpam({ subject: 's', body: 'b', spamFlagged: true });
+  assert.match(lastClaudeArgs.system, /already flagged this message/);
+  assert.match(lastClaudeArgs.system, /answer JUNK/);
+  assert.equal(lastClaudeArgs.metadata.spam_flagged, true);
+
+  claudeResponse = 'CUSTOMER | shopper';
+  await classifyVendorSpam({ subject: 's', body: 'b' });
+  assert.match(lastClaudeArgs.system, /When uncertain, answer CUSTOMER/);
+  assert.equal(lastClaudeArgs.metadata.spam_flagged, false);
+});
+
+test('classifyVendorSpam: error fails soft to CUSTOMER on drift, rethrows when spamFlagged', async () => {
+  claudeError = new Error('api down');
+  const res = await classifyVendorSpam({ subject: 's', body: 'b' });
+  assert.equal(res.verdict, 'CUSTOMER');
+  assert.match(res.reason, /classifier error/);
+
+  // Flagged population: CUSTOMER-on-error would DRAFT the junk; the sweep's
+  // per-ticket catch retries next run instead.
+  await assert.rejects(() => classifyVendorSpam({ subject: 's', body: 'b', spamFlagged: true }), /api down/);
+  claudeError = null;
 });
 
 // --- triageDriftTicket routing ---------------------------------------------
@@ -131,6 +194,35 @@ test('triage: vendor spam → tagged + closed, disposition spam', async () => {
   assert.equal(res.disposition, 'spam');
   assert.ok(calls.some(c => c[0] === 'tag' && c[2] === 'spam'));
   assert.ok(calls.some(c => c[0] === 'close' && c[1] === 3));
+});
+
+test('triage: JUNK verdict → tagged + closed with junk note, disposition spam', async () => {
+  const { calls, gorgias, supabase } = makeHarness();
+  const res = await triageDriftTicket({
+    supabase, gorgias, spamFlagged: true,
+    ticket: { id: 8, customer: { email: 'support@azimut-treks.example' }, subject: 'SendGrid: verify your sender' },
+    messages: customerMsg('Your account will be suspended, click here'),
+    _checkDuplicate: async () => null,
+    _classifyVendorSpam: async () => ({ verdict: 'JUNK', isVendorSpam: false, reason: 'phishing impersonating SendGrid' }),
+  });
+  assert.equal(res.disposition, 'spam');
+  assert.ok(calls.some(c => c[0] === 'tag' && c[2] === 'spam'));
+  assert.ok(calls.some(c => c[0] === 'close' && c[1] === 8));
+  const note = calls.find(c => c[0] === 'note');
+  assert.match(note[2], /junk\/phishing/);
+});
+
+test('triage: spamFlagged is forwarded to the classifier', async () => {
+  const { gorgias, supabase } = makeHarness();
+  const seen = [];
+  await triageDriftTicket({
+    supabase, gorgias, spamFlagged: true,
+    ticket: { id: 9, customer: { email: 'x@y.example' }, subject: 'hello' },
+    messages: customerMsg('is your store open'),
+    _checkDuplicate: async () => null,
+    _classifyVendorSpam: async (args) => { seen.push(args); return { verdict: 'JUNK', reason: 'generic probe' }; },
+  });
+  assert.equal(seen[0].spamFlagged, true);
 });
 
 test('triage: genuine inquiry → real_miss, NOT closed', async () => {

@@ -265,8 +265,10 @@ async function run({ execute = false } = {}) {
           if (!known) {
             if (spamAdvisorMap.get(sTicket.id)) continue; // already in our system — regular drift machinery owns it
             const messages = await gorgias.getTicketMessages(sTicket.id);
+            // spamFlagged flips the classifier's uncertainty tie-break to JUNK:
+            // Gorgias already flagged these, so ambiguity is not enough to draft.
             const { disposition, reason } = await triageDriftTicket({
-              supabase, gorgias, ticket: sTicket, messages,
+              supabase, gorgias, ticket: sTicket, messages, spamFlagged: true,
             });
             if (disposition !== 'real_miss') {
               autoResolved.push({ ticketId: sTicket.id, email: email || '?', disposition, reason: `spam-flagged: ${reason}` });

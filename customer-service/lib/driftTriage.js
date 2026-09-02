@@ -15,8 +15,10 @@
  *   rule from feedback_technical_rules.md — Gorgias is source of truth).
  * - Every auto-close leaves a visible internal note so the action is auditable
  *   and an operator can reopen if a classification was wrong.
- * - The vendor/customer decision can close a real customer if wrong, so it uses
- *   Opus (per the Opus-only guardrail) and defaults to CUSTOMER on any doubt.
+ * - The vendor/customer/junk decision can close a real customer if wrong, so it
+ *   uses Opus (per the Opus-only guardrail). The uncertainty tie-break depends
+ *   on the population: drift tickets default to CUSTOMER, Gorgias-spam-flagged
+ *   tickets default to JUNK (see classifyVendorSpam).
  * - dryRun classifies without writing, so the CLI dry run shows the breakdown.
  */
 
@@ -51,23 +53,38 @@ function isReactionMessage(message) {
 }
 
 /**
- * Decide whether an inbound message is from an actual (or prospective) customer
- * vs. unsolicited vendor/sales/marketing outreach. Conservative: anything that
- * could plausibly be a shopper returns isVendorSpam=false.
+ * Decide whether an inbound message is from an actual (or prospective) customer,
+ * unsolicited vendor/sales outreach, or junk (phishing/scams/bot probes).
+ *
+ * The tie-break depends on the population. Drift tickets (mail Gorgias let
+ * through) default to CUSTOMER on any doubt — never auto-close a real shopper.
+ * Spam-gate tickets pass `spamFlagged: true`: Gorgias has already flagged the
+ * message, and that flag is evidence, so an ambiguous message defaults to JUNK
+ * and only genuine shopper content overrides the flag. Reusing the CUSTOMER
+ * tie-break on the flagged population is what drafted phishing blasts and bot
+ * probes into the operator queue in the week after the 2026-08-30 spam gate
+ * shipped — the base rates of the two populations are inverted.
  */
-async function classifyVendorSpam({ subject, body, ticketId }) {
+async function classifyVendorSpam({ subject, body, ticketId, spamFlagged = false }) {
+  const tieBreak = spamFlagged
+    ? `Gorgias's spam filter has already flagged this message. The flag is evidence, but imperfect — it mislabels real customers, which is why you are re-judging it. A message with genuine shopper content (a question about our products, an order, sizing, shipping, a return or exchange, a donation request) overrides the flag: answer CUSTOMER. A message that is merely ambiguous, generic, or could have been sent to any store does not override it: answer JUNK.`
+    : `When uncertain, answer CUSTOMER.`;
+
   const system = `You are triaging inbound email to the customer-service inbox for RUBIES, a direct-to-consumer apparel brand (gender-affirming swimwear and underwear for trans girls and women).
 
-Decide whether a message is from an ACTUAL or PROSPECTIVE CUSTOMER, or UNSOLICITED business outreach.
+Classify the message as exactly one of CUSTOMER, VENDOR, or JUNK.
 
-Answer CUSTOMER if there is ANY chance it is a real shopper or someone we'd want to talk to: order questions, sizing, returns/exchanges, product or shipping questions, complaints, donation/free-swimwear requests, or a retailer/store expressing interest in BUYING our product wholesale.
+CUSTOMER — an actual or prospective customer, or someone we'd want to talk to: order questions, sizing, returns/exchanges, product or shipping questions, complaints, donation/free-swimwear requests, or a retailer/store expressing interest in BUYING our product wholesale.
 
-Answer VENDOR only when it is clearly unsolicited outreach trying to SELL US something or pitch a service: SaaS tools, SEO/marketing/ad agencies, returns/logistics platforms, payment providers, recruiters, "partnership" or "collaboration" cold emails, lead-gen, etc., with no sign of being a customer.
+VENDOR — unsolicited outreach trying to SELL US something or pitch a service: SaaS tools, SEO/marketing/ad agencies, returns/logistics platforms, payment providers, recruiters, "partnership" or "collaboration" cold emails, lead-gen, etc., with no sign of being a customer.
 
-When uncertain, answer CUSTOMER.
+JUNK — no genuine person seeking support or a purchase behind it: phishing or credential-harvesting attempts, scams, "your account was hacked" blasts, suspicious links, mass mail with no connection to our business, gibberish, or generic one-line probes that could have been sent to any store ("are you open?", "is this your brand?") with nothing specific to our products or an order.
 
-Reply with exactly one word: CUSTOMER or VENDOR. Then a pipe and a brief reason (under 12 words).
+${tieBreak}
+
+Reply with exactly one word: CUSTOMER, VENDOR, or JUNK. Then a pipe and a brief reason (under 12 words).
 Example: VENDOR | SEO agency cold-pitching link-building services
+Example: JUNK | phishing email impersonating SendGrid
 Example: CUSTOMER | asking to return swim bottoms that didn't fit`;
 
   try {
@@ -75,18 +92,22 @@ Example: CUSTOMER | asking to return swim bottoms that didn't fit`;
       model: MODELS.OPUS,
       component: 'drift_triage',
       ticket_id: ticketId || null,
-      metadata: { task: 'vendor_spam_triage' },
+      metadata: { task: 'vendor_spam_triage', spam_flagged: spamFlagged },
       system,
       max_tokens: 40,
       messages: [{ role: 'user', content: `Subject: ${subject || '(none)'}\n\n${(body || '').slice(0, 1500)}` }],
     });
     const text = (resp.content?.[0]?.text || '').trim();
-    const isVendorSpam = /^vendor/i.test(text);
+    const verdict = /^vendor/i.test(text) ? 'VENDOR' : /^junk/i.test(text) ? 'JUNK' : 'CUSTOMER';
     const reason = text.includes('|') ? text.split('|').slice(1).join('|').trim() : text;
-    return { isVendorSpam, reason };
+    return { verdict, isVendorSpam: verdict === 'VENDOR', reason };
   } catch (e) {
-    // Fail-closed toward the customer — never auto-close a real shopper on error.
-    return { isVendorSpam: false, reason: `classifier error: ${e.message}` };
+    // Drift population: fail toward the customer — never auto-close a real
+    // shopper on a transient error. Spam-flagged population: failing toward
+    // CUSTOMER would DRAFT the junk (worse than a dropped classification), so
+    // rethrow and let the sweep's per-ticket catch retry next run.
+    if (spamFlagged) throw e;
+    return { verdict: 'CUSTOMER', isVendorSpam: false, reason: `classifier error: ${e.message}` };
   }
 }
 
@@ -115,9 +136,11 @@ async function closeAsResolved({ gorgias, supabase, ticketId, note }) {
  * @param {object}  args.ticket     Gorgias ticket (needs id, customer, subject)
  * @param {array}   args.messages   Gorgias messages for the ticket
  * @param {boolean} [args.dryRun]   classify only, perform no writes
+ * @param {boolean} [args.spamFlagged] ticket is Gorgias spam-flagged (spam-gate
+ *                                  population) — flips the classifier tie-break
  */
 async function triageDriftTicket({
-  supabase, gorgias, ticket, messages, dryRun = false,
+  supabase, gorgias, ticket, messages, dryRun = false, spamFlagged = false,
   // test seams — default to the real implementations
   _checkDuplicate = checkForDuplicateTicket,
   _classifyVendorSpam = classifyVendorSpam,
@@ -163,15 +186,20 @@ async function triageDriftTicket({
     return { disposition: 'reaction', reason: 'emoji reaction, no new request' };
   }
 
-  // 3) Unsolicited vendor / sales outreach?
+  // 3) Unsolicited vendor / sales outreach, or junk (phishing/scam/probe)?
   const bodyText = latest ? extractCleanBody(latest).text : '';
-  const { isVendorSpam, reason } = await _classifyVendorSpam({ subject: ticket.subject, body: bodyText, ticketId });
-  if (isVendorSpam) {
+  const cls = await _classifyVendorSpam({ subject: ticket.subject, body: bodyText, ticketId, spamFlagged });
+  // Test seams may still return the pre-JUNK shape { isVendorSpam, reason }.
+  const verdict = cls.verdict || (cls.isVendorSpam ? 'VENDOR' : 'CUSTOMER');
+  if (verdict === 'VENDOR' || verdict === 'JUNK') {
+    const note = verdict === 'VENDOR'
+      ? `Auto-closed by drift triage: classified as unsolicited vendor/sales outreach (${cls.reason}).`
+      : `Auto-closed by drift triage: classified as junk/phishing (${cls.reason}).`;
     if (!dryRun) {
       try { await gorgias.addTicketTag(ticketId, 'spam'); } catch (e) { /* tagging is best-effort */ }
-      await closeAsResolved({ gorgias, supabase, ticketId, note: `Auto-closed by drift triage: classified as unsolicited vendor/sales outreach (${reason}).` });
+      await closeAsResolved({ gorgias, supabase, ticketId, note });
     }
-    return { disposition: 'spam', reason };
+    return { disposition: 'spam', reason: cls.reason };
   }
 
   // 4) Genuine unhandled customer inquiry — report it, do NOT auto-draft.
