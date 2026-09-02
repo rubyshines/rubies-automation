@@ -217,7 +217,10 @@ async function handle(payload, gmailPush) {
         gmail_message_id: m.gmail_message_id,
         gmail_thread_id: m.gmail_thread_id,
         from_email: m.from_address,
-        to_email: Array.isArray(m.to_addresses) ? m.to_addresses[0] : m.to_addresses,
+        // The FULL To line, not just the first address — and the Cc line, so a
+        // reply drafted from the record can keep everyone on the conversation.
+        to_email: Array.isArray(m.to_addresses) ? m.to_addresses.join(', ') : m.to_addresses,
+        cc_email: Array.isArray(m.cc_addresses) ? m.cc_addresses.join(', ') : (m.cc_addresses || null),
         subject: m.subject,
         body_text: m.body_text,
         received_at: m.date,

@@ -40,7 +40,7 @@ async function findBounceCandidates(sb, { days = DEFAULT_DAYS, limit = 500 } = {
   // and neither of the two August bounces this was written to repair. A cap
   // applied before the predicate is a silent wrong answer, not a bound.
   const { data, error } = await sb.from('email_messages')
-    .select('gmail_message_id, gmail_thread_id, from_address, to_addresses, subject, date, body_text')
+    .select('gmail_message_id, gmail_thread_id, from_address, to_addresses, cc_addresses, subject, date, body_text')
     .gte('date', since)
     .eq('is_sent', false)
     .or('from_address.ilike.%mailer-daemon@%,from_address.ilike.%postmaster@%')
@@ -87,7 +87,8 @@ async function replayBounces({ days = DEFAULT_DAYS, apply = false } = {}) {
         gmail_message_id: m.gmail_message_id,
         gmail_thread_id: m.gmail_thread_id,
         from_email: m.from_address,
-        to_email: Array.isArray(m.to_addresses) ? m.to_addresses[0] : m.to_addresses,
+        to_email: Array.isArray(m.to_addresses) ? m.to_addresses.join(', ') : m.to_addresses,
+        cc_email: Array.isArray(m.cc_addresses) ? m.cc_addresses.join(', ') : (m.cc_addresses || null),
         subject: m.subject,
         body_text: m.body_text,
         received_at: m.date,

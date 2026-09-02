@@ -61,6 +61,23 @@ test('SENT messages become outbound manual_send rows', () => {
   assert.equal(rows[0].message_type, null); // never pollutes A/B metrics
 });
 
+test('Cc header is captured on imported rows; absent Cc stores null', () => {
+  const withCc = gmailMsg('m1cc', ['SENT'], {
+    payload: {
+      mimeType: 'text/plain',
+      body: { data: Buffer.from('hello body', 'utf8').toString('base64url') },
+      headers: [
+        { name: 'From', value: 'Jamie Alexander <jamie@rubyshines.com>' },
+        { name: 'To', value: 'Ez <ez@tgv.org.au>' },
+        { name: 'Cc', value: 'Colleague <col@tgv.org.au>, second@tgv.org.au' },
+      ],
+    },
+  });
+  const rows = partitionThreadMessages([withCc, gmailMsg('m1nocc', ['SENT'])], new Set());
+  assert.equal(rows[0].cc_email, 'col@tgv.org.au, second@tgv.org.au');
+  assert.equal(rows[1].cc_email, null);
+});
+
 test('non-SENT messages become inbound gmail_backfill rows', () => {
   const rows = partitionThreadMessages([gmailMsg('m2', ['INBOX', 'IMPORTANT'])], new Set());
   assert.equal(rows[0].direction, 'inbound');

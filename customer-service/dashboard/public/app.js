@@ -6520,10 +6520,14 @@ function outreachHistoryHtml() {
       const body = bounce
         ? 'This message could not be delivered.'
         : (m.body_text || '(no text captured)');
+      // Cc is part of who a message is with — hiding it is how a reply ends up
+      // silently dropping the colleague the contact deliberately included.
+      const ccLine = m.cc_email ? `<div class="msg-cc">cc: ${esc(m.cc_email)}</div>` : '';
       const isLast = i === list.length - 1;
       if (isLast) {
         return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
           <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
+          ${ccLine}
           <div class="msg-body">${esc(body)}</div>
         </div>`;
       }
@@ -6534,6 +6538,7 @@ function outreachHistoryHtml() {
           <span class="msg-collapsed-snippet">${esc(body.replace(/\s+/g, ' ').slice(0, 90))}</span>
           <span class="msg-collapsed-date">${msgDate(m.sent_at)}</span>
         </summary>
+        ${ccLine}
         <div class="msg-body">${esc(body)}</div>
       </details>`;
     }).join('');

@@ -1920,6 +1920,15 @@ main { height: calc(100vh - 56px); }
   font-weight: 500;
 }
 
+/* Who else is on the message. Same register as the header line — metadata,
+   not body — so it reads as part of the envelope. */
+.msg-cc {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
 .msg-body {
   word-break: break-word;
   overflow: hidden;

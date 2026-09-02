@@ -123,7 +123,7 @@ function classifyInbound({ subject, body, from } = {}) {
  * { matched, company_id?, thread_id?, duplicate?, contact_loss?, looks_like_order?, auto_reply? }.
  */
 async function correlateInbound(msg) {
-  const { gmail_message_id, gmail_thread_id, from_email, to_email, subject, body_text, received_at } = msg;
+  const { gmail_message_id, gmail_thread_id, from_email, to_email, cc_email, subject, body_text, received_at } = msg;
   if (!gmail_message_id || !from_email) return { matched: false, reason: 'missing ids' };
   const sb = getSupabaseClient();
   const sender = String(from_email).toLowerCase().replace(/^.*</, '').replace(/>.*$/, '').trim();
@@ -259,7 +259,7 @@ async function correlateInbound(msg) {
     thread_id: threadId, company_id: companyId, direction: 'inbound',
     message_type: inboundType,
     gmail_message_id, gmail_thread_id,
-    from_email: sender, to_email: to_email || null,
+    from_email: sender, to_email: to_email || null, cc_email: cc_email || null,
     body_text: (body_text || '').slice(0, 20000),
     sent_at: received_at || new Date().toISOString(), source: 'pubsub',
   });

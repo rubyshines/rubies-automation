@@ -129,6 +129,7 @@ function partitionThreadMessages(gmailMessages, knownIds, companyEmails = null) 
       gmail_thread_id: m.threadId,
       from_email: addressesIn(header(m, 'From'))[0] || null,
       to_email: addressesIn(header(m, 'To')).join(', ') || null,
+      cc_email: addressesIn(header(m, 'Cc')).join(', ') || null,
       body_text: body,
       sent_at: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : null,
       source: outbound ? 'manual_send' : 'gmail_backfill',

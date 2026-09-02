@@ -15,6 +15,7 @@
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 const { nextActionDateAfterSend } = require('./cadence');
+const { defaultReplyCc, splitAddresses } = require('./replyCc');
 
 const FROM_EMAIL = 'jamie@rubyshines.com';
 const SEND_FLAG = 'b2b_send_enabled';
@@ -363,6 +364,22 @@ async function sendB2bEmail(p = {}) {
   let subject = p.subject || (thread?.subject ? (thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`) : null);
   if (!subject) return { ok: false, error: 'subject required for a new thread' };
 
+  // Cc: a reply is a conversation with everyone on it. When the caller says
+  // nothing about cc (undefined/null) and this is a thread reply, default to
+  // reply-all from the stored conversation so a cc'd colleague is never
+  // silently dropped. An explicit empty string means "cc nobody" — that is how
+  // a draft whose operator cleared the Cc field opts out of the default.
+  let effectiveCc = cc;
+  if (effectiveCc == null && thread) {
+    effectiveCc = await defaultReplyCc(sb, { thread_id: thread.id, our_email: FROM_EMAIL });
+    // Whoever the reply is addressed TO never also rides the cc line.
+    if (effectiveCc) {
+      const toSet = new Set(splitAddresses(recipient.email));
+      effectiveCc = splitAddresses(effectiveCc).filter(a => !toSet.has(a)).join(', ') || null;
+    }
+  }
+  if (typeof effectiveCc === 'string' && !effectiveCc.trim()) effectiveCc = null;
+
   // Last outbound/inbound message in the thread → In-Reply-To / References.
   // gmail_message_id is the Gmail API id, NOT an RFC 2822 Message-ID —
   // wrapping it in <> produced a bogus In-Reply-To that broke recipient-side
@@ -401,6 +418,7 @@ async function sendB2bEmail(p = {}) {
     to: recipient.email,
     to_name: recipient.name,
     resolved_via: recipient.via,
+    cc: addressList(effectiveCc) || null,
     from: FROM_EMAIL,
     subject,
     body,
@@ -448,7 +466,7 @@ async function sendB2bEmail(p = {}) {
       to: FROM_EMAIL,
       gmail_message_id: res.data.id,
       would_send_to: recipient?.email || null,
-      would_cc: addressList(cc) || null,
+      would_cc: addressList(effectiveCc) || null,
       attachments: (attachments || []).map(a => a.filename),
       note: 'Sent to you only. Nothing was recorded against the company, and the draft is still pending.',
     };
@@ -480,7 +498,7 @@ async function sendB2bEmail(p = {}) {
   const { getGmail } = require('../../gmail-management/lib/gmailClient');
   const gmail = await getGmail();
   const sentBody = normalizeSignature(body);
-  const raw = buildRawMessage({ to: recipient.email, cc, subject, body: sentBody, inReplyTo, references: inReplyTo, message_type, attachments });
+  const raw = buildRawMessage({ to: recipient.email, cc: effectiveCc, subject, body: sentBody, inReplyTo, references: inReplyTo, message_type, attachments });
   const sendRes = await gmail.users.messages.send({
     userId: 'me',
     requestBody: { raw, ...(thread?.gmail_thread_id ? { threadId: thread.gmail_thread_id } : {}) },
@@ -510,7 +528,8 @@ async function sendB2bEmail(p = {}) {
     thread_id: threadRowId, company_id, direction: 'outbound', message_type,
     variant_id: variant_id || null, gmail_message_id: gmailMessageId,
     gmail_thread_id: gmailThreadId, in_reply_to: inReplyTo,
-    from_email: FROM_EMAIL, to_email: recipient.email, body_text: sentBody,
+    from_email: FROM_EMAIL, to_email: recipient.email,
+    cc_email: addressList(effectiveCc) || null, body_text: sentBody,
     sent_at: sentAt, source: 'send_tool',
   });
   if (mErr) console.error(`[sendB2bEmail] b2b_messages insert failed (sent ok): ${mErr.message}`);
@@ -527,7 +546,7 @@ async function sendB2bEmail(p = {}) {
     updated_at: sentAt,
   }).eq('id', company_id);
 
-  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, sent_at: sentAt };
+  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, cc: addressList(effectiveCc) || null, sent_at: sentAt };
 }
 
 module.exports = { sendB2bEmail, assertInviteClaimIsBacked, assertRecipientDeliverable, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES, FROM_EMAIL, SEND_FLAG };

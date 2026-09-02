@@ -129,6 +129,30 @@ test('reply draft with no subject passes undefined so the thread subject is inhe
   assert.equal(sb.updates[0].fields.operator_edited, false);
 });
 
+// ── cc contract ─────────────────────────────────────────────────────────────
+// The draft governs cc. structured.cc (the reply-all default stamped at draft
+// creation, possibly edited in the panel) flows through; a draft with none
+// passes explicit-empty so sendB2bEmail does NOT re-apply its own send-time
+// default over an operator who cleared the field.
+
+test('structured.cc flows through to sendB2bEmail', async () => {
+  const sb = fakeSb({ ...DRAFT, structured: { cc: 'colleague@org.com' } });
+  await sendDraftById(sb, { draft_id: 9, confirmed: true });
+  assert.equal(lastSendArgs.cc, 'colleague@org.com');
+});
+
+test('a draft without structured.cc sends explicit-empty, never undefined', async () => {
+  const sb = fakeSb();
+  await sendDraftById(sb, { draft_id: 9, confirmed: true });
+  assert.equal(lastSendArgs.cc, '');
+});
+
+test('a caller cc override (Book & Send) beats the stored one', async () => {
+  const sb = fakeSb({ ...DRAFT, structured: { cc: 'colleague@org.com' } });
+  await sendDraftById(sb, { draft_id: 9, confirmed: true, cc: 'other@org.com' });
+  assert.equal(lastSendArgs.cc, 'other@org.com');
+});
+
 // ── mergeFactVerification ───────────────────────────────────────────────────
 
 test('verifying facts accumulates sorted unique indices', () => {

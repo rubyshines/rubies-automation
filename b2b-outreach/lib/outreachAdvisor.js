@@ -20,6 +20,8 @@ const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { partnerDiscountPercent } = require('./donationAgreement');
 const { companyDomain } = require('./queueContext');
+const { defaultReplyCc } = require('./replyCc');
+const { FROM_EMAIL } = require('./sendB2bEmail');
 
 const OUTPUT_SCHEMA = {
   type: 'object',
@@ -106,7 +108,7 @@ async function buildCompanyContext(sb, companyId) {
     .eq('company_id', companyId).order('is_primary', { ascending: false }));
 
   const messages = await fetchAllPaginated(() => sb.from('b2b_messages')
-    .select('direction, message_type, body_text, sent_at, from_email')
+    .select('direction, message_type, body_text, sent_at, from_email, cc_email')
     .eq('company_id', companyId).order('sent_at', { ascending: false })).then(r => r.slice(0, 20).reverse());
 
   const donation = company.relationship_type === 'lgbtq_org'
@@ -308,7 +310,9 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
     lines.push('## Thread history (oldest first, most recent 20)');
     for (const m of messages) {
       const who = m.direction === 'outbound' ? 'JAMIE' : 'THEM';
-      lines.push(`[${(m.sent_at || '').slice(0, 10)}] ${who}${m.message_type ? ` (${m.message_type})` : ''}: ${(m.body_text || '').replace(/\s+/g, ' ').slice(0, 500)}`);
+      // cc is part of who the conversation is with — a message cc'ing a
+      // colleague is addressed to both, and the reply should read that way.
+      lines.push(`[${(m.sent_at || '').slice(0, 10)}] ${who}${m.message_type ? ` (${m.message_type})` : ''}${m.cc_email ? ` (cc: ${m.cc_email})` : ''}: ${(m.body_text || '').replace(/\s+/g, ' ').slice(0, 500)}`);
     }
   } else {
     lines.push('## Thread history\n(none on record — treat as relationship context only from the summary above)');
@@ -336,6 +340,13 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   const sb = getSupabaseClient();
   const ctx = await buildCompanyContext(sb, company_id);
   const advisor = pickAdvisor(ctx.company);
+
+  // Reply-all default: a draft answering a thread keeps everyone the contact
+  // kept on the conversation. Stamped on structured.cc so the panel's Cc field
+  // shows it (the operator can edit or clear it) and the send path reads it.
+  const ccDefault = queueEntry.thread_id
+    ? await defaultReplyCc(sb, { thread_id: queueEntry.thread_id, our_email: FROM_EMAIL })
+    : null;
 
   const response = await callClaude({
     component: advisor.name,
@@ -371,6 +382,7 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
       facts_to_verify: out.facts_to_verify,
       next_touch_days: out.next_touch_days ?? null,
       audit: out.audit,
+      ...(ccDefault ? { cc: ccDefault } : {}),
     },
     queue_tier: queueEntry.tier,
     queue_reason: queueEntry.reason,

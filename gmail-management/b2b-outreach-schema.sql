@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS b2b_messages (
   in_reply_to       TEXT,
   from_email        TEXT,
   to_email          TEXT,
+  cc_email          TEXT,                    -- comma-joined, same shape as to_email
   body_text         TEXT,
   sent_at           TIMESTAMPTZ,
   source            TEXT NOT NULL DEFAULT 'send_tool',  -- 'send_tool' | 'pubsub' | 'manual_send' (reconciled placeholder)

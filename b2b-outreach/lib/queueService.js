@@ -24,7 +24,8 @@ const { assembleQueue, deferredSince, replyLandedAfter, humanAge } = require('./
 const { buildContexts } = require('./queueContext');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
-const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG } = require('./sendB2bEmail');
+const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
+const { defaultReplyCc } = require('./replyCc');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 
 /** One-line preview of a draft body for queue rows. Pure. */
@@ -531,7 +532,7 @@ async function fetchActivity(sb, { direction, channel, limit = 50, before } = {}
 
   let q = sb.from('b2b_messages')
     // Messages carry no subject of their own — it lives on the thread.
-    .select('id, company_id, thread_id, direction, message_type, source, body_text, from_email, to_email, sent_at')
+    .select('id, company_id, thread_id, direction, message_type, source, body_text, from_email, to_email, cc_email, sent_at')
     .order('sent_at', { ascending: false })
     .limit(Math.min(limit, 200));
   if (direction) q = q.eq('direction', direction);
@@ -774,6 +775,14 @@ async function composeDraft(sb, { company_id, body, subject, message_type, threa
   const [entry] = assembleQueue([{ company, ctx: { ...contexts.get(company.id), hasPendingDraft: false } }]);
   const draftRow = composeDraftRow({ company_id, body, subject, message_type, thread_id, entry });
 
+  // A hand-written reply into a thread starts with reply-all cc, same as an
+  // advisor draft: whoever the contact kept on the conversation stays on it,
+  // visible in the panel's Cc field where the operator can clear it.
+  if (draftRow.thread_id) {
+    const ccDefault = await defaultReplyCc(sb, { thread_id: draftRow.thread_id, our_email: FROM_EMAIL });
+    if (ccDefault) draftRow.structured = { ...draftRow.structured, cc: ccDefault };
+  }
+
   await sb.from('b2b_drafts').update({ status: 'superseded' })
     .eq('company_id', company_id).eq('status', 'pending');
 
@@ -836,7 +845,11 @@ async function sendDraftById(sb, {
     confirmed: !!confirmed,
     next_touch_days: draft.structured?.next_touch_days ?? null,
     attachments,
-    cc: cc ?? draft.structured?.cc ?? undefined,
+    // The draft governs cc. A draft with no structured.cc means the operator
+    // cleared (or never had) one — pass explicit-empty so sendB2bEmail does NOT
+    // apply its reply-all default over the operator's decision. The default was
+    // already stamped onto structured.cc when the draft was created.
+    cc: cc ?? draft.structured?.cc ?? '',
     to_override: draft.structured?.to ?? undefined,
     test_send: !!test_send,
     invite_created: !!invite_created,
@@ -995,7 +1008,7 @@ async function fetchCompanyThreads(sb, companyId) {
   const [messagesRes, ordersRes, msgCountRes, donation] = await Promise.all([
     threads.length
       ? sb.from('b2b_messages')
-        .select('thread_id, direction, message_type, from_email, to_email, body_text, sent_at, source, undelivered_at')
+        .select('thread_id, direction, message_type, from_email, to_email, cc_email, body_text, sent_at, source, undelivered_at')
         .in('thread_id', threads.map(t => t.id))
         .order('sent_at', { ascending: true })
       : Promise.resolve({ data: [] }),

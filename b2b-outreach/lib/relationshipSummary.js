@@ -114,7 +114,10 @@ function summaryMode(company, messages) {
 
 /** Render one message for the prompt. PURE. */
 function renderMessage(m) {
-  const who = m.direction === 'outbound' ? 'Us (Jamie)' : (m.from_email || 'Them');
+  // cc names who ELSE is on the conversation — a colleague looped in is part
+  // of the relationship, and a recap that never mentions them reads wrong.
+  const who = (m.direction === 'outbound' ? 'Us (Jamie)' : (m.from_email || 'Them'))
+    + (m.cc_email ? ` (cc: ${m.cc_email})` : '');
   const date = String(m.sent_at || '').slice(0, 10);
   const body = (m.body_text || '').replace(/\s+/g, ' ').slice(0, BODY_CHARS);
   // A send that bounced never reached them, so the recap must not narrate it as
@@ -202,7 +205,7 @@ async function loadCompany(sb, companyId) {
 
   const messages = await fetchAllPaginated(() => sb
     .from('b2b_messages')
-    .select('direction, message_type, from_email, body_text, sent_at, undelivered_at')
+    .select('direction, message_type, from_email, cc_email, body_text, sent_at, undelivered_at')
     .eq('company_id', companyId)
     .order('sent_at', { ascending: true }));
 
