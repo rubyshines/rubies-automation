@@ -6693,11 +6693,15 @@ function outreachHistoryHtml() {
       // silently dropping the colleague the contact deliberately included.
       const ccLine = m.cc_email ? `<div class="msg-cc">cc: ${esc(m.cc_email)}</div>` : '';
       const isLast = i === list.length - 1;
+      // B2B messages are stored plain-text only, so the body goes through the
+      // same artifact-stripping/linkifying renderer as the inbound strip —
+      // `label<https://url>` codes become clickable links. The collapsed
+      // snippet stays escaped text: no anchors inside a <summary>.
       if (isLast) {
         return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
           <div class="msg-header">${who}${badge} · ${msgDate(m.sent_at)}</div>
           ${ccLine}
-          <div class="msg-body">${esc(body)}</div>
+          <div class="msg-body">${intakeParse.renderEmailText(body)}</div>
         </div>`;
       }
       // Collapsed: sender, date and enough of the opening to recognise it.
@@ -6708,7 +6712,7 @@ function outreachHistoryHtml() {
           <span class="msg-collapsed-date">${msgDate(m.sent_at)}</span>
         </summary>
         ${ccLine}
-        <div class="msg-body">${esc(body)}</div>
+        <div class="msg-body">${intakeParse.renderEmailText(body)}</div>
       </details>`;
     }).join('');
     const lastAt = t.last_message_at ? new Date(t.last_message_at).toLocaleDateString('en-US', {
