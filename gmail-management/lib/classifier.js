@@ -117,9 +117,12 @@ function classifyTier1(fromAddress) {
 async function classifyBatchTier3(messages) {
   if (!messages.length) return [];
 
-  // Build the prompt with headers only
+  // Build the prompt with headers + a body preview. 600 chars, not 200: a
+  // cold pitch opens with a friendly warm-up paragraph and states what it is
+  // actually selling after it — Gerrie's CMMS pitch read as "local shop wants
+  // to connect" because the sell started at char ~230 (2026-09-02).
   const emailSummaries = messages.map((msg, i) => {
-    const bodyPreview = (msg.body_text || '').substring(0, 200).replace(/\n/g, ' ');
+    const bodyPreview = (msg.body_text || '').substring(0, 600).replace(/\n/g, ' ');
     return `[${i}] From: ${msg.from_address} (${msg.from_name || 'unknown'})
   To: ${(msg.to_addresses || []).join(', ')}
   Subject: ${msg.subject || '(no subject)'}
@@ -135,7 +138,7 @@ async function classifyBatchTier3(messages) {
 
 Categories:
 - customer_support: End-customer (B2C consumer) emails about orders, sizing, returns, exchanges, product questions
-- wholesale: B2B retailer/shop communications — sales outreach, reorders, wholesale account management
+- wholesale: B2B retailer/shop communications — a store that stocks or wants to stock OUR products: their inquiries, their reorders, wholesale account management. The money flows toward us.
 - lgbtq_org: LGBTQ+ community organizations — donation programs, partnership outreach, community centers, pride events, gender-affirming programs
 - product_rd: Product design, fit testing, sampling, development with suppliers/designers
 - production_orders: Active manufacturing orders, factory production, PO tracking
@@ -147,7 +150,9 @@ Categories:
 - auto_reply: Out-of-office replies, vacation auto-responders, automatic replies to OUR marketing emails. The sender is not writing to us — their email client is auto-responding. Look for "Automatic reply:", "Out of Office", "I am currently out", "I will be away".
 - spam: Unsolicited sales pitches, cold outreach FROM other companies trying to sell TO us
 
-IMPORTANT: LGBTQ+ organizations reaching out for the first time are NEVER spam, even if unsolicited. Classify as lgbtq_org. Signs: mentions LGBTQ+, pride, trans, gender-affirming, community program, non-profit, donation partnership, queer youth, community center. Compare to spam signs: mentions ROI, "scale your business", "boost sales", offers marketing/ad/SEO services, agency domain. Some spammers use trans/gender keywords as bait to sell ad services — that's still spam.
+IMPORTANT: LGBTQ+ organizations reaching out for the first time are NEVER spam, even if unsolicited, and even when they are asking us for something (a donation, event sponsorship, free product). Classify as lgbtq_org. Signs: mentions LGBTQ+, pride, trans, gender-affirming, community program, non-profit, donation partnership, queer youth, community center. Compare to spam signs: mentions ROI, "scale your business", "boost sales", offers marketing/ad/SEO services, agency domain. Some spammers use trans/gender keywords as bait to sell ad services — that's still spam.
+
+IMPORTANT: wholesale means they want to BUY or STOCK our products. A company pitching software, dashboards, marketing, agencies, or any service for OUR business is spam even when the pitch talks in wholesale-sounding language (reorders, inventory, stock levels, Shopify, sizes selling out) — that vocabulary is the bait, not the relationship. Ask: are they a store buying from us, or a vendor selling to us?
 
 Return a JSON array with one object per email: [{"index": 0, "classification": "...", "confidence": 0.0-1.0}]
 Only return the JSON array, nothing else.
