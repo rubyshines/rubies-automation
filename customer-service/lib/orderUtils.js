@@ -163,16 +163,46 @@ function normalizeCountryCode(raw) {
   return COUNTRY_NAME_TO_CODE[c] || '';
 }
 
-async function getShippingMethodTitle(country, speed) {
+// An incoterms override (negotiated partner terms) beats the zone default for
+// any non-US destination: the title is what Warehance's automation rules match
+// on to set carrier + incoterms, so "ddu" must produce the plain international
+// titles (no "All Duties ... Included" wording). "ddp" for Canada keeps the
+// Canada titles — Warehance already maps those to FedEx DDP. US is domestic;
+// incoterms doesn't apply and the override is ignored.
+function pickTitleZone(zone, incoterms) {
+  if (zone === 'us' || !incoterms) return zone;
+  if (incoterms === 'ddu') return 'ddu';
+  return zone === 'canada' ? 'canada' : 'ddp';
+}
+
+async function getShippingMethodTitle(country, speed, incoterms = null) {
   const s = speed === 'expedited' ? 'expedited' : 'standard';
   const c = normalizeCountryCode(country);
-  if (!c) return SHIPPING_METHOD_TITLES.ddu[s];
+  if (!c) return SHIPPING_METHOD_TITLES[pickTitleZone('ddu', incoterms)][s];
 
   // Lazy-require to avoid circular import (shippingLookup pulls in the same
   // shopify/supabase clients that some order-creation tools also rely on).
   const { getShippingZone } = require('./tools/shippingLookup');
   const zone = await getShippingZone(c);
-  return (SHIPPING_METHOD_TITLES[zone] || SHIPPING_METHOD_TITLES.ddu)[s];
+  const effectiveZone = pickTitleZone(SHIPPING_METHOD_TITLES[zone] ? zone : 'ddu', incoterms);
+  return SHIPPING_METHOD_TITLES[effectiveZone][s];
+}
+
+/**
+ * What a shipping title means for duties, derived from the same map Warehance's
+ * rules match on: 'ddp' (RUBIES pays duties/VAT — the "All Duties ... Included"
+ * titles and both Canada titles), 'ddu' (partner/customer pays at import), or
+ * null for US domestic titles where incoterms doesn't apply. Previews use this
+ * so the terms shown are read off the title actually set, never re-derived.
+ */
+function incotermsForTitle(title) {
+  for (const [zone, titles] of Object.entries(SHIPPING_METHOD_TITLES)) {
+    if (titles.standard === title || titles.expedited === title) {
+      if (zone === 'us') return null;
+      return zone === 'ddu' ? 'ddu' : 'ddp';
+    }
+  }
+  return null;
 }
 
 /**
@@ -322,6 +352,8 @@ module.exports = {
   applyShippingAddressOverride,
   SHIPPING_ADDRESS_OVERRIDE_SCHEMA,
   getShippingMethodTitle,
+  pickTitleZone,
+  incotermsForTitle,
   SHIPPING_METHOD_TITLES,
   normalizeCountryCode,
   unknownDestinationWarning,

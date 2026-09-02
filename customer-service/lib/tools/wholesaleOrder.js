@@ -1,13 +1,19 @@
 /**
  * Wholesale order tools: create_wholesale_order, parse_wholesale_input
  *
- * Discount logic:
+ * Discount logic (precedence: explicit param > stored partner terms > default):
  *   US or AU → 50% off per line item
  *   All others → 30% off per line item
  *   All wholesale → free shipping
  *
- * Currency: orders use customer's local currency, except:
- *   hello@sockdrawerheroes.com (AU) → always USD
+ * Negotiated partner terms (discount, incoterms, currency) live on
+ * b2b_companies.wholesale_* and are looked up by customer email — see
+ * lib/wholesaleTerms.js. Incoterms drives the shipping line TITLE (Warehance
+ * automation rules match the title to set carrier + DDP/DDU), so a DDU
+ * partner in a DDP-zone country gets the plain international title.
+ *
+ * Currency: customer's local currency unless partner terms force one
+ * (e.g. Sock Drawer Heroes → USD).
  *
  * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold)
  */
@@ -24,7 +30,9 @@ const {
   normalizeShippingPrice,
   shippingPreviewLine,
   shippingChargeError,
+  incotermsForTitle,
 } = require('../orderUtils');
+const { lookupPartnerTerms, resolveWholesaleTerms, incotermsLabel } = require('../wholesaleTerms');
 const { KNOWN_SIZES_UPPER } = require('../sizeUtils');
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 
@@ -77,10 +85,6 @@ async function fetchPreIncreasePrices(variantIds) {
   }
   return map;
 }
-
-const CURRENCY_OVERRIDES = {
-  'hello@sockdrawerheroes.com': 'USD',
-};
 
 // ---------------------------------------------------------------------------
 // CSV Matrix Parser — programmatically maps header columns to sizes
@@ -296,7 +300,7 @@ const tools = [
   {
     name: 'create_wholesale_order',
     description: [
-      'Create a wholesale draft order with appropriate discount (50% for US/AU, 30% for others) and free shipping.',
+      'Create a wholesale draft order with the partner\'s terms and free shipping. Discount, incoterms (DDP/DDU), and forced currency resolve as: explicit param > stored partner terms (b2b_companies.wholesale_* matched by customer email) > default (50% US/AU else 30%; incoterms by shipping zone; customer\'s local currency). The preview states each resolved value and its source — show it to the user.',
       'Two-phase flow:',
       'Phase 1 (confirmed omitted or false): creates draft order(s) in Shopify and returns a preview with clickable admin links, shipping address, and item breakdown. For AU orders, auto-splits if total exceeds $1,000 AUD.',
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
@@ -348,7 +352,12 @@ const tools = [
             },
           },
         },
-        discount_percent: { type: 'number', description: 'Override the default country-based discount percentage (e.g. 50 for 50% off). If omitted, uses 50% for US/AU, 30% for others.' },
+        discount_percent: { type: 'number', description: 'Override the discount percentage (e.g. 50 for 50% off). If omitted, uses the partner\'s stored terms (b2b_companies.wholesale_discount_percent) when set, else 50% for US/AU, 30% for others.' },
+        incoterms: {
+          type: 'string',
+          enum: ['ddp', 'ddu'],
+          description: 'Override who pays import duties/VAT for this order: "ddu" = partner pays at import, "ddp" = RUBIES pays. If omitted, uses the partner\'s stored terms (b2b_companies.wholesale_incoterms) when set, else the shipping-zone default. Drives the shipping line title, which Warehance maps to carrier + incoterms. Ignored for US destinations.',
+        },
         pre_increase_pricing: {
           type: 'boolean',
           description: 'When true, invoice at pre-Apr-16 2026 retail × wholesale discount for variants that changed in that rollout. Variants without an Apr 16 change row use current retail × discount (silently — they didn\'t change). Use for transitional wholesale partners who were quoted the old prices. Default false.',
@@ -375,7 +384,7 @@ const tools = [
       },
       required: ['customer_id'],
     },
-    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, shipping_speed, shipping_price, shipping_address, pre_increase_pricing, credit_items }) => {
+    handler: async ({ customer_id, customer_email, country_code, items, note, confirmed, draft_order_ids, discount_percent, incoterms, shipping_speed, shipping_price, shipping_address, pre_increase_pricing, credit_items }) => {
       const customerGid = normalizeGid(customer_id, 'Customer');
 
       // --- Phase 2: Confirm drafts, complete them, and send invoices ---
@@ -481,7 +490,17 @@ const tools = [
       }
 
       const cc = (country_code || '').toUpperCase();
-      const discountPercent = discount_percent != null ? discount_percent : (cc === 'US' || cc === 'AU') ? 50 : 30;
+
+      // Negotiated partner terms (b2b_companies.wholesale_*) by customer
+      // email; explicit params always win, defaults fill the rest.
+      const email = (customer_email || '').toLowerCase().trim();
+      const { terms: partnerTerms, warning: termsWarning } = await lookupPartnerTerms(email);
+      const resolvedTerms = resolveWholesaleTerms({
+        countryCode: cc,
+        params: { discount_percent, incoterms },
+        partner: partnerTerms,
+      });
+      const discountPercent = resolvedTerms.discountPercent;
 
       // Resolve items
       const resolvedItems = await resolveLineItems(items);
@@ -519,9 +538,8 @@ const tools = [
         item.unitPrice = computeWholesaleUnitPrice(currentRetail, oldRetail, discountPercent);
       }
 
-      // Check currency override
-      const email = (customer_email || '').toLowerCase().trim();
-      const currencyOverride = CURRENCY_OVERRIDES[email];
+      // Forced invoice currency from partner terms (null = customer's local).
+      const currencyOverride = resolvedTerms.currency;
 
       // Look up customer details for address. An explicit shipping_address
       // override (operator told us to ship somewhere different) takes
@@ -542,7 +560,9 @@ const tools = [
       const speed = (shipping_speed === 'expedited' || shipping_speed === 'standard')
         ? shipping_speed
         : (cc === 'US' ? 'standard' : 'expedited');
-      const shippingTitle = await getShippingMethodTitle(cc, speed);
+      // Incoterms (param > partner terms > zone default) picks the title;
+      // Warehance's automation rules match the title to set carrier + DDP/DDU.
+      const shippingTitle = await getShippingMethodTitle(cc, speed, resolvedTerms.incoterms);
       // Wholesale ships free by default. An operator can charge for it (e.g. a
       // paid expedited upgrade on a rush order) via shipping_price. On an
       // AU split this rides the first draft only, so the customer is not
@@ -704,7 +724,18 @@ const tools = [
       outputLines.push('**Ship to:**');
       outputLines.push(addressBlock);
       outputLines.push('');
-      outputLines.push(`**Discount:** ${discountPercent}% (${cc}) | **Currency:** ${currency}${currencyOverride ? ` (override: ${currencyOverride})` : ''}`);
+      const sourceLabel = (src) => src === 'partner'
+        ? `partner terms — ${resolvedTerms.partnerName}`
+        : src === 'param' ? 'operator override' : `default, ${cc}`;
+      outputLines.push(`**Discount:** ${discountPercent}% (${sourceLabel(resolvedTerms.discountSource)}) | **Currency:** ${currency}${currencyOverride ? ` (${sourceLabel(resolvedTerms.currencySource)})` : ''}`);
+      // Terms are read off the title actually set on the draft — the title is
+      // what Warehance's rules match — so this line can't drift from reality.
+      const effectiveIncoterms = incotermsForTitle(shippingTitle);
+      if (effectiveIncoterms) {
+        const termsSource = resolvedTerms.incoterms ? sourceLabel(resolvedTerms.incotermsSource) : `zone default, ${cc}`;
+        outputLines.push(`**Terms:** ${incotermsLabel(effectiveIncoterms)} (${termsSource})`);
+      }
+      if (termsWarning) outputLines.push(`⚠️ ${termsWarning}`);
       if (pre_increase_pricing) {
         const snapshotCount = resolvedItems.filter(r => r.preIncreaseRetail != null).length;
         const overrideCount = resolvedItems.filter(r => r.useCurrentPricingOverride).length;

@@ -6,7 +6,7 @@
  * Run: node --test customer-service/test/wholesaleOrder.test.js
  */
 
-const { describe, it, beforeEach } = require('node:test');
+const { describe, it, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 // ---------------------------------------------------------------------------
@@ -151,14 +151,13 @@ const TITLES = {
   ddp:    { standard: 'Free International Shipping - All Duties and Import Fees Included', expedited: 'Expedited International Shipping - All Duties and Import Fees Included' },
   ddu:    { standard: 'Free Standard International Shipping',                             expedited: 'Expedited International Shipping' },
 };
-const FAKE_DDP = new Set(['AU', 'GB', 'DE', 'FR', 'NZ']);
-async function fakeGetShippingMethodTitle(country, speed) {
+const FAKE_DDP = new Set(['AU', 'GB', 'DE', 'FR', 'NZ', 'DK']);
+async function fakeGetShippingMethodTitle(country, speed, incoterms = null) {
   const s = speed === 'expedited' ? 'expedited' : 'standard';
   const c = (country || '').toUpperCase().trim();
   if (c === 'US') return TITLES.us[s];
-  if (c === 'CA') return TITLES.canada[s];
-  if (FAKE_DDP.has(c)) return TITLES.ddp[s];
-  return TITLES.ddu[s];
+  const zone = c === 'CA' ? 'canada' : FAKE_DDP.has(c) ? 'ddp' : 'ddu';
+  return TITLES[realOrderUtils.pickTitleZone(zone, incoterms)][s];
 }
 
 const realOrderUtils = require('../lib/orderUtils');
@@ -177,6 +176,22 @@ require.cache[orderUtilsPath] = {
     normalizeShippingPrice: realOrderUtils.normalizeShippingPrice,
     shippingPreviewLine: realOrderUtils.shippingPreviewLine,
     shippingChargeError: realOrderUtils.shippingChargeError,
+    pickTitleZone: realOrderUtils.pickTitleZone,
+    incotermsForTitle: realOrderUtils.incotermsForTitle,
+  },
+};
+
+// Stub the partner-terms lookup so tests control stored terms without Supabase.
+// Tests set stubPartnerTerms to a b2b_companies-shaped row (or null).
+const wholesaleTermsPath = require.resolve('../lib/wholesaleTerms');
+const realWholesaleTerms = require('../lib/wholesaleTerms');
+let stubPartnerTerms = null;
+require.cache[wholesaleTermsPath] = {
+  id: wholesaleTermsPath, filename: wholesaleTermsPath, loaded: true,
+  exports: {
+    lookupPartnerTerms: async () => ({ terms: stubPartnerTerms, warning: null }),
+    resolveWholesaleTerms: realWholesaleTerms.resolveWholesaleTerms,
+    incotermsLabel: realWholesaleTerms.incotermsLabel,
   },
 };
 
@@ -864,5 +879,74 @@ describe('create_wholesale_order — shipping_price', () => {
     for (const d of splitDrafts.slice(1)) {
       assert.equal(d.shippingLine.price, '0.00', 'only the first split may carry freight');
     }
+  });
+});
+
+describe('create_wholesale_order — stored partner terms (b2b_companies.wholesale_*)', () => {
+  beforeEach(() => {
+    lastCreateDraftOrderArgs = null;
+    allCreateDraftOrderArgs = [];
+    stubPartnerTerms = null;
+    stubVariantPrices = {}; // fall back to the $100.00 default retail
+  });
+  after(() => { stubPartnerTerms = null; });
+
+  it('the Transting shape: DK partner with 50% + DDU prices at 50% and gets the plain international title', async () => {
+    stubPartnerTerms = { id: 'transitting', name: 'Transting', wholesale_discount_percent: 50, wholesale_incoterms: 'ddu', wholesale_currency: null };
+    const res = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      customer_email: 'tine@transting.dk',
+      country_code: 'DK',
+      items: [{ sku: 'rub0001-S', quantity: 2 }],
+    });
+    const text = res.content[0].text;
+    // 50% from partner terms, not DK's 30% default
+    assert.equal(lastCreateDraftOrderArgs.lineItems[0].priceOverride.amount, '50.00');
+    // DDU title — the exact string Warehance's rule maps to FedEx + DDU
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Expedited International Shipping');
+    // Preview states the terms and their source
+    assert.match(text, /\*\*Discount:\*\* 50% \(partner terms — Transting\)/);
+    assert.match(text, /\*\*Terms:\*\* DDU — partner pays duties\/VAT at import \(partner terms — Transting\)/);
+  });
+
+  it('explicit params beat stored terms', async () => {
+    stubPartnerTerms = { id: 'transitting', name: 'Transting', wholesale_discount_percent: 50, wholesale_incoterms: 'ddu' };
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      customer_email: 'tine@transting.dk',
+      country_code: 'DK',
+      discount_percent: 30,
+      incoterms: 'ddp',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.lineItems[0].priceOverride.amount, '70.00');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Expedited International Shipping - All Duties and Import Fees Included');
+  });
+
+  it('no stored terms: DK keeps its 30% / DDP-zone defaults and the preview says so', async () => {
+    const res = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      customer_email: 'someone@nowhere.example',
+      country_code: 'DK',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    const text = res.content[0].text;
+    assert.equal(lastCreateDraftOrderArgs.lineItems[0].priceOverride.amount, '70.00');
+    assert.equal(lastCreateDraftOrderArgs.shippingLine.title, 'Expedited International Shipping - All Duties and Import Fees Included');
+    assert.match(text, /\*\*Discount:\*\* 30% \(default, DK\)/);
+    assert.match(text, /\*\*Terms:\*\* DDP — RUBIES pays duties\/VAT \(zone default, DK\)/);
+  });
+
+  it('stored currency forces presentment currency (the Sock Drawer Heroes shape)', async () => {
+    stubPartnerTerms = { id: 'sock-drawer-heroes', name: 'Sock Drawer Heroes', wholesale_currency: 'USD' };
+    await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      customer_email: 'hello@sockdrawerheroes.com',
+      country_code: 'AU',
+      items: [{ sku: 'rub0001-S', quantity: 1 }],
+    });
+    assert.equal(lastCreateDraftOrderArgs.presentmentCurrencyCode, 'USD');
+    // AU + forced currency skips the AUD de-minimis probe: exactly one draft
+    assert.equal(allCreateDraftOrderArgs.length, 1);
   });
 });
