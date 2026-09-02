@@ -152,7 +152,51 @@
     });
   }
 
+  // ── plain-text email → display HTML ───────────────────────────────────────
+  // We store only the plain-text part of inbound mail, and Gmail's text export
+  // of an HTML email leaves artifacts: links become `label<https://url>`,
+  // images become "[A picture containing logo  Description automatically
+  // generated]" or "[cid:...]". This renders that text readably: artifacts
+  // stripped, URLs and mailtos clickable, everything else escaped. Display
+  // only — never feeds the advisor or storage.
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function linkDisplay(url) {
+    const bare = url.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '');
+    return bare.length > 60 ? bare.slice(0, 57) + '…' : bare;
+  }
+
+  function renderEmailText(raw) {
+    let text = String(raw || '');
+    // Outlook/Word image + cid placeholders carry no information.
+    text = text.replace(/\[(?:cid:[^\]]*|[^\[\]]*Description automatically generated[^\[\]]*)\]\s*/gi, '');
+    // Tokenize: angle-bracketed URLs/mailtos (the text export of an HTML
+    // link), then bare URLs. Everything between tokens is escaped text.
+    const token = /<(https?:\/\/[^>\s]+|mailto:[^>\s]+)>|(https?:\/\/[^\s<>"\)\]]+)/g;
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = token.exec(text)) !== null) {
+      out += escapeHtml(text.slice(last, m.index));
+      const target = m[1] || m[2];
+      if (/^mailto:/i.test(target)) {
+        const addr = target.replace(/^mailto:/i, '');
+        out += `<a href="mailto:${escapeHtml(addr)}">${escapeHtml(addr)}</a>`;
+      } else {
+        out += `<a href="${escapeHtml(target)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkDisplay(target))}</a>`;
+      }
+      last = m.index + m[0].length;
+    }
+    out += escapeHtml(text.slice(last));
+    return out;
+  }
+
   return {
+    renderEmailText,
     isOrderFormOutput,
     isHelpCenterForm,
     splitHelpCenterForm,

@@ -119,14 +119,21 @@ test('inferred name is a readable title-cased guess', () => {
 test('enrichment parse accepts a clean answer and normalizes null country', () => {
   assert.deepEqual(
     parseEnrichment('{"org_name": "Blue Mountain Clinic", "country": "United States"}'),
-    { org_name: 'Blue Mountain Clinic', country: 'United States' });
+    { org_name: 'Blue Mountain Clinic', country: 'United States', pitch: false });
   assert.deepEqual(
     parseEnrichment('Here you go: {"org_name": "Le JAG", "country": null}'),
-    { org_name: 'Le JAG', country: null });
+    { org_name: 'Le JAG', country: null, pitch: false });
   // the string "null" is a model tic, not a country
   assert.deepEqual(
     parseEnrichment('{"org_name": "Le JAG", "country": "null"}'),
-    { org_name: 'Le JAG', country: null });
+    { org_name: 'Le JAG', country: null, pitch: false });
+});
+
+test('the pitch flag only reads literal true — a spam guess fails toward showing the row normally', () => {
+  assert.equal(parseEnrichment('{"org_name": "Optimize Synergy", "pitch": true}').pitch, true);
+  assert.equal(parseEnrichment('{"org_name": "Le JAG", "pitch": false}').pitch, false);
+  assert.equal(parseEnrichment('{"org_name": "Le JAG", "pitch": "true"}').pitch, false);
+  assert.equal(parseEnrichment('{"org_name": "Le JAG"}').pitch, false);
 });
 
 test('enrichment parse rejects garbage rather than letting it become a company name', () => {

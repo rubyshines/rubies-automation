@@ -115,8 +115,9 @@ function buildEnrichPrompt(c) {
     '--- END ---',
     '',
     'Reply with ONLY a JSON object, no explanation:',
-    '{"org_name": "the organisation\'s proper name as they would write it", "country": "country they are in, or null if the message does not say or imply one"}',
+    '{"org_name": "the organisation\'s proper name as they would write it", "country": "country they are in, or null if the message does not say or imply one", "pitch": true or false}',
     'If the sender is a company/store, org_name is the company/store name. Use the message\'s own wording — do not invent or expand names beyond what is stated or clearly implied by the domain.',
+    'pitch is true when the sender is selling a product or service TO the brand (software, marketing, agencies, cold sales pitches, marketplace notifications) rather than a store wanting to stock its products or a community organisation wanting to partner. When genuinely unsure, use false.',
   ].join('\n');
 }
 
@@ -130,7 +131,9 @@ function parseEnrichment(text) {
   if (name.length < 2 || name.length > 80) return null;
   const country = typeof parsed.country === 'string' && parsed.country.trim() && parsed.country.trim().toLowerCase() !== 'null'
     ? parsed.country.trim() : null;
-  return { org_name: name, country };
+  // Anything but literal true reads as false — a spam guess must fail toward
+  // "show it normally", never toward hiding a real org.
+  return { org_name: name, country, pitch: parsed.pitch === true };
 }
 
 async function enrichCandidate(c) {
@@ -163,8 +166,13 @@ async function enrichCandidates(candidates) {
     if (!e) { c.name_source = 'domain'; return; }
     c.inferred_name = e.org_name;
     c.country = e.country;
+    c.pitch = e.pitch;
     c.name_source = 'ai';
   }));
+  // Likely vendor pitches sink to the bottom, badged — flagged rather than
+  // hidden, because a wrong spam guess that silently drops a real org is the
+  // worse failure. Stable sort keeps newest-first inside each group.
+  candidates.sort((a, b) => (a.pitch ? 1 : 0) - (b.pitch ? 1 : 0));
   return candidates;
 }
 
@@ -267,7 +275,11 @@ async function admitInboundSender(sb, { domain, name, email, contact_name = null
  */
 async function dismissInboundSender(sb, { domain, name = null, reason = null } = {}) {
   if (!domain) throw new Error('domain is required');
-  const id = slugify(name) || slugify(domain);
+  // Stub ids come from the DOMAIN, not the display name: a name-derived slug
+  // ('info', from info.faire.com's inferred name) is generic enough for a
+  // real company to collide with later, and the domain is what suppression
+  // matches on anyway.
+  const id = slugify(domain);
   const { data: existing } = await sb.from('b2b_companies')
     .select('id, relationship_state').eq('id', id).maybeSingle();
   if (existing && existing.relationship_state !== 'lost') {

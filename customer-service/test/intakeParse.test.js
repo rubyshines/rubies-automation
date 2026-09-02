@@ -263,3 +263,52 @@ describe('isOrderFormOutput', () => {
     assert.equal(isOrderFormOutput(''), false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// renderEmailText — plain-text email → display HTML for the inbound strip
+// ---------------------------------------------------------------------------
+
+describe('renderEmailText', () => {
+  const { renderEmailText } = intakeParse;
+
+  it('escapes HTML — a hostile email cannot inject markup', () => {
+    const out = renderEmailText('<script>alert(1)</script> & <b>bold</b>');
+    assert.ok(!out.includes('<script>'));
+    assert.ok(out.includes('&lt;script&gt;'));
+    assert.ok(out.includes('&amp;'));
+  });
+
+  it('turns angle-bracketed URLs (the text export of an HTML link) into anchors', () => {
+    const out = renderEmailText('Sign our Petition<https://www.subscribepage.io/keeppolitics>');
+    assert.ok(out.includes('<a href="https://www.subscribepage.io/keeppolitics" target="_blank" rel="noopener noreferrer">'));
+    assert.ok(out.includes('subscribepage.io/keeppolitics</a>'));
+    assert.ok(out.includes('Sign our Petition'));
+  });
+
+  it('links bare URLs and mailtos', () => {
+    const out = renderEmailText('See https://lejag.org/about or write <mailto:info@lejag.org>');
+    assert.ok(out.includes('href="https://lejag.org/about"'));
+    assert.ok(out.includes('href="mailto:info@lejag.org"'));
+    assert.ok(out.includes('>info@lejag.org</a>'));
+  });
+
+  it('strips Outlook image placeholders and cid artifacts', () => {
+    const out = renderEmailText('[A picture containing logo  Description automatically generated]\n<https://www.tiktok.com/@lejag_lgbt>\n[cid:52b34f72-321a]Hello');
+    assert.ok(!out.includes('Description automatically generated'));
+    assert.ok(!out.includes('cid:'));
+    assert.ok(out.includes('href="https://www.tiktok.com/@lejag_lgbt"'));
+    assert.ok(out.includes('Hello'));
+  });
+
+  it('shortens very long URLs for display but keeps the full href', () => {
+    const long = 'https://example.org/' + 'a'.repeat(120);
+    const out = renderEmailText(long);
+    assert.ok(out.includes(`href="${long}"`));
+    assert.ok(out.includes('…</a>'));
+  });
+
+  it('handles empty and null input', () => {
+    assert.equal(renderEmailText(''), '');
+    assert.equal(renderEmailText(null), '');
+  });
+});

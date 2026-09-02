@@ -6050,11 +6050,12 @@ function outreachInboundRowHtml(c) {
         <input class="outreach-inbound-name" id="inbound-name-${esc(c.domain)}"
                value="${esc(c.inferred_name)}" onclick="event.stopPropagation()"
                title="Company name — becomes the record's id, fix it before adding" />
+        ${c.pitch ? '<span class="badge outreach-inbound-pitch" title="The message reads like someone selling TO us, not a store or org — double-check, then Ignore">vendor pitch?</span>' : ''}
         <span class="outreach-channel-chip outreach-channel-${esc(c.channel)}">${esc(channelLabel)}</span>
       </div>
       <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}${c.country ? ` &middot; ${esc(c.country)}` : ''}</div>
       ${c.subject ? `<div class="outreach-row-snippet">${esc(c.subject)}${expanded ? '' : ' <span class="outreach-inbound-more">&mdash; click to read</span>'}</div>` : ''}
-      ${expanded && c.body ? `<div class="outreach-inbound-body">${esc(c.body)}</div>` : ''}
+      ${expanded && c.body ? `<div class="outreach-inbound-body">${intakeParse.renderEmailText(c.body)}</div>` : ''}
       <div class="queue-item-row2 outreach-inbound-actions">
         <button class="outreach-inbound-btn outreach-inbound-add" data-domain="${esc(c.domain)}" onclick="outreachInboundAdmit(this.dataset.domain); event.stopPropagation()">Add</button>
         <button class="outreach-inbound-btn" data-domain="${esc(c.domain)}" onclick="outreachInboundDismiss(this.dataset.domain); event.stopPropagation()">Ignore</button>

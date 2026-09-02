@@ -5655,6 +5655,12 @@ main { height: calc(100vh - 56px); }
 }
 .outreach-inbound-row { cursor: pointer; }
 .outreach-inbound-more { color: var(--text-tertiary); font-style: italic; }
+.outreach-inbound-pitch {
+  background: #fef3c7;
+  color: #a16207;
+  flex-shrink: 0;
+}
+.outreach-inbound-body a { color: var(--teal); word-break: break-all; }
 .outreach-inbound-body {
   margin: 6px 0 4px;
   padding: 8px 10px;
