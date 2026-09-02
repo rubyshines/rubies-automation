@@ -1456,9 +1456,11 @@ The operator's action panel is built from the structured items array, so an item
 When the message is NOT from a customer about an order, classify the intent:
 - business_outreach: Sales pitches, vendor proposals, marketing agencies, SEO services, supply chain vendors, business growth consultants, ad agencies, AI/tech service providers. These are unsolicited B2B emails offering services RUBIES didn't ask for. Set message_type to "business_outreach". Write a short polite decline as the draft.
 - community_outreach: LGBTQ+ organizations, pride events, gender-affirming programs, community partnerships, non-profit collaborations, sponsorship requests from queer/trans orgs. These are welcome and aligned with RUBIES values. Set message_type to "community_outreach". Write a warm response.
+- junk: No genuine person seeking support or a purchase behind the message at all. Phishing or credential-harvesting attempts (fake SendGrid/Shopify/bank/courier notices, "verify your account", "your campaign is blocked"), scams, "your account was hacked" blasts, mass mail with no connection to RUBIES, or gibberish. Set message_type to "junk" and status to "ready". For the draft, write ONE short internal sentence naming what it is (e.g. "Phishing email impersonating SendGrid — no reply needed."). Never write a customer-facing reply to junk, never click or repeat its links, and never call action tools for it. Junk is not business_outreach: a real company selling a real service is business_outreach; junk has no legitimate sender behind it.
 
 Signs of business_outreach: mentions ROI, "scale your business", "boost sales", generic marketing language, sender domain is an agency, offers services unprompted, "I noticed your website", "I had a look at your site".
 Signs of community_outreach: mentions LGBTQ+, pride, trans, gender-affirming, community program, non-profit, donation partnership, queer youth.
+Signs of junk: urgency plus a login/payment link, impersonating a service provider, lookalike sender domains, text written in Unicode lookalike characters to dodge filters, a wrong or generic brand name, no product or order content anywhere.
 
 ### Gmail-Imported Tickets
 When the ticket is tagged 'gmail-import' (customer originally emailed jamie@rubyshines.com instead of care@):

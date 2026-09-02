@@ -293,6 +293,69 @@ async function run({ execute = false } = {}) {
     }
   }
 
+  // ── Step 4b⅞: Stale pending drafts on long-closed tickets ──
+  //    A ticket handled outside the dashboard (Jamie replies in Gorgias, drift
+  //    triage closes it, etc.) closes cs_tickets but leaves the pending draft
+  //    row behind forever — 50 had accumulated between April and September
+  //    2026, invisible to the dashboard tabs but polluting any queue-level
+  //    query. Mark them superseded (the neutral "never acted on" terminal
+  //    state — no fake operator judgment, excluded from quality metrics).
+  //    3-day grace so we never race an in-flight close/reopen; a later
+  //    customer reply reopens the ticket and inserts a FRESH draft row, so
+  //    superseding here can never swallow a live conversation.
+  let staleDraftsTidied = 0;
+  {
+    const pendingDrafts = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error } = await supabase
+        .from('cs_ai_drafts')
+        .select('id, gorgias_ticket_id')
+        .eq('status', 'pending')
+        .range(from, from + 999);
+      if (error) { console.warn(`  [stale-drafts] pending fetch failed: ${error.message}`); break; }
+      pendingDrafts.push(...(page || []));
+      if (!page || page.length < 1000) break;
+    }
+    const pendingByTicket = new Map();
+    for (const d of pendingDrafts) {
+      if (!pendingByTicket.has(d.gorgias_ticket_id)) pendingByTicket.set(d.gorgias_ticket_id, []);
+      pendingByTicket.get(d.gorgias_ticket_id).push(d.id);
+    }
+    const ticketIds = [...pendingByTicket.keys()].filter(Boolean);
+    if (ticketIds.length) {
+      const cutoff = new Date(Date.now() - 3 * 86400000).toISOString();
+      const staleIds = [];
+      for (let i = 0; i < ticketIds.length; i += 200) {
+        const { data: closedTickets, error } = await supabase
+          .from('cs_tickets')
+          .select('gorgias_ticket_id, status, closed_at, updated_at')
+          .in('gorgias_ticket_id', ticketIds.slice(i, i + 200))
+          .eq('status', 'closed');
+        if (error) { console.warn(`  [stale-drafts] ticket fetch failed: ${error.message}`); break; }
+        for (const t of (closedTickets || [])) {
+          const closedSince = t.closed_at || t.updated_at;
+          if (closedSince && closedSince < cutoff) staleIds.push(...pendingByTicket.get(t.gorgias_ticket_id));
+        }
+      }
+      if (staleIds.length) {
+        if (dryRun) {
+          console.log(`  [stale-drafts] ${staleIds.length} pending draft(s) on tickets closed >3d — would supersede`);
+        } else {
+          for (let i = 0; i < staleIds.length; i += 200) {
+            const { error } = await supabase
+              .from('cs_ai_drafts')
+              .update({ status: 'superseded', reviewed_at: new Date().toISOString() })
+              .in('id', staleIds.slice(i, i + 200))
+              .eq('status', 'pending');
+            if (error) { console.warn(`  [stale-drafts] update failed: ${error.message}`); break; }
+          }
+          staleDraftsTidied = staleIds.length;
+          console.log(`  [stale-drafts] superseded ${staleIds.length} pending draft(s) on tickets closed >3d`);
+        }
+      }
+    }
+  }
+
   // ── Step 4c: Process expired snoozes → auto follow-ups ──
   //    Only runs when called from runPipeline (daily sync), not CLI dry runs.
 
@@ -533,6 +596,7 @@ Example: NO | exchange confirmed and created, no reply needed`;
     })),
     autoResolved,
     spamRecovered,
+    staleDraftsTidied,
     undelivered: undelivered.map(({ ticket, failedMessages, autoclosed }) => ({
       ticketId: ticket.id,
       email: ticket.customer?.email || '?',
@@ -646,6 +710,7 @@ async function runPipeline() {
     if (driftCount) detailParts.push(`${driftCount} real miss${driftCount === 1 ? '' : 'es'}`);
     if (spamRecoveredCount) detailParts.push(`${spamRecoveredCount} rescued from spam`);
     if (autoResolvedCount) detailParts.push(`${autoResolvedCount} auto-resolved`);
+    if (detection.staleDraftsTidied) detailParts.push(`${detection.staleDraftsTidied} stale drafts tidied`);
     if (undeliveredCount) detailParts.push(`${undeliveredCount} undelivered`);
     if (followUpCount) {
       detailParts.push(followUpErrorCount

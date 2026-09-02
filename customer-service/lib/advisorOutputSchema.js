@@ -43,8 +43,8 @@ const ADVISOR_OUTPUT_SCHEMA = {
     },
     message_type: {
       type: 'string',
-      enum: ['exchange', 'refund', 'defect', 'sizing_inquiry', 'shipping', 'closing', 'general_inquiry', 'business_outreach', 'community_outreach', 'discount_request', 'uncategorized'],
-      description: "Always pick the single best-fit value. business_outreach = unsolicited B2B sales/marketing emails. community_outreach = LGBTQ+ org partnerships. discount_request = customer asks for a discount or missing welcome code. If nothing fits use 'uncategorized' — never invent new values.",
+      enum: ['exchange', 'refund', 'defect', 'sizing_inquiry', 'shipping', 'closing', 'general_inquiry', 'business_outreach', 'community_outreach', 'discount_request', 'junk', 'uncategorized'],
+      description: "Always pick the single best-fit value. business_outreach = unsolicited B2B sales/marketing emails. community_outreach = LGBTQ+ org partnerships. discount_request = customer asks for a discount or missing welcome code. junk = phishing/scam/mass mail with no genuine person behind it. If nothing fits use 'uncategorized' — never invent new values.",
     },
     customer_intent: {
       enum: ['exchange_same_product', 'exchange_different_product', 'refund', 'unsure', null],
@@ -273,7 +273,7 @@ const LEGACY_STRUCTURED_TEMPLATE = `After handling the conversation, you MUST en
 <structured>
 {
   "status": "ready|needs_info|gathering|route_to_human (use ready when ALL items are resolved OR when setting an explicit action_type below — the system automatically marks it action_needed for the operator. Use needs_info when waiting for customer input. Use gathering while still processing.)",
-  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|discount_request|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. If nothing fits, use 'uncategorized' — do not invent new values.)",
+  "message_type": "exchange|refund|defect|sizing_inquiry|shipping|closing|general_inquiry|business_outreach|community_outreach|discount_request|junk|uncategorized (IMPORTANT: always pick the single best-fit value from this exact list. If nothing fits, use 'uncategorized' — do not invent new values.)",
   "customer_intent": "exchange_same_product|exchange_different_product|refund|unsure|null",
   "action_type": "null|warehouse_hold|order_modification|cancellation|customer_profile_update|discount_code|split_shipment|invoice_kept_items",
   "action_order_number": "null OR the order number the staged action targets, digits only (e.g. '31485') — REQUIRED whenever action_type is set or operator_action_summary names an order. Usually the loaded order; when the operator or customer redirects the action to a DIFFERENT order, use THAT order's number (automatic actions like warehouse holds execute against it).",

@@ -25,6 +25,8 @@ const { MODELS } = require('../../shared/aiPricing');
 const { buildContext } = require('../lib/contextBuilder');
 const gorgias = require('../import/gorgiasClient');
 const { canonicalMessageType } = require('../lib/messageTypes');
+const { hasOrderHistory } = require('../lib/knownCustomer');
+const { shouldAutoCloseJunk, junkCloseNote } = require('../lib/junkDisposition');
 const { classifyThankYou, formatMessagesForClassifier } = require('../lib/thankYouClassifier');
 const { stripQuotedContent } = require('../../gmail-management/lib/gmailSync');
 const { transplantContinuation, buildTransplantMessages } = require('../lib/ticketContinuation');
@@ -1185,6 +1187,71 @@ async function processTicketInner(supabase, ticket, aiBotId, existingMessageIds,
   if (ticketErr) {
     console.error(`[intake] Ticket upsert error for ${ticketId}: ${ticketErr.message}`);
     return { skipped: true };
+  }
+
+  // Junk disposition: the advisor concluded there is no genuine person behind
+  // this message (phishing/scam/mass mail). This is the gate for junk that
+  // EVADES Gorgias's spam detector — flagged tickets never reach intake for
+  // unknown senders (the spam gate owns those). Close with an audit note
+  // instead of queueing a draft; the deterministic guards (known customer,
+  // agent already replied) fail toward the queue, and a Gorgias failure here
+  // propagates so the claim releases and the next pass retries.
+  if (messageType === 'junk') {
+    const known = resolvedEmail ? await hasOrderHistory(supabase, resolvedEmail) : false;
+    if (shouldAutoCloseJunk({ messageType, known, hasAgentReply })) {
+      const junkNow = new Date().toISOString();
+      await gorgias.addInternalNote(ticketId, junkCloseNote(structured.summary));
+      try { await gorgias.addTicketTag(ticketId, 'spam'); } catch (e) { /* tagging is best-effort */ }
+      await gorgias.closeTicket(ticketId);
+      await gorgias.assignTicket(ticketId, null);
+
+      await supabase
+        .from('cs_tickets')
+        .update({
+          status: 'closed',
+          closed_at: junkNow,
+          viewed_at: junkNow,
+          updated_at: junkNow,
+          gorgias_status: 'closed',
+          active_draft_id: null,
+          auto_close_path: 'junk',
+        })
+        .eq('id', ticketRow.id);
+
+      // The claim row becomes the terminal record (status 'spam', matching the
+      // dashboard's mark-spam action) — a draft that never entered the queue.
+      await supabase
+        .from('cs_ai_drafts')
+        .update({
+          ticket_id: ticketRow.id,
+          customer_email: resolvedEmail || customerEmail,
+          draft_response: draftResponse,
+          structured_output: structured,
+          audit_trail: structured.audit || [],
+          confidence,
+          advisor_status: structured.status,
+          message_type: messageType,
+          conversation_history: conversationHistory,
+          status: 'spam',
+          reviewed_at: junkNow,
+          auto_close_path: 'junk',
+        })
+        .eq('id', claim.id);
+      claimCtx.settled = true;
+
+      await supabase.from('cs_ai_feedback_log').insert({
+        draft_id: claim.id,
+        gorgias_ticket_id: ticketId,
+        action: 'auto_close_junk',
+        message_type: messageType,
+        confidence,
+        advisor_status: structured.status,
+      });
+
+      console.log(`[intake] Ticket ${ticketId} auto-closed as junk (${(structured.summary || '').slice(0, 80)})`);
+      return { junked: true };
+    }
+    console.log(`[intake] Ticket ${ticketId} classified junk but ${known ? 'sender has order history' : 'an agent already replied'} — keeping draft for review`);
   }
 
   // Auto-execute the warehouse hold the moment the advisor proposes it — the
