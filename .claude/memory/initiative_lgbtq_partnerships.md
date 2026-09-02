@@ -6,7 +6,7 @@ metadata:
   type: project
   domains: 
     - community
-  last_updated: 2026-08-24
+  last_updated: 2026-09-02
   originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
@@ -24,6 +24,16 @@ Active programs running. As of 2026-05-28, rubies-automations is the SSOT for do
 
 ## UK Expansion (2026-07-24)
 Started via the outreach engine's referred-prospect intake. First objective: establish the UK donation partner network (none exist; 30% purchase tier). Five active prospects: **Mermaids** (intro SENT 2026-07-24 — the engine's first real send; auto-reply received, human reply pending; referred by Arianna Bernucci, who has the personal history with them — NOT Jamie's story), TransActual + Not A Phase (Arianna), The Clare Project + Trans Pride Brighton (customer donation thread; TPB has a formal partner programme). AllSorts Youth Project: declined via a customer — marked lost, do not outreach. Drafts #15-#18 pending in the Outreach queue, to send staggered. Uniting Pride (Illinois) call-first onboarding draft #11 also pending.
+
+## Cold Intro Round 1 (2026-09-02)
+The org cold intro is now a locked template (founder story, "Our program offers the
+following:" with donations + always-present discount bullets, call CTA, Talk soon
+sign-off) with two fixed subject lines A/B tested by alternation — locked line by line
+with Jamie after the first freestyled batch mentioned the discount inconsistently.
+The 8 vetted cold orgs regenerated onto it, pending review and send. Measurement:
+reply within 14 days by subject variant, bounces excluded, cumulative across rounds
+(round 1's n=8 is directional only). Drafting policy behind it (auto-draft initiating,
+Jamie writes replies, Sonnet + edit-rate tripwire) is a domain_b2b_sales.md Key Decision.
 
 ## Partner Re-Engagement Round (2026-08-11)
 First check-in sweep across all 18 active partners. Drafts written and grounded in real

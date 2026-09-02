@@ -8,6 +8,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Reopen & follow up still AI-drafts into reopened threads
+- Parked: 2026-09-02
+- Domains: b2b_sales, community
+- Type: decision-needed
+- Priority: low
+- Notes: The initiate-vs-continue rule (2026-09-02, domain_b2b_sales.md) made continuations operator-written, but `reopenThread` still generates an AI follow-up draft into the reopened conversation — continuation-shaped under the rule. Left as-is because removing it needs the composer to target the reopened thread (`composeDraft` inherits thread_id from the queue entry, which a reopen doesn't produce). Decide whether Reopen becomes reopen-and-compose, and plumb composer thread targeting if so.
+
 ## The 354 stored balance-sheet snapshots are all wrong and need re-running
 - Parked: 2026-08-27
 - Domains: finance
