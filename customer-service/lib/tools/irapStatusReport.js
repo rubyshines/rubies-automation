@@ -13,9 +13,9 @@
 const { generateStatusReport } = require('../../../finance/lib/irapStatusReport');
 
 async function handleIrapStatusReport(args) {
-  const { month, claim, notes, delayed, variations, out_path } = args || {};
+  const { month, claim, notes, delayed, variations, address_changed, out_path } = args || {};
   if (!month) {
-    return { content: [{ type: 'text', text: 'month is required (e.g. "July", "2026-07").' }] };
+    return { content: [{ type: 'text', text: 'month is required (e.g. "July", "2026-07", "July-August").' }] };
   }
   const result = await generateStatusReport({
     period: month,
@@ -23,6 +23,7 @@ async function handleIrapStatusReport(args) {
     notes: notes || null,
     delayExplanation: delayed,
     variations,
+    addressChanged: address_changed === true,
     outPath: out_path,
   });
 
@@ -50,7 +51,7 @@ module.exports = [
       properties: {
         month: {
           type: 'string',
-          description: 'Reporting month: "June", "July 2026", or "2026-07"',
+          description: 'Reporting period: "June", "July 2026", or "2026-07". A claim spanning several months is a range: "July-August" or "2026-07..2026-08".',
         },
         claim: {
           type: 'string',
@@ -67,6 +68,10 @@ module.exports = [
         variations: {
           type: 'string',
           description: 'Variations from objectives/work plan/budget. Defaults to "There have been no variations."',
+        },
+        address_changed: {
+          type: 'boolean',
+          description: 'Answer "yes" to the firm-address-changed question. Defaults to no.',
         },
         out_path: {
           type: 'string',

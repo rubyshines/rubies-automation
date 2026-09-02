@@ -3,11 +3,13 @@
  * Generate an NRC-IRAP monthly status report from actual repo activity.
  *
  * Usage:
- *   node finance/generate-irap-status-report.js <month> [options]
+ *   node finance/generate-irap-status-report.js <period> [options]
  *
- *   <month>              "June", "June 2026", or "2026-06"
+ *   <period>             "June", "June 2026", or "2026-06"; a claim spanning
+ *                        several months is a range: "July-August",
+ *                        "July-August 2026", or "2026-07..2026-08"
  *   --claim <n>          claim number override (default: auto-derived — reuses
- *                        this month's archived claim on regenerate, else max
+ *                        this period's archived claim on regenerate, else max
  *                        prior claim + 1)
  *   --notes <file>       operator notes to include alongside git history
  *   --baseline           include the "starting point" section (automatic for
@@ -15,6 +17,7 @@
  *   --delayed "<why>"    mark project off-schedule with this explanation
  *   --completion "<date>"  override forecasted completion date
  *   --variations "<txt>" override the variations section (default: none)
+ *   --address-changed    answer "yes" to the firm-address-changed question
  *   --date "<date>"      prepared-by date (default: today, ET)
  *   --out <path>         output path (default: ~/Downloads/IRAP Status Report - <period>.pdf;
  *                        a .html path writes Google-Docs-pastable HTML instead)
@@ -43,7 +46,7 @@ function parseArgs(argv) {
   const args = parseArgs(process.argv.slice(2));
   const period = args._.join(' ');
   if (!period) {
-    console.error('Usage: node finance/generate-irap-status-report.js <month> [--claim N] [--notes file] [--delayed "why"] [--out path]');
+    console.error('Usage: node finance/generate-irap-status-report.js <period> [--claim N] [--notes file] [--delayed "why"] [--out path]');
     process.exit(1);
   }
   const notes = args.notes ? require('fs').readFileSync(args.notes, 'utf8') : null;
@@ -56,6 +59,7 @@ function parseArgs(argv) {
     delayExplanation: args.delayed,
     completionDate: args.completion,
     variations: args.variations,
+    addressChanged: args['address-changed'] === true,
     preparedDate: args.date,
     outPath: args.out,
   });

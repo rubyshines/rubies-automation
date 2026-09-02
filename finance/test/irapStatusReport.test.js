@@ -33,6 +33,31 @@ test('resolvePeriod: explicit forms', () => {
   assert.throws(() => resolvePeriod('notamonth', JULY_2026), /Cannot parse/);
 });
 
+test('resolvePeriod: multi-month ranges', () => {
+  const sept = new Date('2026-09-02T12:00:00');
+  const r = resolvePeriod('July-August', sept);
+  assert.equal(r.label, 'July-August 2026');
+  assert.equal(r.fromStr, 'July 1, 2026');
+  assert.equal(r.toStr, 'August 31, 2026');
+  assert.equal(r.sinceIso, '2026-07-01T00:00:00');
+  assert.equal(r.untilIso, '2026-08-31T23:59:59');
+  assert.equal(r.month, 7);
+  assert.equal(r.endMonth, 8);
+
+  assert.equal(resolvePeriod('july-august 2026', JULY_2026).label, 'July-August 2026');
+  assert.equal(resolvePeriod('2026-07..2026-08', JULY_2026).toStr, 'August 31, 2026');
+  // cross-year: iso form carries a year per end; bare names roll the end forward
+  assert.equal(resolvePeriod('2026-12..2027-01', JULY_2026).label, 'December 2026 - January 2027');
+  const wrapped = resolvePeriod('december-january', new Date('2027-02-10T12:00:00'));
+  assert.equal(wrapped.label, 'December 2026 - January 2027');
+  assert.equal(wrapped.untilIso, '2027-01-31T23:59:59');
+
+  assert.throws(() => resolvePeriod('2026-08..2026-07', JULY_2026), /ends before it starts/);
+  assert.throws(() => resolvePeriod('july-notamonth', JULY_2026), /Cannot parse/);
+  // single months are unchanged by the range support
+  assert.equal(resolvePeriod('2026-07', JULY_2026).endMonth, 7);
+});
+
 test('shouldIncludeBaseline: only the project start month', () => {
   const july = resolvePeriod('2026-07', JULY_2026);
   const august = resolvePeriod('2026-08', JULY_2026);
@@ -74,6 +99,26 @@ test('report archive: save + load prior months only, in order', () => {
   const beforeAugust = loadPriorReports(august, dir);
   assert.deepEqual(beforeAugust.map((r) => r.period.label), ['June 2026', 'July 2026']);
   assert.equal(loadPriorReports(july, dir)[0].sections[0].heading, 'Older');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('report archive: range periods file under start_end and count as prior for later months', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'irap-range-'));
+  const june = resolvePeriod('2026-06', JULY_2026);
+  const julAug = resolvePeriod('2026-07..2026-08', JULY_2026);
+  const sept = resolvePeriod('2026-09', new Date('2026-10-02T12:00:00'));
+
+  saveReportArchive({ period: june, claimNumber: '1', sections: [{ heading: 'J', bullets: ['x'] }] }, dir);
+  const file = saveReportArchive({ period: julAug, claimNumber: '2', sections: [{ heading: 'R', bullets: ['y'] }] }, dir);
+  assert.equal(path.basename(file), '2026-07_2026-08.json');
+
+  // June precedes the range; the range precedes September
+  assert.deepEqual(loadPriorReports(julAug, dir).map((r) => r.period.label), ['June 2026']);
+  assert.deepEqual(loadPriorReports(sept, dir).map((r) => r.period.label), ['June 2026', 'July-August 2026']);
+
+  // claim derivation: regenerate reuses the range's own claim; next period increments past it
+  assert.equal(deriveClaimNumber(julAug, dir), '2');
+  assert.equal(deriveClaimNumber(sept, dir), '3');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

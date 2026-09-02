@@ -1,0 +1,43 @@
+{
+  "period": {
+    "label": "July-August 2026",
+    "from": "July 1, 2026",
+    "to": "August 31, 2026"
+  },
+  "claimNumber": "2",
+  "sections": [
+    {
+      "heading": "Objective 1: Autonomous Customer Service Agent",
+      "bullets": [
+        "Building on last period's multi-agent system, we rebuilt the agent's knowledge base by mining historical resolved tickets into 292 curated articles, and gave the agent a search tool over it so its answers are grounded in real policy rather than the model's memory.",
+        "We added a two-stage review filter that drops facts the system can look up itself and auto-accepts tool-verified facts before founder review, so the founder only rules on genuine conflicts.",
+        "We introduced a structured review-sheet loop where the founder gives free-text rulings on conflicting responses, and folded 17 of those rulings into the agent as explicit voice and behaviour rules.",
+        "We ran a controlled head-to-head evaluation of a newer, more capable AI model (Opus 5) against our current model on accuracy, latency, and cost, and rejected it after it failed all three acceptance criteria."
+      ]
+    },
+    {
+      "heading": "Objective 1: Measuring and Extending Autonomy",
+      "bullets": [
+        "We extended our shadow-mode auto-send experiment to also judge responses that the founder had steered before regenerating, giving us a would-have-sent verdict on a wider slice of tickets.",
+        "We conducted a formal review of whether to graduate any category to real autonomous sending and judged the agent not yet ready, scheduling re-review for September, an honest checkpoint against the 80% resolution target.",
+        "We hardened the agent's order-changing actions so unshipped orders stay frozen during edits, exchange amounts settle against what the customer actually paid, and swaps never silently double-ship or skip billing."
+      ]
+    },
+    {
+      "heading": "Objective 1: Platform Reliability",
+      "bullets": [
+        "We added automatic retries on transient network and server failures when the agent reads from the helpdesk, reducing tickets that fail to load or process.",
+        "We fixed several data-integrity and security faults (webhook authentication bypass, secret leakage, finance-snapshot corruption, and lost customer emails) surfaced by an internal code review."
+      ]
+    },
+    {
+      "heading": "Objective 2: Partner Channel Discovery and Onboarding",
+      "bullets": [
+        "Building on last period's outreach engine, we shipped a full working partner console: operators can browse past outreach, edit and send AI drafts, attach generated partner agreements, and book onboarding calls without leaving the panel.",
+        "We taught the system to match inbound replies by sender domain and to recognise that a shared email thread can represent two separate relationships, a fix that surfaced history for four previously blank partners.",
+        "We built pause, snooze, and follow-up handling so a scheduled check-in is not treated as work waiting on the operator and a reply from years earlier is never mistaken for an answer to a recent message."
+      ]
+    }
+  ],
+  "generatedAt": "2026-09-02T18:32:46.052Z"
+}

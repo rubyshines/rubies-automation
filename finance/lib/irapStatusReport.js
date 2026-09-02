@@ -33,18 +33,12 @@ function expandHome(p) {
   return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : p;
 }
 
-/**
- * Resolve "June", "June 2026", or "2026-06" to a reporting period.
- * A bare month name resolves to the most recent occurrence of that month
- * that has already started (June asked in July 2026 → June 2026).
- */
-function resolvePeriod(input, now = new Date()) {
-  const raw = String(input || '').trim().toLowerCase();
-  let year;
-  let monthIdx;
-
+/** Resolve one month token ("june", "june 2026", "2026-06") to {year, monthIdx}. */
+function resolveMonthToken(raw, now) {
   const iso = raw.match(/^(\d{4})-(\d{1,2})$/);
   const named = raw.match(/^([a-z]+)(?:\s+(\d{4}))?$/);
+  let year;
+  let monthIdx;
   if (iso) {
     year = Number(iso[1]);
     monthIdx = Number(iso[2]) - 1;
@@ -53,20 +47,80 @@ function resolvePeriod(input, now = new Date()) {
     year = named[2] ? Number(named[2]) : now.getFullYear();
     if (!named[2] && monthIdx > now.getMonth()) year -= 1;
   } else {
-    throw new Error(`Cannot parse reporting period "${input}" — use "June", "June 2026", or "2026-06"`);
+    return null;
   }
-  if (monthIdx < 0 || monthIdx > 11) throw new Error(`Invalid month in "${input}"`);
+  if (monthIdx < 0 || monthIdx > 11) return null;
+  return { year, monthIdx };
+}
 
-  const monthName = MONTHS[monthIdx][0].toUpperCase() + MONTHS[monthIdx].slice(1);
-  const lastDay = new Date(year, monthIdx + 1, 0).getDate();
+function monthName(idx) {
+  return MONTHS[idx][0].toUpperCase() + MONTHS[idx].slice(1);
+}
+
+/**
+ * Resolve "June", "June 2026", or "2026-06" to a reporting period.
+ * A bare month name resolves to the most recent occurrence of that month
+ * that has already started (June asked in July 2026 → June 2026).
+ *
+ * A multi-month claim period is written as a range: "July-August",
+ * "July-August 2026", or "2026-07..2026-08" — the period then runs from the
+ * first day of the start month to the last day of the end month.
+ */
+function resolvePeriod(input, now = new Date()) {
+  const raw = String(input || '').trim().toLowerCase();
+
+  // Range forms: "2026-07..2026-08" and "july-august [year]". A trailing year
+  // on the named form applies to both ends; cross-year named ranges need the
+  // iso form so each end carries its own year.
+  let startTok = null;
+  let endTok = null;
+  const isoRange = raw.match(/^(\d{4}-\d{1,2})\.\.(\d{4}-\d{1,2})$/);
+  const namedRange = raw.match(/^([a-z]+)-([a-z]+)(?:\s+(\d{4}))?$/);
+  if (isoRange) {
+    startTok = resolveMonthToken(isoRange[1], now);
+    endTok = resolveMonthToken(isoRange[2], now);
+  } else if (namedRange && MONTHS.includes(namedRange[1]) && MONTHS.includes(namedRange[2])) {
+    const yearSuffix = namedRange[3] ? ` ${namedRange[3]}` : '';
+    startTok = resolveMonthToken(`${namedRange[1]}${yearSuffix}`, now);
+    endTok = resolveMonthToken(`${namedRange[2]}${yearSuffix}`, now);
+    // "december-january" with bare names would resolve both to past months
+    // independently; keep the range contiguous by rolling the end forward.
+    if (startTok && endTok && !namedRange[3]
+      && endTok.year * 12 + endTok.monthIdx < startTok.year * 12 + startTok.monthIdx) {
+      endTok = { year: endTok.year + 1, monthIdx: endTok.monthIdx };
+    }
+  } else {
+    startTok = resolveMonthToken(raw, now);
+    endTok = startTok;
+  }
+
+  if (!startTok || !endTok) {
+    throw new Error(`Cannot parse reporting period "${input}" — use "June", "June 2026", "2026-06", or a range like "July-August" / "2026-07..2026-08"`);
+  }
+  if (endTok.year * 12 + endTok.monthIdx < startTok.year * 12 + startTok.monthIdx) {
+    throw new Error(`Reporting period "${input}" ends before it starts`);
+  }
+
+  const { year, monthIdx } = startTok;
+  const startName = monthName(monthIdx);
+  const endName = monthName(endTok.monthIdx);
+  const lastDay = new Date(endTok.year, endTok.monthIdx + 1, 0).getDate();
+  const isRange = endTok.year !== year || endTok.monthIdx !== monthIdx;
+  const label = !isRange
+    ? `${startName} ${year}`
+    : endTok.year === year
+      ? `${startName}-${endName} ${year}`
+      : `${startName} ${year} - ${endName} ${endTok.year}`;
   return {
     year,
     month: monthIdx + 1,
-    label: `${monthName} ${year}`,
-    fromStr: `${monthName} 1, ${year}`,
-    toStr: `${monthName} ${lastDay}, ${year}`,
+    endYear: endTok.year,
+    endMonth: endTok.monthIdx + 1,
+    label,
+    fromStr: `${startName} 1, ${year}`,
+    toStr: `${endName} ${lastDay}, ${endTok.year}`,
     sinceIso: `${year}-${String(monthIdx + 1).padStart(2, '0')}-01T00:00:00`,
-    untilIso: `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59`,
+    untilIso: `${endTok.year}-${String(endTok.monthIdx + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59`,
   };
 }
 
@@ -106,15 +160,19 @@ function shouldIncludeBaseline(period, projectStartIso) {
 }
 
 function periodYm(period) {
-  return `${period.year}-${String(period.month).padStart(2, '0')}`;
+  const start = `${period.year}-${String(period.month).padStart(2, '0')}`;
+  const end = `${period.endYear || period.year}-${String(period.endMonth || period.month).padStart(2, '0')}`;
+  return end === start ? start : `${start}_${end}`;
 }
 
-/** Load archived reports for months strictly before the given period. */
+/** Load archived reports for periods strictly before the given period. */
 function loadPriorReports(period, dir = REPORTS_DIR) {
   if (!fs.existsSync(dir)) return [];
-  const ym = periodYm(period);
+  const ymStart = periodYm(period).slice(0, 7);
+  // Archive names are "<start ym>.json" or "<start ym>_<end ym>.json"; a
+  // period is prior when its start month precedes this period's start month.
   return fs.readdirSync(dir)
-    .filter((f) => /^\d{4}-\d{2}\.json$/.test(f) && f.slice(0, 7) < ym)
+    .filter((f) => /^\d{4}-\d{2}(?:_\d{4}-\d{2})?\.json$/.test(f) && f.slice(0, 7) < ymStart)
     .sort()
     .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
 }
@@ -133,7 +191,7 @@ function saveReportArchive({ period, claimNumber, sections }, dir = REPORTS_DIR)
 
 /**
  * Derive the claim number when the caller doesn't pass one: reuse this
- * month's archived claim on a regenerate, otherwise max prior claim + 1.
+ * period's archived claim on a regenerate, otherwise max prior claim + 1.
  */
 function deriveClaimNumber(period, dir = REPORTS_DIR) {
   if (!fs.existsSync(dir)) return '1';
@@ -382,7 +440,7 @@ async function generateStatusReport(opts) {
     onSchedule: !opts.delayExplanation,
     delayExplanation: opts.delayExplanation || '',
     completionDate: opts.completionDate || config.forecastedCompletionDate,
-    addressChanged: false,
+    addressChanged: opts.addressChanged === true,
     nameChanged: false,
     variations: opts.variations || 'There have been no variations.',
     preparedBy: config.preparedBy,
