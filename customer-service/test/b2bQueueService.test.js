@@ -409,3 +409,26 @@ test('a human reply inside an auto-reply thread stays a reply', () => {
   assert.equal(classifyInbound({ subject: 'Re: Out of Office Re: Donation partner inquiry',
     body: 'Hi Jamie, back now — Wednesday works for the call.' }), null);
 });
+
+// ── isDraftableEntry — what "Draft all due" actually drafts ─────────────────
+// A row already holding a pending draft is done (every synthetic merge row is
+// that shape), and a stuck scheduled send needs unsticking, not a second draft.
+
+const { isDraftableEntry } = require('../../b2b-outreach/lib/queueService');
+
+test('a due row without a draft is draftable', () => {
+  assert.equal(isDraftableEntry({ company_id: 'org-a', tier: 4, draft: null }), true);
+});
+
+test('a row with a pending draft is not draftable', () => {
+  assert.equal(isDraftableEntry({ company_id: 'org-a', tier: 4, draft: { id: 7 } }), false);
+});
+
+test('a stuck scheduled send is not draftable — it needs unsticking, not a second draft', () => {
+  assert.equal(isDraftableEntry({ company_id: 'org-a', tier: 3, draft: null, send_stuck: true }), false);
+});
+
+test('null/undefined entries are not draftable', () => {
+  assert.equal(isDraftableEntry(null), false);
+  assert.equal(isDraftableEntry(undefined), false);
+});

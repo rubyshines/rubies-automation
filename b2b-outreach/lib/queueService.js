@@ -668,6 +668,45 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type, th
 }
 
 /**
+ * Which queue entries would "draft everything due" actually draft? Rows already
+ * holding a pending draft are done (that includes every synthetic
+ * mergePendingDraftEntries row, which exists BECAUSE of its draft), and a stuck
+ * scheduled send needs unsticking, not a second draft on top of the one that
+ * cannot leave.
+ */
+function isDraftableEntry(e) {
+  return !!e && !e.draft && !e.send_stuck;
+}
+
+/**
+ * Generate drafts for every queue entry that lacks one — the batch behind the
+ * panel's "Draft all" button and the b2b_draft console tool's all_due mode.
+ *
+ * Sequential on purpose: each draft is an Opus call, and parallel calls can't
+ * share a prompt cache (see the claim-before-the-expensive-work rule). A
+ * per-company failure is recorded and the loop continues — one org with a
+ * broken record must not hold up the other seven drafts.
+ */
+async function draftAllDue(sb, { channel, onProgress } = {}) {
+  const { entries, drafts } = await buildQueueEntries(sb, { channel });
+  const targets = attachDrafts(entries, drafts).filter(isDraftableEntry);
+  const results = [];
+  for (let i = 0; i < targets.length; i++) {
+    const e = targets[i];
+    if (onProgress) onProgress({ index: i, total: targets.length, company_id: e.company_id, company_name: e.company_name });
+    try {
+      const d = await generateDraftForCompany(sb, { company_id: e.company_id });
+      results.push(d
+        ? { company_id: e.company_id, company_name: e.company_name, ok: true, draft_id: d.draft_id }
+        : { company_id: e.company_id, company_name: e.company_name, ok: false, error: 'nothing due by draft time' });
+    } catch (err) {
+      results.push({ company_id: e.company_id, company_name: e.company_name, ok: false, error: err.message });
+    }
+  }
+  return { total: targets.length, results };
+}
+
+/**
  * Store an email the OPERATOR wrote, as a pending draft, so it sends through
  * exactly the same path as an AI draft.
  *
@@ -1109,6 +1148,8 @@ module.exports = {
   fetchCompanyThreads,
   getCompanyEmails,
   generateDraftForCompany,
+  isDraftableEntry,
+  draftAllDue,
   composeDraft,
   saveOperatorDraft,
   composeDraftRow,

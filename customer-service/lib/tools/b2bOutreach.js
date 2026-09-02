@@ -64,6 +64,16 @@ async function handleQueue(input = {}) {
 async function handleDraft(input = {}) {
   try {
     const sb = getSupabaseClient();
+    if (input.all_due) {
+      const { draftAllDue } = require(path.join(B2B_LIB, 'queueService'));
+      const res = await draftAllDue(sb, { channel: input.channel });
+      if (!res.total) return text('Every queue entry already has a pending draft — nothing to generate.');
+      const lines = res.results.map(r => r.ok
+        ? `✓ ${r.company_name} — draft #${r.draft_id}`
+        : `✗ ${r.company_name} — ${r.error}`);
+      const failed = res.results.filter(r => !r.ok).length;
+      return text(`Drafted ${res.total - failed} of ${res.total} due compan${res.total === 1 ? 'y' : 'ies'}${failed ? ` (${failed} failed)` : ''}:\n${lines.join('\n')}\n\nReview in the Outreach panel or via b2b_draft list:true. Drafts are NEVER auto-sent.`);
+    }
     if (input.list || !input.company_id) {
       const { data, error } = await sb.from('b2b_drafts')
         .select('id, company_id, message_type, subject, queue_tier, queue_reason, advisor, generated_at')
@@ -605,7 +615,7 @@ module.exports = [
   },
   {
     name: 'b2b_draft',
-    description: 'Generate (or regenerate with steer) the outreach advisor draft for a company, or list pending drafts (pass list:true / no company_id). Drafts are NEVER auto-sent.',
+    description: 'Generate (or regenerate with steer) the outreach advisor draft for a company, batch-draft every due queue entry lacking one (all_due:true — one Opus call per company, can take minutes), or list pending drafts (pass list:true / no company_id). Drafts are NEVER auto-sent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -613,6 +623,8 @@ module.exports = [
         steer: { type: 'string', description: 'Operator steer applied to regeneration (final authority on intent).' },
         message_type: { type: 'string', description: 'Force a specific catalog message type when nothing is due.' },
         list: { type: 'boolean', description: 'List pending drafts.' },
+        all_due: { type: 'boolean', description: 'Draft every queue entry that has no pending draft yet (skips stuck scheduled sends). Sequential Opus calls — expect ~10-30s per company.' },
+        channel: { type: 'string', description: "With all_due: restrict to 'wholesale' | 'lgbtq_org' | 'affiliate'." },
       },
     },
     handler: handleDraft,

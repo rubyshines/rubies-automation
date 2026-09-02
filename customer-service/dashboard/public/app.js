@@ -5870,7 +5870,71 @@ function outreachControlsHtml() {
     return outreachChipsHtml(OUTREACH_ACTIVITY_DIRS, outreachActivityDir, 'setOutreachActivityDir')
       + outreachFilterHtml();
   }
-  return outreachFilterHtml();
+  return outreachFilterHtml() + outreachDraftAllHtml();
+}
+
+// ── Draft all due ───────────────────────────────────────────────────────────
+// One click drafts every queue row that lacks a pending draft, at the moment
+// the operator sits down to work the queue — drafts are still generated
+// on demand (never at queue entry), this just batches the demand. Sequential
+// per-company calls so each draft is fresh and a failure doesn't kill the run;
+// each is an Opus call taking ~10-30s, hence the progress bar.
+
+let outreachDraftAllRun = null; // { total, done, current, errors: [] } | null
+
+function outreachDraftAllTargets() {
+  return outreachQueue.filter(e => !e.draft && !e.send_stuck);
+}
+
+function outreachDraftAllHtml() {
+  if (outreachDraftAllRun) {
+    const r = outreachDraftAllRun;
+    const pct = r.total ? Math.round((r.done / r.total) * 100) : 0;
+    return `<div class="outreach-draftall">
+      <div class="outreach-draftall-status">Drafting ${Math.min(r.done + 1, r.total)} of ${r.total} &mdash; ${esc(r.current || '')}&hellip;</div>
+      <div class="outreach-draftall-bar"><div class="outreach-draftall-fill" style="width:${pct}%"></div></div>
+      ${r.errors.length ? `<div class="outreach-draftall-errors">${r.errors.length} failed so far</div>` : ''}
+    </div>`;
+  }
+  const n = outreachDraftAllTargets().length;
+  if (!n) return '';
+  return `<div class="outreach-draftall">
+    <button class="btn btn-secondary" onclick="draftAllDue()"
+      title="Generate a draft for every queue row that doesn't have one (~10-30s each)">
+      Draft all ${n} without a draft</button>
+  </div>`;
+}
+
+async function draftAllDue() {
+  if (outreachDraftAllRun) return;
+  const targets = outreachDraftAllTargets();
+  if (!targets.length) return;
+  outreachDraftAllRun = { total: targets.length, done: 0, current: targets[0].company_name, errors: [] };
+  renderOutreachSidebar();
+  for (const t of targets) {
+    outreachDraftAllRun.current = t.company_name;
+    renderOutreachSidebar();
+    try {
+      const d = await api(`/api/b2b/companies/${encodeURIComponent(t.company_id)}/draft`, { method: 'POST', body: {} });
+      // Mark the row done immediately so "draft ready" badges accumulate as
+      // the run progresses; the final silent reload gets server truth.
+      const entry = outreachQueue.find(e => e.company_id === t.company_id);
+      if (entry) {
+        entry.draft = {
+          id: d.id, subject: d.subject, generated_at: d.generated_at,
+          snippet: (d.body || '').replace(/\s+/g, ' ').slice(0, 160),
+        };
+      }
+    } catch (err) {
+      outreachDraftAllRun.errors.push(`${t.company_name}: ${err.message}`);
+    }
+    outreachDraftAllRun.done++;
+    renderOutreachSidebar();
+  }
+  const errors = outreachDraftAllRun.errors;
+  outreachDraftAllRun = null;
+  await loadOutreachQueue(true);
+  if (errors.length) alert(`Draft all finished with ${errors.length} failure${errors.length > 1 ? 's' : ''}:\n\n${errors.join('\n')}`);
 }
 
 function renderOutreachSidebar(errorHtml) {
