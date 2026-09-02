@@ -233,11 +233,12 @@ function buildSynthesisPrompt({ config, period, activityText, notes, prior = [] 
 Style, matching the firm's previously submitted reports:
 - SUCCINCT: 3-4 thematic sub-headings, 2-3 bullets each, ONE sentence per bullet (about 30 words max). Whole section under roughly 300 words. Merge related commits into one bullet; drop minor work entirely rather than compressing everything in.
 - Bullets are first-person plural, plain and factual: "We developed...", "We began...", "We are testing...".
-- AUDIENCE: an NRC industrial technology advisor. Technically literate (understands AI models, databases, integrations at a concept level) but does NOT know this firm's internal systems or deep engineering vocabulary. Write at that middle level:
-  - Name the mechanism by what it does, not by its engineering term. "an automatic fallback that switches to a simpler output format when the AI provider is overloaded", not "a load-shed circuit breaker that degrades to legacy output mode". "a retry system that recovers tickets that failed to import", not "intake dead-letter replay".
+- AUDIENCE: an NRC advisor reading many firms' reports. Comfortable with business technology (knows what an AI assistant, a database, or an integration is) but not a software practitioner, and does NOT know this firm's internal systems. Write plainly at that level:
+  - Name the mechanism by what it does for the business, not by its engineering term. "an automatic fallback that keeps drafts flowing when the AI provider is overloaded", not "a load-shed circuit breaker that degrades to legacy output mode". "a retry system that recovers customer emails that failed to import", not "intake dead-letter replay".
   - No internal component names, table names, or acronym strings. One named concept per bullet at most, and only if it earns its place.
-  - Each bullet is concrete: what we built or tested, in plain words, and what it lets the system do. Avoid abstract phrases like "hardened workflows", "seeded relationship state", "laying groundwork".
-  - Test: a reader who has never seen our codebase should understand every bullet on first read without slowing down.
+  - Each bullet says in plain words what we built or tested and what it lets the business do. Stay at the level of the outcome; leave out how it works inside unless the mechanism IS the news. Avoid abstract phrases like "hardened workflows", "seeded relationship state", "laying groundwork".
+  - NUMBERS: use them only for headline outcomes, a measured rate or figure that speaks to a Contribution Agreement target, or the size of a customer or partner result. Internal implementation counts (how many articles, rules, tickets, or files something contains) stay qualitative: "a curated knowledge base built from past resolved tickets", not "292 curated articles".
+  - Test: a reader who has never seen our codebase should understand every bullet on first read without slowing down, and nothing should read like it was written for our own engineers.
 - Mention remaining work and challenges honestly — reports routinely note what is unfinished or slower than expected.
 - Never use em dashes. Use commas, parentheses, or short sentences.
 - Every bullet must clearly read as work performed DURING the reporting period. When work extends a capability that existed at project start, name the pre-existing capability briefly so a reviewer can tell the starting point from this period's progress.
@@ -279,19 +280,29 @@ Write the Key Developments sections for this reporting period.`;
 async function synthesizeSections({ config, period, activity, notes, prior }) {
   const activityText = formatActivityForPrompt(activity);
   const { system, user } = buildSynthesisPrompt({ config, period, activityText, notes, prior });
-  // Opus: final text a federal funder reads — customer-facing quality bar.
-  const res = await callClaude({
-    component: 'irap_status_report',
-    model: MODELS.OPUS,
-    max_tokens: 4000,
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-  const parsed = extractJson(res.text);
-  if (!Array.isArray(parsed.sections) || !parsed.sections.length) {
-    throw new Error('Model returned no sections');
+  // The model occasionally emits malformed JSON (observed 2/3 runs on a large
+  // two-month commit log), so one parse failure gets one fresh attempt.
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // Opus: final text a federal funder reads — customer-facing quality bar.
+    const res = await callClaude({
+      component: 'irap_status_report',
+      model: MODELS.OPUS,
+      max_tokens: 4000,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
+    try {
+      const parsed = extractJson(res.text);
+      if (!Array.isArray(parsed.sections) || !parsed.sections.length) {
+        throw new Error('Model returned no sections');
+      }
+      return parsed.sections;
+    } catch (err) {
+      lastErr = err;
+    }
   }
-  return parsed.sections;
+  throw lastErr;
 }
 
 function esc(s) {
