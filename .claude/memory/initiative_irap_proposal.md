@@ -3,7 +3,7 @@ name: IRAP Proposal
 description: NRC-IRAP funding for AI Operations Platform, standard technical project, Jun 2026-Feb 2027
 type: project
 domains: [finance, cs, b2b_sales, marketing, tech]
-last_updated: 2026-07-22
+last_updated: 2026-09-02
 originSessionId: cea77ddb-41cd-438f-8b81-dd16fbb62d78
 ---
 ## Goal
@@ -20,6 +20,8 @@ Secure NRC-IRAP funding via the **standard technical IRAP** track (reframed from
 
 ## Current Status
 Proposal submitted, NRC project number 1044596. Monthly status report generator built (`finance/generate-irap-status-report.js`): builds each report from the month's actual repo history, Opus-synthesized into the NRC template; first report (June 2026, per backdated CA start) includes a "starting point at project commencement" baseline section disclosing pre-existing capabilities. Reports describe in-period work only — pre-project work is disclosed as baseline, never re-reported as new (integrity decision, 2026-07-22). Founder hours are claimable as eligible salary cost (agentic development practice).
+
+- July-August 2026 combined report generated as claim 2 (Sep 2026; the July claim was skipped, so the catch-up spans both months). Generator now supports multi-month claim periods. A report need not cover every objective every period, and metrics are included only when the founder supplies them as notes (Jamie's call, 2026-09-02).
 
 ## Project Title
 RUBIES AI Operations Platform: Agentic AI Tooling for Productivity and Revenue Growth
@@ -55,7 +57,8 @@ Develop an agentic AI operations platform — AI agents that reason over real bu
 
 ## What's Next
 - Confirm Contribution Agreement status and claim schedule with Lisa
-- First status report + claim for June 2026 (`node finance/generate-irap-status-report.js June --claim 1`); July follows after month end with `--claim 2`
+- Submit the July-August report (claim 2, generated Sep 2026); September's report follows after month end
+- Next report after the Fashion Zone move completes needs `--address-changed` (firm-address question on the NRC form)
 - Backfill `wholesale` tag on 4 historical retailer accounts (clean objective-2 baseline)
 - Choose affiliate app + verify it tags Shopify orders (not just app dashboard)
 - Monthly claims, ITA reporting cadence, milestone tracking — Claude to manage ongoing
