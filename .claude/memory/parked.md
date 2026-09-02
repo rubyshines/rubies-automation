@@ -251,11 +251,14 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Event donation follow-up: photo collection → collaborations page + Instagram
 - Parked: 2026-05-29
-- Last touched: 2026-05-29
-- Type: idea
+- Last touched: 2026-09-02
+- Type: idea (planned)
 - Domains: community, b2b_sales, marketing
 - Priority: medium
-- Notes: After an event donation ships and the event happens, send a follow-up asking for photos. Photos received → operator routes to content pipeline → added to rubyshines.com/pages/collaborations and queued for Instagram. Over time builds a public record of community work (see collaborations page as the target format). Touches three systems: B2B outreach (follow-up message type), community (org relationship), marketing (site content + Instagram). Not part of V1 message type catalog — design after the core outreach system is running.
+- Notes: After we donate or discount product for a specific event, ask for photos once the event has happened. Photos build the public record of community work (rubyshines.com/pages/collaborations + Instagram).
+- **Scoped 2026-09-02 (with Jamie) — v1 is the ASK only, on existing cadence rails:** (1) event-date capture is operator-confirmed, never silently extracted — the advisor spots "event on <date>" in a thread and suggests tracking it; one click while already approving the discount stores it (same admission-gate shape as the inbound strip; a silently wrong date means asking about an event that hasn't happened). (2) New `event_followup` message type, due ~10 days after a stored event date where we contributed product; community advisor drafts the photo ask with the thread in context. (3) Photo intake and content routing stay MANUAL — photos arrive in Gmail, operator routes to collaborations page / Instagram. That half was most of the original entry's weight and is deliberately out of v1.
+- Volume is a handful of events/year, so this is a convenience build, not leverage — it earns its keep on never-missing the moment, which is exactly what a context-switching founder misses manually. First real case and the miss that sharpened the design: Peloton Pride ERG bought 8 bundles at the 50% org rate for Black Trans Liberation Kitchen care packages (event Aug 19 2026); the photo-ask window passed with the thread closed.
+- Related decision (2026-09-02, Jamie): ERGs are NOT a segment to pursue — woke-era corporate offers rarely repeated and that wave is over. No ERG prospecting lane, no April campaign; a warm past ERG buyer gets at most a per-send `next_touch_days` override. Treat an inbound ERG as `lgbtq_org` with the ERG noted; org discount when the product is destined for community distribution.
 
 ## Unified B2B Outreach — unbuilt remainder (discovery fixes, affiliate onboarding, rename)
 - Parked: 2026-05-28
