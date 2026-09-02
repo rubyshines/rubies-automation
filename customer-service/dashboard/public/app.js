@@ -7646,8 +7646,17 @@ function renderSchedulePanel() {
     ? `${esc(s.their_timezone.replace(/_/g, ' '))} <span class="schedule-tz-source">${esc(s.their_timezone_source)}</span>`
     : '<span class="schedule-tz-unknown">unknown — set it to see their local time</span>';
 
-  const proposed = (s.proposed_times || []).filter(t => t.start);
-  const dayHints = (s.proposed_times || []).filter(t => !t.start);
+  // Three kinds of suggestion: an exact instant is clickable as-is; a window
+  // ("after 1pm", "until 5:30") opens the free grid slots that fit inside it;
+  // a bare day opens the whole day.
+  const named = [];
+  const windows = [];
+  const dayHints = [];
+  for (const t of (s.proposed_times || [])) {
+    if (t.start && !t.isRange) named.push(t);
+    else if (t.start || t.end) windows.push(t);
+    else dayHints.push(t);
+  }
 
   // Their local time is only worth printing when it differs from ours. For a
   // Toronto org it is the same number twice, which reads as noise.
@@ -7663,19 +7672,20 @@ function renderSchedulePanel() {
    * times are on the right, exactly as in the grid.
    */
   const byDate = new Map();
-  for (const t of proposed) {
-    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], wholeDay: false, dayLabel: t.dayLabel });
-    byDate.get(t.date).times.push(t);
-  }
-  for (const h of dayHints) {
-    if (!byDate.has(h.date)) byDate.set(h.date, { date: h.date, times: [], wholeDay: false, dayLabel: h.dayLabel });
-    byDate.get(h.date).wholeDay = true;
-  }
+  const entryFor = (t) => {
+    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], windows: [], wholeDay: false, dayLabel: t.dayLabel });
+    return byDate.get(t.date);
+  };
+  for (const t of named) entryFor(t).times.push(t);
+  for (const w of windows) entryFor(w).windows.push(w);
+  for (const h of dayHints) entryFor(h).wholeDay = true;
 
   const slotChip = (start, label, { busy, busyWith, unsociable } = {}) =>
     `<button class="schedule-slot${busy ? ' is-busy' : ''}${unsociable ? ' is-unsociable' : ''}${scheduleSelected?.start === start ? ' is-selected' : ''}"
       ${busy ? `disabled title="Busy — ${esc(busyWith || '')}"` : `onclick="selectScheduleSlot('${esc(start)}')"`}
       >${esc(label)}</button>`;
+
+  const durationMs = (s.duration_minutes || 30) * 60000;
 
   const suggestionRows = [...byDate.values()]
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
@@ -7683,19 +7693,50 @@ function renderSchedulePanel() {
       const day = (s.days || []).find(d => d.date === entry.date);
       const label = esc(day?.label || entry.dayLabel || entry.date);
 
-      // A whole-day offer opens up every free slot on it; named times show only
-      // what they actually named.
-      const chips = entry.wholeDay
-        ? (day?.slots || []).filter(sl => !sl.busy)
-            .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }))
-        : entry.times.map(t => {
-            const state = findSlotState(t.start);
-            return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem });
-          });
+      // The meeting has to FIT inside the window: start no earlier than its
+      // start, end (start + duration) no later than its end. An unstated bound
+      // is open.
+      const inWindow = sl => entry.windows.some(w => {
+        const t0 = Date.parse(sl.start);
+        if (w.start && t0 < Date.parse(w.start)) return false;
+        if (w.end && t0 + durationMs > Date.parse(w.end)) return false;
+        return true;
+      });
 
-      const note = entry.wholeDay ? 'they offered this day' : 'they suggested';
-      const theirs = !sameZone && entry.times.length
-        ? `<span class="schedule-hint">${entry.times.map(t => esc(t.theirLabel)).filter(Boolean).join(', ')} their time</span>` : '';
+      // A whole-day offer opens up every free slot on it; a window opens the
+      // free slots inside it; named times show only what they actually named.
+      let chips;
+      if (entry.wholeDay) {
+        chips = (day?.slots || []).filter(sl => !sl.busy)
+          .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }));
+      } else {
+        const namedStarts = new Set(entry.times.map(t => t.start));
+        chips = entry.times.map(t => {
+          const state = findSlotState(t.start);
+          return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem });
+        }).concat(entry.windows.length
+          ? (day?.slots || []).filter(sl => !sl.busy && !namedStarts.has(sl.start) && inWindow(sl))
+              .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }))
+          : []);
+      }
+
+      const windowText = entry.windows.map(w =>
+        w.label && w.endLabel ? `${w.label}–${w.endLabel}`
+          : w.label ? `from ${w.label}`
+          : w.endLabel ? `until ${w.endLabel}` : null)
+        .filter(Boolean).join(', ');
+      const note = entry.wholeDay ? 'they offered this day'
+        : windowText ? `they're free ${esc(windowText)}` : 'they suggested';
+
+      const theirParts = [
+        ...entry.times.map(t => t.theirLabel),
+        ...entry.windows.map(w =>
+          w.theirLabel && w.theirEndLabel ? `${w.theirLabel}–${w.theirEndLabel}`
+            : w.theirLabel ? `from ${w.theirLabel}`
+            : w.theirEndLabel ? `until ${w.theirEndLabel}` : null),
+      ].filter(Boolean);
+      const theirs = !sameZone && theirParts.length
+        ? `<span class="schedule-hint">${theirParts.map(esc).join(', ')} their time</span>` : '';
 
       if (!chips.length) {
         return `<div class="schedule-day schedule-day-offered">

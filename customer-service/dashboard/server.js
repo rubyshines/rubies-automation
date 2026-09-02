@@ -3256,6 +3256,7 @@ async function apiB2bAvailability(companyId, params) {
     try {
       proposed = await extractProposedTimes({
         message: inbound.body_text,
+        sentAt: inbound.sent_at || null,
         fallbackTimeZone: tz.timeZone,
         company_id: companyId,
       });

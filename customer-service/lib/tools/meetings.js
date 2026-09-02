@@ -65,6 +65,7 @@ async function handleReadProposedTimes(args = {}) {
   const tz = await resolveTheirTimeZone(sb, args);
 
   let message = args.message;
+  let sentAt = null;
   if (!message && args.company_id) {
     const { data } = await sb.from('b2b_messages')
       .select('body_text, sent_at')
@@ -74,11 +75,13 @@ async function handleReadProposedTimes(args = {}) {
       .limit(1)
       .maybeSingle();
     message = data?.body_text || null;
+    sentAt = data?.sent_at || null;
   }
   if (!message) return { ok: false, error: 'No message to read — pass `message`, or a company_id with an inbound message.' };
 
   const res = await extractProposedTimes({
     message,
+    sentAt,
     fallbackTimeZone: tz.timeZone,
     company_id: args.company_id || null,
   });
