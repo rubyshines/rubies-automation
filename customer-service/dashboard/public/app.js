@@ -7703,11 +7703,22 @@ function renderSchedulePanel() {
         return true;
       });
 
+      // When the panel picks slots ITSELF (whole-day or window expansion) it
+      // assumes they work 9-5 their zone and offers only those — 7 AM their
+      // time reads as careless. If their whole workday misses ours (Germany,
+      // Australia), fall back to every free slot, annotated, rather than an
+      // empty row. Times they NAMED are never filtered.
+      const offerable = sls => {
+        const free = sls.filter(sl => !sl.busy);
+        const sociable = free.filter(sl => !sl.outsideTheirWorkday);
+        return sociable.length ? sociable : free;
+      };
+
       // A whole-day offer opens up every free slot on it; a window opens the
       // free slots inside it; named times show only what they actually named.
       let chips;
       if (entry.wholeDay) {
-        chips = (day?.slots || []).filter(sl => !sl.busy)
+        chips = offerable(day?.slots || [])
           .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }));
       } else {
         const namedStarts = new Set(entry.times.map(t => t.start));
@@ -7715,7 +7726,8 @@ function renderSchedulePanel() {
           const state = findSlotState(t.start);
           return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem });
         }).concat(entry.windows.length
-          ? (day?.slots || []).filter(sl => !sl.busy && !namedStarts.has(sl.start) && inWindow(sl))
+          ? offerable(day?.slots || [])
+              .filter(sl => !namedStarts.has(sl.start) && inWindow(sl))
               .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }))
           : []);
       }

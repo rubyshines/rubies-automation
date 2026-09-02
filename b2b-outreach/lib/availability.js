@@ -178,13 +178,22 @@ function buildSlots({
       };
       if (theirTimeZone) {
         slot.theirLabel = formatTimeInZone(start, theirTimeZone);
-        const theirHour = Number(new Intl.DateTimeFormat('en-US', {
-          timeZone: theirTimeZone, hour: 'numeric', hour12: false,
-        }).format(start)) % 24;
+        const parts = {};
+        for (const part of new Intl.DateTimeFormat('en-US', {
+          timeZone: theirTimeZone, hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(start)) {
+          if (part.type !== 'literal') parts[part.type] = part.value;
+        }
+        const theirHour = (+parts.hour) % 24;
+        const theirStartMins = theirHour * 60 + (+parts.minute);
         // Outside 08:00–20:00 for them is unsociable. Greyed, never hidden —
         // for a German or Australian partner every 9-5 ET slot lands here, and
         // an empty grid would be worse than an annotated one.
         slot.unsociableForThem = theirHour < 8 || theirHour >= 20;
+        // Their assumed 9-5 workday (start no earlier than 9, ending by 5 their
+        // time). Used when the panel picks slots ITSELF — expanding a window or
+        // whole-day offer — where suggesting 7 AM their time reads as careless.
+        slot.outsideTheirWorkday = theirStartMins < 9 * 60 || theirStartMins + duration > 17 * 60;
       }
       slots.push(slot);
     }

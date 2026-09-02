@@ -128,6 +128,34 @@ test('a Pacific partner sees mornings; nothing is dropped', () => {
   assert.strictEqual(byLabel['11:00 AM'].unsociableForThem, false);
 });
 
+test('outsideTheirWorkday marks starts before 9 and meetings ending past 5 their time', () => {
+  const grid = buildSlots({
+    now: new Date(et('2026-08-20', 9)),
+    days: 1,
+    durationMinutes: 30,
+    theirTimeZone: 'America/Denver', // ET-2 in August
+  });
+  const byLabel = Object.fromEntries(grid.days[0].slots.map(s => [s.label, s]));
+  assert.strictEqual(byLabel['9:00 AM'].outsideTheirWorkday, true);   // 7:00 AM their time
+  assert.strictEqual(byLabel['10:30 AM'].outsideTheirWorkday, true);  // 8:30 AM their time
+  assert.strictEqual(byLabel['11:00 AM'].outsideTheirWorkday, false); // 9:00 AM their time
+  assert.strictEqual(byLabel['4:30 PM'].outsideTheirWorkday, false);  // ends 3:00 PM their time
+  // With a 60-minute meeting the last half-hour of their day is out of reach
+  // from a start that would end past 5 — check the end-bound half too.
+  const hourGrid = buildSlots({
+    now: new Date(et('2026-08-20', 9)),
+    days: 1,
+    durationMinutes: 60,
+    theirTimeZone: 'Europe/Berlin', // ET+6 in August
+  });
+  const hb = Object.fromEntries(hourGrid.days[0].slots.map(s => [s.label, s]));
+  assert.strictEqual(hb['10:00 AM'].outsideTheirWorkday, false); // 4:00-5:00 PM Berlin
+  assert.strictEqual(hb['10:30 AM'].outsideTheirWorkday, true);  // would end 5:30 PM Berlin
+  // No their-zone means no flag at all — absent, not false.
+  const bare = buildSlots({ now: new Date(et('2026-08-20', 9)), days: 1 });
+  assert.strictEqual('outsideTheirWorkday' in bare.days[0].slots[0], false);
+});
+
 test('checkSlotFree catches a clash that appeared after the grid was drawn', () => {
   const busy = [{ start: et('2026-08-21', 14), end: et('2026-08-21', 15), summary: 'Dentist' }];
   assert.strictEqual(checkSlotFree({ start: et('2026-08-21', 13), durationMinutes: 30, busy }).free, true);

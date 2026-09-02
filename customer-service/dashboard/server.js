@@ -3233,19 +3233,14 @@ async function apiB2bAvailability(companyId, params) {
     .select('id, name, city, region, country, address').eq('id', companyId).maybeSingle();
   if (!company) throw new Error(`No company ${companyId}`);
 
-  const tz = isValidTimeZone(override)
+  let tz = isValidTimeZone(override)
     ? { timeZone: override, source: 'set by you', split: false, reason: null }
     : timezoneFromLocation(company);
 
-  const grid = await fetchAvailability({ durationMinutes: duration, days, theirTimeZone: tz.timeZone });
-
-  const { data: meeting } = await sb.from('b2b_meetings')
-    .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone')
-    .eq('company_id', companyId).eq('status', 'booked')
-    .gte('starts_at', new Date().toISOString())
-    .order('starts_at', { ascending: true }).limit(1).maybeSingle();
-
-  // Their most recent inbound message is where suggested times live.
+  // Their most recent inbound message is where suggested times live. Read it
+  // BEFORE the grid: a zone they stated in the message ("1pm MST") beats one
+  // inferred from the address, and the grid's their-time labels and workday
+  // flags should follow it. An operator override still wins over both.
   const { data: inbound } = await sb.from('b2b_messages')
     .select('body_text, sent_at, thread_id')
     .eq('company_id', companyId).eq('direction', 'inbound')
@@ -3264,6 +3259,17 @@ async function apiB2bAvailability(companyId, params) {
       proposed = { times: [], error: e.message, wantsToMeet: false };
     }
   }
+  if (!isValidTimeZone(override) && isValidTimeZone(proposed.statedTimeZone)) {
+    tz = { timeZone: proposed.statedTimeZone, source: 'stated in their message', split: false, reason: null };
+  }
+
+  const grid = await fetchAvailability({ durationMinutes: duration, days, theirTimeZone: tz.timeZone });
+
+  const { data: meeting } = await sb.from('b2b_meetings')
+    .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone')
+    .eq('company_id', companyId).eq('status', 'booked')
+    .gte('starts_at', new Date().toISOString())
+    .order('starts_at', { ascending: true }).limit(1).maybeSingle();
 
   return {
     company: { id: company.id, name: company.name },
