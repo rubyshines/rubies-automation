@@ -5696,7 +5696,7 @@ main { height: calc(100vh - 56px); }
 .outreach-inbound-add { color: var(--teal); border-color: var(--teal); }
 .outreach-inbound-add:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
 
-.outreach-draftall { padding: 8px 10px 0; }
+.outreach-draftall { padding: 10px 10px 14px; }
 .outreach-draftall .btn { width: 100%; }
 .outreach-draftall-status {
   font-size: 12px;
