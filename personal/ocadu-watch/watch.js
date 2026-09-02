@@ -2,10 +2,16 @@
 /**
  * OCADU course seat watcher (personal — not a RUBIES system).
  *
- * Polls OCAD University's public course catalog (Ellucian Colleague
- * Self-Service — no login required) for open seats in the courses below,
- * and alerts Jamie by email + macOS notification the moment a watched
- * Fall-term section has seats available.
+ * Watches two specific Fall 2026 sections of ENGL-1003 (The Essay & the
+ * Argument) in OCAD University's public course catalog (Ellucian Colleague
+ * Self-Service — no login required), and alerts Jamie by email + macOS
+ * notification the moment either has a seat.
+ *
+ * Why these two: his daughter holds ENGL-1003-301G (tutorial Tue 11:50).
+ * Every section shares the same Friday 10:00-11:30 lecture; only the
+ * tutorial slot differs. 301B (tutorial Mon 3:10-4:40) or 301D (tutorial
+ * Fri 3:10-4:40) would free her Tuesday entirely — a seat in either means
+ * drop 301G and add it immediately (the swap is not atomic).
  *
  * Notify-only by design: registration stays a manual act in Self-Service.
  * Automating it would require the student's SSO login + authenticator-app
@@ -16,8 +22,11 @@
  * so an open seat alerts once, re-alerts every REALERT_MINUTES while it
  * stays open, and goes quiet when it closes.
  *
- * Usage: node personal/ocadu-watch/watch.js [--dry-run]
+ * Usage: node personal/ocadu-watch/watch.js [--dry-run] [--test-alert]
  *   --dry-run: print what would be alerted, send nothing, don't touch state.
+ *   --test-alert: pretend every watched section has a seat, to exercise the
+ *     alert path/formatting ([TEST] subject). Combine with --dry-run to
+ *     only print.
  */
 
 const fs = require('fs');
@@ -26,14 +35,24 @@ const { execFile } = require('child_process');
 const { sendEmail } = require('../../shared/sendgridClient');
 
 const BASE = 'https://selfservice.ocadu.ca/SelfService';
-const WATCHED_COURSES = ['ENGL-1003', 'IVCV-1001', 'VISC-1001', 'VISC-1002', 'VISC-1004', 'GART-1025'];
+const WATCHED_COURSES = ['ENGL-1003'];
+// Only these sections alert. Empty list = all sections of the watched courses.
+const WATCHED_SECTIONS = ['ENGL-1003-301B', 'ENGL-1003-301D'];
 const WATCHED_TERM = 'Fall 2026';
 const ALERT_TO = 'jamie@rubyshines.com';
 const REALERT_MINUTES = 30; // while a seat stays open
 const FAILURE_ALERT_EVERY = 40; // consecutive failed runs (~2h at 3-min interval)
 const STATE_FILE = path.join(__dirname, '.state.json');
+// Context lines appended to every alert so the email needs no cross-referencing.
+const SWAP_NOTE = [
+  'She currently holds ENGL-1003-301G (lecture F 10:00-11:30 + tutorial T 11:50-1:20).',
+  'To swap: in Self-Service, DROP 301G and immediately ADD the open section.',
+  'The swap is not atomic — only do it while this alert is fresh (minutes old).',
+  'Either section frees her Tuesday completely (4-day week).',
+].join('\n');
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const TEST_ALERT = process.argv.includes('--test-alert');
 
 function loadState() {
   try {
@@ -44,7 +63,7 @@ function loadState() {
 }
 
 function saveState(state) {
-  if (DRY_RUN) return;
+  if (DRY_RUN || TEST_ALERT) return;
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
@@ -76,32 +95,56 @@ async function postJson(session, urlPath, body) {
   return res.json();
 }
 
-function parseTimeToMinutes(display) {
-  // "3:10 p.m." / "10:00 a.m." -> minutes since midnight; null if unparseable
-  const m = String(display || '').match(/(\d{1,2}):(\d{2})\s*([ap])/i);
-  if (!m) return null;
-  let h = Number(m[1]) % 12;
-  if (m[3].toLowerCase() === 'p') h += 12;
-  return h * 60 + Number(m[2]);
-}
-
-function describeMeetings(section) {
+/** One line per meeting: "Lecture: F 10:00 a.m.-11:30 a.m. — Main Building / Sharp Centre 190" */
+function meetingLines(section) {
   const meetings = section.FormattedMeetingTimes || section.PlannedMeetingTimes || [];
-  const parts = [];
-  let isEvening = false;
-  for (const mt of meetings) {
-    const start = mt.StartTimeDisplay || '';
-    const end = mt.EndTimeDisplay || '';
-    const days = mt.DaysOfWeekDisplay || '';
-    if (!days && !start) continue;
-    parts.push(`${days} ${start}-${end}`.trim());
-    const startMin = parseTimeToMinutes(start);
-    if (startMin !== null && startMin >= 17 * 60) isEvening = true;
-  }
-  return { text: parts.join('; ') || 'no meeting times listed', isEvening };
+  return meetings.map((mt) => {
+    const kind = mt.InstructionalMethodDisplay || 'Meeting';
+    const when = `${mt.DaysOfWeekDisplay || ''} ${mt.StartTimeDisplay || ''}-${mt.EndTimeDisplay || ''}`.trim();
+    const where = `${mt.BuildingDisplay || ''} ${mt.RoomDisplay || ''}`.trim();
+    return `${kind}: ${when}${where ? ` — ${where}` : ''}`;
+  });
 }
 
-/** Fetch all watched-term sections for one course code, e.g. "ENGL-1003". */
+/**
+ * Instructor names with their roles, from the SectionDetails endpoint
+ * (the sections list itself carries no instructor data). Fail-soft: an
+ * alert must never be lost because the details call hiccuped.
+ */
+async function fetchInstructorLines(session, sectionId) {
+  try {
+    const d = await postJson(session, '/Courses/SectionDetails', { sectionId });
+    let items = [];
+    let faculty = [];
+    (function dig(o) {
+      if (Array.isArray(o)) { o.forEach(dig); return; }
+      if (o && typeof o === 'object') {
+        if (Array.isArray(o.InstructorItems) && o.InstructorItems.length) items = o.InstructorItems;
+        if (Array.isArray(o.Faculty) && o.Faculty.length) faculty = o.Faculty;
+        Object.values(o).forEach(dig);
+      }
+    })(d);
+    if (!items.length) return ['Instructors: not yet listed'];
+    // Faculty rows repeat one per instructional method; unique ids appear in
+    // the same order as InstructorItems names. Pair them to recover roles.
+    const uniqueIds = [...new Set(faculty.map((f) => f.FacultyId))];
+    const roles = {};
+    for (const f of faculty) {
+      (roles[f.FacultyId] = roles[f.FacultyId] || []).push(
+        f.InstructionalMethodCode === 'LEC' ? 'Lecture' : f.InstructionalMethodCode === 'TUT' ? 'Tutorial' : f.InstructionalMethodCode
+      );
+    }
+    const named = items.map((it, i) => {
+      const role = roles[uniqueIds[i]];
+      return role ? `${it.Name} (${role.join(', ')})` : it.Name;
+    });
+    return [`Instructors: ${named.join('; ')}`];
+  } catch (err) {
+    return [`Instructors: lookup failed (${err.message})`];
+  }
+}
+
+/** Fetch watched-term sections for one course code, e.g. "ENGL-1003". */
 async function fetchCourseSections(session, courseCode) {
   const [subject, number] = courseCode.split('-');
   const search = await postJson(session, '/Courses/PostSearchCriteria', {
@@ -125,16 +168,18 @@ async function fetchCourseSections(session, courseCode) {
     if (termName !== WATCHED_TERM) continue;
     for (const wrapper of term.Sections || []) {
       const s = wrapper.Section || wrapper;
-      const { text: meetingText, isEvening } = describeMeetings(s);
+      const key = s.SectionNameDisplay || `${courseCode}-${s.Number}`;
+      if (WATCHED_SECTIONS.length && !WATCHED_SECTIONS.includes(key)) continue;
       out.push({
-        key: s.SectionNameDisplay || `${courseCode}-${s.Number}`,
+        key,
+        sectionId: s.Id,
         course: courseCode,
         term: termName,
         available: s.Available ?? 0,
         capacity: s.Capacity ?? 0,
         waitlisted: s.Waitlisted ?? 0,
-        meetingText,
-        isEvening,
+        meetingLines: meetingLines(s),
+        datesDisplay: `${s.StartDateDisplay || ''} - ${s.EndDateDisplay || ''}`,
       });
     }
   }
@@ -149,36 +194,46 @@ function macNotify(title, message) {
   ], () => {});
 }
 
-async function alert(openSections) {
-  const lines = openSections.map((s) => {
-    const evening = s.isEvening ? ' [EVENING]' : '';
+async function alert(session, openSections) {
+  const blocks = [];
+  for (const s of openSections) {
     const wl = s.waitlisted > 0 ? ` (waitlist ${s.waitlisted} — seat may go to waitlist first)` : '';
-    return `${s.key}: ${s.available} seat${s.available === 1 ? '' : 's'} of ${s.capacity} — ${s.meetingText}${evening}${wl}`;
-  });
-  const subject = `OCADU seat open (${WATCHED_TERM}): ${openSections.map((s) => s.key).join(', ')}`;
+    const instructorLines = await fetchInstructorLines(session, s.sectionId);
+    blocks.push([
+      `${s.key} — ${s.available} seat${s.available === 1 ? '' : 's'} open of ${s.capacity}${wl}`,
+      ...s.meetingLines.map((l) => `  ${l}`),
+      ...instructorLines.map((l) => `  ${l}`),
+      `  Runs: ${s.datesDisplay}`,
+    ].join('\n'));
+  }
+  const testTag = TEST_ALERT ? '[TEST] ' : '';
+  const subject = `${testTag}OCADU seat open — ENGL swap: ${openSections.map((s) => s.key).join(', ')}`;
   const text = [
-    `Open seats detected in watched ${WATCHED_TERM} sections:`,
+    `Open seat in a watched ${WATCHED_TERM} section:`,
     '',
-    ...lines,
+    blocks.join('\n\n'),
     '',
-    'Register now: https://selfservice.ocadu.ca/SelfService/Planning/DegreePlans',
+    SWAP_NOTE,
+    '',
+    'Register: https://selfservice.ocadu.ca/SelfService/Planning/DegreePlans',
     `(Checked ${new Date().toLocaleString('en-CA', { timeZone: 'America/Toronto' })} ET)`,
   ].join('\n');
 
   if (DRY_RUN) {
-    console.log(`[dry-run] would alert:\n${subject}\n${text}`);
+    console.log(`[dry-run] would alert:\nSubject: ${subject}\n\n${text}`);
     return;
   }
   const result = await sendEmail({ to: ALERT_TO, subject, text, fromName: 'OCADU Watch' });
   if (!result.ok) console.error(`email send failed: ${result.error || result.statusCode}`);
-  macNotify('OCADU seat open', openSections.map((s) => `${s.key} (${s.available})`).join(', '));
+  macNotify(`${testTag}OCADU seat open — swap now`, openSections.map((s) => `${s.key} (${s.available})`).join(', '));
 }
 
 async function main() {
   const state = loadState();
+  let session;
   let sections;
   try {
-    const session = await openSession();
+    session = await openSession();
     sections = [];
     for (const code of WATCHED_COURSES) {
       sections.push(...(await fetchCourseSections(session, code)));
@@ -204,6 +259,7 @@ async function main() {
   const now = Date.now();
   const toAlert = [];
   for (const s of sections) {
+    if (TEST_ALERT) { toAlert.push(s); continue; }
     const prev = state.sections[s.key] || {};
     const opened = s.available > 0 && !(prev.available > 0);
     const stillOpenAndDue =
@@ -218,11 +274,11 @@ async function main() {
   }
 
   const summary = sections
-    .map((s) => `${s.key} ${s.available}/${s.capacity}${s.isEvening ? ' (eve)' : ''}`)
+    .map((s) => `${s.key} ${s.available}/${s.capacity}`)
     .join(' | ');
-  console.log(`[${new Date().toISOString()}] ${sections.length} ${WATCHED_TERM} sections: ${summary}`);
+  console.log(`[${new Date().toISOString()}] watching ${sections.length} ${WATCHED_TERM} sections: ${summary}`);
 
-  if (toAlert.length) await alert(toAlert);
+  if (toAlert.length) await alert(session, toAlert);
   saveState(state);
 }
 

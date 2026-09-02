@@ -5,8 +5,15 @@ Fall-term sections and alerts Jamie by email (SendGrid, to jamie@rubyshines.com)
 and macOS notification. Not a RUBIES system — it just lives in this repo to
 reuse the SendGrid client and version control.
 
-- Courses/term watched: edit `WATCHED_COURSES` / `WATCHED_TERM` at the top of
-  [watch.js](watch.js).
+- Currently watching ONLY ENGL-1003-301B and ENGL-1003-301D (Fall 2026) as
+  swap targets for the registered ENGL-1003-301G: every ENGL-1003 section
+  shares the Friday 10:00-11:30 lecture, and these two put the tutorial on
+  Mon or Fri 3:10-4:40, freeing her Tuesday. Alerts include both time slots,
+  rooms, instructors, and the drop-then-add swap reminder.
+- Courses/sections/term watched: edit `WATCHED_COURSES` / `WATCHED_SECTIONS` /
+  `WATCHED_TERM` at the top of [watch.js](watch.js).
+- Alert-format check: `node personal/ocadu-watch/watch.js --test-alert --dry-run`
+  (or without `--dry-run` to send a real [TEST] email).
 - The catalog API is anonymous (no student login). Registration itself stays
   manual in Self-Service — this is notify-only, on purpose (the student login
   is SSO + authenticator-app MFA; automating it is fragile and risky).
