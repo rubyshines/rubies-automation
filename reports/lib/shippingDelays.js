@@ -13,6 +13,7 @@ const { getSendgridClient } = require('../../shared/sendgridClient');
 const { businessDaysSince: sharedBusinessDaysSince } = require('../../shared/businessDays');
 const { refreshOrderDelivery } = require('../../customer-service/lib/tracking/refreshDelivery');
 const { signOff } = require('../../customer-service/lib/signatures');
+const { matchReplacements } = require('./replacementDetection');
 
 const SHOPIFY_STORE = 'rubies-active-wear';
 
@@ -432,16 +433,27 @@ async function checkShippingDelays({ showResolved = false } = {}) {
 
   console.log(`  [Shipping] ${orderNums.length} orders, ${noDataCount.hasData} with fulfillment events, ${noDataCount.noData} without`);
 
-  // Load line items
+  // Load line items. order_line_items keys on shopify_order_id, not
+  // order_number — the old order_number query errored on a missing column and
+  // the destructured-away error made every alert's item list silently empty.
   const itemMap = {};
-  for (let i = 0; i < orderNums.length; i += 500) {
-    const batch = orderNums.slice(i, i + 500);
-    const { data } = await supabase.from('order_line_items')
-      .select('order_number, title, variant_title, quantity')
-      .in('order_number', batch);
-    for (const li of (data || [])) {
-      if (!itemMap[li.order_number]) itemMap[li.order_number] = [];
-      itemMap[li.order_number].push(li);
+  const orderNumByShopifyId = {};
+  for (const o of allOrders) orderNumByShopifyId[o.shopify_order_id] = o.order_number;
+  for (let i = 0; i < allOrders.length; i += 200) {
+    const ids = allOrders.slice(i, i + 200).map(o => o.shopify_order_id);
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('order_line_items')
+        .select('shopify_order_id, title, variant_title, quantity')
+        .in('shopify_order_id', ids)
+        .range(from, from + 999);
+      if (error) { console.error(`  [Shipping] line items fetch failed: ${error.message}`); break; }
+      for (const li of (data || [])) {
+        const num = orderNumByShopifyId[li.shopify_order_id];
+        if (num === undefined) continue;
+        if (!itemMap[num]) itemMap[num] = [];
+        itemMap[num].push(li);
+      }
+      if (!data || data.length < 1000) break;
     }
   }
 
@@ -635,6 +647,83 @@ async function checkShippingDelays({ showResolved = false } = {}) {
       if (!alert.customer_email) continue;
       await sendCustomsNotificationEmail(supabase, alert);
     }
+  }
+
+  // Replacement-order detection. A stuck shipment whose customer has a NEWER
+  // $0 order covering the same lines (SKU + quantity) was reshipped by hand in
+  // Shopify admin — the duplicate carries no link to the original, so nothing
+  // else can ever clear the alert. Auto-resolve those with a note naming the
+  // replacement. A PAID lookalike may just be a repeat purchase, so it only
+  // gets a line on the alert — a wrong auto-resolve here would hide a
+  // genuinely lost package. Fail-soft: detection must never break the report.
+  try {
+    const detectable = alerts.filter(a =>
+      !a.note?.resolved && !['delivered', 'resolved'].includes(a.claim?.status || ''));
+    const stuckByNum = new Map(detectable.map(a => [a.order_number, a]));
+    const stuckOrders = allOrders.filter(o => stuckByNum.has(o.order_number));
+    const emails = [...new Set(stuckOrders.map(o => o.customer_email).filter(Boolean))];
+    if (emails.length) {
+      const minCreated = stuckOrders.map(o => o.created_at).sort()[0];
+      let candidateOrders = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('orders')
+          .select('order_number, shopify_order_id, customer_email, created_at, total_price, fulfillment_status, cancelled_at')
+          .in('customer_email', emails)
+          .gt('created_at', minCreated)
+          .is('cancelled_at', null)
+          .range(from, from + 999);
+        if (error) throw new Error(`candidate orders fetch: ${error.message}`);
+        candidateOrders = candidateOrders.concat(data || []);
+        if (!data || data.length < 1000) break;
+      }
+      candidateOrders = candidateOrders.filter(c => !stuckByNum.has(c.order_number) || Number(c.total_price) === 0);
+
+      const lineIds = [...new Set([...stuckOrders, ...candidateOrders].map(o => o.shopify_order_id).filter(Boolean))];
+      const linesByShopifyId = {};
+      for (let i = 0; i < lineIds.length; i += 200) {
+        const ids = lineIds.slice(i, i + 200);
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await supabase.from('order_line_items')
+            .select('shopify_order_id, sku, quantity')
+            .in('shopify_order_id', ids)
+            .range(from, from + 999);
+          if (error) throw new Error(`candidate line items fetch: ${error.message}`);
+          for (const li of (data || [])) {
+            if (!linesByShopifyId[li.shopify_order_id]) linesByShopifyId[li.shopify_order_id] = [];
+            linesByShopifyId[li.shopify_order_id].push(li);
+          }
+          if (!data || data.length < 1000) break;
+        }
+      }
+
+      const found = matchReplacements({
+        stuckOrders, candidateOrders, linesByShopifyId,
+        alertNums: new Set(alerts.map(a => a.order_number)),
+      });
+      for (const r of found) {
+        const alert = stuckByNum.get(r.order_number);
+        if (!alert) continue;
+        if (r.action === 'resolve') {
+          const shipped = r.replacement.fulfillment_status === 'FULFILLED' ? ', shipped' : '';
+          const noteText = `Replacement order #${r.replacement.order_number} ($0, same items${shipped}) — auto-resolved (replacement detected)`;
+          const { error } = await supabase.from('order_alert_notes').insert({
+            order_number: alert.order_number,
+            note: noteText,
+            resolved: true,
+            author: 'auto',
+            alert_type: 'shipping',
+          });
+          if (error) { console.error(`  [Shipping] Failed to write replacement note for #${alert.order_number}: ${error.message}`); continue; }
+          alert.note = { order_number: alert.order_number, note: noteText, resolved: true, author: 'auto' };
+          console.log(`  [Shipping] #${alert.order_number} auto-resolved — replacement #${r.replacement.order_number}`);
+        } else {
+          alert.issues.push(`Possible replacement: #${r.replacement.order_number} (paid, same items) — resolve this alert if it was a reship`);
+          alert.replacement = r.replacement;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('  [Shipping] Replacement detection failed:', e.message);
   }
 
   // Categorize alerts
