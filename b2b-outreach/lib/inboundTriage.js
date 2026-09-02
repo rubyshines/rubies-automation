@@ -72,6 +72,7 @@ function deriveInboundCandidates(messages, known) {
       sender_name: m.from_name || null,
       subject: m.subject || null,
       snippet: null,
+      body: null,
     };
     entry.message_count += 1;
     if (m.date < entry.first_seen) entry.first_seen = m.date;
@@ -81,6 +82,10 @@ function deriveInboundCandidates(messages, known) {
       entry.sender_name = m.from_name || entry.sender_name;
       entry.subject = m.subject || entry.subject;
       entry.snippet = (m.body_text || '').replace(/\s+/g, ' ').trim().slice(0, 140) || entry.snippet;
+      // The full latest message, so the operator can read what was actually
+      // asked before deciding — a 140-char snippet is not context. Capped:
+      // a reply drags the whole quoted chain and disclaimers behind it.
+      entry.body = (m.body_text || '').trim().slice(0, 2000) || entry.body;
     }
     if (!prev) byDomain.set(domain, entry);
   }

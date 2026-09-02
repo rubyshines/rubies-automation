@@ -6023,22 +6023,38 @@ function outreachInboundStripHtml() {
   </div>`;
 }
 
+// Which strip rows are expanded to show the full message. Session-local UI
+// state; a row disappears from the set with the candidate itself.
+const outreachInboundExpanded = new Set();
+
+function toggleInboundExpand(domain) {
+  if (outreachInboundExpanded.has(domain)) outreachInboundExpanded.delete(domain);
+  else outreachInboundExpanded.add(domain);
+  renderOutreachQueue();
+}
+
 function outreachInboundRowHtml(c) {
   const channelLabel = OUTREACH_CHANNEL_LABELS[c.channel] || c.channel;
   const when = new Date(c.last_seen).toLocaleDateString('en-US', {
     timeZone: 'America/New_York', month: 'short', day: 'numeric',
   });
   const who = c.sender_name ? `${c.sender_name} &lt;${esc(c.sender_email)}&gt;` : esc(c.sender_email);
+  const expanded = outreachInboundExpanded.has(c.domain);
+  // Reading the message IS the triage, so the whole row toggles it — the
+  // controls that do something else (name field, buttons) stop the click.
   return `
-  <div class="queue-item outreach-row outreach-inbound-row" data-domain="${esc(c.domain)}">
+  <div class="queue-item outreach-row outreach-inbound-row" data-domain="${esc(c.domain)}"
+       onclick="toggleInboundExpand(this.dataset.domain)">
     <div class="queue-item-inner">
       <div class="queue-item-row1">
         <input class="outreach-inbound-name" id="inbound-name-${esc(c.domain)}"
-               value="${esc(c.inferred_name)}" title="Company name — becomes the record's id, fix it before adding" />
+               value="${esc(c.inferred_name)}" onclick="event.stopPropagation()"
+               title="Company name — becomes the record's id, fix it before adding" />
         <span class="outreach-channel-chip outreach-channel-${esc(c.channel)}">${esc(channelLabel)}</span>
       </div>
       <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}</div>
-      ${c.subject ? `<div class="outreach-row-snippet">${esc(c.subject)}</div>` : ''}
+      ${c.subject ? `<div class="outreach-row-snippet">${esc(c.subject)}${expanded ? '' : ' <span class="outreach-inbound-more">&mdash; click to read</span>'}</div>` : ''}
+      ${expanded && c.body ? `<div class="outreach-inbound-body">${esc(c.body)}</div>` : ''}
       <div class="queue-item-row2 outreach-inbound-actions">
         <button class="outreach-inbound-btn outreach-inbound-add" data-domain="${esc(c.domain)}" onclick="outreachInboundAdmit(this.dataset.domain); event.stopPropagation()">Add</button>
         <button class="outreach-inbound-btn" data-domain="${esc(c.domain)}" onclick="outreachInboundDismiss(this.dataset.domain); event.stopPropagation()">Ignore</button>

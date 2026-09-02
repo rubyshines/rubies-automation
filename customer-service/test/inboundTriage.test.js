@@ -81,6 +81,7 @@ test('several messages from one domain collapse to one row, latest message wins 
   assert.equal(out[0].last_seen, '2026-09-01T16:04:15+00:00');
   assert.equal(out[0].subject, 'Re: Interest in Partnering!');
   assert.match(out[0].snippet, /free after 1 MST/);
+  assert.match(out[0].body, /free after 1 MST/);
   // …and message order must not matter
   const reversed = deriveInboundCandidates([
     msg({ gmail_message_id: 'g2', date: '2026-09-01T16:04:15+00:00', subject: 'Re: Interest in Partnering!' }),

@@ -5653,7 +5653,22 @@ main { height: calc(100vh - 56px); }
   border-bottom: 2px solid var(--border);
   background: var(--surface-inset);
 }
-.outreach-inbound-row { cursor: default; }
+.outreach-inbound-row { cursor: pointer; }
+.outreach-inbound-more { color: var(--text-tertiary); font-style: italic; }
+.outreach-inbound-body {
+  margin: 6px 0 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
 .outreach-inbound-name {
   flex: 1;
   min-width: 0;
