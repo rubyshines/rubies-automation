@@ -216,6 +216,38 @@ async function handleTriage(input = {}) {
   }
 }
 
+async function handleInbound(input = {}) {
+  try {
+    const lib = require(path.join(B2B_LIB, 'inboundTriage'));
+    const sb = getSupabaseClient();
+    const action = input.action || 'list';
+
+    if (action === 'add') {
+      const res = await lib.admitInboundSender(sb, {
+        domain: input.domain, name: input.name, email: input.email,
+        contact_name: input.contact_name, channel: input.channel || 'lgbtq_org',
+      });
+      if (res.warning) return text(`**${res.id}** — ${res.warning}`);
+      return text(`**${res.id}** admitted (${res.threads_discovered} thread${res.threads_discovered === 1 ? '' : 's'} imported from Gmail). If they were waiting on a reply, they are now in the queue at Tier 1.`);
+    }
+
+    if (action === 'ignore') {
+      const res = await lib.dismissInboundSender(sb, {
+        domain: input.domain, name: input.name, reason: input.reason,
+      });
+      return text(`**${res.id}** dismissed — ${input.domain} will not be listed again. Reverse by deleting the stub row or admitting the org deliberately.`);
+    }
+
+    const rows = await lib.fetchInboundCandidates(sb);
+    if (!rows.length) return text('No unmatched org/retailer inbound — everything that wrote in is already on the books.');
+    const lines = rows.map(c =>
+      `${c.channel === 'wholesale' ? 'retailer' : 'org'} · **${c.inferred_name}** (${c.domain}) — ${c.sender_name || c.sender_email}, ${c.message_count} message${c.message_count === 1 ? '' : 's'}, latest ${c.last_seen.slice(0, 10)}: "${c.subject || ''}"`);
+    return text(`New inbound — wrote to us, matches no company (${rows.length}):\n${lines.join('\n')}\n\nAdmit with action:'add' (domain + name + email), dismiss with action:'ignore'.`);
+  } catch (err) {
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
 /** Local-time rendering for a scheduled slot, or a plain hint if unscheduled. */
 function scheduleLine(draft) {
   if (!draft.scheduled_send_at) return 'not scheduled — waiting for an operator';
@@ -499,6 +531,23 @@ module.exports = [
       required: ['name'],
     },
     handler: handleAddProspect,
+  },
+  {
+    name: 'b2b_inbound',
+    description: "The 'New inbound' triage list: orgs/retailers whose email the Gmail intake classified (lgbtq_org / wholesale) but who match NO company on the books — the cold-inbound gap where a new org writing in was invisible to the outreach engine. action:'list' (default) shows them, one row per sender domain. action:'add' admits one (creates the company + contact, imports their Gmail thread so they surface at Tier 1 'waiting on us' — no cold intro draft, they wrote to US). action:'ignore' dismisses one permanently via a lost stub row (for vendor pitches and misclassifications). Free-mail senders are never listed — an individual's address identifies no organisation.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: "'list' (default) | 'add' | 'ignore'." },
+        domain: { type: 'string', description: "add/ignore: the sender domain from the list, e.g. 'bluemountainclinic.org'." },
+        name: { type: 'string', description: "add/ignore: the organisation's real name — fix the domain-inferred guess before admitting, it becomes the company id." },
+        email: { type: 'string', description: 'add: the sender address, becomes the primary contact.' },
+        contact_name: { type: 'string', description: "add: the sender's name, if the email signs one." },
+        channel: { type: 'string', description: "add: 'lgbtq_org' (default) | 'wholesale'." },
+        reason: { type: 'string', description: 'ignore: why (recorded on the stub row).' },
+      },
+    },
+    handler: handleInbound,
   },
   {
     name: 'b2b_queue',

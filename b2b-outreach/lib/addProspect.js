@@ -25,6 +25,10 @@ async function addProspect(sb, {
   referred_by = null, blurb = null, country = null,
   contact_form_url = null,
   draft = true, steer = null,
+  // 'referral' (someone recommended them) or 'inbound_email' (they wrote to
+  // us). Recorded so a future reader knows which kind of row this is — an
+  // inbound-admitted org was never "referred" by anyone.
+  source = 'referral',
 } = {}) {
   if (!name?.trim()) throw new Error('name is required');
   if (!INTRO_BY_CHANNEL[channel]) throw new Error(`channel must be one of: ${Object.keys(INTRO_BY_CHANNEL).join(', ')}`);
@@ -38,7 +42,7 @@ async function addProspect(sb, {
     ...(existing?.metadata || {}),
     ...(referred_by ? { referred_by } : {}),
     ...(blurb ? { blurb } : {}),
-    seeded: `${new Date().toISOString().slice(0, 10)} referred-prospect intake`,
+    seeded: `${new Date().toISOString().slice(0, 10)} ${source === 'inbound_email' ? 'inbound-email intake' : 'referred-prospect intake'}`,
   };
   const { error } = await sb.from('b2b_companies').upsert({
     id, name: name.trim(),
@@ -54,9 +58,10 @@ async function addProspect(sb, {
     // deliberate act. Preserved if already set.
     vetted_at: existing?.vetted_at || new Date().toISOString(),
     status: 'qualified_lead',
-    temperature: referred_by ? 'warm' : 'cold',
+    // An org that wrote to us first is as warm as a referral gets.
+    temperature: referred_by || source === 'inbound_email' ? 'warm' : 'cold',
     website, general_email: email, country, contact_form_url,
-    source: 'referral',
+    source,
     metadata: meta,
   }, { onConflict: 'id' });
   if (error) throw new Error(`company upsert: ${error.message}`);

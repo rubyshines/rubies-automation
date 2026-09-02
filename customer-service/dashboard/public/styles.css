@@ -5648,6 +5648,39 @@ main { height: calc(100vh - 56px); }
   font-style: italic;
 }
 
+/* "New inbound" strip — wrote to us, not on the books yet */
+.outreach-inbound-strip {
+  border-bottom: 2px solid var(--border);
+  background: var(--surface-inset);
+}
+.outreach-inbound-row { cursor: default; }
+.outreach-inbound-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed transparent;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.outreach-inbound-name:hover { border-color: var(--border); }
+.outreach-inbound-name:focus { border: 1px solid var(--teal); outline: none; background: var(--surface); }
+.outreach-inbound-actions { gap: 6px; }
+.outreach-inbound-btn {
+  font-size: 11px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.outreach-inbound-btn:hover { color: var(--text); border-color: var(--text-tertiary); }
+.outreach-inbound-add { color: var(--teal); border-color: var(--teal); }
+.outreach-inbound-add:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
+
 /* Activity feed rows */
 .outreach-dir {
   font-size: 13px;

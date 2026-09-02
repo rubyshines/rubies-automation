@@ -5517,6 +5517,7 @@ async function setAutoactionFlag(key, enabled) {
 let outreachMode = 'queue';
 let outreachChannel = '';        // '' = all | wholesale | lgbtq_org | affiliate
 let outreachQueue = [];
+let outreachInbound = [];        // "New inbound" candidates from /api/b2b/inbound
 let outreachOnMe = [];           // company rows from /api/b2b/on-me
 let outreachDirectory = [];      // company rows from /api/b2b/companies
 let outreachActivity = [];       // message rows from /api/b2b/activity
@@ -5594,6 +5595,11 @@ function rememberOutreachEntries(entries) {
 
 async function loadOutreachQueue(isSilentRefresh) {
   let payload;
+  // The "New inbound" strip loads alongside the queue and fails soft — a
+  // broken strip must never take the queue down with it.
+  const inboundPromise = api('/api/b2b/inbound')
+    .then(r => { outreachInbound = r.candidates || []; })
+    .catch(() => { outreachInbound = []; });
   try {
     const url = outreachChannel ? `/api/b2b/queue?channel=${encodeURIComponent(outreachChannel)}` : '/api/b2b/queue';
     payload = await api(url);
@@ -5601,6 +5607,7 @@ async function loadOutreachQueue(isSilentRefresh) {
     if (!isSilentRefresh) renderOutreachSidebar(`Failed to load queue: ${esc(err.message)}`);
     return;
   }
+  await inboundPromise;
   outreachQueue = Array.isArray(payload) ? payload : (payload.entries || []);
   rememberOutreachEntries(outreachQueue);
   renderOutreachSidebar();
@@ -5925,11 +5932,92 @@ function renderOutreachList(errorHtml) {
     return;
   }
 
+  const inboundHtml = outreachInboundStripHtml();
   if (!outreachQueue.length) {
-    el.innerHTML = '<div class="outreach-loading">Outreach queue is empty &mdash; nothing due today.</div>';
+    el.innerHTML = inboundHtml + '<div class="outreach-loading">Outreach queue is empty &mdash; nothing due today.</div>';
     return;
   }
-  el.innerHTML = outreachQueue.map(outreachRowHtml).join('');
+  el.innerHTML = inboundHtml + outreachQueue.map(outreachRowHtml).join('');
+}
+
+// ── New inbound ─────────────────────────────────────────────────────────────
+// Orgs/retailers whose mail the Gmail intake classified but who match no
+// company — the cold-inbound gap. One row per sender domain; Add creates the
+// company and pulls their thread in (Tier 1, no cold intro draft), Ignore
+// records a "reviewed, not a prospect" stub so they never resurface. The name
+// field is editable because the domain-inferred guess becomes the company id.
+
+function outreachInboundStripHtml() {
+  const rows = outreachChannel
+    ? outreachInbound.filter(c => c.channel === outreachChannel)
+    : outreachInbound;
+  if (!rows.length) return '';
+  return `
+  <div class="outreach-inbound-strip">
+    <div class="outreach-list-note"><strong>New inbound</strong> &mdash; wrote to us, not on the books yet</div>
+    ${rows.map(outreachInboundRowHtml).join('')}
+  </div>`;
+}
+
+function outreachInboundRowHtml(c) {
+  const channelLabel = OUTREACH_CHANNEL_LABELS[c.channel] || c.channel;
+  const when = new Date(c.last_seen).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric',
+  });
+  const who = c.sender_name ? `${c.sender_name} &lt;${esc(c.sender_email)}&gt;` : esc(c.sender_email);
+  return `
+  <div class="queue-item outreach-row outreach-inbound-row" data-domain="${esc(c.domain)}">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <input class="outreach-inbound-name" id="inbound-name-${esc(c.domain)}"
+               value="${esc(c.inferred_name)}" title="Company name — becomes the record's id, fix it before adding" />
+        <span class="outreach-channel-chip outreach-channel-${esc(c.channel)}">${esc(channelLabel)}</span>
+      </div>
+      <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}</div>
+      ${c.subject ? `<div class="outreach-row-snippet">${esc(c.subject)}</div>` : ''}
+      <div class="queue-item-row2 outreach-inbound-actions">
+        <button class="outreach-inbound-btn outreach-inbound-add" data-domain="${esc(c.domain)}" onclick="outreachInboundAdmit(this.dataset.domain); event.stopPropagation()">Add</button>
+        <button class="outreach-inbound-btn" data-domain="${esc(c.domain)}" onclick="outreachInboundDismiss(this.dataset.domain); event.stopPropagation()">Ignore</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function outreachInboundAdmit(domain) {
+  const c = outreachInbound.find(x => x.domain === domain);
+  if (!c) return;
+  const nameInput = document.getElementById(`inbound-name-${domain}`);
+  const name = (nameInput?.value || c.inferred_name).trim();
+  try {
+    const res = await api('/api/b2b/inbound/admit', {
+      method: 'POST',
+      body: { domain, name, email: c.sender_email, contact_name: c.sender_name, channel: c.channel },
+    });
+    outreachInbound = outreachInbound.filter(x => x.domain !== domain);
+    if (res.warning) showToast(res.warning);
+    // The company is real now — reload so it appears in the queue proper
+    // (Tier 1 if they were waiting on us) and open it.
+    pendingOutreachRestore = res.id;
+    loadOutreachQueue();
+  } catch (err) {
+    showToast(`Add failed: ${err.message}`);
+  }
+}
+
+async function outreachInboundDismiss(domain) {
+  const c = outreachInbound.find(x => x.domain === domain);
+  if (!c) return;
+  const nameInput = document.getElementById(`inbound-name-${domain}`);
+  try {
+    await api('/api/b2b/inbound/dismiss', {
+      method: 'POST',
+      body: { domain, name: (nameInput?.value || c.inferred_name).trim() },
+    });
+    outreachInbound = outreachInbound.filter(x => x.domain !== domain);
+    renderOutreachQueue();
+  } catch (err) {
+    showToast(`Ignore failed: ${err.message}`);
+  }
 }
 
 function outreachCompanyRowHtml(c) {

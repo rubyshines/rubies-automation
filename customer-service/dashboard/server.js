@@ -3008,6 +3008,29 @@ async function apiB2bQueue(query) {
   return b2bQueueService.fetchQueueWithDrafts(getSupabaseClient(), { channel });
 }
 
+// The "New inbound" strip: classified org/retailer mail matching no company.
+// Same lib the b2b_inbound console tool calls, so the two surfaces never
+// drift on who counts as new.
+async function apiB2bInbound() {
+  const { fetchInboundCandidates } = require('../../b2b-outreach/lib/inboundTriage');
+  return { candidates: await fetchInboundCandidates(getSupabaseClient()) };
+}
+
+async function apiB2bInboundAdmit(body = {}) {
+  const { admitInboundSender } = require('../../b2b-outreach/lib/inboundTriage');
+  return admitInboundSender(getSupabaseClient(), {
+    domain: body.domain, name: body.name, email: body.email,
+    contact_name: body.contact_name || null, channel: body.channel || 'lgbtq_org',
+  });
+}
+
+async function apiB2bInboundDismiss(body = {}) {
+  const { dismissInboundSender } = require('../../b2b-outreach/lib/inboundTriage');
+  return dismissInboundSender(getSupabaseClient(), {
+    domain: body.domain, name: body.name || null, reason: body.reason || null,
+  });
+}
+
 // What Jamie has claimed out of the queue and not yet answered, oldest first.
 async function apiB2bOnMe(query) {
   const channel = query.get('channel') || null;
@@ -4027,6 +4050,7 @@ const routes = {
   'GET /api/autoaction-config': () => apiGetAutoactionConfig(),
   'GET /api/advisor-facts': () => apiGetAdvisorFacts(),
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/inbound': () => apiB2bInbound(),
   'GET /api/b2b/on-me': (req) => apiB2bOnMe(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
@@ -4079,6 +4103,8 @@ const paramRoutes = [
   { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/availability$/, handler: (_, id, req) => apiB2bAvailability(decodeURIComponent(id), new URL(req.url, 'http://localhost').searchParams) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/schedule$/, handler: (body, id) => apiB2bScheduleMeeting(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/inbound\/admit$/, handler: (body) => apiB2bInboundAdmit(body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/inbound\/dismiss$/, handler: (body) => apiB2bInboundDismiss(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/status$/, handler: (body, id) => apiB2bThreadStatus(id, body) },
   { method: 'POST', pattern: /^\/api\/b2b\/threads\/(\d+)\/reopen$/, handler: (body, id) => apiB2bThreadReopen(id, body) },
   // Free Swimwear panel
