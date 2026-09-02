@@ -6052,7 +6052,7 @@ function outreachInboundRowHtml(c) {
                title="Company name — becomes the record's id, fix it before adding" />
         <span class="outreach-channel-chip outreach-channel-${esc(c.channel)}">${esc(channelLabel)}</span>
       </div>
-      <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}</div>
+      <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}${c.country ? ` &middot; ${esc(c.country)}` : ''}</div>
       ${c.subject ? `<div class="outreach-row-snippet">${esc(c.subject)}${expanded ? '' : ' <span class="outreach-inbound-more">&mdash; click to read</span>'}</div>` : ''}
       ${expanded && c.body ? `<div class="outreach-inbound-body">${esc(c.body)}</div>` : ''}
       <div class="queue-item-row2 outreach-inbound-actions">
@@ -6071,7 +6071,7 @@ async function outreachInboundAdmit(domain) {
   try {
     const res = await api('/api/b2b/inbound/admit', {
       method: 'POST',
-      body: { domain, name, email: c.sender_email, contact_name: c.sender_name, channel: c.channel },
+      body: { domain, name, email: c.sender_email, contact_name: c.sender_name, channel: c.channel, country: c.country || null },
     });
     outreachInbound = outreachInbound.filter(x => x.domain !== domain);
     if (res.warning) showToast(res.warning);

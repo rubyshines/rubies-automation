@@ -13,6 +13,8 @@ const {
   deriveInboundCandidates,
   inferNameFromDomain,
   normalizeSender,
+  parseEnrichment,
+  buildEnrichPrompt,
 } = require('../../b2b-outreach/lib/inboundTriage');
 
 const msg = (over = {}) => ({
@@ -112,4 +114,37 @@ test('sender normalization strips display names and case', () => {
 test('inferred name is a readable title-cased guess', () => {
   assert.equal(inferNameFromDomain('bluemountainclinic.org'), 'Bluemountainclinic');
   assert.equal(inferNameFromDomain('trans-closet.org.uk'), 'Trans Closet');
+});
+
+test('enrichment parse accepts a clean answer and normalizes null country', () => {
+  assert.deepEqual(
+    parseEnrichment('{"org_name": "Blue Mountain Clinic", "country": "United States"}'),
+    { org_name: 'Blue Mountain Clinic', country: 'United States' });
+  assert.deepEqual(
+    parseEnrichment('Here you go: {"org_name": "Le JAG", "country": null}'),
+    { org_name: 'Le JAG', country: null });
+  // the string "null" is a model tic, not a country
+  assert.deepEqual(
+    parseEnrichment('{"org_name": "Le JAG", "country": "null"}'),
+    { org_name: 'Le JAG', country: null });
+});
+
+test('enrichment parse rejects garbage rather than letting it become a company name', () => {
+  assert.equal(parseEnrichment('I could not determine the organisation.'), null);
+  assert.equal(parseEnrichment('{"org_name": ""}'), null);
+  assert.equal(parseEnrichment(`{"org_name": "${'x'.repeat(120)}"}`), null);
+  assert.equal(parseEnrichment('{"country": "France"}'), null);
+  assert.equal(parseEnrichment(''), null);
+});
+
+test('enrichment prompt carries the message, sender, and domain', () => {
+  const p = buildEnrichPrompt({
+    sender_name: 'Fearne Perez', sender_email: 'fearne@bluemountainclinic.org',
+    domain: 'bluemountainclinic.org', subject: 'Interest in Partnering!',
+    body: 'Hello! BMC would love to partner…',
+  });
+  assert.match(p, /fearne@bluemountainclinic\.org/);
+  assert.match(p, /Interest in Partnering!/);
+  assert.match(p, /BMC would love to partner/);
+  assert.match(p, /org_name/);
 });

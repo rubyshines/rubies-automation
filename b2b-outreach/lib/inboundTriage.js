@@ -92,6 +92,82 @@ function deriveInboundCandidates(messages, known) {
   return [...byDomain.values()].sort((a, b) => (a.last_seen < b.last_seen ? 1 : -1));
 }
 
+// ── AI name/country extraction ──────────────────────────────────────────────
+// The domain guess ("Lejag", "Bluemountainclinic") is a poor display name and
+// a worse company id, while the message itself almost always states the real
+// one — in the signature, the body, or both. One Haiku call per new domain
+// pulls {org_name, country}; Haiku deliberately (narrow structured extraction,
+// and the operator reviews the name in the strip's editable field before it
+// becomes a record — a miss costs an edit, never a wrong send). Cached per
+// process: candidates are few and a domain's answer doesn't change.
+const ENRICH_CACHE = new Map(); // domain → {org_name, country} | false (tried, failed)
+
+function buildEnrichPrompt(c) {
+  return [
+    'An email arrived at a small clothing brand. Extract the ORGANISATION the sender represents.',
+    '',
+    `From: ${c.sender_name || ''} <${c.sender_email}>`,
+    `Sender domain: ${c.domain}`,
+    `Subject: ${c.subject || ''}`,
+    '',
+    '--- MESSAGE ---',
+    (c.body || '').slice(0, 1500),
+    '--- END ---',
+    '',
+    'Reply with ONLY a JSON object, no explanation:',
+    '{"org_name": "the organisation\'s proper name as they would write it", "country": "country they are in, or null if the message does not say or imply one"}',
+    'If the sender is a company/store, org_name is the company/store name. Use the message\'s own wording — do not invent or expand names beyond what is stated or clearly implied by the domain.',
+  ].join('\n');
+}
+
+/** Parse the model's reply. Returns {org_name, country} or null. Pure. */
+function parseEnrichment(text) {
+  const m = String(text || '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let parsed;
+  try { parsed = JSON.parse(m[0]); } catch { return null; }
+  const name = typeof parsed.org_name === 'string' ? parsed.org_name.trim() : '';
+  if (name.length < 2 || name.length > 80) return null;
+  const country = typeof parsed.country === 'string' && parsed.country.trim() && parsed.country.trim().toLowerCase() !== 'null'
+    ? parsed.country.trim() : null;
+  return { org_name: name, country };
+}
+
+async function enrichCandidate(c) {
+  if (ENRICH_CACHE.has(c.domain)) return ENRICH_CACHE.get(c.domain) || null;
+  let result = null;
+  try {
+    const { callClaude } = require('../../shared/aiClient');
+    const { MODELS } = require('../../shared/aiPricing');
+    const response = await callClaude({
+      component: 'b2b_inbound_enrich',
+      model: MODELS.HAIKU,
+      max_tokens: 150,
+      messages: [{ role: 'user', content: buildEnrichPrompt(c) }],
+    });
+    const text = (response?.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    result = parseEnrichment(text);
+  } catch (err) {
+    console.warn(`[inboundTriage] enrich failed for ${c.domain}: ${err.message}`);
+  }
+  // Failures cache too (as false) — a domain that errors must not re-bill on
+  // every queue load; a restart clears it.
+  ENRICH_CACHE.set(c.domain, result || false);
+  return result;
+}
+
+/** Apply AI extraction on top of the domain guess. Fail-soft throughout. */
+async function enrichCandidates(candidates) {
+  await Promise.all(candidates.map(async c => {
+    const e = await enrichCandidate(c);
+    if (!e) { c.name_source = 'domain'; return; }
+    c.inferred_name = e.org_name;
+    c.country = e.country;
+    c.name_source = 'ai';
+  }));
+  return candidates;
+}
+
 /** What the book already holds, as sets the pure derivation can check. */
 async function fetchKnown(sb) {
   const domains = new Set();
@@ -142,7 +218,7 @@ async function fetchInboundCandidates(sb, { days = DEFAULT_WINDOW_DAYS } = {}) {
     if (data.length < 1000) break;
   }
   const known = await fetchKnown(sb);
-  return deriveInboundCandidates(messages, known);
+  return enrichCandidates(deriveInboundCandidates(messages, known));
 }
 
 /**
@@ -151,7 +227,7 @@ async function fetchInboundCandidates(sb, { days = DEFAULT_WINDOW_DAYS } = {}) {
  * intro to someone who wrote to US. No draft is generated — the Tier-1 flow
  * drafts the reply with the thread in context when the operator opens it.
  */
-async function admitInboundSender(sb, { domain, name, email, contact_name = null, channel = 'lgbtq_org' } = {}) {
+async function admitInboundSender(sb, { domain, name, email, contact_name = null, channel = 'lgbtq_org', country = null } = {}) {
   if (!domain) throw new Error('domain is required');
   if (!email) throw new Error('email is required');
   const { addProspect } = require('./addProspect');
@@ -161,6 +237,7 @@ async function admitInboundSender(sb, { domain, name, email, contact_name = null
     website: domain,
     email,
     contact_name,
+    country,
     source: 'inbound_email',
     draft: false,
   });
@@ -214,6 +291,9 @@ async function dismissInboundSender(sb, { domain, name = null, reason = null } =
 
 module.exports = {
   deriveInboundCandidates,
+  enrichCandidates,
+  buildEnrichPrompt,
+  parseEnrichment,
   fetchInboundCandidates,
   admitInboundSender,
   dismissInboundSender,

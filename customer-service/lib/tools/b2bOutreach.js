@@ -236,6 +236,7 @@ async function handleInbound(input = {}) {
       const res = await lib.admitInboundSender(sb, {
         domain: input.domain, name: input.name, email: input.email,
         contact_name: input.contact_name, channel: input.channel || 'lgbtq_org',
+        country: input.country || null,
       });
       if (res.warning) return text(`**${res.id}** — ${res.warning}`);
       return text(`**${res.id}** admitted (${res.threads_discovered} thread${res.threads_discovered === 1 ? '' : 's'} imported from Gmail). If they were waiting on a reply, they are now in the queue at Tier 1.`);
@@ -554,6 +555,7 @@ module.exports = [
         email: { type: 'string', description: 'add: the sender address, becomes the primary contact.' },
         contact_name: { type: 'string', description: "add: the sender's name, if the email signs one." },
         channel: { type: 'string', description: "add: 'lgbtq_org' (default) | 'wholesale'." },
+        country: { type: 'string', description: "add: country if known — the list's AI extraction usually fills it; it drives the partner discount tier." },
         reason: { type: 'string', description: 'ignore: why (recorded on the stub row).' },
       },
     },
