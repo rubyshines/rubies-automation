@@ -432,3 +432,35 @@ test('null/undefined entries are not draftable', () => {
   assert.equal(isDraftableEntry(null), false);
   assert.equal(isDraftableEntry(undefined), false);
 });
+
+// ── initiate-vs-continue drafting (2026-09-02) ──────────────────────────────
+// Messages WE originate draft on Sonnet under a locked template with fixed A/B
+// subjects; continuations (Tier-1 replies, follow-up ladder drafts) stay Opus
+// and are never batch-drafted.
+
+const { introSubjectFor, modelFor } = require('../../b2b-outreach/lib/outreachAdvisor');
+const { INITIATING_TYPES } = require('../../b2b-outreach/lib/cadence');
+const { MODELS } = require('../../shared/aiPricing');
+
+test('intro subjects are fixed strings — A names the org, B asks the community', () => {
+  assert.equal(introSubjectFor('subject_a', 'Youth OUTright'),
+    'Gender-affirming clothing donations for Youth OUTright');
+  assert.equal(introSubjectFor('subject_b', 'Youth OUTright'),
+    'Could your community use gender-affirming clothing donations?');
+  assert.equal(introSubjectFor('nonsense', 'Youth OUTright'), null);
+});
+
+test('initiating types draft on Sonnet; replies and ladder drafts stay Opus', () => {
+  for (const t of INITIATING_TYPES) {
+    assert.equal(modelFor({ message_type: t }), MODELS.SONNET, t);
+  }
+  assert.equal(modelFor({ message_type: null }), MODELS.OPUS);         // Tier-1 reply
+  assert.equal(modelFor({ message_type: 'followup_1' }), MODELS.OPUS); // auto-sends unreviewed
+  assert.equal(modelFor({ message_type: 'followup_2' }), MODELS.OPUS);
+  assert.equal(modelFor({ message_type: 'reply_close' }), MODELS.OPUS);
+});
+
+test('INITIATING_TYPES is exactly the approved four', () => {
+  assert.deepEqual([...INITIATING_TYPES].sort(),
+    ['community_checkin', 'intro_outreach', 're_approach', 'reorder_nudge']);
+});

@@ -66,8 +66,11 @@ async function handleDraft(input = {}) {
     const sb = getSupabaseClient();
     if (input.all_due) {
       const { draftAllDue } = require(path.join(B2B_LIB, 'queueService'));
-      const res = await draftAllDue(sb, { channel: input.channel });
-      if (!res.total) return text('Every queue entry already has a pending draft — nothing to generate.');
+      const { INITIATING_TYPES } = require(path.join(B2B_LIB, 'cadence'));
+      // Initiating types only, always: continuations (Tier-1 replies) are
+      // operator-written by decision (2026-09-02) and are never batch-drafted.
+      const res = await draftAllDue(sb, { channel: input.channel, types: INITIATING_TYPES });
+      if (!res.total) return text('Every due initiating-type entry already has a pending draft — nothing to generate. (Tier-1 replies are never AI-drafted; Jamie writes those.)');
       const lines = res.results.map(r => r.ok
         ? `✓ ${r.company_name} — draft #${r.draft_id}`
         : `✗ ${r.company_name} — ${r.error}`);
@@ -617,7 +620,7 @@ module.exports = [
   },
   {
     name: 'b2b_draft',
-    description: 'Generate (or regenerate with steer) the outreach advisor draft for a company, batch-draft every due queue entry lacking one (all_due:true — one Opus call per company, can take minutes), or list pending drafts (pass list:true / no company_id). Drafts are NEVER auto-sent.',
+    description: 'Generate (or regenerate with steer) the outreach advisor draft for a company, batch-draft due INITIATING-type entries lacking one (all_due:true — intros/check-ins/re-approaches/reorder nudges only; Tier-1 replies are operator-written, never AI-drafted), or list pending drafts (pass list:true / no company_id). Drafts are NEVER auto-sent. The nightly daily-sync pass already does what all_due does.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -625,7 +628,7 @@ module.exports = [
         steer: { type: 'string', description: 'Operator steer applied to regeneration (final authority on intent).' },
         message_type: { type: 'string', description: 'Force a specific catalog message type when nothing is due.' },
         list: { type: 'boolean', description: 'List pending drafts.' },
-        all_due: { type: 'boolean', description: 'Draft every queue entry that has no pending draft yet (skips stuck scheduled sends). Sequential Opus calls — expect ~10-30s per company.' },
+        all_due: { type: 'boolean', description: 'Draft every due initiating-type entry that has no pending draft yet (skips replies and stuck scheduled sends). Sequential model calls — expect ~10-30s per company.' },
         channel: { type: 'string', description: "With all_due: restrict to 'wholesale' | 'lgbtq_org' | 'affiliate'." },
       },
     },

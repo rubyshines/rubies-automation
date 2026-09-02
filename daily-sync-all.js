@@ -207,6 +207,26 @@ const PIPELINES = [
     },
   },
   {
+    name: 'Initiating Drafts',
+    // Messages WE originate (org intros, check-ins, re-approaches, reorder
+    // nudges) are drafted the night they become due, so the queue is review
+    // work rather than click-to-generate work. Continuations are never
+    // batch-drafted: live conversations are operator-written (2026-09-02).
+    // Runs after Follow-up Drafts for the same freshness reasons, and the
+    // per-night limit bounds the model spend when a cohort admission makes
+    // many companies due at once.
+    run: async () => {
+      const { draftAllDue } = require('./b2b-outreach/lib/queueService');
+      const { INITIATING_TYPES } = require('./b2b-outreach/lib/cadence');
+      const r = await draftAllDue(
+        require('./shared/supabaseClient').getSupabaseClient(),
+        { types: INITIATING_TYPES, limit: 15 });
+      const failed = r.results.filter(x => !x.ok);
+      for (const f of failed) console.warn(`[initiating-drafts] ${f.company_id}: ${f.error}`);
+      return { drafted: r.total - failed.length, failed: failed.length };
+    },
+  },
+  {
     name: 'Ticket Reconciliation',
     run: () => require('./customer-service/sync/gorgiasAdvisorResync').runPipeline(),
   },

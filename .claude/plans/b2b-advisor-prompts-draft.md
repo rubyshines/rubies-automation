@@ -248,3 +248,18 @@ Thread IDs are `email_messages.gmail_thread_id` from the historical findings (§
 1. **New message type `inbound_inquiry_response` (both advisors, Tier 1).** When the org/retailer wrote to US first: NO self-introduction, NO founder story, NO brand pitch (they found us). Thank them for their work in ONE short generic clause — never recite their own details back at them (their counties/programs/service area parroted from their email reads as surveillance, not warmth). 60-100 words, keep the thread subject, move to the next concrete step (orgs: the call-first onboarding call on Google Meet, with the partner-discount line only if their inquiry mentioned budget; retailers: terms/samples/call). Community advisor carries Jamie's verbatim template (from his Uniting Pride edit).
 2. **Tagline ban in B2B prose (both advisors).** "Every girl deserves to shine" is customer-facing copy; in partnership email it reads as cheese. Never in org/B2B drafts.
 3. Source incident: draft #9 (Uniting Pride) applied the cold intro_outreach template to an inbound inquiry because no inbound type existed.
+
+---
+
+## 2026-09-02 — intro_outreach locked template + fixed A/B subjects (materialized in communityAdvisorPrompt.js)
+
+The intro_outreach section was replaced with a LOCKED template Jamie approved line by line
+(founding story: daughter transitioned at 9, couldn't find options; "designed to feel like
+regular clothing"; "Our program offers the following:" with the donations bullet and the
+always-present discount bullet at the country rate; close: "Let me know if you are
+interested and we can set up a call to discuss."; sign-off "Talk soon," + standard
+signature). One free slot: the why-this-org sentence (referral wins when present).
+Subjects are FIXED strings assigned by the system as an A/B test (variant_id subject_a =
+"Gender-affirming clothing donations for [Org]", subject_b = "Could your community use
+gender-affirming clothing donations?"), enforced by code override in outreachAdvisor.js.
+The prompt file is the source of truth for the exact wording — see intro_outreach there.

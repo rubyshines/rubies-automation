@@ -27,6 +27,7 @@ const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
 const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
 const { defaultReplyCc } = require('./replyCc');
 const { isFlagEnabled } = require('../../shared/systemFlags');
+const { fetchAllPaginated } = require('../../shared/supabaseClient');
 
 /** One-line preview of a draft body for queue rows. Pure. */
 function draftSnippet(body, max = 140) {
@@ -635,7 +636,7 @@ async function reopenThread(sb, { thread_id, steer, message_type } = {}) {
  * asked. `task_hint` only reaches the prompt when there is no message_type —
  * a typed cadence message already carries its own locked framing.
  */
-async function generateDraftForCompany(sb, { company_id, steer, message_type, thread_id, task_hint, reason, force } = {}) {
+async function generateDraftForCompany(sb, { company_id, steer, message_type, thread_id, task_hint, reason, force, variant_id } = {}) {
   const { data: company, error } = await sb.from('b2b_companies').select('*').eq('id', company_id).maybeSingle();
   if (error || !company) throw new Error(error?.message || `company '${company_id}' not found`);
 
@@ -664,7 +665,7 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type, th
   // ladder. An explicit type is an instruction, not a suggestion.
   if (message_type) entry = { ...entry, message_type, forced_message_type: true };
 
-  return generateDraft({ company_id: company.id, queueEntry: entry, steer });
+  return generateDraft({ company_id: company.id, queueEntry: entry, steer, variant_id });
 }
 
 /**
@@ -679,25 +680,49 @@ function isDraftableEntry(e) {
 }
 
 /**
- * Generate drafts for every queue entry that lacks one — the batch behind the
- * panel's "Draft all" button and the b2b_draft console tool's all_due mode.
+ * Generate drafts for every queue entry that lacks one — the nightly
+ * initiating-drafts pass (daily-sync-all) and the b2b_draft console tool's
+ * all_due mode. `types` restricts to specific message types: production passes
+ * always send INITIATING_TYPES, because continuations (Tier-1 replies) are
+ * operator-written by decision (2026-09-02) and must never be batch-drafted.
  *
- * Sequential on purpose: each draft is an Opus call, and parallel calls can't
+ * Sequential on purpose: each draft is a model call, and parallel calls can't
  * share a prompt cache (see the claim-before-the-expensive-work rule). A
  * per-company failure is recorded and the loop continues — one org with a
  * broken record must not hold up the other seven drafts.
  */
-async function draftAllDue(sb, { channel, onProgress } = {}) {
+async function draftAllDue(sb, { channel, types, limit, onProgress } = {}) {
   const { entries, drafts } = await buildQueueEntries(sb, { channel });
-  const targets = attachDrafts(entries, drafts).filter(isDraftableEntry);
+  let targets = attachDrafts(entries, drafts).filter(isDraftableEntry);
+  if (types) targets = targets.filter(e => types.includes(e.message_type));
+  if (limit) targets = targets.slice(0, limit);
+
+  // A/B subject assignment for org cold intros: alternate, starting from
+  // whichever fixed subject has been used less. Drafts of every status count —
+  // a dismissed or superseded intro already spent its slot in the rotation,
+  // and counting only sends would let regenerations pile onto one arm.
+  let variantCounts = null;
+  if (targets.some(e => e.message_type === 'intro_outreach')) {
+    const rows = await fetchAllPaginated(() => sb.from('b2b_drafts')
+      .select('variant_id').eq('message_type', 'intro_outreach')
+      .in('variant_id', ['subject_a', 'subject_b']));
+    variantCounts = { subject_a: 0, subject_b: 0 };
+    for (const r of rows) variantCounts[r.variant_id]++;
+  }
+
   const results = [];
   for (let i = 0; i < targets.length; i++) {
     const e = targets[i];
     if (onProgress) onProgress({ index: i, total: targets.length, company_id: e.company_id, company_name: e.company_name });
+    let variant_id;
+    if (e.message_type === 'intro_outreach' && variantCounts) {
+      variant_id = variantCounts.subject_a <= variantCounts.subject_b ? 'subject_a' : 'subject_b';
+      variantCounts[variant_id]++;
+    }
     try {
-      const d = await generateDraftForCompany(sb, { company_id: e.company_id });
+      const d = await generateDraftForCompany(sb, { company_id: e.company_id, variant_id });
       results.push(d
-        ? { company_id: e.company_id, company_name: e.company_name, ok: true, draft_id: d.draft_id }
+        ? { company_id: e.company_id, company_name: e.company_name, ok: true, draft_id: d.draft_id, ...(variant_id ? { variant_id } : {}) }
         : { company_id: e.company_id, company_name: e.company_name, ok: false, error: 'nothing due by draft time' });
     } catch (err) {
       results.push({ company_id: e.company_id, company_name: e.company_name, ok: false, error: err.message });

@@ -3167,6 +3167,9 @@ async function apiB2bRegenerateDraft(id, body = {}) {
     company_id: old.company_id,
     steer,
     message_type: old.message_type,
+    // A regenerated intro keeps its assigned A/B arm — reassigning here would
+    // let regenerations drift the variant split.
+    variant_id: old.variant_id || undefined,
   });
   return apiB2bGetDraft(result.draft_id);
 }

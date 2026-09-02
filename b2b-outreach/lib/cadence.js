@@ -103,6 +103,15 @@ function seasonalWindow(now = new Date()) {
  */
 const FIRST_TOUCH_TYPES = ['intro_pitch', 'intro_outreach', 'affiliate_intro', 're_approach'];
 
+// The initiate-vs-continue line (2026-09-02): messages WE originate are
+// AI-drafted automatically the night they become due and reviewed before send;
+// anything continuing a live conversation (a Tier-1 reply, a reopened thread)
+// is operator-written — the advisor kept asserting things it could not know
+// ("Wednesday works") and the edits cost more than the drafting saved.
+// intro_pitch (retailer cold intro) is deliberately absent until the locked
+// template treatment reaches retailers.
+const INITIATING_TYPES = ['intro_outreach', 'community_checkin', 're_approach', 'reorder_nudge'];
+
 /** The first-touch type for a company's channel. Pure. */
 function firstTouchType(company) {
   if (company.relationship_type === 'lgbtq_org') return 'intro_outreach';
@@ -488,6 +497,7 @@ module.exports = {
   NEXT_ACTION_DAYS,
   SAMPLES_CHECKIN_MAX_AGE_DAYS,
   FIRST_TOUCH_TYPES,
+  INITIATING_TYPES,
   CHASE_AFTER_BUSINESS_DAYS,
   CHASEABLE_SOURCES,
   FOLLOWUP_MAX_AGE_DAYS,

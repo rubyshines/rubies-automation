@@ -291,6 +291,23 @@ async function correlateInbound(msg) {
   // 4. State updates
   const nowIso = new Date().toISOString();
   await sb.from('b2b_threads').update({ last_message_at: received_at || nowIso }).eq('id', threadId);
+  // A genuine human reply makes any waiting initiating draft (cold intro,
+  // check-in, re-approach, reorder nudge) obsolete: the conversation is now
+  // live, and live conversations are operator-written (2026-09-02). Runs even
+  // on a duplicate insert — a record already existing says nothing about
+  // whether its consequences were applied, and the update is idempotent.
+  // Scheduled ladder drafts are left alone: their own send-time reply re-check
+  // holds them, and dismissing here would race it.
+  if (inboundType === null) {
+    const { INITIATING_TYPES } = require('./cadence');
+    const { data: dismissed, error: dErr } = await sb.from('b2b_drafts')
+      .update({ status: 'dismissed' })
+      .eq('company_id', companyId).eq('status', 'pending')
+      .in('message_type', INITIATING_TYPES).is('scheduled_send_at', null)
+      .select('id, message_type');
+    if (dErr) console.warn(`[correlate] initiating-draft dismiss ${companyId}: ${dErr.message}`);
+    else for (const d of dismissed || []) console.log(`[correlate] dismissed initiating draft #${d.id} (${d.message_type}) on ${companyId}: they wrote in`);
+  }
   // A hard bounce knows WHICH address died, so it can do the specific thing:
   // retire that contact, revive the approved text against a live one, and undo
   // the cadence date the failed send bought. Flagging the whole company

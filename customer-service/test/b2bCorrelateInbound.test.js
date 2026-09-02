@@ -65,8 +65,20 @@ function makeClient() {
         },
         upsert(row) { state.upserts.push({ table, row }); return ok(null); },
         update(patch) {
-          state.updates.push({ table, patch });
-          return { eq: () => ok(null) };
+          // Chainable + thenable, because the initiating-draft dismissal runs
+          // .update().eq().eq().in().is().select() while older callers await a
+          // single .eq(). Filters are recorded so a test can assert WHAT was
+          // targeted, not just that an update happened.
+          const rec = { table, patch, filters: {} };
+          state.updates.push(rec);
+          const u = {
+            eq(col, val) { rec.filters[col] = val; return u; },
+            in(col, vals) { rec.filters['in:' + col] = vals; return u; },
+            is(col, val) { rec.filters['is:' + col] = val; return u; },
+            select() { return u; },
+            then(resolve) { return resolve({ data: [], error: null }); },
+          };
+          return u;
         },
       };
       return q;
@@ -222,4 +234,33 @@ test('a hard bounce on a thread two orgs share guesses nobody', async () => {
     body_text: 'Address not found. 550 5.1.1 The email account that you tried to reach does not exist.',
   }));
   assert.strictEqual(r.matched, false, 'ambiguous means unknown, not "pick one"');
+});
+
+// ── initiating-draft dismissal on a genuine reply (2026-09-02) ──────────────
+// A human writing in makes a waiting cold intro / check-in obsolete: the
+// conversation is now live, and live conversations are operator-written.
+
+test('a genuine reply dismisses pending initiating drafts for the company', async () => {
+  reset({ contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }] });
+  const r = await correlateInbound(MSG());
+  assert.strictEqual(r.matched, true);
+  const dismiss = state.updates.find(u => u.table === 'b2b_drafts' && u.patch.status === 'dismissed');
+  assert.ok(dismiss, 'expected a b2b_drafts dismissal update');
+  assert.strictEqual(dismiss.filters.company_id, 'socirc');
+  assert.strictEqual(dismiss.filters.status, 'pending');
+  assert.deepEqual(dismiss.filters['in:message_type'],
+    ['intro_outreach', 'community_checkin', 're_approach', 'reorder_nudge']);
+  // Scheduled ladder drafts are the send pass's problem, never dismissed here.
+  assert.strictEqual(dismiss.filters['is:scheduled_send_at'], null);
+});
+
+test('an auto-reply does NOT dismiss initiating drafts', async () => {
+  reset({ contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }] });
+  const r = await correlateInbound(MSG({
+    subject: 'Out of Office Re: Pride Party',
+    body_text: 'I am out of the office until Monday with limited email access.',
+  }));
+  assert.strictEqual(r.matched, true);
+  const dismiss = state.updates.find(u => u.table === 'b2b_drafts' && u.patch.status === 'dismissed');
+  assert.strictEqual(dismiss, undefined, 'an OOO must not kill the waiting intro');
 });

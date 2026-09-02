@@ -19,6 +19,7 @@ const { getSupabaseClient, fetchAllPaginated } = require('../../shared/supabaseC
 const { callClaude } = require('../../shared/aiClient');
 const { MODELS } = require('../../shared/aiPricing');
 const { partnerDiscountPercent } = require('./donationAgreement');
+const { INITIATING_TYPES } = require('./cadence');
 const { companyDomain } = require('./queueContext');
 const { defaultReplyCc } = require('./replyCc');
 const { FROM_EMAIL } = require('./sendB2bEmail');
@@ -52,6 +53,22 @@ const OUTPUT_SCHEMA = {
   required: ['email_subject', 'email_body', 'message_type', 'confidence', 'needs_review_reason', 'open_commitments', 'facts_to_verify', 'referrals', 'next_touch_days', 'audit'],
   additionalProperties: false,
 };
+
+// Fixed A/B subjects for the org cold intro (locked with Jamie 2026-09-02).
+// The model never writes an intro subject: the A/B read is only clean if the
+// strings are byte-identical across sends, so the assigned variant is rendered
+// here and overrides whatever the model returned. A = statement addressed to
+// the org by name, B = question addressed to their community — one variable.
+const INTRO_SUBJECTS = {
+  subject_a: (orgName) => `Gender-affirming clothing donations for ${orgName}`,
+  subject_b: () => 'Could your community use gender-affirming clothing donations?',
+};
+
+/** The fixed subject for an intro variant, or null for an unknown variant. Pure. */
+function introSubjectFor(variant_id, orgName) {
+  const render = INTRO_SUBJECTS[variant_id];
+  return render ? render(orgName) : null;
+}
 
 function pickAdvisor(company) {
   if (company.relationship_type === 'lgbtq_org') {
@@ -241,6 +258,21 @@ function describeEnrichFacts(facts) {
   return `From their website, read automatically and never verified with them: ${notes.join('; ')}.`;
 }
 
+/**
+ * Which model drafts this entry. Initiating types (org intro, check-in,
+ * re-approach, reorder nudge) run on Sonnet DELIBERATELY: their bodies are
+ * locked templates with one or two slots, the subject is fixed for intros, the
+ * advisor is tool-less, and every one is operator-reviewed before send — the
+ * "downstream check" that makes a cheaper model correct under the model policy.
+ * Everything else (follow-up ladder drafts that auto-send unreviewed, reopened
+ * threads, any forced draft of a non-initiating type) stays on Opus.
+ * Edit-rate data (ai body vs sent body) is the tripwire: if Sonnet intros come
+ * back rewritten, flip this back.
+ */
+function modelFor(queueEntry) {
+  return INITIATING_TYPES.includes(queueEntry.message_type) ? MODELS.SONNET : MODELS.OPUS;
+}
+
 function renderContext({ company, contacts, messages, donation }, queueEntry, steer, now = new Date()) {
   const lines = [];
   // Without today's date the advisor cannot tell a recent message from an old
@@ -328,6 +360,14 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
     : queueEntry.task_hint
       ? queueEntry.task_hint
       : `They are waiting on a reply from us. Read the thread and draft Jamie's response.`);
+  // The A/B subject is assigned by the system, not composed by the model —
+  // the test only reads if the strings are byte-identical across sends. The
+  // same string is enforced again in code after generation, but stating it
+  // here keeps the model from fighting the override in the body.
+  if (queueEntry.message_type === 'intro_outreach' && queueEntry.variant_id) {
+    const fixed = introSubjectFor(queueEntry.variant_id, company.name);
+    if (fixed) lines.push(`\nSubject (fixed by A/B test, use exactly): "${fixed}"`);
+  }
   if (steer) lines.push(`\nOPERATOR STEER (final authority on intent): ${steer}`);
   return lines.join('\n');
 }
@@ -340,6 +380,13 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   const sb = getSupabaseClient();
   const ctx = await buildCompanyContext(sb, company_id);
   const advisor = pickAdvisor(ctx.company);
+  // The variant rides on the queue entry so renderContext can state the fixed
+  // subject, and the override below guarantees it regardless of what the model
+  // wrote. Only org cold intros have variants today.
+  if (variant_id) queueEntry = { ...queueEntry, variant_id };
+  const fixedSubject = queueEntry.message_type === 'intro_outreach' && queueEntry.variant_id
+    ? introSubjectFor(queueEntry.variant_id, ctx.company.name)
+    : null;
 
   // Reply-all default: a draft answering a thread keeps everyone the contact
   // kept on the conversation. Stamped on structured.cc so the panel's Cc field
@@ -350,7 +397,7 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
 
   const response = await callClaude({
     component: advisor.name,
-    model: MODELS.OPUS,
+    model: modelFor(queueEntry),
     max_tokens: 3000,
     system: advisor.prompt,
     messages: [{ role: 'user', content: renderContext(ctx, queueEntry, steer) }],
@@ -373,7 +420,7 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
       ? queueEntry.message_type
       : (out.message_type || queueEntry.message_type || 'reply'),
     variant_id: variant_id || null,
-    subject: out.email_subject,
+    subject: fixedSubject || out.email_subject,
     body: out.email_body,
     structured: {
       confidence: out.confidence,
@@ -391,10 +438,12 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   }).select('id').single();
   if (error) throw new Error(`b2b_drafts insert: ${error.message}`);
 
-  return { draft_id: row.id, advisor: advisor.name, ...out };
+  return { draft_id: row.id, advisor: advisor.name, ...out,
+    ...(fixedSubject ? { email_subject: fixedSubject } : {}) };
 }
 
 module.exports = {
   generateDraft, buildCompanyContext, renderContext, renderMetadataFacts,
   renderDonationFacts, describeEnrichFacts, fetchDonationRouting, pickAdvisor, OUTPUT_SCHEMA,
+  introSubjectFor, modelFor, INTRO_SUBJECTS,
 };
