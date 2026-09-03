@@ -30,6 +30,7 @@ const TIER_BY_TYPE = {
   price_change_notice: 2,
   event_donation_response: 1, // inbound-triggered; normally surfaces via Tier 1 anyway
   inbound_inquiry_response: 1, // inbound-triggered (org/retailer wrote to us first)
+  post_call_followup: 1, // a call just happened — they are waiting on the wrap-up
   // Tier 3 — healthy cadence
   reorder_nudge: 3,
   new_collection: 3,
@@ -193,6 +194,11 @@ function computeQueueEntry(company, ctx, now = new Date()) {
       // Follow-ups carry the thread of the message they chase. Dropping it here
       // is how a chase becomes a brand-new email that refers to one.
       ...(due.thread_id ? { thread_id: due.thread_id } : {}),
+      // post_call_followup lands at Tier 1, whose within-tier sort reads
+      // waiting_since; meeting_id is what the panel's "no follow-up needed"
+      // dismiss acts on.
+      ...(due.waiting_since ? { waiting_since: due.waiting_since } : {}),
+      ...(due.meeting_id ? { meeting_id: due.meeting_id } : {}),
     };
   }
 

@@ -388,7 +388,7 @@ async function lastHeldMeetingsByCompany(sb, companyIds, now = new Date()) {
   for (let i = 0; i < ids.length; i += 200) {
     const chunk = ids.slice(i, i + 200);
     const { data, error } = await sb.from('b2b_meetings')
-      .select('company_id, starts_at, ends_at, title')
+      .select('id, company_id, thread_id, starts_at, ends_at, title, their_timezone')
       .in('company_id', chunk)
       .eq('status', 'booked')
       .lt('ends_at', now.toISOString())
@@ -404,11 +404,33 @@ async function lastHeldMeetingsByCompany(sb, companyIds, now = new Date()) {
   return out;
 }
 
+/**
+ * "No follow-up needed" on a held call: the post-call queue entry acts on the
+ * MEETING (there is no draft to dismiss), so the dismissal lives on the
+ * b2b_meetings row. Scoped to meetings already over — a dismissed FUTURE
+ * meeting would also stop suppressing the cadence via
+ * upcomingMeetingsByCompany's status filter, which is not what "no follow-up
+ * needed" means.
+ */
+async function dismissPostCallFollowup(sb, { meeting_id } = {}) {
+  if (!meeting_id) throw new Error('meeting_id required');
+  const { data, error } = await sb.from('b2b_meetings')
+    .update({ status: 'followup_dismissed', updated_at: new Date().toISOString() })
+    .eq('id', meeting_id)
+    .eq('status', 'booked')
+    .lt('ends_at', new Date().toISOString())
+    .select('id, company_id, title, starts_at');
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error(`meeting #${meeting_id} is not a held, booked call — nothing to dismiss`);
+  return data[0];
+}
+
 module.exports = {
   scheduleMeeting,
   meetingTitle,
   renderConfirmationLine,
   upcomingMeetingsByCompany,
   lastHeldMeetingsByCompany,
+  dismissPostCallFollowup,
   DEFAULT_DURATION_MIN,
 };

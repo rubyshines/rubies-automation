@@ -7,7 +7,7 @@
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 const { deliveryMode } = require('./sendB2bEmail');
 const { NON_REPLY_INBOUND_TYPES } = require('./replyCorrelation');
-const { upcomingMeetingsByCompany } = require('./scheduleMeeting');
+const { upcomingMeetingsByCompany, lastHeldMeetingsByCompany } = require('./scheduleMeeting');
 
 /** "https://www.foo.org/x" → "foo.org". Pure. */
 function companyDomain(website) {
@@ -95,6 +95,9 @@ async function buildContexts(sb, companies) {
   // the cadence table was written to the design and the context to what Tier 1
   // happened to need.
   const upcomingMeetings = await upcomingMeetingsByCompany(sb, ids);
+  // ...and calls already held, for the post-call follow-up. Same rule: the
+  // cadence branch reads ctx.lastHeldMeeting, so it MUST be assembled here.
+  const heldMeetings = await lastHeldMeetingsByCompany(sb, ids);
 
   // How each company is reachable, resolved in bulk. Same pure decision the
   // send path uses per-company, so the panel can never offer a Send button for
@@ -151,6 +154,9 @@ async function buildContexts(sb, companies) {
       // The next booked call, if any. Read by cadence.companyEligible.
       upcomingMeetingAt: upcomingMeetings.get(c.id)?.starts_at || null,
       upcomingMeeting: upcomingMeetings.get(c.id) || null,
+      // The most recent call that already happened. Read by
+      // cadence.postCallFollowupDue.
+      lastHeldMeeting: heldMeetings.get(c.id) || null,
       // 'email' | 'form' | 'none' — how this company can be reached.
       delivery: deliveryMode({
         hasContact: activeContactCompanies.has(c.id),

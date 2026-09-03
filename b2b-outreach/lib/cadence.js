@@ -42,6 +42,7 @@ const NEXT_ACTION_DAYS = {
   reactivation: 180,
   affiliate_reactivation: 180,
   event_donation_response: 7,
+  post_call_followup: 14,
 };
 
 const DEFAULT_NEXT_ACTION_DAYS = 30;
@@ -77,6 +78,58 @@ function businessDaysSince(from, now = new Date()) {
 function daysSince(from, now = new Date()) {
   if (!from) return null;
   return Math.floor((now - new Date(from)) / 86400000);
+}
+
+/**
+ * Is `now` on a later Eastern-Time calendar day than `then`? PURE.
+ *
+ * The post-call follow-up is due "the next morning", not the moment the call
+ * ends — writing the wrap-up an hour after hanging up reads eager in the wrong
+ * way, and the operator was probably ON the call. en-CA renders YYYY-MM-DD, so
+ * string comparison is date comparison.
+ */
+function laterEasternDay(then, now = new Date()) {
+  if (!then) return false;
+  const day = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+  return day(now) > day(then);
+}
+
+/**
+ * A follow-up after a held call stops being "great talking with you" at some
+ * point — past this the moment is missed and whatever outreach makes sense is
+ * an operator judgment (the relationship summary still names the call), not a
+ * standing Tier-1 nag.
+ */
+const POST_CALL_MAX_AGE_DAYS = 30;
+
+/**
+ * The wrap-up after a call that happened: due from the next ET morning until
+ * anything at all goes out to them. Returns a due entry or null. PURE.
+ *
+ * Deliberately NOT an initiating type — no AI draft is ever generated for it.
+ * The call is the strongest case of the initiate-vs-continue rule: the facts
+ * that matter happened in a conversation no model was on, so the entry opens
+ * the composer (with the partner-onboarding template preselected in the
+ * panel). ANY outbound after the meeting ends clears it, including a manual
+ * Gmail send the reconcile imports — the operator following up by hand is the
+ * job being done, not a different job.
+ */
+function postCallFollowupDue(ctx, now = new Date()) {
+  const meeting = ctx?.lastHeldMeeting;
+  if (!meeting) return null;
+  const ended = meeting.ends_at || meeting.starts_at;
+  if (!ended) return null;
+  if (ctx.lastOutboundAt && new Date(ctx.lastOutboundAt) > new Date(ended)) return null;
+  const age = daysSince(ended, now);
+  if (age > POST_CALL_MAX_AGE_DAYS) return null;
+  if (!laterEasternDay(ended, now)) return null;
+  return {
+    message_type: 'post_call_followup',
+    reason: `call held ${age <= 1 ? 'yesterday' : `${age}d ago`}, nothing sent since — write the follow-up`,
+    thread_id: meeting.thread_id || null,
+    waiting_since: ended,
+    meeting_id: meeting.id || null,
+  };
 }
 
 /** Seasonal windows for community_checkin (locked catalog entry). */
@@ -159,6 +212,10 @@ const CHASE_AFTER_BUSINESS_DAYS = {
   reorder_nudge: 10,
   sample_feedback_request: 10,
   referral_ask: 10,
+  // The post-call follow-up ASKS (sign the agreement, return the survey), and
+  // an org going quiet right after a good call is the standing failure mode —
+  // so the ladder chases it on the relationship beat.
+  post_call_followup: 10,
 };
 
 /** Business days between rungs, and between the last rung and giving up. */
@@ -362,6 +419,13 @@ function evaluateDue(company, ctx, now = new Date()) {
   const sent = ctx.sentTypes || new Set();
   const lastSent = ctx.lastTypeSentAt || (() => null);
 
+  // --- post-call follow-up --------------------------------------------------
+  // A call that just happened is the freshest signal in the book, so it
+  // outranks every other cadence track. (A reply that landed after the call
+  // never reaches here — computeQueueEntry returns Tier 1 first.)
+  const postCall = postCallFollowupDue(ctx, now);
+  if (postCall) return postCall;
+
   // --- samples flow (any track, in_contact) -------------------------------
   const samplesAt = company.samples_delivered_at || company.samples_shipped_at;
   const samplesFresh = samplesAt && daysSince(samplesAt, now) <= SAMPLES_CHECKIN_MAX_AGE_DAYS;
@@ -503,6 +567,9 @@ module.exports = {
   FOLLOWUP_MAX_AGE_DAYS,
   FOLLOWUP_2_AFTER_BUSINESS_DAYS,
   EXHAUSTED_AFTER_BUSINESS_DAYS,
+  POST_CALL_MAX_AGE_DAYS,
+  laterEasternDay,
+  postCallFollowupDue,
   firstTouchType,
   nextActionDateAfterSend,
   businessDaysSince,

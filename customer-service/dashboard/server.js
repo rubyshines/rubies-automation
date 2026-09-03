@@ -3394,6 +3394,25 @@ async function apiB2bDraftUpload(id, body = {}) {
   return { draft_id: id, attachments: attachments || [], failed };
 }
 
+async function apiB2bTemplates(companyId) {
+  const { listTemplates } = require('../../b2b-outreach/lib/messageTemplates');
+  return { templates: await listTemplates(getSupabaseClient(), { company_id: companyId }) };
+}
+
+async function apiB2bApplyTemplate(companyId, body = {}) {
+  const { applyTemplate } = require('../../b2b-outreach/lib/messageTemplates');
+  const result = await applyTemplate(getSupabaseClient(), {
+    company_id: companyId,
+    template_id: body.template_id,
+  });
+  return apiB2bGetDraft(result.draft_id);
+}
+
+async function apiB2bDismissPostCall(meetingId) {
+  const { dismissPostCallFollowup } = require('../../b2b-outreach/lib/scheduleMeeting');
+  return dismissPostCallFollowup(getSupabaseClient(), { meeting_id: meetingId });
+}
+
 async function apiB2bComposeDraft(companyId, body = {}) {
   return b2bQueueService.composeDraft(getSupabaseClient(), {
     company_id: companyId,
@@ -4106,6 +4125,9 @@ const paramRoutes = [
   { method: 'GET', pattern: /^\/api\/b2b\/drafts\/(\d+)\/attachment$/, handler: (_, id, req) => apiB2bAttachmentPreview(parseInt(id), new URL(req.url, 'http://localhost').searchParams.get('key')) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/draft$/, handler: (body, id) => apiB2bGenerateDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/compose$/, handler: (body, id) => apiB2bComposeDraft(decodeURIComponent(id), body) },
+  { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/templates$/, handler: (_, id) => apiB2bTemplates(decodeURIComponent(id)) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/apply-template$/, handler: (body, id) => apiB2bApplyTemplate(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/dismiss-followup$/, handler: (_, id) => apiB2bDismissPostCall(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },

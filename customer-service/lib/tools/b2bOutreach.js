@@ -444,7 +444,60 @@ async function handleDraftAttach(input = {}) {
   }
 }
 
+async function handleTemplate(input = {}) {
+  try {
+    const { listTemplates, applyTemplate } = require(path.join(B2B_LIB, 'messageTemplates'));
+    const sb = getSupabaseClient();
+    if (!input.template_id) {
+      const templates = await listTemplates(sb, { company_id: input.company_id });
+      if (!templates.length) return text(`No templates apply to ${input.company_id}.`);
+      const lines = templates.map(t => `- ${t.id}: ${t.label}${t.note ? ` (${t.note})` : ''}`);
+      return text(`Templates for ${input.company_id}:\n${lines.join('\n')}\n\nPass template_id to apply one — it becomes the company's pending compose draft, ready to edit and send.`);
+    }
+    const res = await applyTemplate(sb, { company_id: input.company_id, template_id: input.template_id });
+    return text(`Draft #${res.draft_id} created from '${res.template_id}' for ${res.company_id}. The body is deterministic fill — review it, replace any [NOTES FROM THE CALL...] placeholder with the operator's own words (the send path refuses the placeholder), then send with send_b2b_email.`);
+  } catch (err) {
+    if (isMissingTable(err)) return text(SCHEMA_HINT);
+    return text(`Error: ${err.message}`);
+  }
+}
+
+async function handleDismissPostCall(input = {}) {
+  try {
+    const { dismissPostCallFollowup } = require(path.join(B2B_LIB, 'scheduleMeeting'));
+    const row = await dismissPostCallFollowup(getSupabaseClient(), { meeting_id: input.meeting_id });
+    return text(`Post-call follow-up dismissed for ${row.company_id} (${row.title}, ${row.starts_at}). The queue entry is cleared for good; the cadence takes back over from here.`);
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
 module.exports = [
+  {
+    name: 'b2b_template',
+    description: "Operator message templates for B2B continuations — predefined bodies with every fill deterministic (contact first name, org name, country discount, meeting day, survey link), never a model call. With only company_id: list which templates apply and what each would include. With template_id: fill it and store it as the company's pending compose draft (advisor null — a human owns the words), attachments included, ready to edit in the Outreach panel or send via send_b2b_email. 'setup_call' answers an interested org or retailer and asks for 30 minutes, letting THEM suggest times (it includes the program summary only when we never sent them an intro). 'partner_onboarding' (orgs only) is the post-call email: agreement PDF attached (rendered fresh at send), onboarding survey link, and a [NOTES FROM THE CALL...] placeholder the operator must replace — the send path refuses a body still carrying it.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'b2b_companies id.' },
+        template_id: { type: 'string', description: "Omit to list. 'setup_call' | 'partner_onboarding'." },
+      },
+      required: ['company_id'],
+    },
+    handler: handleTemplate,
+  },
+  {
+    name: 'b2b_dismiss_post_call',
+    description: "Clear a post-call follow-up queue entry: the day after a booked call happens, the company surfaces at Tier 1 until something is sent to them — this records 'no email follow-up needed' (or 'the call never happened') on the b2b_meetings row so the entry never returns. Only meetings already over can be dismissed; sending anything to the company clears the entry on its own, so this is only for the nothing-to-send case.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meeting_id: { type: 'number', description: 'b2b_meetings id, shown on the queue entry.' },
+      },
+      required: ['meeting_id'],
+    },
+    handler: handleDismissPostCall,
+  },
   {
     name: 'b2b_draft_attach',
     description: "Attach one or more files to a pending B2B draft so they go out with the email — or remove one with remove:true. Two kinds. 'partner_agreement' (default) is the LGBTQ+ Organization Donation Program agreement for that draft's company: the draft stores a recipe, not bytes, and the PDF is rendered fresh at send time so it can never be sent with a stale org name or the wrong discount — attaching it twice replaces rather than duplicates. 'upload' points the draft at a file already in the operator-uploads bucket (pass its storage `path`, or the public `url` the operator console returns for a dropped file); uploads are plural, so several can ride on one email and each is removed by its own `key`. Operators normally add uploads by dropping them onto the draft in the Outreach panel — this tool is for a file that is already in storage.",

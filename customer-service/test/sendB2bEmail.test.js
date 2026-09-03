@@ -84,6 +84,22 @@ test('phase 2 is HARD-BLOCKED when b2b_send_enabled is off', async () => {
   assert.equal(res.preview.phase, 'preview');
 });
 
+test('a template call-notes placeholder still in the body refuses to send', async () => {
+  const { CALL_NOTES_PLACEHOLDER } = require('../../b2b-outreach/lib/messageTemplates');
+  state.flagEnabled = true; // the refusal must fire BEFORE the gate, not hide behind it
+  state.contacts = [{ email: 'ez@tgv.org.au', full_name: 'Ez Lowes', is_primary: true, is_active: true }];
+  const res = await sendB2bEmail({
+    company_id: 'transgender-victoria', message_type: 'post_call_followup',
+    subject: 'Great talking',
+    body: `Hi Ez,\n\nGreat talking with you on Monday. ${CALL_NOTES_PLACEHOLDER}\n\nTalk soon`,
+    confirmed: true,
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.phase, 'template_placeholder');
+  assert.match(res.error, /replace it with your notes/);
+  state.flagEnabled = false;
+});
+
 // ── attachment size ─────────────────────────────────────────────────────────
 
 test('attachments within the limit raise nothing', () => {

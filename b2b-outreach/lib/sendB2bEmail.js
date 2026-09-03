@@ -473,6 +473,21 @@ async function sendB2bEmail(p = {}) {
   }
 
   // ---- PHASE 2: the gate ---------------------------------------------------
+  // A template's call-notes placeholder still in the body means the one part
+  // only the operator can write was never written. No bypass: the fix is
+  // always to type the two lines (or delete the marker), never to send it.
+  // Lazy require — messageTemplates sits above this module in the import graph.
+  {
+    const { CALL_NOTES_PLACEHOLDER } = require('./messageTemplates');
+    if ((body || '').includes(CALL_NOTES_PLACEHOLDER)) {
+      return {
+        ok: false,
+        phase: 'template_placeholder',
+        error: `The body still contains "${CALL_NOTES_PLACEHOLDER}" — replace it with your notes from the call before sending.`,
+      };
+    }
+  }
+
   // Checked before the send gate: a draft claiming a call that was never booked
   // is wrong whether or not sending is enabled.
   if (!invite_created && !allow_unbacked_invite_claim) {

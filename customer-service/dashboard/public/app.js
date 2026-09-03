@@ -7356,16 +7356,26 @@ function renderOutreachDetail(entry, draft) {
 
   if (!draft) {
     const what = `the <strong>${esc((entry.message_type || '').replace(/_/g, ' '))}</strong> message`;
+    const isPostCall = entry.message_type === 'post_call_followup';
     // The empty state is the panel's front door, not a placeholder: every
     // company starts here and comes back here after each send. Initiating rows
     // offer ↻ (though the nightly pass usually drafted them already); reply
-    // rows are composer-only — you write those.
+    // rows are composer-only — you write those, optionally starting from a
+    // template (deterministic fill, no AI: the facts that matter are yours).
     el.innerHTML = header + outreachRelationshipHtml(entry) + `
       <div class="detail-section">
         <h3>What I'm sending</h3>
-        <div class="outreach-empty-note">${canGenerate
-          ? `Write it yourself below, or &#8635; to have the advisor write ${what}.`
-          : 'Write your reply below. Replies are yours: the advisor only drafts messages we initiate.'}</div>
+        <div class="outreach-empty-note">${isPostCall
+          ? 'You had a call with them. Write the follow-up below, or start from a template.'
+          : canGenerate
+            ? `Write it yourself below, or &#8635; to have the advisor write ${what}.`
+            : 'Write your reply below. Replies are yours: the advisor only drafts messages we initiate.'}</div>
+        <div class="steer-row" id="outreach-template-row" hidden>
+          <select id="outreach-template-select" class="steer-input"></select>
+          <button class="btn btn-ghost" id="outreach-template-apply-btn"
+            onclick="applyOutreachTemplate()"
+            title="Fills the composer with the template, details filled in. Your words to finish.">Start from template</button>
+        </div>
         ${steerBlock}
         <div class="outreach-subject">
           <span class="outreach-field-label">Subject</span>
@@ -7385,11 +7395,16 @@ function renderOutreachDetail(entry, draft) {
             : `<button class="btn btn-primary" id="outreach-compose-send-btn" onclick="sendComposedDraft()">Send</button>`}
           <button class="btn btn-ghost" onclick="openSchedulePanel()"
             title="See when you are free across all your calendars, or book a call.">Schedule</button>
+          ${isPostCall && entry.meeting_id
+            ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissPostCallEntry()"
+                 title="The call needs no email follow-up (or it did not happen). Clears this entry for good.">No follow-up needed</button>`
+            : ''}
         </div>
         <div id="outreach-schedule-panel" data-open="0"></div>
         <div id="outreach-send-panel"></div>
       </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
     initOutreachDropzone();
+    loadOutreachTemplates(entry);
     return;
   }
 
@@ -7473,6 +7488,84 @@ async function regenerateOutreachDraft() {
     showToast(`Draft failed: ${err.message}`, 'error');
     if (btn) { btn.disabled = false; btn.classList.remove('spinning'); }
   }
+}
+
+/**
+ * Populate the empty-state template picker. Async after render so the composer
+ * never waits on it; the row stays hidden when the company has no applicable
+ * templates or the fetch fails (a composer that works beats a picker that
+ * blocks it).
+ */
+async function loadOutreachTemplates(entry) {
+  const row = document.getElementById('outreach-template-row');
+  const sel = document.getElementById('outreach-template-select');
+  if (!row || !sel) return;
+  try {
+    const res = await api(`/api/b2b/companies/${encodeURIComponent(entry.company_id)}/templates`);
+    if (outreachSelectedId !== entry.company_id) return; // clicked elsewhere meanwhile
+    const templates = res?.templates || [];
+    if (!templates.length) return;
+    sel.innerHTML = templates.map(t =>
+      `<option value="${esc(t.id)}">${esc(t.label)}${t.note ? ` (${esc(t.note)})` : ''}</option>`).join('');
+    // A post-call entry is almost always the onboarding email — preselect it.
+    if (entry.message_type === 'post_call_followup'
+        && templates.some(t => t.id === 'partner_onboarding')) {
+      sel.value = 'partner_onboarding';
+    }
+    row.hidden = false;
+  } catch (err) {
+    console.warn('templates unavailable:', err.message);
+  }
+}
+
+/**
+ * Fill the composer from the selected template. The filled draft lands
+ * server-side as the pending compose row (attachments included), so a refresh
+ * right after keeps everything.
+ */
+async function applyOutreachTemplate() {
+  const entry = outreachEntries.get(outreachSelectedId);
+  if (!entry) return;
+  const templateId = document.getElementById('outreach-template-select')?.value;
+  if (!templateId) return;
+  const typed = (document.getElementById('outreach-draft-editor')?.value || '').trim();
+  if (typed && !confirm('Replace what you have written with the template?')) return;
+  const btn = document.getElementById('outreach-template-apply-btn');
+  if (btn) btn.disabled = true;
+  try {
+    // A queued autosave of the pre-template text must not land AFTER the
+    // template and overwrite it.
+    clearTimeout(composerSaveTimer);
+    composerSaveSeq++;
+    const draft = await api(`/api/b2b/companies/${encodeURIComponent(entry.company_id)}/apply-template`, {
+      method: 'POST', body: { template_id: templateId },
+    });
+    outreachDraft = draft;
+    entry.draft = { id: draft.id, subject: draft.subject, snippet: (draft.body || '').replace(/\s+/g, ' ').slice(0, 140) };
+    renderOutreachQueue();
+    renderOutreachDetail(entry, draft);
+    showToast('Template applied — add your part, then send', 'success');
+  } catch (err) {
+    showToast(`Template failed: ${err.message}`, 'error');
+    if (btn) btn.disabled = false;
+  }
+}
+
+/**
+ * "No follow-up needed" on a post-call queue entry: the dismissal is recorded
+ * on the meeting row (there is no draft yet), so the entry can never come back.
+ */
+async function dismissPostCallEntry() {
+  const entry = outreachEntries.get(outreachSelectedId);
+  if (!entry?.meeting_id) return;
+  try {
+    await api(`/api/b2b/meetings/${entry.meeting_id}/dismiss-followup`, { method: 'POST', body: {} });
+    showToast('Post-call follow-up cleared', 'success');
+  } catch (err) {
+    showToast(`Dismiss failed: ${err.message}`, 'error');
+    return;
+  }
+  outreachAdvancePast(entry.company_id);
 }
 
 async function dismissOutreachDraft() {
