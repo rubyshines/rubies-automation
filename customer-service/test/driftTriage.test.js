@@ -249,3 +249,55 @@ test('triage: dryRun classifies without any writes', async () => {
   assert.equal(res.disposition, 'reaction');
   assert.equal(calls.length, 0);
 });
+
+// --- mailbox probes (2026-09-03) ---------------------------------------------
+//
+// The regression these pin: after the JUNK verdict shipped (09-02), the flagged
+// tie-break still listed "shipping" as shopper content that overrides the flag,
+// so "Hi Rubyshines, do you ship internationally?" from lucyjames01v@gmail.com
+// was drafted into the queue 3/3 on replay. Two things had to change: the prompt
+// names the probe class and stops treating a bare footer question as shopper
+// content, and the classifier is shown the sender header — the body alone
+// cannot carry "a sales052 handle under the display name MR ABDUL".
+
+test('classifyVendorSpam: sender identity reaches the model in the user turn', async () => {
+  claudeResponse = 'JUNK | mailbox probe';
+  await classifyVendorSpam({
+    subject: 'Delivery location inquiry', body: 'Hi Rubyshines, do you ship internationally?',
+    spamFlagged: true, senderEmail: 'lucyjames01v@gmail.com', senderName: 'Victor Ben',
+  });
+  const user = lastClaudeArgs.messages[0].content;
+  assert.match(user, /From: Victor Ben <lucyjames01v@gmail\.com>/);
+  assert.match(user, /Subject: Delivery location inquiry/);
+  assert.match(user, /do you ship internationally/);
+});
+
+test('classifyVendorSpam: missing sender fields render as unknown, never "undefined"', async () => {
+  claudeResponse = 'CUSTOMER | shopper';
+  await classifyVendorSpam({ subject: 's', body: 'b' });
+  const user = lastClaudeArgs.messages[0].content;
+  assert.doesNotMatch(user, /undefined|null/);
+  assert.match(user, /From: \(no display name\) <unknown address>/);
+});
+
+test('classifyVendorSpam: the prompt names mailbox probes and no longer treats a bare shipping question as shopper content', async () => {
+  claudeResponse = 'JUNK | probe';
+  await classifyVendorSpam({ subject: 's', body: 'b', spamFlagged: true });
+  assert.match(lastClaudeArgs.system, /MAILBOX PROBE/);
+  assert.match(lastClaudeArgs.system, /Hi Rubyshines/);
+  assert.match(lastClaudeArgs.system, /bare "do you ship to X \/ internationally\?"[^.]*is a probe/);
+});
+
+test('triage: the Gorgias ticket customer is forwarded to the classifier as the sender', async () => {
+  const { gorgias, supabase } = makeHarness();
+  const seen = [];
+  await triageDriftTicket({
+    supabase, gorgias, spamFlagged: true,
+    ticket: { id: 108041910, subject: 'Delivery location inquiry', customer: { email: 'lucyjames01v@gmail.com', name: 'Victor Ben' } },
+    messages: [{ from_agent: false, channel: 'email', body_text: 'Hi Rubyshines, do you ship internationally?' }],
+    _checkDuplicate: async () => null,
+    _classifyVendorSpam: async (args) => { seen.push(args); return { verdict: 'JUNK', reason: 'mailbox probe' }; },
+  });
+  assert.equal(seen[0].senderEmail, 'lucyjames01v@gmail.com');
+  assert.equal(seen[0].senderName, 'Victor Ben');
+});

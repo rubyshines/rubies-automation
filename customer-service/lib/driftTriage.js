@@ -65,9 +65,9 @@ function isReactionMessage(message) {
  * probes into the operator queue in the week after the 2026-08-30 spam gate
  * shipped — the base rates of the two populations are inverted.
  */
-async function classifyVendorSpam({ subject, body, ticketId, spamFlagged = false }) {
+async function classifyVendorSpam({ subject, body, ticketId, spamFlagged = false, senderEmail = null, senderName = null }) {
   const tieBreak = spamFlagged
-    ? `Gorgias's spam filter has already flagged this message. The flag is evidence, but imperfect — it mislabels real customers, which is why you are re-judging it. A message with genuine shopper content (a question about our products, an order, sizing, shipping, a return or exchange, a donation request) overrides the flag: answer CUSTOMER. A message that is merely ambiguous, generic, or could have been sent to any store does not override it: answer JUNK.`
+    ? `Gorgias's spam filter has already flagged this message. The flag is evidence, but imperfect — it mislabels real customers, which is why you are re-judging it. A message with genuine shopper content — a named product, a size or fit question, an order, a return or exchange, a donation request, or a shipping question that goes beyond the footer (duties for their country, a specific product or size, an order they placed) — overrides the flag: answer CUSTOMER. A message that is merely ambiguous, generic, or could have been sent to any store does not override it: answer JUNK. A bare "do you ship to X / internationally?" or "how long does shipping take?" with nothing else is a probe, not shopper content.`
     : `When uncertain, answer CUSTOMER.`;
 
   const system = `You are triaging inbound email to the customer-service inbox for RUBIES, a direct-to-consumer apparel brand (gender-affirming swimwear and underwear for trans girls and women).
@@ -78,7 +78,7 @@ CUSTOMER — an actual or prospective customer, or someone we'd want to talk to:
 
 VENDOR — unsolicited outreach trying to SELL US something or pitch a service: SaaS tools, SEO/marketing/ad agencies, returns/logistics platforms, payment providers, recruiters, "partnership" or "collaboration" cold emails, lead-gen, etc., with no sign of being a customer.
 
-JUNK — no genuine person seeking support or a purchase behind it: phishing or credential-harvesting attempts, scams, "your account was hacked" blasts, suspicious links, mass mail with no connection to our business, gibberish, or generic one-line probes that could have been sent to any store ("are you open?", "is this your brand?") with nothing specific to our products or an order.
+JUNK — no genuine person seeking support or a purchase behind it: phishing or credential-harvesting attempts, scams, "your account was hacked" blasts, suspicious links, mass mail with no connection to our business, gibberish, or a MAILBOX PROBE. A mailbox probe is a one- or two-line generic store-policy question that any shop's website footer answers — "do you ship internationally?", "do you ship to Canada?", "how long does shipping take to the USA?", "are you open?", "are you still taking orders?", "is this your brand?", "am I right?" — with nothing specific to us: no product, size, colour, order, return, or personal situation. Probes typically come from a free-mail address whose handle does not match the display name (a "tech", "sales" or "ecom" handle with digits), and often greet us by our DOMAIN name ("Hi Rubyshines", "Hello Rubyshines") rather than our brand name (RUBIES) — a scraper read the address, not the site. They are sent to many stores to learn whether the inbox is live, and a reply confirms it.
 
 ${tieBreak}
 
@@ -95,7 +95,10 @@ Example: CUSTOMER | asking to return swim bottoms that didn't fit`;
       metadata: { task: 'vendor_spam_triage', spam_flagged: spamFlagged },
       system,
       max_tokens: 40,
-      messages: [{ role: 'user', content: `Subject: ${subject || '(none)'}\n\n${(body || '').slice(0, 1500)}` }],
+      // Sender identity is evidence the body alone cannot carry (a "sales052"
+      // handle under the display name "MR ABDUL"); the model never writes to
+      // this person, so showing it the header name carries no dead-name risk.
+      messages: [{ role: 'user', content: `From: ${senderName || '(no display name)'} <${senderEmail || 'unknown address'}>\nSubject: ${subject || '(none)'}\n\n${(body || '').slice(0, 1500)}` }],
     });
     const text = (resp.content?.[0]?.text || '').trim();
     const verdict = /^vendor/i.test(text) ? 'VENDOR' : /^junk/i.test(text) ? 'JUNK' : 'CUSTOMER';
@@ -188,7 +191,10 @@ async function triageDriftTicket({
 
   // 3) Unsolicited vendor / sales outreach, or junk (phishing/scam/probe)?
   const bodyText = latest ? extractCleanBody(latest).text : '';
-  const cls = await _classifyVendorSpam({ subject: ticket.subject, body: bodyText, ticketId, spamFlagged });
+  const cls = await _classifyVendorSpam({
+    subject: ticket.subject, body: bodyText, ticketId, spamFlagged,
+    senderEmail: customerEmail, senderName: ticket.customer?.name || null,
+  });
   // Test seams may still return the pre-JUNK shape { isVendorSpam, reason }.
   const verdict = cls.verdict || (cls.isVendorSpam ? 'VENDOR' : 'CUSTOMER');
   if (verdict === 'VENDOR' || verdict === 'JUNK') {
