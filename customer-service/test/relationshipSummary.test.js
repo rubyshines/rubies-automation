@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  summaryMode, renderSummaryPrompt, capMessages, FULL_REBUILD_MESSAGE_CAP,
+  summaryMode, renderSummaryPrompt, capMessages, recapFromOutput, OUTPUT_SCHEMA, FULL_REBUILD_MESSAGE_CAP,
 } = require('../../b2b-outreach/lib/relationshipSummary');
 
 const NOW = new Date('2026-08-13T12:00:00Z');
@@ -163,4 +163,29 @@ test('outbound messages are attributed to Jamie, inbound to the sender', () => {
   });
   assert.match(p, /\[2026-03-01\] Us \(Jamie\): ours/);
   assert.match(p, /\[2026-03-02\] kim@shop\.com: theirs/);
+});
+
+// ── the three-line recap ────────────────────────────────────────────────────
+
+test('the schema demands the recap alongside the paragraph, and the prompt asks for it', () => {
+  assert.ok(OUTPUT_SCHEMA.required.includes('recap'));
+  assert.deepEqual(OUTPUT_SCHEMA.properties.recap.required, ['started', 'agreed', 'now']);
+  const p = renderSummaryPrompt({
+    company: { name: 'Shop', relationship_type: 'wholesale' },
+    messages: [msg('2026-03-01T10:00:00Z')], mode: 'full', now: NOW,
+  });
+  assert.match(p, /"started"/);
+  assert.match(p, /"agreed"/);
+  assert.match(p, /"now"/);
+  assert.match(p, /Nothing agreed yet/);
+});
+
+test('a recap is stored trimmed, and an empty one is stored as null so the panel falls back to the paragraph', () => {
+  assert.deepEqual(recapFromOutput({ recap: { started: ' In March 2026. ', agreed: 'Nothing agreed yet.', now: 'Waiting.' } }),
+    { started: 'In March 2026.', agreed: 'Nothing agreed yet.', now: 'Waiting.' });
+  assert.equal(recapFromOutput({ recap: { started: '', agreed: '  ', now: '' } }), null);
+  assert.equal(recapFromOutput({ summary: 'no recap key' }), null);
+  assert.equal(recapFromOutput(null), null);
+  // A field the model returned as the wrong type is dropped, not stringified.
+  assert.deepEqual(recapFromOutput({ recap: { started: 'x', agreed: 42, now: null } }), { started: 'x', agreed: '', now: '' });
 });

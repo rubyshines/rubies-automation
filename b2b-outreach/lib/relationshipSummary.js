@@ -57,10 +57,50 @@ const OUTPUT_SCHEMA = {
       type: 'boolean',
       description: 'True only when there is nothing further to do on this relationship as it stands.',
     },
+    // The three-line recap the panel renders. The paragraph above stays for the
+    // advisor and the console: a paragraph at 180 characters a line was the
+    // wall of text the operator arrived at; three labelled lines are scannable.
+    recap: {
+      type: 'object',
+      properties: {
+        started: { type: 'string', description: 'One sentence, under 140 characters: how and when the relationship began.' },
+        agreed: { type: 'string', description: "One sentence, under 140 characters: what has been agreed, ordered, declined or promised. 'Nothing agreed yet.' when nothing has." },
+        now: { type: 'string', description: 'One sentence, under 140 characters: where it stands today.' },
+      },
+      required: ['started', 'agreed', 'now'],
+      additionalProperties: false,
+    },
   },
-  required: ['summary', 'next_step', 'next_step_owner', 'is_concluded'],
+  required: ['summary', 'next_step', 'next_step_owner', 'is_concluded', 'recap'],
   additionalProperties: false,
 };
+
+/**
+ * The stored recap from a model output. PURE. Null when the model returned
+ * nothing usable, so the panel falls back to the paragraph rather than
+ * rendering three empty labels.
+ */
+function recapFromOutput(out) {
+  const r = out && out.recap;
+  if (!r) return null;
+  const pick = k => (typeof r[k] === 'string' ? r[k].trim() : '');
+  const recap = { started: pick('started'), agreed: pick('agreed'), now: pick('now') };
+  return recap.started || recap.agreed || recap.now ? recap : null;
+}
+
+// Whether b2b_companies.relationship_recap exists yet. The column ships in a
+// migration that is applied by hand, and a summary pass must keep working on
+// either side of it — a write naming a missing column fails the whole update,
+// which would freeze every summary until someone noticed. Re-checked every ten
+// minutes so a long-lived dashboard process picks the column up once it lands.
+let recapColumnCheck = { at: 0, available: false };
+async function recapColumnAvailable(sb, now = new Date()) {
+  if (now.getTime() - recapColumnCheck.at < CLAIM_TTL_MS) return recapColumnCheck.available;
+  const { error } = await sb.from('b2b_companies').select('relationship_recap').limit(1);
+  recapColumnCheck = { at: now.getTime(), available: !error };
+  if (error) console.warn('[relationshipSummary] relationship_recap column not available yet — apply migrations-2026-09-03-relationship-recap.sql');
+  return recapColumnCheck.available;
+}
 
 /**
  * Decide what kind of pass a company needs. PURE.
@@ -190,6 +230,9 @@ function renderSummaryPrompt({ company, messages, mode, now }) {
     + ' A reader six months from now must be able to place every event without knowing when you wrote this.');
   lines.push('- Cover: how the relationship started, what has been agreed, ordered, declined or promised, and where it stands now.');
   lines.push('- Two to four sentences. Plain, factual, no salesmanship.');
+  lines.push('- Also fill the recap: "started" (one sentence, how and when it began), "agreed" (one sentence,'
+    + ' what has been agreed, ordered, declined or promised, or "Nothing agreed yet."), "now" (one sentence, where it'
+    + ' stands today). Each under 140 characters, dates absolute.');
   lines.push('- The next step is one specific sentence. Set it to null when the relationship has genuinely concluded.');
   lines.push('- Say only what these messages support. If something is unclear, leave it out rather than inferring it.');
 
@@ -299,6 +342,7 @@ async function refreshCompanySummary(sb, companyId, { force = false, now = new D
     const newest = messages[messages.length - 1];
     const { error } = await sb.from('b2b_companies').update({
       relationship_summary: out.summary,
+      ...(await recapColumnAvailable(sb, now) ? { relationship_recap: recapFromOutput(out) } : {}),
       relationship_next_step: out.is_concluded ? null : (out.next_step || null),
       relationship_next_step_owner: out.is_concluded ? null : (out.next_step_owner || null),
       relationship_summary_at: now.toISOString(),
@@ -399,6 +443,7 @@ module.exports = {
   renderSummaryPrompt,
   renderMessage,
   capMessages,
+  recapFromOutput,
   claimSummary,
   releaseSummaryClaim,
   refreshCompanySummary,
