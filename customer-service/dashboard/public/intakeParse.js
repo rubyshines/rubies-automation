@@ -170,24 +170,83 @@
     return bare.length > 60 ? bare.slice(0, 57) + '…' : bare;
   }
 
-  function renderEmailText(raw) {
-    let text = String(raw || '');
+  // Link code as it appears in the text export of an HTML email: Outlook
+  // writes `label<https://url>`, Gmail `label <https://url>`. The optional
+  // leading URL is the case where the anchor text WAS the url
+  // (`https://x.org <https://x.org>`), which must become one link, not two.
+  const LINK_CODE = /(?:(https?:\/\/[^\s<>"\)\]]+) ?)?<(https?:\/\/[^>\s]+|mailto:[^>\s]+)>/;
+  const BARE_URL = /https?:\/\/[^\s<>"\)\]]+/;
+
+  // Words that belong INSIDE a multi-word label ("Sign our Petition") but never
+  // start one — a label that walked back onto "at JAG" is really "JAG".
+  const LABEL_CONNECTOR = /^(a|an|and|&|at|for|in|of|on|or|our|the|to|your|my|this|with)$/i;
+  const MAX_LABEL_WORDS = 6;
+
+  // The anchor text of a link code is whatever immediately precedes it on the
+  // same line. Plain text does not say where the label starts, so this walks
+  // back from the last word over capitalised words and connectors — the shape
+  // of a proper name or a call to action — and stops at punctuation, a
+  // lowercase word, or a line break. Returns [before, label] or null when
+  // nothing is attached (the code sits alone on its line, or after two spaces).
+  function splitLabel(gap) {
+    const line = gap.slice(gap.lastIndexOf('\n') + 1);
+    const core = line.replace(/ $/, '');
+    if (!core || /\s$/.test(core)) return null;
+    const words = core.split(' ');
+    const picked = [words[words.length - 1]];
+    // An address as its own label ("www.lejag.org<https://lejag.org>") is
+    // complete by itself — walking further back would eat "Visit".
+    const selfLabel = /^(https?:\/\/|www\.)|@/i.test(picked[0]);
+    for (let i = words.length - 2; i >= 0 && !selfLabel && picked.length < MAX_LABEL_WORDS; i--) {
+      const w = words[i];
+      if (!w || /[,.;:!?)\]"”’]$/.test(w)) break;
+      if (!/^[\p{Lu}]/u.test(w) && !LABEL_CONNECTOR.test(w)) break;
+      picked.unshift(w);
+    }
+    while (picked.length > 1 && LABEL_CONNECTOR.test(picked[0])) picked.shift();
+    const lead = picked[0].match(/^[(\["'“‘*]+/);
+    if (lead) picked[0] = picked[0].slice(lead[0].length);
+    const label = picked.join(' ');
+    if (!label) return null;
+    return [gap.slice(0, gap.length - (line.length - core.length) - label.length), label];
+  }
+
+  function anchor(target, label) {
+    if (/^mailto:/i.test(target)) {
+      const addr = target.replace(/^mailto:/i, '');
+      const text = label && !/@/.test(label) ? label : addr;
+      return `<a href="mailto:${escapeHtml(addr)}">${escapeHtml(text)}</a>`;
+    }
+    const text = label && !/^(https?:\/\/|www\.)/i.test(label) ? label : linkDisplay(target);
+    return `<a href="${escapeHtml(target)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
+  }
+
+  function stripArtifacts(text) {
     // Outlook/Word image + cid placeholders carry no information.
-    text = text.replace(/\[(?:cid:[^\]]*|[^\[\]]*Description automatically generated[^\[\]]*)\]\s*/gi, '');
-    // Tokenize: angle-bracketed URLs/mailtos (the text export of an HTML
-    // link), then bare URLs. Everything between tokens is escaped text.
-    const token = /<(https?:\/\/[^>\s]+|mailto:[^>\s]+)>|(https?:\/\/[^\s<>"\)\]]+)/g;
+    return String(text || '').replace(/\[(?:cid:[^\]]*|[^\[\]]*Description automatically generated[^\[\]]*)\]\s*/gi, '');
+  }
+
+  function renderEmailText(raw) {
+    const text = stripArtifacts(raw);
+    // Tokenize: link codes (the text export of an HTML link), then bare URLs.
+    // Everything between tokens is escaped text. A link code takes the label
+    // in front of it as its anchor text — the reader sees "JAG" as a link, the
+    // way the sender wrote it, not "JAG" followed by the address.
+    const token = new RegExp(`${LINK_CODE.source}|(${BARE_URL.source})`, 'g');
     let out = '';
     let last = 0;
     let m;
     while ((m = token.exec(text)) !== null) {
-      out += escapeHtml(text.slice(last, m.index));
-      const target = m[1] || m[2];
-      if (/^mailto:/i.test(target)) {
-        const addr = target.replace(/^mailto:/i, '');
-        out += `<a href="mailto:${escapeHtml(addr)}">${escapeHtml(addr)}</a>`;
+      let gap = text.slice(last, m.index);
+      if (m[2]) {
+        let label = m[1] || null;
+        if (!label) {
+          const split = splitLabel(gap);
+          if (split) [gap, label] = split;
+        }
+        out += escapeHtml(gap) + anchor(m[2], label);
       } else {
-        out += `<a href="${escapeHtml(target)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkDisplay(target))}</a>`;
+        out += escapeHtml(gap) + anchor(m[3], null);
       }
       last = m.index + m[0].length;
     }
@@ -195,8 +254,21 @@
     return out;
   }
 
+  // Same text, for places that show it as a one-line excerpt with no anchors
+  // (a collapsed transcript entry, an activity-row snippet): link codes reduce
+  // to their label, a code standing alone to its bare address, and a code
+  // the snippet truncation cut through is dropped rather than shown half-way.
+  function stripLinkCodes(raw) {
+    return stripArtifacts(raw)
+      .replace(new RegExp(`(\\S) ?${LINK_CODE.source}`, 'g'), '$1')
+      .replace(/<(https?:\/\/[^>\s]+)>/g, (_, u) => linkDisplay(u))
+      .replace(/<mailto:([^>\s]+)>/gi, '$1')
+      .replace(/ ?<(?:https?:\/\/|mailto:)[^>\s]*$/i, '');
+  }
+
   return {
     renderEmailText,
+    stripLinkCodes,
     isOrderFormOutput,
     isHelpCenterForm,
     splitHelpCenterForm,
