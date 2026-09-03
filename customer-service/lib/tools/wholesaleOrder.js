@@ -15,7 +15,11 @@
  * Currency: customer's local currency unless partner terms force one
  * (e.g. Sock Drawer Heroes → USD).
  *
- * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold)
+ * AU orders: auto-split to stay under $1,000 AUD each (de minimis threshold).
+ * The split is decided on an AUD probe draft (Shopify's live rate) even when
+ * partner terms force another invoice currency — customs values the parcel in
+ * AUD whatever the invoice says — with an FX safety margin on the threshold,
+ * because the customs rate on export day will not match the draft's rate.
  */
 
 const { createDraftOrder, deleteDraftOrder, completeDraftOrder, sendDraftOrderInvoice, getDraftOrderRecap, updateDraftOrderAppliedDiscount, normalizeGid, getAdminUrl } = require('../shopify');
@@ -302,7 +306,7 @@ const tools = [
     description: [
       'Create a wholesale draft order with the partner\'s terms and free shipping. Discount, incoterms (DDP/DDU), and forced currency resolve as: explicit param > stored partner terms (b2b_companies.wholesale_* matched by customer email) > default (50% US/AU else 30%; incoterms by shipping zone; customer\'s local currency). The preview states each resolved value and its source — show it to the user.',
       'Two-phase flow:',
-      'Phase 1 (confirmed omitted or false): creates draft order(s) in Shopify and returns a preview with clickable admin links, shipping address, and item breakdown. For AU orders, auto-splits if total exceeds $1,000 AUD.',
+      'Phase 1 (confirmed omitted or false): creates draft order(s) in Shopify and returns a preview with clickable admin links, shipping address, and item breakdown. For AU orders, auto-splits to stay under the $1,000 AUD de minimis, decided on an AUD probe at Shopify\'s live rate; when partner terms force a non-AUD invoice currency the split uses an 8% lower threshold so FX drift before export cannot push a parcel over.',
       'IMPORTANT: You MUST show the full Phase 1 preview output to the user and wait for their explicit confirmation before proceeding to Phase 2. Never skip the preview.',
       'Phase 2 (confirmed=true + draft_order_ids): sends a Shopify invoice email for each draft order. Only call Phase 2 after the user has reviewed and approved the preview.',
       'Tagged with "wholesale" and "cs-mcp". Shipping line is set to the zone-appropriate Shopify rate (US Standard / US Expedited / Canada Expedited / Expedited International / Free International) at $0; Warehance auto-maps the title to the right carrier (Passport DDP / Passport DDU / Fedex). Default speed is "standard" for US wholesale and "expedited" for every non-US destination — pass shipping_speed explicitly to override either default.',
@@ -573,7 +577,10 @@ const tools = [
         return { content: [{ type: 'text', text: shippingErr }] };
       }
 
-      function buildDraftInput(itemList, orderNote, isFirstDraft = true) {
+      // localCurrency: build the draft in the customer's own currency even when
+      // partner terms force another one — used for the AU de-minimis probe,
+      // which has to read AUD.
+      function buildDraftInput(itemList, orderNote, isFirstDraft = true, { localCurrency = false } = {}) {
         const lineItems = itemList.map(r => ({
           variantId: r.variantId,
           quantity: r.quantity,
@@ -590,22 +597,32 @@ const tools = [
           input.shippingAddress = shippingAddress;
           input.billingAddress = shippingAddress;
         }
-        if (currencyOverride) {
+        if (currencyOverride && !localCurrency) {
           input.presentmentCurrencyCode = currencyOverride;
         }
         return input;
       }
 
-      // AU de minimis: probe with a single draft to get real AUD prices, then split if needed
+      // AU de minimis: probe with a single draft in AUD to get Shopify's real
+      // AUD prices, then split if needed. The probe is always in the customer's
+      // local currency (AUD) even when partner terms force the invoice into
+      // USD — customs values the parcel in AUD either way.
       const isAU = cc === 'AU';
-      const needsSplitCheck = isAU && !currencyOverride;
       const DE_MINIMIS_AUD = 1000;
+      // A non-AUD invoice is converted by customs at the export-day rate, not
+      // the rate Shopify used for the probe, so split against a lower bar to
+      // absorb the drift between drafting and export.
+      const FORCED_CURRENCY_FX_MARGIN = 0.08;
+      const splitThresholdAUD = currencyOverride
+        ? Math.floor(DE_MINIMIS_AUD * (1 - FORCED_CURRENCY_FX_MARGIN))
+        : DE_MINIMIS_AUD;
+      let deMinimisInfo = null; // what the split decision was based on, for the preview
 
       const createdOrders = [];
 
-      if (needsSplitCheck) {
-        // Phase A: Create a single probe draft order with all items
-        const probeInput = buildDraftInput(resolvedItems, note || defaultNote);
+      if (isAU) {
+        // Phase A: Create a single probe draft order with all items, in AUD
+        const probeInput = buildDraftInput(resolvedItems, note || defaultNote, true, { localCurrency: true });
         const probeDraft = await createDraftOrder(probeInput);
 
         const probeTotalAUD = parseFloat(
@@ -613,12 +630,15 @@ const tools = [
             ? probeDraft.totalPriceSet.presentmentMoney.amount
             : probeDraft.totalPrice
         );
+        deMinimisInfo = { probeTotalAUD, thresholdAUD: splitThresholdAUD };
 
-        if (probeTotalAUD <= DE_MINIMIS_AUD) {
-          // Under threshold — keep the single order
+        if (probeTotalAUD <= splitThresholdAUD && !currencyOverride) {
+          // Under threshold and already in the invoice currency — keep the single order
           createdOrders.push({ draftOrder: probeDraft, splitItems: resolvedItems });
         } else {
-          // Over threshold — extract real AUD prices per line item, delete probe, re-create splits
+          // Extract real AUD prices per line item, delete the probe, and
+          // re-create: one draft per split, or a single draft when the probe
+          // was only needed to price a forced-currency order in AUD.
           const probeLineItems = probeDraft.lineItems.edges.map(e => e.node);
 
           // Map variant ID → real AUD discounted price from Shopify
@@ -646,8 +666,8 @@ const tools = [
             }
           }
 
-          // Split using real AUD prices against real $1,000 AUD threshold
-          const splits = splitForDeMinimis(resolvedItems, DE_MINIMIS_AUD);
+          // Split using real AUD prices against the AUD threshold
+          const splits = splitForDeMinimis(resolvedItems, splitThresholdAUD);
 
           // Create the split draft orders
           for (let i = 0; i < splits.length; i++) {
@@ -659,7 +679,7 @@ const tools = [
           }
         }
       } else {
-        // Non-AU or currency override — single order, no splitting
+        // Non-AU — single order, no splitting
         const input = buildDraftInput(resolvedItems, note || defaultNote);
         const draftOrder = await createDraftOrder(input);
         createdOrders.push({ draftOrder, splitItems: resolvedItems });
@@ -838,10 +858,19 @@ const tools = [
         }
         outputLines.push(`| **Total** | **${totalUnits} units** | **${currency} $${grandTotal.toFixed(2)}** |`);
         outputLines.push('');
-        outputLines.push(`⚠️ AU de minimis: Order split into ${createdOrders.length} draft orders (each under $1,000 AUD)`);
       } else {
         const total = getPresentmentTotal(createdOrders[0].draftOrder);
         outputLines.push(`**Total:** ${currency} $${total.toFixed(2)} (${totalUnits} units)`);
+      }
+      if (deMinimisInfo) {
+        const { probeTotalAUD, thresholdAUD } = deMinimisInfo;
+        const basis = `AUD $${probeTotalAUD.toFixed(2)} at Shopify's current rate`;
+        const bar = currencyOverride
+          ? `AUD $${thresholdAUD} ($1,000 less an ${Math.round(FORCED_CURRENCY_FX_MARGIN * 100)}% FX margin because the invoice is in ${currency})`
+          : `AUD $${thresholdAUD}`;
+        outputLines.push(createdOrders.length > 1
+          ? `⚠️ AU de minimis: ${basis} — split into ${createdOrders.length} draft orders, each under ${bar}`
+          : `AU de minimis: ${basis} — under ${bar}, single order`);
       }
       outputLines.push('');
       outputLines.push(`**Shipping:** ${shippingPreviewLine(shippingTitle, shippingPrice)}`);

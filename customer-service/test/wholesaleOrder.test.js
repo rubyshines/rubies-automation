@@ -946,7 +946,48 @@ describe('create_wholesale_order — stored partner terms (b2b_companies.wholesa
       items: [{ sku: 'rub0001-S', quantity: 1 }],
     });
     assert.equal(lastCreateDraftOrderArgs.presentmentCurrencyCode, 'USD');
-    // AU + forced currency skips the AUD de-minimis probe: exactly one draft
-    assert.equal(allCreateDraftOrderArgs.length, 1);
+    // AU + forced currency still probes in AUD (no presentment override on the
+    // probe), then re-creates exactly one real draft in the forced currency.
+    assert.equal(allCreateDraftOrderArgs.length, 2);
+    assert.equal(allCreateDraftOrderArgs[0].presentmentCurrencyCode, undefined, 'probe must read AUD');
+    assert.equal(allCreateDraftOrderArgs[1].presentmentCurrencyCode, 'USD');
+  });
+
+  // Customs values the parcel in AUD whatever currency the invoice is in, so a
+  // forced-currency AU partner (Sock Drawer Heroes, Tuck and Bind) still has
+  // to split under the de minimis — against a lower bar, because customs will
+  // convert the USD invoice at the export-day rate, not the probe's rate.
+  it('forced currency still splits an AU order under the de minimis, with an FX margin', async () => {
+    stubPartnerTerms = { id: 'tuck-and-bind', name: 'Tuck and Bind', wholesale_currency: 'USD' };
+    const res = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      customer_email: 'contact@illusionslingerie.com.au',
+      country_code: 'AU',
+      // 30 lines at $50 net = $1,500 (the stub presents it as the AUD probe total)
+      items: Array.from({ length: 30 }, (_, i) => ({ sku: `rub000${i}-S`, quantity: 1 })),
+    });
+    const text = res.content[0].text;
+    const probe = allCreateDraftOrderArgs[0];
+    const realDrafts = allCreateDraftOrderArgs.slice(1);
+    assert.equal(probe.presentmentCurrencyCode, undefined, 'probe must read AUD');
+    assert.ok(realDrafts.length > 1, `expected a split, got ${realDrafts.length} draft(s)`);
+    for (const d of realDrafts) {
+      assert.equal(d.presentmentCurrencyCode, 'USD', 'every real draft is invoiced in the forced currency');
+      const total = d.lineItems.reduce((sum, li) => sum + parseFloat(li.priceOverride.amount) * li.quantity, 0);
+      assert.ok(total <= 920, `split of ${total} exceeds the 8%-margin threshold of 920`);
+    }
+    assert.match(text, /AU de minimis: AUD \$1500\.00 at Shopify's current rate — split into \d+ draft orders, each under AUD \$920 \(\$1,000 less an 8% FX margin because the invoice is in USD\)/);
+  });
+
+  it('forced currency under the threshold: one AUD probe, one real draft, and the preview says why', async () => {
+    stubPartnerTerms = { id: 'tuck-and-bind', name: 'Tuck and Bind', wholesale_currency: 'USD' };
+    const res = await runHandler({
+      customer_id: 'gid://shopify/Customer/1',
+      customer_email: 'contact@illusionslingerie.com.au',
+      country_code: 'AU',
+      items: [{ sku: 'rub0001-S', quantity: 3 }], // 3 × $50 = $150
+    });
+    assert.equal(allCreateDraftOrderArgs.length, 2);
+    assert.match(res.content[0].text, /AU de minimis: AUD \$150\.00 at Shopify's current rate — under AUD \$920 \(\$1,000 less an 8% FX margin because the invoice is in USD\), single order/);
   });
 });
