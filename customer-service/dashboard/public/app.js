@@ -6302,13 +6302,32 @@ function outreachRelationshipHtml(entry) {
          ? ' <span class="badge badge-muted">waiting on them</span>' : ''}</div>`
     : '';
   const row = (k, v) => v ? `<div class="outreach-recap-k">${k}</div><div class="outreach-recap-v">${esc(v)}</div>` : '';
+  // The reminder date on the company (next_action_date): what a send stamped,
+  // or the date THEY named once a close applied it — with their words beside
+  // it so the operator can see why. The header's "Next:" line is different: it
+  // is the cadence's own prediction (October check-in, reorder nudge).
+  const stated = c.metadata && c.metadata.stated_next_touch;
+  const nextDate = c.next_action_date ? String(c.next_action_date).slice(0, 10) : null;
+  const touchHtml = nextDate
+    ? `<div class="outreach-recap-k">Reminder</div>
+       <div class="outreach-recap-v">${esc(new Date(nextDate + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}${
+         stated && stated.date === nextDate
+           ? ` <span class="badge badge-muted">their timing</span> <span class="outreach-recap-muted">"${esc(stated.basis || '')}"</span>`
+           : (stated && stated.date
+             ? ` <span class="outreach-recap-muted">(they mentioned ${esc(stated.date)}: "${esc(stated.basis || '')}" — applies once this conversation is closed)</span>`
+             : ' <span class="badge badge-muted">cadence</span>')
+       }</div>`
+    : (stated && stated.date
+      ? `<div class="outreach-recap-k">Reminder</div>
+       <div class="outreach-recap-v">${esc(stated.date)} <span class="badge badge-muted">their timing</span> <span class="outreach-recap-muted">"${esc(stated.basis || '')}" — applies once this conversation is closed</span></div>`
+      : '');
 
   let bodyHtml;
   if (recap && (recap.started || recap.agreed || recap.now)) {
-    bodyHtml = `<div class="outreach-recap">${row('Started', recap.started)}${row('Agreed', recap.agreed)}${row('Now', recap.now)}${nextHtml}</div>`;
+    bodyHtml = `<div class="outreach-recap">${row('Started', recap.started)}${row('Agreed', recap.agreed)}${row('Now', recap.now)}${nextHtml}${touchHtml}</div>`;
   } else if (c.relationship_summary) {
     bodyHtml = `<div class="outreach-summary-text">${esc(c.relationship_summary)}</div>
-      ${nextHtml ? `<div class="outreach-recap">${nextHtml}</div>` : ''}`;
+      ${nextHtml || touchHtml ? `<div class="outreach-recap">${nextHtml}${touchHtml}</div>` : ''}`;
   } else if (msgCount) {
     bodyHtml = `<div class="outreach-empty-note">No summary yet. Hit &#8635; to write one from the ${msgCount} message${msgCount === 1 ? '' : 's'} on record.</div>`;
   } else {

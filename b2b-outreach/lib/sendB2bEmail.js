@@ -14,7 +14,7 @@
  */
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { isFlagEnabled } = require('../../shared/systemFlags');
-const { nextActionDateAfterSend } = require('./cadence');
+const { resolveNextActionDate, withoutStatedNextTouch } = require('./cadence');
 const { defaultReplyCc, splitAddresses } = require('./replyCc');
 
 const FROM_EMAIL = 'jamie@rubyshines.com';
@@ -577,14 +577,21 @@ async function sendB2bEmail(p = {}) {
   // by a second deliberate click nobody makes once the real work is done.
   // Snooze and pause are untouched: a send during either is one deliberate
   // message, not a decision to resume chasing.
+  // A date they stated ("reach out in September") outranks the per-type table
+  // now that this send closes the conversation; one that is past or about to be
+  // acted on by this very send is consumed so it cannot resurface us as overdue.
+  const { data: cadenceRow } = await sb.from('b2b_companies').select('metadata').eq('id', company_id).maybeSingle();
+  const resolved = resolveNextActionDate({ message_type, sentAt: new Date(sentAt), next_touch_days: next_touch_days ?? null, company: cadenceRow });
+  const consumed = !!cadenceRow?.metadata?.stated_next_touch && resolved.source !== 'stated';
   await sb.from('b2b_companies').update({
     last_outbound_at: sentAt,
-    next_action_date: nextActionDateAfterSend(message_type, new Date(sentAt), next_touch_days ?? null),
+    next_action_date: resolved.date,
     on_me_at: null,
     updated_at: sentAt,
+    ...(consumed ? { metadata: withoutStatedNextTouch(cadenceRow.metadata) } : {}),
   }).eq('id', company_id);
 
-  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, cc: addressList(effectiveCc) || null, sent_at: sentAt };
+  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, cc: addressList(effectiveCc) || null, sent_at: sentAt, next_action_date: resolved.date, next_action_source: resolved.source };
 }
 
 module.exports = { sendB2bEmail, assertInviteClaimIsBacked, assertRecipientDeliverable, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES, FROM_EMAIL, SEND_FLAG };

@@ -335,6 +335,8 @@ async function correlateInbound(msg) {
     company_id: companyId,
     thread_id: threadId,
     duplicate,
+    // null = a person wrote; anything else is machine mail (see classifyInbound).
+    inbound_type: inboundType,
     contact_loss: loss,
     bounce,
     looks_like_order: looksLikeOrder(body_text || ''),

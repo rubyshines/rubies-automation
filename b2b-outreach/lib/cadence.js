@@ -59,6 +59,55 @@ function nextActionDateAfterSend(messageType, sentAt = new Date(), overrideDays 
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * A date THEY named for the next contact, while it still lies usefully ahead.
+ *
+ * Written at intake by the relationship summary (metadata.stated_next_touch)
+ * from lines like "reach out in September" or "we're relaunching in the new
+ * year". The summary only observes; this is the reader that lets the date act,
+ * and it acts only when WE close the conversation — a send, a manual Gmail
+ * reply reconciled in, or "nothing to reply to". Until then Tier 1 keeps saying
+ * "waiting on us": a January date going live the instant their mail landed
+ * would read as handled.
+ *
+ * Within STATED_TOUCH_MIN_LEAD_DAYS of `now` the date counts as consumed: a
+ * send that close to it IS the touch they asked for, and stamping the date
+ * would resurface the company as overdue the morning after we reached out.
+ */
+const STATED_TOUCH_MIN_LEAD_DAYS = 7;
+function statedNextTouch(company, now = new Date()) {
+  const s = company?.metadata?.stated_next_touch;
+  if (!s || typeof s.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return null;
+  const d = new Date(`${s.date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  if ((d - new Date(now)) / 86400000 < STATED_TOUCH_MIN_LEAD_DAYS) return null;
+  return { date: s.date, basis: typeof s.basis === 'string' ? s.basis : null };
+}
+
+/** metadata with the stated touch removed (the send that consumed it). PURE. */
+function withoutStatedNextTouch(metadata) {
+  if (!metadata || typeof metadata !== 'object' || !('stated_next_touch' in metadata)) return metadata ?? null;
+  const { stated_next_touch, ...rest } = metadata;
+  return rest;
+}
+
+/**
+ * The next-action date a send stamps. PURE.
+ *
+ * Precedence: the advisor's explicit next_touch_days (the operator saw that in
+ * the panel before sending) > the date they stated > the per-type table. The
+ * table is what a reply used to get regardless of what the thread said, which
+ * is how "we relaunch in the new year" turned into a generic 30-day nag.
+ */
+function resolveNextActionDate({ message_type, sentAt = new Date(), next_touch_days = null, company = null } = {}) {
+  if (Number.isInteger(next_touch_days)) {
+    return { date: nextActionDateAfterSend(message_type, sentAt, next_touch_days), source: 'advisor' };
+  }
+  const stated = statedNextTouch(company, sentAt);
+  if (stated) return { date: stated.date, source: 'stated', basis: stated.basis };
+  return { date: nextActionDateAfterSend(message_type, sentAt, null), source: 'cadence' };
+}
+
 /** Whole business days (Mon-Fri) elapsed between two dates. */
 function businessDaysSince(from, now = new Date()) {
   if (!from) return null;
@@ -565,6 +614,7 @@ const TOUCH_LABELS = {
   content_prompt: 'monthly content prompt',
   followup_1: 'follow-up if they do not reply',
   followup_2: 'second follow-up if they do not reply',
+  stated_touch: 'touch they asked for',
 };
 
 /**
@@ -635,6 +685,14 @@ function nextScheduledTouch(company, ctx = {}, now = new Date()) {
     candidates.push({ message_type: 'content_prompt', date: iso(lastPrompt ? plusDays(lastPrompt, 30) : now) });
   }
 
+  // A date THEY named, recorded at intake (metadata.stated_next_touch). Shown
+  // as a prediction even before a close applies it: it is exactly what the
+  // operator needs in view when deciding there is nothing to send.
+  const statedRaw = company.metadata?.stated_next_touch;
+  if (statedRaw && typeof statedRaw.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(statedRaw.date)) {
+    candidates.push({ message_type: 'stated_touch', date: statedRaw.date });
+  }
+
   // Nearest future date wins. A date already behind us is not a prediction —
   // it is either due right now (the queue says so) or blocked by a gate.
   const today = iso(now);
@@ -660,6 +718,10 @@ module.exports = {
   postCallFollowupDue,
   firstTouchType,
   nextActionDateAfterSend,
+  statedNextTouch,
+  withoutStatedNextTouch,
+  resolveNextActionDate,
+  STATED_TOUCH_MIN_LEAD_DAYS,
   businessDaysSince,
   daysSince,
   seasonalWindow,

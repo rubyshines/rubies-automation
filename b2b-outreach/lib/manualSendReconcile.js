@@ -227,9 +227,20 @@ async function reconcileThreads(sb, { companyIds = null, force = false, includeC
       .map(r => r.sent_at).filter(Boolean).sort().pop();
     if (latestOut) {
       const { data: c } = await sb.from('b2b_companies')
-        .select('last_outbound_at').eq('id', t.company_id).maybeSingle();
+        .select('last_outbound_at, metadata').eq('id', t.company_id).maybeSingle();
       if (!c?.last_outbound_at || latestOut > c.last_outbound_at) {
-        await sb.from('b2b_companies').update({ last_outbound_at: latestOut }).eq('id', t.company_id);
+        // A manual reply carries no type, so it stamps no cadence date of its
+        // own — but it does close the conversation, and that is the moment a
+        // date THEY named takes effect (see cadence.statedNextTouch). This is
+        // the path COLAGE fell through: "reach out in September" answered from
+        // Gmail, and nothing anywhere remembered September.
+        const { statedNextTouch } = require('./cadence');
+        const stated = statedNextTouch(c, new Date(latestOut));
+        await sb.from('b2b_companies').update({
+          last_outbound_at: latestOut,
+          ...(stated ? { next_action_date: stated.date } : {}),
+        }).eq('id', t.company_id);
+        if (stated) console.log(`[reconcile] ${t.company_id}: manual reply closes the thread — next touch ${stated.date} as they asked`);
       }
     }
   }
