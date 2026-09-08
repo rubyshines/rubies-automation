@@ -3089,7 +3089,14 @@ async function apiB2bContactAction(companyId, body = {}) {
   if (body.action === 'primary') return lib.setPrimaryContact(sb, { company_id: companyId, email: body.email });
   if (body.action === 'remove') return lib.removeCompanyContact(sb, { company_id: companyId, email: body.email });
   if (body.action === 'restore') return lib.restoreCompanyContact(sb, { company_id: companyId, email: body.email });
-  throw new Error(`unknown contact action '${body.action}' — expected primary, remove or restore`);
+  // Name/title only — the address is the row id and the recipient is a
+  // separate decision, so neither moves here.
+  if (body.action === 'edit') {
+    return lib.editContactDetails(sb, {
+      company_id: companyId, email: body.email, full_name: body.full_name, title: body.title,
+    });
+  }
+  throw new Error(`unknown contact action '${body.action}' — expected primary, remove, restore or edit`);
 }
 
 // Pause / snooze / on me / resume from the panel. Same triageCompany the

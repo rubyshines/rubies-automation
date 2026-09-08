@@ -365,7 +365,13 @@ async function handleFollowUps(input = {}) {
 
 async function handleUpdateContact(input = {}) {
   try {
-    const { updateCompanyContact } = require(path.join(B2B_LIB, 'updateContact'));
+    const { updateCompanyContact, editContactDetails } = require(path.join(B2B_LIB, 'updateContact'));
+    if (input.details_only) {
+      const r = await editContactDetails(getSupabaseClient(), input);
+      const who = [r.full_name, r.title].filter(Boolean).join(', ') || '(no name)';
+      const was = [r.previous.full_name, r.previous.title].filter(Boolean).join(', ') || '(no name)';
+      return text(`**${r.email}** is now **${who}** (was: ${was}). Who we write to is unchanged.`);
+    }
     const r = await updateCompanyContact(getSupabaseClient(), input);
     const bits = [`**${r.company_name}** now writes to **${r.contact.email}**`
       + (r.contact.full_name ? ` (${r.contact.full_name}${r.contact.title ? `, ${r.contact.title}` : ''})` : '')];
@@ -579,6 +585,7 @@ module.exports = [
         full_name: { type: 'string', description: "The person's name, as they sign off." },
         title: { type: 'string', description: 'Their role/title, if the thread gives one.' },
         replaces: { type: 'string', description: 'Email of the person they are taking over from. Only pass this when someone has genuinely left — it deactivates that contact. Omit to simply add a person.' },
+        details_only: { type: 'boolean', description: 'Fix the name or title of someone ALREADY on file (email must match an existing contact) without changing who we write to. Use when a contact was auto-registered under the org name or a wrong spelling. Pass a blank title to clear it.' },
       },
       required: ['company_id', 'email'],
     },

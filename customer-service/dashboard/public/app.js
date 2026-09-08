@@ -6384,26 +6384,47 @@ async function contactAction(action, email) {
   await loadOutreachContext(companyId, false);
 }
 
-/** @param replaces email of the person being replaced, or null to just add. */
-function showContactForm(replaces) {
+/**
+ * @param replaces email of the person being replaced, or null to just add.
+ * @param edit     email of someone already on file whose name/title is wrong.
+ *                 The address is the row id and the recipient is a separate
+ *                 decision, so an edit changes neither — it is the one form
+ *                 mode that leaves the To line exactly as it was.
+ */
+function showContactForm(replaces, edit = null) {
   const el = document.getElementById('outreach-contact-form');
   if (!el) return;
+  const current = edit
+    ? (outreachHistory?.contacts || []).find(c => c.email === edit) || { email: edit }
+    : null;
+  const save = edit ? `saveContact(null, '${esc(edit)}')`
+    : `saveContact(${replaces ? `'${esc(replaces)}'` : 'null'})`;
+  const onEnter = `onkeydown="if(event.key==='Enter'){${save}}"`;
   el.innerHTML = `
     <div class="outreach-contact-form">
-      <div class="outreach-contact-form-title">${replaces ? `Replacing ${esc(replaces)}` : 'New contact'}</div>
-      <input type="text" id="contact-name" placeholder="Full name" autocomplete="off">
-      <input type="text" id="contact-email" placeholder="email@org.org" autocomplete="off"
-        onkeydown="if(event.key==='Enter'){saveContact(${replaces ? `'${esc(replaces)}'` : 'null'})}">
-      <input type="text" id="contact-title" placeholder="Title (optional)" autocomplete="off">
+      <div class="outreach-contact-form-title">${edit ? `Editing ${esc(edit)}`
+        : replaces ? `Replacing ${esc(replaces)}` : 'New contact'}</div>
+      <input type="text" id="contact-name" placeholder="Full name" autocomplete="off"
+        value="${esc(current?.full_name || '')}" ${onEnter}>
+      ${edit
+        ? `<input type="text" id="contact-email" value="${esc(edit)}" readonly
+            title="The address is who this is — to write to a different address, use replace">`
+        : `<input type="text" id="contact-email" placeholder="email@org.org" autocomplete="off" ${onEnter}>`}
+      <input type="text" id="contact-title" placeholder="Title (optional)" autocomplete="off"
+        value="${esc(current?.title || current?.role || '')}" ${onEnter}>
       <div class="outreach-contact-form-actions">
-        <button class="btn btn-primary" onclick="saveContact(${replaces ? `'${esc(replaces)}'` : 'null'})">Save</button>
+        <button class="btn btn-primary" onclick="${save}">Save</button>
         <button class="btn btn-ghost" onclick="hideContactForm()">Cancel</button>
       </div>
-      <div class="outreach-contact-form-note">${replaces
-        ? 'They stop being written to, and stay on the record so their history keeps making sense.'
-        : 'Becomes the person we write to.'}</div>
+      <div class="outreach-contact-form-note">${edit
+        ? 'Name and title only. Who we write to stays as it is.'
+        : replaces
+          ? 'They stop being written to, and stay on the record so their history keeps making sense.'
+          : 'Becomes the person we write to.'}</div>
     </div>`;
-  document.getElementById('contact-name')?.focus();
+  const name = document.getElementById('contact-name');
+  name?.focus();
+  if (edit && name) name.select();
 }
 
 function hideContactForm() {
@@ -6411,7 +6432,7 @@ function hideContactForm() {
   if (el) el.innerHTML = '';
 }
 
-async function saveContact(replaces) {
+async function saveContact(replaces, edit = null) {
   const companyId = outreachSelectedId;
   const email = (document.getElementById('contact-email')?.value || '').trim();
   const full_name = (document.getElementById('contact-name')?.value || '').trim();
@@ -6419,6 +6440,22 @@ async function saveContact(replaces) {
   if (!email) { showToast('An email address is required', 'error'); return; }
 
   let res;
+  if (edit) {
+    try {
+      res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/contact-action`, {
+        method: 'POST', body: { action: 'edit', email: edit, full_name, title },
+      });
+    } catch (err) {
+      showToast(`Could not save contact: ${err.message}`, 'error');
+      return;
+    }
+    showToast(`${res.email} is now ${res.full_name || '(no name)'}`, 'success');
+    if (outreachSelectedId !== companyId) return;
+    hideContactForm();
+    await loadOutreachContext(companyId, false);   // the greeting in a fresh template reads the new name
+    return;
+  }
+
   try {
     res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/contact`, {
       method: 'POST', body: { email, full_name, title, replaces },
@@ -6849,6 +6886,8 @@ function renderOutreachSidebarContext() {
       <span class="outreach-contact-actions">
         ${ct.is_primary ? '' : `<button onclick="contactAction('primary', '${esc(ct.email)}')"
           title="Write to this person instead">make primary</button>`}
+        <button onclick="showContactForm(null, '${esc(ct.email)}')"
+          title="Fix their name or title — the address and who we write to stay the same">edit</button>
         <button onclick="showContactForm('${esc(ct.email)}')"
           title="This person has moved on — put someone else in their place">replace</button>
         <button class="outreach-contact-danger" onclick="contactAction('remove', '${esc(ct.email)}')"

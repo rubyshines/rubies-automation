@@ -232,6 +232,56 @@ async function removeCompanyContact(sb, { company_id, email } = {}) {
 }
 
 /**
+ * Work out the patch for a details-only edit. PURE.
+ *
+ * Name and title only. Never the address — the email IS the row id, so a
+ * different address is a different person (that is updateCompanyContact's
+ * job) — and never who we write to (setPrimaryContact's). A field left
+ * undefined is left alone; a field passed blank is cleared.
+ */
+function planContactEdit({ full_name, title } = {}) {
+  const patch = {};
+  if (full_name !== undefined) patch.full_name = String(full_name ?? '').trim() || null;
+  if (title !== undefined) patch.title = String(title ?? '').trim() || null;
+  if (!Object.keys(patch).length) throw new Error('nothing to change — pass full_name or title');
+  return patch;
+}
+
+/**
+ * Fix the name or title of someone already on file.
+ *
+ * The gap this closes: an auto-registered contact carries whatever name the
+ * import or the From: header gave us — often the org's name, or nothing — and
+ * every template greeting ("Hi B4CK,") reads it. The only ways to correct it
+ * were a SQL console or updateCompanyContact, which also forces the row to be
+ * the primary recipient. Renaming someone must not change who we write to.
+ */
+async function editContactDetails(sb, { company_id, email, full_name, title } = {}) {
+  if (!company_id) throw new Error('company_id required');
+  const target = normalizeEmail(email);
+  if (!target) throw new Error('email required');
+  const patch = planContactEdit({ full_name, title });
+
+  const { data: rows, error } = await sb.from('b2b_contacts')
+    .select('email, full_name, title').eq('company_id', company_id);
+  if (error) throw new Error(error.message);
+  const found = (rows || []).find(c => normalizeEmail(c.email) === target);
+  if (!found) throw new Error(`${target} is not a contact on '${company_id}'`);
+
+  const { error: uErr } = await sb.from('b2b_contacts')
+    .update({ ...patch, updated_at: new Date().toISOString() }).eq('email', found.email);
+  if (uErr) throw new Error(`edit: ${uErr.message}`);
+
+  return {
+    company_id,
+    email: found.email,
+    full_name: 'full_name' in patch ? patch.full_name : found.full_name,
+    title: 'title' in patch ? patch.title : found.title,
+    previous: { full_name: found.full_name, title: found.title },
+  };
+}
+
+/**
  * Put a retired contact back on the active list.
  *
  * Deliberately does NOT make them primary: undoing a removal and choosing who to
@@ -258,4 +308,5 @@ async function restoreCompanyContact(sb, { company_id, email } = {}) {
 module.exports = {
   updateCompanyContact, planContactUpdate, normalizeEmail,
   setPrimaryContact, removeCompanyContact, restoreCompanyContact,
+  planContactEdit, editContactDetails,
 };

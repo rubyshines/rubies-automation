@@ -77,7 +77,8 @@ function sbWith(rows, company = { general_email: null }) {
         eq(c, v) { q._f[c] = v; return q; },
         in(c, v) { q._in = v; return q; },
         maybeSingle() { return Promise.resolve({ data: table === 'b2b_companies' ? company : null, error: null }); },
-        update(patch) { state.updates.push({ table, patch, email: q._f.email || q._in }); return q; },
+        // The filter is chained AFTER update(), so read it lazily.
+        update(patch) { state.updates.push({ table, patch, get email() { return q._f.email || q._in; } }); return q; },
         then(r) { return r({ data: table === 'b2b_contacts' ? rows : [], error: null }); },
       };
       return q;
@@ -149,4 +150,39 @@ test('restoring does not silently redirect mail to the restored person', async (
   const { client, state } = sbWith([gone, charly]);
   await restoreCompanyContact(client, { company_id: 'mtpc', email: 'programs@masstpc.org' });
   assert.ok(!state.updates.some(u => u.patch.is_primary === true), 'primary is untouched');
+});
+
+// ── fix the name/title of someone already on file ───────────────────────────
+const { planContactEdit, editContactDetails } = require('../../b2b-outreach/lib/updateContact');
+
+test('an edit patches only the fields it was given', () => {
+  assert.deepEqual(planContactEdit({ full_name: ' Elizabeth Haley ' }), { full_name: 'Elizabeth Haley' },
+    'title left undefined stays out of the patch, so it is not cleared by accident');
+  assert.deepEqual(planContactEdit({ full_name: 'Elizabeth Haley', title: '' }),
+    { full_name: 'Elizabeth Haley', title: null }, 'a blank field passed explicitly is cleared');
+  assert.throws(() => planContactEdit({}), /nothing to change/);
+});
+
+test('an edit renames the row without touching who we write to', async () => {
+  const b4ck = { email: 'elizabeth@b4ck.org', full_name: 'B4CK', title: null, is_primary: true, is_active: true };
+  const { client, state } = sbWith([b4ck, charly]);
+  const r = await editContactDetails(client, {
+    company_id: 'b4ck', email: 'Elizabeth@B4CK.org', full_name: 'Elizabeth Haley', title: 'Director',
+  });
+  assert.equal(r.email, 'elizabeth@b4ck.org');
+  assert.equal(r.full_name, 'Elizabeth Haley');
+  assert.deepEqual(r.previous, { full_name: 'B4CK', title: null });
+  assert.equal(state.updates.length, 1);
+  const [u] = state.updates;
+  assert.equal(u.email, 'elizabeth@b4ck.org', 'only the named row is written');
+  assert.equal(u.patch.full_name, 'Elizabeth Haley');
+  assert.equal(u.patch.title, 'Director');
+  assert.ok(!('is_primary' in u.patch) && !('is_active' in u.patch) && !('email' in u.patch),
+    'address, primary and active are never part of an edit');
+});
+
+test('editing an address that is not on the company is refused', async () => {
+  const { client } = sbWith([dj]);
+  await assert.rejects(() => editContactDetails(client, { company_id: 'mtpc', email: 'stranger@x.org', full_name: 'X' }),
+    /is not a contact on/);
 });
