@@ -228,6 +228,7 @@ async function handleTriage(input = {}) {
       // whole point is that it is a one-click decision worth confirming.
       on_me: 'claimed by you — off the queue, still ageing on your On Me list, and the pending draft is kept',
       resume: 'outreach resumed — back on the normal cadence',
+      clear_due: 'nothing to send now — the reminder date is cleared and the cadence will bring them back on its own trigger',
     }[input.action];
     return text(`**${res.name}** (${res.company_id}) — ${detail}. No draft generated.`);
   } catch (err) {
@@ -546,7 +547,7 @@ module.exports = [
       type: 'object',
       properties: {
         company_id: { type: 'string', description: 'b2b_companies id.' },
-        action: { type: 'string', description: "'keep' | 'drop' | 'snooze' | 'pause' | 'on_me' | 'resume'." },
+        action: { type: 'string', description: "'keep' | 'drop' | 'snooze' | 'pause' | 'on_me' | 'resume' | 'clear_due'. clear_due = nothing to send now: clears the reminder date that put a company at Tier 5 and leaves the cadence to bring it back." },
         reason: { type: 'string', description: "Why. Required on drop and on pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise, and ignored on on_me (that row explains itself with the relationship's suggested next step)." },
         until: { type: 'string', description: 'Snooze only: YYYY-MM-DD, must be in the future.' },
       },

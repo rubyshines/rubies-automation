@@ -29,6 +29,12 @@ test('snooze is refused — the cadence owns when a company is next due', () => 
   assert.throws(() => computeTriage('snooze', { now: NOW }), /deprecated/);
 });
 
+test('clear_due clears the reminder date and touches nothing else', () => {
+  // "Nothing to send now" — the Tier-5 exit. Not a deferral, not a vetting
+  // decision: no reason asked for, no state changed, no draft cleared.
+  assert.deepEqual(computeTriage('clear_due', { now: NOW }), { next_action_date: null });
+});
+
 test('an unknown action is refused rather than silently ignored', () => {
   assert.throws(() => computeTriage('archive', { now: NOW }), /unknown triage action/);
 });

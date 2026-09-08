@@ -202,10 +202,17 @@ function computeQueueEntry(company, ctx, now = new Date()) {
     };
   }
 
-  // Tier 5 — next_action_date passed but no specific condition fired
+  // Tier 5 — next_action_date passed but no specific condition fired. Said as
+  // what it is: the reminder date stamped at the last send has come round.
+  // "Follow-up overdue" read as a task, and there is none — the operator's
+  // exit here is "Nothing to send" (triage clear_due), which hands the company
+  // back to the cadence.
   if (company.next_action_date && new Date(company.next_action_date) < now) {
     const overdueDays = Math.floor((now - new Date(company.next_action_date)) / 86400000);
-    return { tier: 5, message_type: null, reason: `follow-up overdue ${overdueDays}d` };
+    const wrote = ctx.lastOutboundAt
+      ? `, set when you wrote on ${new Date(ctx.lastOutboundAt).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })}`
+      : '';
+    return { tier: 5, message_type: null, reason: `reminder date passed ${overdueDays}d ago${wrote} — nothing specific is due` };
   }
 
   return null;

@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   nextActionDateAfterSend, businessDaysSince, seasonalWindow,
-  companyEligible, evaluateDue,
+  companyEligible, evaluateDue, nextScheduledTouch,
 } = require('../../b2b-outreach/lib/cadence');
 
 const NOW = new Date('2026-06-10T12:00:00Z'); // Wednesday, pride window
@@ -17,6 +17,43 @@ function org(over = {}) {
 test('nextActionDateAfterSend uses per-type table', () => {
   assert.equal(nextActionDateAfterSend('reorder_nudge', new Date('2026-06-10T12:00:00Z')), '2026-09-08');
   assert.equal(nextActionDateAfterSend('intro_pitch', new Date('2026-06-10T12:00:00Z')), '2026-06-17');
+});
+
+// ── the cadence's own next date ─────────────────────────────────────────────
+
+test('nextScheduledTouch: an active org partner is next due at the October check-in', () => {
+  // NOW is June; last written to the previous November, so the 300-day
+  // threshold has passed by 1 October this year.
+  const t = nextScheduledTouch(org(), { lastOutboundAt: '2025-11-01T00:00:00Z' }, NOW);
+  assert.deepEqual(t, { message_type: 'community_checkin', date: '2026-10-01', label: 'October partner check-in' });
+  // Written to in January: 1 October is only 264 days on, inside the 300-day
+  // threshold, so the check-in the cadence will actually send is next year's.
+  const later = nextScheduledTouch(org(), { lastOutboundAt: '2026-01-10T00:00:00Z' }, NOW);
+  assert.equal(later.date, '2027-10-01');
+  // Never written to at all: this October.
+  assert.equal(nextScheduledTouch(org(), {}, NOW).date, '2026-10-01');
+});
+
+test('nextScheduledTouch: a repeat retailer is next due for a reorder nudge on their rhythm', () => {
+  const t = nextScheduledTouch(retailer({ metadata: { reorder_threshold_days: 120 } }),
+    { lastOrderAt: '2026-05-01T00:00:00Z', orderCount: 4 }, NOW);
+  assert.deepEqual(t, { message_type: 'reorder_nudge', date: '2026-08-29', label: 'reorder nudge' });
+});
+
+test('nextScheduledTouch: an unanswered send is chased before anything on the calendar', () => {
+  const t = nextScheduledTouch(org(),
+    { lastOutboundAt: '2026-06-08T00:00:00Z', lastOutboundMessageAt: '2026-06-08T00:00:00Z', lastOutboundType: 'community_checkin', lastOutboundSource: 'send_tool' },
+    NOW);
+  assert.equal(t.message_type, 'followup_1');
+  assert.equal(t.date, '2026-06-22');   // 10 business days ≈ 14 calendar days
+  assert.match(t.label, /follow-up if they do not reply/);
+});
+
+test('nextScheduledTouch: lost, paused, or nothing predictable → null', () => {
+  assert.equal(nextScheduledTouch(org({ relationship_state: 'lost' }), {}, NOW), null);
+  assert.equal(nextScheduledTouch(org({ outreach_paused_at: '2026-06-01T00:00:00Z' }), {}, NOW), null);
+  // A prospect has no calendar touch: its first contact is a vetting decision, not a date.
+  assert.equal(nextScheduledTouch(retailer({ relationship_state: 'prospect' }), {}, NOW), null);
 });
 
 test('businessDaysSince skips weekends', () => {

@@ -34,7 +34,20 @@ test('Tier 5: overdue next_action_date with nothing else due', () => {
   const c = retailer({ next_action_date: '2026-05-30' });
   const e = computeQueueEntry(c, { sentTypes: new Set() }, NOW);
   assert.equal(e.tier, 5);
-  assert.match(e.reason, /overdue 11d/);
+  assert.equal(e.message_type, null);
+  // A reminder, not a task: the reason says so and names the send that set it.
+  assert.match(e.reason, /reminder date passed 11d ago/);
+  assert.match(e.reason, /nothing specific is due/);
+  const dated = computeQueueEntry(c, { sentTypes: new Set(), lastOutboundAt: '2026-04-30T15:00:00Z' }, NOW);
+  assert.match(dated.reason, /set when you wrote on Apr 30/);
+});
+
+test('Tier 5: clearing the reminder date takes the company out of the queue', () => {
+  // The clear_due triage patch is exactly this — and nothing else on the row
+  // moves, so an active account must not fall into the never-contacted lane.
+  const c = retailer({ next_action_date: null, vetted_at: null, last_outbound_at: '2026-04-30T15:00:00Z' });
+  const e = computeQueueEntry(c, { sentTypes: new Set(), lastOutboundAt: '2026-04-30T15:00:00Z' }, NOW);
+  assert.equal(e, null);
 });
 
 test('Tier 6: dormant revival sorts below everything', () => {
