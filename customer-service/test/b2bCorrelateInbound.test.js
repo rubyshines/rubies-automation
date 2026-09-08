@@ -264,3 +264,54 @@ test('an auto-reply does NOT dismiss initiating drafts', async () => {
   const dismiss = state.updates.find(u => u.table === 'b2b_drafts' && u.patch.status === 'dismissed');
   assert.strictEqual(dismiss, undefined, 'an OOO must not kill the waiting intro');
 });
+
+// ── machine mail on the live path (2026-09-08) ───────────────────────────────
+// gmailPush used to drop every is_auto_reply message except DSNs before
+// correlation, so calendar RSVPs, departure notices and out-of-office never
+// reached the engine live. Now they all arrive, carrying the intake's header
+// verdict, and land as non-reply types that are born closed.
+
+const GMAIL_PATH = require.resolve('../../gmail-management/lib/gmailClient');
+const readCalls = [];
+require.cache[GMAIL_PATH] = {
+  id: GMAIL_PATH, filename: GMAIL_PATH, loaded: true,
+  exports: {
+    getGmail: async () => ({}),
+    markThreadRead: async (_gmail, id) => { readCalls.push(id); },
+  },
+};
+
+test('an intake header auto-reply with an unrecognisable body still files as machine mail', async () => {
+  reset({ contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }] });
+  const r = await correlateInbound(MSG({ subject: 'Re: Pride Party', body_text: 'Thanks for your message.', is_auto_reply: true }));
+  assert.strictEqual(r.inbound_type, 'auto_reply');
+  const thread = state.inserts.find(i => i.table === 'b2b_threads');
+  assert.strictEqual(thread.row.status, 'closed', 'machine mail opening a thread is born closed');
+  const msg = state.inserts.find(i => i.table === 'b2b_messages');
+  assert.strictEqual(msg.row.message_type, 'auto_reply');
+});
+
+test('the header hint never outranks a bounce or a calendar notice', async () => {
+  reset({ contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }] });
+  const r = await correlateInbound(MSG({ subject: 'Accepted: RUBIES x SoCirC @ Tue Sep 22', body_text: '', is_auto_reply: true }));
+  assert.strictEqual(r.inbound_type, 'calendar_notice');
+});
+
+test('a departure notice arriving as an auto-reply still flags the contact as unknown', async () => {
+  reset({ contacts: [{ email: 'kpepera@colorsplus.org', company_id: 'colors' }] });
+  const r = await correlateInbound(MSG({
+    from_email: 'kpepera@colorsplus.org',
+    subject: 'New contact at this email Re: Could your community use gender-affirming clothing donations?',
+    body_text: 'Kameron Pepera is no longer with the organization. To reach a staff member, please contact info@colorsplus.org.',
+    is_auto_reply: true,
+  }));
+  assert.strictEqual(r.contact_loss, 'departed');
+  const flagged = state.updates.find(u => u.table === 'b2b_companies' && u.patch.contact_unknown === true);
+  assert.ok(flagged, 'the company must surface as needing a working address');
+});
+
+test('a person replying without the header hint is still a person', async () => {
+  reset({ contacts: [{ email: 'rachel@socirc.ca', company_id: 'socirc' }] });
+  const r = await correlateInbound(MSG({ is_auto_reply: false }));
+  assert.strictEqual(r.inbound_type, null);
+});
