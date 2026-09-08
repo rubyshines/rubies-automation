@@ -14,6 +14,7 @@ const { fetchOrderByNumber, releaseAddressHold, setWarehouseHold, releaseWarehou
 const { getShippingZone } = require('./shippingLookup');
 const { getDraftOrderByName, updateDraftOrderShipping, getAdminUrl } = require('../shopify');
 const { getShippingMethodTitle } = require('../orderUtils');
+const { isShippingUpdateNote, isWaitingNote } = require('../noteLifecycle');
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -37,14 +38,18 @@ const BUCKET_LABELS = {
  * a bucketed view that mirrors the daily order report. Filters by bucket
  * name and/or minimum business days. Same precedence rule as the report —
  * an unresolved operator note pulls a pre-order out of Pre-Orders into the
- * actionable flow.
+ * actionable flow. Exception: a shipping-update note records a mechanical
+ * change already applied (see noteLifecycle.isShippingUpdateNote), so it
+ * rides along as context and never reclassifies the order — a pre-order
+ * expedited "when in stock" stays in Pre-Orders, not Waiting on Response.
  */
 function bucketPendingOrders(unfulfilledResult, { bucket, minBusinessDays } = {}) {
   const u = unfulfilledResult?.results || [];
-  const preOrders = u.filter(r => r.isPreOrder && !r.note);
-  const ufActionable = u.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
-  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
-  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved || r.note.author === 'auto');
+  const noteOverrides = r => !!r.note && !isShippingUpdateNote(r.note);
+  const preOrders = u.filter(r => r.isPreOrder && !noteOverrides(r));
+  const ufActionable = u.filter(r => (!r.isPreOrder || noteOverrides(r)) && !r.note?.resolved);
+  const ufWaiting = ufActionable.filter(r => isWaitingNote(r.note));
+  const ufNoNote = ufActionable.filter(r => !isWaitingNote(r.note));
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
 
@@ -97,6 +102,9 @@ function buildOrphanRows(notes, knownOrderNumbers, ordersByNum = new Map()) {
     if (knownOrderNumbers.has(Number(n.order_number))) continue;
     if (n.author === 'auto') continue;
     if (n.resolved) continue;
+    // A shipping-update note on an already-shipped order is just waiting for
+    // the reconciler's R1d pass — nothing is pending on anyone. Don't surface.
+    if (isShippingUpdateNote(n)) continue;
     const order = ordersByNum.get(Number(n.order_number));
     rows.push({
       order: {

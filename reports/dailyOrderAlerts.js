@@ -35,8 +35,8 @@ const { getSendgridClient } = require('../shared/sendgridClient');
 const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
 const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
-const { reconcileNotes } = require('../customer-service/lib/noteLifecycle');
 const { listRegistry, saleIsActive } = require('../promotions/discounts');
+const { reconcileNotes, isShippingUpdateNote, isWaitingNote } = require('../customer-service/lib/noteLifecycle');
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -154,11 +154,15 @@ function unfulfilledRow(r) {
 
   // Aging chips: severity rows nobody has touched, and note-driven rows whose
   // state hasn't moved in over a week. Both are "this is rotting" signals.
+  // Shipping-update notes are exempt from staleness — they record an applied
+  // change and legitimately sit unresolved until the order ships (a pre-order
+  // expedite waits on stock for weeks; there is nothing to nudge).
   let ageChip = '';
   const untouched = !r.note
     && ['urgent', 'attention'].includes(r.classification.severity)
     && r.businessDays > 3;
-  const staleNoteDays = r.note && !r.note.resolved ? ageDaysSince(r.note.created_at) : 0;
+  const staleNoteDays = r.note && !r.note.resolved && !isShippingUpdateNote(r.note)
+    ? ageDaysSince(r.note.created_at) : 0;
   if (untouched) {
     ageChip = `<span style="background:#991b1b;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:6px;">untouched ${r.businessDays}bd</span>`;
   } else if (staleNoteDays > 7) {
@@ -304,15 +308,22 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // unresolved operator note overrides it — once the operator has explicitly
   // flagged an order for follow-up (e.g. mistaken pre-order, defect outreach),
   // it belongs in the actionable/waiting flow, not the silent Pre-Orders silo.
-  const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
-  const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
-  const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
+  // Exception: a shipping-update note records a mechanical change already
+  // applied (see noteLifecycle.isShippingUpdateNote) — it rides along as
+  // context on the row and never reclassifies the order, so a pre-order
+  // expedited "when in stock" stays in Pre-Orders instead of demanding
+  // attention in Waiting on Response for the whole stock wait.
+  const noteOverrides = r => !!r.note && !isShippingUpdateNote(r.note);
+  const preOrders = uf.results.filter(r => r.isPreOrder && !noteOverrides(r));
+  const ufResolved = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && r.note?.resolved);
+  const ufActionable = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && !r.note?.resolved);
   // Orders with an unresolved auto-author note (e.g. unnotified pre-order auto-drafter)
   // already have a pending draft in CS Advisor — surface them in their own
   // info section, not in Attention/Urgent.
-  const ufAutoDrafted = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author === 'auto');
-  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
-  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved);
+  const isAutoDraftNote = r => r.note && !r.note.resolved && r.note.author === 'auto';
+  const ufAutoDrafted = ufActionable.filter(isAutoDraftNote);
+  const ufWaiting = ufActionable.filter(r => isWaitingNote(r.note));
+  const ufNoNote = ufActionable.filter(r => !isAutoDraftNote(r) && !isWaitingNote(r.note));
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
   const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
@@ -331,9 +342,12 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   // The normal terminal path for a stuck shipment is reship + close the
   // conversation — the close hook resolves the note, and the abandoned
   // original shipment must not haunt Urgent on dead tracking data.
+  // A shipping-update note is context, not "waiting": a stuck shipment whose
+  // only note records an applied method change is still genuinely stuck, so
+  // it stays in Urgent with the note rendered on its row.
   const shUrgentAll = sh.urgentNonPassport || [];
-  const shUrgent = shUrgentAll.filter(a => !a.note);
-  const shWaiting = shUrgentAll.filter(a => a.note && !a.note.resolved);
+  const shUrgent = shUrgentAll.filter(a => !a.note || (!a.note.resolved && isShippingUpdateNote(a.note)));
+  const shWaiting = shUrgentAll.filter(a => a.note && !a.note.resolved && !isShippingUpdateNote(a.note));
   const shDelayed = sh.delayed || [];
 
   function section(title, color, cards) {
@@ -643,32 +657,35 @@ function formatConsole(unfulfilled, shipping, opts) {
   }
 
   // Unfulfilled sections — same override as the HTML formatter: an unresolved
-  // operator note pulls the order out of Pre-Orders into the actionable flow.
-  const ufActionable = uf.results.filter(r => (!r.isPreOrder || r.note) && !r.note?.resolved);
-  const ufAutoDrafted = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author === 'auto');
-  const ufWaiting = ufActionable.filter(r => r.note && !r.note.resolved && r.note.author !== 'auto');
-  const ufNoNote = ufActionable.filter(r => !r.note || r.note.resolved);
+  // operator note pulls the order out of Pre-Orders into the actionable flow,
+  // except shipping-update notes, which are context and never reclassify.
+  const noteOverrides = r => !!r.note && !isShippingUpdateNote(r.note);
+  const isAutoDraftNote = r => r.note && !r.note.resolved && r.note.author === 'auto';
+  const ufActionable = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && !r.note?.resolved);
+  const ufAutoDrafted = ufActionable.filter(isAutoDraftNote);
+  const ufWaiting = ufActionable.filter(r => isWaitingNote(r.note));
+  const ufNoNote = ufActionable.filter(r => !isAutoDraftNote(r) && !isWaitingNote(r.note));
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
   const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
   const ufAttention = ufRest.filter(r => r.classification.severity === 'attention');
-  const preOrders = uf.results.filter(r => r.isPreOrder && !r.note);
+  const preOrders = uf.results.filter(r => r.isPreOrder && !noteOverrides(r));
 
   // Action-required first (urgent / attention / lost), info below.
   // Shipping urgent: same note-override as the HTML — unresolved note moves
-  // the alert to Waiting on Response.
+  // the alert to Waiting on Response, shipping-update notes stay put.
   const shUrgentAll = sh.urgentNonPassport || [];
   printUnfulfilledSection('URGENT (unfulfilled)', ufUrgent);
-  printShippingSection('URGENT (shipping)', shUrgentAll.filter(a => !a.note));
+  printShippingSection('URGENT (shipping)', shUrgentAll.filter(a => !a.note || (!a.note.resolved && isShippingUpdateNote(a.note))));
   printUnfulfilledSection('ATTENTION (unfulfilled)', ufAttention);
   printUnfulfilledSection('DRAFTED IN CS ADVISOR (auto)', ufAutoDrafted);
   printUnfulfilledSection('WAITING ON RESPONSE', ufWaiting);
-  printShippingSection('WAITING ON RESPONSE (shipping)', shUrgentAll.filter(a => a.note && !a.note.resolved));
+  printShippingSection('WAITING ON RESPONSE (shipping)', shUrgentAll.filter(a => a.note && !a.note.resolved && !isShippingUpdateNote(a.note)));
   printUnfulfilledSection('AUTO-RESOLVED', ufAutoResolved);
   printUnfulfilledSection('PRE-ORDER', preOrders);
 
   if (opts.showResolved) {
-    const ufResolved = uf.results.filter(r => (!r.isPreOrder || r.note) && r.note?.resolved);
+    const ufResolved = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && r.note?.resolved);
     printUnfulfilledSection('RESOLVED (unfulfilled)', ufResolved);
   }
 

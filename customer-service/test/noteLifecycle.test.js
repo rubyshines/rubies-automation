@@ -3,6 +3,8 @@ const assert = require('node:assert');
 
 const {
   isOutreachNote,
+  isShippingUpdateNote,
+  isWaitingNote,
   markOutreachSent,
   resolveOnTicketClose,
   reconcileNotes,
@@ -480,4 +482,32 @@ test('reconcileNotes: latest-note-wins — already resolved orders are skipped',
   const { checked, resolved } = await reconcileNotes({ supabase: sb });
   assert.equal(checked, 0);
   assert.equal(resolved.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// isShippingUpdateNote / isWaitingNote — the shared "does this note mean
+// someone owes us a reply?" predicate used by every report surface.
+// ---------------------------------------------------------------------------
+
+test('isShippingUpdateNote: matches the update_shipping_speed writer prefix only', () => {
+  assert.equal(isShippingUpdateNote({ note: 'Shipping updated to Fedex: test sizing quickly.' }), true);
+  assert.equal(isShippingUpdateNote({ note: 'Shipping updated to US Expedited Shipping: ship when in stock.' }), true);
+  // Free-form operator note mentioning shipping mid-sentence is NOT mechanical.
+  assert.equal(isShippingUpdateNote({ note: 'Expedited after split — shipping updated to Fedex, watching for reply' }), false);
+  assert.equal(isShippingUpdateNote({ note: 'Warehouse hold placed: pending customer response' }), false);
+  assert.equal(isShippingUpdateNote(null), false);
+  assert.equal(isShippingUpdateNote({}), false);
+});
+
+test('isWaitingNote: unresolved operator questions only', () => {
+  const base = { note: 'Waiting on customer to confirm size', resolved: false, author: 'operator' };
+  assert.equal(isWaitingNote(base), true);
+  // Hold notes are genuine open questions.
+  assert.equal(isWaitingNote({ ...base, note: 'Warehouse hold placed: pending sizing feedback' }), true);
+  // Applied mechanical changes are context, not questions.
+  assert.equal(isWaitingNote({ ...base, note: 'Shipping updated to Fedex: expedite the test items.' }), false);
+  // Resolved and auto-authored notes never count.
+  assert.equal(isWaitingNote({ ...base, resolved: true }), false);
+  assert.equal(isWaitingNote({ ...base, author: 'auto' }), false);
+  assert.equal(isWaitingNote(null), false);
 });
