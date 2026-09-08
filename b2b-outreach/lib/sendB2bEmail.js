@@ -27,7 +27,10 @@ function encodeSubject(subject) {
 }
 
 // One signature convention everywhere — same source of truth as CS emails.
-const { SIGNATURE_NAME, SITE_URL, SITE_LABEL } = require('../../customer-service/lib/signatures');
+const { SIGNATURE_NAME, SITE_URL, SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
+// Same markdown-link grammar as CS mail, so a body written for one composer
+// renders identically from the other; the plain-text flattener is shared too.
+const { MD_LINK, markdownToPlainText } = require('../../customer-service/lib/autoLinker');
 
 // Message types where the email is INTRODUCING the brand — only these get the
 // first-mention RUBIES link in the body. Established relationships know us.
@@ -35,25 +38,41 @@ const INTRO_LINK_TYPES = new Set(['intro_outreach', 'intro_pitch', 'affiliate_in
 
 /**
  * Ensure the CS signature convention: "Jamie Alexander, RUBIES Founder" is
- * followed by a rubyshines.com line (linked in the HTML part). Appended at
- * send time when the advisor didn't write it, so both MIME parts agree. Pure.
+ * followed by a rubyshines.com line linking to the store. Appended at send
+ * time when the advisor didn't write it, in the same markdown-link form the CS
+ * advisor signs with (`SIGNATURE_BLOCK_MD`), so both MIME parts agree: the
+ * HTML part renders it as an anchor, the plain part flattens it back to the
+ * bare domain. An existing site line, bare or linked, is left alone. Pure.
  */
 function normalizeSignature(text) {
   const body = String(text || '');
   if (!body.includes(SIGNATURE_NAME)) return body;
-  const sigLineRe = new RegExp(`${SIGNATURE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\r?\\n(https?:\\/\\/)?(www\\.)?rubyshines\\.com)?`);
-  return body.replace(sigLineRe, (m, hasSite) => hasSite ? m : `${SIGNATURE_NAME}\n${SITE_LABEL}`);
+  const name = SIGNATURE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const bareSite = '(https?:\\/\\/)?(www\\.)?rubyshines\\.com';
+  const linkedSite = `\\[${bareSite}\\]\\(https?:\\/\\/(www\\.)?rubyshines\\.com\\/?\\)`;
+  const sigLineRe = new RegExp(`${name}(\\r?\\n(${linkedSite}|${bareSite}))?`);
+  return body.replace(sigLineRe, (m, hasSite) => hasSite ? m : SIGNATURE_BLOCK_MD);
 }
 
 /**
- * Plain text → minimal personal-looking HTML: escaped, URLs + rubyshines.com
- * linkified, line breaks preserved. When `introLink` (brand-introduction
- * message types), the FIRST standalone body mention of "RUBIES" also links to
- * the store — the signature's "RUBIES Founder" never counts. Pure.
+ * Plain text → minimal personal-looking HTML: escaped, markdown links
+ * ("[Onboarding Survey](https://…)") rendered as anchors on their label, bare
+ * URLs + rubyshines.com linkified, line breaks preserved. When `introLink`
+ * (brand-introduction message types), the FIRST standalone body mention of
+ * "RUBIES" also links to the store — the signature's "RUBIES Founder" never
+ * counts. Pure.
  */
 function toHtmlBody(text, { introLink = false } = {}) {
   let html = String(text || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Markdown links are rendered first and parked behind placeholders, so the
+  // bare-URL and rubyshines.com passes below cannot re-link the href or the
+  // label and nest an anchor inside an anchor. Restored last.
+  const anchors = [];
+  html = html.replace(MD_LINK, (m, label, url) => {
+    anchors.push(`<a href="${url}">${label}</a>`);
+    return `\u0000${anchors.length - 1}\u0000`;
+  });
   html = html.replace(/https?:\/\/[^\s<>"')\]]+/g, (url) => {
     // A URL that ends a sentence must not swallow the full stop. Gmail renders
     // the href verbatim, so "…/1Hq93BSiPrhJkgfB8." is a dead link — which is
@@ -73,6 +92,7 @@ function toHtmlBody(text, { introLink = false } = {}) {
       return `<a href="${SITE_URL}">RUBIES</a>`;
     });
   }
+  html = html.replace(/\u0000(\d+)\u0000/g, (m, i) => anchors[Number(i)]);
   return html.replace(/\r?\n/g, '<br>\r\n');
 }
 
@@ -157,9 +177,12 @@ function buildRawMessage({ to, cc, subject, body: rawBody, inReplyTo, references
   if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`);
   if (references) headers.push(`References: ${references}`);
 
+  // The plain part has no way to render a link, so markdown flattens to
+  // "label (url)" — or just the label when it already says the URL, as the
+  // signature's site line does.
   const alternative = `--${altBoundary}\r\n`
     + 'Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
-    + body + '\r\n\r\n'
+    + markdownToPlainText(body) + '\r\n\r\n'
     + `--${altBoundary}\r\n`
     + 'Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n'
     + `<div>${toHtmlBody(body, { introLink })}</div>\r\n\r\n`

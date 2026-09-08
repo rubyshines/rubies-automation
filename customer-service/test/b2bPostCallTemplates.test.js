@@ -39,14 +39,27 @@ test('partner_onboarding: placeholder, survey link, discount, agreement spec', (
   assert.match(body, /Hi Jessica,/);
   assert.match(body, /Great talking with you on Monday\./);
   assert.ok(body.includes(CALL_NOTES_PLACEHOLDER), 'the operator-fills-this slot must be present');
-  assert.ok(body.includes(ONBOARDING_SURVEY_URL));
-  assert.match(body, /50% off retail/);
+  // The survey link hangs off its label (2026-09-08), not a bare URL.
+  assert.ok(body.includes(`here is the [Onboarding Survey](${ONBOARDING_SURVEY_URL}).`), 'survey is a labelled markdown link');
+  assert.match(body, /Also just a reminder that partner organizations can buy anything on the site at 50% off retail\. So if you are ever looking to place an order, you can send it my way and I'll take care of it\./);
+  assert.ok(!body.includes('On purchasing:'), 'old purchase line is gone');
   assert.match(body, /attached the agreement to sign and return/);
   assert.deepEqual(attachments, [{ kind: 'partner_agreement' }]);
 
   const noDay = fillPartnerOnboarding({ firstName: 'Jessica', discount: 30, meetingDay: null });
   assert.match(noDay.body, /Great talking with you\. /);
   assert.match(noDay.body, /30% off retail/);
+});
+
+test('templates sign off with the CS signature block: name line + linked rubyshines.com', () => {
+  const { SIGNATURE_BLOCK_MD } = require('../lib/signatures');
+  for (const body of [
+    fillSetupCall({ firstName: 'A', companyName: 'B', discount: 30, introEverSent: true }).body,
+    fillPartnerOnboarding({ firstName: 'A', discount: 50, meetingDay: null }).body,
+  ]) {
+    assert.ok(body.endsWith(`Talk soon,\n\n${SIGNATURE_BLOCK_MD}`), `sign-off is the shared block: ${body.slice(-80)}`);
+    assert.ok(body.includes('[rubyshines.com](https://rubyshines.com)'), 'site line is a link, as in the CS advisor');
+  }
 });
 
 test('no em dashes in any filled body (customer-facing copy guardrail)', () => {

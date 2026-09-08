@@ -23,7 +23,7 @@
  * it measures advisor drift.
  */
 const { partnerDiscountPercent } = require('./donationAgreement');
-const { SIGNATURE_NAME, SITE_LABEL } = require('../../customer-service/lib/signatures');
+const { SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
 
 const ONBOARDING_SURVEY_URL = 'https://forms.gle/1Hq93BSiPrhJkgfB8';
 
@@ -33,7 +33,10 @@ const ONBOARDING_SURVEY_URL = 'https://forms.gle/1Hq93BSiPrhJkgfB8';
 // string is one send-guard lapse away from being customer-facing.
 const CALL_NOTES_PLACEHOLDER = '[NOTES FROM THE CALL - one or two lines]';
 
-const SIGN_OFF = `Talk soon,\n\n${SIGNATURE_NAME}\n${SITE_LABEL}`;
+// The CS advisor's signature block verbatim: name line, then the site as a
+// markdown link, which the send path renders as an anchor in the HTML part and
+// flattens to the bare domain in the plain part. Same convention everywhere.
+const SIGN_OFF = `Talk soon,\n\n${SIGNATURE_BLOCK_MD}`;
 
 // Message types whose template already presented the program summary. Manual
 // Gmail sends carry message_type null, so a hand-sent intro is undetectable —
@@ -91,18 +94,20 @@ function fillSetupCall({ firstName, companyName, discount, introEverSent }) {
 
 /**
  * Post-call partner onboarding: agreement attached + survey link in the SAME
- * email (the Hudson Valley precedent), with the call-notes placeholder for the
- * one part only the operator knows. The agreement rides as a generated spec,
+ * email (the Hudson Valley precedent; purchase reminder reworded by Jamie
+ * 2026-09-08), with the call-notes placeholder for the one part only the
+ * operator knows. The survey link hangs off its label as a markdown link, the
+ * same grammar the CS advisor uses. The agreement rides as a generated spec,
  * rendered fresh at send so it can never carry a stale org name or rate. Pure.
  */
 function fillPartnerOnboarding({ firstName, discount, meetingDay }) {
   const talked = meetingDay ? `Great talking with you on ${meetingDay}.` : 'Great talking with you.';
   const body = `Hi ${firstName},\n\n`
     + `${talked} ${CALL_NOTES_PLACEHOLDER}\n\n`
-    + `I've attached the agreement to sign and return, and here is the onboarding survey: ${ONBOARDING_SURVEY_URL}. `
+    + `I've attached the agreement to sign and return, and here is the [Onboarding Survey](${ONBOARDING_SURVEY_URL}). `
     + 'Once I have the signed copy and the survey back, we can list you on our site and start routing items your way.\n\n'
-    + `On purchasing: partner organizations buy anything on the site at ${discount}% off retail. `
-    + "Once you're set up, send your next order my way and I'll take care of it.\n\n"
+    + `Also just a reminder that partner organizations can buy anything on the site at ${discount}% off retail. `
+    + "So if you are ever looking to place an order, you can send it my way and I'll take care of it.\n\n"
     + SIGN_OFF;
   return { body, attachments: [{ kind: 'partner_agreement' }] };
 }

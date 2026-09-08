@@ -65,12 +65,12 @@ Some cron start commands run `scripts/write-service-account-key.js` first (write
 
 ## Build Configuration
 
-- **Nixpacks builder** for all services. The root `nixpacks.toml` (auto-detected, applies to every service) sets `aptPkgs = []` to skip the Chromium/snapd/X11 apt install that Nixpacks would otherwise add on detecting `puppeteer` in package.json — puppeteer bundles its own Chromium via npm, so the apt packages are pure waste (~420MB, flaky mirrors).
+- **Nixpacks builder** for all services. The root `nixpacks.toml` (auto-detected, applies to every service) replaces the Chromium/snapd/X11 apt install that Nixpacks would otherwise add on detecting `puppeteer` in package.json (~420MB, flaky mirrors) with just the ~30 shared libraries the npm-bundled Chromium dynamically links (libglib2.0-0, libnss3, libgbm1, …). The bundled binary is NOT self-contained: with `aptPkgs = []` (April–September 2026) every Puppeteer launch on Railway failed with `libgobject-2.0.so.0: cannot open shared object file`, which surfaced only when the deployed dashboard first rendered a partner-agreement PDF at send (2026-09-08). Anything that launches Chromium on Railway (agreement PDFs, shipping lookup, passport tracking, competitor pricing) depends on this list; if Ubuntu renames a package again (`libasound2` → `libasound2t64` on Noble), the build fails visibly rather than the launch failing at runtime.
 - **Never set `nixpacksConfigPath` in a service's railway toml.** A path that doesn't exist in the repo makes every build FAIL silently-in-the-dashboard (`couldn't locate the nixpacks config`). This killed daily-cs-stats and daily-cs-comparison from their creation (2026-04-16) until 2026-07-20 — their tomls pointed at `nixpacks-no-chromium.toml`, which had been deleted (replaced by the root `nixpacks.toml`) hours before the tomls were written.
 
 ## Key Files
 
-- `nixpacks.toml` — root Nixpacks config (all services): skips Chromium/Puppeteer apt packages
+- `nixpacks.toml` — root Nixpacks config (all services): installs the Chromium runtime shared libraries Puppeteer's bundled browser needs, nothing more
 - `railway.toml` — webhook server deploy config
 - `railway/*.toml` — per-cron-service deploy configs
 - `scripts/copy-railway-vars.js` — env var propagation script
