@@ -110,11 +110,20 @@ function detectCalendarNotice({ subject, body } = {}) {
 // replied — which is exactly what the pre-fix panel did.
 const NON_REPLY_INBOUND_TYPES = new Set(['auto_reply', 'calendar_notice', 'bounce']);
 
-/** Classify an inbound message. Returns a message_type or null. Pure. */
-function classifyInbound({ subject, body, from } = {}) {
+/**
+ * Classify an inbound message. Returns a message_type or null. Pure.
+ *
+ * `headerAutoReply` is the Gmail intake's verdict from protocol headers
+ * (Auto-Submitted, X-Autoreply, Precedence). It is the first line of
+ * detection and the content patterns below are what catch the responders
+ * that skip the headers — so a header hit is honoured even when the body
+ * says nothing recognisable. Bounce and calendar checks still run first:
+ * a DSN is also header-flagged and must land on its own, sharper branch.
+ */
+function classifyInbound({ subject, body, from, headerAutoReply = false } = {}) {
   if (detectContactLoss({ subject, body, from }) === 'hard_bounce') return 'bounce';
   if (detectCalendarNotice({ subject, body })) return 'calendar_notice';
-  if (detectAutoReply({ subject, body })) return 'auto_reply';
+  if (headerAutoReply || detectAutoReply({ subject, body })) return 'auto_reply';
   return null;
 }
 
@@ -123,7 +132,7 @@ function classifyInbound({ subject, body, from } = {}) {
  * { matched, company_id?, thread_id?, duplicate?, contact_loss?, looks_like_order?, auto_reply? }.
  */
 async function correlateInbound(msg) {
-  const { gmail_message_id, gmail_thread_id, from_email, to_email, cc_email, subject, body_text, received_at } = msg;
+  const { gmail_message_id, gmail_thread_id, from_email, to_email, cc_email, subject, body_text, received_at, is_auto_reply } = msg;
   if (!gmail_message_id || !from_email) return { matched: false, reason: 'missing ids' };
   const sb = getSupabaseClient();
   const sender = String(from_email).toLowerCase().replace(/^.*</, '').replace(/>.*$/, '').trim();
@@ -213,7 +222,7 @@ async function correlateInbound(msg) {
   // one conversation regularly holds two orgs — an unscoped lookup found the OTHER
   // company's row and filed this message under their relationship. That is how 105
   // messages ended up mis-parented. A company now only ever matches its own row.
-  const inboundType = classifyInbound({ subject, body: body_text, from: sender });
+  const inboundType = classifyInbound({ subject, body: body_text, from: sender, headerAutoReply: !!is_auto_reply });
 
   let threadId = null;
   let threadWasNew = false;
@@ -351,6 +360,19 @@ async function correlateInbound(msg) {
     }
   }
 
+  // 6. Gmail read state. Machine mail the engine just consumed (a bounce is
+  // already queue work, an RSVP already sits on the meeting row, an
+  // out-of-office asks nothing) and a thread the closer just concluded need no
+  // eyes in the inbox; a person's reply keeps its bold. One verdict function
+  // shared with the send tool and the nightly sweep — see readState.js.
+  // Fail-soft inside settleThreadReadState: a Gmail hiccup never undoes the
+  // correlation above.
+  let read_state = null;
+  if (gmail_thread_id && (inboundType || thankyou_closed)) {
+    const { settleThreadReadState } = require('./readState');
+    read_state = await settleThreadReadState({ sb, gmail_thread_id });
+  }
+
   return {
     matched: true,
     company_id: companyId,
@@ -361,6 +383,7 @@ async function correlateInbound(msg) {
     contact_loss: loss,
     bounce,
     thankyou_closed,
+    read_state,
     looks_like_order: looksLikeOrder(body_text || ''),
   };
 }

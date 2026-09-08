@@ -200,23 +200,27 @@ async function handle(payload, gmailPush) {
   // B2B contact / general_email lands on the company's thread and surfaces
   // Tier 1 in the outreach queue. Fail-soft — B2B tables absent or any error
   // must never break the CS-critical push path.
-  const { looksLikeDsn } = require('../../b2b-outreach/lib/bounceRecovery');
   for (const m of classified) {
     if (m.is_sent) continue;
-    // A delivery failure is the one auto-reply that must NOT be skipped. The
-    // intake classifier marks mailer-daemon DSNs is_auto_reply, which made a
-    // bounce exactly the message shape that could never reach the bounce
-    // detector — correlateInbound's hard_bounce branch and detectContactLoss's
-    // whole bounce path never ran once in production, and two partners' dead
-    // addresses stayed on file with the sends recorded as delivered.
-    // Out-of-office still skips (nobody has gone anywhere); a bounce is work.
-    if (m.is_auto_reply && !looksLikeDsn({ from: m.from_address })) continue;
+    // Auto-replies are NOT skipped here any more. This loop used to drop every
+    // message the intake flagged is_auto_reply except DSNs, on the reasoning
+    // that an out-of-office is nobody going anywhere. Three kinds of machine
+    // mail were lost with it: calendar RSVPs (sent from the contact's own
+    // address, so the born-closed rule in correlateInbound never saw them
+    // live), departure notices ("X is no longer with the organization" — a
+    // contact change the engine has a branch for and never ran), and plain
+    // out-of-office, which the nightly discovery later imported as a stray
+    // open thread. correlateInbound classifies all of these itself and files
+    // them as non-reply types that create no Tier-1 work; the intake's header
+    // verdict is passed down so a responder with an unrecognisable body still
+    // lands as machine mail rather than as a person waiting on us.
     try {
       const { correlateInbound } = require('../../b2b-outreach/lib/replyCorrelation');
       const r = await correlateInbound({
         gmail_message_id: m.gmail_message_id,
         gmail_thread_id: m.gmail_thread_id,
         from_email: m.from_address,
+        is_auto_reply: !!m.is_auto_reply,
         // The FULL To line, not just the first address — and the Cc line, so a
         // reply drafted from the record can keep everyone on the conversation.
         to_email: Array.isArray(m.to_addresses) ? m.to_addresses.join(', ') : m.to_addresses,
@@ -226,7 +230,7 @@ async function handle(payload, gmailPush) {
         received_at: m.date,
       });
       if (r.matched && !r.duplicate) {
-        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}${r.thankyou_closed ? ' (thank-you — thread closed)' : ''}`);
+        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.inbound_type ? ` (${r.inbound_type})` : ''}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}${r.thankyou_closed ? ' (thank-you — thread closed)' : ''}${r.read_state?.marked ? ' (marked read)' : ''}`);
         // Detect at intake, not at reply time. The summary reads the new message
         // now and records any date they named for the next contact
         // (metadata.stated_next_touch), so whichever way Jamie closes the

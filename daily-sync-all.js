@@ -175,6 +175,15 @@ const PIPELINES = [
     run: () => require('./b2b-outreach/lib/manualSendReconcile').runDiscoverySweep(),
   },
   {
+    name: 'Gmail Read State',
+    // After Thread Discovery, so tonight's imports are on the record before
+    // the verdict is taken. Clears UNREAD on outreach threads nobody is
+    // waiting on us in — the catch-up behind the send tool's and the
+    // correlator's live hooks, which are fire-and-forget. Threads the engine
+    // has no record of are counted and left alone.
+    run: () => require('./b2b-outreach/sync/reconcileReadState').run(),
+  },
+  {
     name: 'Relationship Summaries',
     // After every Gmail step above, so the day's messages have landed before we
     // recap them. Deliberately not run on panel open: fetchCompanyThreads kicks

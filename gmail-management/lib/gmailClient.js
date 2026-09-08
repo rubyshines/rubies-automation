@@ -148,6 +148,30 @@ async function markAsSpam(gmail, messageId) {
 }
 
 /**
+ * Clear UNREAD on a whole thread. The outreach engine calls this when nobody is
+ * waiting on us in that thread any more (see b2b-outreach/lib/readState.js).
+ * Never the inverse: nothing here ever marks mail unread.
+ */
+async function markThreadRead(gmail, threadId) {
+  await gmail.users.threads.modify({
+    userId: 'me',
+    id: threadId,
+    requestBody: { removeLabelIds: ['UNREAD'] },
+  });
+}
+
+/**
+ * Clear UNREAD on one message.
+ */
+async function markMessageRead(gmail, messageId) {
+  await gmail.users.messages.modify({
+    userId: 'me',
+    id: messageId,
+    requestBody: { removeLabelIds: ['UNREAD'] },
+  });
+}
+
+/**
  * Move a message to the trash.
  * Trashed messages are permanently deleted after 30 days by Gmail.
  */
@@ -221,4 +245,4 @@ async function createDraftWithAttachment(gmail, { to, from, subject, bodyText, a
   return { draftId: res.data.id, messageId: res.data.message && res.data.message.id };
 }
 
-module.exports = { getGmail, getOrCreateLabel, labelMessage, removeLabelFromMessage, labelAndArchive, markAsSpam, trashMessage, downloadAttachment, buildRawMessage, createDraftWithAttachment };
+module.exports = { getGmail, getOrCreateLabel, labelMessage, removeLabelFromMessage, labelAndArchive, markAsSpam, markThreadRead, markMessageRead, trashMessage, downloadAttachment, buildRawMessage, createDraftWithAttachment };

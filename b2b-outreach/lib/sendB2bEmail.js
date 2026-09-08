@@ -600,6 +600,17 @@ async function sendB2bEmail(p = {}) {
   });
   if (mErr) console.error(`[sendB2bEmail] b2b_messages insert failed (sent ok): ${mErr.message}`);
 
+  // Gmail read state: we just answered, so nothing in this thread is waiting
+  // on a person any more. Only for a reply into an existing Gmail thread — a
+  // fresh intro has no inbound to un-bold. After the message insert on purpose,
+  // since the verdict is computed from the record (readState.js), and
+  // fail-soft inside: the email is already gone, a Gmail hiccup here must not
+  // fail the send.
+  if (thread?.gmail_thread_id) {
+    const { settleThreadReadState } = require('./readState');
+    await settleThreadReadState({ sb, gmail, gmail_thread_id: thread.gmail_thread_id });
+  }
+
   // Cadence bookkeeping. Answering them IS the thing an On Me claim was for, so
   // sending clears it — the alternative is a list that only ever grows, cleared
   // by a second deliberate click nobody makes once the real work is done.
