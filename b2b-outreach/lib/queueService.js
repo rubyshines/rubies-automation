@@ -590,6 +590,19 @@ async function setThreadStatus(sb, { thread_id, status } = {}) {
     .select('id, company_id, subject, status, last_message_at').maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error(`thread #${thread_id} not found`);
+  // "Nothing to reply to" closes the conversation without a send, so it is the
+  // third place a date they stated takes effect (with the send tool and the
+  // manual-reply reconcile). The cadence still comes round on its own schedule
+  // when they named nothing.
+  if (status === 'closed' && data.company_id) {
+    const { statedNextTouch } = require('./cadence');
+    const { data: c } = await sb.from('b2b_companies')
+      .select('id, metadata, next_action_date').eq('id', data.company_id).maybeSingle();
+    const stated = statedNextTouch(c);
+    if (stated && String(c.next_action_date || '').slice(0, 10) !== stated.date) {
+      await sb.from('b2b_companies').update({ next_action_date: stated.date, updated_at: new Date().toISOString() }).eq('id', c.id);
+    }
+  }
   return data;
 }
 

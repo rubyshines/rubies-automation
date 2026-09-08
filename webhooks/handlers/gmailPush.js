@@ -227,6 +227,21 @@ async function handle(payload, gmailPush) {
       });
       if (r.matched && !r.duplicate) {
         console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}`);
+        // Detect at intake, not at reply time. The summary reads the new message
+        // now and records any date they named for the next contact
+        // (metadata.stated_next_touch), so whichever way Jamie closes the
+        // conversation — panel send, Gmail reply, "nothing to reply to" — the
+        // cadence knows when they asked to hear from us. Machine mail is
+        // skipped: an out-of-office names no timing worth a model call.
+        if (r.inbound_type === null) {
+          try {
+            const { refreshCompanySummary } = require('../../b2b-outreach/lib/relationshipSummary');
+            const s = await refreshCompanySummary(supabase, r.company_id);
+            if (s.stated_next_touch) console.log(`[gmail-push] ${r.company_id}: they named a next touch — ${s.stated_next_touch.date} ("${s.stated_next_touch.basis}")${s.applied_next_action_date ? ' (applied: we had already answered)' : ''}`);
+          } catch (err) {
+            console.warn(`[gmail-push] summary at intake skipped for ${r.company_id}: ${err.message}`);
+          }
+        }
       }
     } catch (err) {
       console.warn(`[gmail-push] b2b correlation skipped: ${err.message}`);

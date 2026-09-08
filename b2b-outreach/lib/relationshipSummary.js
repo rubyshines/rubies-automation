@@ -19,6 +19,14 @@
  *      cadence.js stays the single authority on what is due — the old sheet had
  *      no cadence engine to disagree with; this system does.
  *
+ *      One deliberate exception, added 2026-09-08: a date THEY name for the next
+ *      contact ("reach out in September", "relaunching in the new year") is
+ *      recorded here at intake as metadata.stated_next_touch. Recording is not
+ *      acting — cadence.js's statedNextTouch is the only reader, and it applies
+ *      the date only when we close the conversation (see there). If the summary
+ *      runs after we have already answered, the date is applied at once, since
+ *      the closing send happened before the summary could inform it.
+ *
  * Sonnet, not Opus: this is narrow extraction over text we already hold, the
  * operator reads it in the panel before acting on it, and nothing it produces
  * reaches a customer without passing through the advisor and a human. Matches
@@ -57,6 +65,21 @@ const OUTPUT_SCHEMA = {
       type: 'boolean',
       description: 'True only when there is nothing further to do on this relationship as it stands.',
     },
+    stated_next_touch: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            date: { type: 'string', description: 'YYYY-MM-DD, after today.' },
+            basis: { type: 'string', description: 'Their own words, under 120 characters, quoted from the message that named the timing.' },
+          },
+          required: ['date', 'basis'],
+          additionalProperties: false,
+        },
+        { type: 'null' },
+      ],
+      description: "A future date THEY named for when contact should next happen, resolved to an absolute day. Null when no timing was stated, when the stated time has already passed, or when we have already made that contact.",
+    },
     // The three-line recap the panel renders. The paragraph above stays for the
     // advisor and the console: a paragraph at 180 characters a line was the
     // wall of text the operator arrived at; three labelled lines are scannable.
@@ -71,9 +94,35 @@ const OUTPUT_SCHEMA = {
       additionalProperties: false,
     },
   },
-  required: ['summary', 'next_step', 'next_step_owner', 'is_concluded', 'recap'],
+  required: ['summary', 'next_step', 'next_step_owner', 'is_concluded', 'stated_next_touch', 'recap'],
   additionalProperties: false,
 };
+
+/**
+ * The stored stated-touch from a model output. PURE. Null unless the model gave
+ * a well-formed date that is still ahead of `now` — a past date is a fact the
+ * cadence would only ever misread as "overdue since forever".
+ */
+function statedNextTouchFromOutput(out, now = new Date()) {
+  const s = out?.stated_next_touch;
+  if (!s || typeof s !== 'object') return null;
+  if (typeof s.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return null;
+  const d = new Date(`${s.date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d <= new Date(now)) return null;
+  const basis = typeof s.basis === 'string' ? s.basis.trim().slice(0, 200) : '';
+  return { date: s.date, basis: basis || null, stated_at: new Date(now).toISOString() };
+}
+
+/**
+ * Has the conversation been closed on our side — is the newest human message
+ * ours? PURE. Machine inbound (auto-replies, calendar notices, bounces) does not
+ * reopen it; those carry a message_type, a genuine reply carries null.
+ */
+function weAnswered(messages) {
+  const human = (messages || []).filter(m => m.direction === 'outbound' || !m.message_type);
+  const last = human[human.length - 1];
+  return !!last && last.direction === 'outbound';
+}
 
 /**
  * The stored recap from a model output. PURE. Null when the model returned
@@ -234,6 +283,11 @@ function renderSummaryPrompt({ company, messages, mode, now }) {
     + ' what has been agreed, ordered, declined or promised, or "Nothing agreed yet."), "now" (one sentence, where it'
     + ' stands today). Each under 140 characters, dates absolute.');
   lines.push('- The next step is one specific sentence. Set it to null when the relationship has genuinely concluded.');
+  lines.push('- stated_next_touch: if THEY named when contact should next happen ("reach out in September",'
+    + ' "we are relaunching in the new year", "our budget lands in May"), resolve it to one absolute future date and quote their words.'
+    + ' A named month means the 1st of that month; "the new year" or "early next year" means 15 January of the next year;'
+    + ' "next quarter" means the first day of that quarter; "after the summer" means 1 September. Null when no timing was stated,'
+    + ' when the stated time has already passed, or when we have already made that contact. A date we proposed does not count; only theirs does.');
   lines.push('- Say only what these messages support. If something is unclear, leave it out rather than inferring it.');
 
   return lines.join('\n');
@@ -340,8 +394,18 @@ async function refreshCompanySummary(sb, companyId, { force = false, now = new D
     const out = JSON.parse(text);
 
     const newest = messages[messages.length - 1];
+    const stated = out.is_concluded ? null : statedNextTouchFromOutput(out, now);
+    const { stated_next_touch: _prior, ...restMeta } = (company.metadata && typeof company.metadata === 'object') ? company.metadata : {};
+    const metadata = stated ? { ...restMeta, stated_next_touch: stated } : restMeta;
+    // The date acts only once we have closed the conversation. Normally that is
+    // the send's job (resolveNextActionDate); if we answered before this pass
+    // ran, the send stamped a default it could not know was wrong, so fix it now.
+    const { statedNextTouch } = require('./cadence');
+    const applyNow = stated && weAnswered(messages) && statedNextTouch({ metadata }, now);
     const { error } = await sb.from('b2b_companies').update({
       relationship_summary: out.summary,
+      metadata,
+      ...(applyNow ? { next_action_date: applyNow.date } : {}),
       ...(await recapColumnAvailable(sb, now) ? { relationship_recap: recapFromOutput(out) } : {}),
       relationship_next_step: out.is_concluded ? null : (out.next_step || null),
       relationship_next_step_owner: out.is_concluded ? null : (out.next_step_owner || null),
@@ -351,7 +415,7 @@ async function refreshCompanySummary(sb, companyId, { force = false, now = new D
     }).eq('id', companyId);
     if (error) throw new Error(`summary write: ${error.message}`);
 
-    return { status: 'updated', mode: effectiveMode, messages: messages.length };
+    return { status: 'updated', mode: effectiveMode, messages: messages.length, stated_next_touch: stated, applied_next_action_date: applyNow ? applyNow.date : null };
   } finally {
     // Every exit, including a throw. A leaked claim freezes the summary silently
     // for CLAIM_TTL_MS, and a company whose summary never updates looks exactly
@@ -438,6 +502,7 @@ async function run() {
 }
 
 module.exports = {
+  statedNextTouchFromOutput, weAnswered,
   run,
   summaryMode,
   renderSummaryPrompt,

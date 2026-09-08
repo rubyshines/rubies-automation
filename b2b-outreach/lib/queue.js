@@ -209,6 +209,19 @@ function computeQueueEntry(company, ctx, now = new Date()) {
   // back to the cadence.
   if (company.next_action_date && new Date(company.next_action_date) < now) {
     const overdueDays = Math.floor((now - new Date(company.next_action_date)) / 86400000);
+    // The date was THEIRS ("reach out in September"): say so, and hand the
+    // drafter the basis rather than the bare "they are waiting on us" framing,
+    // which is false — nobody wrote in; a date they named has arrived.
+    const stated = company.metadata?.stated_next_touch;
+    if (stated?.date && stated.date === String(company.next_action_date).slice(0, 10)) {
+      const words = stated.basis ? ` — their words: "${stated.basis}"` : '';
+      return {
+        tier: 5,
+        message_type: null,
+        reason: `they asked us to reach back around ${stated.date}${stated.basis ? ` ("${stated.basis}")` : ''} — ${overdueDays}d ago`,
+        task_hint: `They asked us to make contact around ${stated.date}${words}. That time has come. Draft the message that picks the conversation back up on that basis. Nothing new has arrived from them, so do not write it as a reply.`,
+      };
+    }
     const wrote = ctx.lastOutboundAt
       ? `, set when you wrote on ${new Date(ctx.lastOutboundAt).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })}`
       : '';
