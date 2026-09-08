@@ -3050,10 +3050,15 @@ async function apiB2bRefreshSummary(companyId) {
   const { refreshCompanySummary } = require('../../b2b-outreach/lib/relationshipSummary');
   const sb = getSupabaseClient();
   const result = await refreshCompanySummary(sb, companyId, { force: true });
-  const { data } = await sb.from('b2b_companies')
-    .select('relationship_summary, relationship_next_step, relationship_next_step_owner, relationship_summary_at')
-    .eq('id', companyId).maybeSingle();
-  return { ...result, ...(data || {}) };
+  // select('*') rather than naming columns: relationship_recap arrives by a
+  // hand-applied migration, and naming it before it exists would 500 the ↻.
+  const { data } = await sb.from('b2b_companies').select('*').eq('id', companyId).maybeSingle();
+  const fields = {};
+  for (const k of ['relationship_summary', 'relationship_recap', 'relationship_next_step',
+    'relationship_next_step_owner', 'relationship_summary_at']) {
+    if (data && k in data) fields[k] = data[k];
+  }
+  return { ...result, ...fields };
 }
 
 // Autosave what the operator is typing. Fires on a debounce from the composer,

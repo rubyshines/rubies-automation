@@ -278,15 +278,48 @@ describe('renderEmailText', () => {
     assert.ok(out.includes('&amp;'));
   });
 
-  it('turns angle-bracketed URLs (the text export of an HTML link) into anchors', () => {
-    const out = renderEmailText('Sign our Petition<https://www.subscribepage.io/keeppolitics>');
-    assert.ok(out.includes('<a href="https://www.subscribepage.io/keeppolitics" target="_blank" rel="noopener noreferrer">'));
-    assert.ok(out.includes('subscribepage.io/keeppolitics</a>'));
-    assert.ok(out.includes('Sign our Petition'));
+  it('a link code takes the label in front of it as anchor text — the URL is not shown', () => {
+    const out = renderEmailText('I am a counsellor at JAG<https://lejag.org>, an LGBTQ+ org.');
+    assert.equal(out, 'I am a counsellor at <a href="https://lejag.org" target="_blank" rel="noopener noreferrer">JAG</a>, an LGBTQ+ org.');
+  });
+
+  it('walks back over a capitalised multi-word label, stopping at punctuation', () => {
+    const out = renderEmailText('local companies, Origami Customs<https://origamicustoms.com/pages/community-program> and Banana Prosthetics<https://bananaprosthetics.com/en>. However');
+    assert.ok(out.includes('>Origami Customs</a> and <a href="https://bananaprosthetics.com/en"'));
+    assert.ok(out.includes('>Banana Prosthetics</a>. However'));
+    assert.ok(out.startsWith('local companies, <a '));
+  });
+
+  it('keeps connectors inside a label but never starts one with them', () => {
+    assert.ok(renderEmailText('Sign our Petition<https://x.org/p>').includes('>Sign our Petition</a>'));
+    const out = renderEmailText('Check out our Community Program <https://x.org/p> now');
+    assert.equal(out, 'Check out our <a href="https://x.org/p" target="_blank" rel="noopener noreferrer">Community Program</a> now');
+  });
+
+  it('Gmail form (label, space, code) attaches the same way as Outlook form', () => {
+    assert.ok(renderEmailText('at JAG <https://lejag.org>,').includes('at <a href="https://lejag.org" target="_blank" rel="noopener noreferrer">JAG</a>,'));
+  });
+
+  it('an address that is its own label renders once, as the bare address', () => {
+    const out = renderEmailText('Visit https://lejag.org <https://lejag.org> today');
+    assert.equal(out, 'Visit <a href="https://lejag.org" target="_blank" rel="noopener noreferrer">lejag.org</a> today');
+    const www = renderEmailText('Visit www.lejag.org<https://www.lejag.org/>');
+    assert.equal(www, 'Visit <a href="https://www.lejag.org/" target="_blank" rel="noopener noreferrer">lejag.org</a>');
+    const mail = renderEmailText('Write to philippe@lejag.org<mailto:philippe@lejag.org> please');
+    assert.equal(mail, 'Write to <a href="mailto:philippe@lejag.org">philippe@lejag.org</a> please');
+  });
+
+  it('a code alone on its line (an image link) shows the bare address', () => {
+    const out = renderEmailText('Follow us\n<https://www.tiktok.com/@lejag_lgbt>\nthanks');
+    assert.ok(out.includes('Follow us\n<a href="https://www.tiktok.com/@lejag_lgbt" target="_blank" rel="noopener noreferrer">tiktok.com/@lejag_lgbt</a>\nthanks'));
+  });
+
+  it('a wrapping bracket stays outside the anchor', () => {
+    assert.equal(renderEmailText('(JAG<https://lejag.org>)'), '(<a href="https://lejag.org" target="_blank" rel="noopener noreferrer">JAG</a>)');
   });
 
   it('links bare URLs and mailtos', () => {
-    const out = renderEmailText('See https://lejag.org/about or write <mailto:info@lejag.org>');
+    const out = renderEmailText('See https://lejag.org/about or write to info@lejag.org<mailto:info@lejag.org>');
     assert.ok(out.includes('href="https://lejag.org/about"'));
     assert.ok(out.includes('href="mailto:info@lejag.org"'));
     assert.ok(out.includes('>info@lejag.org</a>'));
@@ -310,5 +343,22 @@ describe('renderEmailText', () => {
   it('handles empty and null input', () => {
     assert.equal(renderEmailText(''), '');
     assert.equal(renderEmailText(null), '');
+  });
+});
+
+describe('stripLinkCodes', () => {
+  const { stripLinkCodes } = intakeParse;
+
+  it('reduces link codes to their label for one-line excerpts', () => {
+    assert.equal(stripLinkCodes('at JAG<https://lejag.org>, and Origami Customs <https://o.com/x>.'), 'at JAG, and Origami Customs.');
+  });
+
+  it('a code standing alone becomes its bare address', () => {
+    assert.equal(stripLinkCodes('Follow us\n<https://www.tiktok.com/@x>\nor <mailto:a@b.co>'), 'Follow us\ntiktok.com/@x\nor');
+  });
+
+  it('a code cut by snippet truncation is dropped rather than shown half-way', () => {
+    assert.equal(stripLinkCodes('see Banana<https://banan'), 'see Banana');
+    assert.equal(stripLinkCodes(null), '');
   });
 });

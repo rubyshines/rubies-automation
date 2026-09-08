@@ -5734,7 +5734,7 @@ function outreachOnMeRowHtml(r) {
     : r.next_step
       ? esc(r.next_step)
       : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
-      <div class="queue-item-row2">
+      ${r.claimed_by === 'cadence' || r.replied_since_claim || r.next_step_owner === 'them' ? `<div class="queue-item-row2">
         ${r.claimed_by === 'cadence'
     ? '<span class="badge badge-muted" title="The follow-up ladder ran out of moves and handed this to you — you did not claim it">handed over</span>'
     : ''}
@@ -5746,9 +5746,7 @@ function outreachOnMeRowHtml(r) {
     ? '<span class="category-badge category-order" title="They have written since you claimed this — also in the queue at Tier 1">they replied since</span>'
     : ''}
         ${r.next_step_owner === 'them' ? '<span class="badge badge-muted">waiting on them</span>' : ''}
-        ${r.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
-      </div>
-      ${r.draft?.snippet ? `<div class="outreach-row-snippet">${esc(r.draft.snippet)}</div>` : ''}
+      </div>` : ''}
     </div>
   </div>`;
 }
@@ -6046,9 +6044,7 @@ async function outreachInboundDismiss(domain) {
 
 function outreachCompanyRowHtml(c) {
   const channelLabel = OUTREACH_CHANNEL_LABELS[c.relationship_type] || c.relationship_type || '?';
-  const stageBadge = c.stage
-    ? `<span class="badge badge-muted outreach-stage-${esc(c.stage)}">${esc(OUTREACH_STAGE_LABELS[c.stage] || c.stage)}</span>`
-    : '';
+  const stageBadge = companyStageChip(c);
   return `
   <div class="queue-item outreach-row ${c.id === outreachSelectedId ? 'active' : ''}"
        data-company-id="${esc(c.id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
@@ -6086,7 +6082,7 @@ function outreachActivityRowHtml(m) {
       </div>
       <div class="outreach-row-reason">${esc(when)} &middot; ${esc((m.message_type || 'message').replace(/_/g, ' '))} ${via}</div>
       ${m.thread_subject ? `<div class="queue-item-row2"><span class="outreach-activity-subject">${esc(m.thread_subject)}</span></div>` : ''}
-      ${m.snippet ? `<div class="outreach-row-snippet">${esc(m.snippet)}</div>` : ''}
+      ${m.snippet ? `<div class="outreach-row-snippet">${esc(intakeParse.stripLinkCodes(m.snippet))}</div>` : ''}
     </div>
   </div>`;
 }
@@ -6094,22 +6090,26 @@ function outreachActivityRowHtml(m) {
 function outreachRowHtml(e) {
   const channelLabel = OUTREACH_CHANNEL_LABELS[e.channel] || e.channel || '?';
   const typeLabel = e.message_type ? e.message_type.replace(/_/g, ' ') : 'reply needed';
+  // One dot: red when they are waiting on us, grey for everything else. Six
+  // tier colours said nothing the reason line does not; the tier is a tooltip.
+  // "Draft ready" is gone with it — the nightly pass drafts every initiating
+  // row, so the exception worth a badge is the one that still needs writing.
+  const needsWriting = !e.draft && OUTREACH_INITIATING_TYPES.includes(e.message_type);
   return `
   <div class="queue-item outreach-row ${e.company_id === outreachSelectedId ? 'active' : ''}"
        data-company-id="${esc(e.company_id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
     <div class="queue-item-inner">
       <div class="queue-item-row1">
-        <span class="outreach-tier outreach-tier-${e.tier}">T${e.tier}</span>
+        <span class="status-dot ${e.tier === 1 ? 'outreach-dot-reply' : 'outreach-dot-due'}" title="Tier ${e.tier}"></span>
         <span class="queue-item-name">${esc(e.company_name)}</span>
         <span class="outreach-channel-chip outreach-channel-${esc(e.channel)}">${esc(channelLabel)}</span>
       </div>
       <div class="outreach-row-reason">${esc(e.reason || '')}</div>
       <div class="queue-item-row2">
-        <span class="category-badge ${e.message_type ? 'category-general' : 'category-order'}">${esc(typeLabel)}</span>
-        ${e.draft ? '<span class="badge badge-muted">draft ready</span>' : ''}
+        <span class="category-badge ${e.tier === 1 ? 'category-order' : 'category-general'}">${esc(typeLabel)}</span>
+        ${needsWriting ? '<span class="badge badge-warn">needs writing</span>' : ''}
         ${e.delivery === 'form' ? '<span class="badge badge-muted" title="No published email — submit via their contact form">form</span>' : ''}
       </div>
-      ${e.draft?.snippet ? `<div class="outreach-row-snippet">${esc(e.draft.snippet)}</div>` : ''}
     </div>
   </div>`;
 }
@@ -6203,23 +6203,60 @@ function outreachAdvancePast(companyId) {
 // Newest thread starts expanded; older threads collapse behind <details>.
 // Bubbles reuse the CS advisor's conversation language: customer/org gray on
 // the left (.msg-customer), Jamie teal on the right (.msg-agent).
+// Stage is a KIND of company (lead, account, lost), so it wears the category
+// chip like a message type does; badges are reserved for state.
 function companyStageChip(c) {
   if (!c || !c.stage) return '';
-  return `<span class="badge badge-muted outreach-stage-${esc(c.stage)}">${esc(OUTREACH_STAGE_LABELS[c.stage] || c.stage)}</span>`;
+  return `<span class="category-badge outreach-stage outreach-stage-${esc(c.stage)}">${esc(OUTREACH_STAGE_LABELS[c.stage] || c.stage)}</span>`;
+}
+
+/** "$15,407" — whole dollars. The cents on a lifetime figure are noise. */
+function outreachMoney(n) {
+  return '$' + Math.round(Number(n) || 0).toLocaleString('en-US');
+}
+
+/** Words for a raw enum the operator was never meant to read: partially_refunded → "partially refunded". */
+function outreachWords(s) {
+  return String(s || '').replace(/_/g, ' ');
+}
+
+// Deferral STATE, as one pill for the header. The controls that change it live
+// in the ghost row under the draft with the other secondary actions — state is
+// worth seeing first, controls are not. A company the engine will never chase
+// must still read as such, so paused and on-you are amber, never muted.
+function outreachStatePill(c) {
+  if (!c) return '';
+  if (c.on_me_at) {
+    const days = Math.floor((Date.now() - new Date(c.on_me_at)) / 864e5);
+    // A hand-off is a different fact from a claim: you did not pick this up, the
+    // ladder ran out of moves and gave it to you.
+    const handed = c.on_me_source === 'cadence';
+    const tip = handed
+      ? `${c.on_me_note ? c.on_me_note + ' — ' : ''}The follow-up ladder is spent, so nothing further will be sent automatically. Any draft is kept; sending clears it.`
+      : 'Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again they also return to the queue.';
+    return `<span class="badge badge-onme" title="${esc(tip)}">${handed ? 'handed to you' : 'on you'} · ${days}d</span>`;
+  }
+  if (c.outreach_paused_at) {
+    return `<span class="badge badge-paused" title="Not drafted, not chased, not followed up. A new reply still surfaces.">paused · ${esc(c.outreach_paused_reason || 'no reason recorded')}</span>`;
+  }
+  // Snooze can no longer be set from the panel (deprecated 2026-08-27), but a
+  // value already on a row must keep reading as what it is.
+  if (c.snoozed_until && new Date(c.snoozed_until) > new Date()) {
+    return `<span class="badge badge-paused">snoozed until ${esc(new Date(c.snoozed_until).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</span>`;
+  }
+  return '';
 }
 
 /**
  * "Where this stands" — the relationship block.
  *
- * The pane used to open straight into the draft composer, so the two questions
- * an operator actually arrives with ("what is this relationship" and "what should
- * I do about it") were answered nowhere above the fold: you had to scroll past a
- * full draft into an accordion of raw email to find out. This block answers both
- * before the composer, and the transcript below it becomes the audit trail rather
- * than the primary read.
- *
- * The stat strip pulls the conversation and commerce signal into the main pane;
- * the sidebar keeps the reference data (address, contacts, itemised orders).
+ * Four labelled lines (Started / Agreed / Now / Next) once the summariser has
+ * written a recap; the paragraph, at a readable measure, until the recap sweep
+ * reaches this company. The paragraph at full pane width was 180 characters a
+ * line, and a seven-line paragraph is the least scannable thing in a pane whose
+ * job is to be scanned. The cadence reason moved to the header (it is the
+ * engine's voice, not the recap's) and the deferral controls moved to the
+ * action row under the draft, so this block is one voice: what the record says.
  */
 function outreachRelationshipHtml(entry) {
   const h = outreachHistory;
@@ -6230,18 +6267,22 @@ function outreachRelationshipHtml(entry) {
   const c = h.company || {};
   const threads = h.threads || [];
   // The company's real count, not the thread-derived one — see the note in
-  // fetchCompanyThreads. The summary reads by company_id, so this must too, or
-  // the block states a message count its own recap does not match.
+  // fetchCompanyThreads. The summary reads by company_id, so this must too.
   const msgCount = h.message_count ?? threads.reduce((n, t) => n + (t.messages || []).length, 0);
   const lastAt = threads.reduce((max, t) =>
     t.last_message_at && (!max || new Date(t.last_message_at) > new Date(max)) ? t.last_message_at : max, null);
+  const live = threads.filter(t => t.status !== 'closed').length;
+  const closed = threads.length - live;
 
+  // One quiet line, once. These totals used to appear here AND in the sidebar
+  // Orders heading AND the Conversation heading; the sidebar keeps the itemised
+  // orders, the conversation keeps its count, and this is where they meet.
   const stats = [
     msgCount ? `${msgCount} message${msgCount === 1 ? '' : 's'}` : null,
-    lastAt ? `last activity ${timeAgo(lastAt, 'short')} ago` : null,
+    threads.length ? `${live} live · ${closed} closed` : null,
     h.donation?.shipments ? `${h.donation.shipments} package${h.donation.shipments === 1 ? '' : 's'} routed` : null,
-    c.order_count ? `${c.order_count} order${c.order_count === 1 ? '' : 's'}` : null,
-    c.total_sales ? `$${Number(c.total_sales).toLocaleString()} lifetime` : null,
+    c.order_count ? `${c.order_count} order${c.order_count === 1 ? '' : 's'} · ${outreachMoney(c.total_sales)} lifetime` : null,
+    lastAt ? `last activity ${timeAgo(lastAt, 'short')} ago` : null,
   ].filter(Boolean);
 
   const asOf = c.relationship_summary_at
@@ -6249,133 +6290,31 @@ function outreachRelationshipHtml(entry) {
       timeZone: 'America/New_York', month: 'short', day: 'numeric',
     })}`
     : '';
-
   // A summary is stale when messages have landed since it was written. Saying so
   // is the point: an out-of-date recap that looks current is worse than none.
   const stale = c.relationship_summary_through && lastAt
     && new Date(lastAt) > new Date(c.relationship_summary_through);
 
+  const recap = c.relationship_recap && typeof c.relationship_recap === 'object' ? c.relationship_recap : null;
+  const nextHtml = c.relationship_next_step
+    ? `<div class="outreach-recap-k outreach-recap-next">Next</div>
+       <div class="outreach-recap-v outreach-recap-next">${esc(c.relationship_next_step)}${c.relationship_next_step_owner === 'them'
+         ? ' <span class="badge badge-muted">waiting on them</span>' : ''}</div>`
+    : '';
+  const row = (k, v) => v ? `<div class="outreach-recap-k">${k}</div><div class="outreach-recap-v">${esc(v)}</div>` : '';
+
   let bodyHtml;
-  if (c.relationship_summary) {
-    bodyHtml = `<div class="outreach-summary-text">${esc(c.relationship_summary)}</div>`;
+  if (recap && (recap.started || recap.agreed || recap.now)) {
+    bodyHtml = `<div class="outreach-recap">${row('Started', recap.started)}${row('Agreed', recap.agreed)}${row('Now', recap.now)}${nextHtml}</div>`;
+  } else if (c.relationship_summary) {
+    bodyHtml = `<div class="outreach-summary-text">${esc(c.relationship_summary)}</div>
+      ${nextHtml ? `<div class="outreach-recap">${nextHtml}</div>` : ''}`;
   } else if (msgCount) {
     bodyHtml = `<div class="outreach-empty-note">No summary yet. Hit &#8635; to write one from the ${msgCount} message${msgCount === 1 ? '' : 's'} on record.</div>`;
   } else {
     // Honest rather than invented: plenty of companies genuinely have no imported
     // history yet (thread discovery only runs when someone opens the company).
     bodyHtml = `<div class="outreach-empty-note">No conversation on record, so there is nothing to summarise yet.</div>`;
-  }
-
-  const nextStep = c.relationship_next_step
-    ? `<div class="outreach-next-step">
-         <span class="outreach-next-step-label">Next</span>
-         <span class="outreach-next-step-text">${esc(c.relationship_next_step)}</span>
-         ${c.relationship_next_step_owner === 'them'
-           ? '<span class="badge badge-muted">waiting on them</span>' : ''}
-       </div>` : '';
-
-  // The cadence reason lives here now, next to the state it is explaining,
-  // instead of as a subtitle under the company name. It is a separate voice from
-  // the summary's next step — one is the engine, one is a recommendation — so it
-  // is labelled rather than blended in.
-  const cadence = entry?.reason
-    ? `<div class="outreach-cadence-note">${entry.tier ? 'Due per cadence: ' : ''}${esc(entry.reason)}</div>`
-    : '';
-
-  // "We are done here" — the everyday end of a correspondence, which had no
-  // company-level home.
-  //
-  // A Tier-1 row is in the queue because ONE conversation holds an unanswered
-  // reply, so closing that thread is what clears it — but the only control for
-  // that sat under each thread in the transcript below, repeated per thread,
-  // where picking the right one out of eight is a puzzle you have to solve
-  // before you can act, and closing the wrong one silently does nothing. The
-  // queue entry already knows which thread it means (it has to: the reply draft
-  // threads on it), so the panel can just say so.
-  //
-  // Deliberately NOT one of the deferrals beside it. Pause and snooze also stop
-  // the cadence, and "nothing more to say until the next check-in" is the exact
-  // case where the next check-in must still happen.
-  //
-  // The explanation is a tooltip, not a line of body text, matching "On me"
-  // beside it. The first version spelled out the mechanism next to the button
-  // and named the thread it would close — but the thread name is only worth
-  // asking about when several are live, which is the rare case, and restating
-  // how the control works on every render is chrome around a one-click action.
-  //
-  // It rides the SAME row as the deferrals despite not being one. The row
-  // answers "what do I want to do with this?", and giving the odd one out its
-  // own line spent a row of the block on a distinction the operator does not
-  // need spelled out — the tooltip carries it. The distinction still governs
-  // behaviour, just not layout.
-  const waitingThreadId = entry?.tier === 1 ? entry.thread_id : null;
-  const concludeBtn = waitingThreadId
-    ? `<button class="btn btn-secondary" onclick="concludeOutreachConversation(${waitingThreadId}, this)"
-        title="Closes the conversation holding this in the queue — the cadence still comes back on schedule">Nothing to reply to</button>`
-    : '';
-
-  // Deferral state, and the control to change it. Stated plainly rather than as a
-  // quiet badge: a company the engine will never chase is exactly the thing you
-  // must not mistake for one it is quietly handling.
-  const snoozeLive = c.snoozed_until && new Date(c.snoozed_until) > new Date();
-  let deferral;
-  if (c.on_me_at) {
-    // Checked before the other two because it is the one where work is still
-    // owed: a company that is somehow both should read as yours, not as parked.
-    const days = Math.floor((Date.now() - new Date(c.on_me_at)) / 864e5);
-    // No next step echoed here: it is already rendered directly above, in the
-    // block this sits at the bottom of.
-    // A hand-off is labelled differently because it is a different fact: you did
-    // not claim this, the ladder ran out of moves and gave it to you. Reading it
-    // as something you picked up and forgot would be actively misleading.
-    const handedOver = c.on_me_source === 'cadence';
-    deferral = `<div class="outreach-deferral">
-      <span class="outreach-deferral-label">${handedOver ? 'Handed to you' : 'On you'}</span>
-      <span>${days}d</span>
-      <button class="btn btn-ghost" onclick="resumeOutreach()">Back to queue</button>
-    </div>
-    ${handedOver && c.on_me_note ? `<div class="outreach-deferral-note">${esc(c.on_me_note)} — the follow-up ladder is spent, so nothing further will be sent automatically.</div>` : ''}
-    <div class="outreach-deferral-note">Out of the queue, still yours. Any draft is kept, and sending clears it. If they write again they also return to the queue, and this stays yours until you send or hand it back.</div>`;
-  } else if (c.outreach_paused_at) {
-    deferral = `<div class="outreach-deferral">
-      <span class="outreach-deferral-label">Paused</span>
-      <span>${esc(c.outreach_paused_reason || 'no reason recorded')}</span>
-      <button class="btn btn-ghost" onclick="resumeOutreach()">Resume</button>
-    </div>
-    <div class="outreach-deferral-note">Not drafted, not chased, not followed up. A new reply still surfaces.</div>`;
-  } else if (snoozeLive) {
-    deferral = `<div class="outreach-deferral">
-      <span class="outreach-deferral-label">Snoozed</span>
-      <span>until ${esc(new Date(c.snoozed_until).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }))}</span>
-      <button class="btn btn-ghost" onclick="resumeOutreach()">Resume now</button>
-    </div>`;
-  } else {
-    // Snooze offers fixed horizons rather than a date field. "Come back to this
-    // in a while" is the actual decision; picking a calendar day is busywork that
-    // makes you do arithmetic to express it, and no reason is asked for because
-    // the useful one is already implied by the length.
-    // "On me" leads: it is the everyday one (this is a real thing to answer, just
-    // not right now), where pause and snooze are decisions about the relationship
-    // itself and get made far less often.
-    deferral = `<div class="outreach-deferral-actions">
-      ${concludeBtn}
-      <button class="btn btn-secondary" onclick="onMeOutreach()"
-        title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
-      <button class="btn btn-ghost" onclick="pauseOutreach()">Pause outreach</button>
-      <span class="outreach-snooze-group">
-        <span class="outreach-snooze-label">Snooze</span>
-        ${SNOOZE_PRESETS.map(p => `<button class="btn ${p.default ? 'btn-secondary' : 'btn-ghost'}"
-          onclick="snoozeOutreach(${p.days})">${p.label}</button>`).join('')}
-      </span>
-    </div>`;
-  }
-
-  // A reply can land on top of a deferral — deferrals suppress one that was
-  // already sitting there, never one that arrives afterwards — and in that case
-  // the banner has replaced the actions row, so there is nothing for the
-  // conclude control to ride in. It gets its own line only there.
-  if (concludeBtn && (c.on_me_at || c.outreach_paused_at || snoozeLive)) {
-    deferral += `<div class="outreach-conclude">${concludeBtn}</div>`;
   }
 
   return `<div id="outreach-relationship" class="detail-section outreach-relationship">
@@ -6386,11 +6325,8 @@ function outreachRelationshipHtml(entry) {
           title="Rebuild this summary from the conversation">&#8635;</button>
       </span>
     </h3>
-    ${stats.length ? `<div class="outreach-relationship-stats">${esc(stats.join(' · '))}</div>` : ''}
     ${bodyHtml}
-    ${nextStep}
-    ${cadence}
-    ${deferral}
+    ${stats.length ? `<div class="outreach-relationship-stats">${esc(stats.join(' · '))}</div>` : ''}
   </div>`;
 }
 
@@ -6514,25 +6450,9 @@ function pauseOutreach() {
   applyOutreachTriage({ action: 'pause', reason: reason.trim() }, 'Outreach paused');
 }
 
-// 180 is the default because the common case is "this relationship is fine, stop
-// asking me about it" rather than a specific date being waited on. Anything that
-// genuinely has a date is usually a pause with a note instead.
-const SNOOZE_PRESETS = [
-  { days: 30, label: '30d' },
-  { days: 90, label: '90d' },
-  { days: 180, label: '180d', default: true },
-];
-
-/** today + n days as YYYY-MM-DD. Pure enough; horizons this long ignore TZ drift. */
-function snoozeDate(days, now = new Date()) {
-  return new Date(now.getTime() + days * 864e5).toISOString().slice(0, 10);
-}
-
-function snoozeOutreach(days) {
-  const until = snoozeDate(days);
-  const label = new Date(until).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  applyOutreachTriage({ action: 'snooze', until }, `Snoozed for ${days} days — back ${label}`);
-}
+// Snooze is no longer offered here (deprecated 2026-08-27: every real use meant
+// "do not start something yet", which is the cadence's own job). The reading
+// path survives in outreachStatePill, so a value already on a row still shows.
 
 // Nothing is asked for, unlike pause. This decision gets made in a second while
 // working the queue, and any prompt in front of it is the friction that makes
@@ -6565,7 +6485,7 @@ async function refreshOutreachSummary({ silent = false } = {}) {
     // Only the summary fields — the response also carries status/mode, which
     // have no business on the company record the rest of the pane renders from.
     if (outreachHistory?.company) {
-      for (const k of ['relationship_summary', 'relationship_next_step',
+      for (const k of ['relationship_summary', 'relationship_recap', 'relationship_next_step',
         'relationship_next_step_owner', 'relationship_summary_at']) {
         outreachHistory.company[k] = res[k] ?? null;
       }
@@ -6608,6 +6528,9 @@ function outreachHistoryHtml() {
     });
     return `${esc(abs)} · ${esc(timeAgo(iso, 'short'))} ago`;
   };
+  const fmtDay = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+  }) : '';
   // Gmail's shape: the newest message is open, everything before it is a
   // one-line stub you can click. Reading a thread should not start with an
   // archaeology exercise — the newest message is the one that changed something,
@@ -6638,7 +6561,7 @@ function outreachHistoryHtml() {
       const isLast = i === list.length - 1;
       // B2B messages are stored plain-text only, so the body goes through the
       // same artifact-stripping/linkifying renderer as the inbound strip —
-      // `label<https://url>` codes become clickable links. The collapsed
+      // `label<https://url>` codes become links on their label. The collapsed
       // snippet stays escaped text: no anchors inside a <summary>.
       if (isLast) {
         return `<div class="msg ${out ? 'msg-agent' : 'msg-customer'}">
@@ -6651,16 +6574,13 @@ function outreachHistoryHtml() {
       return `<details class="msg-collapsed ${out ? 'msg-agent' : 'msg-customer'}">
         <summary>
           <span class="msg-collapsed-who">${who}</span>${badge}
-          <span class="msg-collapsed-snippet">${esc(body.replace(/\s+/g, ' ').slice(0, 90))}</span>
+          <span class="msg-collapsed-snippet">${esc(intakeParse.stripLinkCodes(body).replace(/\s+/g, ' ').slice(0, 90))}</span>
           <span class="msg-collapsed-date">${msgDate(m.sent_at)}</span>
         </summary>
         ${ccLine}
         <div class="msg-body">${intakeParse.renderEmailText(body)}</div>
       </details>`;
     }).join('');
-    const lastAt = t.last_message_at ? new Date(t.last_message_at).toLocaleDateString('en-US', {
-      timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
-    }) : '';
     // Closed is not terminal — it means "concluded, stop counting it". Reopening
     // drafts the follow-up INSIDE the thread, so it reaches them as a reply to
     // the conversation they remember rather than a cold new email.
@@ -6676,23 +6596,34 @@ function outreachHistoryHtml() {
     return `<details class="outreach-thread"${open ? ' open' : ''}>
       <summary>${esc(t.subject || t.thread_type || 'thread')}
         ${t.status === 'closed' ? '<span class="badge badge-muted">closed</span>' : ''}
-        <span class="outreach-thread-count">${(t.messages || []).length} messages${lastAt ? ' · ' + esc(lastAt) : ''}</span>
+        <span class="outreach-thread-count">${(t.messages || []).length} messages${t.last_message_at ? ' · ' + esc(fmtDay(t.last_message_at)) : ''}</span>
       </summary>
       <div class="outreach-thread-msgs">${msgs}</div>
       ${actions}
     </details>`;
   };
-  // The live conversation opens; concluded ones stay shut. `threads` arrives
-  // ordered by last_message_at desc, so this is the one that actually moved
-  // most recently — and if the newest thread is closed, nothing is live and
-  // there is nothing worth opening on arrival.
+  // `threads` arrives ordered by last_message_at desc. Live conversations render
+  // as before, the newest open. Concluded ones fold into one row: thirteen closed
+  // threads on an old account are the archive, and thirteen rows of it is what
+  // made the pane read as endless. A lone closed thread with nothing live is the
+  // whole record, so it stays a row of its own.
   const total = threads.reduce((n, t) => n + (t.messages || []).length, 0);
-  const openIdx = threads.findIndex(t => t.status !== 'closed');
+  const liveThreads = threads.filter(t => t.status !== 'closed');
+  const closedThreads = threads.filter(t => t.status === 'closed');
+  let closedHtml = '';
+  if (closedThreads.length === 1 && !liveThreads.length) {
+    closedHtml = threadHtml(closedThreads[0], false);
+  } else if (closedThreads.length) {
+    const last = fmtDay(closedThreads[0].last_message_at);
+    closedHtml = `<details class="outreach-thread-group">
+      <summary>${closedThreads.length} closed thread${closedThreads.length === 1 ? '' : 's'}${last ? `<span class="outreach-thread-count">last ${esc(last)}</span>` : ''}</summary>
+      ${closedThreads.map(t => threadHtml(t, false)).join('')}
+    </details>`;
+  }
   return `<div id="outreach-history" class="detail-section outreach-history">
-    <h3>Conversation
-      <span class="outreach-history-note">${total} message${total === 1 ? '' : 's'} · the record behind the summary above</span>
-    </h3>
-    ${threads.map((t, i) => threadHtml(t, i === openIdx)).join('')}
+    <h3>Conversation <span class="outreach-history-note">${total} message${total === 1 ? '' : 's'}</span></h3>
+    ${liveThreads.map((t, i) => threadHtml(t, i === 0)).join('')}
+    ${closedHtml}
   </div>`;
 }
 
@@ -6802,18 +6733,21 @@ async function loadOutreachContext(companyId, allowRefetch) {
     if (ctxEl) ctxEl.innerHTML = outreachHistoryHtml();
     const recipEl = document.getElementById('outreach-recipient');
     if (recipEl) recipEl.outerHTML = outreachRecipientHtml();
-    // The relationship block and the stage chip are both rendered from this
-    // payload, so they are placeholders until it lands. Patch them in place
-    // rather than re-rendering the detail — that would discard whatever the
-    // operator has already typed into the draft editor.
-    const relEl = document.getElementById('outreach-relationship');
-    if (relEl && outreachEntries.has(companyId)) {
-      relEl.outerHTML = outreachRelationshipHtml(outreachEntries.get(companyId));
-    }
-    const headEl = document.getElementById('outreach-detail-head');
-    if (headEl && h.company && !headEl.querySelector('.outreach-tier')) {
-      const chip = headEl.querySelector('.badge');
-      if (!chip) headEl.querySelector('h2')?.insertAdjacentHTML('afterend', companyStageChip(h.company));
+    // The relationship block, the header (stage, state pill) and the action
+    // row are all rendered from this payload, so they are placeholders until
+    // it lands. Patch each in place rather than re-rendering the detail — that
+    // would discard whatever the operator has already typed into the editor.
+    // The action row is on this list because delivery mode decides whether
+    // there is a Send button at all: leaving it out is how a Send stood beside
+    // "submit this through their contact form".
+    const entryNow = outreachEntries.get(companyId);
+    if (entryNow) {
+      const relEl = document.getElementById('outreach-relationship');
+      if (relEl) relEl.outerHTML = outreachRelationshipHtml(entryNow);
+      const headEl = document.getElementById('outreach-detail-head');
+      if (headEl) headEl.outerHTML = outreachHeaderHtml(entryNow);
+      const actEl = document.getElementById('outreach-actions');
+      if (actEl) actEl.outerHTML = outreachActionsHtml(entryNow, outreachDraft);
     }
   }
   renderOutreachSidebarContext();
@@ -6900,67 +6834,77 @@ function renderOutreachSidebarContext() {
         </div>`).join('')}
     </details>` : '';
 
+  const site = c.website ? (/^https?:/.test(c.website) ? c.website : 'https://' + c.website) : null;
+  const siteLabel = c.website ? c.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
+  const line2 = [place, c.phone, c.general_email].filter(Boolean).map(esc)
+    .join('<span class="customer-sep">&middot;</span>');
+
+  // The CS sidebar's parts, in the CS order: a header bar (the link out, the
+  // stage), a compact identity block, then collapsible sections with the tiny
+  // labels. Reference data reads the same way in both panels, so the eye
+  // already knows where everything is. The bordered Orders card is gone — it
+  // was the only card in any sidebar, and its four-column grid could not fit.
   cardEl.innerHTML = `
-    <div class="outreach-company-card">
+    <div class="current-ticket-bar">
       ${h.logo_url ? `<img class="outreach-company-logo" src="${esc(h.logo_url)}" alt="" loading="lazy">` : ''}
-      <div class="customer-compact">
-        <div class="customer-compact-line1">
-          <span class="customer-name">${esc(c.name)}</span>
-          <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
-        </div>
-        <div class="customer-compact-line2">
-          ${c.relationship_state ? `<span class="badge badge-muted">${esc(c.relationship_state.replace(/_/g, ' '))}</span>` : ''}
-          ${flags.map(f => `<span class="badge badge-muted">${esc(f)}</span>`).join(' ')}
-        </div>
+      ${site
+        ? `<a href="${esc(site)}" target="_blank" rel="noopener" class="current-ticket-link" title="${esc(site)}">${esc(siteLabel)} <span class="external-link-icon">&#8599;</span></a>`
+        : '<span class="current-ticket-link">no website</span>'}
+      ${companyStageChip(c)}
+      ${c.relationship_state ? `<span class="current-ticket-status-text">${esc(outreachWords(c.relationship_state))}</span>` : ''}
+    </div>
+    <div class="customer-compact">
+      <div class="customer-compact-line1">
+        <span class="customer-name">${esc(c.name)}</span>
+        <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
       </div>
+      ${line2 ? `<div class="customer-compact-line2">${line2}</div>` : ''}
+      ${flags.length ? `<div class="customer-compact-line2">${flags.map(f => `<span class="badge badge-muted">${esc(f)}</span>`).join(' ')}</div>` : ''}
+    </div>
+    ${c.description || c.address ? `
+    <details class="context-details">
+      <summary class="context-section-label">About</summary>
       ${c.description ? `<div class="outreach-company-desc">${esc(c.description)}</div>` : ''}
-      <div class="outreach-company-meta">
-        ${c.website ? `<div><a href="${esc(/^https?:/.test(c.website) ? c.website : 'https://' + c.website)}" target="_blank" rel="noopener">${esc(c.website.replace(/^https?:\/\/(www\.)?/, ''))}</a></div>` : ''}
-        ${c.address ? `<div>${esc(c.address)}</div>` : ''}
-        ${place ? `<div>${esc(place)}</div>` : ''}
-        ${c.phone ? `<div>${esc(c.phone)}</div>` : ''}
-        ${c.general_email ? `<div>${esc(c.general_email)}</div>` : ''}
-      </div>
-      <div class="context-section-label">Contacts</div>
+      ${c.address ? `<div class="outreach-company-meta">${esc(c.address)}</div>` : ''}
+    </details>` : ''}
+    <details class="context-details" open>
+      <summary class="context-section-label">Contacts${active.length ? ` <span class="badge badge-muted">${active.length}</span>` : ''}</summary>
       ${contacts || '<div class="outreach-contact-none">Nobody on file — mail falls back to the general inbox.</div>'}
       ${formerHtml}
       <div id="outreach-contact-form"></div>
       <button class="outreach-contact-add" onclick="showContactForm(null)">+ Add contact</button>
-    </div>`;
+    </details>`;
 
   document.getElementById('outreach-orders-card').innerHTML = outreachOrdersHtml();
 }
 
-// Order history card — at-a-glance commerce context for companies that buy.
-// Borrows the CS order-summary shape: tabular rows, status badges, admin links.
+// Order history — the same collapsible section CS uses for Order History: a
+// count on the label, the rows on demand. Two columns of text and a status
+// chip per row, because the sidebar is 340px and a four-column grid wrapped
+// its own heading.
 function outreachOrdersHtml() {
   const h = outreachHistory;
   if (!h || !Array.isArray(h.orders) || !h.orders.length) return '';
   const c = h.company || {};
-  const summary = [
-    c.order_count ? `${c.order_count} order${c.order_count === 1 ? '' : 's'}` : null,
-    c.total_sales ? `$${Number(c.total_sales).toLocaleString()} lifetime` : null,
-    c.last_order_date ? `last ${esc(timeAgo(c.last_order_date, 'short'))} ago` : null,
-  ].filter(Boolean).join(' · ');
   const rows = h.orders.map(o => {
     const adminId = String(o.shopify_order_id || '').split('/').pop();
     const name = `#${o.order_number}`;
     const link = adminId
       ? `<a href="https://admin.shopify.com/store/rubies-active-wear/orders/${esc(adminId)}" target="_blank" rel="noopener">${name}</a>`
       : name;
-    const status = o.cancelled_at ? 'CANCELLED'
-      : [o.financial_status, o.fulfillment_status].filter(Boolean).join(' · ');
+    const status = o.cancelled_at ? 'cancelled'
+      : outreachWords([o.financial_status, o.fulfillment_status].filter(Boolean).join(' · '));
     return `<div class="outreach-order-row${o.cancelled_at ? ' outreach-order-cancelled' : ''}">
       <span class="outreach-order-name">${link}</span>
-      <span class="outreach-order-date">${esc(timeAgo(o.created_at, 'short'))} ago</span>
-      <span class="outreach-order-status">${esc(status || '')}</span>
       <span class="outreach-order-total">$${Number(o.total_price || 0).toFixed(2)}${o.shop_currency && o.shop_currency !== 'USD' ? ' ' + esc(o.shop_currency) : ''}</span>
+      <span class="outreach-order-status">${esc(status)}</span>
+      <span class="outreach-order-date">${esc(timeAgo(o.created_at, 'short'))} ago</span>
     </div>`;
   }).join('');
-  return `<div id="outreach-orders" class="detail-section outreach-orders">
-    <h3>Orders <span class="outreach-orders-summary">${summary}</span></h3>
+  return `<details id="outreach-orders" class="context-details">
+    <summary class="context-section-label">Orders <span class="badge badge-muted">${c.order_count || h.orders.length}</span>${c.total_sales ? ` <span class="outreach-orders-summary">${outreachMoney(c.total_sales)} lifetime</span>` : ''}</summary>
     ${rows}
-  </div>`;
+  </details>`;
 }
 
 // Facts-to-verify checklist. Click a fact to mark it verified (persisted on
@@ -6989,9 +6933,13 @@ function outreachFactsHtml(draft, forceOpen) {
         <button class="btn btn-secondary" onclick="submitOutreachFactFix(${i})">Correct &amp; redraft</button>
       </div>
     </div>`).join('');
+  // The advisor's review reason explains WHY these need checking, so it belongs
+  // here as the note under the checklist — not as a second banner in the draft
+  // card saying the same thing in a different colour 60 pixels away.
   return `<div id="outreach-facts" class="outreach-facts">
-    <div class="outreach-field-label">Facts to verify before sending</div>
+    <div class="outreach-facts-title">Check before sending</div>
     ${rows}
+    ${s.needs_review_reason ? `<div class="outreach-facts-why">${esc(s.needs_review_reason)}</div>` : ''}
   </div>`;
 }
 
@@ -7053,9 +7001,12 @@ function reopenOutreachFacts() {
 function outreachReasoningHtml(draft) {
   const steps = Array.isArray(draft?.structured?.audit) ? draft.structured.audit.filter(Boolean) : [];
   const steer = draft?.operator_steer;
-  if (!steps.length && !steer) return '';
+  // Which advisor wrote it lives here, beside its reasoning, rather than as a
+  // third chip on the draft heading where it competed with type and confidence.
+  const who = draft?.advisor ? draft.advisor.replace(/^b2b_/, '').replace(/_/g, ' ') : '';
+  if (!steps.length && !steer && !who) return '';
   return `<details class="outreach-reasoning">
-    <summary>Advisor reasoning${steer ? ' &amp; your steer' : ''}</summary>
+    <summary>Advisor reasoning${who ? ` <span class="outreach-reasoning-who">${esc(who)}</span>` : ''}${steer ? ' &amp; your steer' : ''}</summary>
     ${steer ? `<div class="outreach-reasoning-steer"><span class="outreach-field-label">You steered</span>${esc(steer)}</div>` : ''}
     ${steps.length ? `<ol class="outreach-reasoning-steps">${steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
   </details>`;
@@ -7153,17 +7104,17 @@ function outreachAttachmentsHtml(draft) {
       ${size ? `<span class="outreach-attach-size">${esc(size)}</span>` : ''}
       <button class="outreach-attach-remove" onclick="detachOutreachFile('${esc(key)}')">remove</button></li>`;
   });
-
-  return `<div class="outreach-list outreach-attachments">
-    <div class="outreach-field-label">Attachments</div>
-    ${rows.length
-      ? `<ul>${rows.join('')}</ul>`
-      : '<div class="outreach-empty-note">None. Drop a file on the message box, or use the buttons below.</div>'}
-    <div class="btn-row outreach-attach-actions">
-      <button class="btn btn-ghost" onclick="document.getElementById('outreach-attach-input').click()"
-        title="Up to 10 MB per file. Uploaded straight away, so it survives a refresh.">Attach file</button>
+  // Listed only when something is attached; the controls are one quiet line.
+  // The failure this guards — a body saying "I have attached the agreement"
+  // sending with nothing on it — is still caught, because the attached list is
+  // the thing you look for, and its absence is as visible as the old "None."
+  return `<div class="outreach-attachments">
+    ${rows.length ? `<ul>${rows.join('')}</ul>` : ''}
+    <div class="outreach-attach-line">
+      <button class="outreach-link-btn" onclick="document.getElementById('outreach-attach-input').click()"
+        title="Up to 10 MB per file. Uploaded straight away, so it survives a refresh. You can also drop a file on the message box.">${rows.length ? 'Attach another file' : 'Attach a file'}</button>
       ${specs.some(a => a.kind === 'partner_agreement') ? '' :
-        `<button class="btn btn-ghost" onclick="attachPartnerAgreement()">Attach partnership agreement</button>`}
+        `<button class="outreach-link-btn" onclick="attachPartnerAgreement()">Attach partnership agreement</button>`}
     </div>
     <input type="file" id="outreach-attach-input" multiple style="display:none"
       onchange="uploadOutreachFiles(this.files);this.value=''">
@@ -7315,6 +7266,100 @@ function outreachListHtml(title, items, cls) {
   </div>`;
 }
 
+// The header carries what you need before reading anything: who, what kind,
+// what state they are in, and why they are in front of you today. The cadence
+// reason used to sit inside the relationship block, where it read as one more
+// line of recap; it is the engine's voice, so it rides the header instead.
+// Directory and activity rows carry no tier — nothing is due about them, and a
+// fake "T3" would read as a cadence decision the engine never made.
+function outreachHeaderHtml(entry) {
+  const c = outreachHistory?.company || null;
+  const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '?';
+  const due = entry.tier && entry.reason
+    ? `<span class="outreach-due" title="Tier ${entry.tier}">${entry.tier === 1
+        ? '<span class="badge badge-reply">reply needed</span> ' : 'Due: '}${esc(entry.reason)}</span>`
+    : '';
+  return `
+    <div class="outreach-detail-head" id="outreach-detail-head">
+      <h2>${esc(entry.company_name)}</h2>
+      ${c ? companyStageChip(c) : ''}
+      <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
+      ${outreachStatePill(c)}
+      ${due}
+    </div>`;
+}
+
+// Every control that acts on the draft or the company, in the CS draft card's
+// two-row shape: one primary, then ghosts with dividers. Rebuilt in place when
+// the company context lands (see loadOutreachContext) — the first version left
+// a Send button standing beside "submit this through their contact form",
+// because only the recipient line was re-rendered once delivery was known.
+function outreachActionsHtml(entry, draft) {
+  const c = outreachHistory?.company || null;
+  const form = outreachHistory?.delivery?.mode === 'form';
+  // No Send at all for a form-only company: sendB2bEmail would refuse it, so
+  // offering one would just produce an error on click.
+  const primary = form
+    ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
+       <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
+    : draft
+      ? `<button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>`
+      : `<button class="btn btn-primary" id="outreach-compose-send-btn" onclick="sendComposedDraft()">Send</button>`;
+  const isPostCall = entry.message_type === 'post_call_followup';
+  const draftGhosts = [
+    `<button class="btn btn-ghost" onclick="openSchedulePanel()"
+      title="See when you are free across all your calendars, or book a call.">Schedule</button>`,
+    draft ? `<button class="btn btn-ghost" id="outreach-test-btn" onclick="testSendOutreachDraft()"
+      title="Sends the real email to you only. Nothing is recorded against the company.">Test send</button>` : '',
+    draft ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>` : '',
+    isPostCall && entry.meeting_id
+      ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissPostCallEntry()"
+          title="The call needs no email follow-up (or it did not happen). Clears this entry for good.">No follow-up needed</button>`
+      : '',
+  ].filter(Boolean);
+
+  // What to do with the company. "Nothing to reply to" is deliberately not a
+  // deferral: pause and on-me stop the cadence, and "nothing more to say until
+  // the next check-in" is exactly the case where the next check-in must still
+  // happen. Snooze is gone (2026-08-27): every real use meant "do not start
+  // something yet", which is the cadence's own job.
+  const deferred = !!(c && (c.on_me_at || c.outreach_paused_at
+    || (c.snoozed_until && new Date(c.snoozed_until) > new Date())));
+  const waitingThreadId = entry.tier === 1 ? entry.thread_id : null;
+  const companyGhosts = [
+    waitingThreadId
+      ? `<button class="btn btn-ghost" onclick="concludeOutreachConversation(${waitingThreadId}, this)"
+          title="Closes the conversation holding this in the queue — the cadence still comes back on schedule">Nothing to reply to</button>`
+      : '',
+    deferred
+      ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()">${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`
+      : `<button class="btn btn-ghost btn-onme" onclick="onMeOutreach()"
+          title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
+         <button class="btn btn-ghost" onclick="pauseOutreach()"
+          title="Stop drafting, chasing and following up. A new reply still surfaces.">Pause outreach</button>`,
+  ].filter(Boolean);
+
+  return `<div id="outreach-actions" class="outreach-actions">
+    <div class="btn-row btn-row-primary">${primary}</div>
+    <div class="btn-row btn-row-secondary">
+      ${draftGhosts.join('')}
+      ${draftGhosts.length && companyGhosts.length ? '<span class="btn-row-divider"></span>' : ''}
+      ${companyGhosts.join('')}
+    </div>
+  </div>`;
+}
+
+// Same voice input as the CS draft card. Attached on every render because the
+// elements are rebuilt each time the detail is drawn.
+function initOutreachMics() {
+  if (!window.voiceInput) return;
+  for (const [ta, mic] of [['outreach-draft-editor', 'outreach-draft-mic'], ['outreach-steer', 'outreach-steer-mic']]) {
+    const t = document.getElementById(ta);
+    const m = document.getElementById(mic);
+    if (t && m) voiceInput.attachVoiceInput(t, m);
+  }
+}
+
 // Detail layout: the DRAFT comes first — facts checklist, steer row, editable
 // box, actions — and the conversation history sits below it. The draft is what
 // you act on, and on a long thread it was scrolling out of reach behind the
@@ -7323,21 +7368,7 @@ function outreachListHtml(title, items, cls) {
 function renderOutreachDetail(entry, draft) {
   const el = document.getElementById('outreach-detail');
   const s = (draft && draft.structured) || {};
-  const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '?';
-
-  // Directory and activity rows carry no tier — nothing is due about them, and
-  // a fake "T3" would read as a cadence decision the engine never made. They do
-  // carry a relationship stage, which is the honest thing to show in its place:
-  // a bare header told you nothing about who you had just opened.
-  const stage = outreachHistory?.company ? companyStageChip(outreachHistory.company) : '';
-  const header = `
-    <div class="outreach-detail-head" id="outreach-detail-head">
-      <h2>${esc(entry.company_name)}</h2>
-      ${entry.tier
-        ? `<span class="outreach-tier outreach-tier-${entry.tier}">T${entry.tier}</span>`
-        : stage}
-      <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
-    </div>`;
+  const header = outreachHeaderHtml(entry);
 
   // The advisor drafts only messages WE initiate (intro, check-in, re-approach,
   // reorder nudge — the nightly pass usually got there first). A Tier-1 reply
@@ -7350,9 +7381,26 @@ function renderOutreachDetail(entry, draft) {
     <div class="steer-row">
       <textarea id="outreach-steer" class="steer-input" rows="1"
         placeholder="redirect the advisor"></textarea>
+      <button class="voice-mic" id="outreach-steer-mic" data-state="idle" type="button" aria-label="Voice input"></button>
       <button id="outreach-regenerate-btn" class="btn-refresh-inline" onclick="regenerateOutreachDraft()"
         title="${draft ? 'Regenerate draft' : 'Generate draft'}">&#8635;</button>
     </div>` : '';
+  // The subject is its own placeholder; a label above a field that says what it
+  // is was one more line of uppercase between you and the draft.
+  const subjectInput = (autosave) => `<input type="text" id="outreach-subject-editor" class="outreach-subject"
+    placeholder="Subject (blank inherits the thread's)"${autosave ? ' oninput="queueComposerAutosave()"' : ''}>`;
+  const editor = (autosave, placeholder) => `
+    <div class="draft-editor-wrap">
+      <textarea id="outreach-draft-editor" rows="8"
+        oninput="autoExpandTextarea(this)${autosave ? '; queueComposerAutosave()' : ''}"${placeholder ? ` placeholder="${placeholder}"` : ''}></textarea>
+      <button class="voice-mic voice-mic-floating" id="outreach-draft-mic" data-state="idle" type="button" aria-label="Voice input"></button>
+    </div>`;
+  const tail = `
+      ${outreachRecipientHtml()}
+      ${outreachActionsHtml(entry, draft)}
+      <div id="outreach-schedule-panel" data-open="0"></div>
+      <div id="outreach-send-panel"></div>
+    </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
 
   if (!draft) {
     const what = `the <strong>${esc((entry.message_type || '').replace(/_/g, ' '))}</strong> message`;
@@ -7364,7 +7412,7 @@ function renderOutreachDetail(entry, draft) {
     // template (deterministic fill, no AI: the facts that matter are yours).
     el.innerHTML = header + outreachRelationshipHtml(entry) + `
       <div class="detail-section">
-        <h3>What I'm sending</h3>
+        <h3>Your message</h3>
         <div class="outreach-empty-note">${isPostCall
           ? 'You had a call with them. Write the follow-up below, or start from a template.'
           : canGenerate
@@ -7377,92 +7425,51 @@ function renderOutreachDetail(entry, draft) {
             title="Fills the composer with the template, details filled in. Your words to finish.">Start from template</button>
         </div>
         ${steerBlock}
-        <div class="outreach-subject">
-          <span class="outreach-field-label">Subject</span>
-          <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)"
-            oninput="queueComposerAutosave()">
-        </div>
-        <textarea id="outreach-draft-editor" rows="8"
-          oninput="autoExpandTextarea(this); queueComposerAutosave()"
-          placeholder="Type your message here. Saved as you write."></textarea>
+        ${subjectInput(true)}
+        ${editor(true, 'Type your message here. Saved as you write.')}
         <div id="outreach-autosave" class="outreach-autosave"></div>
-        ${outreachAttachmentsHtml(null)}
-        ${outreachRecipientHtml()}
-        <div class="btn-row btn-row-primary outreach-actions">
-          ${outreachHistory?.delivery?.mode === 'form'
-            ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
-               <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
-            : `<button class="btn btn-primary" id="outreach-compose-send-btn" onclick="sendComposedDraft()">Send</button>`}
-          <button class="btn btn-ghost" onclick="openSchedulePanel()"
-            title="See when you are free across all your calendars, or book a call.">Schedule</button>
-          ${isPostCall && entry.meeting_id
-            ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissPostCallEntry()"
-                 title="The call needs no email follow-up (or it did not happen). Clears this entry for good.">No follow-up needed</button>`
-            : ''}
-        </div>
-        <div id="outreach-schedule-panel" data-open="0"></div>
-        <div id="outreach-send-panel"></div>
-      </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
+        ${outreachAttachmentsHtml(null)}` + tail;
     initOutreachDropzone();
+    initOutreachMics();
     loadOutreachTemplates(entry);
     return;
   }
 
   const commitments = Array.isArray(s.open_commitments) ? s.open_commitments : [];
+  const factsHtml = outreachFactsHtml(draft);
 
-  el.innerHTML = header + outreachRelationshipHtml(entry) + outreachFactsHtml(draft) + `
+  el.innerHTML = header + outreachRelationshipHtml(entry) + factsHtml + `
     <div class="detail-section">
-      <h3>${draft.advisor ? 'AI Draft' : 'Your draft'}
+      <h3>${draft.advisor ? 'AI draft' : 'Your draft'}
         <span class="category-badge category-general">${esc((draft.message_type || '').replace(/_/g, ' '))}</span>
         ${s.confidence ? `<span class="badge badge-${esc(s.confidence)}">${esc(s.confidence)}</span>` : ''}
-        ${draft.advisor
-          ? `<span class="badge badge-muted">${esc(draft.advisor.replace(/^b2b_/, '').replace(/_/g, ' '))}</span>`
-          : '<span class="badge badge-muted">written by you</span>'}
       </h3>
-      ${s.needs_review_reason ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
+      ${/* The review reason rides the facts checklist when there is one — it is
+           the explanation of why those facts need checking. Only a draft with a
+           reason and no facts gets it as a banner here. */ ''}
+      ${s.needs_review_reason && !factsHtml ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
       ${outreachScheduleBannerHtml(draft)}
       ${steerBlock}
-      <div class="outreach-subject">
-        <span class="outreach-field-label">Subject</span>
-        <input type="text" id="outreach-subject-editor" placeholder="(inherits thread subject)"
-          ${draft.advisor ? '' : 'oninput="queueComposerAutosave()"'}>
-      </div>
+      ${subjectInput(!draft.advisor)}
       ${/* Only YOUR text autosaves. On an advisor draft, subject/body are the AI's
            originals and the pair with sent_subject/sent_body IS the edit record —
            overwriting them would quietly destroy that training signal. */ ''}
-      <textarea id="outreach-draft-editor" rows="8"
-        oninput="autoExpandTextarea(this)${draft.advisor ? '' : '; queueComposerAutosave()'}"></textarea>
+      ${editor(!draft.advisor, '')}
       ${draft.advisor ? '' : '<div id="outreach-autosave" class="outreach-autosave"></div>'}
       ${outreachAttachmentsHtml(draft)}
       ${outreachReasoningHtml(draft)}
       ${commitments.length ? outreachListHtml('Commitments this email makes', commitments, 'outreach-commitments') : ''}
-      ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient">Advisor timing note: next touch in ~${s.next_touch_days} days (reason in its audit; overrides the standard cadence when this sends)</div>` : ''}
-      ${outreachRecipientHtml()}
-      <div class="btn-row btn-row-primary outreach-actions">
-        ${outreachHistory?.delivery?.mode === 'form'
-          // No Send button at all: sendB2bEmail would refuse this company, so
-          // offering one would just produce an error on click.
-          ? `<button class="btn btn-primary" onclick="copyOutreachDraft()">Copy draft</button>
-             <a class="btn btn-ghost" href="${esc(outreachHistory.delivery.url)}" target="_blank" rel="noopener">Open their form</a>`
-          : `<button class="btn btn-primary" id="outreach-send-btn" onclick="sendOutreachDraft()">Send</button>`}
-        <button class="btn btn-ghost" onclick="openSchedulePanel()"
-          title="See when you are free across all your calendars, or book a call.">Schedule</button>
-        <button class="btn btn-ghost" id="outreach-test-btn" onclick="testSendOutreachDraft()"
-          title="Sends the real email to you only. Nothing is recorded against the company.">Test send to me</button>
-        <button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>
-      </div>
-      <div id="outreach-schedule-panel" data-open="0"></div>
-      <div id="outreach-send-panel"></div>
-    </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
+      ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient-note">Advisor timing: next touch in about ${s.next_touch_days} days, overriding the standard cadence once this is sent. The reason is in its audit.</div>` : ''}` + tail;
 
   // Set body + subject via .value (not innerHTML) and size the body to content.
   // A blank subject is left blank rather than prefilled: for replies the draft
   // carries no subject and the thread's is inherited at send time.
-  const editor = document.getElementById('outreach-draft-editor');
-  editor.value = draft.body || '';
-  autoExpandTextarea(editor);
+  const editorEl = document.getElementById('outreach-draft-editor');
+  editorEl.value = draft.body || '';
+  autoExpandTextarea(editorEl);
   document.getElementById('outreach-subject-editor').value = draft.subject || '';
   initOutreachDropzone();
+  initOutreachMics();
 }
 
 async function regenerateOutreachDraft() {
@@ -7590,35 +7597,49 @@ function outreachRecipientHtml() {
   const threaded = !!outreachDraft?.thread_id;
 
   if (delivery?.mode === 'form') {
+    const host = String(delivery.url || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
     return `<div id="outreach-recipient" class="outreach-recipient">
-      No published email address. Submit this through their contact form:
-      <a href="${esc(delivery.url)}" target="_blank" rel="noopener">${esc(delivery.url)}</a>
+      No published email address. Submit this through
+      <a href="${esc(delivery.url)}" target="_blank" rel="noopener">their contact form</a>${host ? ` (${esc(host)})` : ''}.
     </div>`;
   }
 
-  // Editable, and always visible. Seeing exactly who this goes to is the last
-  // check before sending — and the resolved contact is sometimes not the person
-  // you are actually answering.
+  // One line to read, two fields to edit. Seeing exactly who this goes to is
+  // the last check before sending — and the resolved contact is sometimes not
+  // the person you are actually answering — but it is a line you read, not a
+  // form you fill, so the inputs open on "edit" and keep their ids for the
+  // save and send paths.
   const toValue = outreachDraft?.structured?.to || r?.email || '';
   const ccValue = outreachDraft?.structured?.cc || '';
-  const via = !outreachDraft?.structured?.to && r?.via === 'general_email'
-    ? ' <span class="outreach-preview-via">general inbox</span>' : '';
+  const via = !outreachDraft?.structured?.to && r?.via === 'general_email' ? ' (general inbox)' : '';
 
   return `<div id="outreach-recipient" class="outreach-recipient">
-    <div class="outreach-recipient-row">
-      <span class="outreach-field-label">To</span>
-      <input type="text" id="outreach-to-editor" value="${esc(toValue)}"
-        placeholder="recipient@org.org" onchange="saveOutreachRecipients()">${via}
+    <div class="outreach-recipient-line">
+      To <b>${toValue ? esc(toValue) : '<span class="outreach-recipient-missing">nobody on file</span>'}</b>${via}${ccValue ? ` · cc ${esc(ccValue)}` : ''}
+      · ${threaded ? 'replies in the existing thread' : 'starts a new email'}
+      <button class="outreach-link-btn" onclick="toggleOutreachRecipientEdit()">edit</button>
     </div>
-    <div class="outreach-recipient-row">
-      <span class="outreach-field-label">Cc</span>
-      <input type="text" id="outreach-cc-editor" value="${esc(ccValue)}"
-        placeholder="(none) — comma separated" onchange="saveOutreachRecipients()">
-    </div>
-    <div class="outreach-recipient-note">
-      from jamie@rubyshines.com &middot; ${threaded ? 'replies in the existing thread' : 'starts a new email'}
+    <div class="outreach-recipient-edit" id="outreach-recipient-edit" hidden>
+      <div class="outreach-recipient-row">
+        <span class="outreach-field-label">To</span>
+        <input type="text" id="outreach-to-editor" value="${esc(toValue)}"
+          placeholder="recipient@org.org" onchange="saveOutreachRecipients()">
+      </div>
+      <div class="outreach-recipient-row">
+        <span class="outreach-field-label">Cc</span>
+        <input type="text" id="outreach-cc-editor" value="${esc(ccValue)}"
+          placeholder="(none) — comma separated" onchange="saveOutreachRecipients()">
+      </div>
+      <div class="outreach-recipient-note">from jamie@rubyshines.com</div>
     </div>
   </div>`;
+}
+
+function toggleOutreachRecipientEdit() {
+  const el = document.getElementById('outreach-recipient-edit');
+  if (!el) return;
+  el.hidden = !el.hidden;
+  if (!el.hidden) document.getElementById('outreach-to-editor')?.focus();
 }
 
 /**
@@ -7872,8 +7893,17 @@ function renderSchedulePanel() {
   // fallback for "none of these work" and the default when they named nothing.
   const hasSuggestions = suggestions.length > 0;
   const showGrid = !hasSuggestions || scheduleShowAll;
+  // With nothing of theirs to anchor on, the next three working days answer
+  // "when could we talk" without an 80-slot week doing it. The rest is a click.
+  const FIRST_DAYS = 3;
+  const gridDays = (scheduleShowAll || hasSuggestions) ? s.days : s.days.slice(0, FIRST_DAYS);
+  const moreDays = !hasSuggestions && s.days.length > FIRST_DAYS
+    ? `<button class="schedule-toggle" onclick="toggleScheduleAllDays()">
+        ${scheduleShowAll ? '&#9652; Just the next few days' : `&#9662; Show all ${s.days.length} days`}
+      </button>`
+    : '';
 
-  const grid = !showGrid ? '' : s.days.map(day => {
+  const grid = !showGrid ? '' : gridDays.map(day => {
     const chips = day.slots.map(slot => {
       const cls = ['schedule-slot'];
       if (slot.busy) cls.push('is-busy');
@@ -7940,7 +7970,7 @@ function renderSchedulePanel() {
           </select>
         </label>
         <label class="schedule-inline">Their timezone
-          <input type="text" id="schedule-tz-input" placeholder="America/Los_Angeles"
+          <input type="text" id="schedule-tz-input" placeholder="not set"
             value="${esc(s.their_timezone || '')}"
             onchange="openSchedulePanel(scheduleState?.duration_minutes, this.value)">
         </label>
@@ -7957,7 +7987,8 @@ function renderSchedulePanel() {
         ${scheduleShowAll ? '&#9652; Just their suggestions' : '&#9662; None of these work — show all my availability'}
       </button>` : ''}
       ${showGrid ? `<div class="schedule-grid">${grid}</div>` : ''}
-      <div class="schedule-hint">Checked: ${(s.calendars || []).map(esc).join(', ')} · 9-5 Eastern, weekdays, from tomorrow</div>
+      ${moreDays}
+      <div class="schedule-hint" title="${esc((s.calendars || []).join(', '))}">Checked ${(s.calendars || []).length} calendar${(s.calendars || []).length === 1 ? '' : 's'} · 9-5 Eastern, weekdays, from tomorrow</div>
       ${footer}
     </div>`;
 }

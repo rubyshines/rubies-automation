@@ -639,7 +639,9 @@ main { height: calc(100vh - 56px); }
   box-shadow: var(--shadow-sm);
 }
 
-.detail-section summary {
+/* Direct child only. As a descendant rule this reached every <summary> in the
+   outreach pane — thread titles and collapsed email rows rendered in caps. */
+.detail-section > summary {
   cursor: pointer;
   font-weight: 600;
   font-size: 13px;
@@ -650,9 +652,9 @@ main { height: calc(100vh - 56px); }
   user-select: none;
 }
 
-.detail-section summary:hover { color: var(--text); }
+.detail-section > summary:hover { color: var(--text); }
 
-.detail-section[open] summary {
+.detail-section[open] > summary {
   color: var(--text);
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border);
@@ -5553,7 +5555,9 @@ main { height: calc(100vh - 56px); }
   letter-spacing: 0.02em;
   flex-shrink: 0;
 }
-.outreach-channel-wholesale { background: var(--teal-soft); color: var(--teal); }
+/* Retailer takes the CS "shipping" blue; teal stays reserved for outbound
+   messages, links and the next step, where it was fighting this chip. */
+.outreach-channel-wholesale { background: var(--blue-bg); color: var(--blue); }
 .outreach-channel-lgbtq_org { background: #ede9fe; color: #6d28d9; }
 .outreach-channel-affiliate { background: #fce4ec; color: #c62828; }
 
@@ -5593,9 +5597,11 @@ main { height: calc(100vh - 56px); }
   cursor: pointer;
 }
 .outreach-mode:hover { color: var(--text-primary); }
+/* Active = dark text with the accent underline, the top nav's own language;
+   teal here diluted the one colour that means "ours" in the transcript. */
 .outreach-mode.active {
-  color: var(--teal);
-  border-bottom-color: var(--teal);
+  color: var(--text);
+  border-bottom-color: var(--accent);
 }
 /* On Me's count, on the tab itself — the list has to be able to nag from the
    outside or it becomes somewhere work goes quiet. */
@@ -5608,12 +5614,12 @@ main { height: calc(100vh - 56px); }
   line-height: 15px;
   border-radius: 8px;
   color: #fff;
-  background: #7c3aed;
+  background: #d97706;   /* the CS On Me amber (.tab-onme), not a purple of its own */
 }
 
-/* Days-on-you, the queue's tier chip position. Purple to match the CS On Me
-   tab, red once it has been sitting a week, which is the point at which "I'll
-   get to it" has stopped being true. */
+/* Days-on-you, in the queue's dot position. Amber to match the CS On Me tab,
+   red once it has been sitting a week, which is the point at which "I'll get
+   to it" has stopped being true. */
 .outreach-onme-age {
   flex-shrink: 0;
   padding: 1px 6px;
@@ -5621,7 +5627,7 @@ main { height: calc(100vh - 56px); }
   font-weight: 700;
   border-radius: 4px;
   color: #fff;
-  background: #7c3aed;
+  background: #d97706;
 }
 .outreach-onme-age-old { background: #991b1b; }
 
@@ -5735,8 +5741,17 @@ main { height: calc(100vh - 56px); }
 .outreach-detail-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 10px;
+}
+/* The chips stay with the name they describe; the row-level chip pushes itself
+   to the right edge for the queue list, which is wrong in a heading. */
+.outreach-detail-head .outreach-channel-chip { margin-left: 0; }
+.outreach-due {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 .outreach-detail-head h2 {
   font-size: 18px;
@@ -5770,12 +5785,12 @@ main { height: calc(100vh - 56px); }
   margin-bottom: 12px;
 }
 
+/* Sentence case. Uppercase is for section headings; fourteen tracked-out
+   labels between the header and the conversation was most of the noise. */
 .outreach-field-label {
   display: block;
-  color: var(--text-tertiary);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  font-size: 11px;
   font-weight: 600;
   margin-bottom: 4px;
 }
@@ -5853,13 +5868,17 @@ main { height: calc(100vh - 56px); }
 .outreach-summary-stale { color: var(--yellow); }
 .outreach-relationship-stats {
   font-size: 12px;
-  color: var(--text-secondary);
-  margin-bottom: 10px;
+  color: var(--text-tertiary);
+  margin-top: 12px;
+  font-variant-numeric: tabular-nums;
 }
+/* The paragraph fallback, until the recap sweep reaches a company. Capped at a
+   readable measure: at full pane width it ran 180 characters a line. */
 .outreach-summary-text {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text);
+  max-width: 72ch;
 }
 /* The recommendation, marked off from the recap by a teal rule. It is advisory
    — cadence still decides what is due — so it reads as a note, not a verdict. */
@@ -6719,3 +6738,144 @@ main { height: calc(100vh - 56px); }
   background: var(--surface);
   outline: none;
 }
+
+/* ─── Outreach panel restructure (2026-09-03) ──────────────────────────────
+   One voice per zone: header (who, kind, state, why today), relationship
+   (what the record says), draft (what you are sending, CS card anatomy),
+   conversation (the archive). Colour is spent on state, never on kind. */
+
+/* State badges, sharing the CS semantic set: needs-reply red is CS urgent
+   red, on-me amber is the CS On Me tab, paused is the CS warning yellow. */
+.badge-reply { background: var(--red-bg); color: var(--red); }
+.badge-onme { background: #fef3c7; color: #b45309; }
+.badge-paused { background: var(--yellow-bg); color: var(--yellow); }
+
+/* Queue row dot — the CS status-dot shape. Red when they are waiting on us. */
+.outreach-dot-reply { background: var(--accent); }
+.outreach-dot-due { background: var(--border-strong); }
+
+/* Stage reads as a kind, so it wears the category-chip shape, not a badge. */
+.outreach-stage { background: var(--surface-inset); color: var(--text-tertiary); }
+.outreach-stage-active { background: var(--teal-soft); color: var(--teal); }
+.outreach-stage-lost { background: #f3f4f6; color: #9ca3af; text-decoration: line-through; }
+
+/* "Where this stands" as four labelled lines. */
+.outreach-recap {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 72ch);
+  column-gap: 12px;
+  row-gap: 7px;
+  align-items: baseline;
+}
+.outreach-recap-k {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+.outreach-recap-v {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.outreach-recap-k.outreach-recap-next { color: var(--teal); }
+.outreach-recap-v.outreach-recap-next {
+  border-left: 2px solid var(--teal);
+  padding-left: 10px;
+}
+.outreach-summary-text + .outreach-recap { margin-top: 10px; }
+
+/* Facts checklist — the review reason rides here as the note under the list. */
+.outreach-facts-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.outreach-facts-why {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--yellow);
+}
+
+/* Subject as its own placeholder, no label above it. */
+#outreach-subject-editor.outreach-subject { margin-bottom: 10px; }
+#outreach-subject-editor::placeholder { font-weight: 400; color: var(--text-tertiary); }
+
+/* Link-shaped controls for the quiet actions (edit recipients, attach). */
+.outreach-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--teal);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.outreach-link-btn:hover { color: var(--accent); }
+
+/* Recipients: one line to read, the fields on demand. */
+.outreach-recipient-line { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.outreach-recipient-line b { color: var(--text); font-weight: 600; }
+.outreach-recipient-line .outreach-link-btn { margin-left: 4px; }
+.outreach-recipient-missing { color: var(--red); font-weight: 600; }
+.outreach-recipient-edit { margin-top: 8px; }
+.outreach-attach-line { display: flex; gap: 14px; margin: 2px 0 10px; }
+
+/* Actions: the CS draft card's two rows. */
+.outreach-actions { margin-top: 12px; }
+.outreach-actions .btn-row-primary { margin-bottom: 0; }
+
+/* Draft heading and reasoning */
+.outreach-reasoning-who {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+/* Conversation: thread titles in sentence case, closed threads folded. */
+.outreach-thread > summary { text-transform: none; letter-spacing: 0; }
+.outreach-thread-group { margin-top: 6px; }
+.outreach-thread-group > summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 6px 0;
+  user-select: none;
+}
+.outreach-thread-group > summary:hover { color: var(--text); }
+.outreach-thread-group[open] > summary { margin-bottom: 4px; }
+.outreach-thread-group .outreach-thread { padding-left: 12px; border-left: 2px solid var(--border); }
+
+/* Sidebar: the CS parts. The logo rides the header bar, small. */
+.current-ticket-bar .outreach-company-logo {
+  max-height: 22px;
+  max-width: 80px;
+  margin: 0;
+  border-radius: 3px;
+}
+.current-ticket-bar .category-badge { flex-shrink: 0; }
+.outreach-about .outreach-company-desc { margin: 4px 0 6px; }
+.outreach-about .outreach-company-meta { margin: 0 0 6px; line-height: 1.5; }
+#outreach-orders .outreach-order-row {
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "name total" "status date";
+  row-gap: 1px;
+  column-gap: 8px;
+  padding: 6px 0;
+}
+#outreach-orders .outreach-order-name { grid-area: name; }
+#outreach-orders .outreach-order-total { grid-area: total; }
+#outreach-orders .outreach-order-status { grid-area: status; text-transform: none; }
+#outreach-orders .outreach-order-date { grid-area: date; text-align: right; font-size: 11px; }
+#outreach-orders .outreach-orders-summary { margin-left: 6px; font-size: 10px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+#outreach-orders > .context-section-label .badge { margin-left: 2px; }
+#outreach-orders-card .context-details { margin-top: 10px; }
+
+/* Schedule panel: the calendar list lives in a tooltip on the hint. */
+.schedule-hint[title] { cursor: help; }

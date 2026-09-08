@@ -26,6 +26,7 @@ ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary TEXT;
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_next_step TEXT;              -- advisory only; cadence.js still owns what is due
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_next_step_owner TEXT;        -- 'us' | 'them'
 ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_summary_at TIMESTAMPTZ;
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS relationship_recap JSONB;                -- {started, agreed, now}: the panel's three-line recap (2026-09-03)
 -- Watermark + count together, not a bare timestamp: history arrives BACKWARDS in
 -- this system (discoverCompanyThreads imports old threads long after the fact), so
 -- a message can land below the generation time and would never be noticed by a

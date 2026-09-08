@@ -141,9 +141,15 @@ async function handleSearch(input = {}) {
       // The relationship summary is the whole point of looking a company up —
       // without it the console answers "does this company exist" while the
       // dashboard answers "what is going on with them". Same data, both surfaces.
-      const summary = c.relationship_summary
-        ? `\n  ${c.relationship_summary}${c.relationship_summary_at ? ` _(as of ${etDate(c.relationship_summary_at)})_` : ''}`
-        : '';
+      // Same three lines the panel shows when the recap exists; the paragraph
+      // until the recap sweep reaches this company.
+      const r = c.relationship_recap && typeof c.relationship_recap === 'object' ? c.relationship_recap : null;
+      const asOf = c.relationship_summary_at ? ` _(as of ${etDate(c.relationship_summary_at)})_` : '';
+      const summary = r && (r.started || r.agreed || r.now)
+        ? [r.started && `\n  Started: ${r.started}`, r.agreed && `\n  Agreed: ${r.agreed}`, r.now && `\n  Now: ${r.now}${asOf}`].filter(Boolean).join('')
+        : c.relationship_summary
+          ? `\n  ${c.relationship_summary}${asOf}`
+          : '';
       const next = c.relationship_next_step ? `\n  NEXT: ${c.relationship_next_step}` : '';
       return `**${c.name}** (${c.id}) · ${c.relationship_type} · ${state}${last}${why}${draft}${summary}${next}`;
     });
