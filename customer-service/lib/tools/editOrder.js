@@ -322,6 +322,30 @@ const tools = [
         const declaredEven = (_edit_data.swaps || []).some(s => s.even_swap);
         const evenSwapBreach = declaredEven && Math.abs(delta) > 0.01;
 
+        // What the operator's edit actually asked the customer to buy, in list
+        // prices: the value added minus the value removed. A same-item size or
+        // colour swap is 0 here even when Shopify's delta is not.
+        //
+        // The two diverge because of the discount-code re-allocation already
+        // documented for Phase 1: Shopify re-applies an order-level code across the
+        // lines an edit leaves behind, so removing a discounted line and adding its
+        // replacement can shrink the total discount and leave a positive balance
+        // the customer never agreed to. On #32993 a $32 Sassy 1X → $32 Sassy L swap
+        // cut WELCOME10 from $15.60 to $12.40 and auto-invoiced the customer $3.20,
+        // which they paid before anyone saw it. That contradicts the operator
+        // prompt's own standing rule that a straight swap is never invoiced.
+        //
+        // So gate the invoice on the INTENDED delta, not Shopify's. A genuine
+        // addition still invoices — it has real value on the add side. Only a
+        // charge that is purely an artifact of re-allocation is absorbed, and the
+        // absorb direction is the safe one: we are out a few dollars rather than
+        // billing someone for something they did not order.
+        const intendedDelta = (_edit_data.swaps || []).reduce((sum, s) => {
+          const added = parseFloat(s.add_price || 0) * (s.add_quantity || 0);
+          const removed = parseFloat(s.remove_unit_price || 0) * (s.remove_quantity || 0);
+          return sum + added - removed;
+        }, 0);
+
         if (evenSwapBreach) {
           lines.push(`**⚠️ NOT AN EVEN SWAP — no invoice sent, no refund processed**`);
           lines.push(delta > 0
@@ -329,6 +353,9 @@ const tools = [
             : `The customer has paid **$${Math.abs(delta).toFixed(2)} ${currency} more** than the order is now worth.`);
           lines.push('This edit was requested as an even swap, so the customer has been told it costs them nothing.');
           lines.push(`Settle it by hand in Shopify (usually: write the balance off): ${getAdminUrl(committedOrder.id)}`);
+        } else if (delta > 0.01 && intendedDelta <= 0.01) {
+          lines.push(`**Balance absorbed:** $${delta.toFixed(2)} ${currency} — NOT invoiced.`);
+          lines.push(`The swap is even at list price; the balance is Shopify re-spreading the order's discount code over the edited lines, not something the customer ordered. Waive it or clear it in admin.`);
         } else if (delta > 0.01) {
           // Customer owes more — send invoice
           try {

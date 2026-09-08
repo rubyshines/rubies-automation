@@ -385,10 +385,37 @@ async function embedTexts(params) {
   return { vectors, _usage, _timing, _ai_call_id };
 }
 
+/**
+ * Put a cache breakpoint on the last tool so tool schemas cache independently of
+ * everything after them.
+ *
+ * The cached prefix is ordered tools → system → messages, so a breakpoint placed
+ * only at the end of the system block is worth exactly as much as the system block
+ * is stable. On an agent with a large tool catalog and a per-turn system prompt,
+ * that is a bad trade: the operator agent carries 126 tools / ~49.5k tokens of
+ * schemas ahead of a ~6.2k system prompt that legitimately changes every turn, so
+ * every turn rewrote the schemas too. Tagging the last tool splits the two, and the
+ * schemas then survive any change behind them.
+ *
+ * Returns a new array — callers pass tool definitions loaded from a shared cache and
+ * mutating one would leak a cache_control key into every other consumer of it.
+ * A no-op on an empty array so a caller with no tools stays valid.
+ */
+function withToolCaching(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return tools;
+  const last = tools[tools.length - 1];
+  if (last?.cache_control) return tools;
+  return [
+    ...tools.slice(0, -1),
+    { ...last, cache_control: { type: 'ephemeral' } },
+  ];
+}
+
 module.exports = {
   callClaude,
   embedTexts,
   getAnthropic,
+  withToolCaching,
   // test hooks
   _resetTableProbe,
   _extractUsage: extractUsage,
