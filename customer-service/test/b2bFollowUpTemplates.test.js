@@ -14,7 +14,7 @@ const {
 } = require('../../b2b-outreach/lib/messageTemplates');
 const { toHtmlBody } = require('../../b2b-outreach/lib/sendB2bEmail');
 const { generateDraft } = require('../../b2b-outreach/lib/outreachAdvisor');
-const { SIGNATURE_NAME, SITE_LABEL } = require('../../customer-service/lib/signatures');
+const { SIGNATURE_NAME, SITE_LABEL, SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
 
 const INTRO = `Hello,
 
@@ -32,7 +32,9 @@ test('FOLLOW_UP_TYPES is exactly the two rungs', () => {
 
 test('rung 1 is the CS Stage 1 line, nothing more', () => {
   const { body, attachments } = fillFollowUp({ firstName: 'Beck', message_type: 'followup_1', original: INTRO });
-  assert.equal(body, `Hi Beck,\n\nI am following up on this.\n\nTalk soon,\n\n${SIGNATURE_NAME}\n${SITE_LABEL}`);
+  // Signed the way every template signs since #179: the shared markdown block,
+  // which the HTML part renders as a link and the plain part flattens.
+  assert.equal(body, `Hi Beck,\n\nI am following up on this.\n\nTalk soon,\n\n${SIGNATURE_BLOCK_MD}`);
   assert.deepEqual(attachments, []);
 });
 

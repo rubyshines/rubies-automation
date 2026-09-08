@@ -23,7 +23,7 @@
  * it measures advisor drift.
  */
 const { partnerDiscountPercent } = require('./donationAgreement');
-const { SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
+const { SIGNATURE_BLOCK_MD, SIGNATURE_NAME } = require('../../customer-service/lib/signatures');
 
 const ONBOARDING_SURVEY_URL = 'https://forms.gle/1Hq93BSiPrhJkgfB8';
 
