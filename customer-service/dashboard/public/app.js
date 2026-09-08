@@ -8251,7 +8251,14 @@ async function sendComposedDraft() {
  * Reads the textarea rather than the stored draft so operator edits go with it.
  */
 async function copyOutreachDraft() {
-  const body = document.getElementById('outreach-draft-editor')?.value || '';
+  const raw = document.getElementById('outreach-draft-editor')?.value || '';
+  // A contact form renders no markup, so markdown links flatten the way the
+  // email's plain-text part does: "label (url)", or just the label when it
+  // already says the URL (the signature's rubyshines.com line).
+  const body = raw.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (m, label, url) => {
+    const bare = (x) => x.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '').toLowerCase();
+    return bare(label) === bare(url) ? label : `${label} (${url})`;
+  });
   const subject = document.getElementById('outreach-subject-editor')?.value || '';
   const text = subject ? `${subject}\n\n${body}` : body;
   try {

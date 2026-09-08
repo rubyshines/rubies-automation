@@ -1,8 +1,23 @@
-# Skip the apt-get chromium install that Nixpacks auto-adds when it
-# detects puppeteer in package.json. The apt packages (chromium, snapd,
-# X11 libs — ~420MB) are unnecessary because puppeteer bundles its own
-# Chromium via npm. Removing them cuts build time and eliminates flaky
-# Ubuntu mirror failures.
-
+# Root Nixpacks config, auto-detected by every Railway service.
+#
+# Puppeteer bundles its own Chromium via npm, so the full `chromium` apt
+# package (plus snapd and X11, ~420MB) that Nixpacks auto-adds on detecting
+# puppeteer is skipped. But the bundled binary is NOT self-contained: it
+# dynamically links the shared libraries below, and without them every
+# launch on Railway fails with "error while loading shared libraries:
+# libgobject-2.0.so.0". That broke partner-agreement PDFs at send from the
+# deployed dashboard (2026-09-08); the passport tracking cron had been
+# working around it by apt-getting this same list on every boot. Runtime
+# libs only (~100MB), installed at build time so nothing hits an Ubuntu
+# mirror at boot. Ubuntu Noble names (libasound2t64, not libasound2).
 [phases.setup]
-aptPkgs = []
+aptPkgs = [
+  "ca-certificates", "fonts-liberation",
+  "libasound2t64", "libatk-bridge2.0-0", "libatk1.0-0", "libatspi2.0-0",
+  "libcairo2", "libcups2", "libdbus-1-3", "libdrm2", "libexpat1",
+  "libfontconfig1", "libgbm1", "libglib2.0-0", "libgtk-3-0",
+  "libnspr4", "libnss3", "libpango-1.0-0", "libpangocairo-1.0-0",
+  "libx11-6", "libx11-xcb1", "libxcb1", "libxcomposite1", "libxcursor1",
+  "libxdamage1", "libxext6", "libxfixes3", "libxi6", "libxkbcommon0",
+  "libxrandr2", "libxrender1", "libxss1", "libxtst6",
+]

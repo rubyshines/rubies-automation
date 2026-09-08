@@ -72,4 +72,4 @@ function autoLinkProducts(text) {
   return `<p>${html.replace(/\n/g, '<br>')}</p>`;
 }
 
-module.exports = { autoLinkProducts, escapeHtml, markdownToPlainText };
+module.exports = { autoLinkProducts, escapeHtml, markdownToPlainText, MD_LINK };
