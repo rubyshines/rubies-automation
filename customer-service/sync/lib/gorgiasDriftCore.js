@@ -46,26 +46,32 @@ async function fetchOpenGorgiasTickets(gorgias) {
  * junk that nothing reads); without it the first run would trawl years of
  * backlog. Anything older than the floor predates the current intake era
  * and is handled by the one-off backfill, not the nightly sweep.
+ *
+ * `since` + `field` override the day-count floor for the webhook server's
+ * fast path, which wants "touched since the last tick": that is an
+ * `updated_datetime` walk, because a days-old ticket that just received a
+ * reply is new activity however old its created date is.
  */
-async function fetchOpenSpamTickets(gorgias, { sinceDays = 60, maxPages = 30 } = {}) {
-  const floor = new Date(Date.now() - sinceDays * 86400000);
+async function fetchOpenSpamTickets(gorgias, { sinceDays = 60, maxPages = 30, since = null, field = 'created_datetime' } = {}) {
+  const floor = since ? new Date(since) : new Date(Date.now() - sinceDays * 86400000);
+  const stamp = (t) => new Date(t[field] || t.created_datetime);
   const found = [];
   let cursor = null;
   for (let page = 0; page < maxPages; page++) {
     const { data: tickets, nextCursor } = await gorgias.getTickets({
       cursor,
       limit: 100,
-      order_by: 'created_datetime:desc',
+      order_by: `${field}:desc`,
     });
     if (!tickets.length) break;
     for (const t of tickets) {
       const spam = t.spam === true || t.spam === 'True' || t.spam === 'true';
-      if (spam && t.status === 'open' && new Date(t.created_datetime) >= floor) {
+      if (spam && t.status === 'open' && stamp(t) >= floor) {
         found.push(t);
       }
     }
     const oldest = tickets[tickets.length - 1];
-    if (new Date(oldest.created_datetime) < floor) break;
+    if (stamp(oldest) < floor) break;
     cursor = nextCursor;
     if (!cursor) break;
     await gorgias.delay(300);

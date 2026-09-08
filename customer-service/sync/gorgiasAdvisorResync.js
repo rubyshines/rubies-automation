@@ -23,7 +23,6 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const {
   fetchOpenGorgiasTickets,
-  fetchOpenSpamTickets,
   fetchAdvisorTicketsFor,
   findAdvisorOnlyOpen,
   countGorgiasMessages,
@@ -219,78 +218,30 @@ async function run({ execute = false } = {}) {
 
   // ── Step 4b¾: Spam-flagged open tickets — the population the views hide ──
   //    Gorgias's spam detector mislabels real customers, the views exclude
-  //    spam upstream, and the webhook skips unknown spam-flagged senders on
-  //    purpose (known customers override the flag there in real time). This
-  //    step is the designed home for everyone else: a known customer or a
-  //    triage-CUSTOMER verdict gets DRAFTED via normal intake — unlike a
-  //    regular real miss, which is report-only, because a spam-flagged miss
-  //    is a deferral by design, not an intake bug to keep visible. Pitches
-  //    get closed with a note by triage, so the junk stops accumulating and
-  //    nothing is dropped silently. Everything lands in the digest.
+  //    spam upstream, and Gorgias delivers no message webhook for them at all,
+  //    so the sweep is the only path in. The gate (sync/lib/spamGate.js, also
+  //    ticked by the webhook server every 15 min) DRAFTS persons — a known
+  //    customer, a triage-CUSTOMER verdict, or a follow-up reply on a ticket
+  //    it already rescued — via normal intake, unlike a regular real miss,
+  //    which is report-only, because a spam-flagged miss is a deferral by
+  //    design, not an intake bug to keep visible. Pitches get closed with a
+  //    note by triage, so the junk stops accumulating and nothing is dropped
+  //    silently. Everything lands in the digest.
 
-  const spamRecovered = [];
-  {
-    // Read-only in dry runs: list candidates, spend nothing, write nothing.
-    const spamTickets = await fetchOpenSpamTickets(gorgias);
-    // Cost cap, not a coverage cap: each unknown sender costs an Opus classify.
-    // Steady state is a handful/day; a flood waits for the next night's run.
-    const MAX_SPAM_GATE_PER_RUN = 30;
-    const gated = spamTickets.slice(0, MAX_SPAM_GATE_PER_RUN);
-    if (spamTickets.length > gated.length) {
-      console.log(`  [spam-gate] ${spamTickets.length} open spam-flagged tickets; gating first ${gated.length}, rest deferred to next run`);
-    }
-    if (gated.length) {
-      const { hasOrderHistory } = require('../lib/knownCustomer');
-      const { triageDriftTicket } = require('../lib/driftTriage');
-      const spamIds = gated.map(t => t.id);
-      const { byGorgiasId: spamAdvisorMap } = await fetchAdvisorTicketsFor(supabase, spamIds, 'id, gorgias_ticket_id');
-      const { data: spamDrafts } = await supabase
-        .from('cs_ai_drafts')
-        .select('gorgias_ticket_id, gorgias_message_id')
-        .in('gorgias_ticket_id', spamIds);
-      const spamDraftIds = new Map();
-      for (const d of (spamDrafts || [])) {
-        if (!spamDraftIds.has(d.gorgias_ticket_id)) spamDraftIds.set(d.gorgias_ticket_id, new Set());
-        spamDraftIds.get(d.gorgias_ticket_id).add(d.gorgias_message_id);
-      }
+  const { runSpamGate } = require('./lib/spamGate');
+  const gate = await runSpamGate({ supabase, gorgias, aiBotId, dryRun });
+  const spamRecovered = gate.spamRecovered;
+  autoResolved.push(...gate.autoResolved);
 
-      for (const sTicket of gated) {
-        const email = sTicket.customer?.email || null;
-        try {
-          const known = email ? await hasOrderHistory(supabase, email) : false;
-          if (dryRun) {
-            console.log(`  [spam-gate] #${sTicket.id} ${email || '?'} — would ${known ? 'draft (known customer)' : 'triage (unknown sender)'}`);
-            continue;
-          }
-          if (!known) {
-            if (spamAdvisorMap.get(sTicket.id)) continue; // already in our system — regular drift machinery owns it
-            const messages = await gorgias.getTicketMessages(sTicket.id);
-            // spamFlagged flips the classifier's uncertainty tie-break to JUNK:
-            // Gorgias already flagged these, so ambiguity is not enough to draft.
-            const { disposition, reason } = await triageDriftTicket({
-              supabase, gorgias, ticket: sTicket, messages, spamFlagged: true,
-            });
-            if (disposition !== 'real_miss') {
-              autoResolved.push({ ticketId: sTicket.id, email: email || '?', disposition, reason: `spam-flagged: ${reason}` });
-              console.log(`  [spam-gate] #${sTicket.id}: auto-resolved (${disposition}) — ${reason}`);
-              await gorgias.delay(300);
-              continue;
-            }
-          }
-          const existingIds = spamDraftIds.get(sTicket.id) || new Set();
-          const result = await processTicket(supabase, sTicket, aiBotId, existingIds);
-          if (result?.skipped) {
-            console.log(`  [spam-gate] #${sTicket.id}: skipped by intake (${result.reason || 'no new message'})`);
-          } else {
-            spamRecovered.push({ ticketId: sTicket.id, email: email || '?', via: known ? 'known customer' : 'triage: customer' });
-            console.log(`  [spam-gate] #${sTicket.id}: drafted (${known ? 'known customer' : 'triage said customer'})`);
-          }
-        } catch (e) {
-          console.warn(`  [spam-gate] #${sTicket.id}: failed (${e.message}) — will retry next run`);
-        }
-        await gorgias.delay(300);
-      }
-    }
+  // A snoozed spam-flagged ticket with a fresh customer reply is found by the
+  // Advisor-drift pass above ("missing messages — snoozed") AND rescued here.
+  // Once the gate has drafted it, it is handled, not a miss — reporting it
+  // again would keep it in the digest every morning with nothing to do.
+  if (gate.recoveredIds.size) {
+    const before = realMisses.length;
+    realMisses = realMisses.filter(({ ticket }) => !gate.recoveredIds.has(ticket.id));
+    const dropped = before - realMisses.length;
+    if (dropped) console.log(`  [spam-gate] ${dropped} real miss(es) rescued by the gate — dropped from the report`);
   }
 
   // ── Step 4b⅞: Stale pending drafts on long-closed tickets ──

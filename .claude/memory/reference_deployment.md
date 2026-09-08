@@ -12,7 +12,7 @@ All services share one codebase (rubies-automations). Each service has its own `
 
 | Service | Entry Point | Config | Notes |
 |---------|------------|--------|-------|
-| **rubies-automation** (webhook server, main) | `node webhooks/server.js` | root `railway.toml` | Express server on Railway-assigned port. Receives Shopify, Gorgias, Gmail push webhooks. Also runs two sweeps: the warehouse-hold backstop (`reconcilePendingHolds`, every 3 min) and unnotified pre-order outreach (`sweepUnnotifiedPreOrders`, every 10 min, seeds customer drafts). Env-var source of truth. Auto-deploys on push to main. |
+| **rubies-automation** (webhook server, main) | `node webhooks/server.js` | root `railway.toml` | Express server on Railway-assigned port. Receives Shopify, Gorgias, Gmail push webhooks. Also runs three sweeps: the warehouse-hold backstop (`reconcilePendingHolds`, every 3 min), unnotified pre-order outreach (`sweepUnnotifiedPreOrders`, every 10 min, seeds customer drafts), and the Gorgias spam-gate fast path (`runSpamGate`, every 15 min over tickets updated since the last tick — Gorgias sends no webhook for spam-flagged customer messages). Env-var source of truth. Auto-deploys on push to main. |
 | **cs-dashboard** | `node customer-service/dashboard/server.js` | `railway/cs-dashboard.toml` | Ops dashboard at **ops.rubyshines.com**. The Railway-deployed twin of the local 3847 dev server. Auto-deploys on push to main. |
 
 ### Cron Services

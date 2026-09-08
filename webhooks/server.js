@@ -225,6 +225,55 @@ const preOrderSweepTimer = setInterval(async () => {
 }, PREORDER_SWEEP_MS);
 preOrderSweepTimer.unref();
 
+// Spam-gate fast path. Gorgias delivers no `ticket-message-created` for a
+// customer message on a spam-flagged ticket (verified 2026-09-08: zero webhook
+// events for any of them, while an agent reply on the same ticket did fire),
+// so the known-customer override in handlers/gorgiasTickets.js can never run
+// and a mislabelled customer's only way in is a sweep. The nightly reconcile
+// covers the whole population; this tick covers what Gorgias touched since
+// the last one, so a known customer or a follow-up reply waits minutes rather
+// than a day. Spend is bounded: an unknown sender is classified once, after
+// which the ticket is either closed or in our system, and a known ticket costs
+// one messages fetch unless it actually has a new customer message.
+// See customer-service/sync/lib/spamGate.js.
+const {
+  runSpamGate,
+  SPAM_GATE_SWEEP_MS,
+  SPAM_GATE_OVERLAP_MS,
+  SPAM_GATE_FIRST_WINDOW_MS,
+} = require('../customer-service/sync/lib/spamGate');
+let spamGateRunning = false;
+let spamGateLastTick = Date.now() - SPAM_GATE_FIRST_WINDOW_MS;
+const spamGateTimer = setInterval(async () => {
+  if (spamGateRunning) return; // never overlap a slow sweep with the next tick
+  spamGateRunning = true;
+  const tickStart = Date.now();
+  try {
+    const { getSupabaseClient } = require('../shared/supabaseClient');
+    const gorgias = require('../customer-service/import/gorgiasClient');
+    const { getAiBotUserId } = require('../customer-service/intake/processGorgiasTickets');
+    const aiBotId = await getAiBotUserId();
+    const r = await runSpamGate({
+      supabase: getSupabaseClient(),
+      gorgias,
+      aiBotId,
+      updatedAfter: new Date(spamGateLastTick - SPAM_GATE_OVERLAP_MS),
+      log: (m) => console.log(`[spam-gate]${m}`),
+      warn: (m) => console.warn(`[spam-gate]${m}`),
+    });
+    // Advance only after a clean pass, so a failed tick is re-covered next time.
+    spamGateLastTick = tickStart;
+    if (r.spamRecovered.length || r.autoResolved.length) {
+      console.log(`[spam-gate] tick: ${r.candidates} candidate(s), ${r.spamRecovered.length} drafted, ${r.autoResolved.length} closed`);
+    }
+  } catch (e) {
+    console.error(`[spam-gate] sweep error: ${e.message}`);
+  } finally {
+    spamGateRunning = false;
+  }
+}, SPAM_GATE_SWEEP_MS);
+spamGateTimer.unref();
+
 // B2B follow-up send pass. The daily sync writes a scheduled_send_at on each
 // due follow-up, in the RECIPIENT's business hours; this is what notices the
 // moment has arrived. Fifteen minutes is fine granularity for a slot inside a
