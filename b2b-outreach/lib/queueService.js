@@ -22,6 +22,7 @@
  */
 const { assembleQueue, deferredSince, replyLandedAfter, humanAge } = require('./queue');
 const { buildContexts } = require('./queueContext');
+const { nextScheduledTouch } = require('./cadence');
 const { reconcileThreads, discoverCompanyThreads } = require('./manualSendReconcile');
 const { generateDraft, fetchDonationRouting } = require('./outreachAdvisor');
 const { sendB2bEmail, resolveRecipient, resolveDelivery, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
@@ -1069,7 +1070,7 @@ async function fetchCompanyThreads(sb, companyId) {
   const gmailSync = emails.length ? startCompanyGmailSync(sb, companyId, emails) : 'skipped';
 
   // Round 2 — messages + orders + donation routing in parallel (each depends on round 1).
-  const [messagesRes, ordersRes, msgCountRes, donation] = await Promise.all([
+  const round2 = await Promise.all([
     threads.length
       ? sb.from('b2b_messages')
         .select('thread_id, direction, message_type, from_email, to_email, cc_email, body_text, sent_at, source, undelivered_at')
@@ -1103,7 +1104,16 @@ async function fetchCompanyThreads(sb, companyId) {
         return null;
       })
       : Promise.resolve(null),
+    // The same context the queue reasons from, for one company, so the header
+    // can say what the cadence will do next. Fail-soft: no context, no line.
+    companyRes.data
+      ? buildContexts(sb, [companyRes.data]).catch(err => {
+        console.error(`[queueService] context build failed: ${err.message}`);
+        return new Map();
+      })
+      : Promise.resolve(new Map()),
   ]);
+  const [messagesRes, ordersRes, msgCountRes, donation, ctxMap] = round2;
   if (messagesRes.error) throw new Error(messagesRes.error.message);
   if (ordersRes.error) console.error(`[queueService] orders lookup failed: ${ordersRes.error.message}`);
 
@@ -1153,6 +1163,9 @@ async function fetchCompanyThreads(sb, companyId) {
     recipient: recipient?.mode === 'email' ? recipient : null,
     delivery: recipient || { mode: 'none' },
     message_count: msgCountRes?.count ?? null,
+    // The cadence's own next date for this company, or null. The display the
+    // snooze deprecation (2026-08-27) said was missing.
+    next_touch: company ? nextScheduledTouch(company, ctxMap.get(company.id) || {}, new Date()) : null,
     donation: donation ? {
       shipments: donation.shipments, items: donation.items,
       firstAt: donation.firstAt, lastAt: donation.lastAt,

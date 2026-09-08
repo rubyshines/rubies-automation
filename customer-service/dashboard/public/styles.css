@@ -5753,6 +5753,9 @@ main { height: calc(100vh - 56px); }
   font-size: 12px;
   color: var(--text-secondary);
 }
+/* The cadence's own next date, quiet and teal like the recap's Next line —
+   it is the same voice: what happens next, on its own. */
+.outreach-next-touch { color: var(--teal); white-space: nowrap; }
 .outreach-detail-head h2 {
   font-size: 18px;
   font-weight: 600;

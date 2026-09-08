@@ -6467,6 +6467,30 @@ function resumeOutreach() {
   applyOutreachTriage({ action: 'resume' }, 'Back in the queue');
 }
 
+// "Nothing to send now" on a reminder-only (Tier 5) row. Unlike the deferrals
+// this is worklist burn-down, so it advances to the next row the way a send
+// does rather than staying on a company that just left the queue.
+async function clearDueOutreach() {
+  const companyId = outreachSelectedId;
+  if (!companyId) return;
+  try {
+    await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/triage`, { method: 'POST', body: { action: 'clear_due' } });
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+    return;
+  }
+  const touch = outreachHistory?.next_touch;
+  showToast(touch ? `Nothing to send — back for the ${touch.label} on ${fmtTouchDate(touch.date)}` : 'Nothing to send — the cadence will bring them back', 'success');
+  outreachAdvancePast(companyId);
+}
+
+/** "Oct 1" from a YYYY-MM-DD, without the timezone shifting it a day. */
+function fmtTouchDate(ymd) {
+  const [y, m, d] = String(ymd || '').split('-').map(Number);
+  if (!y || !m || !d) return ymd || '';
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', ...(y !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+}
+
 // Rebuild the summary in place. Sonnet over the whole conversation, so it takes
 // a couple of seconds — spin the control rather than leaving a dead button.
 async function refreshOutreachSummary({ silent = false } = {}) {
@@ -7275,10 +7299,17 @@ function outreachListHtml(title, items, cls) {
 function outreachHeaderHtml(entry) {
   const c = outreachHistory?.company || null;
   const channelLabel = OUTREACH_CHANNEL_LABELS[entry.channel] || entry.channel || '?';
+  // What the cadence has on its own calendar for this company. Shown whenever
+  // nothing is due right now, and beside a reminder-only (Tier 5) row, so
+  // "Nothing to send" is a decision made with the next date in view.
+  const touch = outreachHistory?.next_touch;
+  const nextLine = touch && (!entry.tier || entry.tier === 5)
+    ? `<span class="outreach-next-touch" title="What the cadence will do next, on its own">Next: ${esc(touch.label)} · ${esc(fmtTouchDate(touch.date))}</span>`
+    : '';
   const due = entry.tier && entry.reason
     ? `<span class="outreach-due" title="Tier ${entry.tier}">${entry.tier === 1
-        ? '<span class="badge badge-reply">reply needed</span> ' : 'Due: '}${esc(entry.reason)}</span>`
-    : '';
+        ? '<span class="badge badge-reply">reply needed</span> ' : entry.tier === 5 ? '' : 'Due: '}${esc(entry.reason)}${nextLine ? ' · ' + nextLine : ''}</span>`
+    : (nextLine ? `<span class="outreach-due">${nextLine}</span>` : '');
   return `
     <div class="outreach-detail-head" id="outreach-detail-head">
       <h2>${esc(entry.company_name)}</h2>
@@ -7326,10 +7357,17 @@ function outreachActionsHtml(entry, draft) {
   const deferred = !!(c && (c.on_me_at || c.outreach_paused_at
     || (c.snoozed_until && new Date(c.snoozed_until) > new Date())));
   const waitingThreadId = entry.tier === 1 ? entry.thread_id : null;
+  // A Tier-5 row is a reminder date, not a request: the same "nothing needed"
+  // decision as "Nothing to reply to", clearing the date instead of a thread.
+  const reminderOnly = entry.tier === 5;
   const companyGhosts = [
     waitingThreadId
       ? `<button class="btn btn-ghost" onclick="concludeOutreachConversation(${waitingThreadId}, this)"
           title="Closes the conversation holding this in the queue — the cadence still comes back on schedule">Nothing to reply to</button>`
+      : '',
+    reminderOnly
+      ? `<button class="btn btn-ghost" onclick="clearDueOutreach()"
+          title="Clears the reminder date from your last message. The cadence brings them back on its own trigger — see the next touch in the header.">Nothing to send</button>`
       : '',
     deferred
       ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()">${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`

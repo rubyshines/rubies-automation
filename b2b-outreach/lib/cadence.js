@@ -557,8 +557,96 @@ function evaluateDue(company, ctx, now = new Date()) {
   return null;
 }
 
+// What the operator reads for a scheduled touch.
+const TOUCH_LABELS = {
+  community_checkin: 'October partner check-in',
+  reorder_nudge: 'reorder nudge',
+  first_order_checkin: 'first-order check-in',
+  content_prompt: 'monthly content prompt',
+  followup_1: 'follow-up if they do not reply',
+  followup_2: 'second follow-up if they do not reply',
+};
+
+/**
+ * The next touch the cadence has on its own calendar for this company, or
+ * null. PURE, and a PREDICTION: it walks the same rules evaluateDue applies,
+ * but asks "when" instead of "now?". Only the tracks with a date the rules
+ * can name are here; a signal-driven touch (a reply, an order) has no date.
+ *
+ * This is the display the 2026-08-27 snooze decision said was missing: the
+ * next-contact date was stored and shown nowhere, so the only way to be sure
+ * the system would not act was to stop it. With the date on screen, "nothing
+ * to send now" is a safe click rather than a leap.
+ *
+ * @returns {{ message_type, date: 'YYYY-MM-DD', label }|null}
+ */
+function nextScheduledTouch(company, ctx = {}, now = new Date()) {
+  if (!company || company.relationship_state === 'lost') return null;
+  if (company.outreach_paused_at) return null;
+  const rtype = company.relationship_type;
+  const state = company.relationship_state;
+  const isRetailer = rtype === 'wholesale' || rtype === 'retailer';
+  const isOrg = rtype === 'lgbtq_org';
+  const isAffiliate = rtype === 'affiliate' || (company.program_flags && company.program_flags.affiliate);
+  const iso = d => d.toISOString().slice(0, 10);
+  const plusDays = (from, days) => { const d = new Date(from); d.setUTCDate(d.getUTCDate() + days); return d; };
+  const candidates = [];
+
+  // The follow-up ladder, if the last thing we sent is still unanswered.
+  // Business days approximated at 7/5 calendar days: the label says "if they
+  // do not reply", and a day either way does not change what it means.
+  if (ctx.lastOutboundType && ctx.lastOutboundMessageAt
+    && CHASEABLE_SOURCES.has(ctx.lastOutboundSource) && !answeredSince(ctx, ctx.lastOutboundMessageAt)
+    && daysSince(ctx.lastOutboundMessageAt, now) <= FOLLOWUP_MAX_AGE_DAYS) {
+    const type = ctx.lastOutboundType;
+    const wait = type === 'followup_1' ? FOLLOWUP_2_AFTER_BUSINESS_DAYS : CHASE_AFTER_BUSINESS_DAYS[type];
+    if (wait && type !== 'followup_2') {
+      candidates.push({
+        message_type: type === 'followup_1' ? 'followup_2' : 'followup_1',
+        date: iso(plusDays(ctx.lastOutboundMessageAt, Math.ceil(wait * 7 / 5))),
+      });
+    }
+  }
+
+  if (isOrg && state === 'active') {
+    // Next October in which the 300-day threshold will have passed.
+    let year = now.getUTCFullYear();
+    if (now.getUTCMonth() + 1 > 10) year += 1;
+    let october = new Date(Date.UTC(year, 9, 1));
+    if (ctx.lastOutboundAt && daysSince(ctx.lastOutboundAt, october) < 300) {
+      october = new Date(Date.UTC(year + 1, 9, 1));
+    }
+    candidates.push({ message_type: 'community_checkin', date: iso(october) });
+  }
+
+  if (isRetailer && state === 'active') {
+    if (ctx.orderCount === 1 && ctx.firstOrderFulfilledAt) {
+      const d = daysSince(ctx.firstOrderFulfilledAt, now);
+      if (d != null && d < 21) candidates.push({ message_type: 'first_order_checkin', date: iso(plusDays(ctx.firstOrderFulfilledAt, 21)) });
+    }
+    const reorderThreshold = company.metadata?.reorder_threshold_days || 90;
+    if (ctx.lastOrderAt && ctx.orderCount > 1) {
+      candidates.push({ message_type: 'reorder_nudge', date: iso(plusDays(ctx.lastOrderAt, reorderThreshold)) });
+    }
+  }
+
+  if (isAffiliate && state === 'active') {
+    const lastPrompt = ctx.lastTypeSentAt ? ctx.lastTypeSentAt('content_prompt') : null;
+    candidates.push({ message_type: 'content_prompt', date: iso(lastPrompt ? plusDays(lastPrompt, 30) : now) });
+  }
+
+  // Nearest future date wins. A date already behind us is not a prediction —
+  // it is either due right now (the queue says so) or blocked by a gate.
+  const today = iso(now);
+  const future = candidates.filter(c => c.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  if (!future.length) return null;
+  return { ...future[0], label: TOUCH_LABELS[future[0].message_type] || future[0].message_type.replace(/_/g, ' ') };
+}
+
 module.exports = {
   NEXT_ACTION_DAYS,
+  TOUCH_LABELS,
+  nextScheduledTouch,
   SAMPLES_CHECKIN_MAX_AGE_DAYS,
   FIRST_TOUCH_TYPES,
   INITIATING_TYPES,
