@@ -31,6 +31,7 @@ const {
 const { sendB2bEmail, resolveDelivery, addressList, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
 const { fetchCalendarEvents, checkSlotFree, formatTimeInZone, formatDayInZone } = require('./availability');
 const { isValidTimeZone } = require('./meetingTimezone');
+const { greetingName } = require('./messageTemplates');
 
 const DEFAULT_DURATION_MIN = 30;
 const DEFAULT_MESSAGE_TYPE = 'meeting_confirmation';
@@ -43,7 +44,7 @@ function meetingTitle(companyName) {
 /**
  * The one sentence the panel drops into the draft. Deterministic, not AI.
  *
- * Wording is Jamie's own (2026-08-20). Terse on purpose: the rule that killed
+ * Wording is Jamie's own (2026-08-20, reworded 2026-09-08). Terse on purpose: the rule that killed
  * the old bloated scheduling paragraph bans narrating the mechanics, so this
  * states a completed fact and stops. The Meet link is not repeated — it is in
  * the invite.
@@ -59,9 +60,22 @@ function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, t
   const day = formatDayInZone(d, businessTimeZone);
   const ours = formatTimeInZone(d, businessTimeZone);
   if (theirTimeZone && isValidTimeZone(theirTimeZone) && theirTimeZone !== businessTimeZone) {
-    return `I just created an invite for ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
+    return `Ok, I just sent an invite for ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
   }
-  return `I just created an invite for ${day} at ${ours} ET.`;
+  return `Ok, I just sent an invite for ${day} at ${ours} ET.`;
+}
+
+/**
+ * The whole reply around that sentence — greeting named after whoever the
+ * email will go to, the sentence, a closing line, Jamie's sign-off. What an
+ * empty composer is filled with when a slot is picked; a composer already
+ * holding text gets only the sentence. Pure.
+ */
+function renderConfirmationBody({ firstName, start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null }) {
+  // Lazy: messageTemplates reaches back into this module for meeting lookups.
+  const { fillMeetingConfirmation } = require('./messageTemplates');
+  const confirmationLine = renderConfirmationLine({ start, businessTimeZone, theirTimeZone });
+  return fillMeetingConfirmation({ firstName, confirmationLine }).body;
 }
 
 /**
@@ -166,6 +180,11 @@ async function scheduleMeeting(p = {}) {
     when_theirs: theirTz ? `${formatTimeInZone(startDate, theirTz)} (${theirTz})` : null,
     attendees,
     confirmation_line: renderConfirmationLine({ start: startDate, theirTimeZone: theirTz }),
+    // A To override carries no name, so the greeting falls back to "there"
+    // rather than naming the contact the operator just wrote around.
+    confirmation_body: renderConfirmationBody({
+      firstName: greetingName(delivery.name), start: startDate, theirTimeZone: theirTz,
+    }),
   };
   if (!confirmed) return preview;
 
@@ -429,6 +448,7 @@ module.exports = {
   scheduleMeeting,
   meetingTitle,
   renderConfirmationLine,
+  renderConfirmationBody,
   upcomingMeetingsByCompany,
   lastHeldMeetingsByCompany,
   dismissPostCallFollowup,

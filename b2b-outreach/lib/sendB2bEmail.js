@@ -315,7 +315,7 @@ async function resolveDelivery(sb, companyId) {
  *                     subject?, body, confirmed? }
  */
 /**
- * The panel writes "I just created an invite for …" into the draft the moment a
+ * The panel writes "Ok, I just sent an invite for …" into the draft the moment a
  * slot is CLICKED, but only Book & Send actually creates the event — and the
  * ordinary Send button sits right beside it. On 2026-08-20 that sent a partner a
  * message promising an invite that did not exist, with nothing anywhere to catch
@@ -328,7 +328,7 @@ async function resolveDelivery(sb, companyId) {
  * says "I made the event moments ago" — its b2b_meetings row is written after
  * this call, so the row cannot be the evidence on the legitimate path.
  */
-const INVITE_CLAIM = /\bI just created an invite for\b/i;
+const INVITE_CLAIM = /\bI just sent an invite for\b/i;
 
 /**
  * A recipient verified undeliverable gets refused BEFORE the Gmail call: the
@@ -369,7 +369,7 @@ async function assertInviteClaimIsBacked(sb, { company_id, body }) {
   return {
     ok: false,
     phase: 'unbacked_invite_claim',
-    error: 'This message says you just created an invite, but no meeting is booked for '
+    error: 'This message says you just sent an invite, but no meeting is booked for '
       + `${company_id}. Use "Book & Send" in the Schedule panel so the event is actually created, `
       + 'or remove that sentence. (If you booked it by hand in Google Calendar, re-send with '
       + 'allow_unbacked_invite_claim: true.)',

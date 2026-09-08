@@ -1,7 +1,7 @@
 /**
  * A message claiming a booked call must be backed by a booked call.
  *
- * The failure this pins (2026-08-20): clicking a slot writes "I just created an
+ * The failure this pins (2026-08-20): clicking a slot writes "Ok, I just sent an
  * invite for…" into the draft, but only Book & Send creates the event. Plain
  * Send sat right beside it, so a partner was told about an invite that did not
  * exist and nothing anywhere noticed.
@@ -19,7 +19,7 @@ function stubSb(rows, error = null) {
   return { from: () => chain };
 }
 
-const CLAIM = 'Hi Laura,\n\nI just created an invite for Wed 26 Aug at 10:00 AM ET.\n\nJamie';
+const CLAIM = 'Hi Laura,\n\nOk, I just sent an invite for Wed Aug 26 at 10:00 AM ET.\n\nJamie';
 
 test('a body with no invite claim is never blocked', async () => {
   const res = await assertInviteClaimIsBacked(stubSb([]), {
@@ -61,7 +61,8 @@ test('the claim pattern matches the sentence the panel writes, and little else',
   // Ordinary scheduling talk must not trip it.
   for (const benign of [
     'Shall I send you an invite once we agree a time?',
-    'I will create an invite after you confirm.',
+    'I will send an invite after you confirm.',
+    'I just sent the agreement over for you to sign.',
     'Thanks for the invite to your event!',
   ]) assert.ok(!INVITE_CLAIM.test(benign), `should not match: ${benign}`);
 });

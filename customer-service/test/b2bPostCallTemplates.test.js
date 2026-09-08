@@ -169,3 +169,29 @@ test('post_call_followup is wired but never auto-drafted', () => {
   assert.ok(NEXT_ACTION_DAYS.post_call_followup, 'needs a Tier-5 backstop after send');
   assert.ok(CHASE_AFTER_BUSINESS_DAYS.post_call_followup, 'the agreement ask gets chased if ignored');
 });
+
+test('the meeting confirmation is the whole reply, in Jamie\'s words, around the one sentence', () => {
+  const { fillMeetingConfirmation } = require('../../b2b-outreach/lib/messageTemplates');
+  const { renderConfirmationBody } = require('../../b2b-outreach/lib/scheduleMeeting');
+  const { SIGNATURE_NAME } = require('../lib/signatures');
+
+  const { body, attachments } = fillMeetingConfirmation({
+    firstName: 'Emma', confirmationLine: 'Ok, I just sent an invite for Fri Sept 25 at 3:00 PM ET (2:00 PM your time).',
+  });
+  assert.deepEqual(attachments, []);
+  assert.strictEqual(body,
+    'Hi Emma,\n\n'
+    + 'Ok, I just sent an invite for Fri Sept 25 at 3:00 PM ET (2:00 PM your time).\n\n'
+    + 'Looking forward to chatting.\n\n'
+    + 'Talk soon,\n\n'
+    + SIGNATURE_NAME + '\n[rubyshines.com](https://rubyshines.com)');
+  assert.ok(!body.includes('\u2014'), 'no em dashes in customer-facing copy');
+
+  // Through the schedule path: the sentence is rendered from the instant, both zones.
+  const full = renderConfirmationBody({
+    firstName: 'Emma', start: new Date('2026-09-25T19:00:00.000Z'), theirTimeZone: 'America/Chicago',
+  });
+  assert.match(full, /^Hi Emma,\n\nOk, I just sent an invite for Fri Sept 25 at 3:00 PM ET \(2:00 PM your time\)\.\n\nLooking forward to chatting\.\n\nTalk soon,/);
+  // No name on file: "there", never a blank greeting.
+  assert.match(renderConfirmationBody({ firstName: 'there', start: new Date('2026-09-25T19:00:00.000Z') }), /^Hi there,/);
+});

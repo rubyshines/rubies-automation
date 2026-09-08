@@ -105,7 +105,7 @@ const PENDING = {
   message_type: 'operator_message',
   variant_id: null,
   subject: null,
-  body: 'Hi Jessica,\n\nI just created an invite for Mon Aug 31 at 3:00 PM ET.',
+  body: 'Hi Jessica,\n\nOk, I just sent an invite for Mon Aug 31 at 3:00 PM ET.',
   status: 'pending',
   structured: {},
 };
@@ -114,7 +114,7 @@ const BOOK = {
   company_id: 'unity-conejo',
   start: START,
   thread_id: 537,
-  body: 'Hi Jessica,\n\nI just created an invite for Mon Aug 31 at 3:00 PM ET.',
+  body: 'Hi Jessica,\n\nOk, I just sent an invite for Mon Aug 31 at 3:00 PM ET.',
   confirmed: true,
   their_timezone: 'America/Los_Angeles',
 };
@@ -216,4 +216,13 @@ test('a failed send after the event is created leaves the draft pending', async 
   } finally {
     sendImpl = SENT_OK;
   }
+});
+
+test('the preview carries the whole reply, greeting whoever the invite goes to', async () => {
+  currentSb = fakeSb({ draft: null });
+  const res = await scheduleMeeting({ ...BOOK, confirmed: false, body: undefined });
+  assert.equal(res.ok, true);
+  assert.equal(res.phase, 'preview');
+  assert.match(res.confirmation_line, /^Ok, I just sent an invite for \w{3} \w{3,4} \d{1,2} at \d{1,2}:\d{2} [AP]M ET \(\d{1,2}:\d{2} [AP]M your time\)\.$/);
+  assert.ok(res.confirmation_body.startsWith(`Hi Jessica,\n\n${res.confirmation_line}\n\nLooking forward to chatting.\n\nTalk soon,`));
 });
