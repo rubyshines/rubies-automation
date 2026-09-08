@@ -62,8 +62,12 @@ const SKIP_DOMAINS = new Set([
 
 // Known domains → specific business area classification
 const KNOWN_DOMAINS = {
-  // Email marketing
+  // Email marketing — our own team's domains are deterministic so the Tier-3
+  // rule "a reply to our campaign is a customer" can never catch Sadie
+  // answering a campaign-draft thread (her replies quote the same subjects).
   'klaviyo.com': 'email_marketing',
+  'hopeteammarketing.com': 'email_marketing',
+  'playbook.media': 'email_marketing',
   // Finance / Legal
   'logankatz.com': 'finance_legal',
   'azaccounting.com': 'finance_legal',

@@ -5992,6 +5992,7 @@ function outreachInboundRowHtml(c) {
                value="${esc(c.inferred_name)}" onclick="event.stopPropagation()"
                title="Company name — becomes the record's id, fix it before adding" />
         ${c.pitch ? '<span class="badge outreach-inbound-pitch" title="The message reads like someone selling TO us, not a store or org — double-check, then Ignore">vendor pitch?</span>' : ''}
+        ${c.customer_orders ? `<span class="badge outreach-inbound-customer" title="This address has placed retail orders with us — probably a customer replying from work, not a store. Reply from Gmail, then Ignore">customer · ${c.customer_orders} order${c.customer_orders === 1 ? '' : 's'}</span>` : ''}
         <span class="outreach-channel-chip outreach-channel-${esc(c.channel)}">${esc(channelLabel)}</span>
       </div>
       <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}${c.country ? ` &middot; ${esc(c.country)}` : ''}</div>

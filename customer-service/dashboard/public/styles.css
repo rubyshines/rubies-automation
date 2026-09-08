@@ -5666,6 +5666,11 @@ main { height: calc(100vh - 56px); }
   color: #a16207;
   flex-shrink: 0;
 }
+.outreach-inbound-customer {
+  background: #dbeafe;
+  color: #1d4ed8;
+  flex-shrink: 0;
+}
 .outreach-inbound-body a { color: var(--teal); word-break: break-all; }
 .outreach-inbound-body {
   margin: 6px 0 4px;

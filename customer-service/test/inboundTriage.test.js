@@ -11,6 +11,7 @@ const assert = require('node:assert');
 
 const {
   deriveInboundCandidates,
+  applyOrderHistory,
   inferNameFromDomain,
   normalizeSender,
   parseEnrichment,
@@ -154,4 +155,28 @@ test('enrichment prompt carries the message, sender, and domain', () => {
   assert.match(p, /Interest in Partnering!/);
   assert.match(p, /BMC would love to partner/);
   assert.match(p, /org_name/);
+});
+
+test('a sender with retail orders is flagged with the count, everyone else reads 0 — never hidden', () => {
+  const rows = deriveInboundCandidates([
+    msg({ from_address: 'lizgayford@creativeoutdoor.com', subject: 'Re: Life Update From Jamie & Ruby', classification: 'wholesale' }),
+    msg({ gmail_message_id: 'g2', from_address: 'fearne@bluemountainclinic.org' }),
+  ], noKnown);
+  const history = new Map([['lizgayford@creativeoutdoor.com', { orders: 5, last_order_at: '2025-05-11T15:08:13+00:00' }]]);
+  applyOrderHistory(rows, history);
+  const liz = rows.find(r => r.domain === 'creativeoutdoor.com');
+  const org = rows.find(r => r.domain === 'bluemountainclinic.org');
+  assert.equal(liz.customer_orders, 5);
+  assert.equal(liz.customer_last_order_at, '2025-05-11T15:08:13+00:00');
+  assert.equal(org.customer_orders, 0);
+  assert.equal(org.customer_last_order_at, null);
+  assert.equal(rows.length, 2, 'a customer is badged, not dropped');
+});
+
+test('order-history match is case-insensitive on the sender and survives a missing lookup', () => {
+  const rows = deriveInboundCandidates([msg({ from_address: 'Liz@CreativeOutdoor.com' })], noKnown);
+  applyOrderHistory(rows, new Map([['liz@creativeoutdoor.com', { orders: 1, last_order_at: '2024-01-01' }]]));
+  assert.equal(rows[0].customer_orders, 1);
+  applyOrderHistory(rows, undefined);
+  assert.equal(rows[0].customer_orders, 0);
 });

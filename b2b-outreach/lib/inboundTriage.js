@@ -169,10 +169,34 @@ async function enrichCandidates(candidates) {
     c.pitch = e.pitch;
     c.name_source = 'ai';
   }));
-  // Likely vendor pitches sink to the bottom, badged — flagged rather than
-  // hidden, because a wrong spam guess that silently drops a real org is the
-  // worse failure. Stable sort keeps newest-first inside each group.
-  candidates.sort((a, b) => (a.pitch ? 1 : 0) - (b.pitch ? 1 : 0));
+  // Likely vendor pitches and known retail customers sink to the bottom,
+  // badged — flagged rather than hidden, because a wrong guess that silently
+  // drops a real org is the worse failure. Stable sort keeps newest-first
+  // inside each group.
+  candidates.sort((a, b) => (a.pitch || a.customer_orders ? 1 : 0) - (b.pitch || b.customer_orders ? 1 : 0));
+  return candidates;
+}
+
+// ── Retail-customer flag ────────────────────────────────────────────────────
+// A customer answering our newsletter from a work address is, on headers
+// alone, a company writing in: identifying domain, corporate signature, no
+// order talk. The classifier reads as wholesale, the strip lists them, and
+// Haiku names their employer as the prospect (COA Group of Companies, a
+// five-order customer, 2026-09-06). The orders table settles it and the
+// operator cannot see it from the strip, so the row carries the fact.
+// Mechanical lookup (CLAUDE.md exception 1); the decision stays with the
+// operator, who now knows what they are looking at.
+
+/**
+ * Attach order history to candidates. Pure — `byEmail` is the lookup result
+ * (lowercased email → {orders, last_order_at}). Mutates and returns the list.
+ */
+function applyOrderHistory(candidates, byEmail) {
+  for (const c of candidates || []) {
+    const h = byEmail?.get(String(c.sender_email || '').toLowerCase());
+    c.customer_orders = h ? h.orders : 0;
+    c.customer_last_order_at = h ? h.last_order_at : null;
+  }
   return candidates;
 }
 
@@ -226,7 +250,10 @@ async function fetchInboundCandidates(sb, { days = DEFAULT_WINDOW_DAYS } = {}) {
     if (data.length < 1000) break;
   }
   const known = await fetchKnown(sb);
-  return enrichCandidates(deriveInboundCandidates(messages, known));
+  const candidates = deriveInboundCandidates(messages, known);
+  const { orderHistoryByEmail } = require('../../customer-service/lib/knownCustomer');
+  applyOrderHistory(candidates, await orderHistoryByEmail(sb, candidates.map(c => c.sender_email)));
+  return enrichCandidates(candidates);
 }
 
 /**
@@ -303,6 +330,7 @@ async function dismissInboundSender(sb, { domain, name = null, reason = null } =
 
 module.exports = {
   deriveInboundCandidates,
+  applyOrderHistory,
   enrichCandidates,
   buildEnrichPrompt,
   parseEnrichment,

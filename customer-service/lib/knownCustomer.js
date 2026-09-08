@@ -47,4 +47,51 @@ async function hasOrderHistory(supabase, email) {
   }
 }
 
-module.exports = { hasOrderHistory };
+/**
+ * Order history for a batch of addresses at once: email (lowercased) →
+ * { orders, last_order_at }. Addresses with no orders are absent from the map.
+ *
+ * Same policy as hasOrderHistory, for callers that classify many senders per
+ * pass (the Gmail classifier's Tier-3 batch, the B2B "New inbound" strip): a
+ * customer replying to our newsletter from a work address reads, on headers
+ * alone, like a company writing in. The orders table is the one thing that
+ * settles it, and neither the model nor the operator can see it without this.
+ *
+ * Fail-soft to an empty map — a lookup error must never stop classification,
+ * it only withholds the hint.
+ *
+ * @param {object} supabase
+ * @param {string[]} emails
+ * @returns {Promise<Map<string, {orders: number, last_order_at: string}>>}
+ */
+async function orderHistoryByEmail(supabase, emails) {
+  const out = new Map();
+  const wanted = [...new Set((emails || []).map(e => String(e || '').trim().toLowerCase()).filter(Boolean))];
+  if (!wanted.length) return out;
+  try {
+    // customer_email is stored as Shopify sends it (normally lowercase); the
+    // batch match is exact on the lowercased address, which covers the same
+    // ground as hasOrderHistory's ilike for every address we have seen.
+    const { data, error } = await supabase
+      .from('orders')
+      .select('customer_email, created_at')
+      .in('customer_email', wanted)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if (error) {
+      console.warn(`[known-customer] batch orders lookup failed: ${error.message}`);
+      return out;
+    }
+    for (const row of data || []) {
+      const key = String(row.customer_email || '').toLowerCase();
+      const prev = out.get(key);
+      if (prev) prev.orders += 1;
+      else out.set(key, { orders: 1, last_order_at: row.created_at });
+    }
+  } catch (e) {
+    console.warn(`[known-customer] batch orders lookup threw: ${e.message}`);
+  }
+  return out;
+}
+
+module.exports = { hasOrderHistory, orderHistoryByEmail };

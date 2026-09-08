@@ -114,19 +114,34 @@ function classifyTier1(fromAddress) {
 // Tier 3: Claude Sonnet batch classification
 // ---------------------------------------------------------------------------
 
-async function classifyBatchTier3(messages) {
-  if (!messages.length) return [];
+/** "2025-05-11T15:08:13+00:00" → "2025-05". Pure. */
+function yearMonth(iso) {
+  return String(iso || '').slice(0, 7) || 'unknown';
+}
 
+/**
+ * The Tier-3 prompt. Pure, so a test can assert what the model is told.
+ *
+ * `history` is the orders lookup for this batch (email → {orders,
+ * last_order_at}); a sender with orders gets a "Sender on file" line. That is
+ * the mechanical fact the model cannot see from headers: a customer answering
+ * our newsletter from a work address carries a corporate signature and no
+ * order talk, and read as a wholesale lead at 0.55 (2026-09-06). The line
+ * gives the model the fact; the classification stays its call.
+ */
+function buildClassifyPrompt(messages, history = new Map()) {
   // Build the prompt with headers + a body preview. 600 chars, not 200: a
   // cold pitch opens with a friendly warm-up paragraph and states what it is
   // actually selling after it — Gerrie's CMMS pitch read as "local shop wants
   // to connect" because the sell started at char ~230 (2026-09-02).
   const emailSummaries = messages.map((msg, i) => {
     const bodyPreview = (msg.body_text || '').substring(0, 600).replace(/\n/g, ' ');
+    const h = history.get(String(msg.from_address || '').toLowerCase());
+    const onFile = h ? `\n  Sender on file: retail customer, ${h.orders} order${h.orders === 1 ? '' : 's'}, last ${yearMonth(h.last_order_at)}` : '';
     return `[${i}] From: ${msg.from_address} (${msg.from_name || 'unknown'})
   To: ${(msg.to_addresses || []).join(', ')}
   Subject: ${msg.subject || '(no subject)'}
-  Date: ${msg.date}
+  Date: ${msg.date}${onFile}
   Preview: ${bodyPreview}`;
   }).join('\n\n');
 
@@ -154,11 +169,21 @@ IMPORTANT: LGBTQ+ organizations reaching out for the first time are NEVER spam, 
 
 IMPORTANT: wholesale means they want to BUY or STOCK our products. A company pitching software, dashboards, marketing, agencies, or any service for OUR business is spam even when the pitch talks in wholesale-sounding language (reorders, inventory, stock levels, Shopify, sizes selling out) — that vocabulary is the bait, not the relationship. Ask: are they a store buying from us, or a vendor selling to us?
 
+IMPORTANT: a reply to one of OUR marketing emails is a customer writing back. The subject starts with "Re:" and continues with a campaign-style subject (for example "Life Update From Jamie & Ruby", "Read About RUBIES In The News!"), and the body responds to what the campaign said. Classify it customer_support, even when the signature names an employer — people answer newsletters from their work address, and a company name in a signature block is not a store asking to stock us. Treat such a reply as wholesale only when the body itself asks to stock or buy in bulk. It is never email_marketing: that category is our own marketing team's mail, not customers answering it.
+
+IMPORTANT: "Sender on file: retail customer" means that address has placed retail orders with us. Mail from a retail customer is customer_support unless the body is clearly about something else (for example, they now run a store and ask about stocking us).
+
 Return a JSON array with one object per email: [{"index": 0, "classification": "...", "confidence": 0.0-1.0}]
 Only return the JSON array, nothing else.
 
 Emails:
 ${emailSummaries}`;
+  return classifyPrompt;
+}
+
+async function classifyBatchTier3(messages, history = new Map()) {
+  if (!messages.length) return [];
+  const classifyPrompt = buildClassifyPrompt(messages, history);
 
   const PRIMARY_MODEL = MODELS.SONNET;
   const FALLBACK_MODEL = MODELS.HAIKU;
@@ -270,7 +295,11 @@ async function classifyMessages(messages) {
     const BATCH_SIZE = 20;
     for (let i = 0; i < needsTier3.length; i += BATCH_SIZE) {
       const batch = needsTier3.slice(i, i + BATCH_SIZE);
-      const aiResults = await classifyBatchTier3(batch);
+      // Mechanical lookup the model can't do itself (CLAUDE.md exception 1):
+      // which of these senders have placed orders with us. Fail-soft inside.
+      const { orderHistoryByEmail } = require('../../customer-service/lib/knownCustomer');
+      const history = await orderHistoryByEmail(getSupabaseClient(), batch.map(m => m.from_address));
+      const aiResults = await classifyBatchTier3(batch, history);
 
       for (const result of aiResults) {
         const msg = batch[result.index];
@@ -287,4 +316,4 @@ async function classifyMessages(messages) {
   return results;
 }
 
-module.exports = { classifyMessages, classifyTier1, extractDomain };
+module.exports = { classifyMessages, classifyTier1, extractDomain, buildClassifyPrompt };
