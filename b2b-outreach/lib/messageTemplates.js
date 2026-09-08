@@ -23,7 +23,7 @@
  * it measures advisor drift.
  */
 const { partnerDiscountPercent } = require('./donationAgreement');
-const { SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
+const { SIGNATURE_BLOCK_MD, SIGNATURE_NAME } = require('../../customer-service/lib/signatures');
 
 const ONBOARDING_SURVEY_URL = 'https://forms.gle/1Hq93BSiPrhJkgfB8';
 
@@ -110,6 +110,122 @@ function fillPartnerOnboarding({ firstName, discount, meetingDay }) {
     + "So if you are ever looking to place an order, you can send it my way and I'll take care of it.\n\n"
     + SIGN_OFF;
   return { body, attachments: [{ kind: 'partner_agreement' }] };
+}
+
+// ---------------------------------------------------------------------------
+// The follow-up ladder (2026-09-08)
+//
+// followup_1 / followup_2 were Opus drafts that auto-sent unreviewed, and the
+// prompt that shaped them ("add one new hook", never "just circling back") is
+// precisely the instruction that produces a sales pitch. Nothing customer-facing
+// leaves unreviewed unless it is fixed text, so the rungs are now the CS auto
+// follow-up's shape: rung 1 is one line; rung 2 says the earlier notes may have
+// gone to spam and quotes the message being chased, so a reader who sees only
+// this email still gets the whole ask. Both go as replies in the thread. Zero
+// model calls, same greeting resolution as every other template.
+// ---------------------------------------------------------------------------
+
+const FOLLOW_UP_TYPES = new Set(['followup_1', 'followup_2']);
+
+/**
+ * The quotable part of one of our outbound messages: everything above the
+ * valediction and signature. The signature is dropped because the send path
+ * normalises the FIRST "Jamie Alexander, RUBIES Founder" it finds — inside a
+ * quote that would splice a bare site line between two "> " lines — and
+ * because quoting your own sign-off is noise. Pure.
+ */
+function quotableBody(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  let end = lines.findIndex(l => l.includes(SIGNATURE_NAME));
+  if (end === -1) end = lines.length;
+  while (end > 0 && !lines[end - 1].trim()) end--;
+  // "Talk soon," / "Take care," sits on its own line just above the signature.
+  if (end > 0 && /^[A-Za-z][A-Za-z' ]{0,30},$/.test(lines[end - 1].trim())) end--;
+  while (end > 0 && !lines[end - 1].trim()) end--;
+  return lines.slice(0, end).join('\n').trim();
+}
+
+/** "> " on every line, the way every mail client quotes. Pure. */
+function quoteLines(text) {
+  return String(text || '').split('\n').map(l => (l.trim() ? `> ${l}` : '>')).join('\n');
+}
+
+/**
+ * The two rungs. `original` is the body of the message being chased; without
+ * one (thread lost, message never mirrored) rung 2 falls back to the one-liner
+ * rather than promising a quote it cannot show. Pure.
+ */
+function fillFollowUp({ firstName, message_type, original }) {
+  const greeting = `Hi ${firstName},`;
+  const quote = message_type === 'followup_2' ? quotableBody(original) : '';
+  if (quote) {
+    return {
+      body: `${greeting}\n\n`
+        + 'I wanted to follow up in case my earlier notes ended up in your spam folder. This is what I wrote:\n\n'
+        + `${quoteLines(quote)}\n\n`
+        + SIGN_OFF,
+      attachments: [],
+    };
+  }
+  return { body: `${greeting}\n\nI am following up on this.\n\n${SIGN_OFF}`, attachments: [] };
+}
+
+/**
+ * The message a rung is chasing: the newest outbound in the thread that is not
+ * itself a rung (so rung 2 quotes the intro, not rung 1). Null when the thread
+ * holds none we can show.
+ */
+async function chasedMessage(sb, { company_id, thread_id } = {}) {
+  if (!thread_id) return null;
+  const { data, error } = await sb.from('b2b_messages')
+    .select('id, body_text, message_type, sent_at')
+    .eq('company_id', company_id).eq('thread_id', thread_id).eq('direction', 'outbound')
+    .order('sent_at', { ascending: false }).limit(10);
+  if (error) throw new Error(`chased message lookup: ${error.message}`);
+  return (data || []).find(m => !FOLLOW_UP_TYPES.has(m.message_type) && (m.body_text || '').trim()) || null;
+}
+
+/**
+ * Build and store a rung as the company's pending draft. Same landing as an
+ * applied composer template: advisor null (fixed text, no model), thread
+ * inherited, provenance in structured.template_id / template_body. Called from
+ * generateDraftForCompany whenever the live queue entry is a rung, so every
+ * path that used to reach the advisor for a follow-up (nightly pass, panel
+ * Draft, console tool) gets the template instead. Returns the same shape the
+ * advisor path returns, as far as callers read it.
+ */
+async function composeFollowUp(sb, { company_id, entry } = {}) {
+  if (!FOLLOW_UP_TYPES.has(entry?.message_type)) throw new Error(`'${entry?.message_type}' is not a follow-up rung`);
+  const { resolveRecipient } = require('./sendB2bEmail');
+  const recipient = await resolveRecipient(sb, company_id);
+  const chased = await chasedMessage(sb, { company_id, thread_id: entry.thread_id });
+  const { body } = fillFollowUp({
+    firstName: greetingName(recipient?.name),
+    message_type: entry.message_type,
+    original: chased?.body_text || null,
+  });
+
+  // Lazy require: queueService sits above this module in the import graph.
+  const { composeDraft } = require('./queueService');
+  const composed = await composeDraft(sb, {
+    company_id, body, message_type: entry.message_type, thread_id: entry.thread_id || undefined,
+  });
+  const { data: row, error } = await sb.from('b2b_drafts')
+    .select('id, structured').eq('id', composed.draft_id).maybeSingle();
+  if (error) throw new Error(`draft readback: ${error.message}`);
+  const structured = {
+    ...(row?.structured || {}),
+    template_id: entry.message_type,
+    template_body: body,
+    ...(chased ? { quoted_message_id: chased.id } : {}),
+  };
+  const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', composed.draft_id);
+  if (uErr) throw new Error(`template structured update: ${uErr.message}`);
+
+  return {
+    draft_id: composed.draft_id, company_id, message_type: entry.message_type,
+    template_id: entry.message_type, email_subject: null, email_body: body, advisor: null,
+  };
 }
 
 const TEMPLATES = [
@@ -223,6 +339,12 @@ module.exports = {
   greetingName,
   fillSetupCall,
   fillPartnerOnboarding,
+  FOLLOW_UP_TYPES,
+  quotableBody,
+  quoteLines,
+  fillFollowUp,
+  chasedMessage,
+  composeFollowUp,
   templateContext,
   listTemplates,
   applyTemplate,

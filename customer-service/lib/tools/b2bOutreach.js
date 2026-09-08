@@ -94,7 +94,7 @@ async function handleDraft(input = {}) {
 
     const s = d.facts_to_verify?.length ? `\n\nFACTS TO VERIFY: ${d.facts_to_verify.join(' · ')}` : '';
     const c = d.open_commitments?.length ? `\nCOMMITMENTS: ${d.open_commitments.join(' · ')}` : '';
-    return text(`Draft #${d.draft_id} (${d.advisor}, ${d.message_type}, confidence ${d.confidence})\n\nSubject: ${d.email_subject}\n\n${d.email_body}${s}${c}\n\nSend with: send_b2b_email { company_id: "${input.company_id}", ... } — preview first, confirmed:true to send (currently gated OFF).`);
+    return text(`Draft #${d.draft_id} (${d.advisor || `template ${d.template_id}`}, ${d.message_type}${d.confidence ? `, confidence ${d.confidence}` : ''})\n\nSubject: ${d.email_subject}\n\n${d.email_body}${s}${c}\n\nSend with: send_b2b_email { company_id: "${input.company_id}", ... } — preview first, confirmed:true to send (currently gated OFF).`);
   } catch (err) {
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
   }

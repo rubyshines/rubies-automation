@@ -264,8 +264,9 @@ function describeEnrichFacts(facts) {
  * locked templates with one or two slots, the subject is fixed for intros, the
  * advisor is tool-less, and every one is operator-reviewed before send — the
  * "downstream check" that makes a cheaper model correct under the model policy.
- * Everything else (follow-up ladder drafts that auto-send unreviewed, reopened
- * threads, any forced draft of a non-initiating type) stays on Opus.
+ * Everything else (reopened threads, any forced draft of a non-initiating
+ * type) stays on Opus. The follow-up ladder never reaches this function: its
+ * rungs are fixed templates (messageTemplates.js), not drafts.
  * Edit-rate data (ai body vs sent body) is the tripwire: if Sonnet intros come
  * back rewritten, flip this back.
  */
@@ -377,6 +378,14 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
  * Supersedes any pending draft. Returns the inserted b2b_drafts row id + draft.
  */
 async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
+  // The ladder's rungs are fixed templates (messageTemplates.composeFollowUp,
+  // routed in generateDraftForCompany). Refused here rather than drafted so a
+  // new call site can never quietly put a model back in front of an unreviewed
+  // send.
+  const { FOLLOW_UP_TYPES } = require('./messageTemplates');
+  if (FOLLOW_UP_TYPES.has(queueEntry?.message_type)) {
+    throw new Error(`${queueEntry.message_type} is a fixed template, never an advisor draft — see messageTemplates.composeFollowUp`);
+  }
   const sb = getSupabaseClient();
   const ctx = await buildCompanyContext(sb, company_id);
   const advisor = pickAdvisor(ctx.company);

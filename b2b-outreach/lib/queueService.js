@@ -679,6 +679,14 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type, th
   // ladder. An explicit type is an instruction, not a suggestion.
   if (message_type) entry = { ...entry, message_type, forced_message_type: true };
 
+  // A follow-up rung is fixed text, never a draft to reason about (2026-09-08):
+  // the ladder auto-sends, and nothing that auto-sends is model-written.
+  // Routed here so the nightly pass, the panel's Draft button and the console
+  // tool all land on the template. Lazy require: messageTemplates requires
+  // this module back.
+  const { FOLLOW_UP_TYPES, composeFollowUp } = require('./messageTemplates');
+  if (FOLLOW_UP_TYPES.has(entry.message_type)) return composeFollowUp(sb, { company_id: company.id, entry });
+
   return generateDraft({ company_id: company.id, queueEntry: entry, steer, variant_id });
 }
 

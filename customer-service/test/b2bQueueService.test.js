@@ -450,14 +450,14 @@ test('intro subjects are fixed strings — A names the org, B asks the community
   assert.equal(introSubjectFor('nonsense', 'Youth OUTright'), null);
 });
 
-test('initiating types draft on Sonnet; replies and ladder drafts stay Opus', () => {
+test('initiating types draft on Sonnet; replies stay Opus', () => {
   for (const t of INITIATING_TYPES) {
     assert.equal(modelFor({ message_type: t }), MODELS.SONNET, t);
   }
   assert.equal(modelFor({ message_type: null }), MODELS.OPUS);         // Tier-1 reply
-  assert.equal(modelFor({ message_type: 'followup_1' }), MODELS.OPUS); // auto-sends unreviewed
-  assert.equal(modelFor({ message_type: 'followup_2' }), MODELS.OPUS);
   assert.equal(modelFor({ message_type: 'reply_close' }), MODELS.OPUS);
+  // followup_1 / followup_2 never reach modelFor: rungs are fixed templates,
+  // and generateDraft refuses them (b2bFollowUpTemplates.test.js).
 });
 
 test('INITIATING_TYPES is exactly the approved four', () => {
