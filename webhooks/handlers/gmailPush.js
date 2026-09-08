@@ -226,7 +226,7 @@ async function handle(payload, gmailPush) {
         received_at: m.date,
       });
       if (r.matched && !r.duplicate) {
-        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}`);
+        console.log(`[gmail-push] B2B reply correlated → ${r.company_id}${r.contact_loss ? ` (CONTACT LOSS: ${r.contact_loss})` : ''}${r.looks_like_order ? ' (looks like an ORDER)' : ''}${r.thankyou_closed ? ' (thank-you — thread closed)' : ''}`);
         // Detect at intake, not at reply time. The summary reads the new message
         // now and records any date they named for the next contact
         // (metadata.stated_next_touch), so whichever way Jamie closes the
@@ -238,6 +238,16 @@ async function handle(payload, gmailPush) {
             const { refreshCompanySummary } = require('../../b2b-outreach/lib/relationshipSummary');
             const s = await refreshCompanySummary(supabase, r.company_id);
             if (s.stated_next_touch) console.log(`[gmail-push] ${r.company_id}: they named a next touch — ${s.stated_next_touch.date} ("${s.stated_next_touch.basis}")${s.applied_next_action_date ? ' (applied: we had already answered)' : ''}`);
+            // The thank-you closer concluded this conversation just above,
+            // before the date was recorded, so it could not act on it. The
+            // summary applies a stated date only when WE answered last; here
+            // nobody will answer, and the close is what makes the date take
+            // effect — same step "Nothing to reply to" runs.
+            if (r.thankyou_closed && s.stated_next_touch && !s.applied_next_action_date) {
+              const { applyStatedNextTouch } = require('../../b2b-outreach/lib/queueService');
+              const a = await applyStatedNextTouch(supabase, r.company_id);
+              if (a.applied) console.log(`[gmail-push] ${r.company_id}: applied their date ${a.applied} after the thank-you close`);
+            }
           } catch (err) {
             console.warn(`[gmail-push] summary at intake skipped for ${r.company_id}: ${err.message}`);
           }

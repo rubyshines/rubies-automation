@@ -594,16 +594,27 @@ async function setThreadStatus(sb, { thread_id, status } = {}) {
   // third place a date they stated takes effect (with the send tool and the
   // manual-reply reconcile). The cadence still comes round on its own schedule
   // when they named nothing.
-  if (status === 'closed' && data.company_id) {
-    const { statedNextTouch } = require('./cadence');
-    const { data: c } = await sb.from('b2b_companies')
-      .select('id, metadata, next_action_date').eq('id', data.company_id).maybeSingle();
-    const stated = statedNextTouch(c);
-    if (stated && String(c.next_action_date || '').slice(0, 10) !== stated.date) {
-      await sb.from('b2b_companies').update({ next_action_date: stated.date, updated_at: new Date().toISOString() }).eq('id', c.id);
-    }
-  }
+  if (status === 'closed' && data.company_id) await applyStatedNextTouch(sb, data.company_id);
   return data;
+}
+
+/**
+ * A conversation has just been closed without a send: if they named a date for
+ * the next contact, make it the next-action date now. Shared by every close
+ * path that is not a send — the operator's "Nothing to reply to" above and the
+ * thank-you closer in gmailPush — so a partner's "thanks, talk in November"
+ * lands on the calendar whichever of them closed the thread. Idempotent.
+ *
+ * @returns {{ applied: string|null }} the date written, or null
+ */
+async function applyStatedNextTouch(sb, companyId, now = new Date()) {
+  const { statedNextTouch } = require('./cadence');
+  const { data: c } = await sb.from('b2b_companies')
+    .select('id, metadata, next_action_date').eq('id', companyId).maybeSingle();
+  const stated = c ? statedNextTouch(c, now) : null;
+  if (!stated || String(c.next_action_date || '').slice(0, 10) === stated.date) return { applied: null };
+  await sb.from('b2b_companies').update({ next_action_date: stated.date, updated_at: now.toISOString() }).eq('id', c.id);
+  return { applied: stated.date };
 }
 
 /**
@@ -1226,6 +1237,7 @@ module.exports = {
   searchCompanies,
   fetchActivity,
   setThreadStatus,
+  applyStatedNextTouch,
   reopenThread,
   DIRECTORY_STATUSES,
 };

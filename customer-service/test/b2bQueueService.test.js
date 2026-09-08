@@ -3,7 +3,46 @@ const assert = require('node:assert');
 const {
   draftSnippet, attachDrafts, mergePendingDraftEntries, SCHEDULED_STALE_HOURS,
   sanitizeSearchTerm, rollupThreads, companyThreadStatus, companyStage, matchReason,
+  applyStatedNextTouch,
 } = require('../../b2b-outreach/lib/queueService');
+
+// ── applyStatedNextTouch ────────────────────────────────────────────────────
+// The step every no-send close runs (operator "Nothing to reply to", the
+// thank-you closer): a date they named becomes the next-action date.
+
+function companyStub(row) {
+  const updates = [];
+  const sb = {
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: row }) }) }),
+      update: (patch) => ({ eq: (_k, id) => { updates.push({ id, ...patch }); return Promise.resolve({}); } }),
+    }),
+  };
+  return { sb, updates };
+}
+
+test('applyStatedNextTouch writes the date they named after a no-send close', async () => {
+  const now = new Date('2026-09-08T12:00:00Z');
+  const { sb, updates } = companyStub({
+    id: 'org', next_action_date: '2026-10-08',
+    metadata: { stated_next_touch: { date: '2026-11-15', basis: 'reach out mid-November' } },
+  });
+  assert.deepEqual(await applyStatedNextTouch(sb, 'org', now), { applied: '2026-11-15' });
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].next_action_date, '2026-11-15');
+});
+
+test('applyStatedNextTouch is idempotent and does nothing without a stated date', async () => {
+  const now = new Date('2026-09-08T12:00:00Z');
+  const already = companyStub({ id: 'org', next_action_date: '2026-11-15', metadata: { stated_next_touch: { date: '2026-11-15' } } });
+  assert.deepEqual(await applyStatedNextTouch(already.sb, 'org', now), { applied: null });
+  assert.equal(already.updates.length, 0);
+  const none = companyStub({ id: 'org', next_action_date: '2026-10-08', metadata: {} });
+  assert.deepEqual(await applyStatedNextTouch(none.sb, 'org', now), { applied: null });
+  assert.equal(none.updates.length, 0);
+  const missing = companyStub(null);
+  assert.deepEqual(await applyStatedNextTouch(missing.sb, 'gone', now), { applied: null });
+});
 
 // ── draftSnippet ────────────────────────────────────────────────────────────
 
