@@ -221,8 +221,33 @@ test('a vetted prior relationship with no engine history gets re_approach, not a
   const c = retailer({ relationship_state: 'in_contact', vetted_at: '2026-06-01T00:00:00Z' });
   const due = evaluateDue(c, freshCtx({ lastOutboundAt: null }), NOW);
   assert.equal(due.message_type, 're_approach');
-  // Once the engine has sent anything, it is no longer a re-approach candidate.
-  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2026-06-01T00:00:00Z' }), NOW), null);
+  // Once the ENGINE has sent anything, it is no longer a re-approach candidate.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2026-06-01T00:00:00Z', lastEngineOutboundAt: '2026-06-01T00:00:00Z' }), NOW), null);
+});
+
+test('pre-engine history older than six months is a fresh intro, not a re_approach (2026-09-08)', () => {
+  // Thread discovery imports old manual Gmail sends, so lastOutboundAt is set
+  // for an org we wrote to in 2022. Gating on that put vetted orgs in no queue
+  // at all; and a 2022 enquiry is not a door to re-open.
+  const c = org({ relationship_state: 'in_contact', vetted_at: '2026-08-26T00:00:00Z' });
+  const old = freshCtx({ lastOutboundAt: '2022-05-03T00:00:00Z', lastContactAt: '2022-05-03T00:00:00Z', lastEngineOutboundAt: null });
+  const due = evaluateDue(c, old, NOW);
+  assert.equal(due.message_type, 'intro_outreach');
+  assert.match(due.reason, /4 years ago/);
+  // Retailers get their own channel's first touch the same way.
+  assert.equal(evaluateDue(retailer({ relationship_state: 'in_contact', vetted_at: '2026-06-01T00:00:00Z' }), old, NOW).message_type, 'intro_pitch');
+  // Just outside six months: fresh intro. Inside: the old thread is still warm.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2025-12-01T00:00:00Z', lastContactAt: '2025-12-01T00:00:00Z' }), NOW).message_type, 'intro_outreach');
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2026-01-01T00:00:00Z', lastContactAt: '2026-01-01T00:00:00Z' }), NOW).message_type, 're_approach');
+  // THEIR reply counts as contact, closed thread or not: a reply last week keeps
+  // it a re_approach however old our own last message was.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2022-05-03T00:00:00Z', lastContactAt: '2026-06-08T00:00:00Z' }), NOW).message_type, 're_approach');
+  // No dated contact at all (sheet-era row, no imported thread): unchanged.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: null }), NOW).message_type, 're_approach');
+  // The denormalized column alone still dates the history when no messages loaded.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2022-05-03T00:00:00Z' }), NOW).message_type, 'intro_outreach');
+  // Engine history takes the branch away entirely, however old it is.
+  assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2022-05-03T00:00:00Z', lastContactAt: '2022-05-03T00:00:00Z', lastEngineOutboundAt: '2022-05-03T00:00:00Z' }), NOW), null);
 });
 
 test('follow-up 1 after 5 business days of silence, follow-up 2 after 10 more', () => {
@@ -400,7 +425,7 @@ test('no meeting field at all behaves exactly as before', () => {
 // Guard for the standing trap: cadence may only read context buildContexts sets.
 test('buildContexts assembles every field companyEligible reads', () => {
   const src = require('fs').readFileSync(require.resolve('../../b2b-outreach/lib/queueContext.js'), 'utf8');
-  for (const field of ['hasPendingDraft', 'upcomingMeetingAt']) {
+  for (const field of ['hasPendingDraft', 'upcomingMeetingAt', 'lastEngineOutboundAt', 'lastContactAt']) {
     assert.ok(src.includes(field), `buildContexts must set ${field} — cadence reads it`);
   }
 });

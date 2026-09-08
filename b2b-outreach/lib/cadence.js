@@ -231,6 +231,23 @@ function firstTouchType(company) {
 const SAMPLES_CHECKIN_MAX_AGE_DAYS = 60;
 
 /**
+ * Pre-engine history older than this is treated as no history: a vetted org
+ * gets the cold intro rather than a re_approach that names a thread nobody on
+ * their side remembers. Six months, per Jamie (2026-09-08). Only reachable for
+ * companies the engine has never written to, so it is a backfill classifier
+ * for the pre-tool book and never shortens a running cadence.
+ */
+const STALE_HISTORY_DAYS = 183;
+
+/** "4 years" / "7 months" / "12 days", for a queue reason. Pure. */
+function humanGap(from, now = new Date()) {
+  const d = daysSince(from, now);
+  if (d >= 365) { const y = Math.floor(d / 365); return `${y} year${y === 1 ? '' : 's'}`; }
+  if (d >= 30) { const m = Math.floor(d / 30); return `${m} month${m === 1 ? '' : 's'}`; }
+  return `${d} day${d === 1 ? '' : 's'}`;
+}
+
+/**
  * The follow-up ladder chases an ASK that went unanswered. These are the message
  * types that constitute one, mapped to how long we wait (in BUSINESS days)
  * before chasing.
@@ -448,6 +465,8 @@ function exhaustedDecision(company, ctx, now = new Date()) {
  *                 entity_type, program_flags, samples_*, snoozed_until, ...)
  * @param ctx      derived context buildContexts computes:
  *   hasPendingDraft, lastOrderAt, orderCount, lastOutboundAt, lastInboundAt,
+ *   lastEngineOutboundAt (newest send_tool outbound), lastContactAt (newest
+ *   human message either way, closed threads included),
  *   sentTypes: Set of message_types ever sent to this company,
  *   lastTypeSentAt: (type)=>date|null,
  *   firstOrderDeliveredAt (first_order_checkin),
@@ -529,9 +548,21 @@ function evaluateDue(company, ctx, now = new Date()) {
       if (state === 'prospect' && company.vetted_at) {
         return { message_type: firstTouchType(company), reason: 'vetted prospect, never contacted' };
       }
-      // Previously worked outside the engine (sheet history, samples sent) and
-      // re-admitted by the operator: a new door, not a third follow-up.
-      if (state === 'in_contact' && company.vetted_at && !ctx.lastOutboundAt) {
+      // Previously worked outside the engine (sheet history, samples sent, a
+      // manual Gmail thread) and re-admitted by the operator. Keyed on ENGINE
+      // outbound, not any outbound: nightly thread discovery imports the old
+      // manual sends, and gating on those made five of seven vetted orgs
+      // invisible, vetted but in no queue at all (2026-09-08).
+      if (state === 'in_contact' && company.vetted_at && !ctx.lastEngineOutboundAt) {
+        // History older than STALE_HISTORY_DAYS is a fresh intro: a 2022
+        // donation enquiry is a stranger who once heard of us, not a door to
+        // re-open. Inside the window a re_approach names the old thread. No
+        // dated contact at all (sheet-era rows with no imported thread) stays
+        // a re_approach, as before.
+        const last = ctx.lastContactAt || ctx.lastOutboundAt || null;
+        if (last && daysSince(last, now) > STALE_HISTORY_DAYS) {
+          return { message_type: firstTouchType(company), reason: `last contact ${humanGap(last, now)} ago, before this system: fresh intro` };
+        }
         return { message_type: 're_approach', reason: 'prior relationship, re-admitted after review' };
       }
     }
@@ -706,6 +737,7 @@ module.exports = {
   TOUCH_LABELS,
   nextScheduledTouch,
   SAMPLES_CHECKIN_MAX_AGE_DAYS,
+  STALE_HISTORY_DAYS,
   FIRST_TOUCH_TYPES,
   INITIATING_TYPES,
   CHASE_AFTER_BUSINESS_DAYS,

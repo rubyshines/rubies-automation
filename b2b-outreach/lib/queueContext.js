@@ -7,6 +7,7 @@
 const { fetchAllPaginated } = require('../../shared/supabaseClient');
 const { deliveryMode } = require('./sendB2bEmail');
 const { NON_REPLY_INBOUND_TYPES } = require('./replyCorrelation');
+const { CHASEABLE_SOURCES } = require('./cadence');
 const { upcomingMeetingsByCompany, lastHeldMeetingsByCompany } = require('./scheduleMeeting');
 
 /** "https://www.foo.org/x" → "foo.org". Pure. */
@@ -119,6 +120,17 @@ async function buildContexts(sb, companies) {
       // Newest send that came back undelivered. Null for almost every company.
       lastUndeliveredAt: null,
       lastOutboundAt: c.last_outbound_at || null,
+      // Newest outbound the ENGINE sent (source in CHASEABLE_SOURCES). Manual
+      // Gmail sends reconciled in by thread discovery do not count: they are
+      // pre-engine history, and cadence's re_approach / fresh-intro split is
+      // about exactly that history.
+      lastEngineOutboundAt: null,
+      // Newest human message in either direction, closed threads included.
+      // lastInboundAt deliberately skips closed threads (a concluded
+      // conversation is not "waiting on us"); this answers a different
+      // question, how long ago there was ANY contact, for the stale-history
+      // test.
+      lastContactAt: null,
       // The follow-up ANCHOR: the newest outbound that is an actual message, in a
       // thread that is still open. Deliberately separate from lastOutboundAt,
       // which is seeded from the denormalized b2b_companies column and so can be
@@ -185,10 +197,12 @@ async function buildContexts(sb, companies) {
       continue;
     }
     if (m.direction === 'inbound') {
-      if (closedThreadIds.has(m.thread_id)) continue;
       // Auto-responders, calendar notifications and delivery failures are
       // history, not a human waiting on us.
       if (NON_REPLY_INBOUND_TYPES.has(m.message_type)) continue;
+      // Messages arrive oldest-first, so the last assignment wins.
+      ctx.lastContactAt = m.sent_at;
+      if (closedThreadIds.has(m.thread_id)) continue;
       const checkinAt = lastCheckinAt.get(m.company_id);
       if (checkinAt && new Date(m.sent_at) > new Date(checkinAt) && !ctx.postSamplesReplyAt) {
         ctx.postSamplesReplyAt = m.sent_at;
@@ -203,6 +217,8 @@ async function buildContexts(sb, companies) {
       ctx.unansweredRunSince = null;
     } else {
       ctx.lastOutboundAt = ctx.lastOutboundAt && ctx.lastOutboundAt > m.sent_at ? ctx.lastOutboundAt : m.sent_at;
+      ctx.lastContactAt = m.sent_at;
+      if (CHASEABLE_SOURCES.has(m.source)) ctx.lastEngineOutboundAt = m.sent_at;
       ctx.unansweredRun += 1;
       if (!ctx.unansweredRunSince) ctx.unansweredRunSince = m.sent_at;
       // The anchor only advances on open threads — see the field comment above.
