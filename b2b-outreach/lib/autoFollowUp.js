@@ -5,8 +5,9 @@
  * the sweep that would run it was deliberately left unscheduled (pull-mode,
  * 2026-07-23). These are the halves that close that loop:
  *
- *   DRAFT PASS  (daily)      what is due → an Opus draft, stamped with the
- *                            moment it should land in THEIR business hours.
+ *   DRAFT PASS  (daily)      what is due → a fixed-template draft
+ *                            (messageTemplates.composeFollowUp), stamped with
+ *                            the moment it should land in THEIR business hours.
  *                            Also ends the ladder: retire a lead, or hand a live
  *                            relationship to the operator.
  *   SEND PASS   (every 15m)  scheduled drafts whose moment has come, through the
@@ -14,10 +15,12 @@
  *
  * ## Why this can send without a click
  *
- * The prose of a follow-up is low-variance — the advisor has the whole thread
- * plus the relationship recap, and "circling back on this" is hard to get wrong.
- * What goes wrong in this system is TARGETING, so that is what is guarded, and
- * every guard is machine-checkable:
+ * The body is fixed text (2026-09-08): rung 1 is "I am following up on this.",
+ * rung 2 quotes the message it chases — the CS auto follow-up's shape, no model
+ * anywhere. Until then the rungs were unreviewed Opus drafts, which is how "No
+ * cost, no commitment" reached an org; nothing model-written goes out without
+ * review. With the words fixed, what can still go wrong is TARGETING, so that
+ * is what is guarded, and every guard is machine-checkable:
  *
  *   1. The reply re-check, run immediately BEFORE the send rather than at draft
  *      time. The engine has repeatedly turned out not to see its own
@@ -51,7 +54,8 @@ const { fetchAllPaginated } = require('../../shared/supabaseClient');
  * Everything else the queue surfaces — Tier-1 replies, first touches, seasonal
  * check-ins — stays pull-mode and waits for an operator. A chase is the narrow
  * case where the content is genuinely mechanical: we asked, nobody answered, we
- * are asking once more. Widening this set is a decision, not a config tweak.
+ * are asking once more, in fixed words. Widening this set is a decision, not a
+ * config tweak — and anything added here must be a template, never a draft.
  */
 const AUTO_SEND_TYPES = new Set(['followup_1', 'followup_2']);
 
@@ -72,10 +76,9 @@ const REPLY_CHECK_MAX_AGE_MS = 10 * 60 * 1000;
  * Are the scheduling columns actually there?
  *
  * Checked BEFORE either pass does anything, because the failure without it is
- * expensive rather than merely noisy: the draft pass would generate real Opus
- * drafts, fail to stamp a schedule on them, and leave unscheduled pending rows
- * that block their companies from being chased at all. Paying for a draft and
- * then dropping it on the floor is the worst of the available outcomes.
+ * bad rather than merely noisy: the draft pass would write real drafts, fail to
+ * stamp a schedule on them, and leave unscheduled pending rows that block their
+ * companies from being chased at all.
  *
  * A deploy landing before the migration is the ordinary case here, not an
  * exotic one — DDL is a hand-run step in the Supabase SQL Editor.
@@ -274,10 +277,10 @@ async function runDraftPass(sb, { dry = false, now = new Date(), limit = 25 } = 
         report.skipped.push({ company_id: entry.company_id, name: entry.company_name, why: 'nothing due at draft time' });
         continue;
       }
-      // The advisor may pick a different type than the queue predicted (a steer,
-      // a thread that reads as something else). Only stamp a schedule on what we
-      // actually agreed to auto-send; anything else stays pull-mode with no
-      // scheduled_send_at, so the send pass will never pick it up.
+      // The queue is re-read at draft time, so what comes back may not be a rung
+      // any more (a reply landed, the thread closed). Only stamp a schedule on
+      // what we actually agreed to auto-send; anything else stays pull-mode with
+      // no scheduled_send_at, so the send pass will never pick it up.
       if (!AUTO_SEND_TYPES.has(draft.message_type)) {
         report.skipped.push({
           company_id: entry.company_id, name: entry.company_name,

@@ -93,8 +93,36 @@ function toHtmlBody(text, { introLink = false } = {}) {
     });
   }
   html = html.replace(/\u0000(\d+)\u0000/g, (m, i) => anchors[Number(i)]);
-  return html.replace(/\r?\n/g, '<br>\r\n');
+  // Quoted lines ("> ...", the way rung 2 of the follow-up ladder quotes the
+  // message it chases) become a blockquote with the marker stripped; the plain
+  // part keeps the markers, which is ordinary mail quoting. A blank line either
+  // side of the quote is absorbed — a block element already breaks the flow.
+  const out = [];
+  let quote = null;
+  const flush = () => {
+    if (!quote) return;
+    if (out.length && out[out.length - 1] === '') out.pop();
+    out.push(`<blockquote style="${QUOTE_STYLE}">${quote.join('<br>\r\n')}</blockquote>`);
+    quote = null;
+  };
+  const lines = html.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^&gt;(?: ?(.*))?$/);
+    if (m) { (quote ||= []).push(m[1] || ''); continue; }
+    if (quote) {
+      flush();
+      if (lines[i] === '') continue;
+    }
+    out.push(lines[i]);
+  }
+  flush();
+  // A block element already ends its line; a <br> straight after it would be a
+  // second blank line the plain-text part does not have.
+  return out.join('<br>\r\n').replace(/<\/blockquote><br>\r\n/g, '</blockquote>');
 }
+
+// Matches the CS follow-up's quote styling (customer-service/lib/followUp.js).
+const QUOTE_STYLE = 'border-left: 3px solid #ccc; padding-left: 12px; margin: 16px 0; color: #555;';
 
 /**
  * RFC 2047 encode a filename if it has non-ASCII, so an org name with an
