@@ -80,11 +80,17 @@ function formatTimeInZone(date, timeZone) {
   }).format(date).replace(/ /g, ' ');
 }
 
-/** "Tue 26 Aug" in `timeZone`. Pure. */
+/**
+ * "Tue Sept 22" in `timeZone` — weekday, month, day, the order Jamie writes
+ * dates in (2026-09-08). en-GB is kept for its month names ("Sept", not "Sep");
+ * the parts are reassembled because that locale puts the day first. Pure.
+ */
 function formatDayInZone(date, timeZone) {
-  return new Intl.DateTimeFormat('en-GB', {
+  const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone, weekday: 'short', day: 'numeric', month: 'short',
-  }).format(date);
+  }).formatToParts(date);
+  const get = type => parts.find(p => p.type === type)?.value || '';
+  return `${get('weekday')} ${get('month')} ${get('day')}`;
 }
 
 /** Calendar date `iso` (YYYY-MM-DD) advanced by n days. Pure, zone-free. */

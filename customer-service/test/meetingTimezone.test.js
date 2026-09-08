@@ -92,8 +92,8 @@ test('normalizers', () => {
 test('the confirmation line states both zones, and stops', () => {
   const start = new Date('2026-08-25T18:00:00.000Z'); // 2pm ET, 11am Pacific
   const line = renderConfirmationLine({ start, theirTimeZone: 'America/Los_Angeles' });
-  assert.match(line, /^I just created an invite for /);
-  assert.match(line, /Tue 25 Aug/);
+  assert.match(line, /^Ok, I just sent an invite for /);
+  assert.match(line, /Tue Aug 25/);
   assert.match(line, /2:00 PM ET/);
   assert.match(line, /11:00 AM your time/);
   // Absolute date only. "next Wednesday" in a draft that sits pending for days

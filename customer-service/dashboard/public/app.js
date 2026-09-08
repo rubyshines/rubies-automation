@@ -8102,7 +8102,7 @@ function findSlotState(startIso) {
 
 /**
  * While a slot is picked, the ordinary Send is disabled and points at Book &
- * Send. Clicking a slot writes "I just created an invite for…" into the draft
+ * Send. Clicking a slot writes "Ok, I just sent an invite for…" into the draft
  * immediately, but only Book & Send creates the event — and plain Send sits
  * right beside it, so on 2026-08-20 a partner was told about an invite that did
  * not exist. Two buttons where one silently makes the other's promise false.
@@ -8120,7 +8120,7 @@ function syncSendButtonsForSchedule() {
   }
 }
 
-function selectScheduleSlot(startIso) {
+async function selectScheduleSlot(startIso) {
   const fromGrid = findSlotState(startIso);
   const fromProposed = (scheduleState?.proposed_times || []).find(t => t.start === startIso);
   scheduleSelected = {
@@ -8129,9 +8129,9 @@ function selectScheduleSlot(startIso) {
     theirLabel: fromGrid.theirLabel || fromProposed?.theirLabel || null,
     dayLabel: fromProposed?.dayLabel || dayLabelForSlot(startIso),
   };
-  insertConfirmationLine();
   renderSchedulePanel();
   syncSendButtonsForSchedule();
+  await insertConfirmationText(startIso);
 }
 
 function dayLabelForSlot(startIso) {
@@ -8142,32 +8142,61 @@ function dayLabelForSlot(startIso) {
 }
 
 /**
- * The panel owns exactly ONE sentence in the draft. Selecting a different slot
- * rewrites that sentence rather than adding a second one — a draft naming two
- * different times is the obvious way for this to go wrong.
+ * The words come from the server, not the panel: scheduleMeeting's preview
+ * renders the confirmation sentence and the full reply around it (greeting
+ * named after whoever the email will go to, sign-off), so what the operator
+ * sees is byte-identical to what the send guard checks for and there is one
+ * place to change the wording. An empty composer gets the whole reply; one
+ * already holding text gets only the sentence, placed above the signature.
+ *
+ * The panel still owns exactly ONE sentence in the draft. Selecting a different
+ * slot rewrites that sentence rather than adding a second one — a draft naming
+ * two different times is the obvious way for this to go wrong.
  */
-function insertConfirmationLine() {
+async function insertConfirmationText(startIso) {
+  const companyId = outreachSelectedId;
+  if (!companyId) return;
+  let preview;
+  try {
+    preview = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/schedule`, {
+      method: 'POST',
+      body: {
+        start: startIso,
+        duration_minutes: scheduleState?.duration_minutes || 30,
+        their_timezone: scheduleState?.their_timezone || undefined,
+      },
+    });
+  } catch (err) {
+    showToast(`Could not write the confirmation: ${err.message}`, 'error');
+    return;
+  }
+  // Moved on, or picked another slot, while the preview was in flight.
+  if (outreachSelectedId !== companyId || scheduleSelected?.start !== startIso) return;
+  if (!preview?.ok || !preview.confirmation_line) {
+    showToast(preview?.error || 'Could not write the confirmation.', 'error');
+    return;
+  }
   const editor = document.getElementById('outreach-draft-editor');
-  if (!editor || !scheduleSelected) return;
-  // Their local time is added only when their zone differs from ours — the
-  // both-zones habit exists because timezone confusion killed real meetings,
-  // but for a Toronto org it printed the same number twice.
-  const sameZone = !scheduleState?.their_timezone || scheduleState.their_timezone === scheduleState.timezone;
-  const their = scheduleSelected.theirLabel && !sameZone ? ` (${scheduleSelected.theirLabel} your time)` : '';
-  const line = `I just created an invite for ${scheduleSelected.dayLabel} at ${scheduleSelected.label} ET${their}.`;
+  if (!editor) return;
+  const line = preview.confirmation_line;
 
   if (scheduleInsertedLine && editor.value.includes(scheduleInsertedLine)) {
     editor.value = editor.value.replace(scheduleInsertedLine, line);
+  } else if (!editor.value.trim()) {
+    editor.value = preview.confirmation_body || line;
   } else {
     const sigIdx = editor.value.indexOf('Jamie Alexander');
     if (sigIdx > 0) {
       editor.value = `${editor.value.slice(0, sigIdx).replace(/\s*$/, '')}\n\n${line}\n\n${editor.value.slice(sigIdx)}`;
     } else {
-      editor.value = `${editor.value.replace(/\s*$/, '')}${editor.value.trim() ? '\n\n' : ''}${line}`;
+      editor.value = `${editor.value.replace(/\s*$/, '')}\n\n${line}`;
     }
   }
   scheduleInsertedLine = line;
   autoExpandTextarea(editor);
+  // The composer only autosaves on keystrokes; text the panel wrote has to ask.
+  // The save endpoint refuses to overwrite an advisor draft, so this is safe there.
+  queueComposerAutosave();
 }
 
 async function bookMeetingAndSend(testMode) {

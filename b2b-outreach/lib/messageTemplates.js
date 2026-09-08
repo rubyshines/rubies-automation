@@ -112,6 +112,21 @@ function fillPartnerOnboarding({ firstName, discount, meetingDay }) {
   return { body, attachments: [{ kind: 'partner_agreement' }] };
 }
 
+/**
+ * The reply that goes with a booked call (Book & Send in the Schedule panel).
+ * `confirmationLine` is scheduleMeeting's one deterministic sentence naming the
+ * time in both zones; this wraps it in Jamie's own reply (2026-09-08) so the
+ * composer opens with the whole message rather than one sentence dropped into
+ * an empty box. Pure.
+ */
+function fillMeetingConfirmation({ firstName, confirmationLine }) {
+  const body = `Hi ${firstName},\n\n`
+    + `${confirmationLine}\n\n`
+    + 'Looking forward to chatting.\n\n'
+    + SIGN_OFF;
+  return { body, attachments: [] };
+}
+
 // ---------------------------------------------------------------------------
 // The follow-up ladder (2026-09-08)
 //
@@ -339,6 +354,7 @@ module.exports = {
   greetingName,
   fillSetupCall,
   fillPartnerOnboarding,
+  fillMeetingConfirmation,
   FOLLOW_UP_TYPES,
   quotableBody,
   quoteLines,
