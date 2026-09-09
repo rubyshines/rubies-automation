@@ -31,6 +31,18 @@ const { checkForDuplicateTicket } = require('./processGorgiasTickets');
 const CARE_ADDRESS = 'care@rubyshines.com';
 const ATTACHMENT_BUCKET = 'email-attachments';
 
+// Skip reasons whose message stays in the inbox after labelling. A reply on a
+// thread Jamie answered from his own Gmail is a customer writing back to HIM —
+// intake leaves it for him on purpose, and archiving it out of the inbox
+// seconds after arrival is how two address confirmations went unread for a
+// week (2026-09-01). The other skip reasons are copies of mail already living
+// in Gorgias, which is what the archive was written for.
+const SKIP_REASONS_KEPT_IN_INBOX = new Set(['legacy_thread']);
+
+function archivesOnSkip(reason, archiveEnabled) {
+  return !!archiveEnabled && !SKIP_REASONS_KEPT_IN_INBOX.has(reason);
+}
+
 /**
  * Upload Gmail attachments to Supabase Storage and return Gorgias-compatible attachment objects.
  * Files are stored at: email-attachments/{gmailMessageId}/{filename}
@@ -112,13 +124,14 @@ async function processMessage(supabase, gmail, msg, { archiveEnabled, labelIds }
 
   // Helper: CS email already handled elsewhere (by Gorgias native, prior forward,
   // existing ticket, or Jamie's manual Gmail reply). Label R/Customer Support and
-  // archive out of inbox so it doesn't sit there forever.
+  // archive out of inbox so it doesn't sit there forever — except the reasons in
+  // SKIP_REASONS_KEPT_IN_INBOX, which are Jamie's to read.
   const markCsHandled = async (reason) => {
     const csLabel = labelIds['R/Customer Support'];
     let archived = false;
     if (csLabel) {
       try {
-        if (archiveEnabled) {
+        if (archivesOnSkip(reason, archiveEnabled)) {
           await labelAndArchive(gmail, msg.gmail_message_id, csLabel);
           archived = true;
         } else {
@@ -470,4 +483,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, processMessage, CLASSIFICATION_LABELS };
+module.exports = { run, processMessage, CLASSIFICATION_LABELS, archivesOnSkip, SKIP_REASONS_KEPT_IN_INBOX };

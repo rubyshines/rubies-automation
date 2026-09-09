@@ -16,6 +16,7 @@ const {
 } = require('../../shared/businessDays');
 const { fetchUnfulfilledOrders, getHoldReasons, warehanceOrderUrl, cancelOrder } = require('./warehanceClient');
 const { resolveAddressHolds } = require('./addressHoldResolver');
+const { isShippingUpdateNote } = require('../../customer-service/lib/noteLifecycle');
 
 const SHOPIFY_STORE = 'rubies-active-wear';
 const PRE_ORDER_TAG_RE = /pre-?order|backorder|coming soon/i;
@@ -311,6 +312,62 @@ function classifyOrder(order, whOrder, inventoryInfo, bd) {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-order silo vs. holds, and the bucketing predicates every reader shares
+// ---------------------------------------------------------------------------
+
+// Every reason classifyOrder derives from a Warehance hold flag. A hold is live
+// warehouse state — nobody at RUBIES necessarily placed it, and the order cannot
+// ship while it stands — so it outranks both the pre-order silo and a resolved
+// note. Until 2026-09-09 a pre-order never reached classifyOrder at all, so an
+// address hold on one was invisible for the whole stock wait: #33205 sat in
+// "Pre-Order · Customer informed at purchase" for 19 days with the warehouse
+// refusing to ship it, and only surfaced when the customer wrote in.
+const HOLD_REASONS = new Set(['address_hold', 'fraud_hold', 'payment_hold', 'warehouse_hold', 'allocation_hold', 'store_hold']);
+
+function isHoldReason(reason) {
+  return HOLD_REASONS.has(reason);
+}
+
+const PRE_ORDER_CLASSIFICATION = Object.freeze({ reason: 'pre_order', severity: 'info', detail: 'Customer informed at purchase' });
+
+/**
+ * A pre-order keeps the silent "customer informed at purchase" classification
+ * unless the warehouse is holding it — then the hold classification wins, with
+ * the pre-order fact kept in the detail so the row still reads correctly.
+ */
+function classifyWithPreOrder(isPreOrder, base) {
+  if (!isPreOrder) return base;
+  if (!isHoldReason(base.reason)) return { ...PRE_ORDER_CLASSIFICATION };
+  return { ...base, detail: `Pre-order · ${base.detail}` };
+}
+
+// An unresolved operator note pulls a pre-order out of the silo into the
+// actionable flow (mistaken pre-order, defect outreach). A shipping-update note
+// records a mechanical change already applied (noteLifecycle.isShippingUpdateNote)
+// and never reclassifies — a pre-order expedited "when in stock" stays a pre-order.
+function noteOverridesPreOrder(r) {
+  return !!r.note && !isShippingUpdateNote(r.note);
+}
+
+function inPreOrderSilo(r) {
+  return r.classification?.reason === 'pre_order' && !noteOverridesPreOrder(r);
+}
+
+// A resolved note hides a row from the report — unless the warehouse still
+// holds the order. The note records finished work; the hold says the order is
+// still stuck, and the two disagreeing is exactly what the report exists to
+// show (#33220: an unrelated outreach ticket closed, and its resolved note hid
+// a live address hold).
+function isActionable(r) {
+  if (inPreOrderSilo(r)) return false;
+  return !r.note?.resolved || isHoldReason(r.classification?.reason);
+}
+
+function isResolvedRow(r) {
+  return !inPreOrderSilo(r) && !isActionable(r);
+}
+
+// ---------------------------------------------------------------------------
 // Main: checkUnfulfilledOrders()
 // ---------------------------------------------------------------------------
 
@@ -442,9 +499,7 @@ async function checkUnfulfilledOrders() {
     const isPreOrder = classifyPreOrder(order, propsMap);
     const whOrder = whOrders.get(String(order.order_number));
     const bd = businessDaysSince(order.created_at);
-    const classification = isPreOrder
-      ? { reason: 'pre_order', severity: 'info', detail: 'Customer informed at purchase' }
-      : classifyOrder(order, whOrder, inventoryInfo, bd);
+    const classification = classifyWithPreOrder(isPreOrder, classifyOrder(order, whOrder, inventoryInfo, bd));
     const note = notesMap.get(order.order_number) || null;
 
     return {
@@ -460,10 +515,10 @@ async function checkUnfulfilledOrders() {
     };
   });
 
-  // Phase 7: Auto-resolve address holds
-  const addressHeldOrders = results.filter(r =>
-    r.classification.reason === 'address_hold' && !r.note?.resolved
-  );
+  // Phase 7: Auto-resolve address holds. Every live address hold gets a try,
+  // pre-order or not, resolved note or not — the resolver only releases on
+  // positive evidence, and a hold that is still standing is still blocking.
+  const addressHeldOrders = results.filter(r => r.classification.reason === 'address_hold');
   if (addressHeldOrders.length > 0) {
     console.log(`  [Unfulfilled] Auto-resolving ${addressHeldOrders.length} address hold(s)...`);
     const autoResults = await resolveAddressHolds(supabase, addressHeldOrders, whOrders);
@@ -486,7 +541,7 @@ async function checkUnfulfilledOrders() {
   }
 
   // Build stock issues map
-  const actionable = results.filter(r => !r.isPreOrder && !r.note?.resolved);
+  const actionable = results.filter(isActionable);
   const stockIssues = new Map();
   for (const r of actionable) {
     if (r.classification.reason !== 'awaiting_stock') continue;
@@ -511,8 +566,8 @@ async function checkUnfulfilledOrders() {
 
   const summary = {
     total: results.length,
-    preOrder: results.filter(r => r.isPreOrder).length,
-    resolved: results.filter(r => !r.isPreOrder && r.note?.resolved).length,
+    preOrder: results.filter(inPreOrderSilo).length,
+    resolved: results.filter(isResolvedRow).length,
     actionable: actionable.length,
     urgent: actionable.filter(r => r.classification.severity === 'urgent').length,
     attention: actionable.filter(r => r.classification.severity === 'attention').length,
@@ -523,4 +578,15 @@ async function checkUnfulfilledOrders() {
   return { results, summary, errors, stockIssues };
 }
 
-module.exports = { checkUnfulfilledOrders, getInventoryMap, bareVariantId, classifyOrder };
+module.exports = {
+  checkUnfulfilledOrders,
+  getInventoryMap,
+  bareVariantId,
+  classifyOrder,
+  classifyWithPreOrder,
+  HOLD_REASONS,
+  isHoldReason,
+  inPreOrderSilo,
+  isActionable,
+  isResolvedRow,
+};

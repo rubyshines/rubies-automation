@@ -8,6 +8,15 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Address-hold resolver should seed a care@ confirmation outreach when its rules fail
+- Parked: 2026-09-09
+- Last touched: 2026-09-09
+- Domains: logistics, cs
+- Type: build (medium)
+- Priority: high
+- Notes: Every PO Box fails all three resolver rules (no prior order to the address, not ROOFTOP-geocodable, no Street View), so the order sits in Urgent until a human asks the customer. On 2026-09-01 that ask went out from Jamie's personal Gmail with no ticket and no order note; intake archived both replies as "legacy thread" within 20 seconds and they sat unread for a week (#33205 shipped 8 days late, #32969 held 22 business days). Build: when the resolver cannot release, seed an address-confirmation outreach the way the unnotified pre-order drafter does — pending care@ draft via `seedOutboundDraft()`, Gorgias ticket, waiting note on the order, idempotent through an `author='auto'` note. The reply then lands as a ticket where the advisor already has `release_address_hold`. The 2026-09-09 fix stopped intake archiving those replies, but a personal-Gmail ask is still outside every queue.
+- Resume when: the next PO Box hold shows in Urgent, or the next CS dashboard session.
+
 ## Reopen & follow up still AI-drafts into reopened threads
 - Parked: 2026-09-02
 - Domains: b2b_sales, community

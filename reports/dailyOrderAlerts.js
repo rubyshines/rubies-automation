@@ -32,7 +32,7 @@ if (!process.env.SUPABASE_URL) {
 
 const { getSupabaseClient } = require('../shared/supabaseClient');
 const { getSendgridClient } = require('../shared/sendgridClient');
-const { checkUnfulfilledOrders } = require('./lib/unfulfilled');
+const { checkUnfulfilledOrders, inPreOrderSilo, isActionable, isResolvedRow } = require('./lib/unfulfilled');
 const { checkShippingDelays } = require('./lib/shippingDelays');
 const { fetchFulfilledOrphanNotes } = require('../customer-service/lib/tools/orderNotes');
 const { listRegistry, saleIsActive } = require('../promotions/discounts');
@@ -304,19 +304,14 @@ function formatCombinedHtml(unfulfilled, shipping, opts, extra = {}) {
   (shipping.urgentNonPassport || []).forEach(a => enrichTicket(a, a.order_number));
 
   // --- Unfulfilled buckets ---
-  // Pre-order classification is auto-derived from line item attributes/tags. An
-  // unresolved operator note overrides it — once the operator has explicitly
-  // flagged an order for follow-up (e.g. mistaken pre-order, defect outreach),
-  // it belongs in the actionable/waiting flow, not the silent Pre-Orders silo.
-  // Exception: a shipping-update note records a mechanical change already
-  // applied (see noteLifecycle.isShippingUpdateNote) — it rides along as
-  // context on the row and never reclassifies the order, so a pre-order
-  // expedited "when in stock" stays in Pre-Orders instead of demanding
-  // attention in Waiting on Response for the whole stock wait.
-  const noteOverrides = r => !!r.note && !isShippingUpdateNote(r.note);
-  const preOrders = uf.results.filter(r => r.isPreOrder && !noteOverrides(r));
-  const ufResolved = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && r.note?.resolved);
-  const ufActionable = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && !r.note?.resolved);
+  // Silo / actionable / resolved membership comes from reports/lib/unfulfilled
+  // so this email, the CLI print and list_pending_orders cannot drift apart:
+  // an unresolved operator note pulls a pre-order out of the silo, a
+  // shipping-update note never does, and a live warehouse hold outranks both
+  // the silo and a resolved note.
+  const preOrders = uf.results.filter(inPreOrderSilo);
+  const ufResolved = uf.results.filter(isResolvedRow);
+  const ufActionable = uf.results.filter(isActionable);
   // Orders with an unresolved auto-author note (e.g. unnotified pre-order auto-drafter)
   // already have a pending draft in CS Advisor — surface them in their own
   // info section, not in Attention/Urgent.
@@ -656,12 +651,9 @@ function formatConsole(unfulfilled, shipping, opts) {
     }
   }
 
-  // Unfulfilled sections — same override as the HTML formatter: an unresolved
-  // operator note pulls the order out of Pre-Orders into the actionable flow,
-  // except shipping-update notes, which are context and never reclassify.
-  const noteOverrides = r => !!r.note && !isShippingUpdateNote(r.note);
+  // Unfulfilled sections — same shared predicates as the HTML formatter.
   const isAutoDraftNote = r => r.note && !r.note.resolved && r.note.author === 'auto';
-  const ufActionable = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && !r.note?.resolved);
+  const ufActionable = uf.results.filter(isActionable);
   const ufAutoDrafted = ufActionable.filter(isAutoDraftNote);
   const ufWaiting = ufActionable.filter(r => isWaitingNote(r.note));
   const ufNoNote = ufActionable.filter(r => !isAutoDraftNote(r) && !isWaitingNote(r.note));
@@ -669,7 +661,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   const ufRest = ufNoNote.filter(r => r.classification.severity !== 'auto_resolved');
   const ufUrgent = ufRest.filter(r => r.classification.severity === 'urgent');
   const ufAttention = ufRest.filter(r => r.classification.severity === 'attention');
-  const preOrders = uf.results.filter(r => r.isPreOrder && !noteOverrides(r));
+  const preOrders = uf.results.filter(inPreOrderSilo);
 
   // Action-required first (urgent / attention / lost), info below.
   // Shipping urgent: same note-override as the HTML — unresolved note moves
@@ -685,7 +677,7 @@ function formatConsole(unfulfilled, shipping, opts) {
   printUnfulfilledSection('PRE-ORDER', preOrders);
 
   if (opts.showResolved) {
-    const ufResolved = uf.results.filter(r => (!r.isPreOrder || noteOverrides(r)) && r.note?.resolved);
+    const ufResolved = uf.results.filter(isResolvedRow);
     printUnfulfilledSection('RESOLVED (unfulfilled)', ufResolved);
   }
 
