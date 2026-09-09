@@ -1270,7 +1270,101 @@ async function fetchCompanyThreads(sb, companyId) {
   };
 }
 
+
+// ── Vetting ────────────────────────────────────────────────────────────────
+// The admission gate as a list. Tier 4 only ever surfaces prospects a human
+// has kept (`vetted_at`), so every imported cohort waits here until someone
+// looks at it. The console had `b2b_triage` from the start; 119 discovery
+// retailers at once is not a console job (retailer plan D8).
+
+/**
+ * How we can reach a company, for the vetting row's contact chip. Pure.
+ *   own_domain   an address at their own website domain
+ *   other_domain a real address at some other business domain
+ *   free_mail    Gmail and friends
+ *   form         no address, a contact page on file
+ *   none         nothing — the row can never draft
+ */
+function contactStatus({ email, website, contact_form_url } = {}) {
+  const { isGenericDomain, emailDomain } = require('./emailDomains');
+  const { companyDomain } = require('./queueContext');
+  const e = String(email || '').trim().toLowerCase();
+  if (!e || !e.includes('@')) return contact_form_url ? 'form' : 'none';
+  const d = emailDomain(e);
+  if (isGenericDomain(d)) return 'free_mail';
+  const site = companyDomain(website);
+  if (site && d !== site && !d.endsWith(`.${site}`) && !site.endsWith(`.${d}`)) return 'other_domain';
+  return 'own_domain';
+}
+
+/**
+ * Every unvetted prospect, best discovery score first. Deferred rows (paused,
+ * on me) are left out: a deferral already IS a decision about the company.
+ */
+async function fetchVetting(sb, { channel } = {}) {
+  let q = sb.from('b2b_companies')
+    .select('id, name, relationship_type, relationship_state, website, general_email, contact_form_url, city, region, country, source, enrich_facts, metadata, created_at, contact_unknown, triage_reason')
+    .is('vetted_at', null).eq('relationship_state', 'prospect')
+    .is('outreach_paused_at', null).is('on_me_at', null);
+  if (channel) q = q.eq('relationship_type', channel);
+  const companies = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await q.range(from, from + 999);
+    if (error) throw new Error(error.message);
+    companies.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  if (!companies.length) return { companies: [], total: 0 };
+  const ids = companies.map(c => c.id);
+  const contactsBy = new Map();
+  for (let i = 0; i < ids.length; i += 500) {
+    const { data, error } = await sb.from('b2b_contacts')
+      .select('company_id, email, full_name, is_primary').in('company_id', ids.slice(i, i + 500)).eq('is_active', true);
+    if (error) throw new Error(error.message);
+    for (const c of data || []) contactsBy.set(c.company_id, [...(contactsBy.get(c.company_id) || []), c]);
+  }
+  const readMeta = (m) => {
+    if (typeof m === 'string') { try { return JSON.parse(m) || {}; } catch { return {}; } }
+    return (m && typeof m === 'object') ? m : {};
+  };
+  const pickEmail = (c) => {
+    const contacts = (contactsBy.get(c.id) || []).sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0));
+    return { primary: contacts[0] || null, email: contacts[0]?.email || c.general_email || null };
+  };
+  // Kickbox ran on entry; a verdict of undeliverable is the one fact that
+  // blocks a send, so it belongs on the row where the keep decision is made
+  // rather than surfacing as a refused send after the intro drafts. Fails
+  // open: no table, no verdicts, the row still renders.
+  const { fetchVerifications } = require('./emailVerify');
+  const { byEmail } = await fetchVerifications(sb, companies.map(c => pickEmail(c).email).filter(Boolean));
+  const rows = companies.map(c => {
+    const { primary, email } = pickEmail(c);
+    const facts = (c.enrich_facts && typeof c.enrich_facts === 'object') ? c.enrich_facts : {};
+    const meta = readMeta(c.metadata);
+    return {
+      ...c,
+      contact_email: email,
+      contact_name: primary?.full_name || null,
+      contact_status: contactStatus({ email, website: c.website, contact_form_url: c.contact_form_url }),
+      verification: email ? (byEmail.get(String(email).trim().toLowerCase())?.status || null) : null,
+      discovery: {
+        score: facts.discovery_score ?? meta.discovery?.score ?? null,
+        subcategory: facts.discovery_subcategory || meta.discovery?.subcategory || null,
+        angle: facts.discovery_angle || null,
+      },
+    };
+  });
+  rows.sort((a, b) => {
+    const sa = a.discovery.score, sb2 = b.discovery.score;
+    if (sa != null && sb2 != null && sa !== sb2) return sb2 - sa;
+    if ((sa == null) !== (sb2 == null)) return sa == null ? 1 : -1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+  return { companies: rows, total: rows.length };
+}
+
 module.exports = {
+  fetchVetting, contactStatus,
   draftSnippet,
   attachDrafts,
   mergePendingDraftEntries,

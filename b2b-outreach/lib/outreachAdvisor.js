@@ -272,8 +272,22 @@ function describeEnrichFacts(facts) {
   if (facts.site_appears_active === false) {
     notes.push('their website looks dormant, so treat any programme described on it as unconfirmed');
   }
-  if (!notes.length) return null;
-  return `From their website, read automatically and never verified with them: ${notes.join('; ')}.`;
+  const lines = [];
+  if (notes.length) lines.push(`From their website, read automatically and never verified with them: ${notes.join('; ')}.`);
+  // A store imported from the discovery pipeline carries the researcher's
+  // notes: what kind of store it is and the angle it saw. This is the one
+  // true thing the why-this-store slot has to work from for a company we have
+  // never written to, so it is rendered rather than left in a JSON column
+  // (the referral field sat unrendered for months — render every fact a rule
+  // depends on). Labelled as our own research so the model does not present
+  // it to the store as something they told us.
+  if (facts.discovery_angle || facts.discovery_subcategory) {
+    const when = facts.discovery_researched_at ? ` in ${new Date(facts.discovery_researched_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })}` : '';
+    const kind = facts.discovery_subcategory ? `Store type from our research: ${String(facts.discovery_subcategory).replace(/-/g, ' ')}. ` : '';
+    const angle = facts.discovery_angle ? `Our researcher's note (written for us, never shown to them, read off their site${when}): ${facts.discovery_angle}` : '';
+    lines.push(`${kind}${angle}`.trim());
+  }
+  return lines.length ? lines.join('\n') : null;
 }
 
 /**

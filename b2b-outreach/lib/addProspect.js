@@ -39,6 +39,22 @@ async function addProspect(sb, {
   const { data: existing } = await sb.from('b2b_companies')
     .select('id, relationship_state, metadata, vetted_at').eq('id', id).maybeSingle();
 
+  // Domain dedupe at intake. The August merge cleared nine duplicate rows and
+  // nothing stopped the next one: a referral for a company we already hold
+  // under a different name would create a second row, and a cold opener to a
+  // partner's info@ is the worst email we can send. One query here beats a
+  // merge later. Nothing is written; the caller is told which company to work.
+  if (!existing && website) {
+    const { findCompanyByDomain } = require('./importProspects');
+    const dup = await findCompanyByDomain(sb, { website, channel, excludeId: id });
+    if (dup) {
+      return {
+        id: dup.id, existed: true, duplicate_of: dup.id, draft_id: null,
+        warning: `'${name.trim()}' shares its website domain with ${dup.name} (${dup.id}, ${dup.relationship_state || 'unknown state'}) — nothing was created. Work that company instead, or add the contact to it.`,
+      };
+    }
+  }
+
   const meta = {
     ...(existing?.metadata || {}),
     ...(referred_by ? { referred_by } : {}),

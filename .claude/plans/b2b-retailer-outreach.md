@@ -7,7 +7,7 @@ follow-up ladder, and a vetted supply of new stores behind it.
 - **Domain:** b2b_sales
 - **Initiative:** B2B Expansion (Phase 3, active outreach)
 - **Drafted:** 2026-09-08
-- **Status:** Round 1 SENT 2026-09-09 (30 stores: 12 sampled re-approaches, 18 cold intros; 7 stragglers replying by hand in-thread; 6 dropped). Phase 0 done (Kickbox live, She Bop order matching fixed). Phase 1 build shipped. Pending: lock the cold-intro rewording below (all-day comfort opener, "quality and comfort" kit line) before round 2; Phase 2 A/B report (org round reads 22 Sep); Phase 3 importer + vetting screen for the 119 discovery stores; Phase 4 affiliate decision (Hello Gorgeous and The Bra Room both asked).
+- **Status:** Round 1 SENT 2026-09-09 (30 stores: 12 sampled re-approaches, 18 cold intros; 7 stragglers replying by hand in-thread; 6 dropped). Phase 0 done (Kickbox live, She Bop order matching fixed). Phase 1 build shipped. **Phase 2 report shipped 2026-09-09** (`b2b_ab_report`: reply within 14 days by variant, bounces out, one vote per company per type, interim while windows are open; org round reads 22 Sep, retailer round 23 Sep). **Phase 3 build shipped 2026-09-09**: `scripts/importRetailerProspects.js` (D7, dry-run default; 113 of the 119 import, 6 have no way to be reached) + the panel's **Vet** mode (D8: keep / drop, keyboard k / d / j, Kickbox verdict on the row) + `b2b_vetting` console tool; `addProspect` now refuses a domain the channel already holds. Five stores imported as the verification slice; the remaining 108 wait on Jamie's go. Pending: lock the cold-intro rewording below (all-day comfort opener, "quality and comfort" kit line) before round 2; vet the imported cohort; Phase 4 affiliate decision (Hello Gorgeous and The Bra Room both asked).
 
 ---
 
@@ -202,8 +202,8 @@ the four lost.
 
 ### Phase 3 — New supply: import, vet, research
 
-1. **Importer** `scripts/importRetailerProspects.js` (dry-run default, `--execute`): D7. Run over the 119 qualified rows; report kept / no-contact / duplicate.
-2. **Panel vetting mode** (D8), wired to the existing triage endpoint. Static handler test covers the new buttons.
+1. ~~**Importer**~~ Built 2026-09-09: `scripts/importRetailerProspects.js` (dry-run default, `--execute`, `--limit`, `--min-score`, `--no-verify`), library in `b2b-outreach/lib/importProspects.js`. Deviations from D7 as written: free-mail addresses are KEPT and labelled (a Gmail address is often a small store's real inbox; 20 of 119), an address at some other business domain is kept and flagged, and obvious page vendors (font foundries, rewards widgets, pre-order apps) are dropped like placeholders. The researcher's profile becomes `description`, the angle and store type go to `enrich_facts` and render in the advisor context as our own research.
+2. ~~**Panel vetting mode**~~ Built 2026-09-09: the **Vet** sidebar mode (count on the button), rows carry contact route, Kickbox verdict and score, Keep joins the action row for any unvetted prospect, keyboard k / d / j / ↑ / o. `b2b_vetting` is the console twin.
 3. Jamie vets the imported cohort. Kept rows reach Tier 4 and draft nightly on the Phase 1 template.
 4. **Research the 416 pre-filter survivors**: `node b2b-discovery/researchSurvivors.js --execute` in batches; re-run the importer for new qualifieds.
 5. Later, not now: Tier 3 custom searches and a scheduled discovery run. Only worth it once the 119 + 416 are worked and the reply rate says the channel converts.

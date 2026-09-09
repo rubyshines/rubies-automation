@@ -620,6 +620,43 @@ async function handleCommitments(input = {}) {
   }
 }
 
+async function handleAbReport(input = {}) {
+  try {
+    const { fetchAbReport, renderAbReport } = require(path.join(B2B_LIB, 'abReport'));
+    const { FIXED_SUBJECTS, fixedSubjectFor } = require(path.join(B2B_LIB, 'fixedSubjects'));
+    const report = await fetchAbReport(getSupabaseClient(), { windowDays: input.window_days || undefined });
+    const subjects = {};
+    for (const [type, variants] of Object.entries(FIXED_SUBJECTS)) {
+      subjects[type] = {};
+      for (const v of Object.keys(variants)) subjects[type][v] = fixedSubjectFor(type, v, '[name]');
+    }
+    return text(renderAbReport(report, { subjects }));
+  } catch (e) {
+    return text(`A/B report failed: ${e.message}`);
+  }
+}
+
+async function handleVetting(input = {}) {
+  try {
+    const { fetchVetting } = require(path.join(B2B_LIB, 'queueService'));
+    const { companies, total } = await fetchVetting(getSupabaseClient(), { channel: input.channel || undefined });
+    if (!total) return text('Nothing waiting to be vetted.');
+    const limit = input.limit || 40;
+    const lines = [`**Waiting to be vetted** — ${total}${input.channel ? ` (${input.channel})` : ''}. Keep admits to Tier 4 (the intro drafts tonight); drop needs a reason. Both via b2b_triage.`, ''];
+    const CONTACT = { own_domain: 'email', other_domain: 'email at another domain', free_mail: 'free-mail address', form: 'contact form only', none: 'NO WAY TO REACH' };
+    for (const c of companies.slice(0, limit)) {
+      const where = [c.city, c.region, c.country].filter(Boolean).join(', ');
+      const d = c.discovery;
+      lines.push(`- **${c.name}** (${c.id}) — ${c.relationship_type}${where ? `, ${where}` : ''}${d.score != null ? `, score ${d.score}` : ''}${d.subcategory ? `, ${d.subcategory}` : ''} — ${CONTACT[c.contact_status] || c.contact_status}${c.contact_email ? ` <${c.contact_email}>` : ''}${c.website ? ` — ${c.website}` : ''}`);
+      if (d.angle) lines.push(`  ${d.angle}`);
+    }
+    if (total > limit) lines.push('', `…and ${total - limit} more (pass limit to see them).`);
+    return text(lines.join('\n'));
+  } catch (e) {
+    return text(`Vetting list failed: ${e.message}`);
+  }
+}
+
 module.exports = [
   {
     name: 'b2b_template',
@@ -924,5 +961,28 @@ module.exports = [
       required: ['company_id', 'message_type', 'body'],
     },
     handler: handleSend,
+  },
+  {
+    name: 'b2b_ab_report',
+    description: "Reply rate by subject-line variant for every initiating message type under A/B test (org intro, retailer cold intro, sampled-store re-approach). Reply within 14 days, bounces excluded, cumulative across rounds; one vote per company per type. Says how many sends are still inside their window and when the last one reads. Rounds are n≈20-30, so treat a single round as directional and keep accumulating rather than declaring a winner.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window_days: { type: 'number', description: 'Reply window in days (default 14).' },
+      },
+    },
+    handler: handleAbReport,
+  },
+  {
+    name: 'b2b_vetting',
+    description: "Every prospect waiting to be vetted — imported rows that Tier 4 will not surface until a human keeps them. Best discovery score first, with how we can reach them (own-domain email, free-mail, another domain, contact form only, nothing) and the researcher's angle. The panel's Vet mode is the same list; decisions go through b2b_triage (keep / drop with a reason).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: "'wholesale' | 'lgbtq_org' | 'affiliate'. Omit for all." },
+        limit: { type: 'number', description: 'Rows to list (default 40).' },
+      },
+    },
+    handler: handleVetting,
   },
 ];

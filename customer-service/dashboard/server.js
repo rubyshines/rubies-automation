@@ -3172,6 +3172,12 @@ async function apiB2bTriage(companyId, body = {}) {
   });
 }
 
+// Vetting: every prospect waiting for keep / drop. Tier 4 only surfaces rows
+// a human has kept, so an imported cohort sits here until someone looks at it.
+async function apiB2bVetting(query) {
+  return b2bQueueService.fetchVetting(getSupabaseClient(), { channel: query.get('channel') || null });
+}
+
 // Directory: every company, searchable — the panel's browse surface, as
 // opposed to the queue's "what's due today".
 async function apiB2bCompanies(query) {
@@ -4220,6 +4226,7 @@ const routes = {
   'GET /api/b2b/on-me': (req) => apiB2bOnMe(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/commitments': (req) => apiB2bCommitments(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/vetting': (req) => apiB2bVetting(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/reviews/queue': (req) => apiReviewsQueue(new URL(req.url, 'http://localhost').searchParams),

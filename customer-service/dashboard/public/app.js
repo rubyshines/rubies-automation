@@ -5523,6 +5523,7 @@ let outreachTodo = { open: [], done: [] }; // commitments from /api/b2b/commitme
 let outreachTodoCompanies = null;          // [{id,name}] for the add box, fetched once
 let outreachTodoHighlight = null;          // commitment id lit in the detail pane
 let outreachComposeFor = null;             // commitment id the next send marks done
+let outreachVetting = [];        // unvetted prospect rows from /api/b2b/vetting
 let outreachDirectory = [];      // company rows from /api/b2b/companies
 let outreachActivity = [];       // message rows from /api/b2b/activity
 let outreachDirTotal = 0;
@@ -5546,6 +5547,7 @@ const OUTREACH_MODES = [
   // grouped by company — who you are holding up. Both read one table.
   { value: 'todo', label: 'To do', hint: 'what you owe, and what you are waiting on', count: () => (outreachTodo.open || []).filter(r => r.owner === 'me').length },
   { value: 'onme', label: 'On Me', hint: 'companies you still owe something', count: () => outreachOnMe.length },
+  { value: 'vetting', label: 'Vet', hint: 'new prospects waiting for keep or drop before they can draft', count: () => outreachVetting.length },
   { value: 'activity', label: 'Activity', hint: 'what was sent and what came back' },
   { value: 'companies', label: 'Companies', hint: 'search every company' },
 ];
@@ -5597,6 +5599,7 @@ function loadOutreachSidebar() {
   if (outreachMode === 'companies') return loadOutreachDirectory();
   if (outreachMode === 'onme') return loadOutreachOnMe();
   if (outreachMode === 'todo') return loadOutreachTodo();
+  if (outreachMode === 'vetting') return loadOutreachVetting();
   return loadOutreachQueue();
 }
 
@@ -5971,12 +5974,138 @@ async function loadOutreachOnMe() {
   renderOutreachSidebar();
 }
 
+// ── Vetting ─────────────────────────────────────────────────────────────────
+// The admission gate as a list. Tier 4 only surfaces prospects a human has
+// kept, so an imported cohort waits here. Two decisions, both through the
+// same triage endpoint the console uses; keep needs no reason, drop does.
+// Keyboard-driven: 119 rows at a time should take seconds each.
+
+async function fetchVettingRows() {
+  const params = outreachChannel ? `?channel=${encodeURIComponent(outreachChannel)}` : '';
+  const payload = await api(`/api/b2b/vetting${params}`);
+  return payload.companies || [];
+}
+
+async function loadOutreachVetting() {
+  try {
+    outreachVetting = await fetchVettingRows();
+  } catch (err) {
+    renderOutreachSidebar(`Failed to load vetting: ${esc(err.message)}`);
+    return;
+  }
+  rememberOutreachEntries(outreachVetting.map(c => ({
+    company_id: c.id,
+    company_name: c.name,
+    channel: c.relationship_type,
+    tier: null,
+    message_type: null,
+    reason: outreachVettingSubtitle(c),
+  })));
+  renderOutreachSidebar();
+}
+
+const OUTREACH_CONTACT_STATUS = {
+  own_domain: ['email', 'badge-ok', 'An address at their own domain'],
+  other_domain: ['email, other domain', 'badge-warn', 'A real address, but at a different business domain — check it is theirs'],
+  free_mail: ['free mail', 'badge-muted', 'A Gmail-style address; often a small store\'s real inbox'],
+  form: ['form only', 'badge-muted', 'No address on file — the draft is handed over to paste into their contact form'],
+  none: ['no way to reach', 'badge-warn', 'No email and no contact form — cannot draft until one is added'],
+};
+
+function outreachVettingSubtitle(c) {
+  const where = [c.city, c.region].filter(Boolean).join(', ');
+  const kind = c.discovery?.subcategory ? c.discovery.subcategory.replace(/-/g, ' ') : null;
+  return [kind, where].filter(Boolean).join(' · ') || 'new prospect';
+}
+
+function outreachVettingRowHtml(c) {
+  const channelLabel = OUTREACH_CHANNEL_LABELS[c.relationship_type] || c.relationship_type || '?';
+  const [label, cls, title] = OUTREACH_CONTACT_STATUS[c.contact_status] || [c.contact_status, 'badge-muted', ''];
+  const score = c.discovery?.score;
+  return `
+  <div class="queue-item outreach-row ${c.id === outreachSelectedId ? 'active' : ''}"
+       data-company-id="${esc(c.id)}" onclick="selectOutreachEntry(this.dataset.companyId)">
+    <div class="queue-item-inner">
+      <div class="queue-item-row1">
+        <span class="queue-item-name">${esc(c.name)}</span>
+        <span class="outreach-channel-chip outreach-channel-${esc(c.relationship_type)}">${esc(channelLabel)}</span>
+      </div>
+      <div class="outreach-row-reason">${esc(outreachVettingSubtitle(c))}</div>
+      <div class="queue-item-row2">
+        <span class="badge ${cls}" title="${esc(title)}">${esc(label)}</span>
+        ${c.verification === 'undeliverable' ? '<span class="badge badge-warn" title="Kickbox says this mailbox does not exist. A send would be refused; fix the address or drop.">address dead</span>' : ''}
+        ${score != null ? `<span class="badge badge-muted" title="Discovery score, 1 to 10">score ${esc(String(score))}</span>` : ''}
+      </div>
+      ${c.discovery?.angle ? `<div class="outreach-row-snippet">${esc(c.discovery.angle)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+// Keep needs no reason ("yes, this one is fine" needs no essay). In Vet mode
+// the decision advances to the next row the way a send does in the queue —
+// this is a worklist you burn down, not a directory you browse.
+function keepOutreach() {
+  (outreachMode === 'vetting' ? vetOutreach : applyOutreachTriage)({ action: 'keep' }, 'Kept — the intro drafts tonight');
+}
+
+async function vetOutreach(body, okMessage) {
+  const companyId = outreachSelectedId;
+  if (!companyId) return;
+  try {
+    await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/triage`, { method: 'POST', body });
+  } catch (err) {
+    showToast(`Failed: ${err.message}`, 'error');
+    return;
+  }
+  showToast(okMessage, 'success');
+  const idx = outreachVetting.findIndex(c => c.id === companyId);
+  const next = outreachVetting[idx + 1] || outreachVetting[idx - 1] || null;
+  outreachVetting = outreachVetting.filter(c => c.id !== companyId);
+  outreachDraft = null;
+  renderOutreachSidebar();
+  if (next) {
+    selectOutreachEntry(next.id);
+  } else {
+    outreachSelectedId = null;
+    document.getElementById('outreach-detail').style.display = 'none';
+    document.getElementById('outreach-placeholder').style.display = 'flex';
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (typeof currentTab === 'undefined' || currentTab !== 'outreach' || outreachMode !== 'vetting') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (!outreachVetting.length) return;
+  const idx = outreachVetting.findIndex(c => c.id === outreachSelectedId);
+  if (e.key === 'j' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const n = outreachVetting[idx < 0 ? 0 : Math.min(idx + 1, outreachVetting.length - 1)];
+    if (n && n.id !== outreachSelectedId) selectOutreachEntry(n.id);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    const n = outreachVetting[Math.max(idx - 1, 0)];
+    if (n && n.id !== outreachSelectedId) selectOutreachEntry(n.id);
+  } else if (e.key === 'k' && idx >= 0) {
+    e.preventDefault();
+    keepOutreach();
+  } else if (e.key === 'd' && idx >= 0) {
+    e.preventDefault();
+    dropOutreach();
+  } else if (e.key === 'o' && idx >= 0) {
+    const site = outreachVetting[idx].website;
+    if (site) window.open(site, '_blank', 'noopener');
+  }
+});
+
 // Badge-only refresh: never repaints a list the operator is reading, so it is
 // safe to fire from the queue load.
 async function refreshOnMeCount() {
-  // Both counts, each a quiet gap on failure rather than an error banner.
+  // Every count, each a quiet gap on failure rather than an error banner.
   try { outreachOnMe = await fetchOnMeRows(); } catch (_) { /* quiet gap */ }
   try { outreachTodo = await api('/api/b2b/commitments'); } catch (_) { /* quiet gap */ }
+  try { outreachVetting = await fetchVettingRows(); } catch (_) { /* quiet gap */ }
   if (currentTab === 'outreach' && outreachMode === 'queue') renderOutreachSidebar();
 }
 
@@ -6211,6 +6340,16 @@ function renderOutreachList(errorHtml) {
     return;
   }
 
+  if (outreachMode === 'vetting') {
+    if (!outreachVetting.length) {
+      el.innerHTML = `<div class="outreach-loading">Nothing waiting to be vetted.<br><span class="outreach-list-note">Import a cohort with <code>scripts/importRetailerProspects.js</code> and it lands here.</span></div>`;
+      return;
+    }
+    el.innerHTML = `<div class="outreach-list-note">Keyboard: <strong>k</strong> keep &middot; <strong>d</strong> drop &middot; <strong>j</strong> / &darr; next &middot; &uarr; back &middot; <strong>o</strong> open their site</div>`
+      + outreachVetting.map(outreachVettingRowHtml).join('');
+    return;
+  }
+
   const inboundHtml = outreachInboundStripHtml();
   if (!outreachQueue.length) {
     el.innerHTML = inboundHtml + '<div class="outreach-loading">Outreach queue is empty &mdash; nothing due today.</div>';
@@ -6434,6 +6573,7 @@ async function selectOutreachEntry(companyId) {
 // between companies, not re-open the same one for each of its emails.
 function currentOutreachIds() {
   if (outreachMode === 'companies') return outreachDirectory.map(c => c.id);
+  if (outreachMode === 'vetting') return outreachVetting.map(c => c.id);
   if (outreachMode === 'activity') return [...new Set(outreachActivity.map(m => m.company_id))];
   if (outreachMode === 'todo') return [...new Set((outreachTodo.open || []).filter(r => r.company_id).map(r => r.company_id))];
   if (outreachMode === 'onme') return outreachOnMe.map(r => r.company_id);
@@ -7032,7 +7172,7 @@ function resumeOutreach() {
 function dropOutreach() {
   const reason = prompt('Why are we dropping this company?\n\n(e.g. "said no to carrying inventory", "store closed", "dead address, no alternate")');
   if (!reason || !reason.trim()) return;
-  applyOutreachTriage({ action: 'drop', reason: reason.trim() }, 'Dropped');
+  (outreachMode === 'vetting' ? vetOutreach : applyOutreachTriage)({ action: 'drop', reason: reason.trim() }, 'Dropped');
 }
 
 function restoreOutreach() {
@@ -7378,6 +7518,7 @@ function renderOutreachSidebarContext() {
     : outreachMode === 'activity' ? `${outreachActivity.length} messages`
     : outreachMode === 'todo' ? `${(outreachTodo.open || []).filter(r => r.owner === 'me').length} owed`
     : outreachMode === 'onme' ? `${outreachOnMe.length} on you`
+    : outreachMode === 'vetting' ? `${outreachVetting.length} to vet`
     : `${outreachQueue.length} in queue`;
   document.getElementById('outreach-back-count').textContent = backLabel;
 
@@ -7973,7 +8114,10 @@ function outreachActionsHtml(entry, draft) {
           title="Undo the drop: back to lead or account as the record supports. Still needs a keep before it drafts.">Restore</button>`
       : deferred
         ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()"${c.on_me_at ? ' title="Removes the reply claim. Anything you owe them from a call or mail stays on your list."' : ''}>${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`
-        : `<button class="btn btn-ghost btn-onme" onclick="onMeOutreach()"
+        : `${c?.relationship_state === 'prospect' && !c.vetted_at
+            ? `<button class="btn btn-ghost btn-onme" onclick="keepOutreach()"
+                title="Admit to the queue. The intro drafts tonight on the locked template; you review it before it sends.">Keep</button>`
+            : ''}<button class="btn btn-ghost btn-onme" onclick="onMeOutreach()"
             title="Put what you owe them on your To do list — keeps the draft; the cadence stays off until it is done">Add to my list</button>
            <button class="btn btn-ghost" onclick="pauseOutreach()"
             title="Stop drafting, chasing and following up. A new reply still surfaces.">Pause outreach</button>
