@@ -275,7 +275,7 @@ async function composeFollowUp(sb, { company_id, entry } = {}) {
 // with Jamie line by line: pitch first (the reader may not remember the kit,
 // so the email says who is writing before it mentions it), then the samples,
 // then the terms. Zero model calls, like the follow-up rungs; the only fills
-// are the greeting, the store name, and when the kit went out. The subject is
+// are the greeting and when the kit went out. The subject is
 // one of two fixed A/B strings (fixedSubjects.js).
 // ---------------------------------------------------------------------------
 
@@ -304,8 +304,9 @@ function whenPhrase(sampledAt, now = new Date()) {
 }
 
 /** The locked body. Pure. */
-function fillRetailerReApproach({ firstName, storeName, when }) {
-  const sent = when ? `${when[0].toUpperCase()}${when.slice(1)} we sent ${storeName} a sample kit` : `We sent ${storeName} a sample kit`;
+function fillRetailerReApproach({ firstName, when }) {
+  // "we sent you", never the store name: naming it read as a mail merge (Jamie, 2026-09-09).
+  const sent = when ? `${when[0].toUpperCase()}${when.slice(1)} we sent you a sample kit` : 'We sent you a sample kit';
   const body = `Hi ${firstName},\n\n`
     + "I'm Jamie, founder of RUBIES. We make gender-affirming underwear and swimwear for trans women and girls, "
     + 'designed to feel like regular clothing, no tucking or compression needed. '
@@ -342,7 +343,7 @@ async function composeRetailerReApproach(sb, { company_id, entry, variant_id, no
   const { resolveRecipient } = require('./sendB2bEmail');
   const recipient = await resolveRecipient(sb, company_id);
   const when = whenPhrase(company.samples_shipped_at, now);
-  const { body } = fillRetailerReApproach({ firstName: greetingName(recipient?.name), storeName: company.name, when });
+  const { body } = fillRetailerReApproach({ firstName: greetingName(recipient?.name), when });
   const { fixedSubjectFor } = require('./fixedSubjects');
   const subject = fixedSubjectFor('re_approach', variant_id, company.name, { when });
   if (!subject) throw new Error(`no fixed subject for re_approach variant '${variant_id}'`);

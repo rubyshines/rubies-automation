@@ -33,13 +33,13 @@ test('whenPhrase says it the way a person would', () => {
 });
 
 test('the sampled-retailer re-approach body is the locked text, exactly', () => {
-  const { body, attachments } = fillRetailerReApproach({ firstName: 'Carmen', storeName: 'Grail Bra Specialists', when: 'last fall' });
+  const { body, attachments } = fillRetailerReApproach({ firstName: 'Carmen', when: 'last fall' });
   assert.equal(body,
     'Hi Carmen,\n\n'
     + "I'm Jamie, founder of RUBIES. We make gender-affirming underwear and swimwear for trans women and girls, "
     + 'designed to feel like regular clothing, no tucking or compression needed. '
     + 'The brand started with my own trans daughter, who could not find anything that worked.\n\n'
-    + 'Last fall we sent Grail Bra Specialists a sample kit and I would love to hear what you thought of the items.\n\n'
+    + 'Last fall we sent you a sample kit and I would love to hear what you thought of the items.\n\n'
     + 'Our wholesale terms are 50% off retail with free shipping. '
     + 'Let me know if you have any questions or if you would like to set up a quick conversation.\n\n'
     + `Talk soon,\n\n${SIGNATURE_BLOCK_MD}`);
@@ -47,8 +47,8 @@ test('the sampled-retailer re-approach body is the locked text, exactly', () => 
   // No em dashes anywhere in customer-facing text.
   assert.ok(!/[—–]/.test(body));
   // No name on file: the standard fallback greeting.
-  assert.match(fillRetailerReApproach({ firstName: 'there', storeName: 'X', when: 'recently' }).body, /^Hi there,\n\nI'm Jamie/);
-  assert.match(fillRetailerReApproach({ firstName: 'there', storeName: 'X', when: 'recently' }).body, /Recently we sent X a sample kit/);
+  assert.match(fillRetailerReApproach({ firstName: 'there', when: 'recently' }).body, /^Hi there,\n\nI'm Jamie/);
+  assert.match(fillRetailerReApproach({ firstName: 'there', when: 'recently' }).body, /Recently we sent you a sample kit/);
 });
 
 test('only a retailer re_approach with a kit on record takes the template', () => {

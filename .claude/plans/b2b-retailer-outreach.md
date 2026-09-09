@@ -270,7 +270,7 @@ Hi [first name],
 
 I'm Jamie, founder of RUBIES. We make gender-affirming underwear and swimwear for trans women and girls, designed to feel like regular clothing, no tucking or compression needed. The brand started with my own trans daughter, who could not find anything that worked.
 
-Last fall we sent [store] a sample kit and I would love to hear what you thought of the items.
+Last fall we sent you a sample kit and I would love to hear what you thought of the items.
 
 Our wholesale terms are 50% off retail with free shipping. Let me know if you have any questions or if you would like to set up a quick conversation.
 
