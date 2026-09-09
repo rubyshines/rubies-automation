@@ -82,9 +82,19 @@ async function buildContexts(sb, companies) {
   // put the company back in Tier 1 ("waiting on us"). Outbound history still
   // counts for cadence (sentTypes / lastOutboundAt) regardless of status.
   const threads = ids.length ? await fetchAllPaginated(() =>
-    sb.from('b2b_threads').select('id, status').in('company_id', ids)
+    sb.from('b2b_threads').select('id, status, company_id, last_message_at').in('company_id', ids)
   ) : [];
   const closedThreadIds = new Set(threads.filter(t => t.status === 'closed').map(t => t.id));
+  // The newest OPEN thread per company: where a reminder-row reply belongs, so
+  // the composer answers inside the conversation they remember rather than
+  // starting a cold new email (and inherits its subject). Closed threads are
+  // concluded and never a reply target; reopening one makes it eligible.
+  const newestOpenThreadByCompany = new Map();
+  for (const t of threads) {
+    if (t.status === 'closed') continue;
+    const cur = newestOpenThreadByCompany.get(t.company_id);
+    if (!cur || new Date(t.last_message_at || 0) > new Date(cur.last_message_at || 0)) newestOpenThreadByCompany.set(t.company_id, t);
+  }
   const drafts = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_drafts').select('company_id').eq('status', 'pending').in('company_id', ids)
       .order('id', { ascending: true })
@@ -147,6 +157,7 @@ async function buildContexts(sb, companies) {
       // only ever carried a thread for Tier 1, so "just following up on my note
       // below" would arrive with no note below it.
       lastOutboundThreadId: null,
+      newestOpenThreadId: newestOpenThreadByCompany.get(c.id)?.id || null,
       // How many times in a row we have written with no human answer, and when
       // that run started. Derived here rather than stored so it can never
       // disagree with the transcript.

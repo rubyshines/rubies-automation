@@ -630,23 +630,18 @@ async function applyStatedNextTouch(sb, companyId, now = new Date()) {
  * it (one-pending-per-company is a unique index) and `draft` comes back null
  * with `existing_draft_id` set, so the caller can just open it.
  */
-async function reopenThread(sb, { thread_id, steer, message_type } = {}) {
+async function reopenThread(sb, { thread_id } = {}) {
+  // Reopening is a status flip and nothing else (2026-09-09). It used to write
+  // an Opus follow-up into the thread, which the initiate-vs-continue rule
+  // (2026-09-02) already ruled out: anything continuing a conversation is
+  // operator-written. The composer now targets the reopened thread on its own
+  // (queue entries carry the newest open thread), so a reply lands inside it
+  // and inherits its subject.
   const thread = await setThreadStatus(sb, { thread_id, status: 'open' });
-
   const { data: existing, error } = await sb.from('b2b_drafts')
     .select('id').eq('company_id', thread.company_id).eq('status', 'pending').maybeSingle();
   if (error) throw new Error(error.message);
-  if (existing) return { thread, draft: null, existing_draft_id: existing.id };
-
-  const result = await generateDraftForCompany(sb, {
-    company_id: thread.company_id,
-    thread_id: thread.id,
-    steer,
-    message_type,
-    task_hint: 'Jamie is reopening this concluded conversation to follow up. Read the thread, pick up whatever was actually left hanging (or the last real thing that happened), and draft a natural follow-up from him. They are NOT waiting on a reply from us, so do not write as though they are.',
-    reason: `operator reopened "${thread.subject || 'thread'}" to follow up`,
-  });
-  return { thread, draft: result, existing_draft_id: null };
+  return { thread, draft: null, existing_draft_id: existing?.id || null };
 }
 
 /**

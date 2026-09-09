@@ -218,6 +218,10 @@ function computeQueueEntry(company, ctx, now = new Date()) {
       return {
         tier: 5,
         message_type: null,
+        // A reminder-row reply goes inside the newest open thread when there is
+        // one (composeDraftRow inherits it): the conversation they remember,
+        // with its subject, rather than a cold new email (2026-09-09).
+        ...(ctx.newestOpenThreadId ? { thread_id: ctx.newestOpenThreadId } : {}),
         reason: `they asked us to reach back around ${stated.date}${stated.basis ? ` ("${stated.basis}")` : ''} — ${overdueDays}d ago`,
         task_hint: `They asked us to make contact around ${stated.date}${words}. That time has come. Draft the message that picks the conversation back up on that basis. Nothing new has arrived from them, so do not write it as a reply.`,
       };
@@ -225,7 +229,7 @@ function computeQueueEntry(company, ctx, now = new Date()) {
     const wrote = ctx.lastOutboundAt
       ? `, set when you wrote on ${new Date(ctx.lastOutboundAt).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })}`
       : '';
-    return { tier: 5, message_type: null, reason: `reminder date passed ${overdueDays}d ago${wrote} — nothing specific is due` };
+    return { tier: 5, message_type: null, ...(ctx.newestOpenThreadId ? { thread_id: ctx.newestOpenThreadId } : {}), reason: `reminder date passed ${overdueDays}d ago${wrote} — nothing specific is due` };
   }
 
   return null;

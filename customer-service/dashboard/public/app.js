@@ -6733,12 +6733,14 @@ function outreachHistoryHtml() {
       </details>`;
     }).join('');
     // Closed is not terminal — it means "concluded, stop counting it". Reopening
-    // drafts the follow-up INSIDE the thread, so it reaches them as a reply to
-    // the conversation they remember rather than a cold new email.
+    // makes the thread the composer's reply target, so what Jamie writes
+    // reaches them as a reply to the conversation they remember (subject
+    // inherited) rather than a cold new email. No draft is generated:
+    // continuations are operator-written.
     const actions = t.status === 'closed'
       ? `<div class="outreach-thread-actions">
-          <button class="btn btn-secondary" onclick="reopenOutreachThread(${t.id}, this)">Reopen &amp; follow up</button>
-          <span class="outreach-thread-action-note">Drafts a follow-up inside this thread.</span>
+          <button class="btn btn-secondary" onclick="reopenOutreachThread(${t.id}, this)">Reopen</button>
+          <span class="outreach-thread-action-note">Your reply in the composer goes inside this thread.</span>
         </div>`
       : `<div class="outreach-thread-actions">
           <button class="btn btn-ghost" onclick="closeOutreachThread(${t.id})">Close thread</button>
@@ -6761,14 +6763,18 @@ function outreachHistoryHtml() {
   const total = threads.reduce((n, t) => n + (t.messages || []).length, 0);
   const liveThreads = threads.filter(t => t.status !== 'closed');
   const closedThreads = threads.filter(t => t.status === 'closed');
+  // With nothing live, the newest closed thread IS the last thing that
+  // happened, so it opens with its last message expanded rather than sitting
+  // two clicks away behind a blank composer (2026-09-09).
+  const nothingLive = !liveThreads.length;
   let closedHtml = '';
-  if (closedThreads.length === 1 && !liveThreads.length) {
-    closedHtml = threadHtml(closedThreads[0], false);
+  if (closedThreads.length === 1 && nothingLive) {
+    closedHtml = threadHtml(closedThreads[0], true);
   } else if (closedThreads.length) {
     const last = fmtDay(closedThreads[0].last_message_at);
-    closedHtml = `<details class="outreach-thread-group">
+    closedHtml = `<details class="outreach-thread-group"${nothingLive ? ' open' : ''}>
       <summary>${closedThreads.length} closed thread${closedThreads.length === 1 ? '' : 's'}${last ? `<span class="outreach-thread-count">last ${esc(last)}</span>` : ''}</summary>
-      ${closedThreads.map(t => threadHtml(t, false)).join('')}
+      ${closedThreads.map((t, i) => threadHtml(t, nothingLive && i === 0)).join('')}
     </details>`;
   }
   return `<div id="outreach-history" class="detail-section outreach-history">
@@ -6778,23 +6784,21 @@ function outreachHistoryHtml() {
   </div>`;
 }
 
-// Reopen writes an Opus draft, so it takes a few seconds — say so rather than
-// leaving a dead button. The draft lands threaded on the reopened conversation.
+// Reopen is a status flip: no draft is written (continuations are
+// operator-written). The composer's To line and subject follow the thread.
 async function reopenOutreachThread(threadId, btn) {
   const companyId = outreachSelectedId;
-  if (btn) { btn.disabled = true; btn.textContent = 'Drafting…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Reopening…'; }
   let res;
   try {
     res = await api(`/api/b2b/threads/${threadId}/reopen`, { method: 'POST', body: {} });
   } catch (err) {
     showToast(`Reopen failed: ${err.message}`, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Reopen & follow up'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Reopen'; }
     return;
   }
-  if (outreachSelectedId !== companyId) return; // moved on while it drafted
-  showToast(res.reused_existing_draft
-    ? 'Thread reopened — this company already had a draft waiting'
-    : `Thread reopened, follow-up draft #${res.draft?.id} ready`, 'success');
+  if (outreachSelectedId !== companyId) return; // moved on while it saved
+  showToast('Thread reopened. Your reply in the composer goes inside it.', 'success');
   if (res.draft) outreachDraft = res.draft;
   const entry = outreachEntries.get(companyId);
   await loadOutreachContext(companyId, false);

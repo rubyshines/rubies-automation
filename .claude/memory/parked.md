@@ -17,12 +17,13 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Notes: Every PO Box fails all three resolver rules (no prior order to the address, not ROOFTOP-geocodable, no Street View), so the order sits in Urgent until a human asks the customer. On 2026-09-01 that ask went out from Jamie's personal Gmail with no ticket and no order note; intake archived both replies as "legacy thread" within 20 seconds and they sat unread for a week (#33205 shipped 8 days late, #32969 held 22 business days). Build: when the resolver cannot release, seed an address-confirmation outreach the way the unnotified pre-order drafter does — pending care@ draft via `seedOutboundDraft()`, Gorgias ticket, waiting note on the order, idempotent through an `author='auto'` note. The reply then lands as a ticket where the advisor already has `release_address_hold`. The 2026-09-09 fix stopped intake archiving those replies, but a personal-Gmail ask is still outside every queue.
 - Resume when: the next PO Box hold shows in Urgent, or the next CS dashboard session.
 
-## Reopen & follow up still AI-drafts into reopened threads
+## RESOLVED 2026-09-09 — Reopen & follow up still AI-drafts into reopened threads
 - Parked: 2026-09-02
+- Last touched: 2026-09-09
 - Domains: b2b_sales, community
 - Type: decision-needed
 - Priority: low
-- Notes: The initiate-vs-continue rule (2026-09-02, domain_b2b_sales.md) made continuations operator-written, but `reopenThread` still generates an AI follow-up draft into the reopened conversation — continuation-shaped under the rule. Left as-is because removing it needs the composer to target the reopened thread (`composeDraft` inherits thread_id from the queue entry, which a reopen doesn't produce). Decide whether Reopen becomes reopen-and-compose, and plumb composer thread targeting if so.
+- **Resolved 2026-09-09:** reopen is now a status flip with no draft, and queue entries (Tier 5 reminder rows included) carry the company's newest open thread, so the composer replies inside it and inherits its subject. Original note: The initiate-vs-continue rule (2026-09-02, domain_b2b_sales.md) made continuations operator-written, but `reopenThread` still generated an AI follow-up draft into the reopened conversation — continuation-shaped under the rule. Left as-is because removing it needs the composer to target the reopened thread (`composeDraft` inherits thread_id from the queue entry, which a reopen doesn't produce). Decide whether Reopen becomes reopen-and-compose, and plumb composer thread targeting if so.
 
 ## The 354 stored balance-sheet snapshots are all wrong and need re-running
 - Parked: 2026-08-27

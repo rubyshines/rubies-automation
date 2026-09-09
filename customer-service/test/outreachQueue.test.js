@@ -124,3 +124,15 @@ test('a real reply still beats the unreachable branch', () => {
   assert.equal(e.tier, 1);
   assert.match(e.reason, /waiting on us/, 'the human, not the mail server');
 });
+
+test('a reminder row replies inside the newest open thread when there is one (2026-09-09)', () => {
+  const { computeQueueEntry } = require('../../b2b-outreach/lib/queue');
+  const now = new Date('2026-09-09T12:00:00Z');
+  const co = { id: 'c', name: 'C', relationship_type: 'wholesale', relationship_state: 'in_contact', next_action_date: '2026-09-08' };
+  const withThread = computeQueueEntry(co, { newestOpenThreadId: 'th-7' }, now);
+  assert.equal(withThread.tier, 5);
+  assert.equal(withThread.thread_id, 'th-7');
+  const without = computeQueueEntry(co, {}, now);
+  assert.equal(without.tier, 5);
+  assert.equal(without.thread_id, undefined, 'no open thread: a new email, subject typed by the operator');
+});
