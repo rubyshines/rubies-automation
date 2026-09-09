@@ -95,14 +95,14 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Two halves, separable: (1) the immediate ask — check in with the newest partner about volume, which fits the standing partner re-engagement round; (2) the systemic version — a capacity field on `donation_partners` (items/month, or small/medium/large) fed by the onboarding survey and read by the weighting, plus a way for a partner to say "pause us." Related to the "Partner feedback loop (items received, condition)" item in domain What's Next; a partner who can report what arrived is also the one who can say what they want.
 - Resume when: the partner check-in sweep goes out, or a partner asks us to slow down.
 
-## Bulk address verification across b2b_contacts (before the next outreach round)
+## RESOLVED 2026-09-09 — Bulk address verification across b2b_contacts
 - Parked: 2026-08-20
-- Last touched: 2026-08-28
+- Last touched: 2026-09-09
 - Domains: b2b_sales, community
 - Type: idea (BUILT — awaiting key + migration + live run)
 - Priority: high
 - **BUILT 2026-08-28.** Vendor: Kickbox (SMTP probe, ~$0.01/address PAYG — the only class of check that would have caught both 19 Aug bounces; dry run measured the book at 281 unique addresses ≈ $2.81). Not built as a recurring sweep: verification runs where an address ENTERS the book (`addProspect`, `updateCompanyContact`, `enrichOrgs`), recorded per-ADDRESS in `b2b_email_verifications`, so `scripts/verifyB2bAddresses.js` (dry-run default, `--live` to probe, skips rows fresher than `--max-age-days`) is a catch-up, not a chore. Readers fail OPEN — only a positive `undeliverable` row blocks (the ladder's `addressGuard` + a pre-send refusal in `sendB2bEmail` with an `allow_undeliverable` bypass); no row / lookup error / missing table all mean "unverified — proceed".
-- Remaining (Jamie): (1) create a Kickbox account and put `KICKBOX_API_KEY` in `.env` + Railway, (2) run `customer-service/migrations-2026-08-28-b2b-email-verification.sql` in the Supabase SQL Editor, (3) `node scripts/verifyB2bAddresses.js --live`, then fix/retire the undeliverable list. Close this entry after the live run.
+- **Resolved 2026-09-09:** Kickbox account live, key on .env + Railway (all services), table created, first live sweep run over 284 addresses: 104 deliverable, 150 risky (role inboxes / accept-all domains, not blocked), 18 unknown (retried once, still unreachable), 12 undeliverable. Five of the twelve were image filenames the scraper stored as general emails (cleared); dead individual mailboxes retired via `removeCompanyContact` where another route existed. Verification now runs at intake; the sweep is a catch-up only.
 - Related open question from the same parked entry (*B2B lead supply — remaining plan phases*, phase 5): whether cold B2B keeps riding rubyshines.com alongside Klaviyo customer mail or moves to a separate sending domain. Still open — the same reputation question.
 - Context that makes this urgent rather than tidy: contact churn is the standing org-side failure mode (Oasis handed off in June, Carleton's is a student post that turns over yearly, Valid USA's contact left and the org is renaming to Reach Pluto). Most of the book has not been written to in over a year.
 

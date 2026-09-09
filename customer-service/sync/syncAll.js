@@ -19,6 +19,7 @@ if (!process.env.SUPABASE_URL) {
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { fetchOrdersForSync, getCustomerProfile } = require('../lib/shopify');
 const { normalizeFulfillments } = require('../lib/tracking/refreshDelivery');
+const { upsertCustomerRow } = require('../../webhooks/lib/customerUpsert');
 
 // ---------------------------------------------------------------------------
 // CLI args (used in standalone mode)
@@ -116,25 +117,25 @@ async function syncOrders({ since, full } = {}) {
       const orderNumber = parseInt(o.name?.replace(/\D/g, ''), 10);
 
       // --- Ensure customer exists in customers table ---
+      // Resolved by shopify_customer_id first (webhooks/lib/customerUpsert):
+      // a plain upsert on email collides with the unique shopify_customer_id
+      // the moment a customer changes their email in Shopify, the customer
+      // row is never written, and every later order then fails the
+      // orders.customer_email foreign key and is skipped, forever, with only
+      // a console line to show for it (She Bop: three wholesale orders
+      // missing from the mirror for five months, 2026-09-09).
       if (customerEmail) {
-        const { error: custErr } = await supabase
-          .from('customers')
-          .upsert({
+        try {
+          await upsertCustomerRow(supabase, {
             email: customerEmail,
             shopify_customer_id: o.customer?.id || null,
             first_name: o.customer?.firstName || null,
             last_name: o.customer?.lastName || null,
             synced_at: new Date().toISOString(),
-          }, {
-            onConflict: 'email',
-            // Don't overwrite richer data from a full customer sync
-            ignoreDuplicates: false,
           });
-
-        if (custErr) {
-          console.error(`[OrderSync] Customer upsert error for ${customerEmail}:`, custErr.message);
-        } else {
           customersUpserted++;
+        } catch (err) {
+          console.error(`[OrderSync] Customer upsert error for ${customerEmail}:`, err.message);
         }
       }
 
