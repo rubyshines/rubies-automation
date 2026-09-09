@@ -35,6 +35,7 @@
 ## Active Projects
 - [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, shadow model eval infrastructure and verdicts
 - [Advisor Accuracy Rebuild](project_advisor_accuracy_rebuild.md) — eval-first attack on draft quality: measurement repair, founder rule audits, prompt-variant A/B, fair Opus 5 test
+- [Calendar-driven meetings](project_meeting_sync.md) — calendar sync for every B2B call, no-show handling, Wispr meeting notes ingest
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system

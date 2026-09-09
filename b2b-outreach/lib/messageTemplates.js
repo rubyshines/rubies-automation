@@ -48,6 +48,16 @@ const INTRO_TYPES = ['intro_outreach', 'intro_pitch'];
 // day, so the sentence drops the day rather than guessing.
 const MEETING_DAY_MAX_AGE_DAYS = 6;
 
+// After this many no-shows on a company, no reschedule ask is offered: the
+// annual October check-in carries the relationship instead. Chasing a third
+// call is the shape of a partner who has said no without saying it.
+const MAX_NO_SHOWS = 2;
+
+/** May we still ask this company for a call? Pure. */
+function meetingAsksAllowed(noShowCount) {
+  return (Number(noShowCount) || 0) < MAX_NO_SHOWS;
+}
+
 /**
  * "Monday" — the meeting's weekday in the OTHER party's timezone (that is the
  * day the sentence names for them), falling back to ET. Null when the meeting
@@ -123,6 +133,20 @@ function fillMeetingConfirmation({ firstName, confirmationLine }) {
   const body = `Hi ${firstName},\n\n`
     + `${confirmationLine}\n\n`
     + 'Looking forward to chatting.\n\n'
+    + SIGN_OFF;
+  return { body, attachments: [] };
+}
+
+/**
+ * After a no-show: a neutral reschedule ask. Blame-free in both directions
+ * ("we missed each other", never "you missed"), and the times stay theirs to
+ * suggest (standing scheduling decision). The day is named only while a bare
+ * weekday is unambiguous, same rule as the onboarding template. Pure.
+ */
+function fillMissedCall({ firstName, meetingDay }) {
+  const missed = meetingDay ? `Sorry we missed each other on ${meetingDay}.` : 'Sorry we missed each other.';
+  const body = `Hi ${firstName},\n\n`
+    + `${missed} Let me know if you would like to find another time. Feel free to suggest a few.\n\n`
     + SIGN_OFF;
   return { body, attachments: [] };
 }
@@ -248,6 +272,10 @@ const TEMPLATES = [
   // The agreement is the LGBTQ+ org donation-program contract, so this
   // template only makes sense for orgs.
   { id: 'partner_onboarding', label: 'Partner onboarding (agreement + survey)', orgOnly: true, fill: fillPartnerOnboarding },
+  // Offered only once the last call on record is a recorded no-show, and never
+  // past MAX_NO_SHOWS. Sent as its own message_type so the ladder chases it,
+  // with a next touch of a week so the company comes back as a reminder.
+  { id: 'missed_call', label: 'Missed call (ask to reschedule)', afterNoShow: true, fill: fillMissedCall, message_type: 'missed_call', next_touch_days: 7 },
 ];
 
 /** Everything the fills need for one company, gathered once. */
@@ -268,15 +296,26 @@ async function templateContext(sb, company_id) {
     .in('message_type', INTRO_TYPES).limit(1);
   if (iErr) throw new Error(`intro lookup: ${iErr.message}`);
 
-  const { lastHeldMeetingsByCompany } = require('./scheduleMeeting');
+  const { lastHeldMeetingsByCompany, noShowCount } = require('./scheduleMeeting');
   const held = await lastHeldMeetingsByCompany(sb, [company_id]);
+  const noShows = await noShowCount(sb, company_id);
 
   return {
     company,
     firstName: greetingName(recipient?.name),
     introEverSent: !!intros?.length,
     lastMeeting: held.get(company_id) || null,
+    noShowCount: noShows,
   };
+}
+
+/** Why a no-show template is or is not on offer for this context. Pure. */
+function missedCallAvailability(ctx) {
+  if (ctx.lastMeeting?.outcome !== 'no_show') return { ok: false, reason: 'the last call on record was not marked a no-show' };
+  if (!meetingAsksAllowed(ctx.noShowCount)) {
+    return { ok: false, reason: `${ctx.noShowCount} no-shows on record — no more call asks; the October check-in carries this one` };
+  }
+  return { ok: true, reason: null };
 }
 
 /** The picker's list for one company: [{ id, label, note }]. */
@@ -286,8 +325,12 @@ async function listTemplates(sb, { company_id } = {}) {
   const out = [];
   for (const t of TEMPLATES) {
     if (t.orgOnly && ctx.company.relationship_type !== 'lgbtq_org') continue;
+    if (t.afterNoShow && !missedCallAvailability(ctx).ok) continue;
     let note;
-    if (t.id === 'setup_call') {
+    if (t.id === 'missed_call') {
+      const day = meetingDayName(ctx.lastMeeting);
+      note = `reschedule ask${day ? ` for the missed ${day} call` : ''}, chased after 5 business days`;
+    } else if (t.id === 'setup_call') {
       note = ctx.introEverSent ? 'call ask only (they already have our intro)' : `includes the program summary (${discount}%)`;
     } else if (t.id === 'partner_onboarding') {
       const day = meetingDayName(ctx.lastMeeting);
@@ -310,6 +353,10 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
   if (template.orgOnly && ctx.company.relationship_type !== 'lgbtq_org') {
     throw new Error(`'${template_id}' is for LGBTQ+ orgs; ${ctx.company.name} is a ${ctx.company.relationship_type}`);
   }
+  if (template.afterNoShow) {
+    const avail = missedCallAvailability(ctx);
+    if (!avail.ok) throw new Error(`'${template_id}' is not offered for ${ctx.company.name}: ${avail.reason}`);
+  }
 
   const { body, attachments } = template.fill({
     firstName: ctx.firstName,
@@ -328,16 +375,24 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
   const composed = await composeDraft(sb, {
     company_id,
     body,
+    // A template that is its own message type (missed_call) says so, so the
+    // send stamps the right next-touch and the ladder knows what to chase.
+    ...(template.message_type ? { message_type: template.message_type } : {}),
     // The onboarding follow-up belongs on the meeting's own thread even when
     // the queue has no entry for the company (e.g. applied from the directory).
-    thread_id: template.id === 'partner_onboarding' ? (ctx.lastMeeting?.thread_id || undefined) : undefined,
+    thread_id: ['partner_onboarding', 'missed_call'].includes(template.id) ? (ctx.lastMeeting?.thread_id || undefined) : undefined,
   });
 
   const { data: row, error } = await sb.from('b2b_drafts')
     .select('id, structured').eq('id', composed.draft_id).maybeSingle();
   if (error) throw new Error(`draft readback: ${error.message}`);
   const { withAttachment } = require('./draftAttachments');
-  let structured = { ...(row?.structured || {}), template_id: template.id, template_body: body };
+  let structured = {
+    ...(row?.structured || {}),
+    template_id: template.id,
+    template_body: body,
+    ...(template.next_touch_days ? { next_touch_days: template.next_touch_days } : {}),
+  };
   for (const spec of attachments) structured = withAttachment(structured, spec);
   const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', composed.draft_id);
   if (uErr) throw new Error(`template structured update: ${uErr.message}`);
@@ -355,6 +410,10 @@ module.exports = {
   fillSetupCall,
   fillPartnerOnboarding,
   fillMeetingConfirmation,
+  fillMissedCall,
+  MAX_NO_SHOWS,
+  meetingAsksAllowed,
+  missedCallAvailability,
   FOLLOW_UP_TYPES,
   quotableBody,
   quoteLines,

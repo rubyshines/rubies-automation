@@ -485,6 +485,26 @@ async function handleDismissPostCall(input = {}) {
   }
 }
 
+async function handleMeetingOutcome(input = {}) {
+  try {
+    const { recordMeetingOutcome } = require(path.join(B2B_LIB, 'scheduleMeeting'));
+    const sb = getSupabaseClient();
+    const r = await recordMeetingOutcome(sb, { meeting_id: input.meeting_id, outcome: input.outcome, note: input.note || null });
+    const m = r.meeting;
+    if (input.outcome === 'held') {
+      return text(`Recorded: "${m.title}" (${m.starts_at}) with ${m.company_id} was held. The post-call follow-up stands until something is sent to them.`);
+    }
+    if (r.stop_meeting_asks) {
+      return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). That is no-show #${r.no_show_count}, so no reschedule ask is offered — the annual October check-in carries the relationship. The post-call entry is cleared.`);
+    }
+    const { applyTemplate } = require(path.join(B2B_LIB, 'messageTemplates'));
+    const d = await applyTemplate(sb, { company_id: m.company_id, template_id: 'missed_call' });
+    return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). The post-call entry is cleared. Draft #${d.draft_id} ('missed_call') is the reschedule ask — review and send it with send_b2b_email; the ladder chases it after 5 business days.`);
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
 module.exports = [
   {
     name: 'b2b_template',
@@ -501,7 +521,7 @@ module.exports = [
   },
   {
     name: 'b2b_dismiss_post_call',
-    description: "Clear a post-call follow-up queue entry: the day after a booked call happens, the company surfaces at Tier 1 until something is sent to them — this records 'no email follow-up needed' (or 'the call never happened') on the b2b_meetings row so the entry never returns. Only meetings already over can be dismissed; sending anything to the company clears the entry on its own, so this is only for the nothing-to-send case.",
+    description: "Clear a post-call follow-up queue entry: the day after a booked call happens, the company surfaces at Tier 1 until something is sent to them — this records 'no email follow-up needed' on the b2b_meetings row so the entry never returns. For a call that did NOT happen use b2b_meeting_outcome with 'no_show' instead — that clears the entry AND readies the reschedule ask. Only meetings already over can be dismissed; sending anything to the company clears the entry on its own, so this is only for the nothing-to-send case.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -510,6 +530,20 @@ module.exports = [
       required: ['meeting_id'],
     },
     handler: handleDismissPostCall,
+  },
+  {
+    name: 'b2b_meeting_outcome',
+    description: "Record whether a booked call happened: outcome 'held' or 'no_show'. The engine cannot see attendance, so this is the operator's fact, stored with its own timestamp on the b2b_meetings row (status is untouched, so a rescheduled event keeps its history and no-shows stay countable). 'no_show' clears the post-call follow-up entry and creates the deterministic 'missed_call' reschedule-ask draft (neutral wording, times theirs to suggest, chased after 5 business days) — unless this is the company's second no-show, in which case no ask is offered and the October check-in carries the relationship. Only for calls whose start time has passed. Meeting rows exist for every call on the calendar, partner-booked (Calendly) ones included.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meeting_id: { type: 'number', description: 'b2b_meetings id (on the queue entry, or in the company panel Calls block).' },
+        outcome: { type: 'string', description: "'held' | 'no_show'" },
+        note: { type: 'string', description: 'Optional note stored with the outcome.' },
+      },
+      required: ['meeting_id', 'outcome'],
+    },
+    handler: handleMeetingOutcome,
   },
   {
     name: 'b2b_draft_attach',

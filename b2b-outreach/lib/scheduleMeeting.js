@@ -31,7 +31,7 @@ const {
 const { sendB2bEmail, resolveDelivery, addressList, SEND_FLAG, FROM_EMAIL } = require('./sendB2bEmail');
 const { fetchCalendarEvents, checkSlotFree, formatTimeInZone, formatDayInZone } = require('./availability');
 const { isValidTimeZone } = require('./meetingTimezone');
-const { greetingName } = require('./messageTemplates');
+const { greetingName, MAX_NO_SHOWS } = require('./messageTemplates');
 
 const DEFAULT_DURATION_MIN = 30;
 const DEFAULT_MESSAGE_TYPE = 'meeting_confirmation';
@@ -407,7 +407,7 @@ async function lastHeldMeetingsByCompany(sb, companyIds, now = new Date()) {
   for (let i = 0; i < ids.length; i += 200) {
     const chunk = ids.slice(i, i + 200);
     const { data, error } = await sb.from('b2b_meetings')
-      .select('id, company_id, thread_id, starts_at, ends_at, title, their_timezone')
+      .select('id, company_id, thread_id, starts_at, ends_at, title, their_timezone, outcome, booked_by')
       .in('company_id', chunk)
       .eq('status', 'booked')
       .lt('ends_at', now.toISOString())
@@ -444,6 +444,52 @@ async function dismissPostCallFollowup(sb, { meeting_id } = {}) {
   return data[0];
 }
 
+const MEETING_OUTCOMES = new Set(['held', 'no_show']);
+
+/** How many of this company's calls the operator has marked as no-shows. */
+async function noShowCount(sb, companyId) {
+  const { count, error } = await sb.from('b2b_meetings')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId).eq('outcome', 'no_show');
+  if (error) throw new Error(error.message);
+  return count || 0;
+}
+
+/**
+ * Did the call happen? The engine cannot see attendance, so the operator
+ * records it. Stored with its own timestamp rather than by overwriting
+ * `status`: a rescheduled event on the same row keeps its booked → moved
+ * history, and no-shows stay countable — after MAX_NO_SHOWS the reschedule
+ * ask stops being offered (messageTemplates.meetingAsksAllowed).
+ *
+ * Only for a call whose start is past. A no-show is knowable ten minutes in,
+ * so the gate is the start, not the end.
+ */
+async function recordMeetingOutcome(sb, { meeting_id, outcome, note = null, now = new Date() } = {}) {
+  if (!meeting_id) throw new Error('meeting_id required');
+  if (!MEETING_OUTCOMES.has(outcome)) throw new Error(`outcome must be one of ${[...MEETING_OUTCOMES].join(', ')}`);
+  const { data: row, error } = await sb.from('b2b_meetings')
+    .select('id, company_id, title, starts_at, ends_at, status, outcome, booked_by')
+    .eq('id', meeting_id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!row) throw new Error(`meeting #${meeting_id} not found`);
+  if (row.status === 'cancelled') throw new Error(`meeting #${meeting_id} is cancelled — nothing to record`);
+  if (row.starts_at && new Date(row.starts_at) > now) throw new Error(`meeting #${meeting_id} has not started yet`);
+
+  const stamp = now.toISOString();
+  const { error: uErr } = await sb.from('b2b_meetings')
+    .update({ outcome, outcome_at: stamp, outcome_note: note || null, updated_at: stamp })
+    .eq('id', meeting_id);
+  if (uErr) throw new Error(uErr.message);
+
+  const noShows = await noShowCount(sb, row.company_id);
+  return {
+    meeting: { ...row, outcome, outcome_at: stamp },
+    no_show_count: noShows,
+    stop_meeting_asks: outcome === 'no_show' && noShows >= MAX_NO_SHOWS,
+  };
+}
+
 module.exports = {
   scheduleMeeting,
   meetingTitle,
@@ -452,5 +498,8 @@ module.exports = {
   upcomingMeetingsByCompany,
   lastHeldMeetingsByCompany,
   dismissPostCallFollowup,
+  recordMeetingOutcome,
+  noShowCount,
+  MEETING_OUTCOMES,
   DEFAULT_DURATION_MIN,
 };

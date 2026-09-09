@@ -43,6 +43,7 @@ const NEXT_ACTION_DAYS = {
   affiliate_reactivation: 180,
   event_donation_response: 7,
   post_call_followup: 14,
+  missed_call: 7,
 };
 
 const DEFAULT_NEXT_ACTION_DAYS = 30;
@@ -166,6 +167,9 @@ const POST_CALL_MAX_AGE_DAYS = 30;
 function postCallFollowupDue(ctx, now = new Date()) {
   const meeting = ctx?.lastHeldMeeting;
   if (!meeting) return null;
+  // The operator recorded that the call did not happen: there is no
+  // conversation to wrap up. The missed-call template is that follow-up.
+  if (meeting.outcome === 'no_show') return null;
   const ended = meeting.ends_at || meeting.starts_at;
   if (!ended) return null;
   if (ctx.lastOutboundAt && new Date(ctx.lastOutboundAt) > new Date(ended)) return null;
@@ -282,6 +286,9 @@ const CHASE_AFTER_BUSINESS_DAYS = {
   // an org going quiet right after a good call is the standing failure mode —
   // so the ladder chases it on the relationship beat.
   post_call_followup: 10,
+  // A reschedule ask after a no-show is a question too. Five business days,
+  // on the lead beat: a partner who missed a call and then a note is drifting.
+  missed_call: 5,
 };
 
 /** Business days between rungs, and between the last rung and giving up. */

@@ -3425,6 +3425,23 @@ async function apiB2bDismissPostCall(meetingId) {
   return dismissPostCallFollowup(getSupabaseClient(), { meeting_id: meetingId });
 }
 
+// Did the call happen? The engine cannot see attendance, so the operator says.
+// A no-show clears the post-call entry (there was no call to follow up) and,
+// unless this company has now missed two, lands the missed-call template as
+// the pending compose row so the reschedule ask is one click. The second
+// no-show gets no ask: the October check-in carries the relationship.
+async function apiB2bMeetingOutcome(meetingId, body = {}) {
+  const { recordMeetingOutcome } = require('../../b2b-outreach/lib/scheduleMeeting');
+  const sb = getSupabaseClient();
+  const r = await recordMeetingOutcome(sb, { meeting_id: meetingId, outcome: body.outcome, note: body.note || null });
+  let draft = null;
+  if (body.outcome === 'no_show' && !r.stop_meeting_asks && body.compose !== false) {
+    const { applyTemplate } = require('../../b2b-outreach/lib/messageTemplates');
+    draft = await applyTemplate(sb, { company_id: r.meeting.company_id, template_id: 'missed_call' });
+  }
+  return { ...r, draft };
+}
+
 async function apiB2bComposeDraft(companyId, body = {}) {
   return b2bQueueService.composeDraft(getSupabaseClient(), {
     company_id: companyId,
@@ -4140,6 +4157,7 @@ const paramRoutes = [
   { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/templates$/, handler: (_, id) => apiB2bTemplates(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/apply-template$/, handler: (body, id) => apiB2bApplyTemplate(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/dismiss-followup$/, handler: (_, id) => apiB2bDismissPostCall(parseInt(id)) },
+  { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/outcome$/, handler: (body, id) => apiB2bMeetingOutcome(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },

@@ -12,7 +12,7 @@
  * (cadence.companyEligible) until the operator confirms a new contact.
  */
 const { getSupabaseClient } = require('../../shared/supabaseClient');
-const { identifyingDomain, emailDomain } = require('./emailDomains');
+const { resolveCompanyForAddress } = require('./companyMatch');
 const { parseBounce, handleBounce } = require('./bounceRecovery');
 
 /** Bounce / departure detection (Design #3 contact-change flow). Pure. */
@@ -120,9 +120,14 @@ const NON_REPLY_INBOUND_TYPES = new Set(['auto_reply', 'calendar_notice', 'bounc
  * says nothing recognisable. Bounce and calendar checks still run first:
  * a DSN is also header-flagged and must land on its own, sharper branch.
  */
-function classifyInbound({ subject, body, from, headerAutoReply = false } = {}) {
+function classifyInbound({ subject, body, from, headerAutoReply = false, calendarMethod = null } = {}) {
   if (detectContactLoss({ subject, body, from }) === 'hard_bounce') return 'bounce';
-  if (detectCalendarNotice({ subject, body })) return 'calendar_notice';
+  // `calendarMethod` is the iCalendar METHOD the Gmail intake read off a
+  // text/calendar MIME part (REQUEST, REPLY, CANCEL). Language-independent
+  // where the subject test is not: a French Outlook RSVP arrives as
+  // "Acceptée : …" with an empty body, and the English subject regex filed it
+  // as a person waiting on us in Tier 1.
+  if (calendarMethod || detectCalendarNotice({ subject, body })) return 'calendar_notice';
   if (headerAutoReply || detectAutoReply({ subject, body })) return 'auto_reply';
   return null;
 }
@@ -132,53 +137,21 @@ function classifyInbound({ subject, body, from, headerAutoReply = false } = {}) 
  * { matched, company_id?, thread_id?, duplicate?, contact_loss?, looks_like_order?, auto_reply? }.
  */
 async function correlateInbound(msg) {
-  const { gmail_message_id, gmail_thread_id, from_email, to_email, cc_email, subject, body_text, received_at, is_auto_reply } = msg;
+  const { gmail_message_id, gmail_thread_id, from_email, to_email, cc_email, subject, body_text, received_at, is_auto_reply, calendar_method } = msg;
   if (!gmail_message_id || !from_email) return { matched: false, reason: 'missing ids' };
   const sb = getSupabaseClient();
   const sender = String(from_email).toLowerCase().replace(/^.*</, '').replace(/>.*$/, '').trim();
 
-  // 1. Sender → company
-  let companyId = null;
-  const { data: contact } = await sb.from('b2b_contacts')
-    .select('company_id').eq('email', sender).maybeSingle();
-  if (contact?.company_id) companyId = contact.company_id;
-  if (!companyId) {
-    const { data: byGeneral } = await sb.from('b2b_companies')
-      .select('id').eq('general_email', sender).maybeSingle();
-    if (byGeneral?.id) companyId = byGeneral.id;
-  }
-
-  // 1b. Sender DOMAIN → company. Exact-address matching alone silently drops
-  // mail from a colleague of the person we have on file, and that is not an
-  // edge case: 16 of 45 uncorrelated threads were companies we already knew,
-  // writing from an address that simply was not registered. Four of them then
-  // sat in the queue reading "no prior outbound" while their conversation ran
-  // in Gmail. Same shape as the partner whose survey gave us programs@ while
-  // every real thread was with mg@.
-  //
-  // Only an identifying domain counts (see emailDomains): a gmail.com sender
-  // would otherwise attach to whichever company happened to have a gmail
-  // contact. When this path matches, register the address so the exact-match
-  // above wins next time and the company stops depending on the fallback.
-  let matchedByDomain = false;
-  if (!companyId) {
-    const domain = identifyingDomain(sender);
-    if (domain) {
-      const { data: byWebsite } = await sb.from('b2b_companies')
-        .select('id, website, relationship_state').ilike('website', `%${domain}%`);
-      const site = (byWebsite || []).find(c => identifyingDomain(c.website) === domain
-        && c.relationship_state !== 'lost');
-      if (site) companyId = site.id;
-
-      if (!companyId) {
-        const { data: peers } = await sb.from('b2b_contacts')
-          .select('company_id, email').ilike('email', `%@${domain}`);
-        const peer = (peers || []).find(c => emailDomain(c.email) === domain && c.company_id);
-        if (peer) companyId = peer.company_id;
-      }
-      matchedByDomain = !!companyId;
-    }
-  }
+  // 1. Sender → company. Exact contact, then general_email, then the sender's
+  // identifying DOMAIN (16 of 45 uncorrelated threads were companies we already
+  // knew, writing from an unregistered colleague's address). The resolution
+  // lives in companyMatch.js and is shared with the calendar meeting sync, so
+  // an email sender and a calendar attendee can never resolve differently.
+  // When the domain path matches, the address is registered below so the
+  // exact match wins next time.
+  const match = await resolveCompanyForAddress(sb, sender);
+  let companyId = match.company_id;
+  const matchedByDomain = match.matched_by === 'domain_website' || match.matched_by === 'domain_peer';
 
   // Bounce case: the sender is mailer-daemon, so it tells us nothing about who
   // this is about. The DSN's Final-Recipient does — and it is a far sharper key
@@ -222,7 +195,9 @@ async function correlateInbound(msg) {
   // one conversation regularly holds two orgs — an unscoped lookup found the OTHER
   // company's row and filed this message under their relationship. That is how 105
   // messages ended up mis-parented. A company now only ever matches its own row.
-  const inboundType = classifyInbound({ subject, body: body_text, from: sender, headerAutoReply: !!is_auto_reply });
+  const inboundType = classifyInbound({
+    subject, body: body_text, from: sender, headerAutoReply: !!is_auto_reply, calendarMethod: calendar_method || null,
+  });
 
   let threadId = null;
   let threadWasNew = false;

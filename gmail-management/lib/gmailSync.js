@@ -139,6 +139,34 @@ function isAutoReply(headers) {
   return false;
 }
 
+/**
+ * The iCalendar METHOD on a text/calendar MIME part — REQUEST (an invitation),
+ * REPLY (an RSVP), CANCEL — or null when the message carries none. Read from
+ * the part's Content-Type parameter first, then from the METHOD: line of the
+ * body. Language-independent, which the subject line is not: a French Outlook
+ * sends "Acceptée : …" with an empty body, and a subject regex written for
+ * "Accepted: …" filed it as a human reply waiting on us.
+ */
+function calendarMethod(payload) {
+  let found = null;
+  function visit(part) {
+    if (!part || found) return;
+    const mime = String(part.mimeType || '').toLowerCase();
+    if (mime.startsWith('text/calendar')) {
+      const m = /method=([a-z-]+)/i.exec(getHeader(part.headers, 'Content-Type') || '');
+      if (m) { found = m[1].toUpperCase(); return; }
+      if (part.body && part.body.data) {
+        const text = Buffer.from(part.body.data, 'base64').toString('utf-8');
+        const b = /^METHOD:([A-Z-]+)/mi.exec(text);
+        if (b) { found = b[1].toUpperCase(); return; }
+      }
+    }
+    for (const p of part.parts || []) visit(p);
+  }
+  visit(payload);
+  return found;
+}
+
 // ---------------------------------------------------------------------------
 // Gmail API operations
 // ---------------------------------------------------------------------------
@@ -203,6 +231,7 @@ async function fetchMessage(gmail, messageId) {
     has_attachments: attachments.length > 0,
     attachment_meta: attachments.length > 0 ? attachments : null,
     is_auto_reply: isAutoReply(headers),
+    calendar_method: calendarMethod(res.data.payload),
     word_count: bodyText ? bodyText.split(/\s+/).filter(w => w.length > 0).length : 0,
     raw_size_bytes: res.data.sizeEstimate || 0,
   };
@@ -233,6 +262,7 @@ module.exports = {
   fetchMessages,
   stripQuotedContent,
   extractBody,
+  calendarMethod,
   getHeader,
   extractAddress,
   extractName,

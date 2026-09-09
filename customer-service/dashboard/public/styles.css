@@ -6888,3 +6888,9 @@ main { height: calc(100vh - 56px); }
 
 /* Schedule panel: the calendar list lives in a tooltip on the hint. */
 .schedule-hint[title] { cursor: help; }
+
+/* Calls block in the Outreach relationship section (2026-09-09) */
+.outreach-calls { margin-top: 8px; }
+.outreach-call-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 2px 0; }
+.outreach-call-when { font-weight: 600; white-space: nowrap; }
+.btn.btn-xs { padding: 1px 8px; font-size: 12px; line-height: 1.6; }

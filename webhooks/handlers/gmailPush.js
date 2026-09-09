@@ -179,6 +179,7 @@ async function handle(payload, gmailPush) {
     has_attachments: m.has_attachments,
     attachment_meta: m.attachment_meta,
     is_auto_reply: m.is_auto_reply,
+    calendar_method: m.calendar_method || null,
     word_count: m.word_count,
     classification: m.classification,
     classification_confidence: m.classification_confidence,
@@ -221,6 +222,9 @@ async function handle(payload, gmailPush) {
         gmail_thread_id: m.gmail_thread_id,
         from_email: m.from_address,
         is_auto_reply: !!m.is_auto_reply,
+        // The iCalendar METHOD off a text/calendar part: an RSVP in any
+        // language is machine mail, whatever its subject says.
+        calendar_method: m.calendar_method || null,
         // The FULL To line, not just the first address — and the Cc line, so a
         // reply drafted from the record can keep everyone on the conversation.
         to_email: Array.isArray(m.to_addresses) ? m.to_addresses.join(', ') : m.to_addresses,
@@ -237,6 +241,16 @@ async function handle(payload, gmailPush) {
         // conversation — panel send, Gmail reply, "nothing to reply to" — the
         // cadence knows when they asked to hear from us. Machine mail is
         // skipped: an out-of-office names no timing worth a model call.
+        if (r.inbound_type === 'calendar_notice') {
+          // The calendar changed — a partner booked, moved, cancelled or
+          // answered a call. Read the row from the calendar itself rather
+          // than from the notification: that is what makes a Calendly
+          // booking suppress the cadence and fire the post-call follow-up.
+          // Fire-and-forget and fail-soft; the nightly sweep is the catch-up.
+          require('../../b2b-outreach/lib/meetingSync').syncCompanyMeetings(supabase, r.company_id)
+            .then(s => { if (s) console.log(`[gmail-push] meetings synced for ${r.company_id}: ${s.inserted} new, ${s.updated} updated, ${s.cancelled} cancelled`); })
+            .catch(err => console.warn(`[gmail-push] meeting sync skipped for ${r.company_id}: ${err.message}`));
+        }
         if (r.inbound_type === null) {
           try {
             const { refreshCompanySummary } = require('../../b2b-outreach/lib/relationshipSummary');

@@ -6346,8 +6346,65 @@ function outreachRelationshipHtml(entry) {
       </span>
     </h3>
     ${bodyHtml}
+    ${outreachCallsHtml(h.meetings)}
     ${stats.length ? `<div class="outreach-relationship-stats">${esc(stats.join(' · '))}</div>` : ''}
   </div>`;
+}
+
+/**
+ * Calls on the record — the upcoming one, and recent past ones until the
+ * operator has said whether they happened. Rows come from Google Calendar for
+ * every call now, ours or the partner's, so this is where a Calendly booking
+ * first becomes visible in the panel. Held / Didn't happen are the operator's
+ * fact; the engine cannot see attendance.
+ */
+function outreachCallsHtml(meetings) {
+  const list = (meetings || []).filter(m => m.status !== 'cancelled');
+  if (!list.length) return '';
+  const now = Date.now();
+  const rows = list.slice(0, 4).map(m => {
+    const past = new Date(m.starts_at).getTime() <= now;
+    const who = m.booked_by === 'partner' ? 'booked by them' : 'booked by you';
+    const link = m.meet_url
+      ? ` · <a href="${esc(m.meet_url)}" target="_blank" rel="noopener">${/zoom\.us/i.test(m.meet_url) ? 'Zoom' : 'Meet'} link</a>`
+      : '';
+    let state;
+    if (!past) state = '<span class="badge badge-muted">upcoming</span>';
+    else if (m.outcome === 'held') state = '<span class="badge badge-muted">held</span>';
+    else if (m.outcome === 'no_show') state = '<span class="badge badge-reply">no-show</span>';
+    else if (m.status === 'followup_dismissed') state = '<span class="badge badge-muted">no follow-up needed</span>';
+    else {
+      state = `<button class="btn btn-ghost btn-xs" onclick="recordMeetingOutcome(${m.id}, 'held')" title="The call happened.">Held</button>
+        <button class="btn btn-ghost btn-xs btn-ghost-danger" onclick="recordMeetingOutcome(${m.id}, 'no_show')"
+          title="The call did not happen. Readies a reschedule ask (none after a second no-show).">Didn't happen</button>`;
+    }
+    return `<div class="outreach-call-row"><span class="outreach-call-when">${esc(fmtDateTimeET(m.starts_at))}</span>
+      <span class="outreach-recap-muted">${esc(m.title || 'Call')} · ${who}${link}</span> ${state}</div>`;
+  }).join('');
+  return `<div class="outreach-recap outreach-calls"><div class="outreach-recap-k">Calls</div><div class="outreach-recap-v">${rows}</div></div>`;
+}
+
+/**
+ * Record whether a call happened. A no-show clears the post-call entry and,
+ * unless it is the company's second, lands the missed-call template as the
+ * pending draft — so the queue and the detail are reloaded rather than patched.
+ */
+async function recordMeetingOutcome(meetingId, outcome) {
+  const companyId = outreachSelectedId;
+  let res;
+  try {
+    res = await api(`/api/b2b/meetings/${meetingId}/outcome`, { method: 'POST', body: { outcome } });
+  } catch (err) {
+    showToast(`Could not record that: ${err.message}`, 'error');
+    return;
+  }
+  if (outcome === 'held') showToast('Recorded: call held', 'success');
+  else if (res.stop_meeting_asks) showToast(`Recorded: no-show #${res.no_show_count}. No reschedule ask this time — the October check-in carries it.`, 'success');
+  else showToast('Recorded: no-show. The reschedule ask is ready in the composer.', 'success');
+  await loadOutreachQueue(true);
+  if (outreachSelectedId !== companyId) return;
+  if (outreachEntries.has(companyId)) outreachDraft = null;
+  await loadOutreachContext(companyId, false);
 }
 
 // ── Contacts ────────────────────────────────────────────────────────────────
@@ -7404,7 +7461,11 @@ function outreachActionsHtml(entry, draft) {
     draft ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissOutreachDraft()">Dismiss</button>` : '',
     isPostCall && entry.meeting_id
       ? `<button class="btn btn-ghost btn-ghost-danger" onclick="dismissPostCallEntry()"
-          title="The call needs no email follow-up (or it did not happen). Clears this entry for good.">No follow-up needed</button>`
+          title="The call happened and needs no email follow-up. Clears this entry for good.">No follow-up needed</button>`
+      : '',
+    isPostCall && entry.meeting_id
+      ? `<button class="btn btn-ghost btn-ghost-danger" onclick="recordMeetingOutcome(${entry.meeting_id}, 'no_show')"
+          title="The call did not happen. Clears this entry and readies a reschedule ask (none after a second no-show).">Didn't happen</button>`
       : '',
   ].filter(Boolean);
 

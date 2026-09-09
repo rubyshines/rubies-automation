@@ -97,85 +97,55 @@ test('formatThreadForCloser drops empty bodies rather than emitting bare tags', 
 const { describeBookedCall, buildCloserUserText } = require('../../b2b-outreach/lib/thankYouCloser');
 
 const NOW = new Date('2026-09-08T17:00:00Z');
-const INVITE = (subject, at = '2026-09-08T16:43:04Z') => ({ subject, last_message_at: at });
 
 test('a future booked meeting row is described in their timezone', () => {
   const text = describeBookedCall({
     meetings: [{ title: 'RUBIES x Uniting Pride', starts_at: '2026-09-10T14:00:00Z', their_timezone: 'America/Chicago', status: 'booked' }],
-    threads: [], now: NOW,
+    now: NOW,
   });
   assert.ok(text.includes('Booked via our calendar: "RUBIES x Uniting Pride"'));
   assert.ok(text.includes('Thu, Sep 10, 2026'));
   assert.ok(text.includes('9:00 AM'));
 });
 
+test('a partner-booked row (Calendly) reads as booked via THEIR calendar', () => {
+  // The live Stand with Trans case: the calendar sync now writes the row, so
+  // the closer no longer has to read "Invitation: …" subjects out of Gmail.
+  const text = describeBookedCall({
+    meetings: [{ title: 'Discuss RUBIES Clothing Donations and Dion Bourque', starts_at: '2026-09-10T14:00:00Z',
+      their_timezone: 'America/Detroit', status: 'booked', booked_by: 'partner' }],
+    now: NOW,
+  });
+  assert.ok(text.startsWith('Booked via their calendar: "Discuss RUBIES Clothing Donations and Dion Bourque"'));
+  assert.ok(text.includes('10:00 AM'));
+});
+
 test('a meeting already over is not a booked call', () => {
   const text = describeBookedCall({
     meetings: [{ title: 'RUBIES x Someone', starts_at: '2026-09-01T14:00:00Z', status: 'booked' }],
-    threads: [], now: NOW,
-  });
-  assert.equal(text, null);
-});
-
-test('a partner-sent calendar invitation counts — Calendly calls never get a meetings row', () => {
-  // The live Stand with Trans case: booked through THEIR scheduler, so the only
-  // trace is the invitation Gmail filed as a calendar_notice thread.
-  const text = describeBookedCall({
-    meetings: [],
-    threads: [INVITE('Invitation: Discuss RUBIES Clothing Donations and Dion Bourque @ Wed Sep 9, 2026 10am - 10:30am (EDT) (jamie@rubyshines.com)')],
-    now: NOW,
-  });
-  assert.ok(text && text.startsWith('Calendar invitation from them on record:'));
-  assert.ok(text.includes('Wed Sep 9, 2026 10am'));
-});
-
-test('an invitation for a date already past is not a booked call', () => {
-  const text = describeBookedCall({
-    meetings: [],
-    threads: [INVITE('Invitation: Old call @ Tue Sep 1, 2026 10am - 10:30am (EDT) (jamie@rubyshines.com)', '2026-08-25T10:00:00Z')],
     now: NOW,
   });
   assert.equal(text, null);
 });
 
-test('a call later today is still upcoming even after it started', () => {
+test('a cancelled or dismissed row is not a booked call', () => {
   const text = describeBookedCall({
-    meetings: [],
-    threads: [INVITE('Invitation: Today call @ Tue Sep 8, 2026 9am - 9:30am (EDT) (jamie@rubyshines.com)')],
-    now: NOW,
-  });
-  assert.ok(text);
-});
-
-test('a later cancellation of the same event removes the invitation', () => {
-  const text = describeBookedCall({
-    meetings: [],
-    threads: [
-      INVITE('Canceled event: Discuss RUBIES Clothing Donations @ Wed Sep 9, 2026 10am - 10:30am (EDT) (jamie@rubyshines.com)', '2026-09-08T16:50:00Z'),
-      INVITE('Invitation: Discuss RUBIES Clothing Donations @ Wed Sep 9, 2026 10am - 10:30am (EDT) (jamie@rubyshines.com)', '2026-09-08T16:43:04Z'),
+    meetings: [
+      { title: 'RUBIES x A', starts_at: '2026-09-10T14:00:00Z', status: 'cancelled' },
+      { title: 'RUBIES x B', starts_at: '2026-09-10T15:00:00Z', status: 'followup_dismissed' },
     ],
     now: NOW,
   });
   assert.equal(text, null);
 });
 
-test('an RSVP to OUR invite is not partner-invitation evidence', () => {
-  // That call has its own b2b_meetings row; the RSVP subject must not double as one.
-  const text = describeBookedCall({
+test('email subjects are no longer evidence of a booking', () => {
+  assert.equal(describeBookedCall({ meetings: [], now: NOW }), null);
+  assert.equal(describeBookedCall({
     meetings: [],
-    threads: [INVITE('Accepted: RUBIES x Someone @ Wed Sep 9, 2026 10am - 10:30am (EDT) (jamie@rubyshines.com)')],
+    threads: [{ subject: 'Invitation: Discuss RUBIES Clothing Donations @ Wed Sep 9, 2026 10am - 10:30am (EDT)', last_message_at: '2026-09-08T16:43:04Z' }],
     now: NOW,
-  });
-  assert.equal(text, null);
-});
-
-test('an ordinary thread subject is never mistaken for a booking', () => {
-  const text = describeBookedCall({
-    meetings: [],
-    threads: [INVITE('Could your community use gender-affirming clothing donations?')],
-    now: NOW,
-  });
-  assert.equal(text, null);
+  }), null);
 });
 
 test('the user turn tells the model plainly when no call is on record', () => {

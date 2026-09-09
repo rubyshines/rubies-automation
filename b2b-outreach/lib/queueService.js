@@ -1072,7 +1072,7 @@ function startCompanyGmailSync(sb, companyId, emails) {
  */
 async function fetchCompanyThreads(sb, companyId) {
   // Round 1 — independent lookups in parallel.
-  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes] = await Promise.all([
+  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes, meetingsRes] = await Promise.all([
     getCompanyEmails(sb, companyId).catch(err => {
       console.error(`[queueService] emails lookup failed: ${err.message}`);
       return [];
@@ -1096,6 +1096,15 @@ async function fetchCompanyThreads(sb, companyId) {
     // feed reach companies the queue never listed — without this a company with
     // a draft waiting would open looking like it had none.
     sb.from('b2b_drafts').select('*').eq('company_id', companyId).eq('status', 'pending').maybeSingle(),
+    // Calls on the record, recent and upcoming — the panel's Calls block and
+    // its Held / Didn't happen buttons render from this. Rows exist for every
+    // call on the calendar now, partner-booked ones included.
+    sb.from('b2b_meetings')
+      .select('id, title, starts_at, ends_at, status, booked_by, source, outcome, outcome_at, meet_url, html_link, their_timezone, google_event_id')
+      .eq('company_id', companyId)
+      .gte('starts_at', new Date(Date.now() - 45 * 86400000).toISOString())
+      .order('starts_at', { ascending: false })
+      .limit(12),
   ]);
   if (threadsRes.error) throw new Error(threadsRes.error.message);
   const threads = threadsRes.data || [];
@@ -1188,6 +1197,7 @@ async function fetchCompanyThreads(sb, companyId) {
       : null,
     contacts: contactsRes.error ? [] : (contactsRes.data || []),
     pending_draft: draftRes.error ? null : (draftRes.data || null),
+    meetings: meetingsRes?.error ? [] : (meetingsRes?.data || []),
     logo_url: logoUrl,
     // `recipient` keeps its old shape for email companies so nothing downstream
     // has to special-case the common path; `delivery` carries the mode so the

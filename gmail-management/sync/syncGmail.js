@@ -125,6 +125,7 @@ async function run() {
       has_attachments: m.has_attachments,
       attachment_meta: m.attachment_meta,
       is_auto_reply: m.is_auto_reply,
+      calendar_method: m.calendar_method || null,
       word_count: m.word_count,
       raw_size_bytes: m.raw_size_bytes,
       classification: m.classification,

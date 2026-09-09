@@ -19,6 +19,8 @@
  * next step, and the post-call follow-up brings the company back afterwards —
  * and a live negotiation when it does not. The model cannot tell the two apart
  * from the messages, so it is told, and told never to infer a booking itself.
+ * The fact comes from b2b_meetings alone, which the calendar sync keeps
+ * complete for partner-booked calls too.
  *
  * Sonnet-class task per CLAUDE.md model policy: narrow binary classification
  * that fails closed — a false negative just leaves the thread open for the
@@ -120,15 +122,6 @@ function formatThreadForCloser(messages, limit = 6) {
     .join('\n\n');
 }
 
-// A Google Calendar notification subject: "Invitation: <title> @ Wed Sep 9, 2026
-// 10am - 10:30am (EDT) (jamie@rubyshines.com)". The prefix says what happened,
-// the title identifies the event, the date is what makes it upcoming or past.
-const INVITE_SUBJECT = /^\s*(invitation|updated invitation|new event|updated event):\s+(.+?)\s+@\s+(?:\w{3},?\s+)?(\w{3,9})\s+(\d{1,2}),?\s+(\d{4})/i;
-const CANCEL_SUBJECT = /^\s*(cancell?ed event|canceled event):\s+(.+?)\s+@/i;
-const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
-const INVITE_LOOKBACK_DAYS = 90;
-const DAY_MS = 86400000;
-
 function formatMeetingWhen(iso, timeZone) {
   try {
     return new Intl.DateTimeFormat('en-US', {
@@ -145,53 +138,23 @@ function formatMeetingWhen(iso, timeZone) {
  * none is. PURE. The classifier cannot see the meetings table, so this is the
  * one fact it is handed — the mechanical-lookup exception to prompt-not-code.
  *
- * Two sources, because a call booked through the PARTNER's scheduler (Calendly,
- * their Google Calendar) never gets a b2b_meetings row — the only trace is the
- * invitation Gmail filed as a calendar_notice thread. A future invitation
- * counts unless a later cancellation names the same event. RSVPs to OUR
- * invites are not evidence here; those calls already have a meetings row.
+ * Meeting rows only. They now come from Google Calendar for EVERY call
+ * (meetingSync.js), partner-booked Calendly calls included, so the earlier
+ * stopgap that parsed "Invitation: …" email subjects is gone: it was
+ * English-only, blind to reschedules, and could not see an RSVP.
  *
  * @param {object} opts
- * @param {Array} opts.meetings — b2b_meetings rows (status booked) for the company
- * @param {Array} opts.threads — b2b_threads rows for the company (subject, last_message_at)
+ * @param {Array} opts.meetings — b2b_meetings rows for the company
  * @param {Date} [opts.now]
  * @returns {string|null} one line per booked call, or null
  */
-function describeBookedCall({ meetings, threads, now = new Date() } = {}) {
+function describeBookedCall({ meetings, now = new Date() } = {}) {
   const lines = [];
   for (const m of meetings || []) {
     if (m.status && m.status !== 'booked') continue;
     if (!m.starts_at || new Date(m.starts_at) < now) continue;
-    lines.push(`Booked via our calendar: "${m.title || 'call'}" on ${formatMeetingWhen(m.starts_at, m.their_timezone)}.`);
-  }
-
-  const cancelled = new Map(); // title → newest cancellation time
-  const invites = [];
-  const oldest = now.getTime() - INVITE_LOOKBACK_DAYS * DAY_MS;
-  for (const t of threads || []) {
-    const subject = String(t.subject || '');
-    const at = t.last_message_at ? new Date(t.last_message_at).getTime() : 0;
-    if (at && at < oldest) continue;
-    const c = CANCEL_SUBJECT.exec(subject);
-    if (c) {
-      const key = c[2].trim().toLowerCase();
-      cancelled.set(key, Math.max(cancelled.get(key) || 0, at));
-      continue;
-    }
-    const i = INVITE_SUBJECT.exec(subject);
-    if (!i) continue;
-    const month = MONTHS[i[3].slice(0, 4).toLowerCase()] ?? MONTHS[i[3].slice(0, 3).toLowerCase()];
-    if (month === undefined) continue;
-    // Day granularity with a day of slack either side: the subject carries the
-    // partner's zone, not ours, and a call later today is still upcoming.
-    const eventDay = Date.UTC(Number(i[5]), month, Number(i[4]));
-    if (eventDay < now.getTime() - DAY_MS) continue;
-    invites.push({ key: i[2].trim().toLowerCase(), subject: subject.trim(), at });
-  }
-  for (const inv of invites) {
-    const cancelledAt = cancelled.get(inv.key);
-    if (cancelledAt && cancelledAt >= inv.at) continue;
-    lines.push(`Calendar invitation from them on record: "${inv.subject}".`);
+    const via = m.booked_by === 'partner' ? 'their' : 'our';
+    lines.push(`Booked via ${via} calendar: "${m.title || 'call'}" on ${formatMeetingWhen(m.starts_at, m.their_timezone)}.`);
   }
   return lines.length ? lines.join('\n') : null;
 }
@@ -200,16 +163,11 @@ function describeBookedCall({ meetings, threads, now = new Date() } = {}) {
 async function loadBookedCallEvidence(sb, { company_id, now = new Date() } = {}) {
   if (!company_id) return null;
   try {
-    const [{ data: meetings }, { data: threads }] = await Promise.all([
-      sb.from('b2b_meetings').select('id, title, starts_at, their_timezone, status')
-        .eq('company_id', company_id).eq('status', 'booked')
-        .gte('starts_at', now.toISOString()).order('starts_at', { ascending: true }).limit(5),
-      sb.from('b2b_threads').select('id, subject, last_message_at')
-        .eq('company_id', company_id)
-        .gte('last_message_at', new Date(now.getTime() - INVITE_LOOKBACK_DAYS * DAY_MS).toISOString())
-        .order('last_message_at', { ascending: false }).limit(100),
-    ]);
-    return describeBookedCall({ meetings, threads, now });
+    const { data: meetings } = await sb.from('b2b_meetings')
+      .select('id, title, starts_at, their_timezone, status, booked_by')
+      .eq('company_id', company_id).eq('status', 'booked')
+      .gte('starts_at', now.toISOString()).order('starts_at', { ascending: true }).limit(5);
+    return describeBookedCall({ meetings, now });
   } catch (err) {
     console.warn(`[thankyou-closer] booked-call lookup failed for ${company_id}: ${err.message}`);
     return null;

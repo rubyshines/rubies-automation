@@ -195,3 +195,54 @@ test('the meeting confirmation is the whole reply, in Jamie\'s words, around the
   // No name on file: "there", never a blank greeting.
   assert.match(renderConfirmationBody({ firstName: 'there', start: new Date('2026-09-25T19:00:00.000Z') }), /^Hi there,/);
 });
+
+// ---------------------------------------------------------------- no-show (2026-09-09)
+// The engine cannot see attendance, so the operator records it; a recorded
+// no-show turns the post-call entry into a reschedule ask, and after two the
+// asks stop.
+
+const {
+  fillMissedCall, meetingAsksAllowed, missedCallAvailability, MAX_NO_SHOWS,
+} = require('../../b2b-outreach/lib/messageTemplates');
+
+test('missed_call: neutral wording, day named only while unambiguous, times theirs to suggest', () => {
+  const { body, attachments } = fillMissedCall({ firstName: 'Dion', meetingDay: 'Thursday' });
+  assert.match(body, /Hi Dion,/);
+  assert.match(body, /Sorry we missed each other on Thursday\./);
+  assert.match(body, /Feel free to suggest a few\./);
+  assert.ok(!/you missed/i.test(body), 'never blames them');
+  assert.ok(!body.includes('—'), 'no em dashes in customer-facing copy');
+  assert.equal(attachments.length, 0);
+  assert.match(fillMissedCall({ firstName: 'Dion', meetingDay: null }).body, /Sorry we missed each other\. /);
+});
+
+test('missed_call is offered only after a recorded no-show, and never past MAX_NO_SHOWS', () => {
+  assert.equal(MAX_NO_SHOWS, 2);
+  assert.equal(meetingAsksAllowed(0), true);
+  assert.equal(meetingAsksAllowed(1), true);
+  assert.equal(meetingAsksAllowed(2), false);
+  assert.equal(missedCallAvailability({ lastMeeting: { outcome: null }, noShowCount: 0 }).ok, false);
+  assert.equal(missedCallAvailability({ lastMeeting: { outcome: 'held' }, noShowCount: 1 }).ok, false);
+  assert.equal(missedCallAvailability({ lastMeeting: { outcome: 'no_show' }, noShowCount: 1 }).ok, true);
+  const second = missedCallAvailability({ lastMeeting: { outcome: 'no_show' }, noShowCount: 2 });
+  assert.equal(second.ok, false);
+  assert.match(second.reason, /October check-in/);
+  const t = TEMPLATES.find(x => x.id === 'missed_call');
+  assert.equal(t.afterNoShow, true);
+  assert.equal(t.message_type, 'missed_call');
+  assert.equal(t.next_touch_days, 7);
+});
+
+test('postCallFollowupDue: a recorded no-show is not a held call', () => {
+  const now = new Date('2026-09-10T15:00:00Z');
+  const held = { id: 5, starts_at: '2026-09-09T13:30:00Z', ends_at: '2026-09-09T14:00:00Z', thread_id: null };
+  assert.equal(postCallFollowupDue({ lastHeldMeeting: held, lastOutboundAt: null }, now)?.message_type, 'post_call_followup');
+  assert.equal(postCallFollowupDue({ lastHeldMeeting: { ...held, outcome: 'no_show' }, lastOutboundAt: null }, now), null);
+  assert.equal(postCallFollowupDue({ lastHeldMeeting: { ...held, outcome: 'held' }, lastOutboundAt: null }, now)?.message_type, 'post_call_followup');
+});
+
+test('missed_call is its own chased message type, never an initiating one', () => {
+  assert.equal(CHASE_AFTER_BUSINESS_DAYS.missed_call, 5);
+  assert.equal(NEXT_ACTION_DAYS.missed_call, 7);
+  assert.ok(!INITIATING_TYPES.includes('missed_call'));
+});

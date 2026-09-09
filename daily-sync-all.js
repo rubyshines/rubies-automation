@@ -169,6 +169,15 @@ const PIPELINES = [
     },
   },
   {
+    name: 'Calendar Meetings',
+    // Google Calendar is the source of truth for every call, ours or partner-
+    // booked (Calendly). Before Thread Discovery and Relationship Summaries so
+    // tonight's recap can say "call booked for Thursday" from the row rather
+    // than from an invitation email, and so a moved or cancelled call is on
+    // the record before the queue reads it in the morning.
+    run: () => require('./b2b-outreach/lib/meetingSync').run(),
+  },
+  {
     name: 'Thread Discovery',
     // Must precede Relationship Summaries: anything imported here should be
     // summarized the same night rather than waiting for tomorrow's run.

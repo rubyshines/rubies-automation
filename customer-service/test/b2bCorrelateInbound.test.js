@@ -315,3 +315,19 @@ test('a person replying without the header hint is still a person', async () => 
   const r = await correlateInbound(MSG({ is_auto_reply: false }));
   assert.strictEqual(r.inbound_type, null);
 });
+
+// ── calendar MIME method hint (2026-09-09) ───────────────────────────────────
+// Le JAG's French Outlook accepted our invite as "Acceptée : RUBIES x Le JAG"
+// with an empty body; the English subject detector filed it as a human reply
+// on a new open thread in Tier 1. The intake now passes the iCalendar METHOD
+// off the text/calendar part, which needs no language at all.
+
+test('an RSVP in any language lands as a calendar notice when the intake read method=REPLY', async () => {
+  reset({ contacts: [{ email: 'philippe@lejag.org', company_id: 'lejag' }] });
+  const r = await correlateInbound(MSG({
+    from_email: 'philippe@lejag.org', subject: 'Acceptée : RUBIES x Le JAG', body_text: '', calendar_method: 'REPLY',
+  }));
+  assert.strictEqual(r.inbound_type, 'calendar_notice');
+  const thread = state.inserts.find(i => i.table === 'b2b_threads');
+  assert.strictEqual(thread.row.status, 'closed', 'a calendar notice opening a thread is born closed');
+});
