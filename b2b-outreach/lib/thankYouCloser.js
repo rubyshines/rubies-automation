@@ -13,6 +13,13 @@
  * relationship moment worth a warm human reply — that must stay Tier-1 work.
  * Only contentless courtesy ("Thanks!", "Sounds good, appreciate it!") closes.
  *
+ * One fact is handed to the classifier deterministically: whether a call is
+ * already BOOKED with this company (see describeBookedCall). "Sounds good, talk
+ * to you then" is courtesy when an invitation exists — the booked call is the
+ * next step, and the post-call follow-up brings the company back afterwards —
+ * and a live negotiation when it does not. The model cannot tell the two apart
+ * from the messages, so it is told, and told never to infer a booking itself.
+ *
  * Sonnet-class task per CLAUDE.md model policy: narrow binary classification
  * that fails closed — a false negative just leaves the thread open for the
  * operator, which is today's behavior.
@@ -49,15 +56,18 @@ const CLASSIFY_TOOL = {
 
 const SYSTEM_PROMPT = `You decide whether a business contact's latest email reply concludes the conversation — pure courtesy with nothing left pending on either side. These are RUBIES' relationships with retail partners and LGBTQ+ community organizations.
 
+You are given the thread and a BOOKED CALL ON RECORD section. When a call is on record, a calendar invitation already exists for it (booked through our calendar or theirs). A booked call is the next step of the relationship and needs no further email from us — it is not "pending". When the section says none, no invitation exists, whatever the messages say.
+
 Set close_thread=true ONLY when ALL of these are true:
-- The LATEST reply is contentless courtesy: "Thanks!", "Thank you so much!", "Sounds good!", "Perfect, appreciate it", "Got it, have a great weekend".
+- The LATEST reply is contentless courtesy: "Thanks!", "Thank you so much!", "Sounds good!", "Perfect, appreciate it", "Got it, have a great weekend" — or, with a booked call on record, a bare confirmation of that call: "Sounds good, talk to you then", "See you Wednesday!".
 - It contains NO question, no request, no new topic, however casual.
-- Nothing is pending from either side: no call being scheduled, no meeting just agreed, no promised follow-up, no offer they are accepting, no email or action still owed by us. Something already set in motion that needs no further email (a box already shipped, a document already sent, a code already issued) does NOT count as pending — "pending" means we still owe them a message or an action, not that the mail is in transit.
+- Nothing is pending from either side: no call still being arranged (times proposed, no invitation yet), no promised follow-up, no offer they are accepting, no email or action still owed by us. Something already set in motion that needs no further email (a box already shipped, a document already sent, a code already issued, a call already booked) does NOT count as pending — "pending" means we still owe them a message or an action.
 - Our prior message needed no answer, or their reply fully closes what it asked.
 
 Set close_thread=false in ANY of these cases:
 - They ask ANYTHING, or accept an offer ("we'd love that!" — now we act).
-- A call or meeting is being arranged or was just agreed — the conversation is live.
+- A call is being arranged and NO booked call is on record — times proposed, a slot suggested, "does Tuesday work?", "let's find a time". The conversation still needs our answer. Never infer a booking from the messages alone; without a call on record, treat any meeting as still being arranged.
+- They confirm a booked call but also ask or add anything — send the agreement first, change the time, bring a colleague, a link to look at.
 - They confirm a detail we still need to act on (an address to ship to, a survey to send, an intro to make).
 - They share an outcome, a story, feedback, or anything personal ("the boxes arrived — the kids love them!"). That deserves a warm human reply, not silence.
 - Any negative tone, hedging, or doubt.
@@ -110,14 +120,119 @@ function formatThreadForCloser(messages, limit = 6) {
     .join('\n\n');
 }
 
+// A Google Calendar notification subject: "Invitation: <title> @ Wed Sep 9, 2026
+// 10am - 10:30am (EDT) (jamie@rubyshines.com)". The prefix says what happened,
+// the title identifies the event, the date is what makes it upcoming or past.
+const INVITE_SUBJECT = /^\s*(invitation|updated invitation|new event|updated event):\s+(.+?)\s+@\s+(?:\w{3},?\s+)?(\w{3,9})\s+(\d{1,2}),?\s+(\d{4})/i;
+const CANCEL_SUBJECT = /^\s*(cancell?ed event|canceled event):\s+(.+?)\s+@/i;
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
+const INVITE_LOOKBACK_DAYS = 90;
+const DAY_MS = 86400000;
+
+function formatMeetingWhen(iso, timeZone) {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', timeZone: timeZone || 'America/Toronto', timeZoneName: 'short',
+    }).format(new Date(iso));
+  } catch {
+    return String(iso);
+  }
+}
+
+/**
+ * Describe the call that is already booked with this company, or null when
+ * none is. PURE. The classifier cannot see the meetings table, so this is the
+ * one fact it is handed — the mechanical-lookup exception to prompt-not-code.
+ *
+ * Two sources, because a call booked through the PARTNER's scheduler (Calendly,
+ * their Google Calendar) never gets a b2b_meetings row — the only trace is the
+ * invitation Gmail filed as a calendar_notice thread. A future invitation
+ * counts unless a later cancellation names the same event. RSVPs to OUR
+ * invites are not evidence here; those calls already have a meetings row.
+ *
+ * @param {object} opts
+ * @param {Array} opts.meetings — b2b_meetings rows (status booked) for the company
+ * @param {Array} opts.threads — b2b_threads rows for the company (subject, last_message_at)
+ * @param {Date} [opts.now]
+ * @returns {string|null} one line per booked call, or null
+ */
+function describeBookedCall({ meetings, threads, now = new Date() } = {}) {
+  const lines = [];
+  for (const m of meetings || []) {
+    if (m.status && m.status !== 'booked') continue;
+    if (!m.starts_at || new Date(m.starts_at) < now) continue;
+    lines.push(`Booked via our calendar: "${m.title || 'call'}" on ${formatMeetingWhen(m.starts_at, m.their_timezone)}.`);
+  }
+
+  const cancelled = new Map(); // title → newest cancellation time
+  const invites = [];
+  const oldest = now.getTime() - INVITE_LOOKBACK_DAYS * DAY_MS;
+  for (const t of threads || []) {
+    const subject = String(t.subject || '');
+    const at = t.last_message_at ? new Date(t.last_message_at).getTime() : 0;
+    if (at && at < oldest) continue;
+    const c = CANCEL_SUBJECT.exec(subject);
+    if (c) {
+      const key = c[2].trim().toLowerCase();
+      cancelled.set(key, Math.max(cancelled.get(key) || 0, at));
+      continue;
+    }
+    const i = INVITE_SUBJECT.exec(subject);
+    if (!i) continue;
+    const month = MONTHS[i[3].slice(0, 4).toLowerCase()] ?? MONTHS[i[3].slice(0, 3).toLowerCase()];
+    if (month === undefined) continue;
+    // Day granularity with a day of slack either side: the subject carries the
+    // partner's zone, not ours, and a call later today is still upcoming.
+    const eventDay = Date.UTC(Number(i[5]), month, Number(i[4]));
+    if (eventDay < now.getTime() - DAY_MS) continue;
+    invites.push({ key: i[2].trim().toLowerCase(), subject: subject.trim(), at });
+  }
+  for (const inv of invites) {
+    const cancelledAt = cancelled.get(inv.key);
+    if (cancelledAt && cancelledAt >= inv.at) continue;
+    lines.push(`Calendar invitation from them on record: "${inv.subject}".`);
+  }
+  return lines.length ? lines.join('\n') : null;
+}
+
+/** Everything describeBookedCall needs, for one company. Fail-soft: an error reads as "none on record". */
+async function loadBookedCallEvidence(sb, { company_id, now = new Date() } = {}) {
+  if (!company_id) return null;
+  try {
+    const [{ data: meetings }, { data: threads }] = await Promise.all([
+      sb.from('b2b_meetings').select('id, title, starts_at, their_timezone, status')
+        .eq('company_id', company_id).eq('status', 'booked')
+        .gte('starts_at', now.toISOString()).order('starts_at', { ascending: true }).limit(5),
+      sb.from('b2b_threads').select('id, subject, last_message_at')
+        .eq('company_id', company_id)
+        .gte('last_message_at', new Date(now.getTime() - INVITE_LOOKBACK_DAYS * DAY_MS).toISOString())
+        .order('last_message_at', { ascending: false }).limit(100),
+    ]);
+    return describeBookedCall({ meetings, threads, now });
+  } catch (err) {
+    console.warn(`[thankyou-closer] booked-call lookup failed for ${company_id}: ${err.message}`);
+    return null;
+  }
+}
+
+/** The classifier's user turn. PURE. */
+function buildCloserUserText({ recentMessages, priorOutbound, bookedCall, now = new Date() } = {}) {
+  const today = now.toISOString().slice(0, 10);
+  return (
+    `[BOOKED CALL ON RECORD — today is ${today}]\n` +
+    `${bookedCall || '(none — no calendar invitation exists for this contact; treat any meeting as still being arranged)'}\n\n` +
+    `[OUR PRIOR MESSAGE THEY ARE REPLYING TO]\n${priorOutbound || '(none)'}\n\n` +
+    `[RECENT CONVERSATION — last message is their latest reply]\n${recentMessages || '(none)'}\n\n` +
+    `Decide whether their LATEST reply is a pure courtesy closer per the rules.`
+  );
+}
+
 /**
  * @returns {Promise<{close_thread: boolean, reason: string|null}>} — fail-closed.
  */
-async function classifyB2bThankYou({ recentMessages, priorOutbound }) {
-  const userText =
-    `[OUR PRIOR MESSAGE THEY ARE REPLYING TO]\n${priorOutbound || '(none)'}\n\n` +
-    `[RECENT CONVERSATION — last message is their latest reply]\n${recentMessages || '(none)'}\n\n` +
-    `Decide whether their LATEST reply is a pure courtesy closer per the rules.`;
+async function classifyB2bThankYou({ recentMessages, priorOutbound, bookedCall = null }) {
+  const userText = buildCloserUserText({ recentMessages, priorOutbound, bookedCall });
 
   let response;
   try {
@@ -154,7 +269,7 @@ async function classifyB2bThankYou({ recentMessages, priorOutbound }) {
  */
 async function maybeCloseThankYou(sb, { thread_id, inboundType = null, threadWasNew = false } = {}) {
   const { data: thread } = await sb.from('b2b_threads')
-    .select('id, status').eq('id', thread_id).maybeSingle();
+    .select('id, status, company_id').eq('id', thread_id).maybeSingle();
   if (!thread) return { closed: false, reason: 'thread_not_found' };
 
   const { data: messages } = await sb.from('b2b_messages')
@@ -172,6 +287,7 @@ async function maybeCloseThankYou(sb, { thread_id, inboundType = null, threadWas
   const cls = await classifyB2bThankYou({
     recentMessages: formatThreadForCloser(list),
     priorOutbound: String(priorOutbound?.body_text || '').trim().slice(0, 1500),
+    bookedCall: await loadBookedCallEvidence(sb, { company_id: thread.company_id }),
   });
   if (!cls.close_thread) return { closed: false, reason: cls.reason || 'classifier_negative' };
 
@@ -190,6 +306,9 @@ async function maybeCloseThankYou(sb, { thread_id, inboundType = null, threadWas
 module.exports = {
   thankYouGate,
   formatThreadForCloser,
+  describeBookedCall,
+  loadBookedCallEvidence,
+  buildCloserUserText,
   classifyB2bThankYou,
   maybeCloseThankYou,
   MODEL,
