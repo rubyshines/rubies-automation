@@ -291,6 +291,130 @@ body {
   display: block; margin-top: 4px;
   font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
 }
+/* How many are lined up behind this one. A dot, not a spinner: they are
+   waiting, nothing is happening to them yet. */
+.scan-queued {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--amber);
+  background: var(--amber-bg); padding: 3px 9px 3px 7px; border-radius: 20px;
+}
+.scan-queued::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: .8;
+}
+.scan-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.scan.dragover { border-color: var(--accent); box-shadow: 0 6px 24px rgba(192,57,43,.10); }
+
+/* ─── The spike ─────────────────────────────────────────────────
+   Receipts captured this visit, in the order they came in, on one strip.
+   Same card stock as the tray; the states are told apart by what is done
+   to the thumbnail — dimmed and numbered while waiting, swept by the beam
+   while reading, stamped when read, reddened when it could not be. */
+
+.spike {
+  margin-top: 12px; padding: 14px 18px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  animation: rise .3s cubic-bezier(.2,.7,.3,1) both;
+}
+.spike-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.spike-head strong { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.spike-hint { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.spike-clear { margin-left: auto; padding: 5px 12px; font-size: 12px; }
+
+.spike-cards {
+  display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.spike-cards::-webkit-scrollbar { display: none; }
+
+.sp-card {
+  flex-shrink: 0; width: 216px;
+  display: flex; align-items: center; gap: 11px;
+  padding: 8px 10px 8px 8px;
+  border-radius: 8px; border: 0;
+  background: var(--inset);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font: inherit; color: inherit; text-align: left;
+  position: relative;
+  animation: rise .3s cubic-bezier(.2,.7,.3,1) both;
+}
+.sp-thumb {
+  position: relative; flex-shrink: 0;
+  width: 44px; height: 58px; border-radius: 4px; overflow: hidden;
+  background: #fff; box-shadow: inset 0 0 0 1px var(--border);
+}
+.sp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sp-pages {
+  position: absolute; right: 3px; bottom: 3px;
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  color: #fff; background: rgba(28,25,23,.72);
+  padding: 0 4px; border-radius: 3px;
+}
+.sp-body { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.sp-title {
+  font-size: 13px; font-weight: 600; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sp-sub {
+  display: flex; align-items: center; gap: 4px 6px; margin-top: 2px; min-width: 0;
+  flex-wrap: wrap;   /* two stamps beside a USD figure do not fit one line */
+  font-size: 11.5px; color: var(--text-2);
+}
+.sp-amt {
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em; white-space: nowrap; color: var(--text);
+}
+.sp-amt .cur { font-size: 9.5px; color: var(--text-3); margin-right: 3px; }
+.sp-card .stamp { font-size: 8.5px; padding: 1.5px 5px; }
+
+/* Waiting: dimmed, with its place in line. */
+.sp-card.is-queued .sp-thumb img { opacity: .5; filter: grayscale(.5); }
+.sp-card.is-queued .sp-title { color: var(--text-2); }
+.sp-no {
+  position: absolute; left: 4px; top: 4px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: #fff; background: rgba(28,25,23,.72);
+  padding: 1px 5px; border-radius: 3px;
+}
+
+/* Reading: the same beam as the scan frame, in miniature. */
+.sp-card.is-reading { box-shadow: inset 0 0 0 1px var(--accent); background: var(--surface); }
+.sp-card.is-reading .sp-thumb::after {
+  content: ''; position: absolute; left: 0; right: 0; height: 42%;
+  background: linear-gradient(180deg, transparent, rgba(192,57,43,.30) 45%, rgba(255,255,255,.55) 50%, rgba(192,57,43,.30) 55%, transparent);
+  animation: beam 1.7s cubic-bezier(.5,0,.5,1) infinite;
+  mix-blend-mode: multiply;
+}
+.sp-card.is-reading .sp-title { color: var(--accent); }
+.sp-card.is-reading .sp-title::after {
+  content: '…'; display: inline-block;
+  animation: ellipsis 1.4s steps(4, end) infinite; width: 0; overflow: hidden;
+  vertical-align: bottom;
+}
+
+/* Read: a real button, tap to review. */
+.sp-card.is-done {
+  background: var(--surface); cursor: pointer;
+  transition: box-shadow .15s, transform .15s;
+}
+.sp-card.is-done:hover { box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-md); transform: translateY(-1px); }
+.sp-card.is-done:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Could not be read: the photo is kept, and the card says so. */
+.sp-card.is-failed { background: var(--red-bg); box-shadow: inset 0 0 0 1px rgba(185,28,28,.18); }
+.sp-card.is-failed .sp-title { color: var(--red); }
+.sp-err { color: #8f1d1d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.sp-actions { display: flex; gap: 2px; margin-top: 4px; margin-left: -6px; }
+.sp-btn {
+  font-family: var(--sans); font-size: 11.5px; font-weight: 600;
+  color: var(--red); background: none; border: 0; cursor: pointer;
+  padding: 3px 6px; border-radius: 4px;
+}
+.sp-btn:hover { background: rgba(185,28,28,.08); }
+.sp-btn[data-discard] { color: var(--text-2); font-weight: 500; }
 
 /* ─── Ledger controls ───────────────────────────────────────── */
 
@@ -679,7 +803,7 @@ body {
     transition-duration: .01ms !important;
   }
   /* The beam is the progress indicator — keep it, just make it calm. */
-  .scan-beam { animation: none !important; opacity: .35; top: 30%; }
+  .scan-beam, .sp-card.is-reading .sp-thumb::after { animation: none !important; opacity: .35; top: 30%; }
 }
 
 /* ─── Mobile ────────────────────────────────────────────────── */
@@ -719,6 +843,28 @@ body {
   .capture-hint { display: none; }
   .capture-alt-btn { padding: 11px 14px; font-size: 13px; }   /* 44px tap target */
   .capture-copy strong { font-size: 15px; }
+
+  /* Frame, status and two buttons do not fit one row on a phone: the
+     buttons drop to their own line, right-aligned, at tap-target size. */
+  .scan { flex-wrap: wrap; gap: 14px 16px; padding: 16px; }
+  .scan-actions { width: 100%; justify-content: flex-end; }
+  .scan-actions .btn-ghost { padding: 10px 16px; font-size: 13px; }
+  /* "Next receipt" is the FAB's job on a phone. */
+  #scan-next { display: none; }
+
+  /* Count and Clear share the top row; the tally drops underneath rather
+     than pushing Clear onto a line of its own. */
+  .spike { padding: 12px 14px 10px; }
+  .spike-head { display: grid; grid-template-columns: 1fr auto; row-gap: 2px; margin-bottom: 10px; }
+  .spike-head strong { grid-column: 1; grid-row: 1; }
+  .spike-hint { grid-column: 1 / -1; grid-row: 2; }
+  .spike-clear { grid-column: 2; grid-row: 1; margin-left: 0; }
+  /* Two cards fit the width of a phone at this size. */
+  .sp-card { width: 164px; gap: 9px; padding: 8px; }
+  .sp-btn { padding: 8px 8px; }   /* tap target */
+
+  /* Clear of the FAB, which owns the bottom-right corner. */
+  .toast { bottom: calc(96px + env(safe-area-inset-bottom)); }
 
   .ledger-controls { gap: 8px; }
   .ledger-tools { margin-left: 0; width: 100%; }
