@@ -29,7 +29,6 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Sizing constants and normalization library fully stable. Product classification and grading deltas powering exchange logic. Measurement-based sizing active. One-piece fit analysis working. Chest pad sizing (S/M/L by base size) in use.
-- **Partial:** Product metafields synced from Shopify but not surfaced in product recommendation logic.
 
 ## Key Files
 

@@ -12,16 +12,13 @@ Don't infer go-ahead from tangential replies. Wait for explicit "looks good" or 
 
 **How to apply:** Before executing bulk ops or irreversible changes, get a clear "yes" / "go ahead" / "do it". If the response is ambiguous, ask directly.
 
-## Save plans to memory before clearing
+## Plans are committed files; a plan that only exists in the plan-mode buffer is not saved
 
-Plans (created via EnterPlanMode) are ephemeral and DO NOT survive `/clear` or session restarts.
+Plans live in `.claude/plans/` in the repo and are committed like memory. Plan-mode content that was never written to a file does not survive `/clear` or a restart.
 
-**Why:** Lost the full scenario testing plan when suggesting /clear. Hours of work disappeared.
+**Why:** A full scenario-testing plan was lost to a `/clear` before plans were files.
 
-**How to apply:**
-- Before suggesting `/clear` or restart, check for active plan content worth keeping.
-- Save plan content (or thorough summary) as a memory file FIRST.
-- When in doubt, save it — redundant memory is better than lost work.
+**How to apply:** Before suggesting `/clear` or a restart, make sure any live design decisions are in the plan file (see "Write plan file updates inline"). When in doubt, write it.
 
 ## Stop and rethink when a fix isn't working
 
