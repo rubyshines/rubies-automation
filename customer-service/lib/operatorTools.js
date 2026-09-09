@@ -55,6 +55,7 @@ function loadAllOperatorTools() {
     require('./tools/donationPartners'),
     require('./tools/freeSwimwear'),
     require('./tools/storeLocator'),
+    require('./tools/wholesalePriceList'),
     require('./tools/b2bOutreach'),
     require('./tools/emailStudio'),
     require('./tools/preOrderLifecycle'),

@@ -7740,6 +7740,19 @@ function renderOutreachDetail(entry, draft) {
       <div id="outreach-send-panel"></div>
     </div>` + `<div id="outreach-context">${outreachHistoryHtml()}</div>`;
 
+  // The template picker: the empty state's front door, and equally available
+  // on a draft you wrote (or a template you already applied), because "I want
+  // the other template" is a normal second thought. Applying supersedes the
+  // pending row, and applyOutreachTemplate confirms before replacing typed
+  // text. Never on an advisor draft, whose text is the edit record.
+  const templateRow = `
+        <div class="steer-row" id="outreach-template-row" hidden>
+          <select id="outreach-template-select" class="steer-input"></select>
+          <button class="btn btn-ghost" id="outreach-template-apply-btn"
+            onclick="applyOutreachTemplate()"
+            title="Fills the composer with the template, details filled in. Your words to finish.">Start from template</button>
+        </div>`;
+
   if (!draft) {
     const what = `the <strong>${esc((entry.message_type || '').replace(/_/g, ' '))}</strong> message`;
     const isPostCall = entry.message_type === 'post_call_followup';
@@ -7756,12 +7769,7 @@ function renderOutreachDetail(entry, draft) {
           : canGenerate
             ? `Write it yourself below, or &#8635; to have the advisor write ${what}.`
             : 'Write your reply below. Replies are yours: the advisor only drafts messages we initiate.'}</div>
-        <div class="steer-row" id="outreach-template-row" hidden>
-          <select id="outreach-template-select" class="steer-input"></select>
-          <button class="btn btn-ghost" id="outreach-template-apply-btn"
-            onclick="applyOutreachTemplate()"
-            title="Fills the composer with the template, details filled in. Your words to finish.">Start from template</button>
-        </div>
+        ${templateRow}
         ${steerBlock}
         ${subjectInput(true)}
         ${editor(true, 'Type your message here. Saved as you write.')}
@@ -7787,6 +7795,7 @@ function renderOutreachDetail(entry, draft) {
            reason and no facts gets it as a banner here. */ ''}
       ${s.needs_review_reason && !factsHtml ? `<div class="outreach-review-note">&#9888; ${esc(s.needs_review_reason)}</div>` : ''}
       ${outreachScheduleBannerHtml(draft)}
+      ${draft.advisor ? '' : templateRow}
       ${steerBlock}
       ${subjectInput(!draft.advisor)}
       ${/* Only YOUR text autosaves. On an advisor draft, subject/body are the AI's
@@ -7808,6 +7817,7 @@ function renderOutreachDetail(entry, draft) {
   document.getElementById('outreach-subject-editor').value = draft.subject || '';
   initOutreachDropzone();
   initOutreachMics();
+  if (!draft.advisor) loadOutreachTemplates(entry);
 }
 
 async function regenerateOutreachDraft() {
