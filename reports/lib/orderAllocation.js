@@ -18,20 +18,36 @@
  *   ones sitting fully allocated on the shelf.
  *
  * So the two are combined here instead, against the demand queue: Warehance
- * allocates open orders against on-hand stock oldest-first, so replaying that
- * walk reconstructs the join. For a SKU with N units on hand, sort every open
+ * allocates open orders against sellable stock oldest-first, so replaying that
+ * walk reconstructs the join. For a SKU with N sellable units, sort every open
  * order holding it by order date and hand out units until they run out; an
  * order whose full open quantity fits is allocated, and everything from the
  * first short order onward is not (a partial allocation consumes the remainder,
  * so no later order can be covered).
  *
+ * The pool the walk hands out is `allocated + available`, NOT `on_hand`.
+ * `on_hand` counts every unit physically in the building, including the ones
+ * Warehance will never hand to an order — `non_sellable`, `damaged`, `expired`
+ * bins all sit inside it. Walking over on_hand gives a phantom unit to the
+ * oldest order in the queue and reports that customer as reserved for as long
+ * as the unit sits in the bin. Live example (2026-09-09, SHS-BLK-L): on_hand 1,
+ * allocated 0, available 0, backordered 3, non_sellable 1 — two orders waiting
+ * on three units, and the older one (#33550) was called allocated against the
+ * non-sellable unit, so the pre-order drafter never contacted them while
+ * Warehance's own `has_unallocated_products` said they were waiting. The same
+ * signature (on_hand 1, allocated 0, available 0) had been read on 2026-08-25
+ * as "a unit the warehouse has given to nobody", i.e. a de-allocation; it was a
+ * unit the warehouse CANNOT give to anybody. `allocated + available` is exactly
+ * the set of units Warehance has either handed out or could, which is the only
+ * pool the oldest-first walk can be replaying.
+ *
  * The reconstruction is checked against the counters it did not use: summing
  * the allocated quantities must reproduce Warehance's own `allocated`, and the
- * shortfall must reproduce `available === 0`. Live example (2026-08-24,
- * AJ-BLK-M): on_hand 19, allocated 19, available 0, backordered 1 — and 19
- * units of open demand spread over 7 orders, every one of them covered. The
- * SKU counters alone said "out of stock and backordered" about seven orders
- * whose units were all physically reserved.
+ * shortfall must reproduce `backordered`. Live example (2026-08-24, AJ-BLK-M):
+ * on_hand 19, allocated 19, available 0, backordered 1 — and 19 units of open
+ * demand spread over 7 orders, every one of them covered. The SKU counters
+ * alone said "out of stock and backordered" about seven orders whose units
+ * were all physically reserved.
  *
  * Whole-line, not partial: an order needing 5 with 3 units left is NOT
  * allocated, because the customer is still waiting on that line. That matches
@@ -63,6 +79,20 @@ function allocationKey(orderNumber, sku) {
 }
 
 /**
+ * Units Warehance can actually hand to an order: the ones it already has
+ * (`allocated`) plus the ones it still could (`available`). See the module note
+ * on why this is not `on_hand`. A record that carries neither counter cannot be
+ * split, so it falls back to on_hand — the only fallback that does not invent
+ * a shortage out of a missing field.
+ */
+function sellableUnits(stock) {
+  const allocated = Number(stock?.allocated);
+  const available = Number(stock?.available);
+  if (Number.isFinite(allocated) && Number.isFinite(available)) return allocated + available;
+  return Number(stock?.on_hand) || 0;
+}
+
+/**
  * Sort key for the allocation queue: order date first, then order number as a
  * deterministic tiebreak (several orders routinely share a date, and an
  * unstable sort there would make the same inputs yield different verdicts run
@@ -90,9 +120,11 @@ function queueSortKey(order) {
  *   Only SKUs present in this map are reconstructed; anything else is left
  *   unknown rather than guessed.
  * @returns {Map<string, {allocated: boolean, quantity: number, onHand: number,
- *   queuePosition: number}>} keyed by allocationKey(orderNumber, sku).
+ *   sellable: number, queuePosition: number}>} keyed by
+ *   allocationKey(orderNumber, sku). `sellable` is the pool the walk handed
+ *   out (allocated + available); `onHand` is carried for diagnosis only.
  *   `queuePosition` is the cumulative unit index this line ends at, which is
- *   what makes a verdict explainable ("unit 10 of 19 on hand").
+ *   what makes a verdict explainable ("unit 10 of 19 sellable").
  */
 function buildAllocationIndex(openOrders, stockBySku) {
   const demandBySku = new Map();
@@ -129,8 +161,10 @@ function buildAllocationIndex(openOrders, stockBySku) {
         : a.sortKey.date > b.sortKey.date ? 1
           : a.sortKey.num - b.sortKey.num
     ));
-    const onHand = Number(stockBySku.get(sku)?.on_hand) || 0;
-    let remaining = onHand;
+    const stock = stockBySku.get(sku);
+    const onHand = Number(stock?.on_hand) || 0;
+    const sellable = sellableUnits(stock);
+    let remaining = sellable;
     let queuePosition = 0;
     for (const row of rows) {
       queuePosition += row.quantity;
@@ -142,6 +176,7 @@ function buildAllocationIndex(openOrders, stockBySku) {
         allocated,
         quantity: row.quantity,
         onHand,
+        sellable,
         queuePosition,
       });
     }
@@ -175,11 +210,16 @@ function orderFullyAllocated(whOrder) {
 
 /**
  * Consistency check on the demand queue, against the two counters the walk did
- * not consume. Warehance hands out units until they run out, so total open
- * demand and on-hand stock fully determine both counters:
+ * not consume. Warehance hands out sellable units until they run out, so total
+ * open demand and the sellable pool fully determine both counters:
  *
- *   allocated   === min(demand, on_hand)
- *   backordered === max(0, demand - on_hand)
+ *   allocated   === min(demand, sellable)
+ *   backordered === max(0, demand - sellable)
+ *
+ * (With sellable = allocated + available the first line reduces to "available
+ * is 0 whenever demand exceeds allocated", and the second to "backordered is
+ * the demand the pool does not cover" — both are genuine statements about the
+ * order book, not tautologies.)
  *
  * If the queue we assembled reproduces those, it is the same demand the
  * warehouse is looking at, and the per-order verdicts sit on solid ground. If it
@@ -207,15 +247,17 @@ function verifyAgainstCounters(index, stockBySku) {
     if (!stock) continue;
     const demand = demandBySku.get(sku) || 0;
     const onHand = Number(stock.on_hand) || 0;
+    const sellable = sellableUnits(stock);
     const reportedAllocated = Number(stock.allocated) || 0;
     const reportedBackordered = Number(stock.backordered) || 0;
-    const expectedAllocated = Math.min(demand, onHand);
-    const expectedBackordered = Math.max(0, demand - onHand);
+    const expectedAllocated = Math.min(demand, sellable);
+    const expectedBackordered = Math.max(0, demand - sellable);
     if (expectedAllocated !== reportedAllocated || expectedBackordered !== reportedBackordered) {
       mismatches.push({
         sku,
         demand,
         onHand,
+        sellable,
         expectedAllocated,
         reportedAllocated,
         expectedBackordered,
@@ -267,6 +309,7 @@ async function fetchAllocationIndex(skus, { orders = null } = {}) {
 module.exports = {
   openQuantity,
   allocationKey,
+  sellableUnits,
   buildAllocationIndex,
   isLineAllocated,
   orderFullyAllocated,
