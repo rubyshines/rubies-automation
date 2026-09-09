@@ -85,7 +85,8 @@
 
     <!-- The scan panel: shown while a photo is being read. This is the one
          moment the operator actually waits on, so it shows the photo with a
-         sweep across it rather than a spinner over nothing. -->
+         sweep across it rather than a spinner over nothing. It stays up for a
+         whole batch, repointed at each receipt in turn. -->
     <div class="scan" id="scan" hidden>
       <div class="scan-frame">
         <img id="scan-preview" alt="">
@@ -94,8 +95,26 @@
       <div class="scan-status">
         <span class="scan-label" id="scan-label">Reading the receipt</span>
         <span class="scan-steps" id="scan-steps"></span>
+        <span class="scan-queued" id="scan-queued" hidden></span>
       </div>
-      <button class="btn-ghost" id="scan-cancel" type="button">Cancel</button>
+      <div class="scan-actions">
+        <button class="btn-ghost" id="scan-next" type="button">Next receipt</button>
+        <button class="btn-ghost" id="scan-cancel" type="button">Cancel</button>
+      </div>
+    </div>
+
+    <!-- The spike: every receipt captured this visit, in the order it came
+         in, like paper pushed onto a desk spike. Shooting the next receipt
+         while one is still being read just adds to it. Read ones are tapped
+         to review; ones that could not be read keep their photos and offer a
+         retry. Hidden until there is something on it. -->
+    <div class="spike" id="spike" hidden>
+      <div class="spike-head">
+        <strong id="spike-count"></strong>
+        <span class="spike-hint" id="spike-hint"></span>
+        <button class="btn-ghost spike-clear" id="spike-clear" type="button">Clear</button>
+      </div>
+      <div class="spike-cards" id="spike-cards"></div>
     </div>
 
     <div class="capture-error" id="capture-error" hidden></div>

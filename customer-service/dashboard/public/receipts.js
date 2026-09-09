@@ -11,8 +11,10 @@ const state = {
   search: '',
   openId: null,
   detail: null,
-  capturing: false,
   tray: [],          // prepared images held for one multi-section capture
+  queue: [],         // capture jobs, oldest first — see "The spike" below
+  batchNo: 0,        // bumps each time the queue goes idle; a job carries the batch it ran in
+  pendingOpen: null, // receipt id to open once the page is looked at again
 };
 
 // ---------------------------------------------------------------------------
@@ -139,8 +141,16 @@ const SCAN_STEPS_MULTI = [
 ];
 
 let scanTimer;
-function startScan(previewUrl, pageCount = 1) {
-  $('scan-preview').src = previewUrl;
+
+/**
+ * Show the scan panel for a job — or repoint it at the next job if it is
+ * already up. The panel stays put across a whole batch rather than blinking
+ * off and on between receipts.
+ */
+function startScan(job) {
+  clearInterval(scanTimer);
+  const pageCount = job.pages.length;
+  $('scan-preview').src = job.pages[0].previewUrl;
   $('scan-label').textContent = pageCount > 1
     ? `Reading ${pageCount} sections as one receipt`
     : 'Reading the receipt';
@@ -158,6 +168,7 @@ function startScan(previewUrl, pageCount = 1) {
     i = Math.min(i + 1, steps.length - 1);
     $('scan-steps').textContent = steps[i];
   }, 1900);
+  renderScanQueued();
 }
 
 function stopScan() {
@@ -169,22 +180,41 @@ function stopScan() {
   $('scan-preview').src = '';
 }
 
+function renderScanQueued() {
+  const waiting = state.queue.filter(j => j.status === 'queued').length;
+  const el = $('scan-queued');
+  el.hidden = !waiting;
+  el.textContent = waiting ? `${waiting} more waiting` : '';
+}
+
 let captureAbort = null;
 
 const MAX_PAGES = 8;
 
 /**
- * Take photos into the tray.
+ * Take photos in.
  *
- * A single photo submits immediately — that is the overwhelmingly common case
- * and making it wait behind a confirm step to serve long receipts would be the
- * wrong trade. The tray only appears once there is more than one image to hold
- * together, or when "add another section" is used deliberately.
+ * One photo on its own is one receipt and goes straight onto the spike. With
+ * `hold` (or while a tray is already open) it joins the tray instead, as a
+ * section of a long receipt, and the tray is submitted as one job by hand.
+ *
+ * Nothing here ever refuses a photo because another is being read. That was
+ * the old behaviour and it lost receipts: shoot one, open the camera while it
+ * reads, come back with the next — and the second was dropped without a word,
+ * because the input had already been cleared by the time the guard fired.
  */
 async function captureFiles(files, { hold = false } = {}) {
   const list = [...(files || [])].filter(Boolean);
-  if (!list.length || state.capturing) return;
+  if (!list.length) return;
   $('capture-error').hidden = true;
+
+  if (!hold && !state.tray.length) {
+    for (const file of list) {
+      try { enqueue([await prepareImage(file)]); }
+      catch (err) { showCaptureError(err.message); }
+    }
+    return;
+  }
 
   const room = MAX_PAGES - state.tray.length;
   if (room <= 0) { showCaptureError(`A receipt can be captured in at most ${MAX_PAGES} photos.`); return; }
@@ -204,7 +234,6 @@ async function captureFiles(files, { hold = false } = {}) {
   }
 
   renderTray();
-  if (state.tray.length === 1 && !hold) await submitTray();
 }
 
 function renderTray() {
@@ -227,48 +256,223 @@ function renderTray() {
   $('tray-add').disabled = state.tray.length >= MAX_PAGES;
 }
 
-async function submitTray() {
-  if (!state.tray.length || state.capturing) return;
-  const pages = state.tray;
-  state.capturing = true;
-  $('tray').hidden = true;
-
-  startScan(pages[0].previewUrl, pages.length);
-  captureAbort = new AbortController();
-
-  try {
-    const result = await api('/api/receipts/capture', {
-      method: 'POST',
-      signal: captureAbort.signal,
-      body: JSON.stringify({
-        images: pages.map(p => ({ image_base64: p.base64, mime_type: 'image/jpeg' })),
-      }),
-    });
-    stopScan();
-    state.capturing = false;
-    state.tray = [];
-    renderTray();
-
-    await loadList();
-    if (result.already_captured) toast('Already captured — opening the existing receipt');
-    else toast(`Captured ${result.receipt.merchant || 'receipt'}`);
-    openDetail(result.receipt.id, result);
-  } catch (err) {
-    stopScan();
-    state.capturing = false;
-    // The photos stay in the tray on failure — they may be the only copy, and
-    // making someone re-shoot a six-section receipt because the request timed
-    // out is the worst thing this page could do.
-    renderTray();
-    if (err.name === 'AbortError') { toast('Capture cancelled'); return; }
-    showCaptureError(err.message);
-  }
+function submitTray() {
+  if (!state.tray.length) return;
+  enqueue(state.tray);
+  state.tray = [];
+  renderTray();
 }
 
 function showCaptureError(msg) {
   const el = $('capture-error');
   el.textContent = msg;
   el.hidden = false;
+}
+
+// ---------------------------------------------------------------------------
+// The spike
+//
+// Every capture is a job pushed onto a spike — the desk spike paper receipts
+// go onto as they come in — and read one at a time, in order. Sequential on
+// purpose: back-to-back calls share the prompt cache (the system prompt and
+// the chart of accounts are most of every request) where simultaneous calls
+// each pay the full cold write, and the scan panel can be honest about which
+// photo it is reading. A batch is everything pushed on since the queue was
+// last idle; that is what decides whether a finished receipt opens itself.
+// ---------------------------------------------------------------------------
+
+let jobSeq = 0;
+let pendingOpenTimer;
+
+function enqueue(pages) {
+  const job = { id: ++jobSeq, pages, status: 'queued', batch: state.batchNo, result: null, error: null };
+  state.queue.push(job);
+  // A new capture supersedes the sheet: the operator is at the till shooting
+  // the next receipt, not reviewing the last one.
+  state.pendingOpen = null;
+  clearTimeout(pendingOpenTimer);
+  if (state.openId) closeSheet();
+  renderSpike();
+  processQueue();
+  return job;
+}
+
+function activeJob() { return state.queue.find(j => j.status === 'reading') || null; }
+
+async function processQueue() {
+  if (activeJob()) return;
+  const job = state.queue.find(j => j.status === 'queued');
+  if (!job) { stopScan(); settleBatch(); return; }
+
+  job.status = 'reading';
+  job.error = null;
+  startScan(job);
+  renderSpike();
+  captureAbort = new AbortController();
+  try {
+    job.result = await api('/api/receipts/capture', {
+      method: 'POST',
+      signal: captureAbort.signal,
+      body: JSON.stringify({
+        images: job.pages.map(p => ({ image_base64: p.base64, mime_type: 'image/jpeg' })),
+      }),
+    });
+    job.status = 'done';
+  } catch (err) {
+    // The photos stay on the card — they may be the only copy, and making
+    // someone re-shoot a six-section receipt because the request timed out
+    // is the worst thing this page could do. Retry re-queues the same pages.
+    job.status = 'failed';
+    job.error = err.name === 'AbortError' ? 'Cancelled' : err.message;
+  }
+  captureAbort = null;
+  renderSpike();
+  if (job.status === 'done') loadList().catch(() => {});
+  processQueue();
+}
+
+/**
+ * The queue just went idle. A lone successful capture opens itself, as it
+ * always has; anything else stays on the spike to be tapped through, with
+ * one toast for the lot.
+ */
+function settleBatch() {
+  const batch = state.queue.filter(j => j.batch === state.batchNo);
+  state.batchNo++;
+  if (!batch.length) return;
+  const done = batch.filter(j => j.status === 'done');
+  const failed = batch.filter(j => j.status === 'failed' && j.error !== 'Cancelled');
+  const cancelled = batch.filter(j => j.status === 'failed' && j.error === 'Cancelled');
+
+  if (batch.length === 1 && done.length === 1) {
+    const result = done[0].result;
+    // Behind the camera the sheet would open unseen, then sit on top of the
+    // next capture. Hold it until the page is looked at again.
+    if (document.visibilityState === 'hidden') { state.pendingOpen = result.receipt.id; return; }
+    toast(result.already_captured
+      ? 'Already captured — opening the existing receipt'
+      : `Captured ${result.receipt.merchant || 'receipt'}`);
+    openDetail(result.receipt.id, result);
+    return;
+  }
+  if (failed.length) {
+    toast(failed.length === 1 ? failed[0].error : `${failed.length} receipts could not be read`, true);
+  } else if (done.length) {
+    toast(`Captured ${done.length} receipt${done.length === 1 ? '' : 's'} — tap one to review`);
+  } else if (cancelled.length) {
+    toast('Capture cancelled');
+  }
+}
+
+function retryJob(id) {
+  const job = state.queue.find(j => j.id === id);
+  if (!job || job.status !== 'failed') return;
+  job.status = 'queued';
+  job.error = null;
+  job.batch = state.batchNo;
+  renderSpike();
+  processQueue();
+}
+
+function discardJob(id) {
+  const i = state.queue.findIndex(j => j.id === id);
+  if (i < 0) return;
+  state.queue.splice(i, 1);
+  renderSpike();
+}
+
+function clearSpike() {
+  const failed = state.queue.filter(j => j.status === 'failed');
+  if (failed.length && !confirm(`Discard ${failed.length} photo${failed.length === 1 ? '' : 's'} that could not be read?`)) return;
+  state.queue = state.queue.filter(j => j.status === 'queued' || j.status === 'reading');
+  renderSpike();
+}
+
+function spikeCard(j) {
+  const thumb = `<span class="sp-thumb"><img src="${j.pages[0].previewUrl}" alt="">${
+    j.pages.length > 1 ? `<span class="sp-pages">${j.pages.length}</span>` : ''}</span>`;
+
+  if (j.status === 'done') {
+    const r = j.result.receipt;
+    const stamps = [];
+    if (j.result.already_captured) stamps.push('<span class="stamp dupe">again</span>');
+    else if (j.result.duplicate_of) stamps.push('<span class="stamp dupe">dupe</span>');
+    if (!r.clean) stamps.push('<span class="stamp check">check</span>');
+    const amt = money(r.total);
+    return `
+      <button class="sp-card is-done" data-open="${r.id}" type="button">${thumb}
+        <span class="sp-body">
+          <span class="sp-title">${esc(r.merchant || 'Unknown merchant')}</span>
+          <span class="sp-sub"><span class="sp-amt">${
+            amt ? `${r.currency ? `<span class="cur">${esc(r.currency)}</span>` : ''}${esc(amt)}` : '—'
+          }</span>${stamps.join('')}</span>
+        </span>
+      </button>`;
+  }
+  if (j.status === 'failed') {
+    const cancelled = j.error === 'Cancelled';
+    return `
+      <div class="sp-card is-failed">${thumb}
+        <span class="sp-body">
+          <span class="sp-title">${cancelled ? 'Cancelled' : 'Could not read'}</span>
+          <span class="sp-sub sp-err" title="${esc(j.error)}">${esc(cancelled ? 'photo kept' : j.error)}</span>
+          <span class="sp-actions">
+            <button class="sp-btn" data-retry="${j.id}" type="button">Retry</button>
+            <button class="sp-btn" data-discard="${j.id}" type="button">Discard</button>
+          </span>
+        </span>
+      </div>`;
+  }
+  if (j.status === 'reading') {
+    return `
+      <div class="sp-card is-reading">${thumb}
+        <span class="sp-body">
+          <span class="sp-title">Reading</span>
+          <span class="sp-sub">${j.pages.length > 1 ? `${j.pages.length} sections` : 'right now'}</span>
+        </span>
+      </div>`;
+  }
+  const ahead = state.queue.filter(q => q.status === 'queued' && q.id < j.id).length;
+  return `
+    <div class="sp-card is-queued">${thumb}
+      <span class="sp-no">${ahead + 1}</span>
+      <span class="sp-body">
+        <span class="sp-title">Waiting</span>
+        <span class="sp-sub">${ahead ? `${ahead} ahead of it` : 'next up'}</span>
+      </span>
+    </div>`;
+}
+
+function renderSpike() {
+  renderScanQueued();
+  const el = $('spike');
+  const jobs = state.queue;
+  if (!jobs.length) { el.hidden = true; return; }
+  el.hidden = false;
+
+  const done = jobs.filter(j => j.status === 'done').length;
+  const failed = jobs.filter(j => j.status === 'failed').length;
+  const toGo = jobs.length - done - failed;
+  $('spike-count').textContent = toGo
+    ? `${jobs.length} receipt${jobs.length === 1 ? '' : 's'}`
+    : 'Just captured';
+  $('spike-hint').textContent = [
+    done ? `${done} read` : null,
+    toGo ? `${toGo} to go` : null,
+    failed ? `${failed} could not be read` : null,
+  ].filter(Boolean).join(' · ');
+  $('spike-clear').hidden = !(done || failed);
+
+  const cards = $('spike-cards');
+  cards.innerHTML = jobs.map(spikeCard).join('');
+  // Fresh from the server rather than the capture result: a signed photo URL
+  // in the result expires, and a card can be opened long after it landed.
+  cards.querySelectorAll('[data-open]').forEach(b =>
+    b.addEventListener('click', () => openDetail(Number(b.dataset.open))));
+  cards.querySelectorAll('[data-retry]').forEach(b =>
+    b.addEventListener('click', () => retryJob(Number(b.dataset.retry))));
+  cards.querySelectorAll('[data-discard]').forEach(b =>
+    b.addEventListener('click', () => discardJob(Number(b.dataset.discard))));
 }
 
 // ---------------------------------------------------------------------------
@@ -691,7 +895,7 @@ function init() {
   };
   $('capture-sections').addEventListener('click', holdCapture);
   $('tray-add').addEventListener('click', holdCapture);
-  $('tray-submit').addEventListener('click', () => submitTray());
+  $('tray-submit').addEventListener('click', submitTray);
   $('tray-discard').addEventListener('click', () => {
     if (state.tray.length > 1 && !confirm('Discard these photos?')) return;
     state.tray = [];
@@ -699,14 +903,21 @@ function init() {
     $('capture-error').hidden = true;
   });
   $('scan-cancel').addEventListener('click', () => captureAbort?.abort());
+  // The picker, not the camera: on a phone the FAB is the camera, and on a
+  // desktop this is the only way to add the next file while one is reading.
+  $('scan-next').addEventListener('click', () => $('file-input').click());
+  $('spike-clear').addEventListener('click', clearSpike);
 
-  // Desktop: drop a scanned receipt straight onto the panel.
-  const drop = $('capture-drop');
+  // Desktop: drop a scanned receipt straight onto the panel. The whole
+  // capture section is the target, so a drop still lands while the scan
+  // panel is standing in for the drop zone.
+  const drop = $('capture');
+  const lit = () => [$('capture-drop'), $('scan')];
   ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
-    e.preventDefault(); drop.classList.add('dragover');
+    e.preventDefault(); lit().forEach(t => t.classList.add('dragover'));
   }));
   ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
-    e.preventDefault(); drop.classList.remove('dragover');
+    e.preventDefault(); lit().forEach(t => t.classList.remove('dragover'));
   }));
   drop.addEventListener('drop', e => {
     const files = [...(e.dataTransfer?.files || [])].filter(f => f.type.startsWith('image/'));
@@ -718,7 +929,29 @@ function init() {
   document.addEventListener('paste', e => {
     if (state.openId) return;
     const imgs = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith('image/'));
-    if (imgs.length) captureFiles(imgs.map(i => i.getAsFile()), { hold: state.tray.length > 0 });
+    if (imgs.length) captureFiles(imgs.map(i => i.getAsFile()), { hold: state.tray.length > 0 || imgs.length > 1 });
+  });
+
+  // A lone capture that finished while the camera was up opens itself once
+  // the page is looked at again — after a beat, because coming back from the
+  // camera fires this just before the new photo lands, and a fresh capture
+  // should cancel the open rather than be covered by it.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || state.pendingOpen === null) return;
+    clearTimeout(pendingOpenTimer);
+    pendingOpenTimer = setTimeout(() => {
+      const id = state.pendingOpen;
+      state.pendingOpen = null;
+      if (id !== null && !activeJob()) openDetail(id);
+    }, 400);
+  });
+
+  // Photos on the spike or in the tray exist only in this tab.
+  window.addEventListener('beforeunload', e => {
+    const busy = state.tray.length || state.queue.some(j => j.status === 'queued' || j.status === 'reading' || j.status === 'failed');
+    if (!busy) return;
+    e.preventDefault();
+    e.returnValue = '';
   });
 
   $('filters').addEventListener('click', e => {
