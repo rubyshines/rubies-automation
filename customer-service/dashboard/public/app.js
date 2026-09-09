@@ -7075,11 +7075,11 @@ function renderOutreachSidebarContext() {
   const site = c.website ? (/^https?:/.test(c.website) ? c.website : 'https://' + c.website) : null;
   const siteLabel = c.website ? c.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
   // Where they are is a control, not a caption: click it to set city, state
-  // or province, country and timezone. Their zone reads beside it with where
-  // it came from, so an inference is never mistaken for something they said.
+  // or province, country and timezone. Their zone reads beside it; where it
+  // came from is in the editor, not on the line (Jamie, 2026-09-09).
   const tzInfo = c.their_time_zone || null;
   const tzText = tzInfo?.timeZone
-    ? `${c.their_time_zone_label || tzInfo.timeZone}${tzInfo.source === 'set by you' ? '' : ' <span class="outreach-place-src">' + esc(tzInfo.source) + '</span>'}`
+    ? esc(c.their_time_zone_label || tzInfo.timeZone)
     : '<span class="outreach-place-missing">timezone unknown</span>';
   const placeHtml = `<button class="outreach-place-edit" onclick="showLocationForm()"
       title="Edit city, state/province, country and timezone">${place ? esc(place) : '<span class="outreach-place-missing">no location</span>'} <span class="outreach-place-tz">&middot; ${tzText}</span></button>`;
