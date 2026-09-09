@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-08-26
+last_updated: 2026-09-09
 ---
 
 ## Goal
@@ -16,6 +16,8 @@ Grow retailer partnerships and wholesale revenue.
 4. Tier 3 custom searches — not started
 
 ## Current Status
+**2026-09-09: the retailer channel is live, round 1 sent.** The whole worked-but-never-converted retailer book was invisible to the engine (unvetted, pre-engine history) and the queue for retailers was empty by construction. Now: both retailer emails locked line by line with Jamie (cold intro on a template with fixed A/B subjects; the re-approach to sampled stores fully fixed text), a sample kit overrides the six-month fresh-intro rule, and the 44 unpaused retailers were vetted in one sitting: **30 sent** (12 sampled re-approaches, 18 cold intros, one with a real referral), 7 handled by hand in-thread, 6 dropped as dead ends. Kickbox went live first (284 addresses, 12 undeliverable retired); one send still bounced through an accept-all gateway and was repointed to the buyer named on the store's site. Found and fixed underneath: She Bop, a customer with three POs, read as a non-customer because a Shopify email change had silently dropped every later order from the mirror (the same bug hit every customer with order history who changed email; fixed on both sync paths plus a cascade migration). Drop/Restore joined the panel. Next: the ladder chases from 16 Sep; the org A/B round reads on 22 Sep; the 119 qualified discovery retailers need an importer and a vetting screen before round 2; the affiliate decision (Hello Gorgeous, The Bra Room both asked) is still open. Plan: `.claude/plans/b2b-retailer-outreach.md`.
+
 **2026-08-28: the org list can finally be worked by area, and the queue stopped lying about who is a stranger.** The ~130-row CenterLink cohort carried Klaviyo profile geolocation as its location, so "which orgs are in the middle states" had never been answerable. Enrichment (`b2b-discovery/enrichOrgs.js`) reads each org's own site: **160 orgs now have a real region** (was 60 fake ones), **131 are reachable** (was zero in that cohort), and **33 run their own clothing closet**. Ready prospects exist in **23 states and provinces with no partner at all**. Ranking by org quality rather than by our own order volume was the correction that mattered — the volume filter had hidden most of the closet-running orgs.
 
 Twelve closet orgs were vetted in; five turned out to have prior history and dropped back out, because `prospect` was set once by hand in early August and never re-derived after the nightly Gmail sweep imported 489 messages. Eleven vetted rows were queued for cold introductions to orgs we already knew, one of them offered a partnership in 2024. Now derived nightly. Three re-approaches surfaced where a donation was **agreed and never delivered** (We Are Family accepted 15-20 pairs in 2022; Transfolk WA supplied a delivery address; Transhealth applied for a round) — those are owed, not leads, and the re-approach framing was rewritten to explain the gap rather than apologise for it, since the programme is free and treating a lapsed enquiry as a debt argues the reader into feeling let down.

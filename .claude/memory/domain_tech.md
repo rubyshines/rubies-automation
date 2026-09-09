@@ -40,6 +40,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `gmail-management/sync/` — Gmail classification and CS routing.
 
 ## Key Decisions
+- **A customer's email change renames their `customers` row in place, and their orders follow (2026-09-09):** `customers.email` is the primary key and `orders.customer_email` references it, so an upsert keyed on email after a Shopify email change collides with the unique `shopify_customer_id`, the customer row is never written, and every later order fails the foreign key and is skipped with only a console line. Three She Bop wholesale orders were missing from the mirror for five months. Both writers (webhook and nightly sync) now go through `webhooks/lib/customerUpsert.js`, which resolves by Shopify id first: rename in place when the new email is free (the FK now cascades on update), merge orders-first when a fork already sits under the new email. Any new table that references `customers(email)` needs `ON UPDATE CASCADE` or that rename breaks again, silently.
 
 - **Immediate 200 response on webhooks:** Handlers run async after response. Critical for Gorgias 10s timeout.
 - **Daily sync as idempotency layer:** Even if webhooks miss or duplicate, daily sync reconciles.

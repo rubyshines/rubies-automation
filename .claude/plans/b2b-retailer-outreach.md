@@ -7,7 +7,7 @@ follow-up ladder, and a vetted supply of new stores behind it.
 - **Domain:** b2b_sales
 - **Initiative:** B2B Expansion (Phase 3, active outreach)
 - **Drafted:** 2026-09-08
-- **Status:** Phase 0 done 2026-09-09 (Kickbox live, sweep run, She Bop order matching fixed). Phase 1 build shipped 2026-09-09 (both templates locked, samples override the age rule, fixed A/B subjects shared across channels); vetting and the first sends next. Decisions still open: affiliate build, vetting panel timing, unattended sends after round 1. (see the end)
+- **Status:** Round 1 SENT 2026-09-09 (30 stores: 12 sampled re-approaches, 18 cold intros; 7 stragglers replying by hand in-thread; 6 dropped). Phase 0 done (Kickbox live, She Bop order matching fixed). Phase 1 build shipped. Pending: lock the cold-intro rewording below (all-day comfort opener, "quality and comfort" kit line) before round 2; Phase 2 A/B report (org round reads 22 Sep); Phase 3 importer + vetting screen for the 119 discovery stores; Phase 4 affiliate decision (Hello Gorgeous and The Bra Room both asked).
 
 ---
 
@@ -252,7 +252,7 @@ handled by hand earlier if Jamie wants to stop carrying that debt.
 
 ---
 
-## Emails by case (proposed, for Jamie to lock)
+## Emails by case (round 1 as sent; rewording proposed 2026-09-09 for round 2, NOT yet locked: opener "Instead of tucking or tight compression, our designs gently reshape, so they are comfortable enough to wear all day, like regular underwear", kit line "so you can see the quality and comfort for yourself")
 
 Slots in brackets are the only variable parts. Everything else is byte-identical across sends.
 
