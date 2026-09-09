@@ -3277,6 +3277,29 @@ async function apiB2bAvailability(companyId, params) {
 
   const grid = await fetchAvailability({ durationMinutes: duration, days, theirTimeZone: tz.timeZone });
 
+  // Best fits answer THEIR offer when they made one. Deterministic: the
+  // windows come straight off the extracted times; the engine intersects.
+  //   offered   — inside what they offered, grouping as the tiebreak
+  //   counter   — none of their times are free; these are to counter-propose
+  //   unplaced  — they named times but their zone is unknown, so nothing can
+  //               be placed; these are to counter-propose
+  //   open      — they named nothing; tightest against what is already booked
+  const { pickBestFits } = require('../../b2b-outreach/lib/availability');
+  const offered = (proposed.times || []).filter(t => !t.needsTimeZone).map(t => ({
+    date: t.date,
+    start: t.start || null,
+    end: t.end || (t.start && !t.isRange ? new Date(Date.parse(t.start) + duration * 60000).toISOString() : null),
+  }));
+  const unplaced = (proposed.times || []).some(t => t.needsTimeZone);
+  let bestFits = grid.bestFits || [];
+  let bestFitsScope = 'open';
+  if (offered.length) {
+    const inside = pickBestFits(grid.days, { respectTheirWorkday: !!tz.timeZone, within: offered });
+    if (inside.length) { bestFits = inside; bestFitsScope = 'offered'; } else bestFitsScope = 'counter';
+  } else if (unplaced) {
+    bestFitsScope = 'unplaced';
+  }
+
   const { data: meeting } = await sb.from('b2b_meetings')
     .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone')
     .eq('company_id', companyId).eq('status', 'booked')
@@ -3295,8 +3318,10 @@ async function apiB2bAvailability(companyId, params) {
     days: grid.days,
     // Today's bookings, for the week view only — never bookable.
     today: grid.today || null,
-    // Slots sitting right against a call already booked — Jamie stacks calls.
-    bestFits: grid.bestFits || [],
+    // Slots sitting right against a call already booked — Jamie stacks calls —
+    // narrowed to their offer when they made one (see bestFitsScope above).
+    bestFits,
+    bestFitsScope,
     booked: meeting || null,
     proposed_times: proposed.times,
     proposed_error: proposed.error,

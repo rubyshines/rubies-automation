@@ -303,3 +303,32 @@ test('today is returned read-only: its bookings and notes, no slots', () => {
   assert.strictEqual(grid.days[0].date, '2026-09-10');
   assert.strictEqual(grid.days[0].busyBlocks.length, 0);
 });
+
+test('bestFits inside their offer: only slots in their windows, grouping breaks ties, empty days allowed', () => {
+  const { slotWithin } = require('../../b2b-outreach/lib/availability');
+  // Thu 10: Le JAG 9:30 and Dion 10:00. They offered Thu 9-10 or 1-2:30, and Mon 14 all day.
+  const busy = [
+    { start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'Le JAG' },
+    { start: et('2026-09-10', 10), end: et('2026-09-10', 10, 30), summary: 'Dion' },
+  ];
+  const grid = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 4 });
+  const within = [
+    { date: '2026-09-10', start: et('2026-09-10', 9), end: et('2026-09-10', 10) },
+    { date: '2026-09-10', start: et('2026-09-10', 13), end: et('2026-09-10', 14, 30) },
+    { date: '2026-09-14', start: null, end: null },
+  ];
+  const fits = pickBestFits(grid.days, { within, limit: 5 });
+  // 10:30 (right after Dion) is the calendar's favourite and is NOT offered.
+  assert.ok(!fits.some(f => f.label === '10:30 AM'));
+  // Thursday's pick is 9:00 (right before Le JAG, inside 9-10); 1:00 loses on score.
+  assert.deepStrictEqual(fits.map(f => [f.date, f.label, f.reason]), [
+    ['2026-09-10', '9:00 AM', 'right before Le JAG'],
+    ['2026-09-14', '9:00 AM', null],
+  ]);
+  // A 30-min slot must END inside the window: 2:30 is out of 1-2:30, 2:00 is in.
+  const thu = grid.days[0];
+  const at = label => thu.slots.find(x => x.label === label);
+  assert.strictEqual(slotWithin(at('2:00 PM'), '2026-09-10', within), true);
+  assert.strictEqual(slotWithin(at('2:30 PM'), '2026-09-10', within), false);
+  assert.strictEqual(slotWithin(at('9:00 AM'), '2026-09-11', within), false); // wrong day
+});

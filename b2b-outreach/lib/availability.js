@@ -157,21 +157,49 @@ function scoreAgainstBlocks(startMs, endMs, blocks) {
 }
 
 /**
- * The slots to offer first: one per day that already holds something, the
- * tightest fit on that day, best days first, at most `limit`. Days with
- * nothing booked are never suggested here — they are the fallback the full
- * grid shows. When the other party's workday is known, a fit has to sit
- * inside it; if that leaves nothing (Germany, Australia), the filter is
- * dropped rather than returning an empty list. Pure.
+ * Does a slot fit inside one of the windows the other party offered? A window
+ * is { date, start, end }: `date` (YYYY-MM-DD) pins the day, `start`/`end` are
+ * ISO instants or null for an open bound. The meeting must START no earlier
+ * than the window opens and END no later than it closes. Pure.
  */
-function pickBestFits(days, { limit = 3, respectTheirWorkday = true } = {}) {
+function slotWithin(slot, date, windows) {
+  const t0 = Date.parse(slot.start);
+  const t1 = Date.parse(slot.end);
+  return windows.some(w => {
+    if (w.date && w.date !== date) return false;
+    if (w.start && t0 < Date.parse(w.start)) return false;
+    if (w.end && t1 > Date.parse(w.end)) return false;
+    return true;
+  });
+}
+
+/**
+ * The slots to offer first, best days first, at most `limit`, one per day.
+ *
+ * With no `within`: one per day that already holds something, the tightest
+ * fit on that day. Days with nothing booked are never suggested — they are
+ * the fallback the full grid shows.
+ *
+ * With `within` (the windows the other party offered): only slots inside
+ * those windows, still ranked tightest-against-a-booking first, but an empty
+ * day is allowed — their offer is the constraint, grouping is the tiebreak.
+ * A best fit that ignores what they said they could do is not a fit
+ * (Colage, 2026-09-09: 10:30 was offered against "9-10 or 1-2:30").
+ *
+ * When the other party's workday is known, a fit has to sit inside it; if
+ * that leaves nothing (Germany, Australia), the filter is dropped rather than
+ * returning an empty list. Pure.
+ */
+function pickBestFits(days, { limit = 3, respectTheirWorkday = true, within = null } = {}) {
+  const windows = Array.isArray(within) && within.length ? within : null;
   const pick = (filterWorkday) => {
     const fits = [];
     for (const day of days) {
-      if (!day.busyBlocks?.length) continue;
+      if (!windows && !day.busyBlocks?.length) continue;
       let top = null;
       for (const slot of day.slots) {
-        if (slot.busy || slot.score > 2) continue;
+        if (slot.busy) continue;
+        if (windows ? !slotWithin(slot, day.date, windows) : slot.score > 2) continue;
         if (filterWorkday && slot.outsideTheirWorkday) continue;
         if (!top || slot.score < top.score) top = slot;
       }
@@ -465,6 +493,7 @@ module.exports = {
   buildSlots,
   scoreAgainstBlocks,
   pickBestFits,
+  slotWithin,
   checkSlotFree,
   fetchAvailability,
   fetchCalendarEvents,

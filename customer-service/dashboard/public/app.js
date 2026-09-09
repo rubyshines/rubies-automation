@@ -8097,8 +8097,16 @@ function renderSchedulePanel() {
   // The slots to offer first: one per day that already holds a call, the one
   // sitting tightest against it. Jamie stacks calls rather than opening a
   // second hole in a day. Scored by the engine, never here.
+  // The label says what the fits are relative to. "Best" against your own
+  // calendar is not best when they told you when they are free.
+  const fitsLabel = {
+    offered: 'Best fits inside what they offered',
+    counter: 'None of their times are free. Best fits to counter-propose',
+    unplaced: 'Their times can\'t be placed until their timezone is set. Best fits to counter-propose',
+    open: 'Best fits, tight against something already booked',
+  }[s.bestFitsScope || 'open'];
   const fitsHtml = (s.bestFits || []).length ? `
-    <div class="schedule-fits-label">Best fits, tight against something already booked</div>
+    <div class="schedule-fits-label">${esc(fitsLabel)}</div>
     <div class="schedule-fits">${s.bestFits.map(f => `
       <button class="schedule-fit${scheduleSelected?.start === f.start ? ' is-selected' : ''}${f.unsociableForThem ? ' is-unsociable' : ''}"
         onclick="selectScheduleSlot('${esc(f.start)}')"
