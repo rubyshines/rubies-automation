@@ -695,10 +695,43 @@ async function generateDraftForCompany(sb, { company_id, steer, message_type, th
   // Routed here so the nightly pass, the panel's Draft button and the console
   // tool all land on the template. Lazy require: messageTemplates requires
   // this module back.
-  const { FOLLOW_UP_TYPES, composeFollowUp } = require('./messageTemplates');
+  const { FOLLOW_UP_TYPES, composeFollowUp, isRetailerSamplesReApproach, composeRetailerReApproach } = require('./messageTemplates');
   if (FOLLOW_UP_TYPES.has(entry.message_type)) return composeFollowUp(sb, { company_id: company.id, entry });
 
-  return generateDraft({ company_id: company.id, queueEntry: entry, steer, variant_id });
+  // A/B subject assignment for every initiating type that carries one, decided
+  // here so the nightly pass, the panel's Draft button and the console tool all
+  // rotate the same way (it used to live in draftAllDue alone, so a panel draft
+  // of an org intro had no variant and a model-written subject).
+  if (!variant_id) variant_id = await assignVariant(sb, { company, entry });
+
+  // The sampled-retailer re-approach is fixed text (2026-09-09), never a draft.
+  if (isRetailerSamplesReApproach(company, entry)) return composeRetailerReApproach(sb, { company_id: company.id, entry, variant_id });
+
+  const d = await generateDraft({ company_id: company.id, queueEntry: entry, steer, variant_id });
+  return d ? { ...d, variant_id: variant_id || null } : d;
+}
+
+/**
+ * Which A/B variant this draft gets, or null when the type has none, the
+ * company is referred (the referral belongs in the subject — the model writes
+ * it), or the entry is a re_approach that is not the sampled-retailer template
+ * (an org re_approach has a model-written subject about the old thread). Counts
+ * every draft of the type regardless of status: a dismissed or superseded
+ * intro already spent its slot in the rotation.
+ */
+async function assignVariant(sb, { company, entry } = {}) {
+  const { variantsFor, pickVariant } = require('./fixedSubjects');
+  const { isReferred } = require('./outreachAdvisor');
+  const { isRetailerSamplesReApproach } = require('./messageTemplates');
+  const type = entry?.message_type;
+  const variants = variantsFor(type);
+  if (!variants.length || isReferred(company)) return null;
+  if (type === 're_approach' && !isRetailerSamplesReApproach(company, entry)) return null;
+  const rows = await fetchAllPaginated(() => sb.from('b2b_drafts')
+    .select('variant_id').eq('message_type', type).in('variant_id', variants));
+  const counts = {};
+  for (const r of rows) counts[r.variant_id] = (counts[r.variant_id] || 0) + 1;
+  return pickVariant(type, counts);
 }
 
 /**
@@ -730,32 +763,16 @@ async function draftAllDue(sb, { channel, types, limit, onProgress } = {}) {
   if (types) targets = targets.filter(e => types.includes(e.message_type));
   if (limit) targets = targets.slice(0, limit);
 
-  // A/B subject assignment for org cold intros: alternate, starting from
-  // whichever fixed subject has been used less. Drafts of every status count —
-  // a dismissed or superseded intro already spent its slot in the rotation,
-  // and counting only sends would let regenerations pile onto one arm.
-  let variantCounts = null;
-  if (targets.some(e => e.message_type === 'intro_outreach')) {
-    const rows = await fetchAllPaginated(() => sb.from('b2b_drafts')
-      .select('variant_id').eq('message_type', 'intro_outreach')
-      .in('variant_id', ['subject_a', 'subject_b']));
-    variantCounts = { subject_a: 0, subject_b: 0 };
-    for (const r of rows) variantCounts[r.variant_id]++;
-  }
-
   const results = [];
   for (let i = 0; i < targets.length; i++) {
     const e = targets[i];
     if (onProgress) onProgress({ index: i, total: targets.length, company_id: e.company_id, company_name: e.company_name });
-    let variant_id;
-    if (e.message_type === 'intro_outreach' && variantCounts) {
-      variant_id = variantCounts.subject_a <= variantCounts.subject_b ? 'subject_a' : 'subject_b';
-      variantCounts[variant_id]++;
-    }
     try {
-      const d = await generateDraftForCompany(sb, { company_id: e.company_id, variant_id });
+      // Variant assignment happens inside generateDraftForCompany (one small
+      // count query per draft; the loop is sequential so rotation holds).
+      const d = await generateDraftForCompany(sb, { company_id: e.company_id });
       results.push(d
-        ? { company_id: e.company_id, company_name: e.company_name, ok: true, draft_id: d.draft_id, ...(variant_id ? { variant_id } : {}) }
+        ? { company_id: e.company_id, company_name: e.company_name, ok: true, draft_id: d.draft_id, ...(d.variant_id ? { variant_id: d.variant_id } : {}) }
         : { company_id: e.company_id, company_name: e.company_name, ok: false, error: 'nothing due by draft time' });
     } catch (err) {
       results.push({ company_id: e.company_id, company_name: e.company_name, ok: false, error: err.message });
@@ -1227,7 +1244,7 @@ module.exports = {
   fetchOnMe,
   fetchCompanyThreads,
   getCompanyEmails,
-  generateDraftForCompany,
+  generateDraftForCompany, assignVariant,
   isDraftableEntry,
   draftAllDue,
   composeDraft,

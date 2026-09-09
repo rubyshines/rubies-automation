@@ -250,6 +250,24 @@ test('pre-engine history older than six months is a fresh intro, not a re_approa
   assert.equal(evaluateDue(c, freshCtx({ lastOutboundAt: '2022-05-03T00:00:00Z', lastContactAt: '2022-05-03T00:00:00Z', lastEngineOutboundAt: '2022-05-03T00:00:00Z' }), NOW), null);
 });
 
+test('a sample kit overrides the six-month rule: the retailer gets a re_approach that names it (2026-09-09)', () => {
+  // The Nov 2025 cohort: kit shipped, apology in November, pitch in February,
+  // silence since. Well past six months, so the age rule alone would queue a
+  // cold "I came across your store" intro to a store holding our samples.
+  const old = freshCtx({ lastOutboundAt: '2025-11-12T00:00:00Z', lastContactAt: '2025-11-12T00:00:00Z', lastEngineOutboundAt: null });
+  const sampled = retailer({ relationship_state: 'in_contact', vetted_at: '2026-06-01T00:00:00Z', samples_shipped_at: '2025-11-04T00:00:00Z' });
+  const due = evaluateDue(sampled, old, NOW);
+  assert.equal(due.message_type, 're_approach');
+  assert.match(due.reason, /samples sent 7 months ago/);
+  // Same history, no kit: the age rule stands and it is a fresh intro.
+  assert.equal(evaluateDue(retailer({ relationship_state: 'in_contact', vetted_at: '2026-06-01T00:00:00Z' }), old, NOW).message_type, 'intro_pitch');
+  // Unvetted: nothing, whatever the kit says. Admission is still the gate.
+  assert.equal(evaluateDue(retailer({ relationship_state: 'in_contact', samples_shipped_at: '2025-11-04T00:00:00Z' }), old, NOW), null);
+  // A kit inside the 60-day check-in window is the samples flow's job, not this branch's.
+  const fresh = retailer({ relationship_state: 'in_contact', vetted_at: '2026-06-01T00:00:00Z', samples_shipped_at: '2026-05-20T00:00:00Z' });
+  assert.equal(evaluateDue(fresh, freshCtx(), NOW).message_type, 'post_samples_checkin');
+});
+
 test('follow-up 1 after 5 business days of silence, follow-up 2 after 10 more', () => {
   const c = retailer({ relationship_state: 'prospect', vetted_at: '2026-05-01T00:00:00Z' });
   // Intro sent Wed Jun 3 → Wed Jun 10 is 5 business days.

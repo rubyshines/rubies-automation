@@ -214,9 +214,10 @@ const FIRST_TOUCH_TYPES = ['intro_pitch', 'intro_outreach', 'affiliate_intro', '
 // anything continuing a live conversation (a Tier-1 reply, a reopened thread)
 // is operator-written — the advisor kept asserting things it could not know
 // ("Wednesday works") and the edits cost more than the drafting saved.
-// intro_pitch (retailer cold intro) is deliberately absent until the locked
-// template treatment reaches retailers.
-const INITIATING_TYPES = ['intro_outreach', 'community_checkin', 're_approach', 'reorder_nudge'];
+// intro_pitch joined 2026-09-09 when the retailer cold intro moved onto a
+// locked template with fixed A/B subjects, the same treatment the org intro
+// got a week earlier.
+const INITIATING_TYPES = ['intro_outreach', 'intro_pitch', 'community_checkin', 're_approach', 'reorder_nudge'];
 
 /** The first-touch type for a company's channel. Pure. */
 function firstTouchType(company) {
@@ -566,7 +567,15 @@ function evaluateDue(company, ctx, now = new Date()) {
         // re-open. Inside the window a re_approach names the old thread. No
         // dated contact at all (sheet-era rows with no imported thread) stays
         // a re_approach, as before.
+        //
+        // A sample kit is a door however old it is (2026-09-09): a store
+        // holding our samples is not a stranger, and a "fresh intro" that
+        // ignores the kit would read as if we had never met. So samples
+        // override the age rule, and the retailer re_approach names them.
         const last = ctx.lastContactAt || ctx.lastOutboundAt || null;
+        if (company.samples_shipped_at) {
+          return { message_type: 're_approach', reason: `samples sent ${humanGap(company.samples_shipped_at, now)} ago, never converted: re-approach` };
+        }
         if (last && daysSince(last, now) > STALE_HISTORY_DAYS) {
           return { message_type: firstTouchType(company), reason: `last contact ${humanGap(last, now)} ago, before this system: fresh intro` };
         }

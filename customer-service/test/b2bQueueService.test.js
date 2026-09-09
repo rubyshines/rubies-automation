@@ -499,7 +499,9 @@ test('initiating types draft on Sonnet; replies stay Opus', () => {
   // and generateDraft refuses them (b2bFollowUpTemplates.test.js).
 });
 
-test('INITIATING_TYPES is exactly the approved four', () => {
+test('INITIATING_TYPES is exactly the approved five', () => {
+  // intro_pitch joined 2026-09-09 when the retailer cold intro moved onto a
+  // locked template with fixed A/B subjects.
   assert.deepEqual([...INITIATING_TYPES].sort(),
-    ['community_checkin', 'intro_outreach', 're_approach', 'reorder_nudge']);
+    ['community_checkin', 'intro_outreach', 'intro_pitch', 're_approach', 'reorder_nudge']);
 });

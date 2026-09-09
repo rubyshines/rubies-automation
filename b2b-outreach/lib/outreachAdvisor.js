@@ -54,20 +54,28 @@ const OUTPUT_SCHEMA = {
   additionalProperties: false,
 };
 
-// Fixed A/B subjects for the org cold intro (locked with Jamie 2026-09-02).
-// The model never writes an intro subject: the A/B read is only clean if the
-// strings are byte-identical across sends, so the assigned variant is rendered
-// here and overrides whatever the model returned. A = statement addressed to
-// the org by name, B = question addressed to their community — one variable.
-const INTRO_SUBJECTS = {
-  subject_a: (orgName) => `Gender-affirming clothing donations for ${orgName}`,
-  subject_b: () => 'Could your community use gender-affirming clothing donations?',
-};
+// Fixed A/B subjects live in fixedSubjects.js (org intro locked 2026-09-02,
+// retailer intro and sampled re-approach 2026-09-09). The model never writes
+// one: the assigned variant is rendered there and overrides whatever it
+// returned. A REFERRED company is the exception: the referral is the strongest
+// opener we have and belongs in the subject, so a referred intro carries no
+// variant and the model composes the referral subject per the prompt.
+const { fixedSubjectFor } = require('./fixedSubjects');
 
-/** The fixed subject for an intro variant, or null for an unknown variant. Pure. */
+/** The fixed subject for an org intro variant, or null. Kept for callers/tests. Pure. */
 function introSubjectFor(variant_id, orgName) {
-  const render = INTRO_SUBJECTS[variant_id];
-  return render ? render(orgName) : null;
+  return fixedSubjectFor('intro_outreach', variant_id, orgName);
+}
+
+/** A company someone pointed us to: the referral outranks any fixed subject. Pure. */
+function isReferred(company) {
+  return !!readMetadata(company?.metadata).referred_by;
+}
+
+/** The subject this draft must carry, or null when the model writes it. Pure. */
+function subjectFor(company, queueEntry) {
+  if (!queueEntry?.variant_id || isReferred(company)) return null;
+  return fixedSubjectFor(queueEntry.message_type, queueEntry.variant_id, company.name);
 }
 
 function pickAdvisor(company) {
@@ -365,10 +373,8 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   // the test only reads if the strings are byte-identical across sends. The
   // same string is enforced again in code after generation, but stating it
   // here keeps the model from fighting the override in the body.
-  if (queueEntry.message_type === 'intro_outreach' && queueEntry.variant_id) {
-    const fixed = introSubjectFor(queueEntry.variant_id, company.name);
-    if (fixed) lines.push(`\nSubject (fixed by A/B test, use exactly): "${fixed}"`);
-  }
+  const fixed = subjectFor(company, queueEntry);
+  if (fixed) lines.push(`\nSubject (fixed by A/B test, use exactly): "${fixed}"`);
   if (steer) lines.push(`\nOPERATOR STEER (final authority on intent): ${steer}`);
   return lines.join('\n');
 }
@@ -391,11 +397,9 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
   const advisor = pickAdvisor(ctx.company);
   // The variant rides on the queue entry so renderContext can state the fixed
   // subject, and the override below guarantees it regardless of what the model
-  // wrote. Only org cold intros have variants today.
+  // wrote. Null for a referred company (the model writes the referral subject).
   if (variant_id) queueEntry = { ...queueEntry, variant_id };
-  const fixedSubject = queueEntry.message_type === 'intro_outreach' && queueEntry.variant_id
-    ? introSubjectFor(queueEntry.variant_id, ctx.company.name)
-    : null;
+  const fixedSubject = subjectFor(ctx.company, queueEntry);
 
   // Reply-all default: a draft answering a thread keeps everyone the contact
   // kept on the conversation. Stamped on structured.cc so the panel's Cc field
@@ -454,5 +458,5 @@ async function generateDraft({ company_id, queueEntry, steer, variant_id }) {
 module.exports = {
   generateDraft, buildCompanyContext, renderContext, renderMetadataFacts,
   renderDonationFacts, describeEnrichFacts, fetchDonationRouting, pickAdvisor, OUTPUT_SCHEMA,
-  introSubjectFor, modelFor, INTRO_SUBJECTS,
+  introSubjectFor, subjectFor, isReferred, readMetadata, modelFor,
 };

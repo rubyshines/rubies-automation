@@ -249,7 +249,7 @@ test('a genuine reply dismisses pending initiating drafts for the company', asyn
   assert.strictEqual(dismiss.filters.company_id, 'socirc');
   assert.strictEqual(dismiss.filters.status, 'pending');
   assert.deepEqual(dismiss.filters['in:message_type'],
-    ['intro_outreach', 'community_checkin', 're_approach', 'reorder_nudge']);
+    ['intro_outreach', 'intro_pitch', 'community_checkin', 're_approach', 'reorder_nudge']);
   // Scheduled ladder drafts are the send pass's problem, never dismissed here.
   assert.strictEqual(dismiss.filters['is:scheduled_send_at'], null);
 });

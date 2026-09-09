@@ -267,6 +267,101 @@ async function composeFollowUp(sb, { company_id, entry } = {}) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The retailer re-approach after samples (2026-09-09)
+//
+// Thirteen stores were sent sample kits in November 2025, then an apology, then
+// a wholesale pitch, and never replied. The re-approach is fixed text locked
+// with Jamie line by line: pitch first (the reader may not remember the kit,
+// so the email says who is writing before it mentions it), then the samples,
+// then the terms. Zero model calls, like the follow-up rungs; the only fills
+// are the greeting, the store name, and when the kit went out. The subject is
+// one of two fixed A/B strings (fixedSubjects.js).
+// ---------------------------------------------------------------------------
+
+const SEASONS = [['winter', [12, 1, 2]], ['spring', [3, 4, 5]], ['summer', [6, 7, 8]], ['fall', [9, 10, 11]]];
+
+/**
+ * "last fall" / "last spring" / "in March 2025": when the kit went out, as a
+ * person would say it. A season is "last <season>" only once it is over and
+ * still within about a year; anything older names the month and year, and a
+ * kit from the current season is "recently". Pure.
+ */
+function whenPhrase(sampledAt, now = new Date()) {
+  const d = new Date(sampledAt);
+  if (Number.isNaN(d.getTime())) return 'recently';
+  const month = d.getUTCMonth() + 1;
+  const [season] = SEASONS.find(([, months]) => months.includes(month));
+  // Season end: the last day of its final month (winter spans the year).
+  const endYear = season === 'winter' && month === 12 ? d.getUTCFullYear() + 1 : d.getUTCFullYear();
+  const endMonth = { winter: 2, spring: 5, summer: 8, fall: 11 }[season];
+  const seasonEnd = new Date(Date.UTC(endYear, endMonth, 1)); // first day after the season
+  const daysSinceEnd = (now - seasonEnd) / 86400000;
+  if (daysSinceEnd < 0) return 'recently';
+  if (daysSinceEnd <= 400) return `last ${season}`;
+  const monthName = d.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+  return `in ${monthName} ${d.getUTCFullYear()}`;
+}
+
+/** The locked body. Pure. */
+function fillRetailerReApproach({ firstName, storeName, when }) {
+  const sent = when ? `${when[0].toUpperCase()}${when.slice(1)} we sent ${storeName} a sample kit` : `We sent ${storeName} a sample kit`;
+  const body = `Hi ${firstName},\n\n`
+    + "I'm Jamie, founder of RUBIES. We make gender-affirming underwear and swimwear for trans women and girls, "
+    + 'designed to feel like regular clothing, no tucking or compression needed. '
+    + 'The brand started with my own trans daughter, who could not find anything that worked.\n\n'
+    + `${sent} and I would love to hear what you thought of the items.\n\n`
+    + 'Our wholesale terms are 50% off retail with free shipping. '
+    + 'Let me know if you have any questions or if you would like to set up a quick conversation.\n\n'
+    + SIGN_OFF;
+  return { body, attachments: [] };
+}
+
+/**
+ * Does this queue entry get the template rather than an advisor draft? Only a
+ * RETAILER re_approach with a kit on record: an org re_approach stays an Opus
+ * draft (it has to name what the old thread was about), and a retailer
+ * re_approach with no samples has nothing fixed to say. Pure.
+ */
+function isRetailerSamplesReApproach(company, entry) {
+  return entry?.message_type === 're_approach'
+    && company?.relationship_type === 'wholesale'
+    && !!company?.samples_shipped_at;
+}
+
+/**
+ * Build and store the sampled-retailer re-approach as the company's pending
+ * draft: fixed body, fixed A/B subject, new thread, advisor null, provenance in
+ * structured.template_id / template_body. Same landing as a follow-up rung.
+ */
+async function composeRetailerReApproach(sb, { company_id, entry, variant_id, now = new Date() } = {}) {
+  const { data: company, error } = await sb.from('b2b_companies')
+    .select('id, name, relationship_type, samples_shipped_at').eq('id', company_id).maybeSingle();
+  if (error) throw new Error(`company lookup: ${error.message}`);
+  if (!isRetailerSamplesReApproach(company, entry)) throw new Error(`'${company?.name || company_id}' is not a sampled retailer re_approach`);
+  const { resolveRecipient } = require('./sendB2bEmail');
+  const recipient = await resolveRecipient(sb, company_id);
+  const when = whenPhrase(company.samples_shipped_at, now);
+  const { body } = fillRetailerReApproach({ firstName: greetingName(recipient?.name), storeName: company.name, when });
+  const { fixedSubjectFor } = require('./fixedSubjects');
+  const subject = fixedSubjectFor('re_approach', variant_id, company.name, { when });
+  if (!subject) throw new Error(`no fixed subject for re_approach variant '${variant_id}'`);
+
+  const { composeDraft } = require('./queueService');
+  const composed = await composeDraft(sb, { company_id, body, subject, message_type: 're_approach' });
+  const { data: row, error: rErr } = await sb.from('b2b_drafts')
+    .select('id, structured').eq('id', composed.draft_id).maybeSingle();
+  if (rErr) throw new Error(`draft readback: ${rErr.message}`);
+  const structured = { ...(row?.structured || {}), template_id: 'retailer_re_approach', template_body: body };
+  const { error: uErr } = await sb.from('b2b_drafts').update({ structured, variant_id }).eq('id', composed.draft_id);
+  if (uErr) throw new Error(`template structured update: ${uErr.message}`);
+
+  return {
+    draft_id: composed.draft_id, company_id, message_type: 're_approach', variant_id,
+    template_id: 'retailer_re_approach', email_subject: subject, email_body: body, advisor: null,
+  };
+}
+
 const TEMPLATES = [
   { id: 'setup_call', label: 'Set up a call', fill: fillSetupCall },
   // The agreement is the LGBTQ+ org donation-program contract, so this
@@ -401,6 +496,7 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
 }
 
 module.exports = {
+  whenPhrase, fillRetailerReApproach, isRetailerSamplesReApproach, composeRetailerReApproach,
   TEMPLATES,
   ONBOARDING_SURVEY_URL,
   CALL_NOTES_PLACEHOLDER,
