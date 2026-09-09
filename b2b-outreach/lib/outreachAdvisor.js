@@ -193,6 +193,16 @@ function renderMetadataFacts(metadata) {
   if (history.length) {
     lines.push('', '## Prior outreach on record (before this system)', ...history);
   }
+  // A referral is the strongest opener we have and the one fact that must not
+  // stay buried: it IS the why-this-org/store sentence, and it decides the
+  // subject (a referred company carries no A/B variant — see subjectFor). It
+  // was recorded by addProspect for months and never rendered, so a referred
+  // store regenerated without its thread in view lost the referral entirely
+  // (Self Serve Toys, 2026-09-09).
+  if (meta.referred_by) {
+    lines.push('', '## Referral', `- Referred by: ${meta.referred_by}`,
+      'Lead with this. The why-this-company sentence names who pointed us to them and why, and a cold subject takes the referral form.');
+  }
   return lines;
 }
 

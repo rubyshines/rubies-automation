@@ -11,6 +11,7 @@ const { upsertCustomerRow } = require('../lib/customerUpsert');
 
 let calls;
 let rowsByShopifyId; // shopify_customer_id → [{ email }]
+let rowsByEmail;     // email → true when a customers row exists under it
 
 function fakeSupabase() {
   return {
@@ -19,6 +20,9 @@ function fakeSupabase() {
       function exec() {
         calls.push(op);
         if (op.action === 'select') {
+          if (op.filters.email !== undefined) {
+            return Promise.resolve({ data: (rowsByEmail[op.filters.email] ? [{ email: op.filters.email }] : []), error: null });
+          }
           return Promise.resolve({ data: rowsByShopifyId[op.filters.shopify_customer_id] || [], error: null });
         }
         return Promise.resolve({ data: null, error: null });
@@ -37,7 +41,7 @@ function fakeSupabase() {
   };
 }
 
-beforeEach(() => { calls = []; rowsByShopifyId = {}; });
+beforeEach(() => { calls = []; rowsByShopifyId = {}; rowsByEmail = {}; });
 
 const ROW = {
   email: 'new@example.com',
@@ -77,7 +81,31 @@ describe('upsertCustomerRow', () => {
     assert.ok(del, 'expected orphan cleanup');
     assert.equal(del.filters.shopify_customer_id, ROW.shopify_customer_id);
     assert.equal(del.filters['neq:email'], 'new@example.com');
-    assert.equal(calls.filter(c => c.action === 'update').length, 0);
+    // No customer rename: the row under the current email already exists.
+    assert.equal(calls.filter(c => c.action === 'update' && c.table === 'customers').length, 0);
+  });
+
+  it('a fork already sitting under the new email is merged, orders first (2026-09-09)', async () => {
+    // Jared ordered under cerimelton@ before Shopify told us it was the same
+    // customer as jared.melton@: the rename collided on the primary key and
+    // the nightly sync logged it forever.
+    rowsByShopifyId[ROW.shopify_customer_id] = [{ email: 'old@example.com' }];
+    rowsByEmail['new@example.com'] = true;
+    await upsertCustomerRow(fakeSupabase(), ROW);
+    assert.deepEqual(calls.map(c => `${c.action}:${c.table}`),
+      ['select:customers', 'select:customers', 'update:orders', 'delete:customers', 'upsert:customers']);
+    assert.deepEqual(calls[2].payload, { customer_email: 'new@example.com' });
+    assert.equal(calls[2].filters.customer_email, 'old@example.com');
+    assert.equal(calls[3].filters['neq:email'], 'new@example.com');
+    assert.equal(calls[4].payload.email, 'new@example.com');
+  });
+
+  it('orphan cleanup moves the orphans\' orders before deleting them', async () => {
+    rowsByShopifyId[ROW.shopify_customer_id] = [{ email: 'older@example.com' }, { email: 'new@example.com' }];
+    await upsertCustomerRow(fakeSupabase(), ROW);
+    assert.deepEqual(calls.map(c => `${c.action}:${c.table}`),
+      ['select:customers', 'update:orders', 'delete:customers', 'upsert:customers']);
+    assert.equal(calls[1].filters.customer_email, 'older@example.com');
   });
 
   it('rows without a shopify id skip the lookup entirely', async () => {

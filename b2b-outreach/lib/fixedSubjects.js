@@ -10,7 +10,7 @@
  * excluded) reads the same way for orgs and retailers.
  *
  * Every pair varies ONE thing. Org intro: statement to the org vs question to
- * its community. Retailer intro: category-led vs offer-led. Retailer
+ * its community. Retailer intro: about us vs about their customers. Retailer
  * re-approach after samples: whether the samples are mentioned at all — both
  * say what RUBIES makes, because ten months on the kit may have gone to
  * whoever handled the inbox that week, and a subject that assumes they
@@ -25,9 +25,12 @@ const FIXED_SUBJECTS = {
     subject_a: (name) => `Gender-affirming clothing donations for ${name}`,
     subject_b: () => 'Could your community use gender-affirming clothing donations?',
   },
+  // A is about us, B is about their customers (Jamie's own February 2026
+  // line). "A free sample kit for <store>" was the first B and read as junk
+  // mail (Jamie, 2026-09-09).
   intro_pitch: {
     pitch_a: () => 'Gender-affirming underwear and swimwear for trans women and girls, wholesale from RUBIES',
-    pitch_b: (name) => `A free RUBIES sample kit for ${name}`,
+    pitch_b: () => 'Gender-affirming underwear and swimwear for your trans customers',
   },
   // Only the sampled-retailer template carries these; an org re_approach is an
   // Opus draft with a model-written subject (queueService.assignVariant gates).

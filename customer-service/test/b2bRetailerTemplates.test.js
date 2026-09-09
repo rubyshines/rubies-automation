@@ -13,7 +13,7 @@ const {
   whenPhrase, fillRetailerReApproach, isRetailerSamplesReApproach,
 } = require('../../b2b-outreach/lib/messageTemplates');
 const { FIXED_SUBJECTS, variantsFor, fixedSubjectFor, pickVariant } = require('../../b2b-outreach/lib/fixedSubjects');
-const { subjectFor, isReferred, introSubjectFor } = require('../../b2b-outreach/lib/outreachAdvisor');
+const { subjectFor, isReferred, introSubjectFor, renderMetadataFacts } = require('../../b2b-outreach/lib/outreachAdvisor');
 const { INITIATING_TYPES } = require('../../b2b-outreach/lib/cadence');
 const { SIGNATURE_BLOCK_MD } = require('../../customer-service/lib/signatures');
 
@@ -66,7 +66,7 @@ test('fixed subjects: one table, both channels, one variable per pair', () => {
   assert.deepEqual(variantsFor('community_checkin'), []);
   assert.equal(fixedSubjectFor('intro_pitch', 'pitch_a', 'Babeland'),
     'Gender-affirming underwear and swimwear for trans women and girls, wholesale from RUBIES');
-  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_b', 'Babeland'), 'A free RUBIES sample kit for Babeland');
+  assert.equal(fixedSubjectFor('intro_pitch', 'pitch_b', 'Babeland'), 'Gender-affirming underwear and swimwear for your trans customers');
   assert.equal(fixedSubjectFor('re_approach', 'samples_b', 'Journelle', { when: 'last fall' }),
     'The gender-affirming underwear samples we sent Journelle last fall');
   assert.equal(fixedSubjectFor('re_approach', 'samples_a', 'Journelle'),
@@ -102,4 +102,12 @@ test('a referred company carries no fixed subject: the referral is the subject',
 test('intro_pitch is an initiating type: drafted nightly, reviewed before send', () => {
   assert.ok(INITIATING_TYPES.includes('intro_pitch'));
   assert.ok(INITIATING_TYPES.includes('re_approach'));
+});
+
+test('a referral on the record is rendered for the advisor, not left buried', () => {
+  const lines = renderMetadataFacts({ referred_by: 'Searah Deysach, Early To Bed (Chicago), February 2026' });
+  assert.ok(lines.some(l => l.includes('Referred by: Searah Deysach')));
+  assert.ok(lines.some(l => /Lead with this/.test(l)));
+  assert.deepEqual(renderMetadataFacts({}), []);
+  assert.ok(renderMetadataFacts('{"referred_by":"AJ at TransActual"}').some(l => l.includes('AJ at TransActual')), 'string metadata tolerated');
 });

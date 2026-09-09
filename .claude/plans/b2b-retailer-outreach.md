@@ -285,9 +285,9 @@ Notes: locked by Jamie 2026-09-08. Pitch first, samples second, because the read
 
 Same cold intro for both. The February stores are past the six-month line and an email citing its own earlier email reads as a records lookup. The why-this-store slot draws from the discovery angle or the enrichment facts, never from the old thread.
 
-Subjects (A/B, one variable: category-led vs offer-led):
+Subjects (A/B, one variable: about us vs about their customers):
 - A: `Gender-affirming underwear and swimwear for trans women and girls, wholesale from RUBIES`
-- B: `A free RUBIES sample kit for [store]`
+- B: `Gender-affirming underwear and swimwear for your trans customers` (the first B, "A free RUBIES sample kit for [store]", read as junk mail: replaced 2026-09-09)
 - Referral overrides both: `Referral from [name] at [their store] re: gender-affirming clothing from RUBIES`
 
 ```
