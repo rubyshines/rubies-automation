@@ -139,8 +139,8 @@ describe('de-allocation as the reconstruction actually produces it', () => {
       order('32601', '2026-07-23T00:00:00Z', 'SHS-BLK-M', 1),
       order('32951', '2026-08-08T00:00:00Z', 'SHS-BLK-M', 1),
     ];
-    const before = buildAllocationIndex(orders, new Map([['SHS-BLK-M', { on_hand: 2 }]]));
-    const after = buildAllocationIndex(orders, new Map([['SHS-BLK-M', { on_hand: 1 }]]));
+    const before = buildAllocationIndex(orders, new Map([['SHS-BLK-M', { on_hand: 2, allocated: 2, available: 0 }]]));
+    const after = buildAllocationIndex(orders, new Map([['SHS-BLK-M', { on_hand: 1, allocated: 1, available: 0 }]]));
 
     // Sanity on the fixture itself: both covered before, only the older after.
     assert.equal(before.get(allocationKey('32951', 'SHS-BLK-M')).allocated, true);
@@ -154,6 +154,26 @@ describe('de-allocation as the reconstruction actually produces it', () => {
     assert.equal(flips[0].onHandBefore, 2);
     assert.equal(flips[0].onHandAfter, 1);
   });
+
+  // #33550, 2026-09-09. A count came up short and the one unit left was moved
+  // to the non-sellable bin: on_hand 1, allocated 0, available 0. Walking over
+  // on_hand kept handing that unit to the older order, so it never transitioned
+  // and the watch never fired for it — while the newer order on the same SKU
+  // did flip and was drafted. Both customers were waiting.
+  it('a short count leaving only a non-sellable unit flips EVERY order on the SKU', () => {
+    const orders = [
+      order('33550', '2026-09-05T16:38:12Z', 'SHS-BLK-L', 1),
+      order('33574', '2026-09-06T18:56:22Z', 'SHS-BLK-L', 2),
+    ];
+    const before = buildAllocationIndex(orders, new Map([['SHS-BLK-L', { on_hand: 9, allocated: 3, available: 6 }]]));
+    const after = buildAllocationIndex(orders, new Map([['SHS-BLK-L', { on_hand: 1, allocated: 0, available: 0 }]]));
+    assert.equal(before.get(allocationKey('33550', 'SHS-BLK-L')).allocated, true);
+    assert.equal(before.get(allocationKey('33574', 'SHS-BLK-L')).allocated, true);
+
+    const stored = new Map([...before].map(([k, v]) => [k, { allocated: v.allocated, on_hand: v.onHand }]));
+    const flips = diffAllocations(after, stored, new Set(['SHS-BLK-L']));
+    assert.deepEqual(flips.map(f => f.orderNumber).sort(), ['33550', '33574']);
+  });
 });
 
 describe('untrustedFromMismatches — only over-counted demand disqualifies', () => {
@@ -161,9 +181,10 @@ describe('untrustedFromMismatches — only over-counted demand disqualifies', ()
 
   // The regression. All three SKUs excluded by the first version of this filter
   // had shortfall 0 — the demand queue was exactly right — and disagreed only on
-  // how the warehouse SPLIT it: one unit on hand, allocated to nobody. That is
-  // the de-allocation signature, so filtering on "any mismatch" was blind
-  // precisely where the watch needs to see.
+  // how the warehouse SPLIT it: one unit on hand, allocated to nobody. (That
+  // unit turned out to be non-sellable, and the pool now excludes it, so the
+  // split no longer arises on live data. The direction rule still stands:
+  // under-counting can only suppress an email, so shortfall 0 stays trusted.)
   it('trusts a split-only disagreement (unit on hand, allocated to nobody)', () => {
     const out = untrustedFromMismatches([
       { sku: 'SHS-BLK-M', demand: 5, onHand: 1, expectedAllocated: 1, reportedAllocated: 0, expectedBackordered: 4, reportedBackordered: 5, shortfall: 0 },

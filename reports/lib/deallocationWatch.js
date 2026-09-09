@@ -240,9 +240,13 @@ async function observeAllocations({ write = true, supabase = null, orders = null
   // this watch exists for (2026-08-25: HLA-BLK-XL, SHS-BLK-M, HLA-PNK-M — the
   // Serena among them). All three had shortfall 0, meaning the demand queue was
   // exactly right, and disagreed only on the SPLIT: on_hand 1 with
-  // reportedAllocated 0, a unit physically present that the warehouse has given
-  // to nobody. That is the de-allocation signature, so the strict filter was
-  // blind precisely where it needed to see.
+  // reportedAllocated 0. That was read at the time as a unit the warehouse had
+  // given to nobody — a de-allocation. It was a NON-SELLABLE unit, one the
+  // warehouse cannot give to anybody, and the reconstruction was handing it to
+  // the oldest order and calling that customer reserved (#33550, 2026-09-09).
+  // The pool is now `allocated + available` (orderAllocation.js), so that
+  // split no longer occurs; the direction rule here still stands on its own,
+  // because under-counted demand can only ever suppress an email.
   //
   // Disqualified SKUs are still observed and stored — dropping them would make
   // the NEXT run see a phantom transition — they are just not allowed to flip.

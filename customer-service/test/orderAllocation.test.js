@@ -21,6 +21,7 @@ const {
   isLineAllocated,
   orderFullyAllocated,
   verifyAgainstCounters,
+  sellableUnits,
 } = require('../../reports/lib/orderAllocation');
 
 // ---------------------------------------------------------------------------
@@ -122,6 +123,76 @@ describe('buildAllocationIndex — the #33009 reproduction', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The live case: #33550, 2026-09-09 — a non-sellable unit inside on_hand
+// ---------------------------------------------------------------------------
+
+describe('buildAllocationIndex — the #33550 reproduction', () => {
+  // SHS-BLK-L as Warehance reported it after a stock count came up short:
+  // on_hand 1, allocated 0, available 0, backordered 3, non_sellable 1. Two
+  // orders waiting on three units. Walking over on_hand handed the one
+  // non-sellable unit to the older order and called it reserved, so the
+  // pre-order drafter never contacted #33550 while the newer #33574 was
+  // drafted — and Warehance's own has_unallocated_products said both were
+  // waiting.
+  const ORDERS = [
+    order(33550, '2026-09-05', [{ sku: 'SHS-BLK-L', qty: 1 }]),
+    order(33574, '2026-09-06', [{ sku: 'SHS-BLK-L', qty: 2 }]),
+  ];
+  const STOCK = stock({
+    'SHS-BLK-L': { on_hand: 1, allocated: 0, available: 0, backordered: 3 },
+  });
+
+  it('does not hand a non-sellable unit to the oldest order', () => {
+    const index = buildAllocationIndex(ORDERS, STOCK);
+    assert.equal(isLineAllocated(index, '33550', 'SHS-BLK-L'), false);
+    assert.equal(isLineAllocated(index, '33574', 'SHS-BLK-L'), false);
+  });
+
+  it('carries the sellable pool it walked, with on_hand kept for diagnosis', () => {
+    const entry = buildAllocationIndex(ORDERS, STOCK).get('33550::SHS-BLK-L');
+    assert.equal(entry.sellable, 0);
+    assert.equal(entry.onHand, 1);
+  });
+
+  // On on_hand this SKU was a "split" mismatch (expected allocated 1, reported
+  // 0) at shortfall 0 — the shape the 2026-08-25 filter deliberately trusted.
+  // Against the sellable pool the counters reproduce exactly, so the mismatch
+  // was never a de-allocation signature; it was this.
+  it('reproduces both counters once the pool excludes the non-sellable unit', () => {
+    assert.deepEqual(verifyAgainstCounters(buildAllocationIndex(ORDERS, STOCK), STOCK), []);
+  });
+
+  it('still hands out the sellable units when only some of on_hand is sellable', () => {
+    // MIA-BLK-M, live the same day: on_hand 3, allocated 2, available 0 — one
+    // unit in the non-sellable bin. Two orders covered, a third is not.
+    const orders = [
+      order(100, '2026-01-01', [{ sku: 'MIA-BLK-M', qty: 1 }]),
+      order(200, '2026-02-01', [{ sku: 'MIA-BLK-M', qty: 1 }]),
+      order(300, '2026-03-01', [{ sku: 'MIA-BLK-M', qty: 1 }]),
+    ];
+    const st = stock({ 'MIA-BLK-M': { on_hand: 3, allocated: 2, available: 0, backordered: 1 } });
+    const index = buildAllocationIndex(orders, st);
+    assert.equal(isLineAllocated(index, '100', 'MIA-BLK-M'), true);
+    assert.equal(isLineAllocated(index, '200', 'MIA-BLK-M'), true);
+    assert.equal(isLineAllocated(index, '300', 'MIA-BLK-M'), false);
+    assert.deepEqual(verifyAgainstCounters(index, st), []);
+  });
+});
+
+describe('sellableUnits', () => {
+  it('is allocated + available, never on_hand, when the counters are present', () => {
+    assert.equal(sellableUnits({ on_hand: 343, allocated: 7, available: 309 }), 316);
+    assert.equal(sellableUnits({ on_hand: 1, allocated: 0, available: 0 }), 0);
+  });
+
+  it('falls back to on_hand only when the record carries no counters to split', () => {
+    assert.equal(sellableUnits({ on_hand: 4 }), 4);
+    assert.equal(sellableUnits({ on_hand: 4, allocated: 1 }), 4);
+    assert.equal(sellableUnits(null), 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Queue mechanics
 // ---------------------------------------------------------------------------
 
@@ -132,7 +203,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
       order(200, '2026-02-01', [{ sku: 'X', qty: 2 }]),
       order(300, '2026-03-01', [{ sku: 'X', qty: 1 }]),
     ];
-    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 5, allocated: 5 } }));
+    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 5, allocated: 5, available: 0 } }));
     assert.equal(isLineAllocated(index, '100', 'X'), true);
     assert.equal(isLineAllocated(index, '200', 'X'), true);
     assert.equal(isLineAllocated(index, '300', 'X'), false);
@@ -146,7 +217,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
       order(100, '2026-01-01', [{ sku: 'X', qty: 5 }]),
       order(200, '2026-02-01', [{ sku: 'X', qty: 1 }]),
     ];
-    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 3, allocated: 3 } }));
+    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 3, allocated: 3, available: 0 } }));
     assert.equal(isLineAllocated(index, '100', 'X'), false);
     assert.equal(isLineAllocated(index, '200', 'X'), false);
   });
@@ -159,7 +230,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
       order(100, '2026-01-01', [{ sku: 'X', qty: 5, shipped: 4 }]),
       order(200, '2026-02-01', [{ sku: 'X', qty: 1 }]),
     ];
-    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 2, allocated: 2 } }));
+    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 2, allocated: 2, available: 0 } }));
     assert.equal(isLineAllocated(index, '100', 'X'), true);
     assert.equal(isLineAllocated(index, '200', 'X'), true);
   });
@@ -170,7 +241,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
       order(150, '2026-01-15', [{ sku: 'X', qty: 5, cancelled: true }]),
       order(200, '2026-02-01', [{ sku: 'X', qty: 1 }]),
     ];
-    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 1, allocated: 1 } }));
+    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 1, allocated: 1, available: 0 } }));
     assert.equal(isLineAllocated(index, '200', 'X'), true);
     assert.equal(isLineAllocated(index, '100', 'X'), null);
   });
@@ -184,7 +255,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
       order(200, '2026-01-01', [{ sku: 'X', qty: 1 }]),
     ];
     for (const shuffled of [orders, [...orders].reverse()]) {
-      const index = buildAllocationIndex(shuffled, stock({ X: { on_hand: 2, allocated: 2 } }));
+      const index = buildAllocationIndex(shuffled, stock({ X: { on_hand: 2, allocated: 2, available: 0 } }));
       assert.equal(isLineAllocated(index, '100', 'X'), true);
       assert.equal(isLineAllocated(index, '200', 'X'), true);
       assert.equal(isLineAllocated(index, '300', 'X'), false);
@@ -193,14 +264,14 @@ describe('buildAllocationIndex — queue mechanics', () => {
 
   it('returns null rather than guessing for a SKU with no stock record', () => {
     const orders = [order(100, '2026-01-01', [{ sku: 'X', qty: 1 }, { sku: 'Y', qty: 1 }])];
-    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 5, allocated: 1 } }));
+    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 5, allocated: 1, available: 4 } }));
     assert.equal(isLineAllocated(index, '100', 'X'), true);
     assert.equal(isLineAllocated(index, '100', 'Y'), null);
   });
 
   it('matches order numbers with or without the leading #', () => {
     const orders = [order(100, '2026-01-01', [{ sku: 'X', qty: 1 }])];
-    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 5, allocated: 1 } }));
+    const index = buildAllocationIndex(orders, stock({ X: { on_hand: 5, allocated: 1, available: 4 } }));
     assert.equal(isLineAllocated(index, '#100', 'X'), true);
     assert.equal(isLineAllocated(index, 100, 'X'), true);
   });
@@ -209,7 +280,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
     const orders = [order(100, '2026-01-01', [{ sku: 'X', qty: 1 }])];
     // Warehance accounts for 7 units of demand; our book only found 1, so we
     // are missing orders. That can only make later orders look reserved.
-    const stockBySku = stock({ X: { on_hand: 9, allocated: 7, backordered: 0 } });
+    const stockBySku = stock({ X: { on_hand: 9, allocated: 7, available: 2, backordered: 0 } });
     const [m] = verifyAgainstCounters(buildAllocationIndex(orders, stockBySku), stockBySku);
     assert.equal(m.sku, 'X');
     assert.equal(m.demand, 1);
@@ -223,7 +294,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
     ];
     // Warehance sees only 4 units of demand; we found 10. Phantom demand ahead
     // of an order is what makes a reserved item read as waiting.
-    const stockBySku = stock({ X: { on_hand: 9, allocated: 4, backordered: 0 } });
+    const stockBySku = stock({ X: { on_hand: 9, allocated: 4, available: 5, backordered: 0 } });
     const [m] = verifyAgainstCounters(buildAllocationIndex(orders, stockBySku), stockBySku);
     assert.equal(m.demand, 10);
     assert.equal(m.shortfall, -6);
@@ -234,7 +305,7 @@ describe('buildAllocationIndex — queue mechanics', () => {
       order(100, '2026-01-01', [{ sku: 'X', qty: 5 }]),
       order(200, '2026-02-01', [{ sku: 'X', qty: 5 }]),
     ];
-    const stockBySku = stock({ X: { on_hand: 7, allocated: 7, backordered: 3 } });
+    const stockBySku = stock({ X: { on_hand: 7, allocated: 7, available: 0, backordered: 3 } });
     assert.deepEqual(verifyAgainstCounters(buildAllocationIndex(orders, stockBySku), stockBySku), []);
   });
 });
