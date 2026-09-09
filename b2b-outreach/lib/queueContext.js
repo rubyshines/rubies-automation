@@ -74,7 +74,7 @@ async function buildContexts(sb, companies) {
   const ids = (companies || []).map(c => c.id);
   const messages = ids.length ? await fetchAllPaginated(() =>
     sb.from('b2b_messages')
-      .select('company_id, direction, message_type, sent_at, thread_id, undelivered_at, source')
+      .select('company_id, direction, message_type, sent_at, thread_id, undelivered_at, undelivered_reason, source')
       .in('company_id', ids)
       .order('sent_at', { ascending: true })
   ) : [];
@@ -129,6 +129,9 @@ async function buildContexts(sb, companies) {
       lastInboundThreadId: null,
       // Newest send that came back undelivered. Null for almost every company.
       lastUndeliveredAt: null,
+      // Why that send failed (a DSN status, or 'recipient left the
+      // organisation'), so the queue can say "they left" rather than "bounced".
+      lastUndeliveredReason: null,
       lastOutboundAt: c.last_outbound_at || null,
       // Newest outbound the ENGINE sent (source in CHASEABLE_SOURCES). Manual
       // Gmail sends reconciled in by thread discovery do not count: they are
@@ -203,8 +206,10 @@ async function buildContexts(sb, companies) {
       // Remember it though: this is what the queue's "no working address" branch
       // sorts on, and what tells the operator how long we have been unable to
       // reach them rather than just that we cannot.
-      ctx.lastUndeliveredAt = ctx.lastUndeliveredAt && ctx.lastUndeliveredAt > m.sent_at
-        ? ctx.lastUndeliveredAt : m.sent_at;
+      if (!ctx.lastUndeliveredAt || ctx.lastUndeliveredAt <= m.sent_at) {
+        ctx.lastUndeliveredAt = m.sent_at;
+        ctx.lastUndeliveredReason = m.undelivered_reason || null;
+      }
       continue;
     }
     if (m.direction === 'inbound') {

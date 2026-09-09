@@ -311,12 +311,33 @@ async function correlateInbound(msg) {
     if (parsedBounce.unparsed) {
       console.warn(`[correlate] unreadable DSN ${gmail_message_id} on company ${companyId}`);
     }
-  } else if (loss === 'departed') {
-    // A human telling us someone left names a successor we cannot parse
-    // reliably. The operator resolves it with update_contact; until then the
-    // company surfaces via the queue's "no working address" branch rather than
-    // going quiet.
-    await sb.from('b2b_companies').update({ contact_unknown: true, updated_at: nowIso }).eq('id', companyId);
+  }
+  // A departure notice is a bounce's sibling that names where to write instead.
+  // departureRecovery reads the successor out of it, moves the contact, marks
+  // the answered send undelivered and schedules the retry; when the notice
+  // names nobody usable it leaves the company at Tier 1 "no working address"
+  // with a reason that says who left. Runs on a duplicate insert too — the
+  // replay re-reads mail the push path already stored, and handleDeparture is
+  // idempotent on the send's undelivered_at. Fail-soft: a failure here must
+  // not undo the correlation above, and the nightly replay is the catch-up.
+  let departure = null;
+  if (!parsedBounce && loss === 'departed') {
+    try {
+      const { handleDeparture } = require('./departureRecovery');
+      departure = await handleDeparture(sb, {
+        company_id: companyId, sender, subject, body: body_text, gmail_thread_id,
+        received_at, now: new Date(nowIso),
+      });
+      if (!departure.handled && !departure.already) {
+        // Nothing could be worked out (which contact left, for instance). The
+        // pre-recovery behaviour is still the right floor: surface the company
+        // rather than let it go quiet.
+        await sb.from('b2b_companies').update({ contact_unknown: true, updated_at: nowIso }).eq('id', companyId);
+      }
+    } catch (err) {
+      console.warn(`[correlate] departure recovery failed on ${companyId}: ${err.message}`);
+      departure = { handled: false, reason: `error: ${err.message}` };
+    }
   }
 
   // 5. Thank-you closer: a human reply that is pure courtesy ("Thanks so
@@ -360,6 +381,7 @@ async function correlateInbound(msg) {
     inbound_type: inboundType,
     contact_loss: loss,
     bounce,
+    departure,
     thankyou_closed,
     read_state,
     looks_like_order: looksLikeOrder(body_text || ''),

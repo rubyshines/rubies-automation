@@ -151,6 +151,8 @@ const PIPELINES = [
   },
   {
     name: 'Bounce Replay',
+    // Bounces AND departure notices ("X is no longer with the organization"):
+    // both are answers about a send, both travel the same push path.
     // The catch-up gmailPush never had. Push correlation is fire-and-forget and
     // keeps no record of what it considered, so a bounce it skips or errors on
     // is lost — which is exactly how two partners' addresses died with the sends
@@ -164,7 +166,7 @@ const PIPELINES = [
       const r = await require('./b2b-outreach/sync/replayBounces').replayBounces({ days: 14, apply: true });
       return {
         sources: { bounce_replay: { success: true, ...r } },
-        status: r.capped || r.unparsed.length ? 'warn' : 'ok',
+        status: r.capped || r.unparsed.length || r.departures?.error || r.departures?.capped ? 'warn' : 'ok',
       };
     },
   },

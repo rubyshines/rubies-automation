@@ -54,12 +54,89 @@ async function findBounceCandidates(sb, { days = DEFAULT_DAYS, limit = 500 } = {
   return rows;
 }
 
+/**
+ * Departure notices from stored mail — the DSN's sibling. Same window, same
+ * reasoning about the cap. The SQL predicate is deliberately broader than
+ * detectContactLoss (a handful of phrasings) so the query stays cheap and the
+ * real classifier decides; it is re-run on every candidate below.
+ */
+async function findDepartureCandidates(sb, { days = DEFAULT_DAYS, limit = 500 } = {}) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const { data, error } = await sb.from('email_messages')
+    .select('gmail_message_id, gmail_thread_id, from_address, to_addresses, cc_addresses, subject, date, body_text, is_auto_reply, calendar_method')
+    .gte('date', since)
+    .eq('is_sent', false)
+    .or('body_text.ilike.%no longer%,body_text.ilike.%has left the%,body_text.ilike.%going forward%')
+    .order('date', { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`departure candidates: ${error.message}`);
+  const { detectContactLoss } = require('../lib/replyCorrelation');
+  const rows = (data || []).filter(m =>
+    detectContactLoss({ subject: m.subject, body: m.body_text, from: m.from_address }) === 'departed');
+  rows.capped = (data || []).length >= limit;
+  return rows;
+}
+
+/**
+ * Re-run every departure notice in the window through correlateInbound. Safe
+ * to repeat: handleDeparture is idempotent on the answered send's
+ * undelivered_at, so a notice already acted on reports as 'already repaired'.
+ */
+async function replayDepartures(sb, { days = DEFAULT_DAYS, apply = false } = {}) {
+  const { correlateInbound } = require('../lib/replyCorrelation');
+  const candidates = await findDepartureCandidates(sb, { days });
+  const report = { scanned: candidates.length, capped: !!candidates.capped, applied: [], skipped: [] };
+  for (const m of candidates) {
+    if (!apply) {
+      report.applied.push({ id: m.gmail_message_id, date: m.date, from: m.from_address, dry_run: true });
+      continue;
+    }
+    try {
+      const r = await correlateInbound({
+        gmail_message_id: m.gmail_message_id,
+        gmail_thread_id: m.gmail_thread_id,
+        from_email: m.from_address,
+        is_auto_reply: !!m.is_auto_reply,
+        calendar_method: m.calendar_method || null,
+        to_email: Array.isArray(m.to_addresses) ? m.to_addresses.join(', ') : m.to_addresses,
+        cc_email: Array.isArray(m.cc_addresses) ? m.cc_addresses.join(', ') : (m.cc_addresses || null),
+        subject: m.subject,
+        body_text: m.body_text,
+        received_at: m.date,
+      });
+      if (!r.matched) {
+        report.skipped.push({ id: m.gmail_message_id, from: m.from_address, reason: 'could not attribute to a company' });
+      } else if (r.departure?.handled) {
+        report.applied.push({ id: m.gmail_message_id, date: m.date, company_id: r.company_id, from: m.from_address, departure: r.departure });
+      } else if (r.departure?.already) {
+        report.skipped.push({ id: m.gmail_message_id, from: m.from_address, reason: 'already repaired' });
+      } else {
+        report.skipped.push({
+          id: m.gmail_message_id, from: m.from_address,
+          reason: r.departure ? `not handled: ${r.departure.reason}` : 'matched a company but produced no departure result',
+        });
+      }
+    } catch (err) {
+      report.skipped.push({ id: m.gmail_message_id, from: m.from_address, reason: `error: ${err.message}` });
+    }
+  }
+  return report;
+}
+
 async function replayBounces({ days = DEFAULT_DAYS, apply = false } = {}) {
   const sb = getSupabaseClient();
   const { correlateInbound } = require('../lib/replyCorrelation');
   const candidates = await findBounceCandidates(sb, { days });
 
   const report = { scanned: candidates.length, capped: !!candidates.capped, permanent: 0, applied: [], skipped: [], unparsed: [] };
+  // Departure notices ride the same catch-up: same fire-and-forget push path,
+  // same way of going missing. Fail-soft so a departure error never hides the
+  // bounce report it sits beside.
+  try {
+    report.departures = await replayDepartures(sb, { days, apply });
+  } catch (err) {
+    report.departures = { error: err.message, scanned: 0, applied: [], skipped: [] };
+  }
 
   for (const m of candidates) {
     const parsed = parseBounce({ subject: m.subject, body: m.body_text, from: m.from_address });
@@ -118,7 +195,7 @@ async function replayBounces({ days = DEFAULT_DAYS, apply = false } = {}) {
   return report;
 }
 
-module.exports = { replayBounces, findBounceCandidates };
+module.exports = { replayBounces, replayDepartures, findBounceCandidates, findDepartureCandidates };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
@@ -144,7 +221,18 @@ if (require.main === module) {
     // whole change exists to stop. Say what was dropped and why.
     for (const s of r.skipped) console.log(`  skipped ${s.id}: ${s.reason}${s.addresses ? ` (${s.addresses.join(', ')})` : ''}`);
     for (const u of r.unparsed) console.log(`  UNREADABLE DSN ${u.id} (${u.date}): ${u.subject}`);
-    if (!apply && r.permanent) console.log('\n  re-run with --apply to write.');
+    const d = r.departures || {};
+    console.log(`\n  departure notices:   ${d.scanned ?? 0}${d.error ? `  (ERROR: ${d.error})` : ''}${d.capped ? '  ** HIT THE CAP **' : ''}`);
+    for (const a of d.applied || []) {
+      if (a.dry_run) { console.log(`  would handle: ${a.from} (${a.date})`); continue; }
+      const x = a.departure;
+      console.log(`  handled: ${a.from} → ${a.company_id}: retired ${x.retired_contact}`
+        + `${x.new_contact ? `, now writing to ${x.new_contact}` : `, no redirect (${x.redirect_refused || 'none'})`}`
+        + `${x.retry_draft_id ? `, retry draft #${x.retry_draft_id} (${x.retry})` : ''}`
+        + `${x.contact_unknown ? ', NO ADDRESS LEFT' : ''}`);
+    }
+    for (const s of d.skipped || []) console.log(`  skipped ${s.id} (${s.from}): ${s.reason}`);
+    if (!apply && (r.permanent || (d.applied || []).length)) console.log('\n  re-run with --apply to write.');
     process.exit(0);
   }).catch(err => { console.error(`[replay-bounces] ${err.message}`); process.exit(1); });
 }

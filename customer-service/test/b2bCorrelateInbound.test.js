@@ -89,9 +89,21 @@ function makeClient() {
 require.cache[CLIENT_PATH] = {
   id: CLIENT_PATH, filename: CLIENT_PATH, loaded: true, exports: { getSupabaseClient: makeClient },
 };
+// Departure recovery is its own module with its own tests; here it is a
+// recorder, so the correlator's hand-off (and its floor when the hand-off
+// cannot act) can be asserted without the model call or the write path.
+let departureCalls = [];
+let departureResult = { handled: true };
+const DEPARTURE_PATH = require.resolve('../../b2b-outreach/lib/departureRecovery');
+require.cache[DEPARTURE_PATH] = {
+  id: DEPARTURE_PATH, filename: DEPARTURE_PATH, loaded: true,
+  exports: { handleDeparture: async (sb, args) => { departureCalls.push(args); return departureResult; } },
+};
 const { correlateInbound } = require('../../b2b-outreach/lib/replyCorrelation');
 
 function reset(over = {}) {
+  departureCalls = [];
+  departureResult = { handled: true };
   state = {
     companies: [], contacts: [], threads: [],
     inserts: [], upserts: [], updates: [], ...over,
@@ -297,17 +309,42 @@ test('the header hint never outranks a bounce or a calendar notice', async () =>
   assert.strictEqual(r.inbound_type, 'calendar_notice');
 });
 
-test('a departure notice arriving as an auto-reply still flags the contact as unknown', async () => {
+const COLORS_NOTICE = () => MSG({
+  from_email: 'kpepera@colorsplus.org',
+  subject: 'New contact at this email Re: Could your community use gender-affirming clothing donations?',
+  body_text: 'Kameron Pepera is no longer with the organization. To reach a staff member, please contact info@colorsplus.org.',
+  is_auto_reply: true,
+});
+
+test('a departure notice arriving as an auto-reply is handed to departure recovery with the notice', async () => {
   reset({ contacts: [{ email: 'kpepera@colorsplus.org', company_id: 'colors' }] });
-  const r = await correlateInbound(MSG({
-    from_email: 'kpepera@colorsplus.org',
-    subject: 'New contact at this email Re: Could your community use gender-affirming clothing donations?',
-    body_text: 'Kameron Pepera is no longer with the organization. To reach a staff member, please contact info@colorsplus.org.',
-    is_auto_reply: true,
-  }));
+  const r = await correlateInbound(COLORS_NOTICE());
   assert.strictEqual(r.contact_loss, 'departed');
+  assert.strictEqual(r.inbound_type, 'auto_reply', 'still machine mail: no Tier-1 "waiting on us"');
+  assert.strictEqual(departureCalls.length, 1);
+  assert.strictEqual(departureCalls[0].company_id, 'colors');
+  assert.strictEqual(departureCalls[0].sender, 'kpepera@colorsplus.org');
+  assert.match(departureCalls[0].body, /no longer with the organization/);
+  assert.strictEqual(departureCalls[0].gmail_thread_id, 't1');
+  assert.deepStrictEqual(r.departure, { handled: true });
   const flagged = state.updates.find(u => u.table === 'b2b_companies' && u.patch.contact_unknown === true);
-  assert.ok(flagged, 'the company must surface as needing a working address');
+  assert.ok(!flagged, 'recovery owns the flag now — setting it here would mute a company it just made reachable');
+});
+
+test('when recovery cannot work out who left, the company still surfaces as needing an address', async () => {
+  reset({ contacts: [{ email: 'kpepera@colorsplus.org', company_id: 'colors' }] });
+  departureResult = { handled: false, reason: 'could not tell which contact left' };
+  await correlateInbound(COLORS_NOTICE());
+  const flagged = state.updates.find(u => u.table === 'b2b_companies' && u.patch.contact_unknown === true);
+  assert.ok(flagged, 'the pre-recovery floor: never go quiet about a partner');
+});
+
+test('a notice already acted on is left alone on redelivery', async () => {
+  reset({ contacts: [{ email: 'kpepera@colorsplus.org', company_id: 'colors' }] });
+  departureResult = { handled: false, already: true };
+  await correlateInbound(COLORS_NOTICE());
+  const flagged = state.updates.find(u => u.table === 'b2b_companies' && u.patch.contact_unknown === true);
+  assert.ok(!flagged, 'already repaired must not re-flag the company');
 });
 
 test('a person replying without the header hint is still a person', async () => {

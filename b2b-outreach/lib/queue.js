@@ -163,11 +163,17 @@ function computeQueueEntry(company, ctx, now = new Date()) {
   // address exhausted.
   if (company.contact_unknown && !deferredAt) {
     const since = ctx.lastUndeliveredAt || ctx.lastOutboundAt || null;
+    // A departure is not a bounce: the send reached a mailbox whose owner has
+    // gone, and the notice said so. Saying "bounced" for it sent the operator
+    // looking for a DSN that does not exist.
+    const left = /recipient left/i.test(ctx.lastUndeliveredReason || '');
     return {
       tier: 1,
       message_type: null,
       reason: since
-        ? `no working address — last send bounced ${humanAge(since, now)} ago`
+        ? (left
+          ? `no working address — the person we wrote to left the organisation, notice ${humanAge(since, now)} ago and no forwarding address given`
+          : `no working address — last send bounced ${humanAge(since, now)} ago`)
         : 'no working address — last contact bounced or left',
       waiting_since: since,
     };

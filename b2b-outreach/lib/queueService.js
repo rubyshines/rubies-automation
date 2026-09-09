@@ -1126,7 +1126,7 @@ async function fetchCompanyThreads(sb, companyId) {
   const round2 = await Promise.all([
     threads.length
       ? sb.from('b2b_messages')
-        .select('thread_id, direction, message_type, from_email, to_email, cc_email, body_text, sent_at, source, undelivered_at')
+        .select('thread_id, direction, message_type, from_email, to_email, cc_email, body_text, sent_at, source, undelivered_at, undelivered_reason')
         .in('thread_id', threads.map(t => t.id))
         .order('sent_at', { ascending: true })
       : Promise.resolve({ data: [] }),

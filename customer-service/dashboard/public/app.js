@@ -6700,7 +6700,9 @@ function outreachHistoryHtml() {
         + (m.message_type === 'auto_reply' ? ' <span class="badge badge-muted">auto-reply</span>' : '')
         + (m.message_type === 'calendar_notice' ? ' <span class="badge badge-muted">calendar notice</span>' : '')
         + (bounce ? ' <span class="badge badge-warn">bounced</span>' : '')
-        + (m.undelivered_at ? ' <span class="badge badge-warn">never delivered</span>' : '');
+        // A departure marks the send the same way a bounce does, so the notice
+        // buried in its own born-closed thread shows up ON the send it answers.
+        + (m.undelivered_at ? ` <span class="badge badge-warn" title="${esc(m.undelivered_reason || '')}">${/recipient left/i.test(m.undelivered_reason || '') ? 'recipient had left the org' : 'never delivered'}</span>` : '');
       // The DSN's own text is machine boilerplate. What matters is which address
       // died, which the badge and the queue reason already say.
       const body = bounce

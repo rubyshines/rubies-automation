@@ -100,6 +100,18 @@ test('Tier 1: no working address surfaces despite the eligibility gate', () => {
   assert.equal(e.waiting_since, '2026-06-01T00:00:00Z', 'Tier 1 sorts on this');
 });
 
+test('a departure reads as "left", never as a bounce', () => {
+  // The send reached a mailbox whose owner had gone; the notice said so. Calling
+  // that a bounce sent the operator looking for a DSN that does not exist.
+  const e = computeQueueEntry(retailer({ contact_unknown: true }), {
+    sentTypes: new Set(), lastUndeliveredAt: '2026-06-01T00:00:00Z',
+    lastUndeliveredReason: 'recipient left the organisation',
+  }, NOW);
+  assert.equal(e.tier, 1);
+  assert.match(e.reason, /left the organisation, notice 10d ago/);
+  assert.doesNotMatch(e.reason, /bounced/);
+});
+
 test('a company with no working address and no bounce date still surfaces', () => {
   // The "X has left, contact Y" path knows nothing died on a given date.
   const e = computeQueueEntry(retailer({ contact_unknown: true }), { sentTypes: new Set() }, NOW);
