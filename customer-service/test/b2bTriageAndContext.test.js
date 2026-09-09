@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { computeTriage } = require('../../b2b-outreach/lib/triage');
+const { computeTriage, restoredState } = require('../../b2b-outreach/lib/triage');
 const { renderMetadataFacts } = require('../../b2b-outreach/lib/outreachAdvisor');
 const { isUntouchedProspect } = require('../../scripts/assignB2bProspectStates');
 
@@ -19,6 +19,15 @@ test('drop marks lost and demands a reason', () => {
   assert.equal(upd.triage_reason, 'shop closed');
   assert.equal(upd.vetted_at, null, 'a dropped company is not admitted');
   assert.throws(() => computeTriage('drop', { now: NOW }), /requires a reason/);
+});
+
+test('restore undoes a drop: back to the state the record supports, reason cleared, still unvetted', () => {
+  const upd = computeTriage('restore', { restoreTo: 'in_contact', now: NOW });
+  assert.deepEqual(upd, { relationship_state: 'in_contact', triage_reason: null });
+  assert.throws(() => computeTriage('restore', { now: NOW }), /state to restore to/);
+  assert.equal(restoredState({ order_count: 3 }), 'active');
+  assert.equal(restoredState({ order_count: 0, last_outbound_at: '2026-02-18T00:00:00Z' }), 'in_contact');
+  assert.equal(restoredState({ order_count: 0, last_outbound_at: null }), 'prospect');
 });
 
 test('snooze is refused — the cadence owns when a company is next due', () => {

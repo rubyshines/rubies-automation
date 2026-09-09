@@ -587,7 +587,7 @@ module.exports = [
       type: 'object',
       properties: {
         company_id: { type: 'string', description: 'b2b_companies id.' },
-        action: { type: 'string', description: "'keep' | 'drop' | 'snooze' | 'pause' | 'on_me' | 'resume' | 'clear_due'. clear_due = nothing to send now: clears the reminder date that put a company at Tier 5 and leaves the cadence to bring it back." },
+        action: { type: 'string', description: "'keep' | 'drop' | 'restore' | 'snooze' | 'pause' | 'on_me' | 'resume' | 'clear_due'. restore = undo a drop (back to active / in_contact / prospect as the record supports; still unvetted). clear_due = nothing to send now: clears the reminder date that put a company at Tier 5 and leaves the cadence to bring it back." },
         reason: { type: 'string', description: "Why. Required on drop and on pause — in six months 'why is this paused?' is the only question that matters. Optional otherwise, and ignored on on_me (that row explains itself with the relationship's suggested next step)." },
         until: { type: 'string', description: 'Snooze only: YYYY-MM-DD, must be in the future.' },
       },

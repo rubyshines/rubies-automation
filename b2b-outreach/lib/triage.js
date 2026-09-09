@@ -32,7 +32,7 @@
  * @param opts    { reason, until (snooze only, YYYY-MM-DD), now }
  * @returns the b2b_companies patch
  */
-function computeTriage(action, { reason = null, until = null, now = new Date(), source = 'operator', note = null } = {}) {
+function computeTriage(action, { reason = null, until = null, now = new Date(), source = 'operator', note = null, restoreTo = null } = {}) {
   switch (action) {
     case 'keep':
       // Reason is optional on keep — "yes, this one is fine" needs no essay.
@@ -109,6 +109,14 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
         snoozed_until: null, snoozed_at: null,
         on_me_at: null, on_me_source: null, on_me_note: null,
       };
+    case 'restore':
+      // Undo a drop. A dropped row was never deleted, only marked lost with a
+      // reason, so restoring is putting the relationship_state back to what
+      // the record supports (triageCompany derives it) and clearing the
+      // reason. Not vetted: coming back is not the same as being admitted to
+      // the queue, so a restored prospect still needs a keep before it drafts.
+      if (!restoreTo) throw new Error('restore needs the state to restore to');
+      return { relationship_state: restoreTo, triage_reason: null };
     case 'clear_due':
       // "Nothing to send now." A Tier-5 row is a reminder date stamped at the
       // last send that has come round with nothing specific due; clearing it
@@ -118,7 +126,7 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
       // pending draft (if any) is left where it is.
       return { next_action_date: null };
     default:
-      throw new Error(`unknown triage action '${action}' — expected keep, drop, snooze, pause, on_me, resume or clear_due`);
+      throw new Error(`unknown triage action '${action}' — expected keep, drop, restore, snooze, pause, on_me, resume or clear_due`);
   }
 }
 
@@ -126,11 +134,15 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
 async function triageCompany(sb, { company_id, action, reason, until, now = new Date(), source = 'operator', note = null } = {}) {
   if (!company_id) throw new Error('company_id required');
   const { data: company, error } = await sb.from('b2b_companies')
-    .select('id, name, relationship_state').eq('id', company_id).maybeSingle();
+    .select('id, name, relationship_state, order_count, last_outbound_at').eq('id', company_id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!company) throw new Error(`company '${company_id}' not found`);
 
-  const patch = computeTriage(action, { reason, until, now, source, note });
+  // What a dropped company goes back to is what its record supports: a
+  // customer is active, anyone we have written to is in_contact, the rest
+  // never got past prospect.
+  const restoreTo = action === 'restore' ? restoredState(company) : null;
+  const patch = computeTriage(action, { reason, until, now, source, note, restoreTo });
   const { error: uErr } = await sb.from('b2b_companies')
     .update({ ...patch, updated_at: now.toISOString() }).eq('id', company_id);
   if (uErr) throw new Error(uErr.message);
@@ -160,4 +172,11 @@ async function triageCompany(sb, { company_id, action, reason, until, now = new 
   return { company_id, name: company.name, action, drafts_cleared: draftsCleared, ...patch };
 }
 
-module.exports = { computeTriage, triageCompany };
+/** The relationship_state a dropped row returns to. Pure. */
+function restoredState(company) {
+  if ((company?.order_count || 0) > 0) return 'active';
+  if (company?.last_outbound_at) return 'in_contact';
+  return 'prospect';
+}
+
+module.exports = { computeTriage, triageCompany, restoredState };

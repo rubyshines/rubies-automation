@@ -6581,6 +6581,19 @@ function resumeOutreach() {
   applyOutreachTriage({ action: 'resume' }, 'Back in the queue');
 }
 
+// Drop is pause's irreversible-looking cousin, and the reason is what makes it
+// safe: the row stays in the database marked lost, and six months on the
+// reason is the only thing that lets you tell "they said no" from "we gave up".
+function dropOutreach() {
+  const reason = prompt('Why are we dropping this company?\n\n(e.g. "said no to carrying inventory", "store closed", "dead address, no alternate")');
+  if (!reason || !reason.trim()) return;
+  applyOutreachTriage({ action: 'drop', reason: reason.trim() }, 'Dropped');
+}
+
+function restoreOutreach() {
+  applyOutreachTriage({ action: 'restore' }, 'Restored');
+}
+
 // "Nothing to send now" on a reminder-only (Tier 5) row. Unlike the deferrals
 // this is worklist burn-down, so it advances to the next row the way a send
 // does rather than staying on a company that just left the queue.
@@ -7489,12 +7502,21 @@ function outreachActionsHtml(entry, draft) {
       ? `<button class="btn btn-ghost" onclick="clearDueOutreach()"
           title="Clears the reminder date from your last message. The cadence brings them back on its own trigger — see the next touch in the header.">Nothing to send</button>`
       : '',
-    deferred
-      ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()">${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`
-      : `<button class="btn btn-ghost btn-onme" onclick="onMeOutreach()"
-          title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
-         <button class="btn btn-ghost" onclick="pauseOutreach()"
-          title="Stop drafting, chasing and following up. A new reply still surfaces.">Pause outreach</button>`,
+    // A dropped company (lost) offers only the way back. Everyone else gets
+    // the three dispositions: on me, pause, and drop — drop asks for a reason
+    // and marks the relationship lost, but deletes nothing, so it is always
+    // reversible from here (2026-09-09).
+    c?.relationship_state === 'lost'
+      ? `<button class="btn btn-ghost btn-onme" onclick="restoreOutreach()"
+          title="Undo the drop: back to lead or account as the record supports. Still needs a keep before it drafts.">Restore</button>`
+      : deferred
+        ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()">${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`
+        : `<button class="btn btn-ghost btn-onme" onclick="onMeOutreach()"
+            title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
+           <button class="btn btn-ghost" onclick="pauseOutreach()"
+            title="Stop drafting, chasing and following up. A new reply still surfaces.">Pause outreach</button>
+           <button class="btn btn-ghost" onclick="dropOutreach()"
+            title="They said no, closed, or are a dead end. Marks the relationship lost with your reason. Nothing is deleted; Restore brings it back.">Drop</button>`,
   ].filter(Boolean);
 
   return `<div id="outreach-actions" class="outreach-actions">
