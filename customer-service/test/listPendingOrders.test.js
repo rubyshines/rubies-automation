@@ -18,13 +18,17 @@ function row({
   note = null,           // { note, resolved, author } or null
   severity = 'normal',
   detail = null,
+  // The reason carries the silo: checkUnfulfilledOrders classifies a pre-order
+  // as 'pre_order' unless the warehouse holds it, in which case the hold reason
+  // wins and isPreOrder stays true as a fact about the order.
+  reason = isPreOrder ? 'pre_order' : 'at_warehouse',
   businessDays = 1,
 } = {}) {
   return {
     order: { order_number: orderNumber, customer_email: 'x@x.com', created_at: '2026-04-01T00:00:00Z' },
     isPreOrder,
     note,
-    classification: { severity, detail },
+    classification: { reason, severity, detail },
     businessDays,
   };
 }
@@ -102,6 +106,45 @@ describe('bucketPendingOrders — note + isPreOrder precedence (mirrors daily re
     assert.equal(out.pre_orders.length, 0);
     assert.equal(out.waiting_on_response.length, 0);
     assert.equal(out.urgent.length, 0);
+  });
+});
+
+describe('bucketPendingOrders — a live warehouse hold outranks the silo and a resolved note', () => {
+  it('a pre-order the warehouse is holding lands in urgent, not pre_orders', () => {
+    // #33205: address hold on a pre-order, invisible for 19 days because the
+    // pre-order flag used to skip hold classification entirely.
+    const r = row({ orderNumber: 300, isPreOrder: true, reason: 'address_hold', severity: 'urgent', businessDays: 12 });
+    const out = bucket({ results: [r] });
+    assert.equal(out.pre_orders.length, 0, 'must not hide in pre_orders');
+    assert.equal(out.urgent.length, 1, 'must surface as urgent');
+  });
+
+  it('a held order with a resolved note still surfaces (the note is finished work, the hold is live)', () => {
+    // #33220: an unrelated outreach ticket closed, its resolved note hid the hold.
+    const r = row({
+      orderNumber: 301,
+      isPreOrder: true,
+      reason: 'address_hold',
+      severity: 'urgent',
+      note: { note: 'Conversation closed (ticket #3301) — auto-resolved', resolved: true, author: 'auto' },
+    });
+    const out = bucket({ results: [r] });
+    assert.equal(out.urgent.length, 1, 'resolved note must not hide a live hold');
+    assert.equal(out.waiting_on_response.length, 0);
+    assert.equal(out.pre_orders.length, 0);
+  });
+
+  it('a resolved note still hides a non-hold row', () => {
+    const r = row({
+      orderNumber: 302,
+      reason: 'at_warehouse',
+      severity: 'attention',
+      note: { note: 'Reshipped by hand', resolved: true, author: 'operator' },
+    });
+    const out = bucket({ results: [r] });
+    assert.equal(out.attention.length, 0);
+    assert.equal(out.urgent.length, 0);
+    assert.equal(out.normal.length, 0);
   });
 });
 

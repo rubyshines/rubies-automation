@@ -15,6 +15,7 @@ const { getShippingZone } = require('./shippingLookup');
 const { getDraftOrderByName, updateDraftOrderShipping, getAdminUrl } = require('../shopify');
 const { getShippingMethodTitle } = require('../orderUtils');
 const { isShippingUpdateNote, isWaitingNote } = require('../noteLifecycle');
+const { inPreOrderSilo, isActionable } = require('../../../reports/lib/unfulfilled');
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -36,18 +37,15 @@ const BUCKET_LABELS = {
 /**
  * Pure function: takes the result of checkUnfulfilledOrders() and returns
  * a bucketed view that mirrors the daily order report. Filters by bucket
- * name and/or minimum business days. Same precedence rule as the report —
- * an unresolved operator note pulls a pre-order out of Pre-Orders into the
- * actionable flow. Exception: a shipping-update note records a mechanical
- * change already applied (see noteLifecycle.isShippingUpdateNote), so it
- * rides along as context and never reclassifies the order — a pre-order
- * expedited "when in stock" stays in Pre-Orders, not Waiting on Response.
+ * name and/or minimum business days. Silo / actionable membership is the
+ * report's own predicates (reports/lib/unfulfilled): an unresolved operator
+ * note pulls a pre-order out of Pre-Orders, a shipping-update note never
+ * does, and a live warehouse hold outranks both the silo and a resolved note.
  */
 function bucketPendingOrders(unfulfilledResult, { bucket, minBusinessDays } = {}) {
   const u = unfulfilledResult?.results || [];
-  const noteOverrides = r => !!r.note && !isShippingUpdateNote(r.note);
-  const preOrders = u.filter(r => r.isPreOrder && !noteOverrides(r));
-  const ufActionable = u.filter(r => (!r.isPreOrder || noteOverrides(r)) && !r.note?.resolved);
+  const preOrders = u.filter(inPreOrderSilo);
+  const ufActionable = u.filter(isActionable);
   const ufWaiting = ufActionable.filter(r => isWaitingNote(r.note));
   const ufNoNote = ufActionable.filter(r => !isWaitingNote(r.note));
   const ufAutoResolved = ufNoNote.filter(r => r.classification.severity === 'auto_resolved');
