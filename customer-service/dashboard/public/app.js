@@ -7858,7 +7858,6 @@ async function testSendOutreachDraft() {
 let scheduleState = null;      // last /availability payload
 let scheduleSelected = null;   // the chosen slot { start, label, theirLabel }
 let scheduleInsertedLine = ''; // the one sentence this panel owns in the draft
-let scheduleShowAll = false;   // reveal full availability alongside their offer
 let scheduleWeek = 0;          // which week of the grid is on screen
 // Optional description on the calendar event. Kept in a module var rather than
 // read off the DOM at book time, because selecting a slot re-renders the panel
@@ -7868,19 +7867,6 @@ let scheduleNotes = '';
 // null = use the generated "RUBIES x <Company>". Only an actual edit sets it, so
 // the default keeps tracking the company rather than freezing at first render.
 let scheduleTitle = null;
-
-/**
- * When they have named times, the panel answers "which of their options works"
- * and shows ONLY those. The full grid used to render underneath regardless,
- * which repeated any day they had offered — Wed 26 appeared twice and one click
- * lit up both copies, reading as a duplicate row. Full availability is still one
- * click away for when none of their options fit; it is just a different question
- * and no longer asked at the same time.
- */
-function toggleScheduleAllDays() {
-  scheduleShowAll = !scheduleShowAll;
-  renderSchedulePanel();
-}
 
 function scheduleDurationOptions(selected) {
   return [15, 20, 30, 45, 60, 90].map(m =>
@@ -8102,10 +8088,11 @@ function renderSchedulePanel() {
       ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
       : '');
 
-  // Their offer answers the question when there is one; the week is the
-  // fallback for "none of these work" and the default when they named nothing.
-  const hasSuggestions = suggestions.length > 0;
-  const showGrid = !hasSuggestions || scheduleShowAll;
+  // Their offer comes first when there is one, and the week is ALWAYS under
+  // it. It was folded behind a "none of these work" toggle, which hid the one
+  // thing the week is for: checking their offer against what is already booked
+  // before clicking (2026-09-09). The week is a different view of the same
+  // days, not a duplicate of their rows, so nothing repeats.
 
   // The slots to offer first: one per day that already holds a call, the one
   // sitting tightest against it. Jamie stacks calls rather than opening a
@@ -8120,7 +8107,7 @@ function renderSchedulePanel() {
         <span class="schedule-fit-why">${esc(f.reason || '')}</span>
       </button>`).join('')}</div>` : '';
 
-  const grid = !showGrid ? '' : fitsHtml + renderScheduleWeek(s, sameZone);
+  const grid = fitsHtml + renderScheduleWeek(s, sameZone);
 
   // The actions are ALWAYS rendered, disabled until a slot is picked. Hiding
   // them until selection meant the rehearsal button did not exist as far as a
@@ -8171,9 +8158,6 @@ function renderSchedulePanel() {
       ${s.their_timezone_warning ? `<div class="schedule-warning">&#9888; ${esc(s.their_timezone_warning)}</div>` : ''}
       ${booked}
       ${proposedHtml}
-      ${hasSuggestions ? `<button class="schedule-toggle" onclick="toggleScheduleAllDays()">
-        ${scheduleShowAll ? '&#9652; Just their suggestions' : '&#9662; None of these work — show my week'}
-      </button>` : ''}
       ${grid}
       <div class="schedule-hint" title="${esc((s.calendars || []).join(', '))}">Checked ${(s.calendars || []).length} calendar${(s.calendars || []).length === 1 ? '' : 's'} · 9-5 Eastern, weekdays, from tomorrow</div>
       ${footer}
