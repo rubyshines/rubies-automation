@@ -188,7 +188,7 @@ async function syncMeetings(sb, {
   async function companyRow(id) {
     if (!companyCache.has(id)) {
       const { data } = await sb.from('b2b_companies')
-        .select('id, name, city, region, country, address').eq('id', id).maybeSingle();
+        .select('*').eq('id', id).maybeSingle();
       companyCache.set(id, data || null);
     }
     return companyCache.get(id);
@@ -228,7 +228,7 @@ async function syncMeetings(sb, {
 
         if (!existing) {
           const company = await companyRow(cid);
-          const tz = company ? timezone.timezoneFromLocation(company) : { timeZone: null, source: null };
+          const tz = company ? require('./companyLocation').resolveCompanyTimeZone(company) : { timeZone: null, source: null };
           const { error } = await sb.from('b2b_meetings').insert({
             company_id: cid,
             thread_id: null,

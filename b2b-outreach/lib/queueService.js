@@ -1202,9 +1202,14 @@ async function fetchCompanyThreads(sb, companyId) {
       ? {
         ...company,
         stage: companyStage(company),
-        send_time_zone: require('./meetingTimezone').timezoneFromLocation({
-          region: company.region, country: company.country, address: company.address,
-        }).timeZone,
+        send_time_zone: require('./companyLocation').resolveCompanyTimeZone(company).timeZone,
+        // Their zone as the sidebar shows it: the name, and where it came from,
+        // so an inference is never mistaken for something they told us.
+        their_time_zone: require('./companyLocation').resolveCompanyTimeZone(company),
+        their_time_zone_label: (() => {
+          const tz = require('./companyLocation').resolveCompanyTimeZone(company).timeZone;
+          return tz ? require('./meetingTimezone').timeZoneLabel(tz) : null;
+        })(),
       }
       : null,
     contacts: contactsRes.error ? [] : (contactsRes.data || []),

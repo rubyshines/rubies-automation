@@ -8,7 +8,8 @@
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { fetchAvailability } = require('../../../b2b-outreach/lib/availability');
 const { scheduleMeeting, meetingTitle, renderConfirmationLine } = require('../../../b2b-outreach/lib/scheduleMeeting');
-const { timezoneFromLocation, isValidTimeZone, timeZoneLabel } = require('../../../b2b-outreach/lib/meetingTimezone');
+const { isValidTimeZone, timeZoneLabel } = require('../../../b2b-outreach/lib/meetingTimezone');
+const { resolveCompanyTimeZone } = require('../../../b2b-outreach/lib/companyLocation');
 const { extractProposedTimes } = require('../../../b2b-outreach/lib/proposedTimes');
 
 /**
@@ -22,9 +23,9 @@ async function resolveTheirTimeZone(sb, { company_id, their_timezone }) {
   if (!company_id) return { timeZone: null, source: 'unknown', split: false, reason: null };
 
   const { data, error } = await sb.from('b2b_companies')
-    .select('city, region, country, address').eq('id', company_id).maybeSingle();
+    .select('*').eq('id', company_id).maybeSingle();
   if (error || !data) return { timeZone: null, source: 'unknown', split: false, reason: null };
-  return timezoneFromLocation(data);
+  return resolveCompanyTimeZone(data);
 }
 
 async function handleAvailability(args = {}) {

@@ -270,11 +270,11 @@ async function handleInbound(input = {}) {
 }
 
 /** Local-time rendering for a scheduled slot, or a plain hint if unscheduled. */
-function scheduleLine(draft) {
+function scheduleLine(draft, company = null) {
   if (!draft.scheduled_send_at) return 'not scheduled — waiting for an operator';
   const { describeSlot } = require(path.join(B2B_LIB, 'sendWindow'));
-  const { timezoneFromLocation } = require(path.join(B2B_LIB, 'meetingTimezone'));
-  const tz = timezoneFromLocation({ region: draft.region, country: draft.country }).timeZone;
+  const { resolveCompanyTimeZone } = require(path.join(B2B_LIB, 'companyLocation'));
+  const tz = resolveCompanyTimeZone(company || draft).timeZone;
   const when = describeSlot({ at: draft.scheduled_send_at, timeZone: tz })
     || new Date(draft.scheduled_send_at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
   const due = new Date(draft.scheduled_send_at) <= new Date() ? ' — DUE, next sweep will send it' : '';
@@ -328,14 +328,14 @@ async function handleFollowUps(input = {}) {
 
     const ids = [...new Set((drafts || []).map(d => d.company_id))];
     const { data: cos } = ids.length
-      ? await sb.from('b2b_companies').select('id, name, region, country').in('id', ids)
+      ? await sb.from('b2b_companies').select('*').in('id', ids)
       : { data: [] };
     const byId = new Map((cos || []).map(c => [c.id, c]));
 
     const lines = [`**Scheduled follow-ups** — ${drafts?.length || 0}`, ''];
     for (const d of drafts || []) {
       const c = byId.get(d.company_id) || {};
-      lines.push(`- **${c.name || d.company_id}** #${d.id} [${d.message_type}] — ${scheduleLine({ ...d, region: c.region, country: c.country })}`);
+      lines.push(`- **${c.name || d.company_id}** #${d.id} [${d.message_type}] — ${scheduleLine(d, c)}`);
       if (d.queue_reason) lines.push(`  _${d.queue_reason}_`);
     }
 
@@ -359,6 +359,22 @@ async function handleFollowUps(input = {}) {
       return text('Follow-up scheduling columns not yet applied — run the b2b_drafts / b2b_companies ALTERs '
         + 'in gmail-management/b2b-outreach-schema.sql in the Supabase SQL Editor first.');
     }
+    return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
+  }
+}
+
+async function handleUpdateCompany(input = {}) {
+  try {
+    const { updateCompanyLocation, placeLine } = require(path.join(B2B_LIB, 'companyLocation'));
+    const r = await updateCompanyLocation(getSupabaseClient(), input);
+    const where = placeLine(r.company) || 'nowhere on record';
+    const tz = r.resolved.timeZone ? `${r.resolved.timeZone} (${r.resolved.source})` : 'unknown';
+    const bits = [`**${r.company.name}** — ${where} · timezone ${tz}.`];
+    if (!r.changed.length) bits.push('Nothing changed.');
+    else bits.push(`Changed: ${r.changed.join(', ')}.`);
+    if (r.warning) bits.push(`⚠ ${r.warning}`);
+    return text(bits.join(' '));
+  } catch (err) {
     return text(isMissingTable(err) ? SCHEMA_HINT : `Error: ${err.message}`);
   }
 }
@@ -609,6 +625,22 @@ module.exports = [
     handler: handleFollowUps,
   },
   {
+    name: 'b2b_update_company',
+    description: "Set where a company is (city, state/province, country) and/or their timezone. Location changes re-derive the stored timezone deterministically; a timezone passed here is an operator override that inference never touches (pass '' to clear it). Same function the panel's location editor uses.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'b2b_companies id slug.' },
+        city: { type: 'string' },
+        region: { type: 'string', description: 'State / province, e.g. "CA" or "Ontario".' },
+        country: { type: 'string', description: 'e.g. "US", "Canada".' },
+        timezone: { type: 'string', description: "IANA zone, e.g. America/Los_Angeles. '' clears an operator override." },
+      },
+      required: ['company_id'],
+    },
+    handler: handleUpdateCompany,
+  },
+  {
     name: 'b2b_update_contact',
     description: "Change who we write to at a B2B company. Use whenever a thread reveals the person has moved on ('X is no longer with us, please contact Y') or Jamie names a new contact. Sets them as the single primary contact, so the next draft and send address them; pass `replaces` with the old address to retire that person at the same time (they stay on the record so their history still reads correctly). Also clears contact_unknown, which otherwise keeps the cadence from drafting at all. Refuses an address already registered to a different company.",
     inputSchema: {
@@ -639,6 +671,8 @@ module.exports = [
         contact_name: { type: 'string', description: 'Named contact person, if any.' },
         referred_by: { type: 'string', description: "Who recommended them + their exact words/context. Provenance matters: it's what lets future drafts reference the referral honestly." },
         blurb: { type: 'string', description: 'What the org does, in the referrer\'s words.' },
+        city: { type: 'string', description: 'City, if known.' },
+        region: { type: 'string', description: 'State / province, if known (e.g. "TX", "Ontario"). With the country this is what places them in a timezone — capture it at intake.' },
         country: { type: 'string', description: 'Country, e.g. "United Kingdom".' },
         draft: { type: 'boolean', description: 'Generate the intro draft immediately (default true).' },
         steer: { type: 'string', description: 'Extra guidance for the intro draft.' },

@@ -95,12 +95,7 @@ async function schemaReady(sb) {
 
 /** The company's IANA zone for scheduling purposes, or null. Pure. */
 function companyTimeZone(company) {
-  const { timeZone } = timezoneFromLocation({
-    region: company.region,
-    country: company.country,
-    address: company.address,
-  });
-  return timeZone;
+  return require('./companyLocation').resolveCompanyTimeZone(company).timeZone;
 }
 
 /**

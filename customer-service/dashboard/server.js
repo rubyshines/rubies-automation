@@ -3070,6 +3070,16 @@ async function apiB2bSaveDraft(companyId, body = {}) {
   });
 }
 
+// Where they are, and their timezone. Same function the b2b_update_company
+// console tool calls. A `timezone` of '' clears an operator override.
+async function apiB2bUpdateLocation(companyId, body = {}) {
+  const { updateCompanyLocation } = require('../../b2b-outreach/lib/companyLocation');
+  return updateCompanyLocation(getSupabaseClient(), {
+    company_id: companyId,
+    city: body.city, region: body.region, country: body.country, timezone: body.timezone,
+  });
+}
+
 // Change who we write to. Same function the b2b_update_contact console tool
 // calls, so both surfaces agree on what "the contact changed" does.
 async function apiB2bUpdateContact(companyId, body = {}) {
@@ -3234,20 +3244,23 @@ async function apiB2bTestSend(id, body = {}) {
 async function apiB2bAvailability(companyId, params) {
   const sb = getSupabaseClient();
   const { fetchAvailability } = require('../../b2b-outreach/lib/availability');
-  const { timezoneFromLocation, isValidTimeZone } = require('../../b2b-outreach/lib/meetingTimezone');
+  const { isValidTimeZone } = require('../../b2b-outreach/lib/meetingTimezone');
   const { extractProposedTimes } = require('../../b2b-outreach/lib/proposedTimes');
 
   const duration = Math.max(5, parseInt(params?.get('duration'), 10) || 30);
   const days = Math.min(30, Math.max(1, parseInt(params?.get('days'), 10) || 10));
   const override = params?.get('timezone');
 
+  // select('*'): the timezone columns arrive by a hand-applied migration, and
+  // naming them before they exist would 500 the panel.
   const { data: company } = await sb.from('b2b_companies')
-    .select('id, name, city, region, country, address').eq('id', companyId).maybeSingle();
+    .select('*').eq('id', companyId).maybeSingle();
   if (!company) throw new Error(`No company ${companyId}`);
 
+  const { resolveCompanyTimeZone } = require('../../b2b-outreach/lib/companyLocation');
   let tz = isValidTimeZone(override)
     ? { timeZone: override, source: 'set by you', split: false, reason: null }
-    : timezoneFromLocation(company);
+    : resolveCompanyTimeZone(company);
 
   // Their most recent inbound message is where suggested times live. Read it
   // BEFORE the grid: a zone they stated in the message ("1pm MST") beats one
@@ -4191,6 +4204,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact$/, handler: (body, id) => apiB2bUpdateContact(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/location$/, handler: (body, id) => apiB2bUpdateLocation(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact-action$/, handler: (body, id) => apiB2bContactAction(decodeURIComponent(id), body) },
   { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/availability$/, handler: (_, id, req) => apiB2bAvailability(decodeURIComponent(id), new URL(req.url, 'http://localhost').searchParams) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/schedule$/, handler: (body, id) => apiB2bScheduleMeeting(decodeURIComponent(id), body) },

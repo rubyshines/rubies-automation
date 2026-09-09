@@ -6489,6 +6489,85 @@ function hideContactForm() {
   if (el) el.innerHTML = '';
 }
 
+// ── Location ────────────────────────────────────────────────────────────────
+// City, state/province, country, and the timezone. The zone is normally
+// derived from the first three; typing one here is an override that inference
+// never touches (blank it to go back to deriving). Same endpoint as the
+// b2b_update_company console tool.
+function showLocationForm() {
+  const el = document.getElementById('outreach-location-form');
+  const c = outreachHistory?.company;
+  if (!el || !c) return;
+  const onEnter = `onkeydown="if(event.key==='Enter'){saveLocation()}"`;
+  const tz = c.their_time_zone || {};
+  const override = tz.source === 'set by you' ? (tz.timeZone || '') : '';
+  el.innerHTML = `
+    <div class="outreach-contact-form outreach-location-form">
+      <div class="outreach-contact-form-title">Where they are</div>
+      <input type="text" id="location-city" placeholder="City" autocomplete="off" value="${esc(c.city || '')}" ${onEnter}>
+      <input type="text" id="location-region" placeholder="State / province (e.g. CA, Ontario)" autocomplete="off" value="${esc(c.region || '')}" ${onEnter}>
+      <input type="text" id="location-country" placeholder="Country" autocomplete="off" value="${esc(c.country || '')}" ${onEnter}>
+      <input type="text" id="location-timezone" placeholder="Timezone override (e.g. America/Chicago) — blank derives it" autocomplete="off" value="${esc(override)}" ${onEnter}>
+      <div class="outreach-contact-form-actions">
+        <button class="btn btn-primary" onclick="saveLocation()">Save</button>
+        <button class="btn btn-ghost" onclick="hideLocationForm()">Cancel</button>
+      </div>
+      <div class="outreach-contact-form-note">${tz.timeZone
+        ? `Currently ${esc(tz.timeZone)} (${esc(tz.source)}). State or province plus country is what places them in a zone.`
+        : 'No timezone yet. State or province plus country is what places them in a zone.'}</div>
+    </div>`;
+  document.getElementById('location-city')?.focus();
+}
+
+function hideLocationForm() {
+  const el = document.getElementById('outreach-location-form');
+  if (el) el.innerHTML = '';
+}
+
+async function saveLocation() {
+  const companyId = outreachSelectedId;
+  if (!companyId) return;
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  let res;
+  try {
+    res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/location`, {
+      method: 'POST',
+      body: { city: val('location-city'), region: val('location-region'), country: val('location-country'), timezone: val('location-timezone') },
+    });
+  } catch (err) {
+    showToast(`Could not save location: ${err.message}`, 'error');
+    return;
+  }
+  const tz = res.resolved?.timeZone ? `${res.resolved.timeZone} (${res.resolved.source})` : 'timezone unknown';
+  showToast(res.warning ? res.warning : `Saved — ${tz}`, res.warning ? 'error' : 'success');
+  hideLocationForm();
+  await loadOutreachContext(companyId, false);
+  // The schedule panel labels every slot in their time — refresh it if open.
+  const panel = document.getElementById('outreach-schedule-panel');
+  if (panel?.dataset.open === '1') openSchedulePanel(scheduleState?.duration_minutes || 30);
+}
+
+/**
+ * The schedule panel's timezone box saves to the company rather than living
+ * for one panel open — typing America/Chicago once should be enough. Blank
+ * clears the override and the location decides again.
+ */
+async function saveScheduleTimezone(value) {
+  const companyId = outreachSelectedId;
+  if (!companyId) return;
+  try {
+    const res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/location`, {
+      method: 'POST', body: { timezone: String(value || '').trim() },
+    });
+    if (res.warning) showToast(res.warning, 'error');
+  } catch (err) {
+    showToast(`Could not save their timezone: ${err.message}`, 'error');
+    return;
+  }
+  await loadOutreachContext(companyId, false);
+  openSchedulePanel(scheduleState?.duration_minutes || 30);
+}
+
 async function saveContact(replaces, edit = null) {
   const companyId = outreachSelectedId;
   const email = (document.getElementById('contact-email')?.value || '').trim();
@@ -6995,7 +7074,16 @@ function renderOutreachSidebarContext() {
 
   const site = c.website ? (/^https?:/.test(c.website) ? c.website : 'https://' + c.website) : null;
   const siteLabel = c.website ? c.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
-  const line2 = [place, c.phone, c.general_email].filter(Boolean).map(esc)
+  // Where they are is a control, not a caption: click it to set city, state
+  // or province, country and timezone. Their zone reads beside it with where
+  // it came from, so an inference is never mistaken for something they said.
+  const tzInfo = c.their_time_zone || null;
+  const tzText = tzInfo?.timeZone
+    ? `${c.their_time_zone_label || tzInfo.timeZone}${tzInfo.source === 'set by you' ? '' : ' <span class="outreach-place-src">' + esc(tzInfo.source) + '</span>'}`
+    : '<span class="outreach-place-missing">timezone unknown</span>';
+  const placeHtml = `<button class="outreach-place-edit" onclick="showLocationForm()"
+      title="Edit city, state/province, country and timezone">${place ? esc(place) : '<span class="outreach-place-missing">no location</span>'} <span class="outreach-place-tz">&middot; ${tzText}</span></button>`;
+  const line2 = [placeHtml, ...[c.phone, c.general_email].filter(Boolean).map(esc)]
     .join('<span class="customer-sep">&middot;</span>');
 
   // The CS sidebar's parts, in the CS order: a header bar (the link out, the
@@ -7018,6 +7106,7 @@ function renderOutreachSidebarContext() {
         <span class="outreach-channel-chip outreach-channel-${esc(entry.channel)}">${esc(channelLabel)}</span>
       </div>
       ${line2 ? `<div class="customer-compact-line2">${line2}</div>` : ''}
+      <div id="outreach-location-form"></div>
       ${flags.length ? `<div class="customer-compact-line2">${flags.map(f => `<span class="badge badge-muted">${esc(f)}</span>`).join(' ')}</div>` : ''}
     </div>
     ${c.description || c.address ? `
@@ -8155,9 +8244,10 @@ function renderSchedulePanel() {
           </select>
         </label>
         <label class="schedule-inline">Their timezone
-          <input type="text" id="schedule-tz-input" placeholder="not set"
+          <input type="text" id="schedule-tz-input" placeholder="e.g. America/Chicago"
             value="${esc(s.their_timezone || '')}"
-            onchange="openSchedulePanel(scheduleState?.duration_minutes, this.value)">
+            title="Saved on the company — blank it to derive from their city and state again"
+            onchange="saveScheduleTimezone(this.value)">
         </label>
       </div>
       <div class="schedule-agenda">

@@ -208,3 +208,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_drafts_one_pending
   ON b2b_drafts (company_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_b2b_drafts_status ON b2b_drafts (status);
 CREATE INDEX IF NOT EXISTS idx_b2b_drafts_tier ON b2b_drafts (queue_tier) WHERE status = 'pending';
+
+-- 2026-09-09: stored timezone per company (see customer-service/migrations-2026-09-09-b2b-company-timezone.sql)
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS timezone TEXT;          -- IANA, e.g. America/Chicago
+ALTER TABLE b2b_companies ADD COLUMN IF NOT EXISTS timezone_source TEXT;   -- 'operator' | 'inferred'

@@ -23,6 +23,7 @@ async function addProspect(sb, {
   name, channel = 'lgbtq_org', entity_type = 'company',
   website = null, email = null, contact_name = null,
   referred_by = null, blurb = null, country = null,
+  city = null, region = null,
   contact_form_url = null,
   draft = true, steer = null,
   // 'referral' (someone recommended them) or 'inbound_email' (they wrote to
@@ -61,10 +62,22 @@ async function addProspect(sb, {
     // An org that wrote to us first is as warm as a referral gets.
     temperature: referred_by || source === 'inbound_email' ? 'warm' : 'cold',
     website, general_email: email, country, contact_form_url,
+    // Only when given — a re-add without them must not blank what is known.
+    ...(city ? { city } : {}),
+    ...(region ? { region } : {}),
     source,
     metadata: meta,
   }, { onConflict: 'id' });
   if (error) throw new Error(`company upsert: ${error.message}`);
+
+  // The stored timezone follows the location. Never fatal: a missing column
+  // (migration not yet applied) leaves the prospect intact and the zone
+  // derived live, exactly as before.
+  try {
+    await require('./companyLocation').updateCompanyLocation(sb, { company_id: id });
+  } catch (e) {
+    console.warn(`[addProspect] timezone not stored for ${id}: ${e.message}`);
+  }
 
   if (existing?.relationship_state === 'lost') {
     return { id, existed: true, warning: `'${id}' already exists and is marked lost (${existing.metadata?.closed_reason || 'no reason recorded'}) — not re-opened, no draft generated. Re-open deliberately if that was intended.` };
