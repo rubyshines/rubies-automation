@@ -8197,7 +8197,17 @@ function scheduleWeeks(s) {
     for (let i = 0; i < 5; i++) {
       const iso = scheduleAddDays(mon, i);
       const real = byDate.get(iso);
-      days.push(real || { date: iso, placeholder: iso === today ? 'today' : iso < first ? 'past' : 'beyond', slots: [], busyBlocks: [], notes: [] });
+      // Today is drawn from the engine's read-only `today`: its bookings and
+      // notes, no slots, so the column looks like the calendar without
+      // offering a same-day time.
+      const isToday = iso === today && s.today?.date === today;
+      days.push(real || {
+        date: iso,
+        placeholder: iso === today ? 'today' : iso < first ? 'past' : 'beyond',
+        slots: [],
+        busyBlocks: isToday ? (s.today.busyBlocks || []) : [],
+        notes: isToday ? (s.today.notes || []) : [],
+      });
     }
     weeks.push({ monday: mon, days });
   }

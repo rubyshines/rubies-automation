@@ -289,3 +289,17 @@ test('bestFits respect their workday, and fall back when nothing survives it', (
   assert.strictEqual(ber.bestFits[0].label, '4:30 PM');
   assert.strictEqual(ber.bestFits[0].unsociableForThem, true);
 });
+
+test('today is returned read-only: its bookings and notes, no slots', () => {
+  const busy = [{ start: et('2026-09-09', 14), end: et('2026-09-09', 14, 30), summary: 'Natta call', isCall: true }];
+  const allDay = [{ date: '2026-09-09', summary: 'Stock count' }];
+  const grid = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, allDay, days: 1 });
+  assert.strictEqual(grid.today.date, '2026-09-09');
+  assert.strictEqual(grid.today.label, 'Wed Sept 9');
+  assert.deepStrictEqual(grid.today.busyBlocks.map(b => [b.label, b.summary, b.isCall]), [['2:00 PM–2:30 PM', 'Natta call', true]]);
+  assert.deepStrictEqual(grid.today.notes.map(n => n.summary), ['Stock count']);
+  assert.strictEqual(grid.today.slots, undefined);
+  // The bookable grid still starts tomorrow, and today's block is not on it.
+  assert.strictEqual(grid.days[0].date, '2026-09-10');
+  assert.strictEqual(grid.days[0].busyBlocks.length, 0);
+});

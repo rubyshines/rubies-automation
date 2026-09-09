@@ -240,6 +240,42 @@ function buildSlots({
   }
 
   const todayIso = zonedDateParts(now, timeZone).iso;
+
+  /** What is booked on a calendar date, named, clamped to the working window. */
+  const bookingsOn = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dayOpen = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_START_HOUR }, timeZone).getTime();
+    const dayClose = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_END_HOUR }, timeZone).getTime();
+    const dayBusy = busyIntervals.filter(b => b.start < dayClose && b.end > dayOpen);
+    const busyBlocks = dayBusy.map(b => ({
+      start: new Date(b.start).toISOString(),
+      end: new Date(b.end).toISOString(),
+      summary: b.summary,
+      isCall: !!b.isCall,
+      // Clamped to the working day so an all-morning block from 7am reads as
+      // starting at 9 rather than implying the grid is hiding something.
+      label: `${formatTimeInZone(new Date(Math.max(b.start, dayOpen)), timeZone)}`
+        + `–${formatTimeInZone(new Date(Math.min(b.end, dayClose)), timeZone)}`,
+    }));
+    return {
+      dayBusy,
+      busyBlocks,
+      notes: allDayByDate.get(iso) || [],
+      label: formatDayInZone(wallClockToUtc({ year: y, month: m, day: d, hour: 12 }, timeZone), timeZone),
+    };
+  };
+
+  // Today is never bookable (no same-day rule) but it IS on the calendar, and
+  // the week view draws it so the cross-reference matches what Jamie sees in
+  // Google Calendar. Bookings only — no slots.
+  const todayBookings = bookingsOn(todayIso);
+  const today = {
+    date: todayIso,
+    label: todayBookings.label,
+    notes: todayBookings.notes,
+    busyBlocks: todayBookings.busyBlocks,
+  };
+
   const out = [];
   let cursor = addDaysToIso(todayIso, 1); // no same-day booking
   let guard = 0;
@@ -253,9 +289,7 @@ function buildSlots({
 
     // The day's bookings, for grouping. Anything touching the working window
     // counts, so a 7-9am block still makes 9:00 "right after" it.
-    const dayOpen = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_START_HOUR }, timeZone).getTime();
-    const dayClose = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_END_HOUR }, timeZone).getTime();
-    const dayBusy = busyIntervals.filter(b => b.start < dayClose && b.end > dayOpen);
+    const { dayBusy, busyBlocks, notes, label } = bookingsOn(cursor);
 
     for (let mins = BUSINESS_START_HOUR * 60; mins <= lastStartMinutes; mins += SLOT_GRANULARITY_MIN) {
       const start = wallClockToUtc(
@@ -301,26 +335,9 @@ function buildSlots({
       slots.push(slot);
     }
 
-    // What is actually booked that day, named and with its real span. The grid
-    // can only say a slot is taken; this says what it is taken BY, which is what
-    // tells you whether a neighbouring slot is realistic (a 10am across town is
-    // not the same as a 10am call).
-    const busyBlocks = dayBusy
-      .map(b => ({
-        start: new Date(b.start).toISOString(),
-        end: new Date(b.end).toISOString(),
-        summary: b.summary,
-        isCall: !!b.isCall,
-        // Clamped to the working day so an all-morning block from 7am reads as
-        // starting at 9 rather than implying the grid is hiding something.
-        label: `${formatTimeInZone(new Date(Math.max(b.start, dayOpen)), timeZone)}`
-          + `–${formatTimeInZone(new Date(Math.min(b.end, dayClose)), timeZone)}`,
-      }));
-
-    const notes = allDayByDate.get(cursor) || [];
     out.push({
       date: cursor,
-      label: formatDayInZone(wallClockToUtc({ year: y, month: m, day: d, hour: 12 }, timeZone), timeZone),
+      label,
       notes,
       slots,
       busyBlocks,
@@ -334,6 +351,7 @@ function buildSlots({
     theirTimeZone: theirTimeZone || null,
     durationMinutes: duration,
     days: out,
+    today,
     bestFits: pickBestFits(out, { respectTheirWorkday: !!theirTimeZone }),
   };
 }
