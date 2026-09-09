@@ -1,70 +1,34 @@
 ---
-name: lgbtq-partnerships
-description: "Expand LGBTQ+ org partnerships — donation closet programs, org purchases using inclusion funding"
-metadata: 
-  node_type: memory
-  type: project
-  domains: 
-    - community
-  last_updated: 2026-09-02
-  originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
+name: LGBTQ+ Partnerships
+description: Expand LGBTQ+ org partnerships — donation closet programs, org purchases using inclusion funding
+type: initiative
+domains: [community]
+last_updated: 2026-09-09
+originSessionId: 5759f460-bb54-4b38-a734-07510ab9ddf3
 ---
 
 ## Goal
 Expand LGBTQ+ org partnerships. Get orgs to purchase using their inclusion/donation closet funding. Grow the existing donation program (rubyshines.com/pages/donate-your-pre-loved-rubies-clothing).
 
 ## Phases
-1. Donation program — live and running (14 partners across US/CA/CH/AU/DE)
-2. Expand partner network — ongoing, now driven by Google Form submissions ingested via MCP
+1. Donation program — live and running (partners across US/CA/CH/AU/DE)
+2. Expand partner network — ongoing: Google Form submissions ingested via MCP, plus outreach-engine cold intros and referred prospects
 3. Org purchasing via inclusion funding — early
 4. Free swimwear program — migrated into rubies-automations (Supabase SSOT + dashboard tab), full history backfilled
 
 ## Current Status
-Active programs running. As of 2026-05-28, rubies-automations is the SSOT for donation partners — Supabase `donation_partners` table feeds CS routing AND publishes a static JSON asset to the theme. New submissions flow through `donation_partner_create_from_survey` in the ad-hoc operator console (preview-confirm, auto-geocode, auto-extract logo, Shopify-CDN re-host, auto-merge + deploy). All 14 active partner logos are on cdn.shopify.com.
+Active programs running. rubies-automations is the SSOT for donation partners: Supabase `donation_partners` feeds CS routing AND publishes the JSON asset the theme reads. New submissions flow through `donation_partner_create_from_survey` (preview-confirm, auto-geocode, auto-extract logo, CDN re-host, auto-merge + deploy). Org outreach runs through the B2B outreach engine (see initiative_b2b_expansion.md for engine progress).
 
-## UK Expansion (2026-07-24)
-Started via the outreach engine's referred-prospect intake. First objective: establish the UK donation partner network (none exist; 30% purchase tier). Five active prospects: **Mermaids** (intro SENT 2026-07-24 — the engine's first real send; auto-reply received, human reply pending; referred by Arianna Bernucci, who has the personal history with them — NOT Jamie's story), TransActual + Not A Phase (Arianna), The Clare Project + Trans Pride Brighton (customer donation thread; TPB has a formal partner programme). AllSorts Youth Project: declined via a customer — marked lost, do not outreach. Drafts #15-#18 pending in the Outreach queue, to send staggered. Uniting Pride (Illinois) call-first onboarding draft #11 also pending.
-
-## Cold Intro Round 1 (2026-09-02)
-The org cold intro is now a locked template (founder story, "Our program offers the
-following:" with donations + always-present discount bullets, call CTA, Talk soon
-sign-off) with two fixed subject lines A/B tested by alternation — locked line by line
-with Jamie after the first freestyled batch mentioned the discount inconsistently.
-The 8 vetted cold orgs regenerated onto it, pending review and send. Measurement:
-reply within 14 days by subject variant, bounces excluded, cumulative across rounds
-(round 1's n=8 is directional only). Drafting policy behind it (auto-draft initiating,
-Jamie writes replies, Sonnet + edit-rate tripwire) is a domain_b2b_sales.md Key Decision.
-
-## Partner Re-Engagement Round (2026-08-11)
-First check-in sweep across all 18 active partners. Drafts written and grounded in real
-history: `.claude/plans/org-checkin-2026-08.md`. Sends are manual, none gone out yet.
-- Most partners had genuinely gone quiet: 12 of 18 last heard from us between Dec 2024 and Nov 2025, while donations kept flowing the whole time. Our three highest-volume partners (MassTPC 15 packages, BAGLY 13, Raleigh 13) were among them.
-- Six are not check-ins but things WE owe: an unanswered asset request, an unanswered second program at a partner org, a promised meeting, a promised follow-up, an unfinished listing rename, an unacknowledged contact handoff. Consistent with the "the org failure mode is ours" read already in the advisor prompt.
-- Contact churn confirmed as the standing risk: Oasis handed off in June, Carleton's is a student post that turns over yearly, Valid USA's contact left the state and the org is renaming to Reach Pluto.
-- Engine can now draft these itself (donation facts + discount rate in advisor context). Next: send the 18, then decide whether the seasonal `community_checkin` cadence should run in push mode for partners.
-
-## Size-Aware Routing (2026-08-20)
-A partner reported that the donations we route them include sizes they cannot distribute.
-Sizes an org accepts are now a routing constraint rather than a display field: partners are
-filtered on size before proximity, and a mixed box only goes to an org that can take all of
-it. See domain_community.md. The onboarding form's size question was recut into two
-categories at the same time; the existing network was backfilled from the old answers, with
-seven orgs landing on teen-and-adult only. Five of those seven were inferred rather than
-asked, so their check-in is the moment to confirm it.
-
-## Routing Weighting Fix (2026-08-24)
-The first partner in the NY/NJ/PA/CT corridor was taking ~73% of every nationally
-spread routing, including boxes from Maine, Atlanta and Chicago. Two causes, both
-fixed: the national tier ignored distance entirely, and load was a raw 90-day total
-that flattered any partner younger than the window. ~20% of US donation routings
-originate in that corridor, so the new partner should settle around a fifth of US
-flow rather than near zero. Open: nobody has asked them what volume they can absorb.
+- **UK expansion (started 2026-07-24):** first objective is a UK donation partner network (none exist; 30% purchase tier). Prospects came through referrals and a customer donation thread; the first engine send was a UK org intro. One org declined via a customer and is marked lost.
+- **Cold intro round 1 (2026-09-02):** the org cold intro is a locked template (founder story, program offer with donations + discount bullets, call CTA) with two fixed subject lines A/B tested by alternation, locked line by line with Jamie. Measurement: reply within 14 days by subject variant, bounces excluded, cumulative across rounds. Drafting policy (auto-draft initiating, Jamie writes replies, Sonnet + edit-rate tripwire) is a domain_b2b_sales.md Key Decision.
+- **Partner re-engagement round (2026-08-11):** first check-in sweep across all active partners, drafts grounded in real history (`.claude/plans/org-checkin-2026-08.md`). Most partners had genuinely gone quiet for a year while donations kept flowing; several items were things WE owed (unanswered requests, promised follow-ups). Contact churn confirmed as the standing org risk. Check-ins are now one October sitting on the cadence.
+- **Size-aware routing (2026-08-20):** sizes an org accepts are a routing constraint, not a display field; the onboarding form's size question was recut into two categories and the network backfilled (a few inferred rather than asked; confirm at check-in).
+- **Routing weighting fix (2026-08-24):** load compares rates rather than totals and distance weights the national tiers, so a new corridor partner settles at its natural share rather than taking every box. Open: nobody has asked partners what volume they can absorb (parked).
 
 ## Decisions Made
-- 2026-08-24 — Load balancing compares rates rather than totals, and distance weights the two tiers that can span it. The 2026-07 trailing-window change shortened a new partner's runaway but did not shallow it; measuring volume per day active ends it after a single box.
-- 2026-08-20 — Partner size acceptance recut into two categories and enforced in routing. The old three-checkbox survey question had overlapping ranges and was never read by anything, so an org's stated limits had no effect on what we sent them.
-- 2026-05-28 — Partner registry is the SSOT in rubies-automations. Theme reads a published JSON asset (`assets/donation-partners.json`); no more hand-edited section blocks. Updates flow only via MCP tools.
-- 2026-05-28 — New submissions ingest via MCP with preview/confirm. Auto-geocode (Google Maps), auto-extract logo (Haiku from org website), re-host logo on Shopify CDN, then auto-merge to theme main on publish (Shopify auto-deploys ~30s).
-- 2026-05-28 — Submissions match to existing partners by website domain (org names drift; domains stay stable).
-- 2026-06-24 — Free swimwear program (free bikini bottom for trans/non-binary kids in need) moved off the legacy Google Apps Script + manual sheet into rubies-automations: Supabase `free_swimwear_requests` SSOT, deterministic eligibility (Brazil/non-trans silently rejected), one-line Opus summary, one-click approve (issues a code under the existing Shopify price rule + SendGrid acceptance email), daily lifecycle reconcile. 1765 applications backfilled. See domain_community.md.
-- 2026-06-29 — Free swimwear repeat/duplicate handling shipped (PR #24): intake-time Opus recipient-match (fuzzy identity, fails conservative so siblings aren't merged) + pure rule — collapse same-day resubmits, close within-year repeats with a friendly reapply-after email, badge returning families and possible second children. See domain_community.md.
+- 2026-09-02 — Corporate ERGs are not a segment to pursue; treat an inbound ERG as an org with the ERG noted.
+- 2026-08-24 — Load balancing compares rates rather than totals, and distance weights the tiers that can span it.
+- 2026-08-20 — Partner size acceptance recut into two categories and enforced in routing; the old survey question had overlapping ranges and was never read by anything.
+- 2026-05-28 — Partner registry is the SSOT in rubies-automations. Theme reads a published JSON asset; updates flow only via MCP tools. Submissions match existing partners by website domain (names drift, domains stay stable). New submissions ingest with preview/confirm, auto-geocode, logo extraction and CDN re-host, then auto-merge to the theme.
+- 2026-06-24 — Free swimwear program moved off the legacy Apps Script + sheet into rubies-automations: Supabase SSOT, deterministic eligibility, one-line Opus summary, one-click approve, daily lifecycle reconcile. See domain_community.md.
+- 2026-06-29 — Free swimwear repeat/duplicate handling: intake-time recipient match (fails conservative) + a pure rule for same-day resubmits, within-year repeats, and returning families.

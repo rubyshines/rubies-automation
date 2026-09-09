@@ -26,7 +26,7 @@ All cron times are UTC. Each has a `railway/<name>.toml` with its `cronSchedule`
 | daily-seo-tracking | `15 10 * * *` (6:15am ET) | `seo-tracking/daily-seo-tracking.js` |
 | daily-cs-comparison | `30 11 * * *` (7:30am ET) | `analytics/daily-cs-comparison.js` |
 | daily-cs-stats | `0 12 * * *` (8:00am ET) | `analytics/daily-cs-stats.js` |
-| daily-sync-all | `30 12 * * *` (8:30am ET) | `daily-sync-all.js` — 19 sub-pipelines |
+| daily-sync-all | `30 12 * * *` (8:30am ET) | `daily-sync-all.js` (authoritative list of sub-pipelines is in the file) |
 | weekly-seo-digest | `45 10 * * 1` (Mon 6:45am ET) | `seo-tracking/weekly-seo-digest.js` |
 | monthly-competitor-pricing | `0 14 1 * *` (1st, 10am ET) | `competitor-pricing/monthly-competitor-pricing.js` |
 | passport-tracking-sync | `37 * * * *` (hourly at :37) | `customer-service/sync/syncPassportDelivery.js --limit 50` |
@@ -35,7 +35,7 @@ KB Refresh runs as a `daily-sync-all` step self-gated to Mondays UTC (re-harvest
 
 Some cron start commands run `scripts/write-service-account-key.js` first (writes Google service account JSON from env var to disk at runtime): daily-seo-tracking, daily-sync-all, weekly-seo-digest, monthly-competitor-pricing.
 
-> **`cs-drift-check` — retired (2026-07-08).** The hourly drift-check service was deleted from Railway. It never actually ran as intended: its config-as-code pointer was never moved off the root `railway.toml`, so it ran a duplicate `node webhooks/server.js` from 2026-06-14 until deletion. Jamie's call: the daily sync's Ticket Reconciliation (in the "RUBIES Daily Sync" digest) is the drift safety net; an hourly service isn't needed. `customer-service/sync/hourlyDriftCheck.js` remains for manual runs. Gotcha that caused the 2026-07 outage this decision came from: every Gorgias HTTP integration URL must carry `?secret=<GORGIAS_WEBHOOK_SECRET>` — the webhook server 401s without it, BEFORE any logging, so a misconfigured integration fails silently.
+> **No hourly drift-check service.** The daily sync's Ticket Reconciliation (in the "RUBIES Daily Sync" digest) is the drift safety net; `customer-service/sync/hourlyDriftCheck.js` remains for manual runs. Gotcha: every Gorgias HTTP integration URL must carry `?secret=<GORGIAS_WEBHOOK_SECRET>`; the webhook server 401s without it BEFORE any logging, so a misconfigured integration fails silently.
 
 ### Local-Only Services
 
@@ -61,7 +61,7 @@ Some cron start commands run `scripts/write-service-account-key.js` first (write
 - **Push to main** → Railway auto-deploys the webhook server. Cron services pick up the new code on their next scheduled run.
 - **Env var change** → Set on main service (Railway dashboard or GraphQL API) → run `copy-railway-vars.js` → webhook server auto-redeploys (env var change triggers redeploy).
 - **New cron service** → Create in Railway dashboard → add `railway/<name>.toml` with build/deploy/schedule config → add service ID to `scripts/copy-railway-vars.js` CRON_SERVICES array → run copy script.
-- **Local dashboard** → After code changes, restart: `lsof -ti:3847 | xargs kill -9` then relaunch.
+- **Local dashboard** → After server-side code changes, restart with `scripts/restart-dashboard.sh` (kills by command match, verifies exactly one process; never kill by port).
 
 ## Build Configuration
 

@@ -15,7 +15,7 @@
 
 ## Always Read (every session)
 - [How we collaborate](feedback_collaboration.md) — process, communication, output format
-- [Technical rules](feedback_technical_rules.md) — architecture patterns, Opus-only, prompt-not-code, pagination
+- [Technical rules](feedback_technical_rules.md) — architecture patterns, right model for the task, prompt-not-code, pagination
 - [Parked items](parked.md) — single journal for deferred bugs, ideas, half-formed plans (use /park and /parked)
 
 ## References
@@ -33,20 +33,18 @@
 - [Tech & Website](domain_tech.md) — webhooks, Railway, sync pipelines, shared clients, Gmail
 
 ## Active Projects
-- [CS Advisor Efficiency](project_cs_efficiency.md) — cost/latency optimization, shadow model eval infrastructure and verdicts
 - [Advisor Accuracy Rebuild](project_advisor_accuracy_rebuild.md) — eval-first attack on draft quality: measurement repair, founder rule audits, prompt-variant A/B, fair Opus 5 test
 - [Calendar-driven meetings](project_meeting_sync.md) — calendar sync for every B2B call, no-show handling, Wispr meeting notes ingest
+- [Mailing Address Change](project_mailing_address_change.md) — tracked checklist for moving the business mailing address to The Fashion Zone
 
 ## Initiatives
 - [AI Infrastructure](initiative_ai_infrastructure.md) — MCP tools, sync pipelines, webhooks, dashboard, memory system
 - [CS Automation](initiative_cs_automation.md) — AI advisor reducing Jamie's CS time
 - [Pricing Strategy 2026](initiative_pricing_strategy.md) — price increases, fixed bundle pricing, DDP optimization
-- [Naomi Gaff Launch](initiative_naomi_launch.md) — bring Naomi gaff to market as full production product
 - [IRAP Proposal](initiative_irap_proposal.md) — NRC-IRAP funding for AI ops automation
 - [B2B Expansion](initiative_b2b_expansion.md) — grow retailer partnerships and wholesale channel
 - [SEO & Content](initiative_seo_content.md) — drive organic traffic and revenue
 - [Traffic & Conversion Intelligence](initiative_traffic_conversion_intelligence.md) — GA4 behavioral analysis + attribution via BigQuery raw-event export
 - [Email Campaigns](initiative_email_campaigns.md) — Sadie MacDonald using RUBIES tooling for Klaviyo
-- [Website Theme](initiative_website_theme.md) — build out Shopify theme launched Nov 2025, Natta
 - [LGBTQ+ Partnerships](initiative_lgbtq_partnerships.md) — expand org partnerships, donation closet programs
 - [Production Pipeline](initiative_production_pipeline.md) — unify inventory projections, production orders, pre-orders, QC, Warehance receiving

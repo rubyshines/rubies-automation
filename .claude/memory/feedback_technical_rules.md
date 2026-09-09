@@ -258,28 +258,7 @@ Both are project-scoped, so every checkout carries them. The hooks stop the *cur
 they can't stop a concurrent session that lacks them. Hook/settings changes need a Claude Code
 restart to arm.
 
-**A hook that reads the command string is a parser, and parsers need tests (2026-08-19).** Both hooks
-work out which tree a command runs in by reading `cd` out of the command, and both took the LAST `cd`
-anywhere in it — wrong whenever the command changes directory again *after* the git verb, which is the
-everyday shape (`cd <worktree> && git push origin HEAD:main && cd <main> && git pull`). Each was wrong
-in both directions: the memory gate blocked pushes that DID carry a memory commit and passed pushes
-that did not, and `block-main-checkout-git` would allow a main-checkout commit laundered by a trailing
-`cd` into a worktree. They now anchor to the position of the matched git verb, covered by
-`customer-service/test/gitHooks.test.js` against a throwaway repo — a hook test that reads this repo's
-ambient state passes or fails for reasons unrelated to the hook. The design lesson beyond the parsing:
-**a guard that misfires on the correct workflow teaches people to reach for its override**, which is
-the exact habit it exists to prevent, so a false block is not a safe default but a slow failure.
-
-**Second round, 2026-08-24 — the same parser was matching verbs in the wrong POSITION.** `git
-merge-base --is-ancestor` (a read-only query) was blocked, because a substring match treats `-` and
-`.` as word boundaries: `merge-base`, `merge-tree`, `commit-graph`, `config merge.ff` and `log
---merge` all read as mutating. The hook now tokenises, skips git's global options (`-c`, `--no-pager`
-and friends) and requires the verb in SUBCOMMAND position. Fixing that surfaced a real hole beside it:
-`git -C <dir>` relocates a command exactly like a `cd` and the hook could not see it, so `git -C <main
-checkout> commit` ran unguarded from any worktree. `-C` is now resolved like a `cd`, and beats one.
-Generalises: **when a guard reads a command string, enumerate the ways that command can name its own
-target** — a directory can arrive by `cd`, by `-C`, or by `--git-dir`, and covering one of three is
-what makes a guard feel reliable while not being.
+**A hook that reads a command string is a parser, and parsers need tests.** Both hooks work out which tree a command runs in by reading the directory out of the command. Two rounds of fixes established the rules now covered by `customer-service/test/gitHooks.test.js` (against a throwaway repo, never this repo's ambient state): anchor on the git verb's position rather than the last `cd`; tokenise and require the verb in subcommand position so `merge-base`, `commit-graph`, `config merge.ff` and `log --merge` are not read as mutating; and enumerate every way a command can name its own target (`cd`, `git -C`, `--git-dir`), since covering one of three is what makes a guard feel reliable while not being. A guard that misfires on the correct workflow teaches people to reach for its override, which is the exact habit it exists to prevent, so a false block is a slow failure, not a safe default.
 
 ## Memory commits never leave the main checkout — two tracks, branch-from-latest
 
