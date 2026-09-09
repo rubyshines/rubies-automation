@@ -219,3 +219,73 @@ test('a day with nothing booked carries an empty block list, not undefined', () 
   const grid = buildSlots({ now: new Date(et('2026-08-20', 9)), days: 1 });
   assert.deepStrictEqual(grid.days[0].busyBlocks, []);
 });
+
+// ── Grouping ────────────────────────────────────────────────────────────────
+// Jamie stacks calls: the slot touching an existing call is the one to offer.
+const { scoreAgainstBlocks, pickBestFits } = require('../../b2b-outreach/lib/availability');
+
+test('scoreAgainstBlocks: right after beats right before beats nearby beats nothing', () => {
+  const ms = iso => new Date(iso).getTime();
+  const blocks = [{ start: ms(et('2026-09-10', 9, 30)), end: ms(et('2026-09-10', 10)), summary: 'RUBIES x Le JAG' }];
+  const at = (h, m) => scoreAgainstBlocks(ms(et('2026-09-10', h, m)), ms(et('2026-09-10', h, m)) + 30 * 60000, blocks);
+  assert.deepStrictEqual(at(10, 0), { score: 0, reason: 'right after RUBIES x Le JAG', adjacentTo: 'RUBIES x Le JAG' });
+  assert.deepStrictEqual(at(9, 0), { score: 1, reason: 'right before RUBIES x Le JAG', adjacentTo: 'RUBIES x Le JAG' });
+  assert.deepStrictEqual(at(11, 0), { score: 2, reason: 'after RUBIES x Le JAG', adjacentTo: null });
+  assert.deepStrictEqual(at(15, 0), { score: 9, reason: null, adjacentTo: null });
+  // Overlapping a block is not a free slot and never scores against it.
+  assert.strictEqual(at(9, 30).score, 9);
+});
+
+test('the grid scores every free slot and names what it groups with', () => {
+  // Thursday 10 Sept 2026: Le JAG 9:30, then Dion 10:00 — back to back.
+  const busy = [
+    { start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'RUBIES x Le JAG', isCall: true },
+    { start: et('2026-09-10', 10), end: et('2026-09-10', 10, 30), summary: 'Dion Bourque', isCall: true },
+  ];
+  const grid = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 2 });
+  const thu = grid.days[0];
+  const byLabel = Object.fromEntries(thu.slots.map(s => [s.label, s]));
+  assert.strictEqual(byLabel['10:30 AM'].score, 0);
+  assert.strictEqual(byLabel['10:30 AM'].reason, 'right after Dion Bourque');
+  assert.strictEqual(byLabel['9:00 AM'].score, 1);
+  assert.strictEqual(byLabel['9:00 AM'].reason, 'right before RUBIES x Le JAG');
+  assert.strictEqual(byLabel['11:00 AM'].score, 2);
+  assert.strictEqual(byLabel['3:00 PM'].score, 9);
+  assert.strictEqual(byLabel['9:30 AM'].score, null); // busy
+  assert.strictEqual(thu.busyBlocks[0].isCall, true);
+  // An empty day scores nothing.
+  assert.ok(grid.days[1].slots.every(s => s.score === 9 && s.reason === null));
+});
+
+test('bestFits: one per booked day, tightest first, empty days never suggested', () => {
+  const busy = [
+    { start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'Le JAG' },
+    { start: et('2026-09-11', 15), end: et('2026-09-11', 15, 30), summary: 'Uniting Pride' },
+    { start: et('2026-09-15', 11), end: et('2026-09-15', 11, 30), summary: 'P10 Qc' },
+    { start: et('2026-09-16', 9), end: et('2026-09-16', 10), summary: 'Dentist' },
+  ];
+  const grid = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 6 });
+  assert.deepStrictEqual(grid.bestFits.map(f => [f.date, f.label, f.reason]), [
+    ['2026-09-10', '10:00 AM', 'right after Le JAG'],
+    ['2026-09-11', '3:30 PM', 'right after Uniting Pride'],
+    ['2026-09-15', '11:30 AM', 'right after P10 Qc'],
+  ]);
+  // Four booked days, three fits — and Mon 14 (empty) is not among them.
+  assert.ok(!grid.bestFits.some(f => f.date === '2026-09-14'));
+  assert.strictEqual(pickBestFits(grid.days, { limit: 10 }).length, 4);
+});
+
+test('bestFits respect their workday, and fall back when nothing survives it', () => {
+  // 9:00 ET is 8:00 for Winnipeg — before their day — so the right-before
+  // slot loses to the right-after one even though both are tight.
+  const busy = [{ start: et('2026-09-10', 9, 30), end: et('2026-09-10', 10), summary: 'Le JAG' }];
+  const wpg = buildSlots({ now: new Date(et('2026-09-09', 9)), busy, days: 1, theirTimeZone: 'America/Winnipeg' });
+  assert.strictEqual(wpg.bestFits[0].label, '10:00 AM');
+  // A block late in the day for a Berlin partner: every free slot after it is
+  // outside their 9-5, and the filter is dropped rather than offering nothing.
+  const late = [{ start: et('2026-09-10', 16), end: et('2026-09-10', 16, 30), summary: 'Natta' }];
+  const ber = buildSlots({ now: new Date(et('2026-09-09', 9)), busy: late, days: 1, theirTimeZone: 'Europe/Berlin' });
+  assert.strictEqual(ber.bestFits.length, 1);
+  assert.strictEqual(ber.bestFits[0].label, '4:30 PM');
+  assert.strictEqual(ber.bestFits[0].unsociableForThem, true);
+});

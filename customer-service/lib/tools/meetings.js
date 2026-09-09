@@ -37,7 +37,11 @@ async function handleAvailability(args = {}) {
     theirTimeZone: tz.timeZone,
   });
 
-  // A compact rendering: the console wants to read this, not parse it.
+  // A compact rendering: the console wants to read this, not parse it. Best
+  // fits lead — slots touching a call already on the calendar — so any advisor
+  // asked "when am I free" gives the same grouped answer the panel does.
+  const fits = (grid.bestFits || []).map(f =>
+    `${f.dayLabel} ${f.label}${f.theirLabel ? ` (${f.theirLabel})` : ''} — ${f.reason}`);
   const lines = grid.days.map(day => {
     const free = day.slots.filter(s => !s.busy);
     const notes = day.notes.length ? `  [${day.notes.map(n => n.summary).join('; ')}]` : '';
@@ -55,7 +59,8 @@ async function handleAvailability(args = {}) {
     their_timezone_label: tz.timeZone ? timeZoneLabel(tz.timeZone) : null,
     duration_minutes: grid.durationMinutes,
     calendars_checked: grid.calendars,
-    summary: lines.join('\n'),
+    summary: (fits.length ? `Best fits, next to a call already booked:\n${fits.join('\n')}\n\n` : '') + lines.join('\n'),
+    best_fits: grid.bestFits || [],
     days: grid.days,
   };
 }
@@ -107,7 +112,7 @@ async function handleSchedule(args = {}) {
 module.exports = [
   {
     name: 'calendar_availability',
-    description: 'When is Jamie free? Reads ALL of his calendars (rubyshines, personal, bridgecard) and returns 30-minute slots inside 9-5 Eastern on weekdays, starting the next business day (no same-day booking). Pass company_id to also get each slot labelled in the other party\'s local time, inferred from their address. Read-only — books nothing.',
+    description: 'When is Jamie free? Reads ALL of his calendars (rubyshines, personal, bridgecard) and returns 30-minute slots inside 9-5 Eastern on weekdays, starting the next business day (no same-day booking). Jamie groups calls: best_fits lists the slots that sit right against a call already on the calendar — offer those first. Pass company_id to also get each slot labelled in the other party\'s local time, inferred from their address. Read-only — books nothing.',
     inputSchema: {
       type: 'object',
       properties: {

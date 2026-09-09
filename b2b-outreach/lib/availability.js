@@ -108,6 +108,89 @@ function isWeekendIso(iso) {
 }
 
 // ---------------------------------------------------------------------------
+// Grouping (pure)
+// ---------------------------------------------------------------------------
+
+/** Same-day gap, in minutes, still counted as "grouped" though not tight. */
+const GROUP_GAP_MIN = 60;
+
+/**
+ * How well a free slot groups with what is already booked that day.
+ *
+ * Jamie stacks calls: when a day already holds one, the next should sit
+ * against it rather than open a second hole in the day (2026-09-09). Calls
+ * stay 30 minutes; "tight" means no gap at all. Scores, lower is better:
+ *   0  starts the minute an existing block ends ("right after")
+ *   1  ends the minute an existing block starts ("right before")
+ *   2  within GROUP_GAP_MIN of a block on the same day
+ *   9  nothing nearby — an empty day, or far from anything
+ * After beats before because a call that runs long then spills into open
+ * time rather than into the next call. Any timed event counts, since the
+ * calendar cannot say which are calls; the name is always returned so the
+ * operator can tell. Pure.
+ *
+ * @param startMs  slot start (epoch ms)
+ * @param endMs    slot end
+ * @param blocks   [{ start: ms, end: ms, summary }] busy intervals of that day
+ */
+function scoreAgainstBlocks(startMs, endMs, blocks) {
+  let best = null;
+  for (const b of blocks) {
+    if (b.start < endMs && b.end > startMs) continue; // overlaps: not a free slot
+    const after = startMs >= b.end;
+    const gap = after ? (startMs - b.end) / 60000 : (b.start - endMs) / 60000;
+    let score;
+    if (gap === 0) score = after ? 0 : 1;
+    else if (gap <= GROUP_GAP_MIN) score = 2;
+    else continue;
+    if (!best || score < best.score || (score === best.score && gap < best.gap)) {
+      best = { score, gap, side: after ? 'after' : 'before', summary: b.summary };
+    }
+  }
+  if (!best) return { score: 9, reason: null, adjacentTo: null };
+  const tight = best.gap === 0;
+  return {
+    score: best.score,
+    reason: `${tight ? 'right ' : ''}${best.side} ${best.summary}`,
+    adjacentTo: tight ? best.summary : null,
+  };
+}
+
+/**
+ * The slots to offer first: one per day that already holds something, the
+ * tightest fit on that day, best days first, at most `limit`. Days with
+ * nothing booked are never suggested here — they are the fallback the full
+ * grid shows. When the other party's workday is known, a fit has to sit
+ * inside it; if that leaves nothing (Germany, Australia), the filter is
+ * dropped rather than returning an empty list. Pure.
+ */
+function pickBestFits(days, { limit = 3, respectTheirWorkday = true } = {}) {
+  const pick = (filterWorkday) => {
+    const fits = [];
+    for (const day of days) {
+      if (!day.busyBlocks?.length) continue;
+      let top = null;
+      for (const slot of day.slots) {
+        if (slot.busy || slot.score > 2) continue;
+        if (filterWorkday && slot.outsideTheirWorkday) continue;
+        if (!top || slot.score < top.score) top = slot;
+      }
+      if (top) {
+        fits.push({
+          date: day.date, dayLabel: day.label,
+          start: top.start, end: top.end, label: top.label, theirLabel: top.theirLabel || null,
+          score: top.score, reason: top.reason, unsociableForThem: !!top.unsociableForThem,
+        });
+      }
+    }
+    // Stable: equal scores keep date order, so the sooner day wins ties.
+    return fits.sort((a, b) => a.score - b.score).slice(0, limit);
+  };
+  const strict = pick(respectTheirWorkday);
+  return strict.length ? strict : pick(false);
+}
+
+// ---------------------------------------------------------------------------
 // The slot engine (pure)
 // ---------------------------------------------------------------------------
 
@@ -144,6 +227,7 @@ function buildSlots({
       end: new Date(b.end).getTime(),
       summary: b.summary || 'Busy',
       calendar: b.calendar || null,
+      isCall: !!b.isCall,
     }))
     .filter(b => Number.isFinite(b.start) && Number.isFinite(b.end) && b.end > b.start)
     .sort((a, b) => a.start - b.start);
@@ -167,6 +251,12 @@ function buildSlots({
     const slots = [];
     const lastStartMinutes = BUSINESS_END_HOUR * 60 - duration;
 
+    // The day's bookings, for grouping. Anything touching the working window
+    // counts, so a 7-9am block still makes 9:00 "right after" it.
+    const dayOpen = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_START_HOUR }, timeZone).getTime();
+    const dayClose = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_END_HOUR }, timeZone).getTime();
+    const dayBusy = busyIntervals.filter(b => b.start < dayClose && b.end > dayOpen);
+
     for (let mins = BUSINESS_START_HOUR * 60; mins <= lastStartMinutes; mins += SLOT_GRANULARITY_MIN) {
       const start = wallClockToUtc(
         { year: y, month: m, day: d, hour: Math.floor(mins / 60), minute: mins % 60 },
@@ -175,12 +265,19 @@ function buildSlots({
       const end = new Date(start.getTime() + duration * 60000);
       const clash = busyIntervals.find(b => b.start < end.getTime() && b.end > start.getTime());
 
+      const grouping = clash
+        ? { score: null, reason: null, adjacentTo: null }
+        : scoreAgainstBlocks(start.getTime(), end.getTime(), dayBusy);
       const slot = {
         start: start.toISOString(),
         end: end.toISOString(),
         label: formatTimeInZone(start, timeZone),
         busy: !!clash,
         busyWith: clash ? clash.summary : null,
+        // How this slot groups with the day's bookings (see scoreAgainstBlocks).
+        score: grouping.score,
+        reason: grouping.reason,
+        adjacentTo: grouping.adjacentTo,
       };
       if (theirTimeZone) {
         slot.theirLabel = formatTimeInZone(start, theirTimeZone);
@@ -208,14 +305,12 @@ function buildSlots({
     // can only say a slot is taken; this says what it is taken BY, which is what
     // tells you whether a neighbouring slot is realistic (a 10am across town is
     // not the same as a 10am call).
-    const dayOpen = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_START_HOUR }, timeZone).getTime();
-    const dayClose = wallClockToUtc({ year: y, month: m, day: d, hour: BUSINESS_END_HOUR }, timeZone).getTime();
-    const busyBlocks = busyIntervals
-      .filter(b => b.start < dayClose && b.end > dayOpen)
+    const busyBlocks = dayBusy
       .map(b => ({
         start: new Date(b.start).toISOString(),
         end: new Date(b.end).toISOString(),
         summary: b.summary,
+        isCall: !!b.isCall,
         // Clamped to the working day so an all-morning block from 7am reads as
         // starting at 9 rather than implying the grid is hiding something.
         label: `${formatTimeInZone(new Date(Math.max(b.start, dayOpen)), timeZone)}`
@@ -234,7 +329,13 @@ function buildSlots({
     cursor = addDaysToIso(cursor, 1);
   }
 
-  return { timeZone, theirTimeZone: theirTimeZone || null, durationMinutes: duration, days: out };
+  return {
+    timeZone,
+    theirTimeZone: theirTimeZone || null,
+    durationMinutes: duration,
+    days: out,
+    bestFits: pickBestFits(out, { respectTheirWorkday: !!theirTimeZone }),
+  };
 }
 
 /**
@@ -308,6 +409,11 @@ async function fetchCalendarEvents({ timeMin, timeMax, calendarIds = BUSY_CALEND
             end: ev.end.dateTime,
             summary: ev.summary || 'Busy',
             calendar: calendarId,
+            // A call, as opposed to an errand: it has other people on it or a
+            // video room. The grid draws these differently because "right
+            // after a call" and "right after the dentist" are different offers.
+            isCall: !!(ev.hangoutLink || ev.conferenceData
+              || (ev.attendees || []).some(a => !a.self)),
           });
         }
       }
@@ -339,6 +445,8 @@ async function fetchAvailability({
 
 module.exports = {
   buildSlots,
+  scoreAgainstBlocks,
+  pickBestFits,
   checkSlotFree,
   fetchAvailability,
   fetchCalendarEvents,
@@ -354,4 +462,5 @@ module.exports = {
   SLOT_GRANULARITY_MIN,
   DEFAULT_DURATION_MIN,
   DEFAULT_LOOKAHEAD_DAYS,
+  GROUP_GAP_MIN,
 };

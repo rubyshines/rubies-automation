@@ -7833,6 +7833,7 @@ let scheduleState = null;      // last /availability payload
 let scheduleSelected = null;   // the chosen slot { start, label, theirLabel }
 let scheduleInsertedLine = ''; // the one sentence this panel owns in the draft
 let scheduleShowAll = false;   // reveal full availability alongside their offer
+let scheduleWeek = 0;          // which week of the grid is on screen
 // Optional description on the calendar event. Kept in a module var rather than
 // read off the DOM at book time, because selecting a slot re-renders the panel
 // and would otherwise wipe whatever had been typed. Blank by default — an event
@@ -7894,6 +7895,7 @@ async function openSchedulePanel(duration, timezone) {
     if (outreachSelectedId !== companyId) return; // moved on while loading
     scheduleState = data;
     scheduleSelected = null;
+    scheduleWeek = 0;
     renderSchedulePanel();
     syncSendButtonsForSchedule();
   } catch (err) {
@@ -7952,9 +7954,11 @@ function renderSchedulePanel() {
   for (const w of windows) entryFor(w).windows.push(w);
   for (const h of dayHints) entryFor(h).wholeDay = true;
 
-  const slotChip = (start, label, { busy, busyWith, unsociable } = {}) =>
-    `<button class="schedule-slot${busy ? ' is-busy' : ''}${unsociable ? ' is-unsociable' : ''}${scheduleSelected?.start === start ? ' is-selected' : ''}"
-      ${busy ? `disabled title="Busy — ${esc(busyWith || '')}"` : `onclick="selectScheduleSlot('${esc(start)}')"`}
+  // A chip that sits right against something already booked is tinted and says
+  // so on hover — the grouping preference, without reordering their offer.
+  const slotChip = (start, label, { busy, busyWith, unsociable, reason, score } = {}) =>
+    `<button class="schedule-slot${busy ? ' is-busy' : ''}${unsociable ? ' is-unsociable' : ''}${!busy && score <= 1 ? ' is-fit' : ''}${scheduleSelected?.start === start ? ' is-selected' : ''}"
+      ${busy ? `disabled title="Busy — ${esc(busyWith || '')}"` : `onclick="selectScheduleSlot('${esc(start)}')"${reason ? ` title="${esc(reason)}"` : ''}`}
       >${esc(label)}</button>`;
 
   const durationMs = (s.duration_minutes || 30) * 60000;
@@ -7991,16 +7995,16 @@ function renderSchedulePanel() {
       let chips;
       if (entry.wholeDay) {
         chips = offerable(day?.slots || [])
-          .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }));
+          .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem, reason: sl.reason, score: sl.score }));
       } else {
         const namedStarts = new Set(entry.times.map(t => t.start));
         chips = entry.times.map(t => {
           const state = findSlotState(t.start);
-          return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem });
+          return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem, reason: state.reason, score: state.score });
         }).concat(entry.windows.length
           ? offerable(day?.slots || [])
               .filter(sl => !namedStarts.has(sl.start) && inWindow(sl))
-              .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem }))
+              .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem, reason: sl.reason, score: sl.score }))
           : []);
       }
 
@@ -8047,50 +8051,25 @@ function renderSchedulePanel() {
       ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
       : '');
 
-  // Their offer answers the question when there is one; the full grid is the
+  // Their offer answers the question when there is one; the week is the
   // fallback for "none of these work" and the default when they named nothing.
   const hasSuggestions = suggestions.length > 0;
   const showGrid = !hasSuggestions || scheduleShowAll;
-  // With nothing of theirs to anchor on, the next three working days answer
-  // "when could we talk" without an 80-slot week doing it. The rest is a click.
-  const FIRST_DAYS = 3;
-  const gridDays = (scheduleShowAll || hasSuggestions) ? s.days : s.days.slice(0, FIRST_DAYS);
-  const moreDays = !hasSuggestions && s.days.length > FIRST_DAYS
-    ? `<button class="schedule-toggle" onclick="toggleScheduleAllDays()">
-        ${scheduleShowAll ? '&#9652; Just the next few days' : `&#9662; Show all ${s.days.length} days`}
-      </button>`
-    : '';
 
-  const grid = !showGrid ? '' : gridDays.map(day => {
-    const chips = day.slots.map(slot => {
-      const cls = ['schedule-slot'];
-      if (slot.busy) cls.push('is-busy');
-      if (slot.unsociableForThem) cls.push('is-unsociable');
-      if (scheduleSelected?.start === slot.start) cls.push('is-selected');
-      const title = slot.busy
-        ? `Busy — ${slot.busyWith}`
-        : slot.theirLabel ? `${slot.theirLabel} their time` : '';
-      return `<button class="${cls.join(' ')}" ${title ? `title="${esc(title)}"` : ''}
-        ${slot.busy ? 'disabled' : `onclick="selectScheduleSlot('${esc(slot.start)}')"`}>${esc(slot.label)}</button>`;
-    }).join('');
-    const notes = day.notes?.length
-      ? `<span class="schedule-day-note">${esc(day.notes.map(n => n.summary).join(' · '))}</span>` : '';
-    // What the busy slots actually are. A struck-through chip tells you a time
-    // is gone; the name tells you whether the slot beside it is realistic.
-    // Blocks from a free/busy-only calendar have no title and honestly say so.
-    const booked = day.busyBlocks?.length
-      ? `<div class="schedule-booked-line">${day.busyBlocks.map(b =>
-          `<span class="schedule-booked-item"><span class="schedule-booked-time">${esc(b.label)}</span> ${esc(b.summary)}</span>`
-        ).join('')}</div>`
-      : '';
-    return `<div class="schedule-day">
-      <div class="schedule-day-label">${esc(day.label)}${notes}</div>
-      <div class="schedule-day-body">
-        <div class="schedule-slots">${chips || '<span class="schedule-hint">nothing free</span>'}</div>
-        ${booked}
-      </div>
-    </div>`;
-  }).join('');
+  // The slots to offer first: one per day that already holds a call, the one
+  // sitting tightest against it. Jamie stacks calls rather than opening a
+  // second hole in a day. Scored by the engine, never here.
+  const fitsHtml = (s.bestFits || []).length ? `
+    <div class="schedule-fits-label">Best fits, tight against something already booked</div>
+    <div class="schedule-fits">${s.bestFits.map(f => `
+      <button class="schedule-fit${scheduleSelected?.start === f.start ? ' is-selected' : ''}${f.unsociableForThem ? ' is-unsociable' : ''}"
+        onclick="selectScheduleSlot('${esc(f.start)}')"
+        title="${esc(f.theirLabel && !sameZone ? `${f.theirLabel} their time` : '')}${f.unsociableForThem ? ' (outside their 8am–8pm)' : ''}">
+        <span class="schedule-fit-when">${esc(f.dayLabel)} ${esc(f.label)}</span>
+        <span class="schedule-fit-why">${esc(f.reason || '')}</span>
+      </button>`).join('')}</div>` : '';
+
+  const grid = !showGrid ? '' : fitsHtml + renderScheduleWeek(s, sameZone);
 
   // The actions are ALWAYS rendered, disabled until a slot is picked. Hiding
   // them until selection meant the rehearsal button did not exist as far as a
@@ -8103,7 +8082,7 @@ function renderSchedulePanel() {
           ? `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
             + (scheduleSelected.theirLabel && !sameZone ? ` · ${esc(scheduleSelected.theirLabel)} their time` : '')
             + `<span class="schedule-hint">${esc((scheduleTitle ?? s.title) || s.title)} · ${s.duration_minutes} min</span>`
-          : '<span class="schedule-hint">Looking only — type times into the draft yourself, or pick a slot above to book it.</span>'}
+          : '<span class="schedule-hint">Looking only — pick a time above to book it, or read the week and type your own times into the draft.</span>'}
       </div>
       <div class="btn-row btn-row-primary">
         <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()"
@@ -8142,12 +8121,176 @@ function renderSchedulePanel() {
       ${booked}
       ${proposedHtml}
       ${hasSuggestions ? `<button class="schedule-toggle" onclick="toggleScheduleAllDays()">
-        ${scheduleShowAll ? '&#9652; Just their suggestions' : '&#9662; None of these work — show all my availability'}
+        ${scheduleShowAll ? '&#9652; Just their suggestions' : '&#9662; None of these work — show my week'}
       </button>` : ''}
-      ${showGrid ? `<div class="schedule-grid">${grid}</div>` : ''}
-      ${moreDays}
+      ${grid}
       <div class="schedule-hint" title="${esc((s.calendars || []).join(', '))}">Checked ${(s.calendars || []).length} calendar${(s.calendars || []).length === 1 ? '' : 's'} · 9-5 Eastern, weekdays, from tomorrow</div>
       ${footer}
+    </div>`;
+}
+
+// ── The week ────────────────────────────────────────────────────────────────
+// Five weekdays, 9-5 Eastern, every booking drawn at its real length with its
+// name — the cross-reference Jamie was opening Google Calendar for. Past days
+// stay on the grid greyed, so Thursday sits where Thursday is. Nothing here
+// decides anything: the engine scored the slots, this draws them.
+const SCHEDULE_ROW_PX = 20;   // one 30-minute row
+const SCHEDULE_DAY_MIN = 480; // 9:00 → 17:00
+
+function scheduleWeekStep(delta) {
+  scheduleWeek += delta;
+  renderSchedulePanel();
+}
+
+/** Calendar date `iso` (YYYY-MM-DD) advanced by n days. Pure, zone-free. */
+function scheduleAddDays(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Monday of the week holding `iso`. Pure, zone-free. */
+function scheduleMondayOf(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dow = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; // Mon = 0
+  return scheduleAddDays(iso, -dow);
+}
+
+/** { weekday: 'Thu', day: '10', month: 'Sept' } for a calendar date. Pure. */
+function scheduleDayParts(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' })
+    .formatToParts(new Date(Date.UTC(y, m - 1, d, 12)));
+  const get = t => parts.find(p => p.type === t)?.value || '';
+  return { weekday: get('weekday'), day: get('day'), month: get('month') };
+}
+
+/** Minutes past 9:00 in the business zone for an instant. */
+function scheduleMinutesIntoDay(iso, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hour: '2-digit', minute: '2-digit', hour12: false })
+    .formatToParts(new Date(iso));
+  const h = (+parts.find(p => p.type === 'hour').value) % 24;
+  const mi = +parts.find(p => p.type === 'minute').value;
+  return h * 60 + mi - 9 * 60;
+}
+
+/** Today's date in the business zone, YYYY-MM-DD. */
+function scheduleTodayIso(timeZone) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+/**
+ * The grid's days regrouped into Monday-to-Friday weeks. Weekdays before the
+ * first bookable day (past, today) and after the last (beyond the lookahead)
+ * are placeholders, so every week has five columns in the same places.
+ */
+function scheduleWeeks(s) {
+  const byDate = new Map((s.days || []).map(d => [d.date, d]));
+  if (!byDate.size) return [];
+  const first = s.days[0].date;
+  const last = s.days[s.days.length - 1].date;
+  const today = scheduleTodayIso(s.timezone);
+  const weeks = [];
+  for (let mon = scheduleMondayOf(first); mon <= last; mon = scheduleAddDays(mon, 7)) {
+    const days = [];
+    for (let i = 0; i < 5; i++) {
+      const iso = scheduleAddDays(mon, i);
+      const real = byDate.get(iso);
+      days.push(real || { date: iso, placeholder: iso === today ? 'today' : iso < first ? 'past' : 'beyond', slots: [], busyBlocks: [], notes: [] });
+    }
+    weeks.push({ monday: mon, days });
+  }
+  return weeks;
+}
+
+/** Which week index holds a slot start. */
+function scheduleWeekIndexFor(startIso) {
+  const s = scheduleState;
+  if (!s) return 0;
+  const day = (s.days || []).find(d => d.slots.some(sl => sl.start === startIso));
+  if (!day) return scheduleWeek;
+  return Math.max(0, scheduleWeeks(s).findIndex(w => w.days.some(d => d.date === day.date)));
+}
+
+function renderScheduleWeek(s, sameZone) {
+  const weeks = scheduleWeeks(s);
+  if (!weeks.length) return '';
+  scheduleWeek = Math.min(Math.max(0, scheduleWeek), weeks.length - 1);
+  const w = weeks[scheduleWeek];
+  const tz = s.timezone;
+  const ROW = SCHEDULE_ROW_PX;
+  const height = (SCHEDULE_DAY_MIN / 30) * ROW;
+
+  const a = scheduleDayParts(w.days[0].date), b = scheduleDayParts(w.days[4].date);
+  const range = a.month === b.month ? `${a.month} ${a.day} to ${b.day}` : `${a.month} ${a.day} to ${b.month} ${b.day}`;
+  const [gy, gm, gd] = w.monday.split('-').map(Number);
+  const gcal = `https://calendar.google.com/calendar/u/0/r/week/${gy}/${gm}/${gd}`;
+
+  const heads = w.days.map(d => {
+    const p = scheduleDayParts(d.date);
+    const cls = d.placeholder ? ` is-${d.placeholder}` : '';
+    const notes = (d.notes || []).map(n => `<span class="schedule-week-pill">${esc(n.summary)}</span>`).join('');
+    return `<div class="schedule-week-head${cls}"><b>${esc(p.weekday)}</b> ${esc(p.day)}${d.placeholder === 'today' ? ' <span>today</span>' : ''}${notes}</div>`;
+  }).join('');
+
+  const gutter = [9, 10, 11, 12, 13, 14, 15, 16, 17].map(h =>
+    `<span style="top:${(h - 9) * 2 * ROW}px">${((h + 11) % 12) + 1}${h < 12 ? 'a' : 'p'}</span>`).join('');
+
+  const cols = w.days.map(d => {
+    let col = `<div class="schedule-week-col${d.placeholder ? ` is-${d.placeholder}` : ''}" style="height:${height}px">`;
+    for (let i = 1; i < SCHEDULE_DAY_MIN / 30; i++) {
+      col += `<div class="schedule-week-line${i % 2 ? ' is-half' : ''}" style="top:${i * ROW}px"></div>`;
+    }
+    for (const slot of (d.slots || [])) {
+      if (slot.busy) continue; // the block covers it
+      const top = (scheduleMinutesIntoDay(slot.start, tz) / 30) * ROW;
+      const cls = ['schedule-week-slot'];
+      if (slot.score <= 1) cls.push('is-fit');
+      if (slot.unsociableForThem) cls.push('is-unsociable');
+      if (scheduleSelected?.start === slot.start) cls.push('is-selected');
+      const tip = [
+        `${slot.label} ET`,
+        slot.theirLabel && !sameZone ? `${slot.theirLabel} their time` : null,
+        slot.reason,
+        slot.unsociableForThem ? 'outside their 8am–8pm' : null,
+      ].filter(Boolean).join(', ');
+      col += `<button class="${cls.join(' ')}" style="top:${top}px" title="${esc(tip)}" aria-label="${esc(tip)}"
+        onclick="selectScheduleSlot('${esc(slot.start)}')">${esc(slot.label)}</button>`;
+    }
+    for (const blk of (d.busyBlocks || [])) {
+      const from = Math.max(0, Math.min(SCHEDULE_DAY_MIN, scheduleMinutesIntoDay(blk.start, tz)));
+      const to = Math.max(0, Math.min(SCHEDULE_DAY_MIN, scheduleMinutesIntoDay(blk.end, tz)));
+      if (to <= from) continue;
+      const h = Math.max(ROW - 2, ((to - from) / 30) * ROW - 2);
+      col += `<div class="schedule-week-block${blk.isCall ? ' is-call' : ''}${to - from <= 30 ? ' is-short' : ''}"
+        style="top:${(from / 30) * ROW}px;height:${h}px" title="${esc(blk.label)} ${esc(blk.summary)}">
+        <b>${esc(blk.summary)}</b><span>${esc(blk.label)}</span></div>`;
+    }
+    if (d.placeholder === 'beyond') col += `<div class="schedule-week-beyond">beyond the ${s.days.length}-day lookahead</div>`;
+    return col + '</div>';
+  }).join('');
+
+  return `
+    <div class="schedule-week">
+      <div class="schedule-week-bar">
+        <div class="schedule-week-nav">
+          <button type="button" onclick="scheduleWeekStep(-1)" ${scheduleWeek === 0 ? 'disabled' : ''} aria-label="Previous week">&#8249;</button>
+          <span class="schedule-week-range">${esc(range)}</span>
+          <button type="button" onclick="scheduleWeekStep(1)" ${scheduleWeek >= weeks.length - 1 ? 'disabled' : ''} aria-label="Next week">&#8250;</button>
+        </div>
+        <a class="schedule-week-gcal" href="${esc(gcal)}" target="_blank" rel="noopener">Open this week in Google Calendar</a>
+      </div>
+      <div class="schedule-week-grid">
+        <div></div>${heads}
+        <div class="schedule-week-gutter" style="height:${height}px">${gutter}</div>${cols}
+      </div>
+      <div class="schedule-week-legend">
+        <span class="l-fit">next to an existing booking</span>
+        <span class="l-call">your calls</span>
+        <span class="l-busy">other bookings</span>
+        <span class="l-uns">outside their day</span>
+      </div>
     </div>`;
 }
 
@@ -8190,6 +8333,7 @@ async function selectScheduleSlot(startIso) {
     theirLabel: fromGrid.theirLabel || fromProposed?.theirLabel || null,
     dayLabel: fromProposed?.dayLabel || dayLabelForSlot(startIso),
   };
+  scheduleWeek = scheduleWeekIndexFor(startIso); // a best-fit chip may sit in another week
   renderSchedulePanel();
   syncSendButtonsForSchedule();
   await insertConfirmationText(startIso);

@@ -6886,6 +6886,112 @@ main { height: calc(100vh - 56px); }
 #outreach-orders > .context-section-label .badge { margin-left: 2px; }
 #outreach-orders-card .context-details { margin-top: 10px; }
 
+/* ── Schedule panel: best fits + the week ────────────────────────────────
+   Jamie stacks calls. The engine scores every free slot by how tightly it
+   sits against a booking already on that day; the panel leads with the best
+   one per booked day, then draws the week the way Google Calendar would so
+   the choice can be checked against what is actually there. */
+.schedule-fits-label { font-size: 12px; color: var(--text-secondary); margin: 8px 0 6px; }
+.schedule-fits { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.schedule-fit {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  font: inherit; font-size: 12.5px; color: inherit;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 4px 12px 4px 10px; cursor: pointer;
+}
+.schedule-fit-when { font-weight: 600; font-variant-numeric: tabular-nums; }
+.schedule-fit-why { color: var(--text-secondary); }
+.schedule-fit:hover { border-color: var(--accent); }
+.schedule-fit.is-unsociable { border-style: dashed; }
+.schedule-fit.is-selected { background: var(--accent); border-color: var(--accent); color: #fff; }
+.schedule-fit.is-selected .schedule-fit-why { color: rgba(255, 255, 255, 0.8); }
+/* A suggestion chip that sits right against an existing booking. */
+.schedule-slot.is-fit:not(.is-selected) { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.schedule-week {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px 10px;
+}
+.schedule-week-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.schedule-week-nav { display: flex; align-items: center; gap: 4px; }
+.schedule-week-nav button {
+  font: inherit; font-size: 12px; color: inherit; background: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; cursor: pointer;
+}
+.schedule-week-nav button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.schedule-week-nav button:disabled { opacity: 0.4; cursor: default; }
+.schedule-week-range { font-size: 13px; font-weight: 600; margin: 0 6px; font-variant-numeric: tabular-nums; }
+.schedule-week-gcal { font-size: 12px; color: var(--accent); text-decoration: none; }
+.schedule-week-gcal:hover { text-decoration: underline; }
+
+.schedule-week-grid { display: grid; grid-template-columns: 40px repeat(5, minmax(0, 1fr)); gap: 0 4px; }
+.schedule-week-head { font-size: 12px; color: var(--text-secondary); padding: 0 0 4px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.schedule-week-head b { color: var(--text); font-weight: 600; }
+.schedule-week-head.is-past, .schedule-week-head.is-today, .schedule-week-head.is-beyond,
+.schedule-week-head.is-past b, .schedule-week-head.is-today b, .schedule-week-head.is-beyond b { color: var(--text-tertiary); font-weight: 500; }
+.schedule-week-pill {
+  display: inline-block; font-size: 10.5px; color: var(--yellow); background: var(--yellow-bg);
+  border-radius: 999px; padding: 0 6px; margin-left: 4px; vertical-align: 1px;
+}
+.schedule-week-gutter { position: relative; }
+.schedule-week-gutter span {
+  position: absolute; right: 6px; transform: translateY(-50%);
+  font-size: 11px; color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+}
+.schedule-week-col { position: relative; border-left: 1px solid var(--border); }
+.schedule-week-col.is-past, .schedule-week-col.is-today, .schedule-week-col.is-beyond { background: var(--surface-inset); }
+.schedule-week-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); pointer-events: none; }
+.schedule-week-line.is-half { border-top-style: dashed; opacity: 0.6; }
+.schedule-week-beyond {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 10.5px; color: var(--text-tertiary); text-align: center; padding: 0 6px;
+}
+/* Free slots are quiet until hovered; the ones that group with a booking are
+   tinted so the tight option reads before the cursor gets there. */
+.schedule-week-slot {
+  position: absolute; left: 3px; right: 2px; height: 18px; margin-top: 1px;
+  font: inherit; font-size: 11px; color: transparent; font-variant-numeric: tabular-nums;
+  background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+  text-align: left; padding: 0 5px;
+}
+.schedule-week-slot:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.schedule-week-slot.is-fit { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.schedule-week-slot.is-fit::after { content: ''; position: absolute; right: 5px; top: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.schedule-week-slot.is-unsociable { border-color: var(--border); border-style: dashed; color: var(--text-tertiary); background: transparent; }
+.schedule-week-slot.is-unsociable::after { display: none; }
+.schedule-week-slot.is-selected, .schedule-week-slot.is-selected:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.schedule-week-slot.is-selected::after { background: #fff; }
+.schedule-week-slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accent); }
+/* Bookings at their real length. A call (other attendees or a Meet room)
+   carries a teal edge; an errand does not — "right after" means something
+   different for each. */
+.schedule-week-block {
+  position: absolute; left: 3px; right: 2px; margin-top: 1px;
+  background: var(--border); color: var(--text);
+  border-left: 3px solid var(--text-tertiary); border-radius: 4px;
+  font-size: 11px; line-height: 1.2; padding: 2px 5px; overflow: hidden;
+  pointer-events: none;
+}
+.schedule-week-block.is-call { border-left-color: var(--teal); }
+.schedule-week-block b { font-weight: 500; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.schedule-week-block span { display: block; color: var(--text-secondary); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.schedule-week-block.is-short span { display: none; }
+.schedule-week-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 11px; color: var(--text-secondary); }
+.schedule-week-legend span::before {
+  content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  margin-right: 5px; vertical-align: -1px; border: 1px solid var(--border-strong);
+}
+.schedule-week-legend .l-fit::before { background: var(--accent-soft); border-color: var(--accent); }
+.schedule-week-legend .l-busy::before { background: var(--border); border-color: var(--border); }
+.schedule-week-legend .l-call::before { background: var(--border); border-color: var(--border); border-left: 3px solid var(--teal); }
+.schedule-week-legend .l-uns::before { border-style: dashed; }
+@media (max-width: 700px) {
+  .schedule-week-grid { grid-template-columns: 34px repeat(5, minmax(0, 1fr)); gap: 0 2px; }
+  .schedule-week-block b { font-size: 10px; }
+}
+
 /* Schedule panel: the calendar list lives in a tooltip on the hint. */
 .schedule-hint[title] { cursor: help; }
 

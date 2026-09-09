@@ -3293,6 +3293,8 @@ async function apiB2bAvailability(companyId, params) {
     their_timezone_warning: tz.split ? tz.reason : (tz.timeZone ? null : tz.reason),
     calendars: grid.calendars,
     days: grid.days,
+    // Slots sitting right against a call already booked — Jamie stacks calls.
+    bestFits: grid.bestFits || [],
     booked: meeting || null,
     proposed_times: proposed.times,
     proposed_error: proposed.error,
