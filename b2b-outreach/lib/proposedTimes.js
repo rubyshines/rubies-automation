@@ -41,6 +41,11 @@ only the bounds they actually stated:
 When they name a day with no time at all, return time and end_time null and
 is_range true.
 
+An invitation for US to propose ("let me know some times that work for you next
+week", "send me a few options", "what does your week look like?") is not an
+offer of any day: return no entry for it and set wants_to_meet true. Only the
+days and times THEY say they are available become entries.
+
 Rules:
 - Resolve relative days ("next Tuesday", "tomorrow") against the date the message
   was SENT, given below — the message may have been written days before today.

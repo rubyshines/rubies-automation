@@ -7945,11 +7945,17 @@ function renderSchedulePanel() {
   // Three kinds of suggestion: an exact instant is clickable as-is; a window
   // ("after 1pm", "until 5:30") opens the free grid slots that fit inside it;
   // a bare day opens the whole day.
+  // A fourth kind: times they stated in a zone nobody knows (a US org with no
+  // usable region). They cannot be placed on the grid, so they are shown as
+  // the words they used — not silently widened to "they offered this day",
+  // which is a different and larger claim than the one they made.
   const named = [];
   const windows = [];
   const dayHints = [];
+  const zoneless = [];
   for (const t of (s.proposed_times || [])) {
-    if (t.start && !t.isRange) named.push(t);
+    if (t.needsTimeZone) zoneless.push(t);
+    else if (t.start && !t.isRange) named.push(t);
     else if (t.start || t.end) windows.push(t);
     else dayHints.push(t);
   }
@@ -7969,12 +7975,19 @@ function renderSchedulePanel() {
    */
   const byDate = new Map();
   const entryFor = (t) => {
-    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], windows: [], wholeDay: false, dayLabel: t.dayLabel });
+    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], windows: [], zoneless: [], wholeDay: false, dayLabel: t.dayLabel });
     return byDate.get(t.date);
   };
   for (const t of named) entryFor(t).times.push(t);
   for (const w of windows) entryFor(w).windows.push(w);
+  for (const z of zoneless) entryFor(z).zoneless.push(z);
   for (const h of dayHints) entryFor(h).wholeDay = true;
+
+  /** "09:00" → "9:00 AM", for wall-clock times we could not place in a zone. */
+  const wallClockLabel = (hhmm) => {
+    const [h, m] = String(hhmm).split(':').map(Number);
+    return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  };
 
   // A chip that sits right against something already booked is tinted and says
   // so on hover — the grouping preference, without reordering their offer.
@@ -7990,6 +8003,18 @@ function renderSchedulePanel() {
     .map(entry => {
       const day = (s.days || []).find(d => d.date === entry.date);
       const label = esc(day?.label || entry.dayLabel || entry.date);
+
+      // Times in an unknown zone: say what they said, and what unlocks it.
+      if (entry.zoneless.length && !entry.times.length && !entry.windows.length && !entry.wholeDay) {
+        const said = entry.zoneless.map(z =>
+          z.wallClock && z.wallClockEnd ? `${wallClockLabel(z.wallClock)}–${wallClockLabel(z.wallClockEnd)}`
+            : z.wallClock ? `from ${wallClockLabel(z.wallClock)}`
+            : z.wallClockEnd ? `until ${wallClockLabel(z.wallClockEnd)}` : null).filter(Boolean).join(', ');
+        return `<div class="schedule-day schedule-day-offered">
+          <div class="schedule-day-label">${label}<span class="schedule-hint">they're free ${esc(said)} their time</span></div>
+          <div class="schedule-day-body"><span class="schedule-hint">Their timezone is unknown, so these can't be placed on the grid yet. Set it above and the matching slots appear here.</span></div>
+        </div>`;
+      }
 
       // The meeting has to FIT inside the window: start no earlier than its
       // start, end (start + duration) no later than its end. An unstated bound
