@@ -36,6 +36,67 @@ const { greetingName, MAX_NO_SHOWS } = require('./messageTemplates');
 const DEFAULT_DURATION_MIN = 30;
 const DEFAULT_MESSAGE_TYPE = 'meeting_confirmation';
 
+/** The video entry point on an event, or null. Pure. */
+function meetLinkOf(event) {
+  return event?.hangoutLink
+    || (event?.conferenceData?.entryPoints || []).find(x => x.entryPointType === 'video')?.uri
+    || null;
+}
+
+/** 'success' | 'pending' | 'failure' | null — Google's verdict on our Meet request. Pure. */
+function conferenceStatus(event) {
+  return event?.conferenceData?.createRequest?.status?.statusCode || null;
+}
+
+const MEET_LINK_ATTEMPTS = 4;
+const MEET_LINK_WAIT_MS = 1500;
+
+/**
+ * Make sure the event actually has a Meet link before we tell anyone it does.
+ *
+ * Google creates the room asynchronously: the insert response can carry the
+ * request as `pending`, and sometimes as an outright `failure` — Uniting Pride
+ * (2026-09-08) went out that way, invite and reply both sent, no link on
+ * either, and nothing noticed until the partner's calendar was looked at.
+ * Pending is polled; failure is retried with a FRESH requestId, because the
+ * deterministic one is idempotent by design and would only replay the same
+ * failure. `sendUpdates: 'all'` on the retry, since the attendee already holds
+ * the invite and needs the link added to it. Returns the freshest event either
+ * way; the caller reports a missing link rather than pretending.
+ */
+async function ensureMeetLink(cal, event, {
+  calendarId, requestIdBase, attempts = MEET_LINK_ATTEMPTS, waitMs = MEET_LINK_WAIT_MS, sleep = ms => new Promise(r => setTimeout(r, ms)),
+} = {}) {
+  let current = event;
+  for (let i = 0; i < attempts; i++) {
+    if (meetLinkOf(current)) return current;
+    const status = conferenceStatus(current);
+    try {
+      if (status === 'failure' || status === null) {
+        const res = await cal.events.patch({
+          calendarId, eventId: current.id, conferenceDataVersion: 1, sendUpdates: 'all',
+          requestBody: {
+            conferenceData: {
+              createRequest: {
+                requestId: `${requestIdBase}-r${i + 1}`.slice(0, 64),
+                conferenceSolutionKey: { type: 'hangoutsMeet' },
+              },
+            },
+          },
+        });
+        current = res.data || current;
+        if (meetLinkOf(current)) return current;
+      }
+      await sleep(waitMs);
+      const again = await cal.events.get({ calendarId, eventId: current.id });
+      current = again.data || current;
+    } catch (e) {
+      console.warn(`[scheduleMeeting] Meet link check attempt ${i + 1} failed: ${e.message}`);
+    }
+  }
+  return current;
+}
+
 /** "RUBIES x Uniting Pride". Pure. */
 function meetingTitle(companyName) {
   return `RUBIES x ${String(companyName || 'partner').trim()}`;
@@ -250,9 +311,13 @@ async function scheduleMeeting(p = {}) {
     return { ok: false, error: `Could not create the calendar event: ${e.message}. Nothing was sent.` };
   }
 
-  const meetUrl = event.hangoutLink
-    || (event.conferenceData?.entryPoints || []).find(x => x.entryPointType === 'video')?.uri
-    || null;
+  // Never announce a link we do not hold. See ensureMeetLink.
+  event = await ensureMeetLink(cal, event, {
+    calendarId: ORGANIZER_CALENDAR_ID,
+    requestIdBase: `rubies-${company_id}-${startDate.getTime()}`.slice(0, 58),
+  });
+  const meetUrl = meetLinkOf(event);
+  if (!meetUrl) console.error(`[scheduleMeeting] event ${event.id} for ${company_id} has NO Meet link after retries (${conferenceStatus(event) || 'no status'})`);
 
   // --- 4. the reply, down the one send path ---------------------------------
   // `skip_reply` books WITHOUT writing an email: the repair path for a message
@@ -365,6 +430,9 @@ async function scheduleMeeting(p = {}) {
     gmail_message_id: send.gmail_message_id,
     double_booked_over: clashInfo ? clashInfo.summary : null,
     record_written: !mErr,
+    // Loud rather than a null field: the reply has already said "I just sent
+    // an invite", so a missing link is the operator's to fix in the calendar.
+    warning: meetUrl ? null : 'The invite went out WITHOUT a Meet link — Google failed to create the room. Add one to the event by hand.',
   };
 }
 
@@ -493,6 +561,9 @@ async function recordMeetingOutcome(sb, { meeting_id, outcome, note = null, now 
 module.exports = {
   scheduleMeeting,
   meetingTitle,
+  meetLinkOf,
+  conferenceStatus,
+  ensureMeetLink,
   renderConfirmationLine,
   renderConfirmationBody,
   upcomingMeetingsByCompany,
