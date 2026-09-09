@@ -74,7 +74,25 @@ function identifyingDomain(addressOrUrl) {
   return isGenericDomain(domain) ? null : domain.replace(/^www\./, '');
 }
 
+// Mailboxes that are never a person: a DSN arrives FROM postmaster@ at the
+// company's own domain, so the domain-match registration in correlateInbound
+// happily filed it as a colleague and bounce recovery then offered it as the
+// live alternate (Fairvilla, 2026-09-09: the retry was addressed to
+// postmaster@fairvilla.com).
+const SYSTEM_LOCAL_PARTS = new Set([
+  'postmaster', 'mailer-daemon', 'mailerdaemon', 'noreply', 'no-reply', 'no_reply',
+  'donotreply', 'do-not-reply', 'do_not_reply', 'bounce', 'bounces', 'abuse', 'hostmaster',
+]);
+
+/** Is this address a system mailbox rather than a person or a team inbox? Pure. */
+function isSystemMailbox(address) {
+  const local = String(address || '').toLowerCase().replace(/^.*</, '').replace(/>.*$/, '').trim().split('@')[0];
+  if (!local) return false;
+  return SYSTEM_LOCAL_PARTS.has(local) || /^(bounce|bounces|noreply|no-reply)[-+.]/.test(local);
+}
+
 module.exports = {
+  isSystemMailbox, SYSTEM_LOCAL_PARTS,
   FREE_MAIL_DOMAINS, NON_IDENTIFYING_DOMAINS,
   emailDomain, isGenericDomain, identifyingDomain,
 };

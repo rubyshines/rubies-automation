@@ -111,3 +111,13 @@ test('a referral on the record is rendered for the advisor, not left buried', ()
   assert.deepEqual(renderMetadataFacts({}), []);
   assert.ok(renderMetadataFacts('{"referred_by":"AJ at TransActual"}').some(l => l.includes('AJ at TransActual')), 'string metadata tolerated');
 });
+
+test('a system mailbox is never a contact: postmaster@ from a bounce must not register (2026-09-09)', () => {
+  const { isSystemMailbox } = require('../../b2b-outreach/lib/emailDomains');
+  for (const a of ['postmaster@fairvilla.com', 'MAILER-DAEMON@googlemail.com', 'noreply@shopify.com', 'no-reply@calendar.google.com', 'bounces+123@example.com', 'Mail Delivery <postmaster@x.org>']) {
+    assert.equal(isSystemMailbox(a), true, a);
+  }
+  for (const a of ['erica@fairvilla.com', 'info@fairvilla.com', 'purchasing@sheboptheshop.com', 'hello@shop.com', '']) {
+    assert.equal(isSystemMailbox(a), false, a);
+  }
+});

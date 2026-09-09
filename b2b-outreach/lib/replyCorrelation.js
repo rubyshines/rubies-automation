@@ -11,6 +11,7 @@
  * "no longer with" auto-replies flag contact_unknown, which pauses cadence
  * (cadence.companyEligible) until the operator confirms a new contact.
  */
+const { isSystemMailbox } = require('./emailDomains');
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { resolveCompanyForAddress } = require('./companyMatch');
 const { parseBounce, handleBounce } = require('./bounceRecovery');
@@ -265,7 +266,9 @@ async function correlateInbound(msg) {
   // exact-address match handles it next time and resolveRecipient can see it.
   // Not primary: a colleague writing in does not displace the person we have
   // deliberately been corresponding with.
-  if (matchedByDomain) {
+  // Never a system mailbox: a bounce DSN comes from postmaster@ at the
+  // company's own domain, which matches by domain like any colleague would.
+  if (matchedByDomain && !isSystemMailbox(sender)) {
     const { error: cErr } = await sb.from('b2b_contacts').upsert({
       id: sender, email: sender, company_id: companyId,
       is_primary: false, is_active: true, source: 'inbound_domain_match',
