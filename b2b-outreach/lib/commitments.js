@@ -75,6 +75,8 @@ function parseNextSteps(summary) {
     let ownerName = null;
     const named = /^\(([^)]+)\)\s*(.+)$/.exec(text) || /^\*\*([^*]+)\*\*:?\s*(.+)$/.exec(text) || /^([A-Z][\w.'-]+(?:\s+[A-Z][\w.'-]+){0,3}):\s+(.+)$/.exec(text);
     if (named) { ownerName = named[1].trim(); text = named[2].trim(); }
+    // Wispr escapes markdown-significant characters in its summaries ("\\~8 pairs").
+    text = text.replace(/\\([~*_`#\\])/g, '$1');
     if (!text) continue;
     out.push({ owner: classifyOwner(ownerName), owner_name: ownerName, text });
   }
