@@ -50,6 +50,29 @@ const PIPELINES = [
     run: () => require('./customer-service/sync/syncCollections').run(),
   },
   {
+    name: 'Wholesale Pricing Page',
+    // After Products so a retail price changed in Shopify admin (not through
+    // set_product_prices) still reaches rubyshines.com/pages/wholesale-pricing
+    // by the next morning; popularity order and product photos refresh the
+    // same way. A no-op when nothing but the timestamp changed. Needs
+    // GITHUB_TOKEN on this service (commits through the GitHub API; there is
+    // no theme checkout on Railway) — without it the step reports a warning.
+    run: async () => {
+      const { hasGithubToken } = require('./customer-service/lib/githubContents');
+      if (!hasGithubToken()) {
+        console.log('  GITHUB_TOKEN not set — skipping (set it on the main service and run copy-railway-vars.js)');
+        return { status: 'warning', sources: { wholesale_pricing: { success: true, rowsWritten: 0, skipped: 'no GITHUB_TOKEN' } } };
+      }
+      const { autoPublishWholesalePricing } = require('./customer-service/lib/wholesalePriceListPublish');
+      const res = await autoPublishWholesalePricing({ via: 'github' });
+      console.log(`  ${res.line}`);
+      return {
+        status: res.ok ? 'success' : 'failure',
+        sources: { wholesale_pricing: { success: res.ok, rowsWritten: res.noOp ? 0 : (res.result?.count || 0), error: res.error } },
+      };
+    },
+  },
+  {
     name: 'Expired Sales Sweep',
     // Shopify expires sale discount nodes on its own at ends_at; everything
     // else end_sale owns (registry status, theme banner metafields, attached

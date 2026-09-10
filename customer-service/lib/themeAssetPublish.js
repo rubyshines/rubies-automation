@@ -61,6 +61,7 @@ async function publishViaWorktree(payload, {
   prBody,
   baseBranch = 'main',
   merge = true,
+  ignoreKeys = [],
 }) {
   if (!fs.existsSync(path.join(themeRepo, '.git'))) {
     throw new Error(`Not a git repo: ${themeRepo}`);
@@ -81,6 +82,17 @@ async function publishViaWorktree(payload, {
 
   try {
     const outAbsPath = path.join(wt, relativeOutPath);
+    // A payload whose only difference is a stamp (generated_at) is not a
+    // change: an automated caller (a nightly step) would otherwise commit
+    // and deploy the theme every day for nothing.
+    if (ignoreKeys.length && fs.existsSync(outAbsPath)) {
+      try {
+        const { sameIgnoringKeys } = require('./githubContents');
+        if (sameIgnoringKeys(JSON.parse(fs.readFileSync(outAbsPath, 'utf8')), payload, ignoreKeys)) {
+          return { branch: null, baseBranch, themeRepo, remoteUrl, noOp: true };
+        }
+      } catch { /* unparseable on main: write it */ }
+    }
     fs.writeFileSync(outAbsPath, serializePayload(payload), 'utf8');
 
     // Detect whether anything actually changed vs origin/<baseBranch>.

@@ -31,7 +31,7 @@ All cron times are UTC. Each has a `railway/<name>.toml` with its `cronSchedule`
 | monthly-competitor-pricing | `0 14 1 * *` (1st, 10am ET) | `competitor-pricing/monthly-competitor-pricing.js` |
 | passport-tracking-sync | `37 * * * *` (hourly at :37) | `customer-service/sync/syncPassportDelivery.js --limit 50` |
 
-KB Refresh runs as a `daily-sync-all` step self-gated to Mondays UTC (re-harvest kb_sources, propagate kb_candidates into cs_knowledge_base with embeddings, flag drifted sources needing re-extraction) — see `customer-service/sync/refreshKb.js`. Free swimwear (import new applications, then reconcile register/order/expire/resend) runs as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), not a separate cron service.
+KB Refresh runs as a `daily-sync-all` step self-gated to Mondays UTC (re-harvest kb_sources, propagate kb_candidates into cs_knowledge_base with embeddings, flag drifted sources needing re-extraction) — see `customer-service/sync/refreshKb.js`. Free swimwear (import new applications, then reconcile register/order/expire/resend) runs as two sub-pipelines of `daily-sync-all` (`Free Swimwear Apps` + `Free Swimwear Lifecycle`), not a separate cron service. `Wholesale Pricing Page` republishes `assets/wholesale-pricing.json` on the theme after the Products sync (no-op unless the data changed; needs `GITHUB_TOKEN`).
 
 Some cron start commands run `scripts/write-service-account-key.js` first (writes Google service account JSON from env var to disk at runtime): daily-seo-tracking, daily-sync-all, weekly-seo-digest, monthly-competitor-pricing.
 
@@ -55,6 +55,7 @@ Some cron start commands run `scripts/write-service-account-key.js` first (write
 - **When to run:** After adding or changing any env var on the main service.
 - **Local `.env`:** Separate from Railway. Not synced automatically. Must be updated manually if a new var is needed for local dev.
 - **Service IDs** are hardcoded in `scripts/copy-railway-vars.js` — update the `CRON_SERVICES` array when adding/removing Railway services.
+- **`GITHUB_TOKEN`** (fine-grained PAT, Contents read/write on `rubyshines/rubies-ecom-v4`): lets a Railway service commit generated theme assets straight to the theme's `main` through the GitHub API (`customer-service/lib/githubContents.js`). Needed by the `Wholesale Pricing Page` step of `daily-sync-all`; without it that step reports a warning and skips. Locally the worktree + `gh` flow is used instead, so the var is optional on a dev machine.
 
 ## Deploy Flow
 
