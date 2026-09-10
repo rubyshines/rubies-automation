@@ -795,6 +795,35 @@ async function dismissPostCallFollowup(sb, { meeting_id } = {}) {
   return data[0];
 }
 
+/**
+ * "Not a separate call." Two calendar events regularly describe ONE call: we
+ * Book & Send, then the partner sends their own invite for the same slot (Le
+ * JAG, 2026-09-10: both in different rooms, he mailed a Teams invite). The sync
+ * rightly makes a row for each. Marking the spare a no-show would count a strike
+ * that never happened, and deleting it is not sticky: the sync re-inserts any
+ * event it still sees on the calendar. So the row stays, as status 'ignored':
+ * every reader already keys on status 'booked', so an ignored row drops out of
+ * the post-call queue, the last-call lookup, the live-call nudge and the
+ * booked-call closer on its own; noShowCount is guarded here by clearing any
+ * outcome the row carried. `restore` undoes a mis-click.
+ */
+async function ignoreMeeting(sb, { meeting_id, restore = false } = {}) {
+  if (!meeting_id) throw new Error('meeting_id required');
+  const { data: row, error } = await sb.from('b2b_meetings')
+    .select('id, company_id, title, starts_at, status').eq('id', meeting_id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!row) throw new Error(`meeting #${meeting_id} not found`);
+  if (row.status === 'cancelled') throw new Error(`meeting #${meeting_id} is cancelled — nothing to ignore`);
+  const stamp = new Date().toISOString();
+  const patch = restore
+    ? { status: 'booked', updated_at: stamp }
+    : { status: 'ignored', outcome: null, outcome_at: null, outcome_note: null, updated_at: stamp };
+  if (restore && row.status !== 'ignored') throw new Error(`meeting #${meeting_id} is not ignored — nothing to restore`);
+  const { error: uErr } = await sb.from('b2b_meetings').update(patch).eq('id', meeting_id);
+  if (uErr) throw new Error(uErr.message);
+  return { ...row, status: patch.status };
+}
+
 const MEETING_OUTCOMES = new Set(['held', 'no_show']);
 
 /** How many of this company's calls the operator has marked as no-shows. */
@@ -825,6 +854,7 @@ async function recordMeetingOutcome(sb, { meeting_id, outcome, note = null, now 
   if (error) throw new Error(error.message);
   if (!row) throw new Error(`meeting #${meeting_id} not found`);
   if (row.status === 'cancelled') throw new Error(`meeting #${meeting_id} is cancelled — nothing to record`);
+  if (row.status === 'ignored') throw new Error(`meeting #${meeting_id} is ignored (not a separate call) — restore it first`);
   if (row.starts_at && new Date(row.starts_at) > now) throw new Error(`meeting #${meeting_id} has not started yet`);
 
   const stamp = now.toISOString();
@@ -876,6 +906,7 @@ module.exports = {
   lastHeldMeetingsByCompany,
   dismissPostCallFollowup,
   recordMeetingOutcome,
+  ignoreMeeting,
   noShowCount,
   MEETING_OUTCOMES,
   DEFAULT_DURATION_MIN,

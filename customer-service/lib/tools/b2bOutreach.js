@@ -520,7 +520,13 @@ async function handleMeetingOutcome(input = {}) {
       return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). That is no-show #${r.no_show_count}, so no reschedule ask is offered — the annual October check-in carries the relationship. The post-call entry is cleared.`);
     }
     const { applyTemplate } = require(path.join(B2B_LIB, 'messageTemplates'));
-    const d = await applyTemplate(sb, { company_id: m.company_id, template_id: 'missed_call' });
+    let d;
+    try {
+      d = await applyTemplate(sb, { company_id: m.company_id, template_id: 'missed_call' });
+    } catch (err) {
+      // The outcome is on the row; the ask is a convenience with its own rules.
+      return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). The post-call entry is cleared. No reschedule ask was readied: ${err.message}`);
+    }
     return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). The post-call entry is cleared. Draft #${d.draft_id} ('missed_call') is the reschedule ask — review and send it with send_b2b_email; the ladder chases it after 5 business days.`);
   } catch (err) {
     return text(`Error: ${err.message}`);

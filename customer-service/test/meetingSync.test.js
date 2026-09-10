@@ -158,6 +158,11 @@ test('plannedStatus: the reschedule / cancel / reinstate / dismissed-stays rules
   // …but a past reschedule (the row's start moved to another past time) does not resurrect it.
   const movedPast = normalizeEvent(CALENDLY({ start: { dateTime: '2026-09-08T13:30:00Z' }, end: { dateTime: '2026-09-08T14:00:00Z' } }));
   assert.equal(plannedStatus({ status: 'followup_dismissed', starts_at: '2026-09-09T13:30:00Z' }, movedPast, NOW), 'followup_dismissed');
+  // "Not a separate call" is the operator's fact about the row; no calendar
+  // change un-says it — a move of the spare invite is still the spare invite.
+  assert.equal(plannedStatus({ status: 'ignored', starts_at: live.starts_at }, live, NOW), 'ignored');
+  assert.equal(plannedStatus({ status: 'ignored', starts_at: '2026-09-09T13:30:00Z' }, moved, NOW), 'ignored');
+  assert.equal(plannedStatus({ status: 'ignored', starts_at: live.starts_at }, cancelled, NOW), 'cancelled', 'the spare invite being cancelled is still a cancellation');
 });
 
 // -------------------------------------------------------------- syncMeetings

@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS b2b_meetings (
   their_timezone         TEXT,          -- IANA zone used for the "their time" label
   their_timezone_source  TEXT,          -- 'stated' | 'inferred from …' | 'operator'
 
-  status                 TEXT NOT NULL DEFAULT 'booked',  -- 'booked' | 'cancelled'
+  status                 TEXT NOT NULL DEFAULT 'booked',  -- 'booked' | 'cancelled' | 'followup_dismissed' | 'ignored' (not a separate call: the spare row when two events describe one call)
   booked_by              TEXT,                            -- 'operator' | advisor name
   notes                  TEXT,
 

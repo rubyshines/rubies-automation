@@ -6916,19 +6916,27 @@ function outreachCallsHtml(meetings) {
     const outcomeButtons = `<button class="btn btn-ghost btn-xs" onclick="recordMeetingOutcome(${m.id}, 'held')" title="The call happened.">Held</button>
         <button class="btn btn-ghost btn-xs btn-ghost-danger" onclick="recordMeetingOutcome(${m.id}, 'no_show')"
           title="The call did not happen. Readies a reschedule ask (none after a second no-show).">Didn't happen</button>`;
+    // Two calendar events regularly describe ONE call (we book, they send their
+    // own invite for the same slot). Ignore keeps the spare row on the record
+    // but out of every count and follow-up; Restore undoes a mis-click.
+    const ignoreBtn = `<button class="btn btn-ghost btn-xs" onclick="ignoreMeeting(${m.id}, false)"
+          title="Not a separate call (a duplicate invite for the same call). Stays on the record, drops out of no-show counts and follow-ups.">Ignore</button>`;
     let state;
-    if (live) {
+    if (m.status === 'ignored') {
+      state = `<span class="badge badge-muted">ignored · same call</span>
+        <button class="btn btn-ghost btn-xs" onclick="ignoreMeeting(${m.id}, true)" title="It was a separate call after all.">Restore</button>`;
+    } else if (live) {
       // The nudge first (it is the thing to do while waiting); Held / Didn't
       // happen only once the start has passed, which is the server's rule too.
       state = `<span class="badge badge-ready">in progress</span>
         <button class="btn btn-ghost btn-xs" onclick="nudgeMeetingAttendee()"
           title="They have not joined: readies a short 'I am in the meeting room' email with the link in the composer.">Not here yet? Nudge</button>
-        ${past ? outcomeButtons : ''}`;
-    } else if (!past) state = '<span class="badge badge-muted">upcoming</span>';
-    else if (m.outcome === 'held') state = '<span class="badge badge-muted">held</span>';
-    else if (m.outcome === 'no_show') state = '<span class="badge badge-reply">no-show</span>';
+        ${past ? outcomeButtons : ''} ${ignoreBtn}`;
+    } else if (!past) state = `<span class="badge badge-muted">upcoming</span> ${ignoreBtn}`;
+    else if (m.outcome === 'held') state = `<span class="badge badge-muted">held</span> ${ignoreBtn}`;
+    else if (m.outcome === 'no_show') state = `<span class="badge badge-reply">no-show</span> ${ignoreBtn}`;
     else if (m.status === 'followup_dismissed') state = '<span class="badge badge-muted">no follow-up needed</span>';
-    else state = outcomeButtons;
+    else state = `${outcomeButtons} ${ignoreBtn}`;
     // Notes from the recording, folded under the line (2026-09-10). A held
     // call with none yet says so: the nightly pass keeps trying for a week.
     const notes = m.summary
@@ -7015,10 +7023,25 @@ async function recordMeetingOutcome(meetingId, outcome) {
           : 'Recorded: call held', 'success');
   }
   else if (res.stop_meeting_asks) showToast(`Recorded: no-show #${res.no_show_count}. No reschedule ask this time — the October check-in carries it.`, 'success');
+  else if (res.ask_note) showToast(`Recorded: no-show. No reschedule ask readied: ${res.ask_note}`, 'info');
   else showToast('Recorded: no-show. The reschedule ask is ready in the composer.', 'success');
   await loadOutreachQueue(true);
   if (outreachSelectedId !== companyId) return;
   if (outreachEntries.has(companyId)) outreachDraft = null;
+  await loadOutreachContext(companyId, false);
+}
+
+async function ignoreMeeting(meetingId, restore) {
+  const companyId = outreachSelectedId;
+  try {
+    await api(`/api/b2b/meetings/${meetingId}/ignore`, { method: 'POST', body: { restore: !!restore } });
+  } catch (err) {
+    showToast(`Could not ${restore ? 'restore' : 'ignore'} that call: ${err.message}`, 'error');
+    return;
+  }
+  showToast(restore ? 'Restored: counts as its own call again.' : 'Ignored: kept on the record, out of counts and follow-ups.', 'success');
+  await loadOutreachQueue(true);
+  if (outreachSelectedId !== companyId) return;
   await loadOutreachContext(companyId, false);
 }
 
