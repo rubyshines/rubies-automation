@@ -3547,11 +3547,26 @@ async function apiB2bMeetingOutcome(meetingId, body = {}) {
   const sb = getSupabaseClient();
   const r = await recordMeetingOutcome(sb, { meeting_id: meetingId, outcome: body.outcome, note: body.note || null });
   let draft = null;
+  let ask_note = null;
   if (body.outcome === 'no_show' && !r.stop_meeting_asks && body.compose !== false) {
-    const { applyTemplate } = require('../../b2b-outreach/lib/messageTemplates');
-    draft = await applyTemplate(sb, { company_id: r.meeting.company_id, template_id: 'missed_call' });
+    // The outcome is already on the row. A template refusal here (the missed-
+    // call ask is a convenience, and it has its own availability rules) must
+    // not read back as "recording failed" — it did not.
+    try {
+      const { applyTemplate } = require('../../b2b-outreach/lib/messageTemplates');
+      draft = await applyTemplate(sb, { company_id: r.meeting.company_id, template_id: 'missed_call' });
+    } catch (err) {
+      ask_note = err.message;
+    }
   }
-  return { ...r, draft };
+  return { ...r, draft, ask_note };
+}
+
+// "Not a separate call": the spare row when two calendar events describe one
+// call. Kept on the record as status 'ignored'; body.restore undoes it.
+async function apiB2bIgnoreMeeting(meetingId, body = {}) {
+  const { ignoreMeeting } = require('../../b2b-outreach/lib/scheduleMeeting');
+  return ignoreMeeting(getSupabaseClient(), { meeting_id: meetingId, restore: !!body.restore });
 }
 
 async function apiB2bComposeDraft(companyId, body = {}) {
@@ -4274,6 +4289,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/apply-template$/, handler: (body, id) => apiB2bApplyTemplate(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/dismiss-followup$/, handler: (_, id) => apiB2bDismissPostCall(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/outcome$/, handler: (body, id) => apiB2bMeetingOutcome(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/ignore$/, handler: (body, id) => apiB2bIgnoreMeeting(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/cancel$/, handler: (body, id) => apiB2bCancelMeeting(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },

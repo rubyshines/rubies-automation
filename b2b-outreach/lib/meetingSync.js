@@ -115,6 +115,10 @@ function plannedStatus(existing, ev, now = new Date()) {
   if (ev.cancelled || ev.self_declined) return 'cancelled';
   if (!existing) return 'booked';
   if (existing.status === 'cancelled') return 'booked';
+  // "Not a separate call" is the operator's fact about the row, not the event;
+  // no calendar change un-says it (a move of the spare invite is still the
+  // spare invite). Only the panel's Restore does.
+  if (existing.status === 'ignored') return 'ignored';
   if (existing.status === 'followup_dismissed') {
     const moved = ev.starts_at && existing.starts_at
       && new Date(ev.starts_at).getTime() !== new Date(existing.starts_at).getTime();
