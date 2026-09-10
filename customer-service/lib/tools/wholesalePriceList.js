@@ -82,7 +82,7 @@ module.exports = [
   },
   {
     name: 'wholesale_price_list_publish',
-    description: `Publish the wholesale line sheet (featured products at the page rate, ${PAGE_DISCOUNT_PERCENT}%, with their current Shopify product photos) → assets/wholesale-pricing.json on the rubies-ecom-v4 theme repo, AND auto-merge to main so Shopify deploys it (~30s) to ${PAGE_URL}. Run after a retail price change or a product photo change. Uses an isolated git worktree so any in-progress theme branch is untouched; commits nothing when the payload is unchanged. Pass dry_run: true to only update the theme working tree (no commit/push/merge). Pass merge: false to commit+push but skip the auto-merge.`,
+    description: `Publish the wholesale line sheet (featured products at the page rate, ${PAGE_DISCOUNT_PERCENT}%, with their current Shopify product photos) → assets/wholesale-pricing.json on the rubies-ecom-v4 theme repo, AND auto-merge to main so Shopify deploys it (~30s) to ${PAGE_URL}. This also runs by itself: set_product_prices publishes after every committed price change, and the nightly sync publishes after the product sync (needs GITHUB_TOKEN on Railway). Commits nothing when only the timestamp changed. With GITHUB_TOKEN set it commits straight to the theme's main through the GitHub API; otherwise it uses an isolated git worktree + PR so any in-progress theme branch is untouched. Pass dry_run: true to only update the theme working tree (no commit/push/merge). Pass merge: false to commit+push but skip the auto-merge.`,
     inputSchema: {
       type: 'object',
       properties: {
