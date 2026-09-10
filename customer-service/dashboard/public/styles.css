@@ -7016,3 +7016,82 @@ main { height: calc(100vh - 56px); }
 .outreach-call-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 2px 0; }
 .outreach-call-when { font-weight: 600; white-space: nowrap; }
 .btn.btn-xs { padding: 1px 8px; font-size: 12px; line-height: 1.6; }
+
+/* ── To do: the commitments list (2026-09-10) ─────────────────────────────
+   Rows are promises, not companies: the sentence is the primary text in body
+   weight, the company a quiet chip beneath it, so the list reads as a to-do
+   list rather than another company list wearing a different filter. Colour is
+   spent on state only — overdue in the existing red, a pin in teal. */
+.todo-add { display: flex; gap: 6px; padding: 8px 10px 4px; }
+.todo-add-inline { padding: 6px 0 0; }
+.todo-add-input {
+  flex: 1; min-width: 0; padding: 6px 9px;
+  font: inherit; font-size: 13px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+}
+.todo-add-input:focus { outline: 2px solid var(--teal-soft); border-color: var(--teal); }
+.todo-add-company { flex: 0 1 40%; }
+.todo-row-inner { display: flex; align-items: flex-start; gap: 8px; }
+.todo-check {
+  flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; padding: 0;
+  border: 1.5px solid var(--border-strong); border-radius: 50%;
+  background: var(--surface); cursor: pointer; position: relative;
+}
+.todo-check:hover { border-color: var(--teal); }
+.todo-check-done { background: var(--teal); border-color: var(--teal); }
+.todo-check-done::after {
+  content: ''; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.todo-check-theirs { border-style: dashed; }
+.todo-main { flex: 1; min-width: 0; }
+.todo-text { font-size: 13px; line-height: 1.4; color: var(--text); }
+.todo-row-done .todo-text { color: var(--text-tertiary); text-decoration: line-through; }
+.todo-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 3px; font-size: 11px; color: var(--text-secondary); }
+.todo-company { font-size: 11px; }
+.todo-due { color: var(--text-secondary); }
+.todo-due-over { color: var(--red); font-weight: 600; }
+.todo-age, .todo-source { color: var(--text-tertiary); }
+.todo-more {
+  flex-shrink: 0; border: none; background: transparent; padding: 0 2px;
+  color: var(--text-tertiary); cursor: pointer; font-size: 16px; line-height: 1;
+}
+.todo-more:hover { color: var(--text); }
+.todo-row-pinned { border-left: 2px solid var(--teal); }
+.todo-fold { margin-top: 6px; }
+.todo-fold-title {
+  padding: 8px 12px 4px; font-size: 11px; font-weight: 600;
+  color: var(--text-tertiary); cursor: pointer; list-style: none;
+}
+.todo-fold-title::-webkit-details-marker { display: none; }
+.todo-fold-title::before { content: '\25B8  '; }
+.todo-fold[open] > .todo-fold-title::before { content: '\25BE  '; }
+.todo-fold-count { font-weight: 400; }
+.todo-empty-mine { padding: 10px 12px; }
+
+/* The same items inside "Where this stands". */
+.outreach-commitments { margin-top: 10px; }
+.todo-inline { display: flex; align-items: center; gap: 8px; padding: 3px 0; flex-wrap: wrap; }
+.todo-inline-text { flex: 1; min-width: 12ch; font-size: 13px; }
+.todo-inline-hl { background: var(--teal-soft); margin: 0 -6px; padding: 4px 6px; border-radius: var(--radius); }
+.outreach-compose-for {
+  display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px;
+  font-size: 12px; background: var(--teal-soft); color: var(--teal); border-radius: var(--radius);
+}
+.outreach-compose-for button { margin-left: auto; }
+
+/* A held call's notes, folded under the call line. */
+.outreach-call-notes { display: block; margin-top: 4px; font-size: 12px; }
+.outreach-call-notes > summary { cursor: pointer; color: var(--text-secondary); }
+.outreach-call-summary {
+  margin-top: 6px; padding: 8px 10px; max-width: 72ch;
+  background: var(--surface-inset); border-radius: var(--radius);
+  font-size: 12px; line-height: 1.5; white-space: normal;
+}
+.ocs-h { font-weight: 600; margin-top: 6px; }
+.ocs-li { padding-left: 12px; text-indent: -8px; }
+@media (max-width: 720px) {
+  .todo-check { width: 22px; height: 22px; }
+  .todo-more { font-size: 20px; }
+}

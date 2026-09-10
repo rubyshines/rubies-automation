@@ -508,7 +508,14 @@ async function handleMeetingOutcome(input = {}) {
     const r = await recordMeetingOutcome(sb, { meeting_id: input.meeting_id, outcome: input.outcome, note: input.note || null });
     const m = r.meeting;
     if (input.outcome === 'held') {
-      return text(`Recorded: "${m.title}" (${m.starts_at}) with ${m.company_id} was held. The post-call follow-up stands until something is sent to them.`);
+      const n = r.notes;
+      const notesLine = !n ? ''
+        : n.status === 'ingested' ? ` Notes fetched from Wispr (${n.share_link || 'stored on the row'}); ${n.commitments.added} commitment(s) added to the list.`
+          : n.status === 'already' ? ' Notes were already on the row.'
+            : n.status === 'no_recording' ? ' No Wispr recording found yet — the nightly pass will try again, or pass the notes to b2b_meeting_notes.'
+              : n.status === 'not_connected' ? ' Wispr is not connected to the server, so no notes were fetched — b2b_meeting_notes can record them by hand.'
+                : ` Notes not fetched: ${n.error || n.status}.`;
+      return text(`Recorded: "${m.title}" (${m.starts_at}) with ${m.company_id} was held. The post-call follow-up stands until something is sent to them.${notesLine}`);
     }
     if (r.stop_meeting_asks) {
       return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). That is no-show #${r.no_show_count}, so no reschedule ask is offered — the annual October check-in carries the relationship. The post-call entry is cleared.`);
@@ -516,6 +523,98 @@ async function handleMeetingOutcome(input = {}) {
     const { applyTemplate } = require(path.join(B2B_LIB, 'messageTemplates'));
     const d = await applyTemplate(sb, { company_id: m.company_id, template_id: 'missed_call' });
     return text(`Recorded: no-show for ${m.company_id} ("${m.title}", ${m.starts_at}). The post-call entry is cleared. Draft #${d.draft_id} ('missed_call') is the reschedule ask — review and send it with send_b2b_email; the ladder chases it after 5 business days.`);
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
+// ── Meeting notes + commitments (2026-09-10) ────────────────────────────────
+
+async function meetingIdForEvent(sb, eventId) {
+  const { data } = await sb.from('b2b_meetings').select('id').eq('google_event_id', eventId).limit(1);
+  if (data?.length) return data[0].id;
+  const { data: linked } = await sb.from('b2b_meetings').select('id').contains('linked_event_ids', [eventId]).limit(1);
+  return linked?.length ? linked[0].id : null;
+}
+
+function commitmentLine(r) {
+  const who = r.company_name ? `[${r.company_name}] ` : '';
+  const due = r.due_on ? ` · due ${r.due_on}${r.overdue ? ' (overdue)' : ''}` : '';
+  const age = r.days_open != null ? ` · ${r.days_open}d` : '';
+  return `#${r.id} ${who}${r.text}${due}${age}${r.source === 'meeting' ? ' · from a call' : ''}`;
+}
+
+function commitmentItems(items) {
+  return items.length ? '\n' + items.map(i => `- ${i.owner === 'me' ? 'Jamie' : 'them'}: ${i.text}`).join('\n') : '';
+}
+
+async function handleMeetingNotes(input = {}) {
+  try {
+    const sb = getSupabaseClient();
+    const notes = require(path.join(B2B_LIB, 'meetingNotes'));
+    let meetingId = input.meeting_id || null;
+    if (!meetingId && input.google_event_id) meetingId = await meetingIdForEvent(sb, input.google_event_id);
+    if (!meetingId) return text('Error: pass meeting_id, or a google_event_id that matches a b2b_meetings row.');
+
+    if (input.summary) {
+      const { data: row, error } = await sb.from('b2b_meetings').select('*').eq('id', meetingId).maybeSingle();
+      if (error || !row) return text(`Error: meeting #${meetingId} not found`);
+      const r = await notes.recordMeetingNotes(sb, {
+        row, notes: { summary: input.summary, share_link: input.share_link || null, transcript: input.transcript || null, commitments: input.commitments || null },
+      });
+      return text(`Notes recorded on meeting #${meetingId} (${row.company_id}, "${row.title}")${r.held ? ' — marked held' : ''}${r.conflict ? ' — the operator had recorded a no-show; that stands' : ''}. Commitments: ${r.commitments.added} added, ${r.commitments.matched} already listed.${commitmentItems(r.commitments.items)}`);
+    }
+
+    const r = await notes.ingestMeetingNotes(sb, { meeting_id: meetingId, force: !!input.force });
+    switch (r.status) {
+      case 'ingested':
+        return text(`Fetched the recording for meeting #${r.meeting_id} (${r.company_id}, "${r.title}") — matched by ${r.matched_by === 'calendar' ? 'calendar event id' : 'start time and title'}${r.held ? ', marked held' : ''}${r.conflict ? ' (the operator recorded a no-show; that stands)' : ''}. Notes: ${r.share_link || 'stored on the row'}. Commitments: ${r.commitments.added} added, ${r.commitments.matched} already listed.${commitmentItems(r.commitments.items)}`);
+      case 'already': return text(`Meeting #${r.meeting_id} already has notes. Pass force:true to re-fetch.`);
+      case 'no_recording': return text(`No Wispr recording found for meeting #${r.meeting_id} ("${r.title}") — none linked to its calendar event and none within 45 minutes of its start titled for the company. If you have the notes, pass summary (and commitments) to record them by hand.`);
+      case 'not_connected': return text('Wispr is not connected to the server (run scripts/authWispr.js, set WISPR_TOKEN_JSON). Pass summary and commitments to record the notes by hand.');
+      case 'cancelled': return text(`Meeting #${r.meeting_id} is cancelled — nothing to fetch.`);
+      default: return text(JSON.stringify(r));
+    }
+  } catch (err) {
+    return text(`Error: ${err.message}`);
+  }
+}
+
+async function handleCommitments(input = {}) {
+  try {
+    const sb = getSupabaseClient();
+    const C = require(path.join(B2B_LIB, 'commitments'));
+    const action = input.action || 'list';
+    if (action === 'list') {
+      const rows = await C.listCommitments(sb, {
+        company_id: input.company_id || null, owner: input.owner || null,
+        status: input.status || 'open', channel: input.channel || null,
+      });
+      if (!rows.length) return text('Nothing on the list for that filter.');
+      const mine = rows.filter(r => r.owner === 'me');
+      const theirs = rows.filter(r => r.owner === 'them');
+      const lines = [];
+      if (mine.length) lines.push(`ON JAMIE (${mine.length}):`, ...mine.map(commitmentLine));
+      if (theirs.length) lines.push(mine.length ? '' : null, `WAITING ON THEM (${theirs.length}):`, ...theirs.map(commitmentLine));
+      return text(lines.filter(l => l !== null).join('\n'));
+    }
+    if (action === 'add') {
+      if (!input.text) return text('Error: text required');
+      const row = await C.addCommitment(sb, {
+        company_id: input.company_id || null, owner: input.owner === 'them' ? 'them' : 'me',
+        text: input.text, due_on: input.due_on || null, source: 'manual',
+      });
+      return text(`Added #${row.id}: ${row.owner === 'me' ? 'Jamie' : 'them'} — ${row.text}${row.due_on ? ` (due ${row.due_on})` : ''}${row.company_id ? ` for ${row.company_id}` : ''}.`);
+    }
+    if (!input.id) return text(`Error: id required for ${action}`);
+    if (action === 'done') { const r = await C.completeCommitment(sb, { id: input.id, by: 'operator' }); return text(`Done: #${r.id} ${r.text}`); }
+    if (action === 'reopen') { const r = await C.reopenCommitment(sb, { id: input.id }); return text(`Reopened: #${r.id} ${r.text}`); }
+    if (action === 'delete') { const r = await C.deleteCommitment(sb, { id: input.id }); return text(`Deleted: #${r.id} ${r.text}`); }
+    if (action === 'edit') {
+      const r = await C.updateCommitment(sb, { id: input.id, text: input.text, due_on: input.due_on, owner: input.owner, company_id: input.company_id, pinned: input.pinned });
+      return text(`Updated #${r.id}: ${r.owner === 'me' ? 'Jamie' : 'them'} — ${r.text}${r.due_on ? ` (due ${r.due_on})` : ''}`);
+    }
+    return text(`Error: unknown action '${action}' — expected list, add, done, reopen, delete or edit`);
   } catch (err) {
     return text(`Error: ${err.message}`);
   }
@@ -560,6 +659,45 @@ module.exports = [
       required: ['meeting_id', 'outcome'],
     },
     handler: handleMeetingOutcome,
+  },
+  {
+    name: 'b2b_meeting_notes',
+    description: "Bring a call's notes onto its b2b_meetings row and lift the action items onto the commitments list. Normally automatic: the nightly sync fetches every recent call's Wispr Flow recording, and marking a call held (b2b_meeting_outcome) fetches it at once. Use this to fetch one call now (meeting_id, or its Google event id), to re-fetch with force, or — when Wispr is not connected to the server — to record notes by hand: pass summary (markdown, ideally with a '### Next Steps' section of '- (Name) …' bullets), optional share_link and transcript, and optionally an explicit commitments list [{owner:'us'|'them', text, due_on}]. Marks the call held (a recording is proof it happened; an operator-recorded no-show is never overwritten), stores the summary, link and transcript, and rebuilds the relationship recap so it knows what was agreed.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meeting_id: { type: 'number', description: 'b2b_meetings id.' },
+        google_event_id: { type: 'string', description: 'Alternative to meeting_id: the Google Calendar event id (also matches linked_event_ids).' },
+        force: { type: 'boolean', description: 'Re-fetch even if the row already has notes.' },
+        summary: { type: 'string', description: 'Manual fallback: the meeting summary to record instead of fetching.' },
+        share_link: { type: 'string', description: 'Manual fallback: the Wispr notes page link.' },
+        transcript: { type: 'string', description: 'Manual fallback: the transcript, kept on the row and never fed to an AI context.' },
+        commitments: {
+          type: 'array', description: "Manual fallback: explicit action items. Omit to parse the summary's Next Steps.",
+          items: { type: 'object', properties: { owner: { type: 'string', description: "'us' or 'them'" }, text: { type: 'string' }, due_on: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['owner', 'text'] },
+        },
+      },
+    },
+    handler: handleMeetingNotes,
+  },
+  {
+    name: 'b2b_commitments',
+    description: "The list of what Jamie owes and is waiting on across every partner and retailer (2026-09-10): one row per promise with who owes it ('me' = Jamie, 'them' = the other side), the company (optional — a general item has none), an optional due date, and open/done. Fed by meeting notes (Next Steps), by the relationship summariser reading mail, and by this tool. On Me in the Outreach panel is derived from it: a company is on Jamie while he owes it something. action 'list' (default; filter owner, company_id, channel, status open|done) returns the list in reading order — overdue first, then dated, then oldest. 'add' (text, owner, company_id?, due_on?) puts one on. 'done', 'reopen', 'delete' and 'edit' (text, due_on, owner, company_id, pinned) take an id. Delete a wrong capture; mark a finished one done. Never mark one of Jamie's done from a reading of mail — only Jamie decides those; theirs may be closed when the record shows they delivered.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: "'list' (default) | 'add' | 'done' | 'reopen' | 'delete' | 'edit'" },
+        id: { type: 'number', description: 'b2b_commitments id (done, reopen, delete, edit).' },
+        text: { type: 'string', description: 'The promise, one line (add, edit).' },
+        owner: { type: 'string', description: "'me' | 'them' (add, edit, list filter)." },
+        company_id: { type: 'string', description: 'b2b_companies id (add, edit, list filter). Omit on add for a general item.' },
+        due_on: { type: 'string', description: "YYYY-MM-DD (add, edit). '' on edit clears it." },
+        pinned: { type: 'boolean', description: "edit: pin as 'today' (true) or unpin (false)." },
+        status: { type: 'string', description: "list: 'open' (default) | 'done'." },
+        channel: { type: 'string', description: "list: 'wholesale' | 'lgbtq_org' | 'affiliate'." },
+      },
+    },
+    handler: handleCommitments,
   },
   {
     name: 'b2b_draft_attach',

@@ -273,9 +273,16 @@ async function fetchQueueCount(sb, { channel } = {}) {
  * the one thing the claim stamp cannot tell you.
  */
 async function fetchOnMe(sb, { channel } = {}) {
-  let q = sb.from('b2b_companies').select('*').not('on_me_at', 'is', null);
-  if (channel) q = q.eq('relationship_type', channel);
-  const { data: claimed, error } = await q;
+  // On Me is a query over the commitments list (2026-09-10): the companies with
+  // at least one open item Jamie owns, oldest first, each carrying its items.
+  // The derived on_me_* columns still exist for the cadence and the badge, but
+  // this list reads the rows themselves so it can show WHAT is owed, not just
+  // that something is.
+  const { companiesOnMe } = require('./commitments');
+  const groups = await companiesOnMe(sb, { channel });
+  if (!groups.length) return { entries: [] };
+  const groupBy = new Map(groups.map(g => [g.company_id, g]));
+  const { data: claimed, error } = await sb.from('b2b_companies').select('*').in('id', [...groupBy.keys()]);
   if (error) throw new Error(error.message);
   if (!claimed?.length) return { entries: [] };
 
@@ -293,29 +300,33 @@ async function fetchOnMe(sb, { channel } = {}) {
   for (const c of claimed) {
     const ctx = contexts.get(c.id) || {};
     const d = draftBy.get(c.id);
+    const g = groupBy.get(c.id);
     const row = {
       company_id: c.id,
       company_name: c.name,
       channel: c.relationship_type,
-      on_me_at: c.on_me_at,
+      on_me_at: g.on_me_at,
+      // The items themselves: what you owe them, in reading order.
+      commitments: g.items,
+      count: g.count,
       next_step: c.relationship_next_step || null,
       // 'them' when the summary judged the ball is in their court. Worth
       // carrying: a next step that reads as an action for us, on a company that
       // is actually waiting on them, would send you off to write a chaser.
       next_step_owner: c.relationship_next_step_owner || null,
-      age: humanAge(c.on_me_at, now),
-      days_on_you: Math.floor((now - new Date(c.on_me_at)) / 86400000),
+      age: humanAge(g.on_me_at, now),
+      days_on_you: Math.floor((now - new Date(g.on_me_at)) / 86400000),
       // Did the CADENCE hand this over, or did Jamie pick it up? An engine
       // hand-off is a different thing to read: nobody has looked at it yet, and
       // the note says why the engine gave up. Blurring the two would make the
       // list stop meaning "things I have taken on".
-      claimed_by: c.on_me_source || 'operator',
-      claim_note: c.on_me_note || null,
+      claimed_by: g.claimed_by,
+      claim_note: g.claim_note,
       last_inbound_at: ctx.lastInboundAt || null,
       // They have written since you claimed it, so this company is ALSO sitting
       // in the queue at Tier 1. Not a reason to drop the row — a reason to read
       // the reply before acting on what you thought you owed them.
-      replied_since_claim: replyLandedAfter(ctx, c.on_me_at),
+      replied_since_claim: replyLandedAfter(ctx, g.on_me_at),
       draft: d ? { id: d.id, subject: d.subject, snippet: draftSnippet(d.body), generated_at: d.generated_at } : null,
     };
     entries.push(row);
@@ -839,12 +850,16 @@ function composeDraftRow({ company_id, body, subject, message_type, thread_id, e
  *
  * @returns {{ draft_id, saved: boolean, reason?: string }}
  */
-async function saveOperatorDraft(sb, { company_id, body, subject } = {}) {
+async function saveOperatorDraft(sb, { company_id, body, subject, completes_commitment_id } = {}) {
   if (!company_id) throw new Error('company_id required');
   const text = (body || '').trim();
+  // The commitment this message settles, kept on the row (structured is
+  // operator state). undefined leaves it alone; null clears it.
+  const structuredPatch = completes_commitment_id === undefined ? null
+    : { completes_commitment_id: completes_commitment_id ? Number(completes_commitment_id) : null };
 
   const { data: pending, error: pErr } = await sb.from('b2b_drafts')
-    .select('id, advisor').eq('company_id', company_id).eq('status', 'pending').maybeSingle();
+    .select('id, advisor, structured').eq('company_id', company_id).eq('status', 'pending').maybeSingle();
   if (pErr) throw new Error(pErr.message);
 
   if (pending && pending.advisor) {
@@ -864,12 +879,19 @@ async function saveOperatorDraft(sb, { company_id, body, subject } = {}) {
 
   if (pending) {
     const { error } = await sb.from('b2b_drafts')
-      .update({ body: text, subject: subject?.trim() || null }).eq('id', pending.id);
+      .update({
+        body: text, subject: subject?.trim() || null,
+        ...(structuredPatch ? { structured: { ...(pending.structured || {}), ...structuredPatch } } : {}),
+      }).eq('id', pending.id);
     if (error) throw new Error(`draft autosave: ${error.message}`);
     return { draft_id: pending.id, saved: true };
   }
 
   const { draft_id } = await composeDraft(sb, { company_id, body: text, subject });
+  if (structuredPatch && structuredPatch.completes_commitment_id) {
+    const { data: fresh } = await sb.from('b2b_drafts').select('structured').eq('id', draft_id).maybeSingle();
+    await sb.from('b2b_drafts').update({ structured: { ...(fresh?.structured || {}), ...structuredPatch } }).eq('id', draft_id);
+  }
   return { draft_id, saved: true, created: true };
 }
 
@@ -927,7 +949,7 @@ async function composeDraft(sb, { company_id, body, subject, message_type, threa
  */
 async function sendDraftById(sb, {
   draft_id, confirmed, body, subject, test_send,
-  thread_id, message_type, cc, invite_created,
+  thread_id, message_type, cc, invite_created, completes_commitment_id,
 } = {}) {
   if (!draft_id) throw new Error('draft_id required');
   const { data: draft, error } = await sb.from('b2b_drafts').select('*').eq('id', draft_id).maybeSingle();
@@ -964,6 +986,9 @@ async function sendDraftById(sb, {
     to_override: draft.structured?.to ?? undefined,
     test_send: !!test_send,
     invite_created: !!invite_created,
+    // "Done, write to them": the commitment this composer was opened from,
+    // completed by this send and linked to the message it went out in.
+    completes_commitment_id: completes_commitment_id ?? draft.structured?.completes_commitment_id ?? null,
   });
 
   if (res.phase === 'preview') {
@@ -1086,7 +1111,7 @@ function startCompanyGmailSync(sb, companyId, emails) {
  */
 async function fetchCompanyThreads(sb, companyId) {
   // Round 1 — independent lookups in parallel.
-  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes, meetingsRes] = await Promise.all([
+  const [emails, threadsRes, companyRes, recipient, contactsRes, draftRes, meetingsRes, commitmentsRes] = await Promise.all([
     getCompanyEmails(sb, companyId).catch(err => {
       console.error(`[queueService] emails lookup failed: ${err.message}`);
       return [];
@@ -1114,11 +1139,13 @@ async function fetchCompanyThreads(sb, companyId) {
     // its Held / Didn't happen buttons render from this. Rows exist for every
     // call on the calendar now, partner-booked ones included.
     sb.from('b2b_meetings')
-      .select('id, title, starts_at, ends_at, status, booked_by, source, outcome, outcome_at, meet_url, html_link, their_timezone, google_event_id')
+      .select('id, title, starts_at, ends_at, status, booked_by, source, outcome, outcome_at, meet_url, html_link, their_timezone, google_event_id, summary, wispr_share_link')
       .eq('company_id', companyId)
       .gte('starts_at', new Date(Date.now() - 45 * 86400000).toISOString())
       .order('starts_at', { ascending: false })
       .limit(12),
+    // What is owed either way (2026-09-10) — the block under "Where this stands".
+    sb.from('b2b_commitments').select('*').eq('company_id', companyId).order('created_at', { ascending: true }),
   ]);
   if (threadsRes.error) throw new Error(threadsRes.error.message);
   const threads = threadsRes.data || [];
@@ -1217,6 +1244,14 @@ async function fetchCompanyThreads(sb, companyId) {
     contacts: contactsRes.error ? [] : (contactsRes.data || []),
     pending_draft: draftRes.error ? null : (draftRes.data || null),
     meetings: meetingsRes?.error ? [] : (meetingsRes?.data || []),
+    // Open first in reading order, then the ten most recent done. Fail-soft
+    // before the migration.
+    commitments: (() => {
+      if (!commitmentsRes || commitmentsRes.error) return [];
+      const C = require('./commitments');
+      const rows = (commitmentsRes.data || []).map(r => C.decorate(r, company));
+      return [...C.orderCommitments(rows.filter(r => r.status === 'open')), ...rows.filter(r => r.status === 'done').slice(-10).reverse()];
+    })(),
     logo_url: logoUrl,
     // `recipient` keeps its old shape for email companies so nothing downstream
     // has to special-case the common path; `delivery` carries the mode so the

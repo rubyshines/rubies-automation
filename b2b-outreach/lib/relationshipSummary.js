@@ -93,8 +93,30 @@ const OUTPUT_SCHEMA = {
       required: ['started', 'agreed', 'now'],
       additionalProperties: false,
     },
+    // The structured half of "what was promised" (2026-09-10). The record used
+    // to hold this only as prose — one next-step sentence — so nothing could be
+    // listed or checked off. Each entry becomes a row on the commitments list.
+    commitments: {
+      type: 'array',
+      description: "NEW commitments these messages establish that are NOT already listed under OPEN COMMITMENTS: one entry per concrete thing a person said they will do. Only when someone clearly committed ('I will send', 'we can ship', 'I'll introduce you'); never a suggestion, a hope, or a step you think should happen. Empty when nothing new was promised.",
+      items: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string', enum: ['us', 'them'], description: "'us' when Jamie/RUBIES owes it, 'them' when the other side does." },
+          text: { type: 'string', description: 'One line, under 120 characters, naming the thing and who it is for.' },
+          due_on: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'YYYY-MM-DD when a date or deadline was stated for it; null otherwise.' },
+        },
+        required: ['owner', 'text', 'due_on'],
+        additionalProperties: false,
+      },
+    },
+    settled: {
+      type: 'array',
+      items: { type: 'integer' },
+      description: 'The ids from OPEN COMMITMENTS owed by THEM that these messages show they have now done (the intro arrived, the signed agreement came back). Never one of ours. Empty when none.',
+    },
   },
-  required: ['summary', 'next_step', 'next_step_owner', 'is_concluded', 'stated_next_touch', 'recap'],
+  required: ['summary', 'next_step', 'next_step_owner', 'is_concluded', 'stated_next_touch', 'recap', 'commitments', 'settled'],
   additionalProperties: false,
 };
 
@@ -223,11 +245,30 @@ function renderMessage(m) {
   return `[${date}] ${who}: ${body}`;
 }
 
+/** Render a held call with notes as a dated event beside the messages. PURE. */
+function renderMeeting(m) {
+  const date = String(m.starts_at || '').slice(0, 10);
+  const notes = String(m.summary || '').replace(/\s+/g, ' ').slice(0, 1500);
+  return `[${date}] CALL HELD with them ("${m.title || 'call'}") — notes from the recording: ${notes}`;
+}
+
+/** The open commitments block for the prompt. PURE. */
+function renderOpenCommitments(commitments) {
+  const rows = (commitments || []).filter(c => c && c.status !== 'done');
+  if (!rows.length) return ['OPEN COMMITMENTS on the record: none.'];
+  return [
+    'OPEN COMMITMENTS on the record (id · who owes it · what · due):',
+    ...rows.map(c => `#${c.id} · ${c.owner === 'me' ? 'us' : 'them'} · ${c.text}${c.due_on ? ` · due ${c.due_on}` : ''}`),
+  ];
+}
+
 /**
  * Build the prompt. PURE — `now` is injected rather than read, so the render
  * stays testable and the date the model sees is the date the caller meant.
+ * `commitments` are the company's open rows (so the extractor returns only
+ * what is new and can settle theirs); `meetings` are held calls with notes.
  */
-function renderSummaryPrompt({ company, messages, mode, now }) {
+function renderSummaryPrompt({ company, messages, mode, now, commitments = [], meetings = [] }) {
   const today = now.toISOString().slice(0, 10);
   const lines = [];
 
@@ -236,6 +277,8 @@ function renderSummaryPrompt({ company, messages, mode, now }) {
   } of RUBIES, a gender-affirming underwear and swimwear brand. The owner is Jamie.`);
   lines.push('');
   lines.push(`Today is ${today}.`);
+  lines.push('');
+  lines.push(...renderOpenCommitments(commitments));
   lines.push('');
 
   if (mode === 'incremental') {
@@ -262,7 +305,13 @@ function renderSummaryPrompt({ company, messages, mode, now }) {
   }
 
   lines.push('');
-  lines.push(messages.map(renderMessage).join('\n\n---\n\n'));
+  // Calls sit in the timeline where they happened, so "agreed on the call"
+  // lands between the email that booked it and the one that followed up.
+  const timeline = [
+    ...messages.map(m => ({ at: m.sent_at, text: renderMessage(m) })),
+    ...(meetings || []).filter(m => m && m.summary).map(m => ({ at: m.starts_at, text: renderMeeting(m) })),
+  ].sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
+  lines.push(timeline.map(e => e.text).join('\n\n---\n\n'));
   lines.push('');
   lines.push(mode === 'incremental'
     ? 'Rewrite the summary so it covers the whole relationship including these new messages.'
@@ -289,6 +338,15 @@ function renderSummaryPrompt({ company, messages, mode, now }) {
     + ' "next quarter" means the first day of that quarter; "after the summer" means 1 September. Null when no timing was stated,'
     + ' when the stated time has already passed, or when we have already made that contact. A date we proposed does not count; only theirs does.');
   lines.push('- Say only what these messages support. If something is unclear, leave it out rather than inferring it.');
+  // Positive, narrow, and framed against the list it already has: the failure
+  // mode of an extractor is inventing, and a list nobody trusts is worse than
+  // no list. Miss one rather than add one.
+  lines.push('- commitments: list only NEW promises these messages make that are not already under OPEN COMMITMENTS, one line each,'
+    + ' with who owes it. A promise is something a person said they will do ("I will send", "we can ship", "I\'ll introduce you").'
+    + ' A suggestion, a hope, a question, or a step you think should happen is not one. When in doubt, leave it out.');
+  lines.push('- settled: the ids of OPEN COMMITMENTS owed by THEM that these messages show are now done (the thing arrived, the'
+    + ' intro was made, the form came back). Never list one owed by us — only Jamie decides those are done.');
+  lines.push('- Keep the next step consistent with the open commitments: when we owe them something, the next step is ours.');
 
   return lines.join('\n');
 }
@@ -302,11 +360,23 @@ async function loadCompany(sb, companyId) {
 
   const messages = await fetchAllPaginated(() => sb
     .from('b2b_messages')
-    .select('direction, message_type, from_email, cc_email, body_text, sent_at, undelivered_at')
+    .select('id, direction, message_type, from_email, cc_email, body_text, sent_at, undelivered_at')
     .eq('company_id', companyId)
     .order('sent_at', { ascending: true }));
 
-  return { company, messages: messages || [] };
+  // Calls held with notes on the row (2026-09-10): a dated input beside the
+  // messages, so the recap can say "call held 10 September, agreed X" rather
+  // than inferring it from a thank-you email. Fail-soft before the migration.
+  let meetings = [];
+  try {
+    const { data, error: mErr } = await sb.from('b2b_meetings')
+      .select('id, title, starts_at, outcome, summary')
+      .eq('company_id', companyId).eq('outcome', 'held').not('summary', 'is', null)
+      .order('starts_at', { ascending: true });
+    if (!mErr) meetings = data || [];
+  } catch { /* pre-migration */ }
+
+  return { company, messages: messages || [], meetings };
 }
 
 /**
@@ -360,8 +430,8 @@ async function releaseSummaryClaim(sb, companyId) {
  *
  * @returns {{ status: 'updated'|'current'|'empty'|'busy', mode?: string }}
  */
-async function refreshCompanySummary(sb, companyId, { force = false, now = new Date() } = {}) {
-  const { company, messages } = await loadCompany(sb, companyId);
+async function refreshCompanySummary(sb, companyId, { force = false, now = new Date(), commitmentSource = 'email' } = {}) {
+  const { company, messages, meetings } = await loadCompany(sb, companyId);
   const { mode, newMessages } = summaryMode(company, messages);
 
   // A company with no imported history gets no summary rather than an invented
@@ -376,6 +446,11 @@ async function refreshCompanySummary(sb, companyId, { force = false, now = new D
     ? newMessages
     : capMessages(messages);
 
+  // The open commitments, so the extractor returns only what is NEW and can
+  // say which of theirs these messages settled. Fail-soft before the migration.
+  let openCommitments = [];
+  try { openCommitments = await require('./commitments').openCommitmentsForCompany(sb, companyId); } catch { /* pre-migration */ }
+
   if (!(await claimSummary(sb, companyId, now))) return { status: 'busy' };
 
   try {
@@ -385,7 +460,7 @@ async function refreshCompanySummary(sb, companyId, { force = false, now = new D
       max_tokens: 800,
       messages: [{
         role: 'user',
-        content: renderSummaryPrompt({ company, messages: forPrompt, mode: effectiveMode, now }),
+        content: renderSummaryPrompt({ company, messages: forPrompt, mode: effectiveMode, now, commitments: openCommitments, meetings }),
       }],
       output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
       metadata: { company_id: companyId },
@@ -415,7 +490,31 @@ async function refreshCompanySummary(sb, companyId, { force = false, now = new D
     }).eq('id', companyId);
     if (error) throw new Error(`summary write: ${error.message}`);
 
-    return { status: 'updated', mode: effectiveMode, messages: messages.length, stated_next_touch: stated, applied_next_action_date: applyNow ? applyNow.date : null };
+    // The commitments this pass found. After the summary write, so a list
+    // failure never costs the recap. The engine may settle THEIRS only —
+    // completeCommitment enforces it, and an id it cannot find is ignored.
+    let commitmentsResult = null;
+    try {
+      const C = require('./commitments');
+      const items = (out.commitments || []).map(c => ({
+        owner: c.owner === 'us' ? 'me' : 'them', text: c.text, due_on: c.due_on || null, source_message_id: newest.id || null,
+      }));
+      const up = items.length
+        ? await C.upsertCommitments(sb, { company_id: companyId, items, source: commitmentSource, created_by: 'engine', now })
+        : { inserted: [], matched: [] };
+      const settled = [];
+      for (const id of out.settled || []) {
+        const row = openCommitments.find(r => Number(r.id) === Number(id));
+        if (!row || row.owner !== 'them') continue;
+        await C.completeCommitment(sb, { id: row.id, by: 'engine', done_message_id: newest.id || null, now });
+        settled.push(row.id);
+      }
+      commitmentsResult = { added: up.inserted.length, settled: settled.length, items: up.inserted };
+    } catch (err) {
+      console.warn(`[relationshipSummary] commitments for ${companyId} skipped: ${err.message}`);
+    }
+
+    return { status: 'updated', mode: effectiveMode, messages: messages.length, stated_next_touch: stated, applied_next_action_date: applyNow ? applyNow.date : null, commitments: commitmentsResult };
   } finally {
     // Every exit, including a throw. A leaked claim freezes the summary silently
     // for CLAIM_TTL_MS, and a company whose summary never updates looks exactly
@@ -507,6 +606,8 @@ module.exports = {
   summaryMode,
   renderSummaryPrompt,
   renderMessage,
+  renderMeeting,
+  renderOpenCommitments,
   capMessages,
   recapFromOutput,
   claimSummary,

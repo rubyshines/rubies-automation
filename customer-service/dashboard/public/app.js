@@ -5519,6 +5519,10 @@ let outreachChannel = '';        // '' = all | wholesale | lgbtq_org | affiliate
 let outreachQueue = [];
 let outreachInbound = [];        // "New inbound" candidates from /api/b2b/inbound
 let outreachOnMe = [];           // company rows from /api/b2b/on-me
+let outreachTodo = { open: [], done: [] }; // commitments from /api/b2b/commitments
+let outreachTodoCompanies = null;          // [{id,name}] for the add box, fetched once
+let outreachTodoHighlight = null;          // commitment id lit in the detail pane
+let outreachComposeFor = null;             // commitment id the next send marks done
 let outreachDirectory = [];      // company rows from /api/b2b/companies
 let outreachActivity = [];       // message rows from /api/b2b/activity
 let outreachDirTotal = 0;
@@ -5538,7 +5542,10 @@ let outreachEntries = new Map();
 
 const OUTREACH_MODES = [
   { value: 'queue', label: 'Queue', hint: 'what needs action today' },
-  { value: 'onme', label: 'On Me', hint: "what you've claimed to answer yourself", count: () => outreachOnMe.length },
+  // To do is the list itself (rows are promises); On Me is the same list
+  // grouped by company — who you are holding up. Both read one table.
+  { value: 'todo', label: 'To do', hint: 'what you owe, and what you are waiting on', count: () => (outreachTodo.open || []).filter(r => r.owner === 'me').length },
+  { value: 'onme', label: 'On Me', hint: 'companies you still owe something', count: () => outreachOnMe.length },
   { value: 'activity', label: 'Activity', hint: 'what was sent and what came back' },
   { value: 'companies', label: 'Companies', hint: 'search every company' },
 ];
@@ -5589,6 +5596,7 @@ function loadOutreachSidebar() {
   if (outreachMode === 'activity') return loadOutreachActivity();
   if (outreachMode === 'companies') return loadOutreachDirectory();
   if (outreachMode === 'onme') return loadOutreachOnMe();
+  if (outreachMode === 'todo') return loadOutreachTodo();
   return loadOutreachQueue();
 }
 
@@ -5684,6 +5692,267 @@ async function fetchOnMeRows() {
   return payload.entries || [];
 }
 
+// ── To do: the commitments list (2026-09-10) ────────────────────────────────
+// One list of what you owe and what you are waiting on, across every company.
+// Rows come from calls (Next Steps), from mail (the summariser), and from the
+// add box. On Me is derived from it: a company sits there while you owe it
+// something. A row with a company opens the company; the check closes it.
+async function loadOutreachTodo() {
+  try {
+    const params = outreachChannel ? `?channel=${encodeURIComponent(outreachChannel)}` : '';
+    outreachTodo = await api(`/api/b2b/commitments${params}`);
+  } catch (err) {
+    renderOutreachSidebar(`Failed to load the list: ${esc(err.message)}`);
+    return;
+  }
+  rememberOutreachEntries((outreachTodo.open || []).filter(r => r.company_id).map(r => ({
+    company_id: r.company_id, company_name: r.company_name, channel: r.channel,
+    tier: null, message_type: null, reason: r.text,
+  })));
+  renderOutreachSidebar();
+  loadTodoCompanyNames();
+}
+
+// Company names for the add box, fetched once: typing one attaches the item.
+async function loadTodoCompanyNames() {
+  if (outreachTodoCompanies) return;
+  try {
+    const r = await api('/api/b2b/companies?limit=500');
+    const list = Array.isArray(r) ? r : (r.companies || r.rows || r.results || []);
+    outreachTodoCompanies = list.map(c => ({ id: c.id, name: c.name }));
+  } catch (_) { outreachTodoCompanies = []; }
+  const dl = document.getElementById('todo-company-list');
+  if (dl) dl.innerHTML = outreachTodoCompanies.map(c => `<option value="${esc(c.name)}"></option>`).join('');
+}
+
+function outreachTodoListHtml() {
+  const open = outreachTodo.open || [];
+  const mine = open.filter(r => r.owner === 'me' && r.company_id);
+  const general = open.filter(r => r.owner === 'me' && !r.company_id);
+  const theirs = open.filter(r => r.owner === 'them');
+  const done = outreachTodo.done || [];
+  const addBox = `<div class="todo-add">
+      <input type="text" id="todo-add-input" class="todo-add-input" placeholder="Add something you owe&hellip;" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addTodoFromList()}">
+      <input type="text" id="todo-add-company" class="todo-add-input todo-add-company" list="todo-company-list" placeholder="Company (optional)" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addTodoFromList()}">
+      <datalist id="todo-company-list">${(outreachTodoCompanies || []).map(c => `<option value="${esc(c.name)}"></option>`).join('')}</datalist>
+    </div>`;
+  if (!open.length && !done.length) {
+    return addBox + '<div class="outreach-loading">Nothing owed either way.<br><span class="outreach-list-note">Calls and mail add to this list on their own. Type one above to add it yourself.</span></div>';
+  }
+  const fold = (title, rows, isOpen) => rows.length
+    ? `<details class="todo-fold"${isOpen ? ' open' : ''}><summary class="todo-fold-title">${title} <span class="todo-fold-count">${rows.length}</span></summary>${rows.map(outreachTodoRowHtml).join('')}</details>`
+    : '';
+  return addBox
+    + (mine.length ? mine.map(outreachTodoRowHtml).join('') : '<div class="outreach-list-note todo-empty-mine">Nothing on you.</div>')
+    + fold('Waiting on them', theirs, true)
+    + fold('General', general, true)
+    + fold('Done', done, false);
+}
+
+function fmtDueOn(d) {
+  return new Date(`${d}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function todoSourceLabel(r) {
+  return r.source === 'meeting' ? 'from a call'
+    : r.source === 'email' || r.source === 'backfill' ? 'from mail'
+      : r.source === 'cadence' ? 'handed over' : '';
+}
+
+function outreachTodoRowHtml(r) {
+  const isDone = r.status === 'done';
+  const mine = r.owner === 'me';
+  const company = r.company_name
+    ? `<span class="todo-company outreach-channel-chip outreach-channel-${esc(r.channel || '')}">${esc(r.company_name)}</span>` : '';
+  const when = isDone ? ''
+    : r.due_on ? `<span class="todo-due${r.overdue ? ' todo-due-over' : ''}">${r.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(r.due_on))}</span>`
+      : `<span class="todo-age">${r.days_open}d</span>`;
+  const source = todoSourceLabel(r);
+  const check = `<button class="todo-check${isDone ? ' todo-check-done' : ''}${!mine && !isDone ? ' todo-check-theirs' : ''}"
+      onclick="event.stopPropagation(); toggleTodoDone(${r.id}, ${isDone ? 'false' : 'true'})"
+      title="${isDone ? 'Reopen' : mine ? 'Done' : 'They did it'}" aria-label="${isDone ? 'Reopen' : 'Mark done'}"></button>`;
+  const open = r.company_id ? `openTodo(${r.id})` : `editTodo(${r.id})`;
+  return `<div class="queue-item outreach-row todo-row${isDone ? ' todo-row-done' : ''}${r.pinned_at ? ' todo-row-pinned' : ''}${r.id === outreachTodoHighlight ? ' active' : ''}"
+       data-id="${r.id}" onclick="${open}">
+    <div class="queue-item-inner todo-row-inner">
+      ${check}
+      <div class="todo-main">
+        <div class="todo-text">${esc(r.text)}</div>
+        <div class="todo-meta">${company}${when}${source ? `<span class="todo-source">${source}</span>` : ''}${r.blocked_by ? '<span class="badge badge-muted">blocked</span>' : ''}</div>
+      </div>
+      <button class="todo-more" onclick="event.stopPropagation(); editTodo(${r.id})" title="Edit or delete">&#8943;</button>
+    </div>
+  </div>`;
+}
+
+function findTodo(id) {
+  const pools = [outreachTodo.open || [], outreachTodo.done || [], (outreachHistory && outreachHistory.commitments) || []];
+  for (const p of pools) { const hit = p.find(r => r.id === id); if (hit) return hit; }
+  return null;
+}
+
+// Every surface that shows the list, redrawn after a change.
+function refreshTodoSurfaces() {
+  if (currentTab !== 'outreach') return;
+  if (outreachMode === 'todo') loadOutreachTodo();
+  else if (outreachMode === 'onme') loadOutreachOnMe();
+  else refreshOnMeCount();
+  if (outreachSelectedId) loadOutreachContext(outreachSelectedId, false);
+}
+
+async function toggleTodoDone(id, done) {
+  await todoAction(id, { action: done ? 'done' : 'reopen' }, done ? 'Done' : 'Reopened');
+}
+
+async function todoAction(id, body, okMessage) {
+  try {
+    await api(`/api/b2b/commitments/${id}`, { method: 'POST', body });
+  } catch (err) {
+    showToast(`Could not update: ${err.message}`, 'error');
+    return false;
+  }
+  showToast(okMessage, 'success');
+  refreshTodoSurfaces();
+  return true;
+}
+
+// A row with a company opens the company, composer ready, that item lit.
+function openTodo(id) {
+  const r = findTodo(id);
+  if (!r || !r.company_id) return;
+  outreachTodoHighlight = id;
+  selectOutreachEntry(r.company_id);
+}
+
+// Edit or delete, in two prompts: the wording, then the date. Empty wording
+// offers delete — for a wrong capture; a finished one is Done, not deleted.
+async function editTodo(id) {
+  const r = findTodo(id);
+  if (!r) return;
+  const text = prompt('Edit this item. Leave it empty to delete it.', r.text);
+  if (text === null) return;
+  if (!text.trim()) {
+    if (!confirm('Delete this item? (If it was finished, use Done instead so the record keeps it.)')) return;
+    await todoAction(id, { action: 'delete' }, 'Deleted');
+    return;
+  }
+  const due = prompt('Due date as YYYY-MM-DD, or empty for none.', r.due_on || '');
+  if (due === null) return;
+  await todoAction(id, { action: 'edit', text: text.trim(), due_on: due.trim() }, 'Updated');
+}
+
+async function createTodo(body) {
+  try {
+    await api('/api/b2b/commitments', { method: 'POST', body });
+  } catch (err) {
+    showToast(`Could not add: ${err.message}`, 'error');
+    return false;
+  }
+  showToast('Added', 'success');
+  refreshTodoSurfaces();
+  return true;
+}
+
+// From the list's add box. A typed company name attaches the item; no match
+// means a general item, and the toast says so rather than guessing.
+async function addTodoFromList() {
+  const input = document.getElementById('todo-add-input');
+  const text = (input?.value || '').trim();
+  if (!text) return;
+  const typed = (document.getElementById('todo-add-company')?.value || '').trim();
+  let company_id = null;
+  if (typed) {
+    const q = typed.toLowerCase();
+    const hit = (outreachTodoCompanies || []).find(c => c.name.toLowerCase() === q)
+      || (outreachTodoCompanies || []).find(c => c.name.toLowerCase().includes(q));
+    if (!hit) showToast(`No company called "${typed}" — added as a general item`, 'error');
+    else company_id = hit.id;
+  }
+  if (await createTodo({ text, owner: 'me', company_id })) {
+    input.value = '';
+    const c = document.getElementById('todo-add-company');
+    if (c) c.value = '';
+  }
+}
+
+// From "Where this stands": an item for the open company, either direction.
+async function addTodoForCompany(owner) {
+  const input = document.getElementById('todo-add-company-inline');
+  const text = (input?.value || '').trim();
+  if (!text || !outreachSelectedId) return;
+  if (await createTodo({ text, owner, company_id: outreachSelectedId })) input.value = '';
+}
+
+// "Done, write to them": the composer takes this item; the send marks it done
+// and links the message that settled it.
+function writeToThemFor(id) {
+  outreachComposeFor = id;
+  const el = document.getElementById('outreach-compose-for');
+  if (el) el.innerHTML = outreachComposeForHtml();
+  const ta = document.getElementById('outreach-draft-editor');
+  if (ta) { ta.focus(); ta.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  queueComposerAutosave();
+}
+
+function clearComposeFor() {
+  outreachComposeFor = null;
+  const el = document.getElementById('outreach-compose-for');
+  if (el) el.innerHTML = '';
+  queueComposerAutosave();
+}
+
+function outreachComposeForHtml() {
+  if (!outreachComposeFor) return '';
+  const r = findTodo(outreachComposeFor);
+  if (!r) return '';
+  return `<div class="outreach-compose-for">Sending this marks done: <strong>${esc(r.text)}</strong>
+    <button class="btn btn-ghost btn-xs" onclick="clearComposeFor()">Not this one</button></div>`;
+}
+
+// The company's items inside "Where this stands": yours with Done and
+// Done-write-to-them, theirs with They-did-it, and an add box for either.
+function outreachCommitmentsHtml(rows) {
+  const open = (rows || []).filter(r => r.status === 'open');
+  const mine = open.filter(r => r.owner === 'me');
+  const theirs = open.filter(r => r.owner === 'them');
+  const addRow = `<div class="todo-add todo-add-inline">
+      <input type="text" id="todo-add-company-inline" class="todo-add-input" placeholder="Add something owed&hellip;" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();addTodoForCompany('me')}">
+      <button class="btn btn-ghost btn-xs" onclick="addTodoForCompany('me')" title="Something you owe them">I owe</button>
+      <button class="btn btn-ghost btn-xs" onclick="addTodoForCompany('them')" title="Something you are waiting on from them">They owe</button>
+    </div>`;
+  const item = r => `<div class="todo-inline${r.id === outreachTodoHighlight ? ' todo-inline-hl' : ''}">
+      <button class="todo-check${r.owner === 'them' ? ' todo-check-theirs' : ''}" onclick="toggleTodoDone(${r.id}, true)"
+        title="${r.owner === 'them' ? 'They did it' : 'Done'}" aria-label="Mark done"></button>
+      <span class="todo-inline-text">${esc(r.text)}</span>
+      ${r.due_on ? `<span class="todo-due${r.overdue ? ' todo-due-over' : ''}">${r.overdue ? 'overdue ' : 'by '}${esc(fmtDueOn(r.due_on))}</span>` : ''}
+      ${r.owner === 'me' ? `<button class="btn btn-ghost btn-xs" onclick="writeToThemFor(${r.id})" title="Opens the composer; sending marks this done">Done, write to them</button>` : ''}
+      <button class="todo-more" onclick="editTodo(${r.id})" title="Edit or delete">&#8943;</button>
+    </div>`;
+  return `<div class="outreach-recap outreach-commitments">
+    <div class="outreach-recap-k${mine.length ? ' outreach-recap-next' : ''}">You owe</div>
+    <div class="outreach-recap-v">${mine.length ? mine.map(item).join('') : '<span class="outreach-recap-muted">nothing open</span>'}${addRow}</div>
+    ${theirs.length ? `<div class="outreach-recap-k">They owe</div><div class="outreach-recap-v">${theirs.map(item).join('')}</div>` : ''}
+  </div>`;
+}
+
+// A Wispr summary is markdown: headings, bullets, paragraphs. Just enough
+// rendering to read, everything escaped.
+function meetingSummaryHtml(md) {
+  return String(md || '').split(/\r?\n/).map(line => {
+    const l = line.trim();
+    if (!l) return '';
+    const h = /^#{1,6}\s*(.+?)\s*$/.exec(l);
+    if (h) return `<div class="ocs-h">${esc(h[1].replace(/<[^>]+>/g, ''))}</div>`;
+    const b = /^[-*\u2022]\s+(.+)$/.exec(l);
+    if (b) return `<div class="ocs-li">&bull; ${esc(b[1])}</div>`;
+    return `<div>${esc(l)}</div>`;
+  }).join('');
+}
+
+// ── On Me ───────────────────────────────────────────────────────────────────
 async function loadOutreachOnMe() {
   try {
     outreachOnMe = await fetchOnMeRows();
@@ -5705,9 +5974,9 @@ async function loadOutreachOnMe() {
 // Badge-only refresh: never repaints a list the operator is reading, so it is
 // safe to fire from the queue load.
 async function refreshOnMeCount() {
-  try {
-    outreachOnMe = await fetchOnMeRows();
-  } catch (_) { return; }        // a missing count is a quiet gap, not an error banner
+  // Both counts, each a quiet gap on failure rather than an error banner.
+  try { outreachOnMe = await fetchOnMeRows(); } catch (_) { /* quiet gap */ }
+  try { outreachTodo = await api('/api/b2b/commitments'); } catch (_) { /* quiet gap */ }
   if (currentTab === 'outreach' && outreachMode === 'queue') renderOutreachSidebar();
 }
 
@@ -5726,14 +5995,14 @@ function outreachOnMeRowHtml(r) {
         <span class="queue-item-name">${esc(r.company_name)}</span>
         <span class="outreach-channel-chip outreach-channel-${esc(r.channel)}">${esc(channelLabel)}</span>
       </div>
-      <div class="outreach-row-reason">${r.claimed_by === 'cadence' && r.claim_note
-    // The engine's note wins the reason line on a hand-off: it says why the
-    // company is here at all, which on this row is the thing you do not know.
-    // The suggested next step is still shown in the detail pane.
-    ? esc(r.claim_note)
-    : r.next_step
-      ? esc(r.next_step)
-      : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
+      <div class="outreach-row-reason">${r.commitments && r.commitments.length
+    // What you owe them, from the list itself (a hand-off's note is that item).
+    ? `${esc(r.commitments[0].text)}${r.count > 1 ? ` <span class="outreach-recap-muted">+${r.count - 1} more</span>` : ''}`
+    : r.claimed_by === 'cadence' && r.claim_note
+      ? esc(r.claim_note)
+      : r.next_step
+        ? esc(r.next_step)
+        : `on you since ${esc(new Date(r.on_me_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}`}</div>
       ${r.claimed_by === 'cadence' || r.replied_since_claim || r.next_step_owner === 'them' ? `<div class="queue-item-row2">
         ${r.claimed_by === 'cadence'
     ? '<span class="badge badge-muted" title="The follow-up ladder ran out of moves and handed this to you — you did not claim it">handed over</span>'
@@ -5928,9 +6197,14 @@ function renderOutreachList(errorHtml) {
     return;
   }
 
+  if (outreachMode === 'todo') {
+    el.innerHTML = outreachTodoListHtml();
+    return;
+  }
+
   if (outreachMode === 'onme') {
     if (!outreachOnMe.length) {
-      el.innerHTML = `<div class="outreach-loading">Nothing is on you.<br><span class="outreach-list-note">Use <strong>On me</strong> on a company to move it here when you owe them an answer but not today.</span></div>`;
+      el.innerHTML = `<div class="outreach-loading">Nothing is on you.<br><span class="outreach-list-note">A company lands here while you owe it something on the <strong>To do</strong> list &mdash; from a call, from mail, or <strong>Add to my list</strong> on the company.</span></div>`;
       return;
     }
     el.innerHTML = outreachOnMe.map(outreachOnMeRowHtml).join('');
@@ -6121,6 +6395,9 @@ async function selectOutreachEntry(companyId) {
   outreachSelectedId = companyId;
   outreachDraft = null;
   outreachHistory = null;
+  outreachComposeFor = null;
+  // The lit To do item survives only if it belongs to the company being opened.
+  if (outreachTodoHighlight && findTodo(outreachTodoHighlight)?.company_id !== companyId) outreachTodoHighlight = null;
   location.hash = `outreach-${encodeURIComponent(companyId)}`; // reload restores this company
   renderOutreachQueue(); // refresh active highlight
   renderOutreachSidebarContext(); // sidebar takeover (compact card while loading)
@@ -6158,6 +6435,8 @@ async function selectOutreachEntry(companyId) {
 function currentOutreachIds() {
   if (outreachMode === 'companies') return outreachDirectory.map(c => c.id);
   if (outreachMode === 'activity') return [...new Set(outreachActivity.map(m => m.company_id))];
+  if (outreachMode === 'todo') return [...new Set((outreachTodo.open || []).filter(r => r.company_id).map(r => r.company_id))];
+  if (outreachMode === 'onme') return outreachOnMe.map(r => r.company_id);
   return outreachQueue.map(e => e.company_id);
 }
 
@@ -6177,6 +6456,7 @@ function navigateOutreach(direction) {
 // auto-polled, so there's nothing to resurrect the removed row.
 function outreachAdvancePast(companyId) {
   outreachDraft = null;
+  outreachComposeFor = null;   // the send settled it (or there was none)
   // Only the queue is a worklist you burn down. In the directory and the
   // activity feed the row is a fact about the company, not a task — dropping it
   // on send would make the company you just wrote to vanish from the search you
@@ -6346,6 +6626,7 @@ function outreachRelationshipHtml(entry) {
       </span>
     </h3>
     ${bodyHtml}
+    ${outreachCommitmentsHtml(h.commitments)}
     ${outreachCallsHtml(h.meetings)}
     ${stats.length ? `<div class="outreach-relationship-stats">${esc(stats.join(' · '))}</div>` : ''}
   </div>`;
@@ -6391,8 +6672,15 @@ function outreachCallsHtml(meetings) {
     else if (m.outcome === 'no_show') state = '<span class="badge badge-reply">no-show</span>';
     else if (m.status === 'followup_dismissed') state = '<span class="badge badge-muted">no follow-up needed</span>';
     else state = outcomeButtons;
+    // Notes from the recording, folded under the line (2026-09-10). A held
+    // call with none yet says so: the nightly pass keeps trying for a week.
+    const notes = m.summary
+      ? `<details class="outreach-call-notes"><summary>Notes${m.wispr_share_link
+        ? ` &middot; <a href="${esc(m.wispr_share_link)}" target="_blank" rel="noopener">open in Wispr</a>` : ''}</summary>
+          <div class="outreach-call-summary">${meetingSummaryHtml(m.summary)}</div></details>`
+      : (past && m.outcome === 'held' ? '<div class="outreach-call-notes outreach-recap-muted">notes pending</div>' : '');
     return `<div class="outreach-call-row"><span class="outreach-call-when">${esc(fmtDateTimeET(m.starts_at))}</span>
-      <span class="outreach-recap-muted">${esc(m.title || 'Call')} · ${who}${link}</span> ${state}</div>`;
+      <span class="outreach-recap-muted">${esc(m.title || 'Call')} · ${who}${link}</span> ${state}${notes}</div>`;
   }).join('');
   return `<div class="outreach-recap outreach-calls"><div class="outreach-recap-k">Calls</div><div class="outreach-recap-v">${rows}</div></div>`;
 }
@@ -6461,7 +6749,14 @@ async function recordMeetingOutcome(meetingId, outcome) {
     showToast(`Could not record that: ${err.message}`, 'error');
     return;
   }
-  if (outcome === 'held') showToast('Recorded: call held', 'success');
+  if (outcome === 'held') {
+    const n = res.notes;
+    showToast(n?.status === 'ingested'
+      ? `Recorded: call held. Notes fetched${n.commitments?.added ? `, ${n.commitments.added} item${n.commitments.added === 1 ? '' : 's'} added to your list` : ''}.`
+      : n?.status === 'no_recording' ? 'Recorded: call held. No recording found yet — the nightly pass will look again.'
+        : n?.status === 'not_connected' ? 'Recorded: call held. Wispr is not connected, so no notes were fetched.'
+          : 'Recorded: call held', 'success');
+  }
   else if (res.stop_meeting_asks) showToast(`Recorded: no-show #${res.no_show_count}. No reschedule ask this time — the October check-in carries it.`, 'success');
   else showToast('Recorded: no-show. The reschedule ask is ready in the composer.', 'success');
   await loadOutreachQueue(true);
@@ -6715,8 +7010,16 @@ function pauseOutreach() {
 // you leave the row where it is instead. What the claim is about is answered on
 // the list by the relationship's suggested next step, which stays current as
 // messages land — better than a note typed once and never revisited.
+// Says what you owe them at claim time, prefilled with the relationship's
+// suggested next step so the common case is still one Enter. The item lands
+// on the To do list and clears when you send to them.
 function onMeOutreach() {
-  applyOutreachTriage({ action: 'on_me' }, 'Moved to On Me');
+  const c = outreachHistory && outreachHistory.company;
+  const name = outreachEntries.get(outreachSelectedId)?.company_name || 'them';
+  const suggested = (c && c.relationship_next_step) || `Reply to ${name}`;
+  const text = prompt('Put this on your list. What do you owe them?', suggested);
+  if (text === null) return;
+  applyOutreachTriage({ action: 'on_me', text: text.trim() || suggested }, 'On your list');
 }
 
 function resumeOutreach() {
@@ -7073,6 +7376,7 @@ function renderOutreachSidebarContext() {
   document.getElementById('outreach-sidebar-context').style.display = '';
   const backLabel = outreachMode === 'companies' ? `${outreachDirectory.length} companies`
     : outreachMode === 'activity' ? `${outreachActivity.length} messages`
+    : outreachMode === 'todo' ? `${(outreachTodo.open || []).filter(r => r.owner === 'me').length} owed`
     : outreachMode === 'onme' ? `${outreachOnMe.length} on you`
     : `${outreachQueue.length} in queue`;
   document.getElementById('outreach-back-count').textContent = backLabel;
@@ -7464,7 +7768,7 @@ async function ensureOutreachDraftId() {
   const subject = document.getElementById('outreach-subject-editor')?.value || '';
   clearTimeout(composerSaveTimer);
   const res = await api(`/api/b2b/companies/${encodeURIComponent(outreachSelectedId)}/save-draft`, {
-    method: 'POST', body: { body, subject },
+    method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
   });
   return res.draft_id || null;
 }
@@ -7668,9 +7972,9 @@ function outreachActionsHtml(entry, draft) {
       ? `<button class="btn btn-ghost btn-onme" onclick="restoreOutreach()"
           title="Undo the drop: back to lead or account as the record supports. Still needs a keep before it drafts.">Restore</button>`
       : deferred
-        ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()">${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`
+        ? `<button class="btn btn-ghost btn-onme" onclick="resumeOutreach()"${c.on_me_at ? ' title="Removes the reply claim. Anything you owe them from a call or mail stays on your list."' : ''}>${c.on_me_at ? 'Back to queue' : 'Resume outreach'}</button>`
         : `<button class="btn btn-ghost btn-onme" onclick="onMeOutreach()"
-            title="Take it out of the queue and onto your own list — keeps the draft, keeps ageing">On me</button>
+            title="Put what you owe them on your To do list — keeps the draft; the cadence stays off until it is done">Add to my list</button>
            <button class="btn btn-ghost" onclick="pauseOutreach()"
             title="Stop drafting, chasing and following up. A new reply still surfaces.">Pause outreach</button>
            <button class="btn btn-ghost" onclick="dropOutreach()"
@@ -7771,6 +8075,7 @@ function renderOutreachDetail(entry, draft) {
             : 'Write your reply below. Replies are yours: the advisor only drafts messages we initiate.'}</div>
         ${templateRow}
         ${steerBlock}
+        <div id="outreach-compose-for">${outreachComposeForHtml()}</div>
         ${subjectInput(true)}
         ${editor(true, 'Type your message here. Saved as you write.')}
         <div id="outreach-autosave" class="outreach-autosave"></div>
@@ -7797,6 +8102,7 @@ function renderOutreachDetail(entry, draft) {
       ${outreachScheduleBannerHtml(draft)}
       ${draft.advisor ? '' : templateRow}
       ${steerBlock}
+      <div id="outreach-compose-for">${outreachComposeForHtml()}</div>
       ${subjectInput(!draft.advisor)}
       ${/* Only YOUR text autosaves. On an advisor draft, subject/body are the AI's
            originals and the pair with sent_subject/sent_body IS the edit record —
@@ -8741,7 +9047,7 @@ async function saveComposerDraft() {
   const seq = ++composerSaveSeq;
   try {
     const res = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/save-draft`, {
-      method: 'POST', body: { body, subject },
+      method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
     });
     if (seq !== composerSaveSeq || outreachSelectedId !== companyId) return;
     if (res.saved === false && res.reason === 'advisor_draft') return; // not ours to overwrite
@@ -8780,17 +9086,17 @@ async function sendComposedDraft() {
   try {
     clearTimeout(composerSaveTimer);
     composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/save-draft`, {
-      method: 'POST', body: { body, subject },
+      method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
     });
     // save-draft declines to overwrite an advisor draft, and returns no row when
     // it does. Nothing to send down that path but a fresh one.
     if (!composed?.draft_id) {
       composed = await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/compose`, {
-        method: 'POST', body: { body, subject },
+        method: 'POST', body: { body, subject, completes_commitment_id: outreachComposeFor || undefined },
       });
     }
     const res = await api('/api/b2b/send', {
-      method: 'POST', body: { draft_id: composed.draft_id, confirmed: true, body, subject },
+      method: 'POST', body: { draft_id: composed.draft_id, confirmed: true, body, subject, completes_commitment_id: outreachComposeFor || undefined },
     });
     if (res.phase === 'sent') {
       showToast(`Sent to ${res.to}`, 'success');
@@ -8846,7 +9152,7 @@ async function sendOutreachDraft() {
   const editedSubject = document.getElementById('outreach-subject-editor')?.value;
   let res;
   try {
-    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true, body: editedBody, subject: editedSubject } });
+    res = await api('/api/b2b/send', { method: 'POST', body: { draft_id: outreachDraft.id, confirmed: true, body: editedBody, subject: editedSubject, completes_commitment_id: outreachComposeFor || undefined } });
   } catch (err) {
     showToast(`Send failed: ${err.message}`, 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Send'; }

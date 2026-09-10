@@ -377,7 +377,7 @@ async function assertInviteClaimIsBacked(sb, { company_id, body }) {
 }
 
 async function sendB2bEmail(p = {}) {
-  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override, test_send, invite_created, allow_unbacked_invite_claim } = p;
+  const { company_id, thread_id, message_type, variant_id, body, confirmed, next_touch_days, attachments, cc, to_override, test_send, invite_created, allow_unbacked_invite_claim, completes_commitment_id } = p;
   if (!company_id) throw new Error('company_id required');
   if (!message_type) throw new Error('message_type required');
   if (!body || !body.trim()) throw new Error('body required');
@@ -590,15 +590,31 @@ async function sendB2bEmail(p = {}) {
   }
 
   // The ONLY outbound b2b_messages writer (dedupe rule)
-  const { error: mErr } = await sb.from('b2b_messages').insert({
+  const { data: sentRow, error: mErr } = await sb.from('b2b_messages').insert({
     thread_id: threadRowId, company_id, direction: 'outbound', message_type,
     variant_id: variant_id || null, gmail_message_id: gmailMessageId,
     gmail_thread_id: gmailThreadId, in_reply_to: inReplyTo,
     from_email: FROM_EMAIL, to_email: recipient.email,
     cc_email: addressList(effectiveCc) || null, body_text: sentBody,
     sent_at: sentAt, source: 'send_tool',
-  });
+  }).select('id').single();
   if (mErr) console.error(`[sendB2bEmail] b2b_messages insert failed (sent ok): ${mErr.message}`);
+
+  // What this send settles on the commitments list (2026-09-10): the item the
+  // composer was opened from ("Done, write to them") and any "reply to them"
+  // claim on this thread. Nothing else — sending Le JAG their codes does not
+  // ship the stand. Fail-soft: the email is gone, and a bookkeeping miss must
+  // not fail the send.
+  let settled = [];
+  try {
+    const { settleOnSend } = require('./commitments');
+    settled = (await settleOnSend(sb, {
+      company_id, thread_id: threadRowId, message_id: sentRow?.id || null,
+      draft: { structured: { completes_commitment_id: completes_commitment_id || null } },
+    })).completed;
+  } catch (err) {
+    console.error(`[sendB2bEmail] commitments settle failed (sent ok): ${err.message}`);
+  }
 
   // Gmail read state: we just answered, so nothing in this thread is waiting
   // on a person any more. Only for a reply into an existing Gmail thread — a
@@ -611,9 +627,8 @@ async function sendB2bEmail(p = {}) {
     await settleThreadReadState({ sb, gmail, gmail_thread_id: thread.gmail_thread_id });
   }
 
-  // Cadence bookkeeping. Answering them IS the thing an On Me claim was for, so
-  // sending clears it — the alternative is a list that only ever grows, cleared
-  // by a second deliberate click nobody makes once the real work is done.
+  // Cadence bookkeeping. On Me is not cleared here any more: it is derived from
+  // the commitments list, and settleOnSend above closed what this send settled.
   // Snooze and pause are untouched: a send during either is one deliberate
   // message, not a decision to resume chasing.
   // A date they stated ("reach out in September") outranks the per-type table
@@ -625,12 +640,11 @@ async function sendB2bEmail(p = {}) {
   await sb.from('b2b_companies').update({
     last_outbound_at: sentAt,
     next_action_date: resolved.date,
-    on_me_at: null,
     updated_at: sentAt,
     ...(consumed ? { metadata: withoutStatedNextTouch(cadenceRow.metadata) } : {}),
   }).eq('id', company_id);
 
-  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, cc: addressList(effectiveCc) || null, sent_at: sentAt, next_action_date: resolved.date, next_action_source: resolved.source };
+  return { ok: true, phase: 'sent', gmail_message_id: gmailMessageId, gmail_thread_id: gmailThreadId, thread_id: threadRowId, to: recipient.email, cc: addressList(effectiveCc) || null, sent_at: sentAt, next_action_date: resolved.date, next_action_source: resolved.source, settled_commitments: settled };
 }
 
 module.exports = { sendB2bEmail, assertInviteClaimIsBacked, assertRecipientDeliverable, INVITE_CLAIM, buildRawMessage, toHtmlBody, normalizeSignature, resolveRecipient, resolveDelivery, deliveryMode, addressList, encodeSubject, attachmentSizeError, MAX_ATTACHMENT_TOTAL_BYTES, FROM_EMAIL, SEND_FLAG };

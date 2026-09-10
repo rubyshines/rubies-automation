@@ -3038,6 +3038,51 @@ async function apiB2bOnMe(query) {
   return b2bQueueService.fetchOnMe(getSupabaseClient(), { channel });
 }
 
+// ── Commitments: what Jamie owes and is waiting on (2026-09-10) ────────────
+// One list, three ways in (a call's Next Steps, the summariser reading mail,
+// typed in here); On Me is derived from it. Same lib the b2b_commitments
+// console tool calls, so the two surfaces cannot drift.
+async function apiB2bCommitments(query) {
+  const C = require('../../b2b-outreach/lib/commitments');
+  const sb = getSupabaseClient();
+  const channel = query.get('channel') || null;
+  const company_id = query.get('company_id') || null;
+  const [open, done] = await Promise.all([
+    C.listCommitments(sb, { status: 'open', channel, company_id }),
+    C.listCommitments(sb, { status: 'done', channel, company_id, limit: 30 }),
+  ]);
+  return { open, done };
+}
+
+async function apiB2bAddCommitment(body = {}) {
+  const C = require('../../b2b-outreach/lib/commitments');
+  if (!body.text || !String(body.text).trim()) {
+    const err = new Error('text required');
+    err.statusCode = 400;
+    throw err;
+  }
+  return C.addCommitment(getSupabaseClient(), {
+    company_id: body.company_id || null, owner: body.owner === 'them' ? 'them' : 'me',
+    text: body.text, due_on: body.due_on || null, source: 'manual',
+  });
+}
+
+async function apiB2bCommitmentAction(id, body = {}) {
+  const C = require('../../b2b-outreach/lib/commitments');
+  const sb = getSupabaseClient();
+  switch (body.action) {
+    case 'done': return C.completeCommitment(sb, { id, by: 'operator' });
+    case 'reopen': return C.reopenCommitment(sb, { id });
+    case 'delete': return C.deleteCommitment(sb, { id });
+    case 'edit': return C.updateCommitment(sb, { id, text: body.text, due_on: body.due_on, owner: body.owner, company_id: body.company_id, pinned: body.pinned });
+    default: {
+      const err = new Error(`unknown commitment action '${body.action}' — expected done, reopen, delete or edit`);
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+}
+
 async function apiB2bCompanyThreads(companyId) {
   return b2bQueueService.fetchCompanyThreads(getSupabaseClient(), companyId);
 }
@@ -3067,6 +3112,9 @@ async function apiB2bRefreshSummary(companyId) {
 async function apiB2bSaveDraft(companyId, body = {}) {
   return b2bQueueService.saveOperatorDraft(getSupabaseClient(), {
     company_id: companyId, body: body.body, subject: body.subject,
+    // "Done, write to them": the commitment this composer was opened from rides
+    // on the draft so a refresh mid-compose does not lose the link.
+    completes_commitment_id: body.completes_commitment_id ?? undefined,
   });
 }
 
@@ -3119,6 +3167,8 @@ async function apiB2bTriage(companyId, body = {}) {
     action: body.action,
     reason: body.reason || null,
     until: body.until || null,
+    // on_me: what the operator says they owe, as the commitment's text.
+    note: body.text || body.note || null,
   });
 }
 
@@ -3560,6 +3610,7 @@ async function apiB2bSend(body = {}) {
   return b2bQueueService.sendDraftById(getSupabaseClient(), {
     draft_id: parseInt(body.draft_id),
     confirmed: !!body.confirmed,
+    completes_commitment_id: body.completes_commitment_id ? parseInt(body.completes_commitment_id) : undefined,
     body: typeof body.body === 'string' ? body.body : undefined,
     subject: typeof body.subject === 'string' ? body.subject : undefined,
   });
@@ -4167,6 +4218,7 @@ const routes = {
   'GET /api/b2b/queue': (req) => apiB2bQueue(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/inbound': () => apiB2bInbound(),
   'GET /api/b2b/on-me': (req) => apiB2bOnMe(new URL(req.url, 'http://localhost').searchParams),
+  'GET /api/b2b/commitments': (req) => apiB2bCommitments(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/companies': (req) => apiB2bCompanies(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/b2b/activity': (req) => apiB2bActivity(new URL(req.url, 'http://localhost').searchParams),
   'GET /api/swimwear/queue': (req) => apiSwimwearQueue(new URL(req.url, 'http://localhost').searchParams),
@@ -4223,6 +4275,8 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/contact-action$/, handler: (body, id) => apiB2bContactAction(decodeURIComponent(id), body) },
   { method: 'GET', pattern: /^\/api\/b2b\/companies\/([^/]+)\/availability$/, handler: (_, id, req) => apiB2bAvailability(decodeURIComponent(id), new URL(req.url, 'http://localhost').searchParams) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/schedule$/, handler: (body, id) => apiB2bScheduleMeeting(decodeURIComponent(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/commitments$/, handler: (body) => apiB2bAddCommitment(body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/commitments\/(\d+)$/, handler: (body, id) => apiB2bCommitmentAction(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/send$/, handler: (body) => apiB2bSend(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/inbound\/admit$/, handler: (body) => apiB2bInboundAdmit(body) },
   { method: 'POST', pattern: /^\/api\/b2b\/inbound\/dismiss$/, handler: (body) => apiB2bInboundDismiss(body) },

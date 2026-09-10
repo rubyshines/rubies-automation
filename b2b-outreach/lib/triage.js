@@ -134,7 +134,7 @@ function computeTriage(action, { reason = null, until = null, now = new Date(), 
 async function triageCompany(sb, { company_id, action, reason, until, now = new Date(), source = 'operator', note = null } = {}) {
   if (!company_id) throw new Error('company_id required');
   const { data: company, error } = await sb.from('b2b_companies')
-    .select('id, name, relationship_state, order_count, last_outbound_at').eq('id', company_id).maybeSingle();
+    .select('id, name, relationship_state, order_count, last_outbound_at, relationship_next_step').eq('id', company_id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!company) throw new Error(`company '${company_id}' not found`);
 
@@ -169,7 +169,31 @@ async function triageCompany(sb, { company_id, action, reason, until, now = new 
     draftsCleared = (data || []).length;
   }
 
-  return { company_id, name: company.name, action, drafts_cleared: draftsCleared, ...patch };
+  // On Me is a commitment now (2026-09-10). Claiming writes a row on the list
+  // ("reply to them", completed by any send to the company) and the derived
+  // on_me_* columns are recomputed from the open rows by commitments.syncOnMeFlag
+  // — which is why the stamp in `patch` above is immediately superseded. Back
+  // to queue removes the system-made stubs only: a real promise (a meeting's
+  // action item) keeps the company on me until it is done.
+  let commitment = null;
+  if (action === 'on_me' || action === 'resume') {
+    const commitments = require('./commitments');
+    if (action === 'on_me') {
+      commitment = await commitments.addCommitment(sb, {
+        company_id, owner: 'me', now,
+        source: source === 'cadence' ? 'cadence' : 'claim',
+        created_by: source === 'cadence' ? 'engine' : 'operator',
+        // The operator can say what they owe at claim time; otherwise the
+        // relationship's suggested next step stands in, as it always did.
+        text: note || company.relationship_next_step || `Reply to ${company.name}`,
+        completes_on_send: true,
+      });
+    } else {
+      commitment = await commitments.abandonClaims(sb, { company_id });
+    }
+  }
+
+  return { company_id, name: company.name, action, drafts_cleared: draftsCleared, ...patch, ...(commitment ? { commitment } : {}) };
 }
 
 /** The relationship_state a dropped row returns to. Pure. */

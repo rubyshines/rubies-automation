@@ -834,10 +834,27 @@ async function recordMeetingOutcome(sb, { meeting_id, outcome, note = null, now 
   if (uErr) throw new Error(uErr.message);
 
   const noShows = await noShowCount(sb, row.company_id);
+
+  // The call happened, so its notes can come in now (2026-09-10): fetched from
+  // Wispr and stored on the row, with the Next Steps on the commitments list,
+  // before the post-call email is written. Fail-soft: a notes miss is reported
+  // on the result, never a reason the outcome did not record. The nightly pass
+  // retries any call whose recording was not ready yet.
+  let notes = null;
+  if (outcome === 'held') {
+    try {
+      notes = await require('./meetingNotes').ingestMeetingNotes(sb, { meeting_id, now });
+    } catch (err) {
+      notes = { status: 'failed', error: err.message };
+      console.warn(`[scheduleMeeting] notes for meeting #${meeting_id} not fetched: ${err.message}`);
+    }
+  }
+
   return {
     meeting: { ...row, outcome, outcome_at: stamp },
     no_show_count: noShows,
     stop_meeting_asks: outcome === 'no_show' && noShows >= MAX_NO_SHOWS,
+    notes,
   };
 }
 

@@ -168,6 +168,28 @@ async function matchEventCompanies(sb, ev) {
  * @param {string} [opts.companyId]  only write rows for this company (live trigger)
  * @param {Array}  [opts.events]     pre-fetched raw events (tests / replays)
  */
+// Two Google events for one call: our Book & Send event and the partner's own
+// invite (Le JAG, 2026-09-10) both land on the calendar, minutes apart at the
+// same start. One call, one row.
+const SAME_CALL_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * An existing live row for the same company whose start is within 15 minutes
+ * of this event's, under a different event id — the same call arriving twice.
+ * Null for a cancellation (nothing to link) or when no such row exists.
+ */
+async function sameCallSibling(sb, companyId, ev) {
+  if (ev.cancelled || !ev.starts_at) return null;
+  const start = new Date(ev.starts_at).getTime();
+  const { data, error } = await sb.from('b2b_meetings')
+    .select('id, google_event_id, starts_at, status, linked_event_ids')
+    .eq('company_id', companyId)
+    .gte('starts_at', new Date(start - SAME_CALL_WINDOW_MS).toISOString())
+    .lt('starts_at', new Date(start + SAME_CALL_WINDOW_MS + 1).toISOString());
+  if (error) throw new Error(error.message);
+  return (data || []).find(r => r.status !== 'cancelled' && r.google_event_id !== ev.google_event_id) || null;
+}
+
 async function syncMeetings(sb, {
   now = new Date(), daysBack = DEFAULT_DAYS_BACK, daysAhead = DEFAULT_DAYS_AHEAD,
   companyId = null, events = null, calendarId = ORGANIZER_CALENDAR_ID,
@@ -180,7 +202,7 @@ async function syncMeetings(sb, {
 
   const result = {
     events: raw.length, considered: 0, matched: 0, inserted: 0, updated: 0,
-    cancelled: 0, unchanged: 0, failed: 0, unmatched: [], errors: [],
+    cancelled: 0, unchanged: 0, linked: 0, failed: 0, unmatched: [], errors: [],
   };
 
   const timezone = require('./meetingTimezone');
@@ -227,6 +249,22 @@ async function syncMeetings(sb, {
         const stamp = now.toISOString();
 
         if (!existing) {
+          // The same call under a second event id: link it on the row we have
+          // so the notes lookup can try both ids, and make no second row.
+          const sibling = await sameCallSibling(sb, cid, ev);
+          if (sibling) {
+            const linked = [...new Set([...(sibling.linked_event_ids || []), ev.google_event_id])];
+            if (linked.length !== (sibling.linked_event_ids || []).length) {
+              const { error: lErr } = await sb.from('b2b_meetings')
+                .update({ linked_event_ids: linked, updated_at: stamp }).eq('id', sibling.id);
+              // Pre-migration the column is missing; a second row is still worse.
+              if (lErr && !/linked_event_ids/.test(lErr.message)) throw new Error(lErr.message);
+              result.linked++;
+            } else {
+              result.unchanged++;
+            }
+            continue;
+          }
           const company = await companyRow(cid);
           const tz = company ? require('./companyLocation').resolveCompanyTimeZone(company) : { timeZone: null, source: null };
           const { error } = await sb.from('b2b_meetings').insert({
@@ -309,7 +347,7 @@ async function run() {
   const { getSupabaseClient } = require('../../shared/supabaseClient');
   const r = await syncMeetings(getSupabaseClient(), {});
   console.log(`Calendar Meetings — ${r.events} events, ${r.considered} with partner attendees, `
-    + `${r.matched} matched (${r.inserted} new, ${r.updated} updated, ${r.cancelled} cancelled)`
+    + `${r.matched} matched (${r.inserted} new, ${r.updated} updated, ${r.cancelled} cancelled${r.linked ? `, ${r.linked} linked as the same call` : ''})`
     + `${r.unmatched.length ? `, ${r.unmatched.length} unmatched` : ''}${r.failed ? `, ${r.failed} failed` : ''}`);
   for (const u of r.unmatched) console.log(`  unmatched: "${u.title}" ${u.starts_at || ''} — ${u.attendees.join(', ')}`);
   for (const e of r.errors) console.warn(`  error: ${e}`);
@@ -332,6 +370,7 @@ module.exports = {
   plannedStatus,
   listCalendarEvents,
   matchEventCompanies,
+  sameCallSibling,
   syncMeetings,
   syncCompanyMeetings,
   run,

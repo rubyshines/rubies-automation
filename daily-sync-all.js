@@ -204,6 +204,15 @@ const PIPELINES = [
     run: () => require('./b2b-outreach/lib/meetingSync').run(),
   },
   {
+    name: 'Meeting Notes',
+    // After Calendar Meetings (the rows exist) and before Relationship
+    // Summaries (the recap should know a call was held and what was agreed).
+    // Fetches each recent call's Wispr Flow recording, marks it held, stores
+    // the summary, and lifts its Next Steps onto the commitments list. Skips
+    // itself when Wispr is not connected rather than failing the sync.
+    run: () => require('./b2b-outreach/lib/meetingNotes').run(),
+  },
+  {
     name: 'Thread Discovery',
     // Must precede Relationship Summaries: anything imported here should be
     // summarized the same night rather than waiting for tomorrow's run.
