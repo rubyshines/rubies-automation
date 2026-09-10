@@ -6,6 +6,22 @@ const {
 
 const NOW = new Date('2026-08-13T12:00:00Z');
 
+// ── commitments in the prompt (2026-09-10) ──────────────────────────────────
+
+test('open commitments render with the date they were made, and the settled rule names it', () => {
+  const prompt = renderSummaryPrompt({
+    company: { id: 'colage', name: 'COLAGE', relationship_type: 'lgbtq_org' },
+    messages: [{ direction: 'inbound', from_email: 'katy@colage.org', body_text: 'cc Asha for sizes', sent_at: '2026-09-10T17:34:44Z' }],
+    mode: 'full', now: NOW,
+    commitments: [{ id: 15, owner: 'them', text: 'Asha to provide sizes', created_at: '2026-09-10T18:14:21Z', status: 'open' }],
+    meetings: [{ title: 'RUBIES x COLAGE', starts_at: '2026-09-10T16:00:00Z', summary: '### Next Steps\n- (Jamie) Send 10 pairs' }],
+  });
+  assert.match(prompt, /#15 · them · Asha to provide sizes · made on 2026-09-10/);
+  assert.match(prompt, /dated AFTER the commitment was made/, 'the message that made a promise must not settle it');
+  assert.match(prompt, /CALL HELD with them \("RUBIES x COLAGE"\)/, 'a held call sits in the timeline');
+  assert.ok(prompt.indexOf('CALL HELD') < prompt.indexOf('cc Asha for sizes'), 'in date order: the call came before the email');
+});
+
 const msg = (sent_at, over = {}) => ({
   direction: 'inbound', from_email: 'kim@shop.com', body_text: 'hello there', sent_at, ...over,
 });

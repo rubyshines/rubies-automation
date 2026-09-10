@@ -256,9 +256,13 @@ function renderMeeting(m) {
 function renderOpenCommitments(commitments) {
   const rows = (commitments || []).filter(c => c && c.status !== 'done');
   if (!rows.length) return ['OPEN COMMITMENTS on the record: none.'];
+  // The date each was made is what lets the model tell a message that MADE a
+  // promise from a later one that shows it was kept (2026-09-10: a forced
+  // rebuild re-read the email that created two of COLAGE's items and marked
+  // them settled on the strength of the same email).
   return [
-    'OPEN COMMITMENTS on the record (id · who owes it · what · due):',
-    ...rows.map(c => `#${c.id} · ${c.owner === 'me' ? 'us' : 'them'} · ${c.text}${c.due_on ? ` · due ${c.due_on}` : ''}`),
+    'OPEN COMMITMENTS on the record (id · who owes it · what · made on · due):',
+    ...rows.map(c => `#${c.id} · ${c.owner === 'me' ? 'us' : 'them'} · ${c.text} · made on ${String(c.created_at || '').slice(0, 10) || 'unknown'}${c.due_on ? ` · due ${c.due_on}` : ''}`),
   ];
 }
 
@@ -344,8 +348,10 @@ function renderSummaryPrompt({ company, messages, mode, now, commitments = [], m
   lines.push('- commitments: list only NEW promises these messages make that are not already under OPEN COMMITMENTS, one line each,'
     + ' with who owes it. A promise is something a person said they will do ("I will send", "we can ship", "I\'ll introduce you").'
     + ' A suggestion, a hope, a question, or a step you think should happen is not one. When in doubt, leave it out.');
-  lines.push('- settled: the ids of OPEN COMMITMENTS owed by THEM that these messages show are now done (the thing arrived, the'
-    + ' intro was made, the form came back). Never list one owed by us — only Jamie decides those are done.');
+  lines.push('- settled: the ids of OPEN COMMITMENTS owed by THEM where a message dated AFTER the commitment was made shows the'
+    + ' thing was delivered ("here is the receipt", "introducing X, cc\'d here", the signed form attached). The message that made'
+    + ' the promise can never settle it, and a promise is not settled because it looks small or easy. Never list one owed by us —'
+    + ' only Jamie decides those are done. Leave settled empty when unsure.');
   lines.push('- Keep the next step consistent with the open commitments: when we owe them something, the next step is ours.');
 
   return lines.join('\n');
