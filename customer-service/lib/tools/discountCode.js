@@ -24,8 +24,12 @@
  * Partner / campaign batches (e.g. ten single-use 20% codes for an LGBTQ+
  * org to hand out): pass `title` to issue under a dedicated discount named
  * for the partner instead of the shared bucket, and `count` to issue several
- * codes in one call. Same config as bucket codes; the only difference is
- * which discount holds them, so redemptions can be read per partner.
+ * codes in one call, `uses` for a per-code limit above 1 (one code the whole
+ * org shares, ten uses), and `prefix` for codes people can recognise
+ * (LEJAG-3F9A2C). `uses` > 1 needs a dedicated title, because a discount's
+ * usageLimit applies to every code on it and the shared buckets are limit-1.
+ * Otherwise the config is the bucket config; the only difference is which
+ * discount holds the codes, so redemptions can be read per partner.
  *
  * Free-product comps stay one-discount-per-code since they're product-specific.
  *
@@ -60,13 +64,13 @@ function bucketTitle(percentOff) {
   return `Thank You ${percentOff}`;
 }
 
-function buildBaseConfig({ title, code, startsAt }) {
+function buildBaseConfig({ title, code, startsAt, uses = 1 }) {
   return {
     title,
     code,
     customerSelection: { all: true },
     appliesOncePerCustomer: false,
-    usageLimit: 1,
+    usageLimit: uses,
     combinesWith: {
       productDiscounts: true,
       orderDiscounts: true,
@@ -76,7 +80,7 @@ function buildBaseConfig({ title, code, startsAt }) {
   };
 }
 
-function buildPercentInput({ percentOff, code, title }) {
+function buildPercentInput({ percentOff, code, title, uses }) {
   // Shopify expects percentage as a decimal: 0.10 for 10%.
   // appliesOnOneTimePurchase is omitted because the shop doesn't have
   // subscriptions enabled and Shopify rejects the field in that case.
@@ -84,6 +88,7 @@ function buildPercentInput({ percentOff, code, title }) {
     ...buildBaseConfig({
       title: title || bucketTitle(percentOff),
       code,
+      uses,
       startsAt: new Date().toISOString(),
     }),
     customerGets: {
@@ -123,10 +128,29 @@ function isCollisionError(err) {
  * has ~1 trillion possibilities so collisions are extremely rare, but we
  * retry up to 3 times with a fresh code as a belt-and-suspenders guarantee.
  */
-async function withCollisionRetry(attempt, attempts = 3) {
+/**
+ * A prefix makes a code recognisable to the people handing it out
+ * (LEJAG-3F9A2C). Letters/digits only, uppercased; the random tail is
+ * shortened because the prefix carries the identity and a short code is
+ * what a counsellor will type out. Store-wide uniqueness is still enforced
+ * by Shopify and the collision retry.
+ */
+const PREFIXED_TAIL_LENGTH = 6;
+
+function normalizePrefix(prefix) {
+  const clean = String(prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return clean || undefined;
+}
+
+function generateCode(prefix) {
+  const random = randomDiscountCode();
+  return prefix ? `${prefix}-${random.slice(-PREFIXED_TAIL_LENGTH)}` : random;
+}
+
+async function withCollisionRetry(attempt, attempts = 3, prefix) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
-    const code = randomDiscountCode();
+    const code = generateCode(prefix);
     try {
       const result = await attempt(code);
       return { ...result, code };
@@ -153,20 +177,26 @@ async function withCollisionRetry(attempt, attempts = 3) {
  * Returns { discountGid, codes, code } — `code` is the first (and for a
  * single issue the only) code, kept for existing callers.
  */
-async function issuePercentCode(percentOff, { title, count = 1 } = {}) {
+async function issuePercentCode(percentOff, { title, count = 1, uses = 1, prefix } = {}) {
   const discountTitle = title || bucketTitle(percentOff);
   const existing = await findDiscountNodeByTitle(discountTitle);
   let discountGid;
   let numericId;
   const codes = [];
   if (existing) {
+    // A code appended to an existing discount inherits ITS per-code limit;
+    // there is no per-code override, so a different `uses` cannot be honoured.
+    if (existing.usageLimit !== undefined && existing.usageLimit !== uses) {
+      const have = existing.usageLimit == null ? 'unlimited' : `${existing.usageLimit}`;
+      throw new Error(`"${discountTitle}" already exists with a per-code limit of ${have}, so codes with ${uses} use(s) cannot be added to it. Use a different title (e.g. "${discountTitle} x${uses}") or omit uses.`);
+    }
     discountGid = existing.id;
     numericId = existing.numericId;
   } else {
     const first = await withCollisionRetry(async (code) => {
-      const node = await createDiscountCode(buildPercentInput({ percentOff, code, title: discountTitle }));
+      const node = await createDiscountCode(buildPercentInput({ percentOff, code, title: discountTitle, uses }));
       return { discountGid: node.id };
-    });
+    }, 3, prefix);
     discountGid = first.discountGid;
     numericId = discountGid.split('/').pop();
     codes.push(first.code);
@@ -175,7 +205,7 @@ async function issuePercentCode(percentOff, { title, count = 1 } = {}) {
     const added = await withCollisionRetry(async (code) => {
       await addCodeToPriceRule(numericId, code);
       return {};
-    });
+    }, 3, prefix);
     codes.push(added.code);
   }
   return { discountGid, codes, code: codes[0] };
@@ -197,7 +227,7 @@ function findProductFromQuery(query) {
   };
 }
 
-function createdResponse({ code, codes, discountGid, summary }) {
+function createdResponse({ code, codes, discountGid, summary, uses = 1 }) {
   const adminUrl = getAdminUrl(discountGid);
   const all = codes && codes.length ? codes : [code];
   const lines = all.length === 1
@@ -206,13 +236,13 @@ function createdResponse({ code, codes, discountGid, summary }) {
       '',
       `**Code:** \`${all[0]}\``,
       `**Discount:** ${summary}`,
-      `**Limit:** 1 use total`,
+      `**Limit:** ${uses} use${uses === 1 ? '' : 's'} total`,
     ]
     : [
       `**${all.length} Discount Codes Created**`,
       '',
       `**Discount:** ${summary}`,
-      `**Limit:** 1 use per code`,
+      `**Limit:** ${uses} use${uses === 1 ? '' : 's'} per code`,
       '',
       ...all.map(c => `- \`${c}\``),
     ];
@@ -302,7 +332,7 @@ async function waitForRemoval(discountGid, code) {
 const tools = [
   {
     name: 'create_discount_code',
-    description: 'Create a Shopify discount code. Two modes: (1) percent: % off applied to the "Discounts" collection — the standard response when a customer asks for a discount or never received their welcome code. Default 10%. Each code is added to the shared "Thank You N" discount for that percent level, or to a dedicated discount when `title` is given (partner/campaign batches — e.g. ten 20% codes for an LGBTQ+ org, so their redemptions read separately from CS comps). `count` issues several codes in one call. (2) free_product: fixed-amount discount equal to the highest variant price of a named product, scoped to that product (makes it free for one use). Codes are limit-1-use, combine with product/order/shipping discounts, no minimum, all customers, active immediately. Two-phase confirmation required when percent_off > 10, count > 1, OR mode=free_product. Returns the generated code string(s) and an admin link.',
+    description: 'Create a Shopify discount code. Two modes: (1) percent: % off applied to the "Discounts" collection — the standard response when a customer asks for a discount or never received their welcome code. Default 10%. Each code is added to the shared "Thank You N" discount for that percent level, or to a dedicated discount when `title` is given (partner/campaign batches — e.g. ten 20% codes for an LGBTQ+ org, so their redemptions read separately from CS comps). `count` issues several distinct codes in one call; `uses` sets the per-code limit (one code the whole org shares = count 1, uses 10 — needs a `title`); `prefix` makes codes recognisable (LEJAG-3F9A2C). (2) free_product: fixed-amount discount equal to the highest variant price of a named product, scoped to that product (makes it free for one use). Codes are limit-1-use, combine with product/order/shipping discounts, no minimum, all customers, active immediately. Two-phase confirmation required when percent_off > 10, count > 1, uses > 1, OR mode=free_product. Returns the generated code string(s) and an admin link.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -321,7 +351,15 @@ const tools = [
         },
         count: {
           type: 'number',
-          description: 'percent mode only. Number of single-use codes to issue (1-50, default 1).',
+          description: 'percent mode only. Number of distinct codes to issue (1-50, default 1).',
+        },
+        uses: {
+          type: 'number',
+          description: 'percent mode only. How many times EACH code can be redeemed (1-1000, default 1). Above 1 requires `title`, since a limit belongs to the discount and the shared buckets are single-use. Cannot change the limit of a title that already exists.',
+        },
+        prefix: {
+          type: 'string',
+          description: 'percent mode only. Recognisable prefix for the codes, e.g. "LEJAG" → LEJAG-3F9A2C. Letters and digits only; uppercased.',
         },
         product_query: {
           type: 'string',
@@ -349,11 +387,14 @@ const tools = [
         const data = input._discount_data;
         try {
           if (data.mode === 'percent') {
-            const result = await issuePercentCode(data.percent_off, { title: data.title, count: data.count });
+            const result = await issuePercentCode(data.percent_off, {
+              title: data.title, count: data.count, uses: data.uses || 1, prefix: data.prefix,
+            });
             return createdResponse({
               codes: result.codes,
               discountGid: result.discountGid,
               summary: `${data.percent_off}% off the Discounts collection${data.title ? ` (${data.title})` : ''}`,
+              uses: data.uses || 1,
             });
           }
           const result = await withCollisionRetry(async (code) => {
@@ -386,11 +427,22 @@ const tools = [
           return { content: [{ type: 'text', text: `count must be a whole number between 1 and 50 (got ${input.count}).` }], isError: true };
         }
         const title = (input.title || '').trim() || undefined;
-        const needsConfirm = percentOff > 10 || count > 1;
+        const uses = typeof input.uses === 'number' ? input.uses : 1;
+        if (!Number.isInteger(uses) || uses < 1 || uses > 1000) {
+          return { content: [{ type: 'text', text: `uses must be a whole number between 1 and 1000 (got ${input.uses}).` }], isError: true };
+        }
+        if (uses > 1 && !title) {
+          return { content: [{ type: 'text', text: `uses > 1 needs a dedicated title: the shared "Thank You ${percentOff}" bucket is single-use per code and a limit belongs to the whole discount.` }], isError: true };
+        }
+        const prefix = normalizePrefix(input.prefix);
+        if (input.prefix && !prefix) {
+          return { content: [{ type: 'text', text: `prefix must contain at least one letter or digit (got "${input.prefix}").` }], isError: true };
+        }
+        const needsConfirm = percentOff > 10 || count > 1 || uses > 1;
         if (!needsConfirm) {
-          // Short-circuit: a single 10% (or less) code is auto-issued without confirmation.
+          // Short-circuit: a single 10% (or less) single-use code is auto-issued without confirmation.
           try {
-            const result = await issuePercentCode(percentOff, { title });
+            const result = await issuePercentCode(percentOff, { title, prefix });
             return createdResponse({
               code: result.code,
               discountGid: result.discountGid,
@@ -401,13 +453,16 @@ const tools = [
           }
         }
         // Phase 1 preview for percent > 10 or a batch
-        const _discount_data = { mode: 'percent', percent_off: percentOff, count, ...(title ? { title } : {}) };
+        const _discount_data = {
+          mode: 'percent', percent_off: percentOff, count, uses,
+          ...(title ? { title } : {}), ...(prefix ? { prefix } : {}),
+        };
         const lines = [
           '**Discount Code Preview — Awaiting Confirmation**',
           '',
           `**Discount:** ${percentOff}% off the Discounts collection`,
           `**Issued under:** ${title || bucketTitle(percentOff)}${title ? ' (dedicated)' : ' (shared bucket)'}`,
-          `**Codes:** ${count} · each limit 1 use · Combines with product/order/shipping discounts`,
+          `**Codes:** ${count}${prefix ? ` (${prefix}-…)` : ''} · each limit ${uses} use${uses === 1 ? '' : 's'} · Combines with product/order/shipping discounts`,
           '',
           `Confirm to create the code${count > 1 ? 's' : ''}, or cancel to discard.`,
           '',

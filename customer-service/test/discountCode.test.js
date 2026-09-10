@@ -374,6 +374,85 @@ describe('create_discount_code — dedicated title + batch (partner codes)', () 
   });
 });
 
+describe('create_discount_code — uses per code + prefix', () => {
+  it('one shared code with 10 uses creates a dedicated discount with usageLimit 10', async () => {
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 1, uses: 10, title: 'Le JAG 20 shared' },
+    });
+    assert.equal(createCalls.length, 1);
+    assert.equal(createCalls[0].usageLimit, 10);
+    assert.equal(createCalls[0].title, 'Le JAG 20 shared');
+    assert.equal(addCodeCalls.length, 0);
+    assert.match(res.content[0].text, /\*\*Limit:\*\* 10 uses total/);
+  });
+
+  it('uses > 1 without a title is refused before any Shopify call', async () => {
+    const res = await tool.handler({ mode: 'percent', percent_off: 20, uses: 10 });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /needs a dedicated title/);
+    assert.equal(findCalls.length, 0);
+  });
+
+  it('uses > 1 needs confirmation even at 10%', async () => {
+    const res = await tool.handler({ mode: 'percent', uses: 5, title: 'Org 10' });
+    assert.match(res.content[0].text, /Awaiting Confirmation/);
+    assert.match(res.content[0].text, /each limit 5 uses/);
+    assert.match(res.content[0].text, /"uses":5/);
+  });
+
+  it('refuses to add codes with a different per-code limit to an existing title', async () => {
+    existingBuckets['Le JAG 20'] = {
+      id: 'gid://shopify/DiscountCodeNode/777', numericId: '777', codesCount: 10, usageLimit: 1,
+    };
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 1, uses: 10, title: 'Le JAG 20' },
+    });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /per-code limit of 1/);
+    assert.equal(addCodeCalls.length, 0);
+    assert.equal(createCalls.length, 0);
+  });
+
+  it('appends when the existing title has the same per-code limit', async () => {
+    existingBuckets['Le JAG 20'] = {
+      id: 'gid://shopify/DiscountCodeNode/777', numericId: '777', codesCount: 10, usageLimit: 1,
+    };
+    await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 2, uses: 1, title: 'Le JAG 20' },
+    });
+    assert.equal(addCodeCalls.length, 2);
+  });
+
+  it('a prefix is uppercased, stripped to letters/digits, and gets a short random tail', async () => {
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 3, uses: 1, title: 'Le JAG 20', prefix: 'LEJAG' },
+    });
+    const codes = [createCalls[0].code, ...addCodeCalls.map(c => c.code)];
+    assert.equal(codes.length, 3);
+    for (const c of codes) assert.match(c, /^LEJAG-[0-9A-F]{6}$/);
+    assert.equal(new Set(codes).size, 3);
+    assert.match(res.content[0].text, /LEJAG-/);
+  });
+
+  it('normalises a messy prefix at preview time and rejects an empty one', async () => {
+    const ok = await tool.handler({ mode: 'percent', percent_off: 20, count: 2, prefix: 'le jag!' });
+    assert.match(ok.content[0].text, /"prefix":"LEJAG"/);
+    const bad = await tool.handler({ mode: 'percent', percent_off: 20, count: 2, prefix: '--' });
+    assert.equal(bad.isError, true);
+  });
+
+  it('rejects an out-of-range uses', async () => {
+    for (const uses of [0, 1001, 1.5]) {
+      const res = await tool.handler({ mode: 'percent', uses, title: 'X' });
+      assert.equal(res.isError, true, `uses ${uses}`);
+    }
+  });
+});
+
 describe('create_discount_code — free_product mode', () => {
   it('without confirmed returns preview with max-variant-price calculation', async () => {
     mockProducts = [
