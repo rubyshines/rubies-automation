@@ -1634,7 +1634,7 @@ async function createDiscountCode(input) {
 /**
  * Find a code discount node by exact title. Shopify's `query` search on
  * title is a fuzzy/prefix match, so results are exact-matched client-side.
- * Returns { id, numericId, codesCount } for the first exact match, or null.
+ * Returns { id, numericId, codesCount, usageLimit } for the first exact match, or null.
  * The numericId doubles as the legacy price rule id, usable with
  * addCodeToPriceRule to append codes to the discount.
  */
@@ -1645,7 +1645,7 @@ async function findDiscountNodeByTitle(title) {
         nodes {
           id
           codeDiscount {
-            ... on DiscountCodeBasic { title status codesCount { count } }
+            ... on DiscountCodeBasic { title status usageLimit codesCount { count } }
           }
         }
       }
@@ -1659,6 +1659,9 @@ async function findDiscountNodeByTitle(title) {
     id: match.id,
     numericId: match.id.split('/').pop(),
     codesCount: match.codeDiscount.codesCount ? match.codeDiscount.codesCount.count : null,
+    // Per-code limit (Shopify applies usageLimit per code on a multi-code
+    // discount); null means unlimited.
+    usageLimit: match.codeDiscount.usageLimit == null ? null : match.codeDiscount.usageLimit,
   };
 }
 

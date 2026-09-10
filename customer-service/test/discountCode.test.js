@@ -282,6 +282,177 @@ describe('create_discount_code — percent mode, two-phase', () => {
   });
 });
 
+describe('create_discount_code — dedicated title + batch (partner codes)', () => {
+  it('a batch requires confirmation even at 10%', async () => {
+    const res = await tool.handler({ mode: 'percent', count: 3 });
+    assert.equal(createCalls.length, 0);
+    assert.equal(addCodeCalls.length, 0);
+    assert.match(res.content[0].text, /Awaiting Confirmation/);
+    assert.match(res.content[0].text, /\*\*Codes:\*\* 3/);
+    assert.match(res.content[0].text, /"count":3/);
+  });
+
+  it('preview names the dedicated title and carries it into _discount_data', async () => {
+    const res = await tool.handler({ mode: 'percent', percent_off: 20, count: 10, title: 'Le JAG 20' });
+    assert.match(res.content[0].text, /Issued under:\*\* Le JAG 20 \(dedicated\)/);
+    assert.match(res.content[0].text, /"title":"Le JAG 20"/);
+  });
+
+  it('creates the dedicated discount with the first code and appends the rest', async () => {
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 10, title: 'Le JAG 20' },
+    });
+    assert.deepEqual(findCalls, ['Le JAG 20']);
+    assert.equal(createCalls.length, 1);
+    assert.equal(createCalls[0].title, 'Le JAG 20');
+    assert.equal(createCalls[0].code, 'DEADBEEF01');
+    assert.equal(createCalls[0].usageLimit, 1);
+    assert.equal(createCalls[0].customerGets.value.percentage, 0.2);
+    // Remaining nine go onto the node the create returned — no re-search
+    // (the title index lags creation).
+    assert.equal(addCodeCalls.length, 9);
+    assert.ok(addCodeCalls.every(c => c.priceRuleId === '123456789'));
+    const codes = [createCalls[0].code, ...addCodeCalls.map(c => c.code)];
+    assert.equal(new Set(codes).size, 10);
+    const text = res.content[0].text;
+    assert.match(text, /10 Discount Codes Created/);
+    assert.match(text, /Le JAG 20/);
+    for (const c of codes) assert.match(text, new RegExp(c));
+    assert.match(text, /discounts\/123456789/);
+  });
+
+  it('appends every code when the dedicated discount already exists', async () => {
+    existingBuckets['Le JAG 20'] = {
+      id: 'gid://shopify/DiscountCodeNode/777', numericId: '777', codesCount: 10,
+    };
+    await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 5, title: 'Le JAG 20' },
+    });
+    assert.equal(createCalls.length, 0);
+    assert.equal(addCodeCalls.length, 5);
+    assert.ok(addCodeCalls.every(c => c.priceRuleId === '777'));
+  });
+
+  it('a batch without a title goes into the shared level bucket', async () => {
+    await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 2 },
+    });
+    assert.deepEqual(findCalls, ['Thank You 20']);
+    assert.equal(createCalls[0].title, 'Thank You 20');
+    assert.equal(addCodeCalls.length, 1);
+  });
+
+  it('retries a mid-batch collision with a fresh code and keeps the batch intact', async () => {
+    existingBuckets['Le JAG 20'] = {
+      id: 'gid://shopify/DiscountCodeNode/777', numericId: '777', codesCount: 0,
+    };
+    let calls = 0;
+    addCodeImpl = async (id, code) => {
+      calls++;
+      if (calls === 2) throw new Error('code has already been taken');
+      return { id: calls, code };
+    };
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 3, title: 'Le JAG 20' },
+    });
+    assert.equal(addCodeCalls.length, 4);
+    const text = res.content[0].text;
+    assert.match(text, /3 Discount Codes Created/);
+    assert.doesNotMatch(text, /DEADBEEF02/);
+  });
+
+  it('rejects an out-of-range or fractional count', async () => {
+    for (const count of [0, 51, 2.5]) {
+      const res = await tool.handler({ mode: 'percent', count });
+      assert.equal(res.isError, true, `count ${count}`);
+      assert.match(res.content[0].text, /count must be a whole number between 1 and 50/);
+    }
+  });
+});
+
+describe('create_discount_code — uses per code + prefix', () => {
+  it('one shared code with 10 uses creates a dedicated discount with usageLimit 10', async () => {
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 1, uses: 10, title: 'Le JAG 20 shared' },
+    });
+    assert.equal(createCalls.length, 1);
+    assert.equal(createCalls[0].usageLimit, 10);
+    assert.equal(createCalls[0].title, 'Le JAG 20 shared');
+    assert.equal(addCodeCalls.length, 0);
+    assert.match(res.content[0].text, /\*\*Limit:\*\* 10 uses total/);
+  });
+
+  it('uses > 1 without a title is refused before any Shopify call', async () => {
+    const res = await tool.handler({ mode: 'percent', percent_off: 20, uses: 10 });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /needs a dedicated title/);
+    assert.equal(findCalls.length, 0);
+  });
+
+  it('uses > 1 needs confirmation even at 10%', async () => {
+    const res = await tool.handler({ mode: 'percent', uses: 5, title: 'Org 10' });
+    assert.match(res.content[0].text, /Awaiting Confirmation/);
+    assert.match(res.content[0].text, /each limit 5 uses/);
+    assert.match(res.content[0].text, /"uses":5/);
+  });
+
+  it('refuses to add codes with a different per-code limit to an existing title', async () => {
+    existingBuckets['Le JAG 20'] = {
+      id: 'gid://shopify/DiscountCodeNode/777', numericId: '777', codesCount: 10, usageLimit: 1,
+    };
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 1, uses: 10, title: 'Le JAG 20' },
+    });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /per-code limit of 1/);
+    assert.equal(addCodeCalls.length, 0);
+    assert.equal(createCalls.length, 0);
+  });
+
+  it('appends when the existing title has the same per-code limit', async () => {
+    existingBuckets['Le JAG 20'] = {
+      id: 'gid://shopify/DiscountCodeNode/777', numericId: '777', codesCount: 10, usageLimit: 1,
+    };
+    await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 2, uses: 1, title: 'Le JAG 20' },
+    });
+    assert.equal(addCodeCalls.length, 2);
+  });
+
+  it('a prefix is uppercased, stripped to letters/digits, and gets a short random tail', async () => {
+    const res = await tool.handler({
+      mode: 'percent', confirmed: true,
+      _discount_data: { mode: 'percent', percent_off: 20, count: 3, uses: 1, title: 'Le JAG 20', prefix: 'LEJAG' },
+    });
+    const codes = [createCalls[0].code, ...addCodeCalls.map(c => c.code)];
+    assert.equal(codes.length, 3);
+    for (const c of codes) assert.match(c, /^LEJAG-[0-9A-F]{6}$/);
+    assert.equal(new Set(codes).size, 3);
+    assert.match(res.content[0].text, /LEJAG-/);
+  });
+
+  it('normalises a messy prefix at preview time and rejects an empty one', async () => {
+    const ok = await tool.handler({ mode: 'percent', percent_off: 20, count: 2, prefix: 'le jag!' });
+    assert.match(ok.content[0].text, /"prefix":"LEJAG"/);
+    const bad = await tool.handler({ mode: 'percent', percent_off: 20, count: 2, prefix: '--' });
+    assert.equal(bad.isError, true);
+  });
+
+  it('rejects an out-of-range uses', async () => {
+    for (const uses of [0, 1001, 1.5]) {
+      const res = await tool.handler({ mode: 'percent', uses, title: 'X' });
+      assert.equal(res.isError, true, `uses ${uses}`);
+    }
+  });
+});
+
 describe('create_discount_code — free_product mode', () => {
   it('without confirmed returns preview with max-variant-price calculation', async () => {
     mockProducts = [
