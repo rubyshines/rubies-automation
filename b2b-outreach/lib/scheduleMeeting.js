@@ -448,6 +448,37 @@ async function upcomingBookedMeeting(sb, company_id, now = new Date()) {
   return data || null;
 }
 
+// The waiting-in-room nudge is offered from a little before the start (Jamie
+// is in the room early) until the scheduled end. Shared with nothing else: a
+// no-show is recorded against the START, this is about "now".
+const LIVE_LEAD_MINUTES = 5;
+
+/**
+ * Is this call happening right now: from shortly before its start until its
+ * end, still booked, and not yet marked held or no-show? Pure.
+ */
+function isMeetingLive(m, now = new Date()) {
+  if (!m || m.status !== 'booked' || m.outcome) return false;
+  const start = new Date(m.starts_at).getTime();
+  const end = m.ends_at
+    ? new Date(m.ends_at).getTime()
+    : start + (Number(m.duration_minutes) || DEFAULT_DURATION_MIN) * 60000;
+  if (Number.isNaN(start) || Number.isNaN(end)) return false;
+  const t = now.getTime();
+  return t >= start - LIVE_LEAD_MINUTES * 60000 && t <= end;
+}
+
+/** The company's call that is happening right now, or null. */
+async function liveMeeting(sb, company_id, now = new Date()) {
+  const { data, error } = await sb.from('b2b_meetings')
+    .select('*').eq('company_id', company_id).eq('status', 'booked')
+    .lte('starts_at', new Date(now.getTime() + LIVE_LEAD_MINUTES * 60000).toISOString())
+    .gte('ends_at', now.toISOString())
+    .order('starts_at', { ascending: false }).limit(3);
+  if (error) throw new Error(error.message);
+  return (data || []).find(m => isMeetingLive(m, now)) || null;
+}
+
 /**
  * Move a booked call, and tell them, in one action.
  *
@@ -815,6 +846,9 @@ module.exports = {
   rescheduleMeeting,
   cancelMeeting,
   upcomingBookedMeeting,
+  isMeetingLive,
+  liveMeeting,
+  LIVE_LEAD_MINUTES,
   meetingTitle,
   meetLinkOf,
   conferenceStatus,

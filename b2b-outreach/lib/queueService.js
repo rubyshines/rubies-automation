@@ -797,8 +797,10 @@ function composeDraftRow({ company_id, body, subject, message_type, thread_id, e
   return {
     company_id,
     // Inherit the thread so a hand-written reply lands in the conversation
-    // rather than starting a detached one.
-    thread_id: thread_id || entry?.thread_id || null,
+    // rather than starting a detached one. An EXPLICIT null is the one caller
+    // (the waiting-in-room nudge) saying "a fresh email, on purpose": a note
+    // that has to be read mid-meeting needs its own subject line, not "Re:".
+    thread_id: thread_id === null ? null : (thread_id || entry?.thread_id || null),
     // Cadence keys off message_type for next_action_date and the follow-up
     // ladder, so a hand-written message adopts whatever the queue says is due
     // here. Neutral fallback when nothing is (reaching out unprompted).

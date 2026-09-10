@@ -44,6 +44,9 @@ const NEXT_ACTION_DAYS = {
   event_donation_response: 7,
   post_call_followup: 14,
   missed_call: 7,
+  // "I am in the meeting room" sent mid-call. Not an ask, so the ladder never
+  // chases it (no CHASE entry); a week so a call nobody marked comes back soon.
+  meeting_nudge: 7,
 };
 
 const DEFAULT_NEXT_ACTION_DAYS = 30;

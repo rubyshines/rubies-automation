@@ -27,6 +27,11 @@ const { SIGNATURE_BLOCK_MD, SIGNATURE_NAME } = require('../../customer-service/l
 
 const ONBOARDING_SURVEY_URL = 'https://forms.gle/1Hq93BSiPrhJkgfB8';
 
+// The waiting-in-room nudge goes out as a fresh email under this subject: a
+// note that has to be seen in the next two minutes cannot hide behind "Re:".
+// Jamie's own subject line (Le JAG, 2026-09-10), sentence-cased.
+const WAITING_IN_ROOM_SUBJECT = 'In the meeting room right now';
+
 // The operator-fills-this marker. sendB2bEmail refuses any body still carrying
 // it, so a distracted click can never mail a partner the placeholder. Plain
 // hyphen on purpose — customer-facing copy never carries em dashes, and this
@@ -148,6 +153,22 @@ function fillMissedCall({ firstName, meetingDay }) {
   const body = `Hi ${firstName},\n\n`
     + `${missed} Let me know if you would like to find another time. Feel free to suggest a few.\n\n`
     + SIGN_OFF;
+  return { body, attachments: [] };
+}
+
+/**
+ * Sent from inside the meeting room when they have not joined (Jamie's note to
+ * Le JAG, 2026-09-10, word for word). A question and the link, nothing else.
+ * The link is the calendar event's; when the event has none the sentence points
+ * at the invite rather than inventing a room. The URL is its own label so the
+ * HTML part is clickable and the plain part still shows where it goes. Pure.
+ */
+function fillWaitingInRoom({ firstName, meetUrl }) {
+  const link = meetUrl ? `Here is the link: [${meetUrl}](${meetUrl})` : 'The link is in the calendar invite.';
+  const body = `Hi ${firstName},\n\n`
+    + 'I am in the meeting room - just checking if you still plan to attend.\n\n'
+    + `${link}\n\n`
+    + `Thanks,\n\n${SIGNATURE_BLOCK_MD}`;
   return { body, attachments: [] };
 }
 
@@ -372,10 +393,15 @@ const TEMPLATES = [
   // past MAX_NO_SHOWS. Sent as its own message_type so the ladder chases it,
   // with a next touch of a week so the company comes back as a reminder.
   { id: 'missed_call', label: 'Missed call (ask to reschedule)', afterNoShow: true, fill: fillMissedCall, message_type: 'missed_call', next_touch_days: 7 },
+  // Offered only while a booked call is live (scheduleMeeting.isMeetingLive)
+  // and no outcome is recorded yet. Its own message_type so the activity log
+  // says what it was; a fresh thread with its own subject, because mid-meeting
+  // the subject line is the message.
+  { id: 'waiting_in_room', label: "In the meeting room (they haven't joined)", duringCall: true, fill: fillWaitingInRoom, message_type: 'meeting_nudge', subject: WAITING_IN_ROOM_SUBJECT, new_thread: true },
 ];
 
 /** Everything the fills need for one company, gathered once. */
-async function templateContext(sb, company_id) {
+async function templateContext(sb, company_id, now = new Date()) {
   if (!company_id) throw new Error('company_id required');
   const { data: company, error } = await sb.from('b2b_companies')
     .select('id, name, country, relationship_type').eq('id', company_id).maybeSingle();
@@ -392,9 +418,10 @@ async function templateContext(sb, company_id) {
     .in('message_type', INTRO_TYPES).limit(1);
   if (iErr) throw new Error(`intro lookup: ${iErr.message}`);
 
-  const { lastHeldMeetingsByCompany, noShowCount } = require('./scheduleMeeting');
-  const held = await lastHeldMeetingsByCompany(sb, [company_id]);
+  const { lastHeldMeetingsByCompany, noShowCount, liveMeeting } = require('./scheduleMeeting');
+  const held = await lastHeldMeetingsByCompany(sb, [company_id], now);
   const noShows = await noShowCount(sb, company_id);
+  const live = await liveMeeting(sb, company_id, now);
 
   return {
     company,
@@ -402,7 +429,14 @@ async function templateContext(sb, company_id) {
     introEverSent: !!intros?.length,
     lastMeeting: held.get(company_id) || null,
     noShowCount: noShows,
+    liveMeeting: live,
   };
+}
+
+/** Why the waiting-in-room nudge is or is not on offer for this context. Pure. */
+function waitingInRoomAvailability(ctx) {
+  if (!ctx.liveMeeting) return { ok: false, reason: 'no call is in progress right now' };
+  return { ok: true, reason: null };
 }
 
 /** Why a no-show template is or is not on offer for this context. Pure. */
@@ -422,8 +456,11 @@ async function listTemplates(sb, { company_id } = {}) {
   for (const t of TEMPLATES) {
     if (t.orgOnly && ctx.company.relationship_type !== 'lgbtq_org') continue;
     if (t.afterNoShow && !missedCallAvailability(ctx).ok) continue;
+    if (t.duringCall && !waitingInRoomAvailability(ctx).ok) continue;
     let note;
-    if (t.id === 'missed_call') {
+    if (t.id === 'waiting_in_room') {
+      note = ctx.liveMeeting.meet_url ? 'fresh email with the meeting link' : 'fresh email; the event has no link, so it points at the invite';
+    } else if (t.id === 'missed_call') {
       const day = meetingDayName(ctx.lastMeeting);
       note = `reschedule ask${day ? ` for the missed ${day} call` : ''}, chased after 5 business days`;
     } else if (t.id === 'setup_call') {
@@ -453,6 +490,10 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
     const avail = missedCallAvailability(ctx);
     if (!avail.ok) throw new Error(`'${template_id}' is not offered for ${ctx.company.name}: ${avail.reason}`);
   }
+  if (template.duringCall) {
+    const avail = waitingInRoomAvailability(ctx);
+    if (!avail.ok) throw new Error(`'${template_id}' is not offered for ${ctx.company.name}: ${avail.reason}`);
+  }
 
   const { body, attachments } = template.fill({
     firstName: ctx.firstName,
@@ -460,6 +501,7 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
     discount: partnerDiscountPercent(ctx.company.country),
     introEverSent: ctx.introEverSent,
     meetingDay: meetingDayName(ctx.lastMeeting),
+    meetUrl: ctx.liveMeeting?.meet_url || null,
   });
 
   // composeDraft supersedes any prior pending row and inherits thread +
@@ -474,9 +516,13 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
     // A template that is its own message type (missed_call) says so, so the
     // send stamps the right next-touch and the ladder knows what to chase.
     ...(template.message_type ? { message_type: template.message_type } : {}),
+    ...(template.subject ? { subject: template.subject } : {}),
     // The onboarding follow-up belongs on the meeting's own thread even when
     // the queue has no entry for the company (e.g. applied from the directory).
-    thread_id: ['partner_onboarding', 'missed_call'].includes(template.id) ? (ctx.lastMeeting?.thread_id || undefined) : undefined,
+    // An explicit null is composeDraftRow's "fresh thread, on purpose".
+    thread_id: template.new_thread
+      ? null
+      : (['partner_onboarding', 'missed_call'].includes(template.id) ? (ctx.lastMeeting?.thread_id || undefined) : undefined),
   });
 
   const { data: row, error } = await sb.from('b2b_drafts')
@@ -488,6 +534,7 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
     template_id: template.id,
     template_body: body,
     ...(template.next_touch_days ? { next_touch_days: template.next_touch_days } : {}),
+    ...(template.duringCall && ctx.liveMeeting ? { meeting_id: ctx.liveMeeting.id } : {}),
   };
   for (const spec of attachments) structured = withAttachment(structured, spec);
   const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', composed.draft_id);
@@ -508,6 +555,9 @@ module.exports = {
   fillPartnerOnboarding,
   fillMeetingConfirmation,
   fillMissedCall,
+  fillWaitingInRoom,
+  WAITING_IN_ROOM_SUBJECT,
+  waitingInRoomAvailability,
   MAX_NO_SHOWS,
   meetingAsksAllowed,
   missedCallAvailability,

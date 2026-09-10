@@ -6363,22 +6363,34 @@ function outreachCallsHtml(meetings) {
   if (!list.length) return '';
   const now = Date.now();
   const rows = list.slice(0, 4).map(m => {
-    const past = new Date(m.starts_at).getTime() <= now;
+    const start = new Date(m.starts_at).getTime();
+    const end = m.ends_at ? new Date(m.ends_at).getTime() : start + 30 * 60000;
+    const past = start <= now;
+    // Mirrors scheduleMeeting.isMeetingLive (5 minutes before the start until
+    // the end, no outcome yet): the window in which "they have not joined" is
+    // a thing to act on. The server re-checks before filling the template.
+    const live = m.status === 'booked' && !m.outcome && now >= start - 5 * 60000 && now <= end;
     const who = m.booked_by === 'partner' ? 'booked by them' : 'booked by you';
     const link = (m.meet_url
       ? ` · <a href="${esc(m.meet_url)}" target="_blank" rel="noopener">${/zoom\.us/i.test(m.meet_url) ? 'Zoom' : 'Meet'} link</a>`
       : '')
       + (m.html_link ? ` · <a href="${esc(m.html_link)}" target="_blank" rel="noopener" title="Open the event in Google Calendar">Calendar</a>` : '');
+    const outcomeButtons = `<button class="btn btn-ghost btn-xs" onclick="recordMeetingOutcome(${m.id}, 'held')" title="The call happened.">Held</button>
+        <button class="btn btn-ghost btn-xs btn-ghost-danger" onclick="recordMeetingOutcome(${m.id}, 'no_show')"
+          title="The call did not happen. Readies a reschedule ask (none after a second no-show).">Didn't happen</button>`;
     let state;
-    if (!past) state = '<span class="badge badge-muted">upcoming</span>';
+    if (live) {
+      // The nudge first (it is the thing to do while waiting); Held / Didn't
+      // happen only once the start has passed, which is the server's rule too.
+      state = `<span class="badge badge-ready">in progress</span>
+        <button class="btn btn-ghost btn-xs" onclick="nudgeMeetingAttendee()"
+          title="They have not joined: readies a short 'I am in the meeting room' email with the link in the composer.">Not here yet? Nudge</button>
+        ${past ? outcomeButtons : ''}`;
+    } else if (!past) state = '<span class="badge badge-muted">upcoming</span>';
     else if (m.outcome === 'held') state = '<span class="badge badge-muted">held</span>';
     else if (m.outcome === 'no_show') state = '<span class="badge badge-reply">no-show</span>';
     else if (m.status === 'followup_dismissed') state = '<span class="badge badge-muted">no follow-up needed</span>';
-    else {
-      state = `<button class="btn btn-ghost btn-xs" onclick="recordMeetingOutcome(${m.id}, 'held')" title="The call happened.">Held</button>
-        <button class="btn btn-ghost btn-xs btn-ghost-danger" onclick="recordMeetingOutcome(${m.id}, 'no_show')"
-          title="The call did not happen. Readies a reschedule ask (none after a second no-show).">Didn't happen</button>`;
-    }
+    else state = outcomeButtons;
     return `<div class="outreach-call-row"><span class="outreach-call-when">${esc(fmtDateTimeET(m.starts_at))}</span>
       <span class="outreach-recap-muted">${esc(m.title || 'Call')} · ${who}${link}</span> ${state}</div>`;
   }).join('');
@@ -6409,6 +6421,35 @@ async function cancelBookedCall(meetingId) {
   await loadOutreachContext(companyId, false);
   const panel = document.getElementById('outreach-schedule-panel');
   if (panel?.dataset.open === '1') openSchedulePanel(scheduleState?.duration_minutes || 30);
+}
+
+/**
+ * They have not joined the call: land the waiting-in-room template as the
+ * company's pending draft and show it in the composer. Same apply-template
+ * endpoint as the picker (the server checks the call is really live), same
+ * reload as recording an outcome, so the composer opens on the new row.
+ */
+async function nudgeMeetingAttendee() {
+  const companyId = outreachSelectedId;
+  if (!companyId) return;
+  const typed = (document.getElementById('outreach-draft-editor')?.value || '').trim();
+  if (typed && !confirm('Replace what you have written with the meeting-room note?')) return;
+  // A queued autosave of the pre-template text must not land AFTER the
+  // template and overwrite it.
+  clearTimeout(composerSaveTimer);
+  composerSaveSeq++;
+  try {
+    await api(`/api/b2b/companies/${encodeURIComponent(companyId)}/apply-template`, {
+      method: 'POST', body: { template_id: 'waiting_in_room' },
+    });
+  } catch (err) {
+    showToast(`Could not ready the note: ${err.message}`, 'error');
+    return;
+  }
+  showToast('Meeting-room note ready in the composer. Check it and hit Send.', 'success');
+  if (outreachSelectedId !== companyId) return;
+  outreachDraft = null;
+  await loadOutreachContext(companyId, false);
 }
 
 async function recordMeetingOutcome(meetingId, outcome) {
