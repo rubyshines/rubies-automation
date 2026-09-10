@@ -1,12 +1,13 @@
 /**
- * Publish the wholesale line sheet to the rubies-ecom-v4 theme as a static
+ * Publish the wholesale sheet's DATA to the rubies-ecom-v4 theme as a static
  * JSON asset, the way store locators and donation partners are published.
  *
- * Reads the product catalog (Supabase mirror of Shopify), ranks each section
- * by units sold over the last year (orders mirror), decorates each featured
- * product with its Shopify featured image, and writes
- * rubies-ecom-v4/assets/wholesale-pricing.json for the `wholesale-pricing`
- * theme section to fetch. The rows and the terms come from
+ * Not prices: the theme reads those live from Shopify (2026-09-10). This
+ * carries what Shopify does not know: the featured handles per section
+ * ranked by units sold over the last year (orders mirror), the per-country
+ * views (rate + terms), and the local currency per country. It changes when
+ * the featured list, the terms, or the popularity order change, which is
+ * rare; a retail price change never needs it. The terms come from
  * b2b-outreach/lib/wholesalePriceList.js, the same module the wholesale_terms
  * email template reads, so the page and the email agree.
  *
@@ -25,7 +26,7 @@ const path = require('path');
 
 const { publishThemeAsset } = require('./themeAssetPublish');
 const { hasGithubToken, putJsonIfChanged } = require('./githubContents');
-const { themePayload, loadSheetProducts, PAGE_URL, FEATURED } = require('../../b2b-outreach/lib/wholesalePriceList');
+const { themePayload, loadSheetProducts, PAGE_URL } = require('../../b2b-outreach/lib/wholesalePriceList');
 
 const THEME_REPO = { owner: 'rubyshines', repo: 'rubies-ecom-v4', branch: 'main' };
 const ASSET_PATH = 'assets/wholesale-pricing.json';
@@ -36,54 +37,6 @@ const DEFAULT_THEME_ASSET_PATH = path.resolve(
 
 /** Keys whose change alone is not a change. */
 const STAMP_KEYS = ['generated_at'];
-
-// The page renders the image at up to ~200px wide; a 480px CDN cut is sharp
-// on retina without pulling the 2000px original.
-const IMAGE_WIDTH = 480;
-
-/**
- * Map(handle → { image }) from Shopify for the featured handles. Live data
- * because product photos change and the catalog mirror does not carry them.
- * A product with no featured image gets null and the page renders without one.
- */
-async function fetchProductMedia() {
-  const { shopifyGraphQL } = require('./shopify');
-  const handles = FEATURED.flatMap(s => s.handles);
-  const query = handles.map(h => `handle:${h}`).join(' OR ');
-  const data = await shopifyGraphQL(`query($q: String!) {
-    products(first: 50, query: $q) { nodes { handle featuredImage { url } } }
-  }`, { q: query });
-  const media = new Map();
-  for (const p of data?.products?.nodes || []) {
-    const url = p.featuredImage?.url || null;
-    media.set(p.handle, { image: url ? withWidth(url, IMAGE_WIDTH) : null });
-  }
-  return media;
-}
-
-/**
- * The USD price of the store's hidden `fx-reference` product (handle
- * `fx-reference`, the shipping bar's FX yardstick). The page divides that
- * product's market-converted price by this figure to get Shopify's rate.
- * Null when the product is missing, and the page then offers no switch.
- */
-async function fetchFxReferenceUsd() {
-  const { shopifyGraphQL } = require('./shopify');
-  const data = await shopifyGraphQL(`{ productByHandle(handle: "fx-reference") { variants(first: 1) { nodes { price } } } }`);
-  const price = Number(data?.productByHandle?.variants?.nodes?.[0]?.price);
-  return Number.isFinite(price) && price > 0 ? price : null;
-}
-
-/** Shopify CDN URLs accept a width parameter; add it without breaking the version query. Pure. */
-function withWidth(url, width) {
-  try {
-    const u = new URL(url);
-    u.searchParams.set('width', String(width));
-    return u.toString();
-  } catch {
-    return url;
-  }
-}
 
 /** How far back "popular" looks. A year covers both swim and underwear seasons. */
 const POPULARITY_DAYS = 365;
@@ -127,16 +80,14 @@ async function fetchUnitsSoldByHandle({ days = POPULARITY_DAYS, now = new Date()
 }
 
 /** The payload as it would be written, without touching git. */
-async function buildWholesalePricingPayload({ generatedAt, media, popularity, fxReferenceUsd } = {}) {
+async function buildWholesalePricingPayload({ generatedAt, popularity } = {}) {
   const products = await loadSheetProducts();
-  const m = media || await fetchProductMedia();
   const pop = popularity || await fetchUnitsSoldByHandle();
-  const fx = fxReferenceUsd === undefined ? await fetchFxReferenceUsd() : fxReferenceUsd;
-  return themePayload(products, { generatedAt, media: m, popularity: pop, fxReferenceUsd: fx });
+  return themePayload(products, { generatedAt, popularity: pop });
 }
 
 function countProducts(payload) {
-  return payload.sections.reduce((n, s) => n + s.products.length, 0);
+  return payload.sections.reduce((n, s) => n + s.handles.length, 0);
 }
 
 /**
@@ -236,6 +187,6 @@ async function autoPublishWholesalePricing(opts = {}) {
 
 module.exports = {
   publishWholesalePricing, autoPublishWholesalePricing, buildWholesalePricingPayload,
-  fetchProductMedia, fetchUnitsSoldByHandle, fetchFxReferenceUsd, withWidth,
+  fetchUnitsSoldByHandle,
   POPULARITY_DAYS, STAMP_KEYS, THEME_REPO, ASSET_PATH, DEFAULT_THEME_ASSET_PATH,
 };

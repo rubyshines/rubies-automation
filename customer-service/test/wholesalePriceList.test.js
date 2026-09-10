@@ -190,7 +190,7 @@ test('within a section, units sold decide the order; FEATURED order breaks ties 
     ['the-aj-shaping-underwear', 'the-extra-cute-shaping-underwear', 'the-naomi-gaff-extra-strength-shaping-underwear']);
   assert.deepEqual(list.sections[1].products.map(p => p.handle),
     ['the-ruby-no-tuck-shaping-bikini-bottom', 'the-cheeky-shaping-bikini-bottom'], 'Ruby outsells Cheeky, so Ruby leads');
-  assert.equal(themePayload(CATALOG, { popularity }).sections[1].products[0].handle, 'the-ruby-no-tuck-shaping-bikini-bottom');
+  assert.equal(themePayload(CATALOG, { popularity }).sections[1].handles[0], 'the-ruby-no-tuck-shaping-bikini-bottom');
   // Sales figures never reach the public payload.
   assert.ok(!JSON.stringify(themePayload(CATALOG, { popularity })).includes('13514'));
 });
@@ -218,8 +218,9 @@ test('media decorates products with their image, by handle', () => {
   assert.equal(list.sections[0].products[1].image, null);
 });
 
-test('the theme payload is the page: US view by default, every view precomputed', () => {
-  const p = themePayload(CATALOG, { generatedAt: '2026-09-09T12:00:00Z' });
+test('the theme payload carries what Shopify does not know: handles in order, views, currencies', () => {
+  const popularity = new Map([['the-ruby-no-tuck-shaping-bikini-bottom', 3793], ['the-cheeky-shaping-bikini-bottom', 850]]);
+  const p = themePayload(CATALOG, { generatedAt: '2026-09-09T12:00:00Z', popularity });
   assert.equal(p.discount_percent, PAGE_DISCOUNT_PERCENT);
   assert.equal(p.currency, 'USD');
   assert.equal(p.minimum_order_usd, 300);
@@ -230,21 +231,22 @@ test('the theme payload is the page: US view by default, every view precomputed'
   assert.deepEqual(p.views.us, { rate: 50, international: false, terms: wholesaleTermsLines(50) });
   assert.deepEqual(p.views.au, { rate: 50, international: true, terms: wholesaleTermsLines(50, { international: true }) });
   assert.deepEqual(p.views.other, { rate: 30, international: true, terms: wholesaleTermsLines(30, { international: true }) });
-  // The USD ↔ local toggle needs to know a country's currency; the US has none listed.
+  // The USD ↔ local switch needs to know a country's currency; the US has none listed.
   assert.equal(p.currency_by_country.ca, 'CAD');
   assert.equal(p.currency_by_country.de, 'EUR');
   assert.equal(p.currency_by_country.us, undefined);
-  // Shopify's own FX comes from the fx-reference product; its USD price rides along.
-  assert.equal(p.fx_reference_usd, null);
-  assert.equal(themePayload(CATALOG, { fxReferenceUsd: '9900.00' }).fx_reference_usd, 9900);
-  assert.equal(p.sections.length, 3);
-  // Serialisable as-is: what publishThemeAsset writes. Each band carries the
-  // wholesale figure for every view's rate so the page never does arithmetic.
-  const ava = JSON.parse(JSON.stringify(p)).sections[2].products[0].bands[0];
-  assert.equal(ava.wholesale, 23);
-  assert.deepEqual(ava.wholesale_by_rate, { '50': 23, '30': 32.2 });
-  // Without extraRates (the console's markdown sheet) the shape stays lean.
-  assert.equal(buildPriceList(CATALOG, { discountPercent: 50 }).sections[2].products[0].bands[0].wholesale_by_rate, undefined);
+  // Sections are handles only, in popularity order, minus anything the catalog lacks
+  // (Sassy, Mia, Serena, Brooke, Evey are absent from this fixture).
+  assert.deepEqual(p.sections, [
+    { name: 'Underwear', handles: ['the-aj-shaping-underwear', 'the-extra-cute-shaping-underwear', 'the-naomi-gaff-extra-strength-shaping-underwear'] },
+    { name: 'Swimwear', handles: ['the-ruby-no-tuck-shaping-bikini-bottom', 'the-cheeky-shaping-bikini-bottom'] },
+    { name: 'Bras', handles: ['the-ava-seamless-shaping-bra'] },
+  ]);
+  // No prices, photos, names or sales figures: the theme reads the catalog live from Shopify.
+  const text = JSON.stringify(p);
+  for (const leak of ['bands', 'wholesale_by_rate', '"image"', '"product"', 'fx_reference', '3793']) {
+    assert.ok(!text.includes(leak), `payload must not carry ${leak}`);
+  }
 });
 
 test('a country lands on a view, and the link carries it', () => {

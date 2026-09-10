@@ -11,7 +11,8 @@ const { publishWholesalePricing, autoPublishWholesalePricing, STAMP_KEYS, ASSET_
 
 const PAYLOAD = {
   generated_at: '2026-09-10T12:00:00.000Z', discount_percent: 50, currency: 'USD',
-  sections: [{ name: 'Underwear', products: [{ product: 'AJ', bands: [{ sizes: 'Youth 4-10', retail: 28, wholesale: 14 }] }] }],
+  views: { us: { rate: 50, terms: ['50% off retail, priced in USD'] } },
+  sections: [{ name: 'Underwear', handles: ['the-aj-shaping-underwear'] }],
 };
 
 // ── comparison ──────────────────────────────────────────────────────────────
@@ -20,9 +21,9 @@ test('a timestamp-only difference is not a change; a price is; array order is', 
   const later = { ...PAYLOAD, generated_at: '2026-09-11T12:00:00.000Z' };
   assert.ok(sameIgnoringKeys(PAYLOAD, later, STAMP_KEYS));
   assert.ok(!sameIgnoringKeys(PAYLOAD, later, []), 'without the ignore list the stamp counts');
-  const repriced = JSON.parse(JSON.stringify(later));
-  repriced.sections[0].products[0].bands[0].retail = 30;
-  assert.ok(!sameIgnoringKeys(PAYLOAD, repriced, STAMP_KEYS));
+  const reordered = JSON.parse(JSON.stringify(later));
+  reordered.sections[0].handles.push('the-extra-cute-shaping-underwear');
+  assert.ok(!sameIgnoringKeys(PAYLOAD, reordered, STAMP_KEYS));
   // Key order in the stored file never matters (jsonb and pretty-printers reorder).
   assert.ok(sameIgnoringKeys({ b: 1, a: [1, 2] }, { a: [1, 2], b: 1 }));
   assert.ok(!sameIgnoringKeys({ a: [1, 2] }, { a: [2, 1] }), 'position is meaning');
@@ -59,7 +60,7 @@ test('unchanged data on the branch → no PUT', async () => {
 
 test('changed data → PUT with the existing sha, on main, pretty JSON', async () => {
   const stored = JSON.parse(JSON.stringify(PAYLOAD));
-  stored.sections[0].products[0].bands[0].retail = 26;
+  stored.sections[0].handles = ['the-extra-cute-shaping-underwear'];
   const { impl, calls } = fetchStub(stored);
   const res = await putJsonIfChanged({ owner: 'o', repo: 'r', path: ASSET_PATH, content: PAYLOAD, ignoreKeys: STAMP_KEYS, message: 'data: x', token: 't', fetchImpl: impl });
   assert.equal(res.noOp, false);

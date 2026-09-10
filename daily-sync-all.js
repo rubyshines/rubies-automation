@@ -51,10 +51,11 @@ const PIPELINES = [
   },
   {
     name: 'Wholesale Pricing Page',
-    // After Products so a retail price changed in Shopify admin (not through
-    // set_product_prices) still reaches rubyshines.com/pages/wholesale-pricing
-    // by the next morning; popularity order and product photos refresh the
-    // same way. A no-op when nothing but the timestamp changed. Needs
+    // Prices on rubyshines.com/pages/wholesale-pricing are live from Shopify;
+    // this refreshes what the page cannot read from the catalog: the featured
+    // list's popularity order (12-month units) and the terms. After Products
+    // because the order reads the mirror. A no-op when nothing but the
+    // timestamp changed, which is most nights. Needs
     // GITHUB_TOKEN on this service (commits through the GitHub API; there is
     // no theme checkout on Railway) — without it the step reports a warning.
     run: async () => {
