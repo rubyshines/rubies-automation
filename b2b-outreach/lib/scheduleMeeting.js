@@ -116,14 +116,17 @@ function meetingTitle(companyName) {
  * the both-zones habit exists because timezone confusion killed real meetings,
  * but for a Toronto org it prints the same number twice. Pure.
  */
-function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null }) {
+function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null, moved = false }) {
   const d = new Date(start);
   const day = formatDayInZone(d, businessTimeZone);
   const ours = formatTimeInZone(d, businessTimeZone);
+  // A move says so: "sent an invite" for a call they already hold reads as a
+  // second call. Same shape otherwise, so the send guard covers both.
+  const verb = moved ? 'I moved our call to' : 'I just sent an invite for';
   if (theirTimeZone && isValidTimeZone(theirTimeZone) && theirTimeZone !== businessTimeZone) {
-    return `Ok, I just sent an invite for ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
+    return `Ok, ${verb} ${day} at ${ours} ET (${formatTimeInZone(d, theirTimeZone)} your time).`;
   }
-  return `Ok, I just sent an invite for ${day} at ${ours} ET.`;
+  return `Ok, ${verb} ${day} at ${ours} ET.`;
 }
 
 /**
@@ -132,10 +135,10 @@ function renderConfirmationLine({ start, businessTimeZone = BUSINESS_TIMEZONE, t
  * empty composer is filled with when a slot is picked; a composer already
  * holding text gets only the sentence. Pure.
  */
-function renderConfirmationBody({ firstName, start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null }) {
+function renderConfirmationBody({ firstName, start, businessTimeZone = BUSINESS_TIMEZONE, theirTimeZone = null, moved = false }) {
   // Lazy: messageTemplates reaches back into this module for meeting lookups.
   const { fillMeetingConfirmation } = require('./messageTemplates');
-  const confirmationLine = renderConfirmationLine({ start, businessTimeZone, theirTimeZone });
+  const confirmationLine = renderConfirmationLine({ start, businessTimeZone, theirTimeZone, moved });
   return fillMeetingConfirmation({ firstName, confirmationLine }).body;
 }
 
@@ -436,6 +439,255 @@ async function scheduleMeeting(p = {}) {
   };
 }
 
+/** The company's next booked call, or null. */
+async function upcomingBookedMeeting(sb, company_id, now = new Date()) {
+  const { data, error } = await sb.from('b2b_meetings')
+    .select('*').eq('company_id', company_id).eq('status', 'booked')
+    .gte('starts_at', now.toISOString()).order('starts_at', { ascending: true }).limit(1).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
+/**
+ * Move a booked call, and tell them, in one action.
+ *
+ * Why this exists: a partner writing "can we push our chat to next week"
+ * (Lumenus, 2026-08-26) lands in the panel like any reply, and Book & Send
+ * would have created a SECOND event while the first stayed in their inbox.
+ * A company with an upcoming booked call plus a picked slot is a move by
+ * definition, so the caller routes here deterministically — no detection.
+ *
+ * The existing Google event is PATCHED to the new time (sendUpdates 'all', so
+ * Google emails them the change and the Meet link survives), the row updates
+ * in place keeping its history, and the reply says "I moved our call". Same
+ * order of operations as scheduleMeeting: recipient and gate first, then the
+ * slot check (ignoring this call's own block), then the calendar, then the
+ * one send path. The event stays moved if the email fails.
+ *
+ * `deps` is for tests: { cal, fetchEvents, now }.
+ */
+async function rescheduleMeeting(p = {}, deps = {}) {
+  const {
+    company_id, meeting_id, start, thread_id, subject, body,
+    duration_minutes, their_timezone = null,
+    confirmed, force, skip_reply, message_type = DEFAULT_MESSAGE_TYPE, cc,
+  } = p;
+  const now = deps.now || new Date();
+  if (!company_id) throw new Error('company_id required');
+  if (!start) throw new Error('start required');
+  const startDate = new Date(start);
+  if (Number.isNaN(startDate.getTime())) throw new Error(`start is not a valid date: ${start}`);
+  if (startDate.getTime() < now.getTime()) return { ok: false, error: 'That time is in the past.' };
+
+  const sb = deps.sb || getSupabaseClient();
+  const { data: company, error: cErr } = await sb.from('b2b_companies')
+    .select('id, name, city, region, country').eq('id', company_id).maybeSingle();
+  if (cErr) throw new Error(`company lookup: ${cErr.message}`);
+  if (!company) return { ok: false, error: `No company ${company_id}` };
+
+  let meeting;
+  if (meeting_id) {
+    const { data, error } = await sb.from('b2b_meetings').select('*').eq('id', meeting_id).maybeSingle();
+    if (error) throw new Error(error.message);
+    meeting = data;
+  } else {
+    meeting = await upcomingBookedMeeting(sb, company_id, now);
+  }
+  if (!meeting) return { ok: false, error: `${company.name} has no upcoming booked call to move.` };
+  if (meeting.status !== 'booked') return { ok: false, error: `Call #${meeting.id} is ${meeting.status}, not booked — nothing to move.` };
+  if (!meeting.google_event_id) return { ok: false, error: `Call #${meeting.id} has no calendar event on record — move it in Google Calendar by hand.` };
+
+  const duration = Math.max(5, Math.round(duration_minutes || meeting.duration_minutes || DEFAULT_DURATION_MIN));
+  const endDate = new Date(startDate.getTime() + duration * 60000);
+  const theirTz = isValidTimeZone(their_timezone) ? their_timezone
+    : isValidTimeZone(meeting.their_timezone) ? meeting.their_timezone : null;
+  const calendarId = meeting.google_calendar_id || ORGANIZER_CALENDAR_ID;
+
+  const { data: pendingDraft } = await sb.from('b2b_drafts')
+    .select('id, thread_id, structured')
+    .eq('company_id', company_id).eq('status', 'pending').maybeSingle();
+  const toOverride = pendingDraft?.structured?.to || null;
+  const ccList = cc ?? pendingDraft?.structured?.cc ?? null;
+
+  // --- 1. recipient + gate, before the calendar is touched --------------------
+  const delivery = toOverride
+    ? { mode: 'email', email: addressList(toOverride) }
+    : await resolveDelivery(sb, company_id);
+  if (delivery.mode !== 'email') {
+    return { ok: false, error: `No email address on file for ${company.name} — fix the contact record first.` };
+  }
+  if (!(await isFlagEnabled(SEND_FLAG))) {
+    return {
+      ok: false, phase: 'blocked',
+      error: `B2B sending is disabled (system flag '${SEND_FLAG}' is off), so the reply could not go out. Nothing was moved.`,
+    };
+  }
+
+  const preview = {
+    ok: true,
+    phase: 'preview',
+    mode: 'move',
+    company: company.name,
+    meeting_id: meeting.id,
+    title: meeting.title,
+    previous_start: meeting.starts_at,
+    previous_when_ours: `${formatDayInZone(new Date(meeting.starts_at), BUSINESS_TIMEZONE)} ${formatTimeInZone(new Date(meeting.starts_at), BUSINESS_TIMEZONE)} Eastern`,
+    start: startDate.toISOString(),
+    end: endDate.toISOString(),
+    duration_minutes: duration,
+    when_ours: `${formatDayInZone(startDate, BUSINESS_TIMEZONE)} ${formatTimeInZone(startDate, BUSINESS_TIMEZONE)} Eastern`,
+    when_theirs: theirTz ? `${formatTimeInZone(startDate, theirTz)} (${theirTz})` : null,
+    attendees: meeting.attendee_emails || [],
+    confirmation_line: renderConfirmationLine({ start: startDate, theirTimeZone: theirTz, moved: true }),
+    confirmation_body: renderConfirmationBody({
+      firstName: greetingName(delivery.name), start: startDate, theirTimeZone: theirTz, moved: true,
+    }),
+  };
+  if (!confirmed) return preview;
+  if (!skip_reply && (!body || !body.trim())) {
+    return { ok: false, error: 'body required — the reply that tells them the new time.' };
+  }
+
+  // --- 2. is the new slot free? (this call's own block does not count) --------
+  let clashInfo = null;
+  try {
+    const fetchEvents = deps.fetchEvents || fetchCalendarEvents;
+    const { busy } = await fetchEvents({
+      timeMin: new Date(startDate.getTime() - 3600 * 1000),
+      timeMax: new Date(endDate.getTime() + 3600 * 1000),
+      includeHolidays: false,
+    });
+    const others = busy.filter(b => b.eventId !== meeting.google_event_id);
+    const check = checkSlotFree({ start: startDate, durationMinutes: duration, busy: others });
+    if (!check.free) {
+      clashInfo = check.clash;
+      if (!force) {
+        return {
+          ok: false, phase: 'clash',
+          error: `${formatDayInZone(startDate, BUSINESS_TIMEZONE)} ${formatTimeInZone(startDate, BUSINESS_TIMEZONE)} `
+            + `is not free — "${check.clash.summary}" is in that slot. Pick another, or pass force to double-book.`,
+          clash: check.clash,
+        };
+      }
+    }
+  } catch (e) {
+    return { ok: false, error: `Could not verify the slot is free: ${e.message}` };
+  }
+
+  // --- 3. move the event (Google emails them the update) ----------------------
+  const cal = deps.cal || await getCalendar();
+  let event;
+  try {
+    const res = await cal.events.patch({
+      calendarId, eventId: meeting.google_event_id, sendUpdates: 'all',
+      requestBody: {
+        start: { dateTime: startDate.toISOString(), timeZone: BUSINESS_TIMEZONE },
+        end: { dateTime: endDate.toISOString(), timeZone: BUSINESS_TIMEZONE },
+      },
+    });
+    event = res.data || {};
+  } catch (e) {
+    return { ok: false, error: `Could not move the calendar event: ${e.message}. Nothing was sent.` };
+  }
+
+  // --- 4. the record, before the reply: the moved event is the evidence -------
+  const stamp = now.toISOString();
+  const { error: mErr } = await sb.from('b2b_meetings').update({
+    starts_at: startDate.toISOString(),
+    ends_at: endDate.toISOString(),
+    duration_minutes: duration,
+    ...(theirTz && !meeting.their_timezone ? { their_timezone: theirTz, their_timezone_source: 'operator' } : {}),
+    updated_at: stamp,
+  }).eq('id', meeting.id);
+  if (mErr) console.error(`[rescheduleMeeting] b2b_meetings update failed (event IS moved): ${mErr.message}`);
+
+  // --- 5. the reply, down the one send path ---------------------------------
+  let send;
+  if (skip_reply) {
+    send = { ok: true, phase: 'no_reply_sent', thread_id: thread_id || meeting.thread_id || null };
+  } else {
+    try {
+      const { sendDraftById } = require('./queueService');
+      const common = { confirmed: true, invite_created: true };
+      send = pendingDraft
+        ? await sendDraftById(sb, {
+          ...common, draft_id: pendingDraft.id, body, subject,
+          thread_id: thread_id || pendingDraft.thread_id || meeting.thread_id || undefined,
+          message_type, cc: ccList ?? undefined,
+        })
+        : await sendB2bEmail({ ...common, company_id, thread_id: thread_id || meeting.thread_id || undefined, subject, body, cc: ccList ?? undefined, message_type });
+    } catch (e) {
+      send = { ok: false, error: e.message };
+    }
+  }
+  if (!send?.ok) {
+    return {
+      ok: false,
+      phase: 'event_moved_email_failed',
+      error: `The calendar update went out, but the reply email did not: ${send?.error || 'unknown error'}. `
+        + 'Send the reply by hand — the call itself is moved.',
+      meeting_id: meeting.id, event_id: meeting.google_event_id,
+      previous_start: meeting.starts_at, start: startDate.toISOString(),
+    };
+  }
+
+  return {
+    ok: true,
+    phase: 'moved',
+    meeting_id: meeting.id,
+    event_id: meeting.google_event_id,
+    meet_url: meetLinkOf(event) || meeting.meet_url || null,
+    html_link: event.htmlLink || meeting.html_link || null,
+    title: meeting.title,
+    previous_start: meeting.starts_at,
+    previous_when_ours: preview.previous_when_ours,
+    start: startDate.toISOString(),
+    end: endDate.toISOString(),
+    when_ours: preview.when_ours,
+    when_theirs: preview.when_theirs,
+    thread_id: send.thread_id,
+    gmail_message_id: send.gmail_message_id,
+    double_booked_over: clashInfo ? clashInfo.summary : null,
+    record_written: !mErr,
+  };
+}
+
+/**
+ * Cancel a booked call: delete the Google event (which emails them the
+ * cancellation) and mark the row. No email of ours goes out — whatever needs
+ * saying is the operator's to write. An event already gone from the calendar
+ * still lets the row be marked, so the record cannot get stuck.
+ */
+async function cancelMeeting(sb, { meeting_id, company_id = null, now = new Date() } = {}, deps = {}) {
+  if (!meeting_id) throw new Error('meeting_id required');
+  const { data: meeting, error } = await sb.from('b2b_meetings').select('*').eq('id', meeting_id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!meeting) throw new Error(`meeting #${meeting_id} not found`);
+  if (company_id && meeting.company_id !== company_id) throw new Error(`meeting #${meeting_id} is not ${company_id}'s`);
+  if (meeting.status === 'cancelled') return { ok: true, already: true, meeting_id, start: meeting.starts_at };
+  if (meeting.starts_at && new Date(meeting.starts_at) <= now) throw new Error(`meeting #${meeting_id} has already started — record an outcome instead`);
+
+  let calendar_deleted = false;
+  if (meeting.google_event_id) {
+    const cal = deps.cal || await getCalendar();
+    try {
+      await cal.events.delete({
+        calendarId: meeting.google_calendar_id || ORGANIZER_CALENDAR_ID,
+        eventId: meeting.google_event_id, sendUpdates: 'all',
+      });
+      calendar_deleted = true;
+    } catch (e) {
+      const code = e?.code || e?.response?.status;
+      if (code !== 404 && code !== 410) throw new Error(`Could not cancel the calendar event: ${e.message}`);
+    }
+  }
+  const stamp = now.toISOString();
+  const { error: uErr } = await sb.from('b2b_meetings')
+    .update({ status: 'cancelled', updated_at: stamp }).eq('id', meeting_id);
+  if (uErr) throw new Error(uErr.message);
+  return { ok: true, meeting_id, start: meeting.starts_at, title: meeting.title, calendar_deleted, cancelled_at: stamp };
+}
+
 /**
  * The next booked call for each of these companies, keyed by company_id.
  * Used by the cadence — a company with a call coming up is not waiting on us.
@@ -560,6 +812,9 @@ async function recordMeetingOutcome(sb, { meeting_id, outcome, note = null, now 
 
 module.exports = {
   scheduleMeeting,
+  rescheduleMeeting,
+  cancelMeeting,
+  upcomingBookedMeeting,
   meetingTitle,
   meetLinkOf,
   conferenceStatus,

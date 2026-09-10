@@ -328,7 +328,7 @@ async function resolveDelivery(sb, companyId) {
  * says "I made the event moments ago" — its b2b_meetings row is written after
  * this call, so the row cannot be the evidence on the legitimate path.
  */
-const INVITE_CLAIM = /\bI just sent an invite for\b/i;
+const INVITE_CLAIM = /\bI (just sent an invite for|moved our call to)\b/i;
 
 /**
  * A recipient verified undeliverable gets refused BEFORE the Gmail call: the

@@ -455,6 +455,7 @@ async function fetchCalendarEvents({ timeMin, timeMax, calendarIds = BUSY_CALEND
             end: ev.end.dateTime,
             summary: ev.summary || 'Busy',
             calendar: calendarId,
+            eventId: ev.id || null,
             // A call, as opposed to an errand: it has other people on it or a
             // video room. The grid draws these differently because "right
             // after a call" and "right after the dentist" are different offers.

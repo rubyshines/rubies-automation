@@ -61,8 +61,12 @@ Respond with JSON only:
       "quote": "the words they used" }
   ],
   "stated_timezone": "IANA name" or null,
-  "wants_to_meet": true|false
+  "wants_to_meet": true|false,
+  "wants_to_reschedule": true|false
 }
+"wants_to_reschedule" is true only when they ask to move, postpone or cancel a
+call that is ALREADY arranged ("can we push our call to next week", "something
+came up Thursday"). A first-time request to meet is not a reschedule.
 "stated_timezone" is the zone the writer appears to be in overall, if knowable.`;
 
 const HHMM = /^\d{1,2}:\d{2}$/;
@@ -88,7 +92,7 @@ async function extractProposedTimes({
   businessTimeZone = 'America/Toronto',
   company_id = null,
 } = {}) {
-  const empty = { times: [], statedTimeZone: null, wantsToMeet: false, error: null };
+  const empty = { times: [], statedTimeZone: null, wantsToMeet: false, wantsToReschedule: false, error: null };
   if (!message || !String(message).trim()) return empty;
 
   const dayFmt = new Intl.DateTimeFormat('en-GB', {
@@ -195,6 +199,7 @@ async function extractProposedTimes({
     times,
     statedTimeZone,
     wantsToMeet: !!parsed.wants_to_meet || times.length > 0,
+    wantsToReschedule: !!parsed.wants_to_reschedule,
     error: null,
   };
 }

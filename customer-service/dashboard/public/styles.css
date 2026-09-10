@@ -7004,6 +7004,10 @@ main { height: calc(100vh - 56px); }
 .outreach-place-missing { color: var(--yellow); font-style: italic; }
 .outreach-location-form { margin: 6px 0 4px; }
 
+/* A booked call in the schedule panel: links, their ask, and cancel, on one line. */
+.schedule-booked-actions { margin-left: 8px; }
+.schedule-hint-inline { font-size: 12px; color: var(--text-secondary); }
+
 /* Schedule panel: the calendar list lives in a tooltip on the hint. */
 .schedule-hint[title] { cursor: help; }
 

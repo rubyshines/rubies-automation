@@ -66,3 +66,10 @@ test('the claim pattern matches the sentence the panel writes, and little else',
     'Thanks for the invite to your event!',
   ]) assert.ok(!INVITE_CLAIM.test(benign), `should not match: ${benign}`);
 });
+
+test('a moved-call claim is guarded exactly like an invite claim', () => {
+  const { INVITE_CLAIM } = require('../../b2b-outreach/lib/sendB2bEmail');
+  assert.ok(INVITE_CLAIM.test('Ok, I moved our call to Thu Sept 17 at 1:00 PM ET (10:00 AM your time).'));
+  assert.ok(INVITE_CLAIM.test('Ok, I just sent an invite for Thu Sept 17 at 1:00 PM ET.'));
+  assert.ok(!INVITE_CLAIM.test('Happy to move things around if that helps.'));
+});

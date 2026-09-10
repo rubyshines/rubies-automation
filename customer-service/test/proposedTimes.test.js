@@ -14,6 +14,7 @@ const aiClientPath = require.resolve('../../shared/aiClient');
 let lastCall = null;
 let nextTimes = [];
 let nextStatedTz = null;
+let nextReschedule = false;
 require.cache[aiClientPath] = {
   id: aiClientPath,
   filename: aiClientPath,
@@ -24,7 +25,7 @@ require.cache[aiClientPath] = {
       return {
         content: [{
           type: 'text',
-          text: JSON.stringify({ times: nextTimes, stated_timezone: nextStatedTz, wants_to_meet: true }),
+          text: JSON.stringify({ times: nextTimes, stated_timezone: nextStatedTz, wants_to_meet: true, wants_to_reschedule: nextReschedule }),
         }],
       };
     },
@@ -125,4 +126,13 @@ test('no knowable zone keeps the wall clock and flags it', async () => {
   assert.strictEqual(t.start, null);
   assert.strictEqual(t.wallClock, '13:00');
   assert.strictEqual(t.wallClockEnd, '17:30');
+});
+
+test('a request to move an arranged call comes through as wantsToReschedule', async () => {
+  nextReschedule = true;
+  const r = await run([]);
+  assert.strictEqual(r.wantsToReschedule, true);
+  nextReschedule = false;
+  const r2 = await run([]);
+  assert.strictEqual(r2.wantsToReschedule, false);
 });

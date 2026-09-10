@@ -7,7 +7,9 @@
  */
 const { getSupabaseClient } = require('../../../shared/supabaseClient');
 const { fetchAvailability } = require('../../../b2b-outreach/lib/availability');
-const { scheduleMeeting, meetingTitle, renderConfirmationLine } = require('../../../b2b-outreach/lib/scheduleMeeting');
+const {
+  scheduleMeeting, rescheduleMeeting, cancelMeeting, upcomingBookedMeeting, meetingTitle, renderConfirmationLine,
+} = require('../../../b2b-outreach/lib/scheduleMeeting');
 const { isValidTimeZone, timeZoneLabel } = require('../../../b2b-outreach/lib/meetingTimezone');
 const { resolveCompanyTimeZone } = require('../../../b2b-outreach/lib/companyLocation');
 const { extractProposedTimes } = require('../../../b2b-outreach/lib/proposedTimes');
@@ -103,11 +105,20 @@ async function handleReadProposedTimes(args = {}) {
 async function handleSchedule(args = {}) {
   const sb = getSupabaseClient();
   const tz = await resolveTheirTimeZone(sb, args);
+  // An upcoming booked call makes this a move, not a second booking.
+  if (!args.new_call && !args.test_mode && args.company_id) {
+    const booked = await upcomingBookedMeeting(sb, args.company_id);
+    if (booked) return rescheduleMeeting({ ...args, meeting_id: booked.id, their_timezone: tz.timeZone });
+  }
   return scheduleMeeting({
     ...args,
     their_timezone: tz.timeZone,
     their_timezone_source: tz.source,
   });
+}
+
+async function handleCancel(args = {}) {
+  return cancelMeeting(getSupabaseClient(), { meeting_id: args.meeting_id, company_id: args.company_id || null });
 }
 
 module.exports = [
@@ -140,7 +151,7 @@ module.exports = [
   },
   {
     name: 'schedule_meeting',
-    description: 'Book a call with a company: creates a Google Calendar event titled "RUBIES x <Company>" with a Google Meet link, invites their contact, and sends the reply telling them the time. Two-phase — without confirmed:true it only previews. Pass test_mode:true to rehearse: a real event and real invite addressed to Jamie only, titled [TEST], writing nothing to the company record.',
+    description: 'Book a call with a company: creates a Google Calendar event titled "RUBIES x <Company>" with a Google Meet link, invites their contact, and sends the reply telling them the time. If the company already has an upcoming booked call, this MOVES that call instead (the existing event is updated, Google sends them the change, the reply says "I moved our call") — pass new_call:true for a genuine second call. Two-phase — without confirmed:true it only previews. Pass test_mode:true to rehearse: a real event and real invite addressed to Jamie only, titled [TEST], writing nothing to the company record.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -157,10 +168,24 @@ module.exports = [
         confirmed: { type: 'boolean', description: 'Phase 2. Without it, returns a preview and books nothing.' },
         test_mode: { type: 'boolean', description: 'Rehearsal: real event + invite to Jamie only, [TEST] title, nothing written to the record.' },
         force: { type: 'boolean', description: 'Book even though the slot now clashes with something.' },
+        new_call: { type: 'boolean', description: 'Book a second call even though one is already upcoming (default: an upcoming call is moved instead).' },
       },
       required: ['company_id', 'start'],
     },
     handler: handleSchedule,
+  },
+  {
+    name: 'cancel_meeting',
+    description: 'Cancel a booked call: deletes the Google Calendar event (Google emails them the cancellation) and marks the b2b_meetings row cancelled. Sends no email of ours — write one if something needs saying. Only for calls that have not started; a past call gets an outcome (b2b_meeting_outcome) instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meeting_id: { type: 'number', description: 'b2b_meetings id (the panel\'s Calls block and calendar_availability\'s `booked` carry it).' },
+        company_id: { type: 'string', description: 'Optional guard: refuses if the meeting belongs to another company.' },
+      },
+      required: ['meeting_id'],
+    },
+    handler: handleCancel,
   },
 ];
 

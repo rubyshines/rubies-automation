@@ -3314,7 +3314,7 @@ async function apiB2bAvailability(companyId, params) {
   }
 
   const { data: meeting } = await sb.from('b2b_meetings')
-    .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone')
+    .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone, google_event_id, booked_by')
     .eq('company_id', companyId).eq('status', 'booked')
     .gte('starts_at', new Date().toISOString())
     .order('starts_at', { ascending: true }).limit(1).maybeSingle();
@@ -3338,14 +3338,28 @@ async function apiB2bAvailability(companyId, params) {
     booked: meeting || null,
     proposed_times: proposed.times,
     proposed_error: proposed.error,
+    // Their message asks to move or cancel a call already arranged.
+    wants_to_reschedule: !!proposed.wantsToReschedule,
     inbound_at: inbound?.sent_at || null,
     inbound_thread_id: inbound?.thread_id || null,
   };
 }
 
+// A company with an upcoming booked call plus a picked slot is a MOVE of that
+// call, not a second booking — the same rule the schedule_meeting tool applies.
+// `new_call: true` is the escape hatch for a genuine second call.
 async function apiB2bScheduleMeeting(companyId, body = {}) {
-  const { scheduleMeeting } = require('../../b2b-outreach/lib/scheduleMeeting');
+  const { scheduleMeeting, rescheduleMeeting, upcomingBookedMeeting } = require('../../b2b-outreach/lib/scheduleMeeting');
+  if (!body.new_call && !body.test_mode) {
+    const booked = await upcomingBookedMeeting(getSupabaseClient(), companyId);
+    if (booked) return rescheduleMeeting({ ...body, company_id: companyId, meeting_id: booked.id });
+  }
   return scheduleMeeting({ ...body, company_id: companyId });
+}
+
+async function apiB2bCancelMeeting(meetingId, body = {}) {
+  const { cancelMeeting } = require('../../b2b-outreach/lib/scheduleMeeting');
+  return cancelMeeting(getSupabaseClient(), { meeting_id: meetingId, company_id: body.company_id || null });
 }
 
 /**
@@ -4200,6 +4214,7 @@ const paramRoutes = [
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/apply-template$/, handler: (body, id) => apiB2bApplyTemplate(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/dismiss-followup$/, handler: (_, id) => apiB2bDismissPostCall(parseInt(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/outcome$/, handler: (body, id) => apiB2bMeetingOutcome(parseInt(id), body) },
+  { method: 'POST', pattern: /^\/api\/b2b\/meetings\/(\d+)\/cancel$/, handler: (body, id) => apiB2bCancelMeeting(parseInt(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/summary\/refresh$/, handler: (_, id) => apiB2bRefreshSummary(decodeURIComponent(id)) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/triage$/, handler: (body, id) => apiB2bTriage(decodeURIComponent(id), body) },
   { method: 'POST', pattern: /^\/api\/b2b\/companies\/([^/]+)\/save-draft$/, handler: (body, id) => apiB2bSaveDraft(decodeURIComponent(id), body) },

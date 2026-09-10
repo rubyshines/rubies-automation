@@ -6365,9 +6365,10 @@ function outreachCallsHtml(meetings) {
   const rows = list.slice(0, 4).map(m => {
     const past = new Date(m.starts_at).getTime() <= now;
     const who = m.booked_by === 'partner' ? 'booked by them' : 'booked by you';
-    const link = m.meet_url
+    const link = (m.meet_url
       ? ` · <a href="${esc(m.meet_url)}" target="_blank" rel="noopener">${/zoom\.us/i.test(m.meet_url) ? 'Zoom' : 'Meet'} link</a>`
-      : '';
+      : '')
+      + (m.html_link ? ` · <a href="${esc(m.html_link)}" target="_blank" rel="noopener" title="Open the event in Google Calendar">Calendar</a>` : '');
     let state;
     if (!past) state = '<span class="badge badge-muted">upcoming</span>';
     else if (m.outcome === 'held') state = '<span class="badge badge-muted">held</span>';
@@ -6389,6 +6390,27 @@ function outreachCallsHtml(meetings) {
  * unless it is the company's second, lands the missed-call template as the
  * pending draft — so the queue and the detail are reloaded rather than patched.
  */
+/**
+ * Cancel a booked call. Google emails them the cancellation; nothing of ours
+ * goes out, so if something needs saying the composer is right there.
+ */
+async function cancelBookedCall(meetingId) {
+  const companyId = outreachSelectedId;
+  if (!companyId || !meetingId) return;
+  if (!confirm('Cancel this call? The calendar event is deleted and Google tells them. No email of ours is sent.')) return;
+  let res;
+  try {
+    res = await api(`/api/b2b/meetings/${meetingId}/cancel`, { method: 'POST', body: { company_id: companyId } });
+  } catch (err) {
+    showToast(`Could not cancel: ${err.message}`, 'error');
+    return;
+  }
+  showToast(res.already ? 'That call was already cancelled.' : `Cancelled ${fmtDateTimeET(res.start)} — they get the calendar cancellation.`, 'success');
+  await loadOutreachContext(companyId, false);
+  const panel = document.getElementById('outreach-schedule-panel');
+  if (panel?.dataset.open === '1') openSchedulePanel(scheduleState?.duration_minutes || 30);
+}
+
 async function recordMeetingOutcome(meetingId, outcome) {
   const companyId = outreachSelectedId;
   let res;
@@ -8011,10 +8033,22 @@ function renderSchedulePanel() {
   if (!el || !scheduleState) return;
   const s = scheduleState;
 
+  // A booked call turns the panel into a MOVE: the pick below patches this
+  // event rather than creating a second one (server-side rule, not a mode
+  // the operator has to choose). Their ask to move it, when the message
+  // says so, sits right here so the reason for the move is on screen.
   const booked = s.booked ? `
     <div class="schedule-booked">
       <strong>Call booked</strong> — ${esc(fmtDateTimeET(s.booked.starts_at))}
+      ${s.booked.booked_by === 'partner' ? ' <span class="schedule-hint-inline">booked by them</span>' : ''}
       ${s.booked.meet_url ? ` · <a href="${esc(s.booked.meet_url)}" target="_blank" rel="noopener">Meet link</a>` : ''}
+      ${s.booked.html_link ? ` · <a href="${esc(s.booked.html_link)}" target="_blank" rel="noopener">Calendar</a>` : ''}
+      ${s.wants_to_reschedule ? ' <span class="badge badge-reply">they asked to move it</span>' : ''}
+      <span class="schedule-booked-actions">
+        <button class="btn btn-ghost btn-xs" onclick="cancelBookedCall(${s.booked.id})"
+          title="Deletes the calendar event — Google tells them. No email of ours goes out.">Cancel call</button>
+      </span>
+      <span class="schedule-hint">Pick a new time below to move this call. The invite updates in place, and the reply says so.</span>
     </div>` : '';
 
   // Where their timezone came from is always on screen: an inference must never
@@ -8212,23 +8246,26 @@ function renderSchedulePanel() {
   // them until selection meant the rehearsal button did not exist as far as a
   // first-time user was concerned — you cannot look for a control you have no
   // evidence of. Disabled-with-a-reason is discoverable; absent is not.
+  // Rehearsal is for new bookings: a move updates a real event they hold.
+  const testBtn = s.booked ? '' : `<button class="btn btn-ghost" id="schedule-test-btn" onclick="bookMeetingAndSend(true)"
+          ${scheduleSelected ? '' : 'disabled'}
+          title="${scheduleSelected
+            ? 'Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company\'s record.'
+            : 'Pick a slot first — then this books a real event and invites only you.'}">Test booking (me only)</button>`;
   const footer = `
     <div class="schedule-footer${scheduleSelected ? '' : ' schedule-footer-lookup'}">
       <div class="schedule-chosen">
         ${scheduleSelected
-          ? `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
+          ? (s.booked ? `<span class="schedule-hint-inline">Moving from ${esc(fmtDateTimeET(s.booked.starts_at))} to</span> ` : '')
+            + `<strong>${esc(scheduleSelected.dayLabel || '')} ${esc(scheduleSelected.label)}</strong> Eastern`
             + (scheduleSelected.theirLabel && !sameZone ? ` · ${esc(scheduleSelected.theirLabel)} their time` : '')
             + `<span class="schedule-hint">${esc((scheduleTitle ?? s.title) || s.title)} · ${s.duration_minutes} min</span>`
-          : '<span class="schedule-hint">Looking only — pick a time above to book it, or read the week and type your own times into the draft.</span>'}
+          : `<span class="schedule-hint">Looking only — pick a time above to ${s.booked ? 'move the call' : 'book it'}, or read the week and type your own times into the draft.</span>`}
       </div>
       <div class="btn-row btn-row-primary">
         <button class="btn btn-primary" id="schedule-book-btn" onclick="bookMeetingAndSend()"
-          ${scheduleSelected ? '' : 'disabled title="Pick a slot first"'}>Book &amp; Send</button>
-        <button class="btn btn-ghost" id="schedule-test-btn" onclick="bookMeetingAndSend(true)"
-          ${scheduleSelected ? '' : 'disabled'}
-          title="${scheduleSelected
-            ? 'Creates a real event with a real Meet link, invites only you, titled [TEST]. Writes nothing to this company\'s record.'
-            : 'Pick a slot first — then this books a real event and invites only you.'}">Test booking (me only)</button>
+          ${scheduleSelected ? '' : 'disabled title="Pick a slot first"'}>${s.booked ? 'Move &amp; Send' : 'Book &amp; Send'}</button>
+        ${testBtn}
       </div>
     </div>`;
 
@@ -8558,7 +8595,7 @@ async function bookMeetingAndSend(testMode) {
   const btnId = testMode ? 'schedule-test-btn' : 'schedule-book-btn';
   const btn = document.getElementById(btnId);
   const original = btn?.textContent;
-  if (btn) { btn.disabled = true; btn.textContent = testMode ? 'Booking test…' : 'Booking…'; }
+  if (btn) { btn.disabled = true; btn.textContent = testMode ? 'Booking test…' : scheduleState?.booked ? 'Moving…' : 'Booking…'; }
 
   const companyId = outreachSelectedId;
   try {
@@ -8577,6 +8614,9 @@ async function bookMeetingAndSend(testMode) {
     });
     if (res.ok && res.phase === 'test_booked') {
       showToast(`Test booked — invite in your inbox. ${res.note}`, 'success');
+    } else if (res.ok && res.phase === 'moved') {
+      showToast(`Moved to ${res.when_ours} and replied — the invite updated in place`, 'success');
+      outreachAdvancePast(companyId);
     } else if (res.ok) {
       showToast(`Booked ${res.when_ours} and replied to ${(res.invited || []).join(', ')}`, 'success');
       outreachAdvancePast(companyId);
