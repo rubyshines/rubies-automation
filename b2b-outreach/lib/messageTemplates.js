@@ -23,6 +23,7 @@
  * it measures advisor drift.
  */
 const { partnerDiscountPercent } = require('./donationAgreement');
+const { wholesaleTermsLines, wholesaleDiscountFor, pageViewFor, pageUrlFor, isDomestic, HOW_IT_WORKS_URL } = require('./wholesalePriceList');
 const { SIGNATURE_BLOCK_MD, SIGNATURE_NAME } = require('../../customer-service/lib/signatures');
 
 const ONBOARDING_SURVEY_URL = 'https://forms.gle/1Hq93BSiPrhJkgfB8';
@@ -125,6 +126,35 @@ function fillPartnerOnboarding({ firstName, discount, meetingDay }) {
     + "So if you are ever looking to place an order, you can send it my way and I'll take care of it.\n\n"
     + SIGN_OFF;
   return { body, attachments: [{ kind: 'partner_agreement' }] };
+}
+
+/**
+ * Wholesale terms for a retailer (2026-09-09): the terms inline and the
+ * storefront page linked. The terms sentences come from wholesalePriceList.js,
+ * the same lines the page prints, so the two surfaces cannot drift. Pure.
+ */
+function fillWholesaleTerms({ firstName, discount, country }) {
+  // Bulleted (Jamie 2026-09-10): a hyphen bullet reads the same in the plain
+  // part and the HTML part, which preserves line breaks and nothing more.
+  const terms = wholesaleTermsLines(discount, { international: !isDomestic(country) }).map(t => `- ${t}`).join('\n');
+  // The page IS the price list (Jamie 2026-09-10: no PDF), and it is
+  // country-aware: the link carries their country so it shows their rate and
+  // terms. A negotiated rate the page cannot show (a stored
+  // wholesale_discount_percent off the country rule) is stated plainly next
+  // to the link rather than carried by a separate document.
+  const pageRate = pageViewFor(country).rate;
+  const negotiated = Number(discount) !== pageRate
+    ? `The page shows our standard ${pageRate}% rate. Your pricing is ${Number(discount)}% off, as agreed, so take that off the retail prices shown.\n\n`
+    : '';
+  const body = `Hi ${firstName},\n\n`
+    + 'Thanks for your interest in carrying RUBIES. Here are our wholesale terms, and the price list is here: '
+    + `[Wholesale pricing](${pageUrlFor(country)}). `
+    + `If you are new to RUBIES, here is [how it works](${HOW_IT_WORKS_URL}).\n\n`
+    + `${terms}\n\n`
+    + negotiated
+    + 'Let me know if you have any questions. It would be great to set up a quick call to discuss.\n\n'
+    + SIGN_OFF;
+  return { body, attachments: [] };
 }
 
 /**
@@ -398,13 +428,18 @@ const TEMPLATES = [
   // says what it was; a fresh thread with its own subject, because mid-meeting
   // the subject line is the message.
   { id: 'waiting_in_room', label: "In the meeting room (they haven't joined)", duringCall: true, fill: fillWaitingInRoom, message_type: 'meeting_nudge', subject: WAITING_IN_ROOM_SUBJECT, new_thread: true },
+  // The price list is a retailer document; an org's purchase terms are in the
+  // agreement and the onboarding template already states its rate.
+  // `subject` is used only when the draft starts a new thread; a reply keeps
+  // inheriting the thread's subject like every other template.
+  { id: 'wholesale_terms', label: 'Wholesale terms + price list', retailerOnly: true, fill: fillWholesaleTerms, subject: 'RUBIES wholesale terms and pricing' },
 ];
 
 /** Everything the fills need for one company, gathered once. */
 async function templateContext(sb, company_id, now = new Date()) {
   if (!company_id) throw new Error('company_id required');
   const { data: company, error } = await sb.from('b2b_companies')
-    .select('id, name, country, relationship_type').eq('id', company_id).maybeSingle();
+    .select('id, name, country, relationship_type, wholesale_discount_percent').eq('id', company_id).maybeSingle();
   if (error) throw new Error(`company lookup: ${error.message}`);
   if (!company) throw new Error(`company '${company_id}' not found`);
 
@@ -455,11 +490,20 @@ async function listTemplates(sb, { company_id } = {}) {
   const out = [];
   for (const t of TEMPLATES) {
     if (t.orgOnly && ctx.company.relationship_type !== 'lgbtq_org') continue;
+    if (t.retailerOnly && ctx.company.relationship_type !== 'wholesale') continue;
     if (t.afterNoShow && !missedCallAvailability(ctx).ok) continue;
     if (t.duringCall && !waitingInRoomAvailability(ctx).ok) continue;
     let note;
     if (t.id === 'waiting_in_room') {
       note = ctx.liveMeeting.meet_url ? 'fresh email with the meeting link' : 'fresh email; the event has no link, so it points at the invite';
+    } else if (t.id === 'wholesale_terms') {
+      const rate = wholesaleDiscountFor(ctx.company);
+      // An unknown country quotes the conservative rate; say so, because a US
+      // store with no country on file would otherwise be offered 30% in silence.
+      const unknown = ctx.company.wholesale_discount_percent == null && !String(ctx.company.country || '').trim();
+      note = `terms inline at ${rate}%${unknown ? ' (country unknown: set it in the sidebar for the right rate)' : ''}`
+        + ' + link to the pricing page for their country'
+        + (rate === pageViewFor(ctx.company.country).rate ? '' : ' (negotiated rate stated in the email; the page shows the standard rate)');
     } else if (t.id === 'missed_call') {
       const day = meetingDayName(ctx.lastMeeting);
       note = `reschedule ask${day ? ` for the missed ${day} call` : ''}, chased after 5 business days`;
@@ -486,6 +530,9 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
   if (template.orgOnly && ctx.company.relationship_type !== 'lgbtq_org') {
     throw new Error(`'${template_id}' is for LGBTQ+ orgs; ${ctx.company.name} is a ${ctx.company.relationship_type}`);
   }
+  if (template.retailerOnly && ctx.company.relationship_type !== 'wholesale') {
+    throw new Error(`'${template_id}' is for retailers; ${ctx.company.name} is a ${ctx.company.relationship_type}`);
+  }
   if (template.afterNoShow) {
     const avail = missedCallAvailability(ctx);
     if (!avail.ok) throw new Error(`'${template_id}' is not offered for ${ctx.company.name}: ${avail.reason}`);
@@ -498,7 +545,10 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
   const { body, attachments } = template.fill({
     firstName: ctx.firstName,
     companyName: ctx.company.name,
-    discount: partnerDiscountPercent(ctx.company.country),
+    country: ctx.company.country,
+    // A retailer's rate honours a stored negotiated figure; the org lookups
+    // stay on the country default the agreement is written at.
+    discount: template.retailerOnly ? wholesaleDiscountFor(ctx.company) : partnerDiscountPercent(ctx.company.country),
     introEverSent: ctx.introEverSent,
     meetingDay: meetingDayName(ctx.lastMeeting),
     meetUrl: ctx.liveMeeting?.meet_url || null,
@@ -526,7 +576,7 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
   });
 
   const { data: row, error } = await sb.from('b2b_drafts')
-    .select('id, structured').eq('id', composed.draft_id).maybeSingle();
+    .select('id, structured, thread_id, subject').eq('id', composed.draft_id).maybeSingle();
   if (error) throw new Error(`draft readback: ${error.message}`);
   const { withAttachment } = require('./draftAttachments');
   let structured = {
@@ -537,7 +587,12 @@ async function applyTemplate(sb, { company_id, template_id } = {}) {
     ...(template.duringCall && ctx.liveMeeting ? { meeting_id: ctx.liveMeeting.id } : {}),
   };
   for (const spec of attachments) structured = withAttachment(structured, spec);
-  const { error: uErr } = await sb.from('b2b_drafts').update({ structured }).eq('id', composed.draft_id);
+  // A draft with no thread starts a new email, and the send path refuses one
+  // with no subject; a template that carries a subject supplies it here, and
+  // only here, so a reply still inherits the thread's.
+  const update = { structured };
+  if (template.subject && !row?.thread_id && !row?.subject) update.subject = template.subject;
+  const { error: uErr } = await sb.from('b2b_drafts').update(update).eq('id', composed.draft_id);
   if (uErr) throw new Error(`template structured update: ${uErr.message}`);
 
   return { draft_id: composed.draft_id, template_id: template.id, company_id };
@@ -558,6 +613,7 @@ module.exports = {
   fillWaitingInRoom,
   WAITING_IN_ROOM_SUBJECT,
   waitingInRoomAvailability,
+  fillWholesaleTerms,
   MAX_NO_SHOWS,
   meetingAsksAllowed,
   missedCallAvailability,
