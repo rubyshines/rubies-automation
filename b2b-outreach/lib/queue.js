@@ -103,6 +103,17 @@ function replyLandedAfter(ctx, stamp) {
 }
 
 /**
+ * Have they written and we not answered? PURE. The Tier-1 predicate before the
+ * deferral gate is applied: the queue asks it to decide what is DUE, and the
+ * compose path asks it to decide where a reply BELONGS — a claim (On Me) takes
+ * the company out of the queue but not out of the conversation they wrote in.
+ */
+function replyWaiting(ctx) {
+  if (!ctx?.lastInboundAt) return false;
+  return !ctx.lastOutboundAt || new Date(ctx.lastInboundAt) > new Date(ctx.lastOutboundAt);
+}
+
+/**
  * computeQueueEntry — decide whether a company belongs in today's queue and at
  * what tier. Returns { tier, message_type|null, reason } or null.
  *
@@ -133,8 +144,7 @@ function computeQueueEntry(company, ctx, now = new Date()) {
   const deferredAt = deferredSince(company, now);
   const staleReply = !!deferredAt && !!ctx.lastInboundAt && !replyLandedAfter(ctx, deferredAt);
 
-  if (!staleReply && ctx.lastInboundAt
-    && (!ctx.lastOutboundAt || new Date(ctx.lastInboundAt) > new Date(ctx.lastOutboundAt))) {
+  if (!staleReply && replyWaiting(ctx)) {
     return {
       tier: 1,
       message_type: null, // advisor reads the thread and decides
@@ -281,5 +291,5 @@ function assembleQueue(items, now = new Date()) {
 
 module.exports = {
   computeQueueEntry, assembleQueue, humanAge, deferredSince,
-  replyLandedAfter, TIER_BY_TYPE,
+  replyLandedAfter, replyWaiting, TIER_BY_TYPE,
 };
