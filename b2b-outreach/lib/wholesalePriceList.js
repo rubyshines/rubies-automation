@@ -335,15 +335,16 @@ function flatRows(list) {
 }
 
 /**
- * The JSON the theme page fetches. Every view's rate is precomputed on each
- * band (`wholesale_by_rate`) and every view's terms ride along, so the page
- * does lookups only; `discount_percent` / `terms` / `wholesale` remain the
- * default view for anything reading the old shape. Pure.
+ * The JSON the theme page fetches: only what Shopify does not already know.
+ * Prices, photos, names and links are read LIVE by the theme from the
+ * product catalog (2026-09-10, "why are the prices hardcoded into the
+ * theme"), so a retail change never needs a publish. This carries the
+ * featured handles per section in popularity order, every view's rate and
+ * terms, and the local currency per country. `products` is consulted only
+ * to drop a featured handle the catalog no longer has. Pure.
  */
-function themePayload(products, { generatedAt = new Date(), media, popularity, fxReferenceUsd = null } = {}) {
-  const defaultRate = PAGE_VIEWS[DEFAULT_PAGE_VIEW].rate;
-  const rates = [...new Set(Object.values(PAGE_VIEWS).map(v => v.rate))];
-  const list = buildPriceList(products, { discountPercent: defaultRate, media, extraRates: rates, popularity });
+function themePayload(products, { generatedAt = new Date(), popularity } = {}) {
+  const known = new Set((products || []).filter(isSheetProduct).map(p => p.handle));
   const views = Object.fromEntries(Object.entries(PAGE_VIEWS).map(([key, v]) => [key, {
     rate: v.rate,
     international: v.international,
@@ -351,19 +352,16 @@ function themePayload(products, { generatedAt = new Date(), media, popularity, f
   }]));
   return {
     generated_at: new Date(generatedAt).toISOString(),
-    discount_percent: list.discount_percent,
-    currency: list.currency,
+    discount_percent: PAGE_VIEWS[DEFAULT_PAGE_VIEW].rate,
+    currency: 'USD',
     minimum_order_usd: MINIMUM_ORDER_USD,
     terms: views[DEFAULT_PAGE_VIEW].terms,
     default_view: DEFAULT_PAGE_VIEW,
     views,
     currency_by_country: CURRENCY_BY_COUNTRY,
-    // The USD price of the store's hidden `fx-reference` product. The page
-    // reads that product's price in the visitor's market currency (Shopify's
-    // own conversion, the same trick the shipping bar uses) and divides by
-    // this to get the rate, so converted prices match the storefront's.
-    fx_reference_usd: fxReferenceUsd == null ? null : Number(fxReferenceUsd),
-    sections: list.sections,
+    sections: FEATURED
+      .map(s => ({ name: s.name, handles: orderByPopularity(s.handles, popularity).filter(h => known.has(h)) }))
+      .filter(s => s.handles.length),
   };
 }
 

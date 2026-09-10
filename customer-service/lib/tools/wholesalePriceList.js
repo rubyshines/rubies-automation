@@ -70,7 +70,7 @@ async function handlePublish({ dry_run, merge } = {}) {
 module.exports = [
   {
     name: 'wholesale_price_list',
-    description: `The RUBIES wholesale terms and line sheet as markdown, at a rate (default ${PAGE_DISCOUNT_PERCENT}%). The sheet is the curated featured subset in popularity order (Underwear, Swimwear, Bras; edit FEATURED in wholesalePriceList.js to change it); pass all_products: true for every eligible catalog product. Each product lists one band per price ("Youth 4-11", "Adult 12-16, XS-4X"), wholesale = retail less the discount. This is the same data the storefront page shows (the wholesale_terms email template links that page). No files are written.`,
+    description: `The RUBIES wholesale terms and line sheet as markdown, at a rate (default ${PAGE_DISCOUNT_PERCENT}%). The sheet is the curated featured subset in popularity order (Underwear, Swimwear, Bras; edit FEATURED in wholesalePriceList.js to change it); pass all_products: true for every eligible catalog product. Each product lists one band per price ("Youth 4-11", "Adult 12-16, XS-4X"), wholesale = retail less the discount. The storefront page shows the same styles with live Shopify prices at the same rates (the wholesale_terms email template links that page). No files are written.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -82,7 +82,7 @@ module.exports = [
   },
   {
     name: 'wholesale_price_list_publish',
-    description: `Publish the wholesale line sheet (featured products at the page rate, ${PAGE_DISCOUNT_PERCENT}%, with their current Shopify product photos) → assets/wholesale-pricing.json on the rubies-ecom-v4 theme repo, AND auto-merge to main so Shopify deploys it (~30s) to ${PAGE_URL}. This also runs by itself: set_product_prices publishes after every committed price change, and the nightly sync publishes after the product sync (needs GITHUB_TOKEN on Railway). Commits nothing when only the timestamp changed. With GITHUB_TOKEN set it commits straight to the theme's main through the GitHub API; otherwise it uses an isolated git worktree + PR so any in-progress theme branch is untouched. Pass dry_run: true to only update the theme working tree (no commit/push/merge). Pass merge: false to commit+push but skip the auto-merge.`,
+    description: `Publish the wholesale sheet's data → assets/wholesale-pricing.json on the rubies-ecom-v4 theme repo, AND auto-merge to main so Shopify deploys it (~30s) to ${PAGE_URL}. Prices, photos and names are NOT in this file: the page reads them live from Shopify, so a retail price change never needs a publish. What it carries: the featured styles per section in popularity order (12-month units sold), the per-country views (rate + terms), and the local currency per country. Run after changing FEATURED or the terms wording; the nightly sync also runs it (needs GITHUB_TOKEN on Railway) to refresh the popularity order. Commits nothing when only the timestamp changed. With GITHUB_TOKEN set it commits straight to the theme's main through the GitHub API; otherwise it uses an isolated git worktree + PR so any in-progress theme branch is untouched. Pass dry_run: true to only update the theme working tree (no commit/push/merge). Pass merge: false to commit+push but skip the auto-merge.`,
     inputSchema: {
       type: 'object',
       properties: {

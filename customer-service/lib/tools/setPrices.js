@@ -281,13 +281,6 @@ const tools = [
 
         pendingPriceChanges.delete(confirmation_token);
 
-        // The wholesale pricing page shows retail and wholesale for the
-        // featured styles, so a retail change is a page change. Publish now
-        // rather than trusting anyone to remember (Jamie 2026-09-10); a
-        // publish failure is reported, never turned into a failed price change.
-        const { autoPublishWholesalePricing } = require('../wholesalePriceListPublish');
-        const publish = await autoPublishWholesalePricing();
-
         // Natural-language commit summary, grouped per product
         const groupBlocks = [];
         for (const { product, newPrice, variants } of productGroups.values()) {
@@ -309,8 +302,7 @@ const tools = [
           `**Prices updated** — ${syncResult.updated} variant${syncResult.updated === 1 ? '' : 's'} changed.\n` +
           `Supabase synced: ${syncResult.logged} price_history entr${syncResult.logged === 1 ? 'y' : 'ies'} logged.\n\n` +
           groupBlocks.join('\n\n') +
-          (errorBlock ? `\n\n${errorBlock}` : '') +
-          `\n\n${publish.line}`;
+          (errorBlock ? `\n\n${errorBlock}` : '');
 
         console.error('\n[set_product_prices] COMMITTED\n' + commitText + '\n');
 
