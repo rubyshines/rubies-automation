@@ -59,17 +59,22 @@ tracks execution). Absorbs `project_meeting_sync.md` piece 4 (Wispr notes ingest
   hint; the summariser reads the sent message itself. Revisit if extraction misses our promises.
 - Meeting Next Steps carry no due dates (deterministic parse); Jamie adds dates inline.
 
+## Progress
+
+Done 2026-09-10: migration applied; Wispr connected (token lives in the `oauth_tokens` row, so
+the Railway env var is a bootstrap only, not required); Le JAG duplicate merged (row 13 linked
+onto 7); the nightly Meeting Notes step run by hand fetched all three recordings through the
+server (two by calendar id, Stand with Trans by time + title), marked them held with summary,
+transcript and link, and lifted 13 items; the recap refresh then added 3 more from mail and
+settled one of theirs (Katy's organizer contact, from message 7399). The two pre-existing On Me
+claims migrated to claim rows keeping their age. Endpoints smoke-tested with a signed session.
+
 ## Remaining (in order)
 
-1. Jamie applies `migrations-2026-09-10-commitments.sql` in the Supabase SQL editor.
-2. Jamie runs `node scripts/authWispr.js` from the worktree (browser approval), then
-   `--print-env` → `WISPR_TOKEN_JSON` on Railway (daily-sync-all + webhook server).
-3. One-off: merge the Le JAG duplicate rows (link event id of row 13 onto row 7, delete 13).
-4. Ingest the three 2026-09-10 calls through the server path (Held / `b2b_meeting_notes`),
-   verify the fourteen items and the recap.
-5. Backfill dry run reviewed with Jamie, then `--write`; Jamie tidies in To do.
-6. Smoke the panel locally (worktree server on 3848), then push, verify Railway.
-7. Close-out memory: domain Key Decision, `project_meeting_sync.md` piece 4 done by this,
+1. Backfill: dry run lists 39 companies with a human reply in 60 days; `--write` after Jamie's
+   go, then he tidies in To do.
+2. Push, verify Railway's nightly line "Meeting Notes".
+3. Close-out memory: domain Key Decision, `project_meeting_sync.md` piece 4 done by this,
    parked entries (digest section, CS as a source, aged-theirs chase, "gave up" close).
 
 ## done_when

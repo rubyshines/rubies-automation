@@ -102,8 +102,10 @@ function orderCommitments(rows, now = new Date()) {
     const ra = rank(a); const rb = rank(b);
     if (ra !== rb) return ra - rb;
     if (ra === 0) return String(a.pinned_at).localeCompare(String(b.pinned_at));
-    if (ra === 1 || ra === 2) return String(a.due_on).localeCompare(String(b.due_on)) || String(a.created_at).localeCompare(String(b.created_at));
-    return String(a.created_at).localeCompare(String(b.created_at));
+    // Id breaks a created_at tie: one pass writes several rows on one stamp,
+    // and an unstable order would shuffle the list between renders.
+    if (ra === 1 || ra === 2) return String(a.due_on).localeCompare(String(b.due_on)) || String(a.created_at).localeCompare(String(b.created_at)) || (a.id - b.id);
+    return String(a.created_at).localeCompare(String(b.created_at)) || (a.id - b.id);
   });
 }
 
