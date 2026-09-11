@@ -1,0 +1,958 @@
+{
+ "_note": "Read from what each org told us in its own words (donation onboarding survey, call recording, their replies). Written by the backfill in b2b-outreach/sync/backfillProgramProfiles.js. Supabase is the source of truth once applied; this file is the audit record of the reading and lets the backfill be re-run.",
+ "_read_on": "2026-09-11",
+ "profiles": [
+  {
+   "id": "carleton-cusa",
+   "type": "by_request",
+   "line": "Gear programme since 2023: subsidises the full cost of requests from students until the year's budget runs out.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-05-28"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-the-gender-and-sexuality-resource-center-carleton-university-student-association",
+   "type": "by_request",
+   "line": "Gear programme since 2023: subsidises the full cost of requests from students until the year's budget runs out.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-05-28"
+    }
+   ]
+  },
+  {
+   "id": "colage",
+   "type": "events",
+   "line": "No HQ or closet of their own. Hands product out at Family Week and Atlanta Family Weekend, and refers people to Massachusetts partners.",
+   "sources": [
+    {
+     "kind": "call",
+     "at": "2026-09-10"
+    }
+   ]
+  },
+  {
+   "id": "lejag",
+   "type": "by_request",
+   "line": "Counsellors hand out gear codes privately across three offices, half or fully covered. Low volume, roughly one or two orders a year.",
+   "sources": [
+    {
+     "kind": "call",
+     "at": "2026-09-10"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-bagly",
+   "type": "standing_closet",
+   "line": "BAGLY's Boutique keeps gender-affirming wear in stock with one-on-one sizing help, plus fittings at the annual Trans Youth Summit.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2025-03-18"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-bagly-boston-alliance-of-lgbtq-youth",
+   "type": "standing_closet",
+   "line": "BAGLY's Boutique keeps gender-affirming wear in stock with one-on-one sizing help, plus fittings at the annual Trans Youth Summit.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2025-03-18"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-four-corners-rainbow-youth-center",
+   "type": "standing_closet",
+   "line": "Free queer closet: clothing, underwear, swimwear, binders, tape and other gender-affirming products.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-lgbt-center-of-raleigh",
+   "type": "standing_closet",
+   "line": "Free gender-affirming clothing closet people can shop and try on in person. Takes donations of all kinds.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-massachusetts-transgender-political-coalition",
+   "type": "by_request",
+   "line": "G.E.A.R. programme: request what they hold in stock through an online form, then collect it or have it mailed.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-oasis-youth-center",
+   "type": "standing_closet",
+   "line": "Gender-affirming supports at the Tacoma and Lakewood drop-in centres, open Thursday to Saturday 4-10pm, other times by appointment.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-oasisyouthcenter",
+   "type": "standing_closet",
+   "line": "Gender-affirming supports at the Tacoma and Lakewood drop-in centres, open Thursday to Saturday 4-10pm, other times by appointment.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-out-metrowest",
+   "type": "standing_closet",
+   "line": "Bins of gender-affirming care items around the space, free for youth to take what they need.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-outmetrowest",
+   "type": "standing_closet",
+   "line": "Bins of gender-affirming care items around the space, free for youth to take what they need.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-rise-la-lgbt-center",
+   "type": "standing_closet",
+   "line": "Rainbow Boutique: free gender-affirming clothing for LA County foster youth up to 24. Actively wants extended sizes.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-05-01"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-skipping-stone",
+   "type": "by_request",
+   "line": "Gear appointments at their office: binders, breast forms, gaffs and packers kept in stock.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-skippingstone",
+   "type": "by_request",
+   "line": "Gear appointments at their office: binders, breast forms, gaffs and packers kept in stock.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-standwithtrans",
+   "type": "by_request",
+   "line": "No closet of their own: hands donated items out on request, and runs an October clothing closet event with the Jim Toy Center.",
+   "sources": [
+    {
+     "kind": "call",
+     "at": "2026-09-10"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-trans-healthkit-projekt",
+   "type": "by_request",
+   "line": "Mails free gender-affirming, hygiene and period products worldwide to trans people 12 and over facing financial hardship.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-05-28"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-trans-open-wardrobe",
+   "type": "by_request",
+   "line": "Two volunteers stocking and giving out gender-affirming items free across Switzerland. Buys from us to restock.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2026-07-21"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-transformation-closet-with-sexual-health-nova-scotia",
+   "type": "by_request",
+   "line": "Low-barrier access for anyone anywhere in Nova Scotia, run from a staffed health clinic. Buys in bulk across separate funding streams.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2026-06-16"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-transponder",
+   "type": "standing_closet",
+   "line": "Sylvia's Closet at their Eugene resource room: free binders, bras, breast forms, tucking and packing underwear. Walk-ins welcome.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-valid-usa",
+   "type": "standing_closet",
+   "line": "Affirming Wardrobes placed with schools, clinics and community orgs across Arizona; since late 2025 running as Reach Pluto from a Tucson church closet.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2025-11-18"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-yellow-house-student-centre-for-equity-and-inclusion",
+   "type": "standing_closet",
+   "line": "\"On the House\" free community closet at their Queen's University drop-in centre, including a Gender Affirming Closet.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    }
+   ]
+  },
+  {
+   "id": "montgomery-pride-united",
+   "type": "by_request",
+   "line": "Gender-affirming care kits and assistance handed out free through their peer mental-health programme.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-06-22"
+    }
+   ]
+  },
+  {
+   "id": "trans-closet-hudson-valley",
+   "type": "standing_closet",
+   "line": "Hosts a closet of free gender-affirming clothing and accessories.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-08-19"
+    }
+   ]
+  },
+  {
+   "id": "transgender-victoria",
+   "type": "by_request",
+   "line": "30-minute one-on-one appointments to shop their preloved racks with styling support, in a dedicated trans-centric space.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-05-28"
+    }
+   ]
+  },
+  {
+   "id": "blue-mountain-clinic",
+   "type": "standing_closet",
+   "line": "Donation closet at the clinic alongside gender-affirming care, plus outreach across rural Montana including the travelling Trans Closet.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-08-31"
+    }
+   ]
+  },
+  {
+   "id": "fenway-health",
+   "type": "by_request",
+   "line": "Trans Health Program hands RUBIES gift-card codes to patients one at a time; 100 issued in 2025.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-05-26"
+    }
+   ]
+  },
+  {
+   "id": "foothill-college-pride-center",
+   "type": "no_program",
+   "line": "Student-led college Pride Center working toward a gender-affirming closet this year. Nothing standing yet.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-11"
+    }
+   ]
+  },
+  {
+   "id": "genderswap",
+   "type": "events",
+   "line": "Runs gender-affirming clothing swaps and events. On hiatus from receiving and distributing since 2026, relaunching in the new year.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-08"
+    }
+   ]
+  },
+  {
+   "id": "gr-trans-foundation",
+   "type": "by_request",
+   "line": "Buys through a renewing discount code and passes items to their local trans community. Renews the code roughly yearly.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-08-04"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-allrainbowandalliedyouth",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-03-21"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-atlanta-youth-affirmed",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-04-05"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-b4ck",
+   "type": "by_request",
+   "line": "Distributes gender-affirming gear to trans kids in Chattanooga (formerly B4CK, Binders for Confident Kids). Has its own space now and sees far more trans girls.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-08"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-campoutflorida",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-04-28"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-centerlb",
+   "type": "events",
+   "line": "Runs a Gender Affirming Supply Closet as a periodic Saturday event: free supplies plus a swap of new and gently used donated clothing.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-10-21"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-chrysalis",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-11-15"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-colorsplus",
+   "type": "by_request",
+   "line": "Provides gender-affirming items to youth at the centre as the need comes up; also runs an annual Back to School with Pride event.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-10"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-east-bay-community-action-program-ebcap",
+   "type": "no_program",
+   "line": "Wound up their Transgender Whole Healthcare Team in July 2025. Still provides gender-affirming health care, but no community outreach.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2025-07-10"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-fountain-house",
+   "type": "standing_closet",
+   "line": "Set up a queer closet at their New York clubhouse in 2024, stocked by direct order.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-05-10"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-friedbergjcc",
+   "type": "no_program",
+   "line": "Runs Camp Ga'avah, an LGBTQ+ camp for ages 6-16, with parent and youth groups and monthly programming. No clothing distribution on record.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-09-28"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-gmail",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2025-07-25"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-health-nsw-gov",
+   "type": "by_request",
+   "line": "Hospital gender service for trans and gender-diverse children and teens in Sydney; items reach families through the clinic.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-04-04"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-hitops",
+   "type": "standing_closet",
+   "line": "Runs The Closet alongside a youth leadership programme, support groups and the Trans Youth Forum.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-06-30"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-hugh-lane-wellness-foundation",
+   "type": "no_program",
+   "line": "Was a donation partner buying at the discount; their programme is no longer running.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-04-25"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-inclusivekc",
+   "type": "by_request",
+   "line": "Offers donated gender-affirming clothing to local young people in need; received and promoted a box in 2022.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-05-31"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-indypride",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2025-10-03"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-jasmyn",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-08"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-jfedsnj",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-06-03"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-lgbtq-resource-center-of-kutztown-university",
+   "type": "standing_closet",
+   "line": "Campus resource centre with free binders on hand for students; asked about adding tucking products.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-02-21"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-liveoutloud",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-11-09"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-mcminnville-trans-network",
+   "type": "standing_closet",
+   "line": "Free community closet open Friday to Sunday, other days by request: binders, packers, tucking underwear and kits, trans tape, bras and forms.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2024-11-19"
+    }
+   ]
+  },
+  {
+   "id": "mcminnville-trans-network",
+   "type": "standing_closet",
+   "line": "Free community closet open Friday to Sunday, other days by request: binders, packers, tucking underwear and kits, trans tape, bras and forms.",
+   "sources": [
+    {
+     "kind": "survey",
+     "at": "2026-03-20"
+    },
+    {
+     "kind": "email",
+     "at": "2024-11-19"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-ncresourcecenter",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-06-20"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-northstarlgbtcc",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-02"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-out-of-the-closet-charity",
+   "type": "events",
+   "line": "All their clothing is free, handed out at events that raise very little. Were fundraising for storage bins in 2024.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-03-29"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-p10-qc",
+   "type": "by_request",
+   "line": "Project 10's trans programming hands gender gear to Montreal youth as demand comes in, and demand from transfeminine youth is rising.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-08"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-pridecentersi",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2025-09-19"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-qtopia-org-nz",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-05-09"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-sanmateopride",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-11-29"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-sfcenter",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-12-29"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-the519",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-06-16"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-thetransitioncloset",
+   "type": "standing_closet",
+   "line": "The Transition Closet serves regular clientele and takes product out to Queer Camp and Fayetteville Pride; stock is listed on their website.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2023-02-03"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-transammans-se",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-05-16"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-transfamily-support-service",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-04-16"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-transfolkofwa",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-05-25"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-transhealth",
+   "type": "standing_closet",
+   "line": "Community closet at their independent trans healthcare centre in Northampton, Massachusetts.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-06-14"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-waf",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-05-03"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-yahoo",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2023-08-15"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-youth-outlook",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-05-12"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-youthoutright",
+   "type": "standing_closet",
+   "line": "Runs a free store of gender-affirming garments for youth, and would buy more of whatever moves.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-02"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-youthprideri",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-09"
+    }
+   ]
+  },
+  {
+   "id": "lgbtq-youthzone",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2022-11-11"
+    }
+   ]
+  },
+  {
+   "id": "lumenus-foundation",
+   "type": "no_program",
+   "line": "Children's mental-health and community services org. What is on the table is fundraising and free webinars, not clothing distribution.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-11"
+    }
+   ]
+  },
+  {
+   "id": "peloton",
+   "type": "events",
+   "line": "Pride ERG assembling care packages for events (Black Trans Liberation Kitchen, August 2026). Small budget, buys at the partner discount.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-08-12"
+    }
+   ]
+  },
+  {
+   "id": "socirc",
+   "type": "no_program",
+   "line": "Circus arts org that co-hosts the annual Toronto Pride party with us. No distribution of their own.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-06-01"
+    }
+   ]
+  },
+  {
+   "id": "tdsb-gsd-team",
+   "type": "no_program",
+   "line": "School board team that shares our Pride party with its Gender Independent Group families. No distribution of their own.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-06-04"
+    }
+   ]
+  },
+  {
+   "id": "the-center-on-colfax",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-10"
+    }
+   ]
+  },
+  {
+   "id": "uk-allsorts-youth-project",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2024-04-01"
+    }
+   ]
+  },
+  {
+   "id": "uk-mermaids",
+   "type": "unknown",
+   "line": null,
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-08-27"
+    }
+   ]
+  },
+  {
+   "id": "uk-the-clare-project",
+   "type": "events",
+   "line": "Puts donated items out at their in-person community events for TNBI people to take. Part-time staff, slow inbox.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-08"
+    }
+   ]
+  },
+  {
+   "id": "uk-transactual",
+   "type": "no_program",
+   "line": "NHS advocacy, no distribution of their own. Referred us on to Genderswap.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-08-03"
+    }
+   ]
+  },
+  {
+   "id": "uniting-pride",
+   "type": "standing_closet",
+   "line": "Gender-affirming items closet serving 12 counties in East Central Illinois. Tiny budget, actively wants more transfemme options.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-07-22"
+    }
+   ]
+  },
+  {
+   "id": "unity-conejo",
+   "type": "standing_closet",
+   "line": "Runs a clothing closet with its own point person; signed up as a donation partner in September 2026.",
+   "sources": [
+    {
+     "kind": "email",
+     "at": "2026-09-11"
+    }
+   ]
+  }
+ ]
+}

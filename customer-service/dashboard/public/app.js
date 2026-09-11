@@ -6786,6 +6786,54 @@ function outreachStatePill(c) {
 }
 
 /**
+ * The org's OWN programme, in one line above "Where this stands" (2026-09-11).
+ *
+ * Everything else in this pane is about our relationship with them. This is the
+ * one line about them: whether there is a door people walk through, a form they
+ * fill in, a pop-up twice a year, or nothing they hold themselves. It is the
+ * first thing worth knowing before a call, and it used to be readable only by
+ * opening a call recording or scrolling a thread.
+ *
+ * Muted throughout, deliberately: colour in this panel is spent on state, never
+ * on kind, and a programme type is a kind. An org with nothing read says so
+ * rather than rendering blank — "we have not read it" and "they run nothing"
+ * are different answers and the pane has to keep them apart.
+ */
+const OUTREACH_PROGRAM_LABELS = {
+  standing_closet: 'standing closet',
+  by_request: 'by request',
+  events: 'events',
+  no_program: 'no programme',
+  unknown: 'programme unknown',
+};
+
+function outreachProgramHtml(c, entry) {
+  const isOrg = (c && c.relationship_type === 'lgbtq_org') || entry?.channel === 'lgbtq_org';
+  if (!isOrg) return '';
+  const p = c && c.program_profile && typeof c.program_profile === 'object' ? c.program_profile : null;
+  if (!p || !OUTREACH_PROGRAM_LABELS[p.type]) {
+    return `<div class="outreach-program outreach-program-none">Programme not on record yet
+      <span class="outreach-program-hint">nothing they have told us has been read into a profile</span></div>`;
+  }
+  // The newest source is what the reading rests on; showing it stops a line
+  // written off a 2022 email from reading as current fact.
+  const newest = (p.sources || []).map(s => s.at).filter(Boolean).sort().pop();
+  const when = newest
+    ? new Date(String(newest).length > 10 ? newest : `${newest}T12:00:00Z`)
+      .toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', year: 'numeric' })
+    : null;
+  const kinds = [...new Set((p.sources || []).map(s => s.kind).filter(Boolean))];
+  const provenance = kinds.length
+    ? `${kinds.join(' + ')}${when ? `, ${when}` : ''}`
+    : (when || '');
+  return `<div class="outreach-program">
+    <span class="badge badge-muted outreach-program-type">${esc(OUTREACH_PROGRAM_LABELS[p.type])}</span>
+    ${p.line ? `<span class="outreach-program-line">${esc(p.line)}</span>` : ''}
+    ${provenance ? `<span class="outreach-program-hint">${esc(provenance)}</span>` : ''}
+  </div>`;
+}
+
+/**
  * "Where this stands" — the relationship block.
  *
  * Four labelled lines (Started / Agreed / Now / Next) once the summariser has
@@ -6875,6 +6923,7 @@ function outreachRelationshipHtml(entry) {
   }
 
   return `<div id="outreach-relationship" class="detail-section outreach-relationship">
+    ${outreachProgramHtml(c, entry)}
     <h3>Where this stands
       <span class="outreach-summary-stamp">
         ${asOf ? `<span${stale ? ' class="outreach-summary-stale"' : ''}>${esc(asOf)}${stale ? ' · new messages since' : ''}</span>` : ''}

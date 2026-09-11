@@ -7,6 +7,7 @@
  * or any future surface — tools own operations, agents own judgment.
  */
 const { generateDraftForCompany } = require('./queueService');
+const { resolveWebsite, needsResolving } = require('./resolveWebsite');
 
 const INTRO_BY_CHANNEL = {
   lgbtq_org: 'intro_outreach',
@@ -38,6 +39,25 @@ async function addProspect(sb, {
 
   const { data: existing } = await sb.from('b2b_companies')
     .select('id, relationship_state, metadata, vetted_at').eq('id', id).maybeSingle();
+
+  // A shortener or link-in-bio URL stored here is a row that can never be
+  // matched on domain again — not by the dedupe below, not by inbound
+  // correlation, not by partner matching. Look behind it once, at the moment it
+  // arrives, rather than leaving a permanently unjoinable row (2026-09-11).
+  // Fail-soft in every direction: a lookup error or a page with nothing real
+  // behind it keeps whatever the operator typed, because an unjoinable value is
+  // still better than silently discarding what they gave us.
+  let website_note = null;
+  if (!existing && website && needsResolving(website)) {
+    const r = await resolveWebsite(website).catch(() => ({ via: 'error' }));
+    if (r.domain) {
+      website_note = `Followed ${website} to ${r.domain} (${r.via}); stored the real site.`;
+      website = r.url;
+    } else if (r.via === 'none') {
+      website_note = `${website} leads nowhere but ${r.socials.length ? r.socials.join(', ') : 'social profiles'}`
+        + ` — kept as given, but this company cannot be matched on domain.`;
+    }
+  }
 
   // Domain dedupe at intake. The August merge cleared nine duplicate rows and
   // nothing stopped the next one: a referral for a company we already hold
@@ -155,6 +175,7 @@ async function addProspect(sb, {
     ...(verification?.status === 'undeliverable'
       ? { warning: `${email} verified UNDELIVERABLE (${verification.reason || 'no reason given'}) — get a working address before sending.` }
       : {}),
+    ...(website_note ? { website_note } : {}),
   };
 }
 

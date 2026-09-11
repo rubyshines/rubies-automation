@@ -5874,6 +5874,31 @@ main { height: calc(100vh - 56px); }
   color: var(--text-tertiary);
 }
 .outreach-summary-stale { color: var(--yellow); }
+
+/* The org's own programme — one line above "Where this stands" (2026-09-11).
+   Sits on its own rule above the heading so it reads as a fact about THEM
+   rather than as the first line of the recap, which is about us. No colour:
+   this is a kind, and colour in this panel means state. */
+.outreach-program {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+  font-size: 13px;
+  line-height: 1.5;
+}
+.outreach-program-type { flex: none; }
+.outreach-program-line { color: var(--text); max-width: 72ch; }
+.outreach-program-hint {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+/* Nothing read yet is its own statement, not a blank: an org we have never
+   read is not the same as an org that runs nothing. */
+.outreach-program-none { color: var(--text-tertiary); }
 .outreach-relationship-stats {
   font-size: 12px;
   color: var(--text-tertiary);

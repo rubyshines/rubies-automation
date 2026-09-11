@@ -10,6 +10,8 @@
  *   b2b_reopen_thread— reopen a concluded thread + draft the follow-up in it
  *   b2b_draft        — generate/regenerate the advisor draft for a company
  *                      (optional steer), or list pending drafts
+ *   b2b_program_profile — what an org's own programme looks like (closet /
+ *                      by request / events / none), read from their own words
  *   send_b2b_email   — two-phase send; phase 2 HARD-GATED on b2b_send_enabled
  *                      (default OFF — go-live is a Jamie cowork act)
  *
@@ -662,6 +664,81 @@ async function handleVetting(input = {}) {
   }
 }
 
+/**
+ * b2b_program_profile — what an org's own programme looks like.
+ *
+ * Three actions, because this is a read-then-write by a reader (a Claude
+ * session or Jamie), not a pipeline: `needs` says whose profile is missing or
+ * has been overtaken by new evidence, `evidence` hands over what the org itself
+ * said, and `set` records the reading. Nothing here calls a model.
+ */
+async function handleProgramProfile(input = {}) {
+  try {
+    const { gatherProgramEvidence, setProgramProfile, listProgramProfiles, PROGRAM_TYPES, programLine } =
+      require(path.join(B2B_LIB, 'programProfile'));
+    const action = input.action || (input.type ? 'set' : (input.company_id ? 'evidence' : 'needs'));
+
+    if (action === 'needs' || action === 'list') {
+      const rows = await listProgramProfiles({ needsOnly: action === 'needs' });
+      if (!rows.length) {
+        return text(action === 'needs'
+          ? 'Every org holding evidence has a current programme profile.'
+          : 'No orgs on file.');
+      }
+      const lines = action === 'needs'
+        ? ['**Orgs whose programme profile needs reading** — pull the evidence (action: "evidence"), then record it (action: "set").', '']
+        : [`**Programme profiles** — ${rows.length} orgs.`, ''];
+      for (const r of rows) {
+        const kinds = r.evidence_kinds.length ? r.evidence_kinds.join(' + ') : 'nothing on record';
+        lines.push(`- **${r.name}** (${r.id}) — ${r.line || (r.type ? PROGRAM_TYPES[r.type]?.label : 'unread')}${r.stale && r.type ? ' _(new evidence since)_' : ''} — evidence: ${kinds}`);
+      }
+      lines.push('', 'Types: ' + Object.entries(PROGRAM_TYPES).map(([k, v]) => `\`${k}\` ${v.hint}`).join('  '));
+      return text(lines.join('\n'));
+    }
+
+    if (!input.company_id) return text('company_id is required.');
+
+    if (action === 'evidence') {
+      const got = await gatherProgramEvidence(input.company_id);
+      if (!got) return text(`No company ${input.company_id}.`);
+      const lines = [`**${got.company.name}** (${got.company.id})`, ''];
+      const current = programLine(got.company.program_profile);
+      lines.push(current
+        ? `On record: ${current}${got.stale ? ' — **new evidence has landed since**' : ''}`
+        : 'On record: nothing read yet.');
+      if (!got.evidence.length) {
+        lines.push('', 'Nothing this org has told us about its own programme. Leave it unread rather than guessing from their website.');
+        return text(lines.join('\n'));
+      }
+      lines.push('', `Their own words, newest first (${got.evidence.length} pieces, evidence through ${String(got.evidence_through).slice(0, 10)}):`, '');
+      for (const e of got.evidence) {
+        lines.push(`**${e.kind} · ${String(e.at).slice(0, 10)}** (${e.label})`);
+        lines.push(String(e.text).slice(0, 1800), '');
+      }
+      lines.push('Record the reading with action "set": type, a line under 160 characters, and the sources you actually used.');
+      return text(lines.join('\n'));
+    }
+
+    if (action === 'set') {
+      // The watermark comes from a live gather, never from the caller: it has to
+      // describe the evidence that was read, or staleness can never be detected.
+      const got = await gatherProgramEvidence(input.company_id);
+      if (!got) return text(`No company ${input.company_id}.`);
+      const saved = await setProgramProfile(input.company_id, {
+        type: input.type,
+        line: input.line || null,
+        sources: Array.isArray(input.sources) ? input.sources : got.evidence.map(e => ({ kind: e.kind, at: e.at, label: e.label })),
+        evidence_through: got.evidence_through,
+      });
+      return text(`Recorded for **${saved.name}**: ${programLine(saved.program_profile) || PROGRAM_TYPES[input.type].label}`);
+    }
+
+    return text(`Unknown action "${action}". Use needs | list | evidence | set.`);
+  } catch (e) {
+    return text(`Programme profile failed: ${e.message}`);
+  }
+}
+
 module.exports = [
   {
     name: 'b2b_template',
@@ -977,6 +1054,21 @@ module.exports = [
       },
     },
     handler: handleAbReport,
+  },
+  {
+    name: 'b2b_program_profile',
+    description: "What an LGBTQ+ org's OWN gender-affirming programme looks like — a standing closet, gear by request or appointment, periodic events, or nothing they hold themselves — in one line the Outreach panel shows above \"Where this stands\" and the advisor is given before it drafts. Read it before a call so you know whether you are talking to somewhere with an open door, a mail-out, or a pop-up. Three actions: `needs` (orgs holding evidence whose profile is missing or overtaken by newer evidence), `evidence` (everything the org itself said, from its donation survey write-up, call recordings and its own replies), `set` (record the reading). No model runs anywhere in this: you read the evidence and make the call. Never read a programme off their website — that is marketing copy, and an org with nothing on record stays `unknown`, which is the honest answer.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: "'needs' (default) | 'list' | 'evidence' | 'set'." },
+        company_id: { type: 'string', description: 'b2b_companies id slug. Required for evidence and set.' },
+        type: { type: 'string', description: "set: standing_closet | by_request | events | no_program | unknown." },
+        line: { type: 'string', description: 'set: one scannable sentence under 160 characters saying what they actually run. Omit for unknown.' },
+        sources: { type: 'array', description: 'set: which pieces of evidence the reading rests on, as [{kind, at}] where kind is survey | call | email. Defaults to everything gathered.', items: { type: 'object' } },
+      },
+    },
+    handler: handleProgramProfile,
   },
   {
     name: 'b2b_vetting',

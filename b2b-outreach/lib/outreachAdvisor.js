@@ -260,6 +260,15 @@ function renderDonationFacts(donation, company) {
  * the reverse reading would open a first email to a stranger as if they were
  * an established partner.
  */
+// Programme types as a sentence the advisor can act on, rather than a slug it
+// has to interpret. Mirrors PROGRAM_TYPES in programProfile.js.
+const PROGRAM_TYPE_SENTENCE = {
+  standing_closet: 'they run a standing closet people can come to.',
+  by_request: 'gear goes out on request, by appointment, by mail or handed over privately by staff — there is no open door.',
+  events: 'they distribute at periodic events or pop-ups; nothing stands between them.',
+  no_program: 'they hold and distribute nothing themselves (they may still refer people on, or want product for something else).',
+};
+
 function describeEnrichFacts(facts) {
   if (!facts || typeof facts !== 'object' || !Object.keys(facts).length) return null;
   const notes = [];
@@ -340,6 +349,23 @@ function renderContext({ company, contacts, messages, donation }, queueEntry, st
   }
   if (company.order_count) lines.push(`Orders: ${company.order_count} (total $${company.total_sales || 0}, last ${company.last_order_date || '—'})`);
   if (company.program_flags && Object.keys(company.program_flags).length) lines.push(`Programs: ${JSON.stringify(company.program_flags)}`);
+  // What THEIR programme looks like, read from what they told us (survey write-up,
+  // a call, their own replies) — never from their website. Given to the advisor
+  // for the same reason donation counts are (2026-08-11): where our records can
+  // answer a question we are about to put to a partner, the record goes in the
+  // context. An org running a standing closet and an org that hands gear out by
+  // appointment need different emails, and the advisor was asking them both the
+  // same question. Absent means unread, which is why it says so rather than
+  // being left out — silence here would read as "they run nothing".
+  const prog = company.program_profile;
+  if (prog && prog.type && prog.type !== 'unknown') {
+    const asOf = (prog.sources || []).map(s => s.at).filter(Boolean).sort().pop();
+    lines.push(`Their own programme: ${PROGRAM_TYPE_SENTENCE[prog.type] || prog.type}`
+      + `${prog.line ? ` ${prog.line}` : ''}`
+      + `${asOf ? ` (what they told us as of ${String(asOf).slice(0, 10)} — say so as of then, not as if it still holds)` : ''}`);
+  } else if (company.relationship_type === 'lgbtq_org') {
+    lines.push(`Their own programme: not on record. We have not read what they run, which is NOT the same as them running nothing — do not assert either way.`);
+  }
   // Rendered separately from Programs, and labelled as observation rather than
   // relationship. "Programs" means what this org is IN with us; these are notes
   // read off their own website by an automated pass, about an org we may never
