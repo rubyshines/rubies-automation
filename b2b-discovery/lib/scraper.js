@@ -298,7 +298,24 @@ async function scrapeUrl(url, verbose = false) {
   return { html, method };
 }
 
-async function scrapeProspect(websiteUrl, verbose = false) {
+/**
+ * A stored `website` is not reliably a URL. Discovery writes full URLs, but the
+ * inbound strip writes the bare sender domain ('bluemountainclinic.org') and
+ * the sheet import wrote whatever was typed. Puppeteer refuses a scheme-less
+ * string outright ("Cannot navigate to invalid URL"), and worse, `new URL`
+ * throwing on one silently skipped the social-media guard below. Pure.
+ */
+function toScrapeUrl(website) {
+  const raw = String(website || '').trim();
+  if (!raw) return '';
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+}
+
+async function scrapeProspect(website, verbose = false) {
+  const websiteUrl = toScrapeUrl(website);
+  if (!websiteUrl) {
+    return { content: '', rawHtmlByPage: {}, pagesScraped: 0, method: 'failed', error: 'no website given' };
+  }
   // Skip social media / non-scrapable domains
   try {
     const hostname = new URL(websiteUrl).hostname.replace(/^www\./, '');
@@ -397,6 +414,7 @@ async function scrapeProspect(websiteUrl, verbose = false) {
 
 module.exports = {
   scrapeProspect,
+  toScrapeUrl,
   fetchPage,
   puppeteerFetch,
   isUsableContent,

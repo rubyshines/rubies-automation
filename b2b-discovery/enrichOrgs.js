@@ -22,6 +22,10 @@
  * queue stays a `b2b_triage` decision per the standing rule that supply is let
  * in cohort by cohort; this only supplies the facts that decision needs.
  *
+ * Also a library: `enrichCompany(sb, row)` is the per-row work, called here in
+ * a concurrency loop and by the inbound-admit background finisher so a company
+ * seeded one at a time gets the same location the batch would have written.
+ *
  * Usage:
  *   node b2b-discovery/enrichOrgs.js [--execute] [--limit N] [--concurrency N]
  *                                    [--source S] [--company ID] [--retry-failed]
@@ -246,10 +250,125 @@ function buildEnrichNotes({ analysis, geo, geoApprox, scrapeError, thinContent }
   return parts.join(' | ').slice(0, 400);
 }
 
-async function fetchTargets(sb, { limit, source, companyId, retryFailed }) {
+// ── One row's enrichment ────────────────────────────────────────────────────
+// The batch run above and the single-company callers (inbound admit) must not
+// enrich differently — a location written by one path and not the other is the
+// same class of drift the shared queue functions exist to prevent. So the work
+// lives here and the CLI worker below is a loop with a progress log around it.
+//
+// Every outcome is written to the row: a failure recorded as `enrich_status` is
+// retryable and visible, where a thrown error is neither. Only an unexpected
+// error escapes, for the caller to log.
+//
+// The analyzer is written for LGBTQ+ orgs and this runs for retailers too. The
+// part we are actually after — transcribe the address the site publishes,
+// never infer one — is not org-specific, and the org-facts it returns for a
+// store read true or false-by-absence rather than wrong.
+
+/**
+ * Scrape → analyze → geocode → write, for one company row.
+ *
+ * @param {object} sb Supabase client
+ * @param {object} row a b2b_companies row carrying at least the columns
+ *   `fetchTargets` selects (id, name, website, contact fields, location).
+ * @returns {Promise<object>} { status, notes, update, geo, geoApprox, analysis,
+ *   thinChars, verification } — `status` is the stored `enrich_status`.
+ */
+async function enrichCompany(sb, row) {
+  const stamp = () => new Date().toISOString();
+
+  if (!row.website || !identifyingDomain(row.website)) {
+    const notes = row.website ? `website is a non-identifying domain: ${row.website}` : 'no website on record';
+    await sb.from('b2b_companies').update({
+      enriched_at: stamp(), enrich_status: 'no_website', enrich_notes: notes,
+    }).eq('id', row.id);
+    return { status: 'no_website', notes, update: null };
+  }
+
+  const scrape = await scrapeProspect(row.website);
+  if (scrape.error || !scrape.content) {
+    const notes = buildEnrichNotes({ scrapeError: scrape.error || 'no content extracted' });
+    await sb.from('b2b_companies').update({
+      enriched_at: stamp(), enrich_status: 'scrape_failed', enrich_notes: notes,
+    }).eq('id', row.id);
+    return { status: 'scrape_failed', notes, update: null, scrapeError: scrape.error || 'no content' };
+  }
+
+  const contacts = findContacts(scrape.rawHtmlByPage || {});
+  const analysis = await analyzeOrg({ orgName: row.name, website: row.website, content: scrape.content });
+
+  if (analysis.analysisStatus === 'failed') {
+    const notes = buildEnrichNotes({ analysis });
+    await sb.from('b2b_companies').update({
+      enriched_at: stamp(), enrich_status: 'analysis_failed', enrich_notes: notes,
+    }).eq('id', row.id);
+    return { status: 'analysis_failed', notes, update: null, analysis };
+  }
+
+  // A stated street address is the answer we want. Failing that, many orgs
+  // publish only a service area ("serving the Greater Kansas City area"), and
+  // for the question this run exists to answer — which state is this org in —
+  // that is a perfectly good answer. It is kept strictly separate from a real
+  // address; see buildCompanyUpdate.
+  //
+  // Both lookups are constrained to the country the org says it operates from.
+  // Free text is full of place names that belong to somewhere else: an
+  // unconstrained service area put a German org in Minnesota.
+  const bias = countryBias(analysis, row);
+  let geo = null;
+  let geoApprox = null;
+  let geocodeError = null;
+  try {
+    const addressQuery = buildGeocodeQuery(analysis);
+    if (addressQuery) geo = await geocode(addressQuery, { country: bias });
+    if (!geo && analysis.serviceAreaText) geoApprox = await geocode(analysis.serviceAreaText, { country: bias });
+  } catch (geoErr) {
+    geocodeError = geoErr.message;
+  }
+
+  // A geocode that lands in a different country than the org states is wrong,
+  // whatever the API's confidence. Refuse it rather than write it.
+  const crossCountry = crossCountryReject({ geo, geoApprox, bias, statedRegion: analysis.basedInRegion });
+  if (crossCountry) {
+    await sb.from('b2b_companies').update({
+      enriched_at: stamp(), enrich_status: 'conflict', enrich_notes: crossCountry.slice(0, 400),
+    }).eq('id', row.id);
+    return { status: 'conflict', notes: crossCountry, update: null, analysis, geocodeError };
+  }
+
+  const thinChars = scrape.content.length < MIN_CONTENT_CHARS ? scrape.content.length : null;
+
+  const update = buildCompanyUpdate({ company: row, analysis, contacts, geo, geoApprox });
+  if (!geo && !geoApprox) update.enrich_status = thinChars ? 'scrape_thin' : 'no_address';
+  update.enrich_notes = buildEnrichNotes({ analysis, geo, geoApprox, thinContent: thinChars });
+
+  const { error: upErr } = await sb.from('b2b_companies').update(update).eq('id', row.id);
+  if (upErr) throw new Error(upErr.message);
+
+  // A scraped address goes into the book verified, so a round built on this
+  // cohort never needs a separate verification pass first. Fail-soft:
+  // enrichment's job is done whether or not the probe succeeds.
+  let verification = null;
+  if (update.general_email) {
+    const { verifyEmail } = require('../b2b-outreach/lib/emailVerify');
+    verification = await verifyEmail(sb, update.general_email, { source: 'enrich' });
+  }
+
+  return {
+    status: update.enrich_status, notes: update.enrich_notes, update,
+    geo, geoApprox, analysis, thinChars, verification, geocodeError,
+  };
+}
+
+/**
+ * The rows to enrich. `anyChannel` drops the org filter for a single named
+ * company: the batch run is an org cohort, but a retailer admitted from the
+ * inbound strip needs a location for exactly the same reason an org does.
+ */
+async function fetchTargets(sb, { limit, source, companyId, retryFailed, anyChannel = false }) {
   let q = sb.from('b2b_companies')
-    .select('id,name,website,general_email,contact_form_url,phone,description,program_flags,enrich_facts,city,region,country,source,enrich_status')
-    .eq('relationship_type', 'lgbtq_org');
+    .select('id,name,website,general_email,contact_form_url,phone,description,program_flags,enrich_facts,city,region,country,source,enrich_status');
+  if (!anyChannel) q = q.eq('relationship_type', 'lgbtq_org');
 
   if (companyId) {
     q = q.eq('id', companyId);
@@ -321,109 +440,47 @@ async function main() {
       const secs = () => `[${((Date.now() - started) / 1000).toFixed(1)}s]`;
 
       try {
-        if (!row.website || !identifyingDomain(row.website)) {
-          await sb.from('b2b_companies').update({
-            enriched_at: new Date().toISOString(),
-            enrich_status: 'no_website',
-            enrich_notes: row.website ? `website is a non-identifying domain: ${row.website}` : 'no website on record',
-          }).eq('id', row.id);
+        const r = await enrichCompany(sb, row);
+        if (r.geocodeError) console.log(`${tag} → geocode error: ${r.geocodeError}`);
+
+        if (r.status === 'no_website') {
           counts.no_website++;
           console.log(`${tag} → no usable website ${secs()}`);
           continue;
         }
-
-        const scrape = await scrapeProspect(row.website);
-        if (scrape.error || !scrape.content) {
-          const notes = buildEnrichNotes({ scrapeError: scrape.error || 'no content extracted' });
-          await sb.from('b2b_companies').update({
-            enriched_at: new Date().toISOString(), enrich_status: 'scrape_failed', enrich_notes: notes,
-          }).eq('id', row.id);
+        if (r.status === 'scrape_failed') {
           counts.scrape_failed++;
-          console.log(`${tag} → scrape failed (${scrape.error || 'no content'}) ${secs()}`);
+          console.log(`${tag} → scrape failed (${r.scrapeError}) ${secs()}`);
           continue;
         }
-
-        const contacts = findContacts(scrape.rawHtmlByPage || {});
-        const analysis = await analyzeOrg({ orgName: row.name, website: row.website, content: scrape.content });
-
-        if (analysis.analysisStatus === 'failed') {
-          await sb.from('b2b_companies').update({
-            enriched_at: new Date().toISOString(), enrich_status: 'analysis_failed',
-            enrich_notes: buildEnrichNotes({ analysis }),
-          }).eq('id', row.id);
+        if (r.status === 'analysis_failed') {
           counts.analysis_failed++;
-          console.log(`${tag} → ANALYSIS FAILED (${analysis.failureReason}) ${secs()}`);
+          console.log(`${tag} → ANALYSIS FAILED (${r.analysis?.failureReason}) ${secs()}`);
           continue;
         }
-
-        // A stated street address is the answer we want. Failing that, many
-        // orgs publish only a service area ("serving the Greater Kansas City
-        // area"), and for the question this run exists to answer — which state
-        // is this org in — that is a perfectly good answer. It is kept
-        // strictly separate from a real address; see buildCompanyUpdate.
-        //
-        // Both lookups are constrained to the country the org says it operates
-        // from. Free text is full of place names that belong to somewhere else:
-        // an unconstrained service area put a German org in Minnesota.
-        const bias = countryBias(analysis, row);
-        let geo = null;
-        let geoApprox = null;
-        try {
-          const addressQuery = buildGeocodeQuery(analysis);
-          if (addressQuery) geo = await geocode(addressQuery, { country: bias });
-          if (!geo && analysis.serviceAreaText) geoApprox = await geocode(analysis.serviceAreaText, { country: bias });
-        } catch (geoErr) {
-          console.log(`${tag} → geocode error: ${geoErr.message}`);
-        }
-
-        // A geocode that lands in a different country than the org states is
-        // wrong, whatever the API's confidence. Refuse it rather than write it.
-        const crossCountry = crossCountryReject({ geo, geoApprox, bias, statedRegion: analysis.basedInRegion });
-        if (crossCountry) {
-          await sb.from('b2b_companies').update({
-            enriched_at: new Date().toISOString(), enrich_status: 'conflict',
-            enrich_notes: crossCountry.slice(0, 400),
-          }).eq('id', row.id);
+        if (r.status === 'conflict') {
           counts.conflict++;
-          console.log(`${tag} → CONFLICT: ${crossCountry} ${secs()}`);
+          console.log(`${tag} → CONFLICT: ${r.notes} ${secs()}`);
           continue;
         }
 
-        const thin = scrape.content.length < MIN_CONTENT_CHARS ? scrape.content.length : null;
-
-        const update = buildCompanyUpdate({ company: row, analysis, contacts, geo, geoApprox });
-        if (!geo && !geoApprox) {
-          update.enrich_status = thin ? 'scrape_thin' : 'no_address';
-        }
-        update.enrich_notes = buildEnrichNotes({ analysis, geo, geoApprox, thinContent: thin });
-
-        const { error: upErr } = await sb.from('b2b_companies').update(update).eq('id', row.id);
-        if (upErr) throw new Error(upErr.message);
-
-        // A scraped address goes into the book verified, so a round built on
-        // this cohort never needs a separate verification pass first. Fail-soft:
-        // enrichment's job is done whether or not the probe succeeds.
-        if (update.general_email) {
-          const { verifyEmail } = require('../b2b-outreach/lib/emailVerify');
-          const v = await verifyEmail(sb, update.general_email, { source: 'enrich' });
-          if (v?.status === 'undeliverable') {
-            console.log(`${tag}   general_email ${update.general_email} verified UNDELIVERABLE (${v.reason || '?'})`);
-          }
+        if (r.verification?.status === 'undeliverable') {
+          console.log(`${tag}   general_email ${r.update.general_email} verified UNDELIVERABLE (${r.verification.reason || '?'})`);
         }
 
-        const hit = geo || geoApprox;
+        const hit = r.geo || r.geoApprox;
         if (hit) {
-          if (geo) counts.located++; else counts.located_approx++;
+          if (r.geo) counts.located++; else counts.located_approx++;
           if (hit.region) foundStates[hit.region] = (foundStates[hit.region] || 0) + 1;
           const moved = row.region && row.region !== hit.region ? ` (was ${row.region})` : '';
           console.log(
-            `${tag} → ${[hit.city, hit.region, hit.country_code].filter(Boolean).join(', ')}${geoApprox ? ' ~approx' : ''}${moved}` +
-            `${update.general_email ? ` | ${update.general_email}` : ''}` +
-            `${analysis.runsClothingProgram ? ' | CLOTHING PROGRAM' : ''} ${secs()}`
+            `${tag} → ${[hit.city, hit.region, hit.country_code].filter(Boolean).join(', ')}${r.geoApprox ? ' ~approx' : ''}${moved}` +
+            `${r.update.general_email ? ` | ${r.update.general_email}` : ''}` +
+            `${r.analysis.runsClothingProgram ? ' | CLOTHING PROGRAM' : ''} ${secs()}`
           );
-        } else if (thin) {
+        } else if (r.thinChars) {
           counts.scrape_thin++;
-          console.log(`${tag} → only ${thin} chars scraped, inconclusive ${secs()}`);
+          console.log(`${tag} → only ${r.thinChars} chars scraped, inconclusive ${secs()}`);
         } else {
           counts.no_address++;
           console.log(`${tag} → no address or service area on site ${secs()}`);
@@ -466,6 +523,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  enrichCompany, fetchTargets,
   buildCompanyUpdate, buildEnrichNotes, nameLooksLikeDomainSlug,
   countryBias, crossCountryReject, buildGeocodeQuery, sameRegion,
   COUNTRY_NAME_TO_CODE, UNCOVERED_PRIORITY,

@@ -7,6 +7,30 @@ const {
   buildEnrichNotes,
   nameLooksLikeDomainSlug,
 } = require('../../b2b-discovery/enrichOrgs');
+const { toScrapeUrl } = require('../../b2b-discovery/lib/scraper');
+
+// ── What we hand the scraper ────────────────────────────────────────────────
+// `website` holds whatever each intake path wrote. Discovery writes URLs; the
+// inbound strip writes the bare sender domain, and that row is exactly the one
+// enrichment now runs against.
+
+test('a bare domain is scraped as https, and a real URL is left alone', () => {
+  assert.equal(toScrapeUrl('bluemountainclinic.org'), 'https://bluemountainclinic.org');
+  assert.equal(toScrapeUrl('https://bluemountainclinic.org/about'), 'https://bluemountainclinic.org/about');
+  assert.equal(toScrapeUrl('HTTP://lgbtcenters.org'), 'HTTP://lgbtcenters.org');
+  assert.equal(toScrapeUrl('  bluemountainclinic.org  '), 'https://bluemountainclinic.org');
+});
+
+test('nothing to scrape stays empty rather than becoming the URL https://', () => {
+  assert.equal(toScrapeUrl(null), '');
+  assert.equal(toScrapeUrl('   '), '');
+});
+
+test('a normalized bare domain reaches the social-media guard', () => {
+  // The guard reads the hostname off a parsed URL. When a bare domain threw in
+  // the parser, every one of these slipped past it and got scraped.
+  assert.equal(new URL(toScrapeUrl('facebook.com/someorg')).hostname, 'facebook.com');
+});
 
 // ── The evidence guard ───────────────────────────────────────────────────────
 // This is what stops a recalled address becoming a routing decision, so it gets

@@ -5713,6 +5713,34 @@ main { height: calc(100vh - 56px); }
 .outreach-inbound-add { color: var(--teal); border-color: var(--teal); }
 .outreach-inbound-add:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
 
+/* An admit in flight. The whole row dims so the answer to "did my click do
+   anything" is visible without reading the button, and every control on it is
+   disabled so a second click can't admit the same company twice. */
+.outreach-inbound-row.is-busy { opacity: 0.55; cursor: progress; }
+.outreach-inbound-btn:disabled,
+.outreach-inbound-btn:disabled:hover {
+  cursor: progress;
+  color: var(--text-tertiary);
+  border-color: var(--border);
+  background: var(--surface);
+}
+.outreach-inbound-add:disabled,
+.outreach-inbound-add:disabled:hover { color: var(--teal); border-color: var(--teal); }
+.outreach-inbound-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .outreach-inbound-spinner { animation: none; }
+}
+
 /* Activity feed rows */
 .outreach-dir {
   font-size: 13px;

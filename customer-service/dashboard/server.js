@@ -3021,7 +3021,7 @@ async function apiB2bInboundAdmit(body = {}) {
   return admitInboundSender(getSupabaseClient(), {
     domain: body.domain, name: body.name, email: body.email,
     contact_name: body.contact_name || null, channel: body.channel || 'lgbtq_org',
-    country: body.country || null,
+    country: body.country || null, city: body.city || null, region: body.region || null,
   });
 }
 

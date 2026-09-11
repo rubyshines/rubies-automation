@@ -6502,6 +6502,13 @@ function outreachInboundStripHtml() {
 // state; a row disappears from the set with the candidate itself.
 const outreachInboundExpanded = new Set();
 
+// Which strip rows have an action in flight, and which one. Admitting takes a
+// second or two (company, contact, Gmail threads), and a button that neither
+// moves nor disables for that long reads as broken — the row stayed put, so
+// the honest next move was a second click, which admitted the company twice.
+// domain → 'adding' | 'ignoring'.
+const outreachInboundBusy = new Map();
+
 function toggleInboundExpand(domain) {
   if (outreachInboundExpanded.has(domain)) outreachInboundExpanded.delete(domain);
   else outreachInboundExpanded.add(domain);
@@ -6509,6 +6516,7 @@ function toggleInboundExpand(domain) {
 }
 
 function outreachInboundRowHtml(c) {
+  const busy = outreachInboundBusy.get(c.domain) || null;
   const channelLabel = OUTREACH_CHANNEL_LABELS[c.channel] || c.channel;
   const when = new Date(c.last_seen).toLocaleDateString('en-US', {
     timeZone: 'America/New_York', month: 'short', day: 'numeric',
@@ -6517,24 +6525,27 @@ function outreachInboundRowHtml(c) {
   const expanded = outreachInboundExpanded.has(c.domain);
   // Reading the message IS the triage, so the whole row toggles it — the
   // controls that do something else (name field, buttons) stop the click.
+  const place = [c.city, c.region, c.country].filter(Boolean).join(', ');
   return `
-  <div class="queue-item outreach-row outreach-inbound-row" data-domain="${esc(c.domain)}"
+  <div class="queue-item outreach-row outreach-inbound-row${busy ? ' is-busy' : ''}" data-domain="${esc(c.domain)}"
        onclick="toggleInboundExpand(this.dataset.domain)">
     <div class="queue-item-inner">
       <div class="queue-item-row1">
         <input class="outreach-inbound-name" id="inbound-name-${esc(c.domain)}"
-               value="${esc(c.inferred_name)}" onclick="event.stopPropagation()"
+               value="${esc(c.inferred_name)}" onclick="event.stopPropagation()" ${busy ? 'disabled' : ''}
                title="Company name — becomes the record's id, fix it before adding" />
         ${c.pitch ? '<span class="badge outreach-inbound-pitch" title="The message reads like someone selling TO us, not a store or org — double-check, then Ignore">vendor pitch?</span>' : ''}
         ${c.customer_orders ? `<span class="badge outreach-inbound-customer" title="This address has placed retail orders with us — probably a customer replying from work, not a store. Reply from Gmail, then Ignore">customer · ${c.customer_orders} order${c.customer_orders === 1 ? '' : 's'}</span>` : ''}
         <span class="outreach-channel-chip outreach-channel-${esc(c.channel)}">${esc(channelLabel)}</span>
       </div>
-      <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}${c.country ? ` &middot; ${esc(c.country)}` : ''}</div>
+      <div class="outreach-row-reason">${who} &middot; ${esc(when)}${c.message_count > 1 ? ` &middot; ${c.message_count} messages` : ''}${place ? ` &middot; ${esc(place)}` : ''}</div>
       ${c.subject ? `<div class="outreach-row-snippet">${esc(c.subject)}${expanded ? '' : ' <span class="outreach-inbound-more">&mdash; click to read</span>'}</div>` : ''}
       ${expanded && c.body ? `<div class="outreach-inbound-body">${intakeParse.renderEmailText(c.body)}</div>` : ''}
       <div class="queue-item-row2 outreach-inbound-actions">
-        <button class="outreach-inbound-btn outreach-inbound-add" data-domain="${esc(c.domain)}" onclick="outreachInboundAdmit(this.dataset.domain); event.stopPropagation()">Add</button>
-        <button class="outreach-inbound-btn" data-domain="${esc(c.domain)}" onclick="outreachInboundDismiss(this.dataset.domain); event.stopPropagation()">Ignore</button>
+        <button class="outreach-inbound-btn outreach-inbound-add" data-domain="${esc(c.domain)}" ${busy ? 'disabled' : ''}
+                onclick="outreachInboundAdmit(this.dataset.domain); event.stopPropagation()">${busy === 'adding' ? '<span class="outreach-inbound-spinner"></span>Adding&hellip;' : 'Add'}</button>
+        <button class="outreach-inbound-btn" data-domain="${esc(c.domain)}" ${busy ? 'disabled' : ''}
+                onclick="outreachInboundDismiss(this.dataset.domain); event.stopPropagation()">${busy === 'ignoring' ? 'Ignoring&hellip;' : 'Ignore'}</button>
       </div>
     </div>
   </div>`;
@@ -6542,38 +6553,75 @@ function outreachInboundRowHtml(c) {
 
 async function outreachInboundAdmit(domain) {
   const c = outreachInbound.find(x => x.domain === domain);
-  if (!c) return;
+  if (!c || outreachInboundBusy.has(domain)) return;
   const nameInput = document.getElementById(`inbound-name-${domain}`);
   const name = (nameInput?.value || c.inferred_name).trim();
+  // Paint the row busy BEFORE the request: the wait is the company write, the
+  // contact and the Gmail thread import, and the operator has to be able to
+  // see that their click landed.
+  outreachInboundBusy.set(domain, 'adding');
+  renderOutreachQueue();
   try {
     const res = await api('/api/b2b/inbound/admit', {
       method: 'POST',
-      body: { domain, name, email: c.sender_email, contact_name: c.sender_name, channel: c.channel, country: c.country || null },
+      body: {
+        domain, name, email: c.sender_email, contact_name: c.sender_name, channel: c.channel,
+        country: c.country || null, city: c.city || null, region: c.region || null,
+      },
     });
+    outreachInboundBusy.delete(domain);
     outreachInbound = outreachInbound.filter(x => x.domain !== domain);
     if (res.warning) showToast(res.warning);
     // The company is real now — reload so it appears in the queue proper
     // (Tier 1 if they were waiting on us) and open it.
     pendingOutreachRestore = res.id;
     loadOutreachQueue();
+    // The server is still writing the summary and scraping their site for an
+    // address. Re-read the company as those land so the panel fills itself in
+    // rather than waiting for a reload.
+    if (res.background === 'started') pollAdmittedCompany(res.id);
   } catch (err) {
+    outreachInboundBusy.delete(domain);
+    renderOutreachQueue();
     showToast(`Add failed: ${err.message}`);
   }
 }
 
+// The background half of an admit (relationship summary, then a Puppeteer
+// scrape of their site → Sonnet → geocode) takes tens of seconds and has no
+// completion signal to subscribe to. Three checks, stopping as soon as the
+// location lands, and only while the operator still has the company open.
+const ADMIT_POLL_DELAYS_MS = [15000, 20000, 25000];
+
+function pollAdmittedCompany(companyId, step = 0) {
+  if (step >= ADMIT_POLL_DELAYS_MS.length) return;
+  setTimeout(async () => {
+    if (outreachSelectedId !== companyId) return;
+    await loadOutreachContext(companyId, false);
+    if (outreachSelectedId !== companyId) return;
+    const c = outreachHistory?.company;
+    if (c && (c.city || c.region)) return; // located — nothing left to wait for
+    pollAdmittedCompany(companyId, step + 1);
+  }, ADMIT_POLL_DELAYS_MS[step]);
+}
+
 async function outreachInboundDismiss(domain) {
   const c = outreachInbound.find(x => x.domain === domain);
-  if (!c) return;
+  if (!c || outreachInboundBusy.has(domain)) return;
   const nameInput = document.getElementById(`inbound-name-${domain}`);
+  outreachInboundBusy.set(domain, 'ignoring');
+  renderOutreachQueue();
   try {
     await api('/api/b2b/inbound/dismiss', {
       method: 'POST',
       body: { domain, name: (nameInput?.value || c.inferred_name).trim() },
     });
     outreachInbound = outreachInbound.filter(x => x.domain !== domain);
-    renderOutreachQueue();
   } catch (err) {
     showToast(`Ignore failed: ${err.message}`);
+  } finally {
+    outreachInboundBusy.delete(domain);
+    renderOutreachQueue();
   }
 }
 

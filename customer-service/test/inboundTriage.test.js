@@ -120,14 +120,30 @@ test('inferred name is a readable title-cased guess', () => {
 test('enrichment parse accepts a clean answer and normalizes null country', () => {
   assert.deepEqual(
     parseEnrichment('{"org_name": "Blue Mountain Clinic", "country": "United States"}'),
-    { org_name: 'Blue Mountain Clinic', country: 'United States', pitch: false });
+    { org_name: 'Blue Mountain Clinic', country: 'United States', city: null, region: null, pitch: false });
   assert.deepEqual(
     parseEnrichment('Here you go: {"org_name": "Le JAG", "country": null}'),
-    { org_name: 'Le JAG', country: null, pitch: false });
+    { org_name: 'Le JAG', country: null, city: null, region: null, pitch: false });
   // the string "null" is a model tic, not a country
   assert.deepEqual(
     parseEnrichment('{"org_name": "Le JAG", "country": "null"}'),
-    { org_name: 'Le JAG', country: null, pitch: false });
+    { org_name: 'Le JAG', country: null, city: null, region: null, pitch: false });
+});
+
+test('enrichment parse carries a stated city and region, and treats a missing one as null', () => {
+  assert.deepEqual(
+    parseEnrichment('{"org_name": "Blue Mountain Clinic", "country": "United States", "city": "Missoula", "region": "Montana"}'),
+    { org_name: 'Blue Mountain Clinic', country: 'United States', city: 'Missoula', region: 'Montana', pitch: false });
+  // A signature with no address is the normal case, not a parse failure.
+  const bare = parseEnrichment('{"org_name": "Le JAG", "country": "France", "city": null, "region": "null"}');
+  assert.equal(bare.city, null);
+  assert.equal(bare.region, null);
+  assert.equal(bare.org_name, 'Le JAG', 'a missing location never costs us the name');
+  // Junk in a location field is dropped, and never blocks the row.
+  const junk = parseEnrichment(`{"org_name": "Le JAG", "city": "${'x'.repeat(120)}", "region": ""}`);
+  assert.equal(junk.city, null);
+  assert.equal(junk.region, null);
+  assert.equal(junk.org_name, 'Le JAG');
 });
 
 test('the pitch flag only reads literal true — a spam guess fails toward showing the row normally', () => {
