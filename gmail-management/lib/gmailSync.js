@@ -38,12 +38,33 @@ function parseAddressList(headerValue) {
  * Strip quoted/replied content from an email body. Multi-locale: handles
  * English "On ... wrote:", Danish "Den ... skrev :", French "Le ... a écrit :",
  * German "Am ... schrieb :", and the usual Outlook / forwarded markers.
- * Keeps only the new content in this message.
+ * Keeps only the new content in this message — INCLUDING how the person signed
+ * it.
+ *
+ * The library's own `getVisibleText()` drops two different things under one
+ * word: the quoted chain (which is someone else's text, and rightly goes) and
+ * the sender's signature block (which is theirs, and must stay). It classified
+ * "Cheers,\nLynn Raridon" as signature, so the stored body ended mid-thought at
+ * "...float is past the team" and the person's own name never reached the
+ * database. Every inbound email in `email_messages` has been losing its sign-off
+ * this way, which costs us in two places at once: the CS advisor never sees the
+ * name the customer just signed, and `contactDetails.js` harvests the name and
+ * job title of a B2B contact out of exactly the block that was being deleted.
+ *
+ * So: keep every fragment that is not quoted. A signature is content.
  */
 function stripQuotedContent(body) {
   if (!body || typeof body !== 'string') return body;
   try {
-    return new EmailReplyParser().read(body).getVisibleText().trim();
+    const parsed = new EmailReplyParser().read(body);
+    const kept = parsed.getFragments().filter(f => !f.isQuoted());
+    // Joined the way the library joins its own output (newline between
+    // fragments, trailing tildes dropped), so nothing downstream sees a
+    // different shape of whitespace than it did before.
+    const text = kept.join('\n').replace(/~*$/, '').trim();
+    // A message that is nothing but a quoted chain has no new content; fall
+    // back rather than return empty, which is what the old call would have done.
+    return text || parsed.getVisibleText().trim();
   } catch {
     return body;
   }

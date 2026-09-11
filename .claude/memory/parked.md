@@ -8,6 +8,13 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 Minimum entry is title + Parked date + Domains. Everything else is optional. See CLAUDE.md Memory Protocol for the lifecycle (captured → discussed → planned → executing → validated).
 
+## Re-sync stored Gmail bodies so the signatures come back
+- Parked: 2026-09-11
+- Domains: b2b_sales, cs, tech
+- Type: idea
+- Priority: medium
+- Notes: `stripQuotedContent` was deleting every sender's signature block before storage (fixed 2026-09-11), so mail already in `email_messages` / `b2b_messages` is still truncated — the Forbidden Fruit reply stops before "Cheers, Lynn Raridon". New mail is fine. A re-fetch through `gmail-management/sync/backfillGmail.js` would restore the sign-offs, after which `scripts/backfillContactDetails.js` would find names, titles and addresses it currently cannot see (the first sweep filled 75 contacts and 16 company addresses working with truncated bodies). Weigh against Gmail API cost/rate limits and the fact that it rewrites stored bodies.
+
 ## Commitments in the daily sync digest
 - Parked: 2026-09-11
 - Domains: b2b_sales, tech

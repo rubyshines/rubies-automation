@@ -19,18 +19,18 @@ const EXECUTE = process.argv.includes('--execute');
 // notes carry the bespoke-arrangement facts the advisor must know (locked
 // 2026-06-10: bespoke arrangements live as profile notes, not schema).
 const ORGS = [
-  { id: 'transgender-victoria', name: 'Transgender Victoria', country: 'Australia', email: 'ez@tgv.org.au', full_name: 'Ez Lowes', role: 'program_coordinator', title: 'Affirmation Station Manager', status: 'qualified_lead', notes: 'Donation-routing partner-in-progress (15-msg thread in corpus).' },
-  { id: 'fenway-health', name: 'Fenway Health', city: 'Boston', region: 'MA', country: 'USA', email: 'cskaggs@fenwayhealth.org', full_name: 'Courtney Skaggs', role: 'program_coordinator', title: 'Trans Health Program', status: 'active_partner', notes: 'BESPOKE ARRANGEMENT: active gift-card program (~$720 outstanding as of Jun 2026). Advisor must know this before drafting.' },
-  { id: 'gr-trans-foundation', name: 'GR Trans Foundation', city: 'Grand Rapids', region: 'MI', country: 'USA', email: 'info@grtransfoundation.org', full_name: 'Gage', role: 'program_coordinator', status: 'active_partner', notes: 'BESPOKE ARRANGEMENT: annual discount-code program ("partner in this program"). Advisor must know this before drafting.' },
-  { id: 'lumenus-foundation', name: 'Lumenus Foundation', city: 'Toronto', region: 'ON', country: 'Canada', email: 'lchampion@lumenus.ca', full_name: 'Laura Champion', role: 'program_coordinator', status: 'active_partner', notes: 'Recurring Pride event partner.' },
-  { id: 'socirc', name: 'SoCirC', country: 'Canada', email: 'rachel@socirc.ca', full_name: 'Rachel David', role: 'program_coordinator', status: 'active_partner', notes: 'Pride party performer/partner; $500 donation history.' },
-  { id: 'tdsb-gsd-team', name: 'TDSB Gender & Sexual Diversity Team', city: 'Toronto', region: 'ON', country: 'Canada', email: 'ilana.david@tdsb.on.ca', full_name: 'Ilana David', role: 'program_coordinator', status: 'qualified_lead', notes: 'Event amplification partner.' },
-  { id: 'colage', name: 'COLAGE', country: 'USA', email: 'katyc@colage.org', full_name: 'Katy Chatel', role: 'program_coordinator', status: 'lead', notes: 'Inbound event-donation requester.' },
-  { id: 'montgomery-pride-united', name: 'Montgomery Pride United', city: 'Montgomery', region: 'AL', country: 'USA', email: 'lorelei@montgomeryprideunited.org', full_name: 'Lorelei', role: 'program_coordinator', status: 'qualified_lead', notes: 'Onboarding in progress (met 2026-06-04).' },
-  { id: 'unity-conejo', name: 'Unity Conejo', region: 'CA', country: 'USA', email: 'jess@unityconejo.org', full_name: 'Jess', role: 'program_coordinator', status: 'qualified_lead', notes: 'Partnership discussion in progress.' },
-  { id: 'thprojekt', name: 'THProjekt', country: 'Germany', email: 'thprojekt@gmx.net', full_name: 'Billy', role: 'program_coordinator', status: 'active_partner', notes: 'Donation closet partner — signed agreement Apr 2026.' },
-  { id: 'mcminnville-trans-network', name: 'McMinnville Trans Network', region: 'OR', country: 'USA', email: null, full_name: null, role: null, status: 'lead', notes: 'Return-routing destination referenced in corpus; no direct thread or email yet — company row only.' },
-  { id: 'carleton-cusa', name: 'Carleton CUSA Gender & Sexuality Resource Centre', city: 'Ottawa', region: 'ON', country: 'Canada', email: 'eman.elnaidany1@cusaonline.ca', full_name: 'Eman Elnaidany', role: 'program_coordinator', status: 'active_partner', notes: 'Human contact behind the gsrc@ alias already in b2b_contacts.' },
+  { id: 'transgender-victoria', name: 'Transgender Victoria', country: 'Australia', email: 'ez@tgv.org.au', full_name: 'Ez Lowes', title: 'Affirmation Station Manager', status: 'qualified_lead', notes: 'Donation-routing partner-in-progress (15-msg thread in corpus).' },
+  { id: 'fenway-health', name: 'Fenway Health', city: 'Boston', region: 'MA', country: 'USA', email: 'cskaggs@fenwayhealth.org', full_name: 'Courtney Skaggs', title: 'Trans Health Program', status: 'active_partner', notes: 'BESPOKE ARRANGEMENT: active gift-card program (~$720 outstanding as of Jun 2026). Advisor must know this before drafting.' },
+  { id: 'gr-trans-foundation', name: 'GR Trans Foundation', city: 'Grand Rapids', region: 'MI', country: 'USA', email: 'info@grtransfoundation.org', full_name: 'Gage', status: 'active_partner', notes: 'BESPOKE ARRANGEMENT: annual discount-code program ("partner in this program"). Advisor must know this before drafting.' },
+  { id: 'lumenus-foundation', name: 'Lumenus Foundation', city: 'Toronto', region: 'ON', country: 'Canada', email: 'lchampion@lumenus.ca', full_name: 'Laura Champion', status: 'active_partner', notes: 'Recurring Pride event partner.' },
+  { id: 'socirc', name: 'SoCirC', country: 'Canada', email: 'rachel@socirc.ca', full_name: 'Rachel David', status: 'active_partner', notes: 'Pride party performer/partner; $500 donation history.' },
+  { id: 'tdsb-gsd-team', name: 'TDSB Gender & Sexual Diversity Team', city: 'Toronto', region: 'ON', country: 'Canada', email: 'ilana.david@tdsb.on.ca', full_name: 'Ilana David', status: 'qualified_lead', notes: 'Event amplification partner.' },
+  { id: 'colage', name: 'COLAGE', country: 'USA', email: 'katyc@colage.org', full_name: 'Katy Chatel', status: 'lead', notes: 'Inbound event-donation requester.' },
+  { id: 'montgomery-pride-united', name: 'Montgomery Pride United', city: 'Montgomery', region: 'AL', country: 'USA', email: 'lorelei@montgomeryprideunited.org', full_name: 'Lorelei', status: 'qualified_lead', notes: 'Onboarding in progress (met 2026-06-04).' },
+  { id: 'unity-conejo', name: 'Unity Conejo', region: 'CA', country: 'USA', email: 'jess@unityconejo.org', full_name: 'Jess', status: 'qualified_lead', notes: 'Partnership discussion in progress.' },
+  { id: 'thprojekt', name: 'THProjekt', country: 'Germany', email: 'thprojekt@gmx.net', full_name: 'Billy', status: 'active_partner', notes: 'Donation closet partner — signed agreement Apr 2026.' },
+  { id: 'mcminnville-trans-network', name: 'McMinnville Trans Network', region: 'OR', country: 'USA', email: null, full_name: null, status: 'lead', notes: 'Return-routing destination referenced in corpus; no direct thread or email yet — company row only.' },
+  { id: 'carleton-cusa', name: 'Carleton CUSA Gender & Sexuality Resource Centre', city: 'Ottawa', region: 'ON', country: 'Canada', email: 'eman.elnaidany1@cusaonline.ca', full_name: 'Eman Elnaidany', status: 'active_partner', notes: 'Human contact behind the gsrc@ alias already in b2b_contacts.' },
 ];
 
 (async () => {
@@ -65,7 +65,6 @@ const ORGS = [
       email,
       company_id: org.id,
       full_name: org.full_name || null,
-      role: org.role || null,
       title: org.title || null,
       is_primary: true,
       is_active: true,

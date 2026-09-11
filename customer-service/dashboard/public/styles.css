@@ -6064,6 +6064,9 @@ main { height: calc(100vh - 56px); }
   margin: 8px 0 10px;
 }
 .outreach-company-meta a { text-decoration: none; }
+/* A parcel address keeps its own line breaks, and stays selectable in one
+   sweep so it can be pasted into a shipping form as written. */
+.outreach-company-address { white-space: pre-line; }
 .outreach-contact-row {
   display: flex;
   flex-direction: column;

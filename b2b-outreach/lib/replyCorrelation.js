@@ -383,6 +383,27 @@ async function correlateInbound(msg) {
     }
   }
 
+  // 5b. Who wrote this. A person signs their replies with their name and often
+  // their job title, and until now nothing read it: the book held 13 titles
+  // against 284 active contacts, so the templates greeted most of them "Hi
+  // there," and the advisor could not say who it was writing to. Same claim as
+  // the closer above — only the worker that actually inserted the message
+  // extracts, so redelivery cannot double-spend it — and the same fail-soft
+  // rule, since a missing title is the status quo and a failed correlation is
+  // not. Fill-only inside: a signature never overwrites what is already on
+  // file. Machine mail is excluded because an auto-responder's signature
+  // belongs to whoever set it up, not to the person we write to.
+  let contact_details = null;
+  if (!duplicate && !inboundType) {
+    const { harvestContactDetails } = require('./contactDetails');
+    contact_details = await harvestContactDetails(sb, {
+      company_id: companyId, sender, subject, body: body_text,
+    });
+    if (contact_details) {
+      console.log(`[correlate] ${sender}: filled ${contact_details.filled.join(', ')} from their signature`);
+    }
+  }
+
   // 6. Gmail read state. Machine mail the engine just consumed (a bounce is
   // already queue work, an RSVP already sits on the meeting row, an
   // out-of-office asks nothing) and a thread the closer just concluded need no
@@ -408,6 +429,7 @@ async function correlateInbound(msg) {
     departure,
     thankyou_closed,
     reopened,
+    contact_details,
     read_state,
     looks_like_order: looksLikeOrder(body_text || ''),
   };

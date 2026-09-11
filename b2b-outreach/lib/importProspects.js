@@ -151,7 +151,6 @@ function planProspect(p, index, { now = new Date() } = {}) {
     website: cleanUrl(p.website) || p.website || null,
     general_email: email,
     contact_form_url: form,
-    phone: String(p.phone || '').trim() || null,
     address: String(p.address || '').trim() || null,
     city, region, country,
     // The researcher's profile is the best "About" we hold for a store we have

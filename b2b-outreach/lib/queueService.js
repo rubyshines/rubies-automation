@@ -1230,7 +1230,7 @@ async function fetchCompanyThreads(sb, companyId) {
     // UI entirely: you could not see who you used to write to, could not check
     // the claim that their history was kept, and could not undo a wrong click.
     sb.from('b2b_contacts')
-      .select('email, full_name, role, title, is_primary, is_active, bounced_at')
+      .select('email, full_name, title, is_primary, is_active, bounced_at')
       .eq('company_id', companyId)
       .order('is_active', { ascending: false })
       .order('is_primary', { ascending: false }),
