@@ -16,11 +16,21 @@ fall back to a token from `.env`: `GH_TOKEN="$(grep -E '^(GH_TOKEN|GITHUB_TOKEN)
 1. On a non-`main` branch (a `wt/<name>` worktree under `~/Code/rubies-repo/worktrees/<name>`) with ≥1 commit
    ahead of `origin/main`. If on `main`, refuse — nothing to ship (the main checkout is a read-only mirror).
 2. Working tree committed. If there are uncommitted **feature** changes, commit them first with the standard
-   `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer. **Stage only the feature
+   `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>` trailer. **Stage only the feature
    files** — `git add <paths>`, **never `git add -A`** — a worktree holds preview scaffolding (the
-   `node_modules`/`.env` symlinks, copied `.claude/commands/*.md`) that must not land in the PR.
+   `node_modules` and `.env` symlinks) that must not land in the PR.
 3. **Tests green**: `node --test customer-service/test/*.test.js` — all pass before shipping. (Rebase on
    `origin/main` first if behind, then re-run — see step 1 below.)
+4. **Close-out sweep — run it, don't print it.** Before the push, work through the five questions from
+   CLAUDE.md (schema applied? code wired in? tools registered? runnable/deployed? what breaks if we stop?)
+   plus the memory question (does this change what exists, how it works, a key decision, or initiative
+   progress?). This is the moment to *act*, not to narrate:
+   - Anything unfinished and small → finish it now, as part of this ship.
+   - Anything unfinished and real → write the `parked.md` entry now, before the push.
+   - A memory delta → propose it in one line, get a yes, commit it on this branch so it lands in the same
+     push (the `memory-closeout-check.js` hook enforces this at the push; don't reach for `MEMORY_REVIEWED=1`
+     until the sweep has genuinely been run).
+   Everything that comes back clean is **silent**. It does not appear in the report.
 
 ## Procedure
 1. **Sync + push**: `git fetch origin && git rebase origin/main` (resolve nothing automatically — on conflict,
@@ -61,12 +71,45 @@ fall back to a token from `.env`: `GH_TOKEN="$(grep -E '^(GH_TOKEN|GITHUB_TOKEN)
    git -C ~/Code/rubies-repo/rubies-automations worktree remove ~/Code/rubies-repo/worktrees/<name>
    ```
    (`--delete-branch` in step 3 already removed the remote branch; the local `wt/<name>` goes with the worktree.)
-7. **Report**:
+7. **Report** — see "Report discipline" below. The default, and the common case, is exactly this:
    ```
-   ✅ Shipped — PR #<n> squash-merged to main
+   ✅ Shipped — <one plain sentence: what this does for the business or the customer>
    PR:   <url>
-   Live: https://ops.rubyshines.com  (Railway deploying — ~1–2 min)
+   Live: https://ops.rubyshines.com  (deploying — live in ~1–2 min)
    ```
+
+## Report discipline
+
+Jamie ships to close a session, not to open five more. A long ship report is a session that never ends: every
+minor flag is an invitation to reply, each reply extends the thread, and the work that was actually finished
+gets buried. **The close-out sweep is a check you run and act on. The report is only the result.**
+
+**Default output: the three-line block in step 7. Nothing else.** That is the whole message for a clean ship.
+
+**`Worth knowing`** — at most three lines, appended under the block, and only when something clears this bar:
+- A step **failed or is still in doubt** (merge didn't land, Railway hasn't picked it up, a test was skipped).
+- **Scope was parked instead of shipped** — one line naming what, so it isn't a surprise later.
+- **A judgment call was made on Jamie's behalf** that he might reasonably have decided differently.
+- **Customer-facing behavior changed** in a way he'd want to watch over the next few days.
+
+If nothing clears the bar, the section does not appear. Do not invent an entry to fill it, and do not soften a
+real one into the block.
+
+**Never report** (all of this is routine, and success is assumed):
+- Worktrees — created, removed, still open, belonging to other sessions. If it's open, assume it was handled.
+- Previews, ngrok domains, ports, servers stopped or restarted.
+- Rebases, branch names, squash-merges, commit SHAs, PR titles, file or line counts.
+- Test counts when they passed. "Tests green" is a precondition, not news.
+- Memory or parked writes that Jamie already approved during the sweep.
+- Anything another session is doing.
+- A recap of the work itself. He was there for it.
+
+**Write it for a founder, not an engineer.** Plain English, no jargon: "shipped," not "squash-merged"; "the
+change is live," not "Railway redeployed from main"; say what it *does*, not which files moved. If a line needs
+Jamie to know git to parse it, rewrite the line.
+
+Only failures break this contract. A blocked merge, a conflict, or a failed deploy gets as much detail as it
+takes to fix — that is news, and it is the one thing the brevity rule is protecting space for.
 
 ## Notes
 - The branch-protection hooks (`block-main-checkout-git.js`) block direct commits/merges on the **main
