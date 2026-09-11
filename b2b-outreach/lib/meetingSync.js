@@ -187,7 +187,9 @@ async function sameCallSibling(sb, companyId, ev) {
     .gte('starts_at', new Date(start - SAME_CALL_WINDOW_MS).toISOString())
     .lt('starts_at', new Date(start + SAME_CALL_WINDOW_MS + 1).toISOString());
   if (error) throw new Error(error.message);
-  return (data || []).find(r => r.status !== 'cancelled' && r.google_event_id !== ev.google_event_id) || null;
+  // Never the ignored spare (status 'ignored', 2026-09-11): the kept row is the
+  // one whose linked ids the notes lookup reads.
+  return (data || []).find(r => r.status !== 'cancelled' && r.status !== 'ignored' && r.google_event_id !== ev.google_event_id) || null;
 }
 
 async function syncMeetings(sb, {
