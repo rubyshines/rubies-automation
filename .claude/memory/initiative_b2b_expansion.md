@@ -3,7 +3,7 @@ name: B2B Expansion
 description: Grow retailer partnerships and wholesale channel
 type: project
 domains: [b2b_sales]
-last_updated: 2026-09-09
+last_updated: 2026-09-11
 ---
 
 ## Goal
@@ -18,6 +18,7 @@ Grow retailer partnerships and wholesale revenue.
 ## Current Status
 Outreach runs on the engine end to end: nightly initiating drafts for operator review, an automatic follow-up ladder, calendar-driven meeting rows, and Gmail kept in sync both ways. Progress since go-live, newest first:
 
+- **2026-09-11 — New retailer supply is in the book, and the A/B test has a report.** Retailer plan Phases 2 and 3 shipped. The 119 qualified discovery stores had never been reachable by the engine (the pipeline ended at a spreadsheet); an importer now brings them in unvetted with the researcher's notes attached, and the panel's Vet mode admits or drops them in seconds each. **113 imported**, 6 skipped as unreachable; roughly 31 own-domain addresses, 20 free-mail, the rest form-only, so a form filler is worth revisiting once the cohort is vetted. `b2b_ab_report` replaces the hand query: as of 9 Sep the org round had 5 replies on 18 delivered (reads 22 Sep), the retailer rounds 0 on 29 (read 23 Sep). Next: vet the cohort (kept rows draft nightly), lock the round-2 intro rewording, read the A/B on 22-23 Sep, research the 416 pre-filter survivors and re-run the importer, and the affiliate decision.
 - **2026-09-09 — The retailer channel is live, round 1 sent.** The worked-but-never-converted retailer book had been invisible to the engine (unvetted, pre-engine history). Both retailer emails locked line by line with Jamie; a sample kit overrides the six-month fresh-intro rule; the unpaused retailers were vetted in one sitting and 30 sent (sampled re-approaches and cold intros), a handful handled by hand, the dead ends dropped. Kickbox went live first. Found underneath: a customer email change had silently dropped later orders from the mirror (fixed on both sync paths plus a cascade migration; see domain_tech.md). Drop/Restore joined the panel.
 - **2026-09-09 — Calendar is the record of every call.** Partner-booked calls, reschedules and RSVPs land in `b2b_meetings` from Google Calendar; no-shows are an operator outcome with a fixed reschedule template.
 - **2026-09-02 — Cold intro round 1 for orgs on a locked template** with A/B subject lines; initiating drafts machine-written, replies operator-written (see initiative_lgbtq_partnerships.md).

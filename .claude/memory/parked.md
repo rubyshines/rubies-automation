@@ -140,9 +140,10 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Priority: low
 - Notes: Form-contact companies get a normal email draft (greeting plus full signature block), which reads oddly pasted into a form with separate name and email fields. Left alone until a real one has been sent; it may want a shorter form-shaped variant. The advisor is not told the delivery channel today; `queueEntry` would be the place to pass it.
 
-## Nothing stops duplicate company rows re-appearing on the next import
+## RESOLVED 2026-09-11 — Nothing stops duplicate company rows re-appearing on the next import
 - Parked: 2026-08-11
-- Last touched: 2026-08-11
+- Last touched: 2026-09-11
+- Resolution: the discovery importer dedupes on website domain (within the channel) and prospect id at intake, and `addProspect` refuses a domain the channel already holds. The merge script stays a one-off for anything already duplicated.
 - Domains: b2b_sales, community
 - Type: idea
 - Priority: medium
@@ -155,9 +156,11 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 - Priority: medium
 - Notes: `reactivation` gates on `relationship_state === 'dormant'`, but nothing writes that value: `syncB2bCompanyState` promotes and never demotes, and the "derived at queue time" dormancy the design assumed was never built, so the branch has been unreachable since it was written (kept, with a comment, because the revival behaviour is wanted). Fix: derive dormancy in the queue from `last_order_date` vs the company's reorder threshold rather than storing a state that goes stale. Related cleanup: `in_contact` is carried by ~180 companies of which most are untouched imports; the directory derives its stage filter instead of trusting the column, which leaves the data wrong for anything else that reads it. Fix is a backfill pass (imported-and-never-contacted → a real prospect state).
 
-## B2B lead supply — remaining plan phases (vetting UI, enrichment, send rate)
+## RESOLVED 2026-09-11 — B2B lead supply — remaining plan phases (vetting UI, enrichment, send rate)
 - Parked: 2026-08-05
+- Last touched: 2026-09-11
 - Domains: b2b_sales, community, tech
+- Resolution: (2) vetting UI is the panel's Vet mode (2026-09-11); (4) CenterLink enrichment ran 2026-08-28; (5) the daily send cap and Kickbox verification are live. Still open as a decision rather than a build: whether cold B2B keeps riding rubyshines.com beside Klaviyo or moves to its own sending domain — raise before volume.
 - Type: idea (planned)
 - Priority: high
 - Notes: The original plan file was retired 2026-09-09; this entry is the spec. Phases 0, 1 and 3 shipped 2026-08-05. Remaining: (2) **vetting UI** — the panel needs keep/drop/snooze controls so the ~41 sheet retailers can be triaged; `b2b_triage` and `vetted_at` exist, only the UI is missing, and until it lands those retailers stay invisible because first touch requires `vetted_at`. (4) **CenterLink enrichment** — largely done by `b2b-discovery/enrichOrgs.js` (2026-08-28); what remains is running survivors through as vetted prospects. (5) **send rate + sender reputation** — the daily cap and pre-send address verification shipped (autoFollowUp cap, Kickbox verification at intake); the open decision is whether cold B2B keeps riding rubyshines.com alongside Klaviyo customer mail or moves to a separate sending domain.
@@ -256,11 +259,11 @@ Minimum entry is title + Parked date + Domains. Everything else is optional. See
 
 ## Unified B2B Outreach — unbuilt remainder (discovery fixes, affiliate onboarding, rename)
 - Parked: 2026-05-28
-- Last touched: 2026-07-24
+- Last touched: 2026-09-11
 - Type: idea (planned)
 - Domains: community, b2b_sales, tech
 - Priority: medium
-- Notes: The system is built and live (see domain_b2b_sales.md); the original design plan file was retired 2026-09-09 and code is truth. Deliberately unbuilt remainder: (1) discovery pipeline fixes — aiClient.js port, Haiku pre-filter for the discovery backlog, org routing fix for mis-dismissed orgs, scheduled cron; (2) affiliate onboarding flow (GoAffPro); (3) A/B variant evaluation loop; (4) wholesale→B2B rename (last, after everything is proven); (5) CS→outreach transfer tool (one-click move of a community_outreach Gorgias ticket into b2b_companies + thread; done by hand so far, automate when inbound org volume justifies it).
+- Notes: The system is built and live (see domain_b2b_sales.md); the original design plan file was retired 2026-09-09 and code is truth. Deliberately unbuilt remainder: (1) discovery pipeline fixes — aiClient.js port, Haiku pre-filter for the discovery backlog, org routing fix for mis-dismissed orgs, scheduled cron; (2) affiliate onboarding flow (GoAffPro); (3) ~~A/B variant evaluation loop~~ done 2026-09-11 (`b2b_ab_report`); (4) wholesale→B2B rename (last, after everything is proven); (5) CS→outreach transfer tool (one-click move of a community_outreach Gorgias ticket into b2b_companies + thread; done by hand so far, automate when inbound org volume justifies it).
 
 ## Audit sheet-imported B2B contact associations
 - Parked: 2026-07-24

@@ -54,6 +54,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 
 **Departure recovery:** `departureRecovery.js` is bounce recovery's sibling for "X is no longer with the organization, contact Y" notices: a narrow Sonnet extraction reads who left and the one address named, a deterministic gate accepts it only at the org's own domain or already on file, the change goes through `updateCompanyContact`, the answered send is marked undelivered with a reason, and an unedited initiating send is re-rendered from its locked template for the new recipient and scheduled through the ladder's mechanism. The nightly Bounce Replay sweeps departure notices too.
 
+**Discovery import + vetting (2026-09-11):** the discovery table feeds the book. `scripts/importRetailerProspects.js` (library `b2b-outreach/lib/importProspects.js`, dry-run default) turns a `retailer_prospects` row scored 5+ into an unvetted `prospect` retailer: one row per website domain within the channel and per prospect id (idempotent), scrape artefacts dropped at intake (template placeholders, image filenames, the page's own vendors), free-mail kept and labelled, a row with no email and no contact form skipped rather than shown. The researcher's profile becomes `description`; the angle and store type go to `enrich_facts` and render in the advisor context as our own research. `addProspect` refuses a domain the channel already holds. The panel's **Vet** sidebar mode is the admission gate as a list (unvetted prospects, best score first, contact route + Kickbox verdict + angle per row; Keep / Drop through the triage endpoint; keys k, d, j, o); `b2b_vetting` is its console twin. `b2b_ab_report` reads reply rate by subject variant per message type (14-day window, bounces out, one vote per company per type, interim while any window is open).
+
 **Inbound triage:** the "New inbound" strip closes the cold-inbound gap (`correlateInbound` can only attach mail to companies that already exist). `b2b-outreach/lib/inboundTriage.js` lists org/retailer-classified inbound matching no company, one row per identifying sender domain (free-mail senders excluded); a Haiku pass extracts org name + country, operator-reviewed in an editable field. Admission-gated like Tier-4, never auto-created: **Add** creates the company (`source: inbound_email`, warm, vetted) + contact and imports their Gmail thread so they surface at Tier 1 with no cold intro draft; **Ignore** records a lost stub row keyed on the domain. Surfaces: strip atop the panel queue, `b2b_inbound` console tool.
 
 **Contact management:** `b2b-outreach/lib/updateContact.js` handles replace / promote / retire / restore as single operations (`b2b_update_contact` console tool); retired contacts stay visible in the panel under a "former" group.
@@ -65,8 +67,8 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 ## Current Status
 
 - **Production:** Outreach live (send flag ON). Initiating drafts are generated nightly in `daily-sync-all`; the follow-up ladder sends automatically behind pre-send guards; Tier-1 replies and post-call follow-ups are operator-written in the composer. Wholesale orders working via MCP tools. Store locator live.
-- **Queue supply:** Tier-4 first touch, `re_approach`, and the `followup_1`/`followup_2` ladder all fire. Donation-form orgs admitted; the CenterLink cohort stays unvetted until enrichment. Discovery backlog researched; further retailer and community-org cohorts wait for admission.
-- **Partial:** Sheet sync exists but unclear if continuous or one-time. Duplicate rows per org are guarded in code but not fully merged in data (parked). Affiliate channel exists in the spine but no affiliate program is built. Wispr call-notes ingest not built.
+- **Queue supply:** Tier-4 first touch, `re_approach`, and the `followup_1`/`followup_2` ladder all fire. Donation-form orgs admitted; the CenterLink cohort stays unvetted until enrichment. Discovery supply: 119 qualified retailers imported 2026-09-11 (113 in the book unvetted, 6 unreachable and skipped) and waiting in the Vet mode; 416 pre-filter survivors still unresearched.
+- **Partial:** Sheet sync exists but unclear if continuous or one-time. Duplicate rows are refused at intake (domain guard, 2026-09-11); any pre-existing duplicates in data are a one-off merge. Affiliate channel exists in the spine but no affiliate program is built. Wispr call-notes ingest not built.
 
 ## Key Files
 
@@ -77,7 +79,7 @@ originSessionId: 76845f16-8454-4953-8882-a8bc486354fb
 - `b2b-outreach/lib/meetingSync.js` — calendar → `b2b_meetings` sync; `b2b-outreach/lib/companyMatch.js` — the one address → company resolution shared with inbound correlation.
 - `b2b-outreach/lib/commitments.js` — the commitments list (what Jamie owes / is waiting on) and the derived On Me flag; `b2b-outreach/lib/meetingNotes.js` + `b2b-outreach/lib/wisprClient.js` — Wispr recordings onto meeting rows and the list.
 - `b2b-outreach/lib/emailDomains.js` — single denylist for free mail, shorteners and page builders; anything matching on domain uses it.
-- `b2b-discovery/discover.js` — prospect discovery entry point (+ `prefilter.js`, `researchSurvivors.js`).
+- `b2b-discovery/discover.js` — prospect discovery entry point (+ `prefilter.js`, `researchSurvivors.js`); `scripts/importRetailerProspects.js` carries qualified rows into the book.
 - `customer-service/lib/tools/b2bOutreach.js` — console/MCP outreach tools.
 - `customer-service/lib/tools/wholesaleOrder.js` — wholesale order MCP tool; terms in `customer-service/lib/wholesaleTerms.js`.
 - `customer-service/lib/tools/storeLocator.js` — store locator MCP tools.
