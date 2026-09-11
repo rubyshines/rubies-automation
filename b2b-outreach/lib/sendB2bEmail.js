@@ -15,7 +15,7 @@
 const { getSupabaseClient } = require('../../shared/supabaseClient');
 const { isFlagEnabled } = require('../../shared/systemFlags');
 const { resolveNextActionDate, withoutStatedNextTouch } = require('./cadence');
-const { defaultReplyCc, splitAddresses } = require('./replyCc');
+const { defaultReplyCc, splitAddresses, replySubject } = require('./replyCc');
 
 const FROM_EMAIL = 'jamie@rubyshines.com';
 const SEND_FLAG = 'b2b_send_enabled';
@@ -412,7 +412,7 @@ async function sendB2bEmail(p = {}) {
     if (error) throw new Error(`thread lookup: ${error.message}`);
     thread = data;
   }
-  let subject = p.subject || (thread?.subject ? (thread.subject.startsWith('Re:') ? thread.subject : `Re: ${thread.subject}`) : null);
+  let subject = p.subject || replySubject(thread?.subject);
   if (!subject) return { ok: false, error: 'subject required for a new thread' };
 
   // Cc: a reply is a conversation with everyone on it. When the caller says

@@ -69,4 +69,20 @@ async function defaultReplyCc(sb, { thread_id, our_email }) {
   return computeReplyCc(pickReplyAnchor(data || []), our_email);
 }
 
-module.exports = { splitAddresses, pickReplyAnchor, computeReplyCc, defaultReplyCc };
+/**
+ * The subject a reply on `threadSubject` goes out with: the thread's own,
+ * prefixed "Re: " unless it already carries one. Null when there is no thread
+ * to inherit from — a brand-new email needs a subject of its own.
+ *
+ * Shared with the panel so the Subject box can show the real subject rather
+ * than a promise to inherit one. The box being pre-filled is only safe while
+ * the string it shows is the string the send path would have computed, so both
+ * read it from here. Pure.
+ */
+function replySubject(threadSubject) {
+  const s = String(threadSubject || '').trim();
+  if (!s) return null;
+  return /^re:/i.test(s) ? s : `Re: ${s}`;
+}
+
+module.exports = { splitAddresses, pickReplyAnchor, computeReplyCc, defaultReplyCc, replySubject };

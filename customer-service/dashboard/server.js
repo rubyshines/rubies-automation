@@ -3353,7 +3353,7 @@ async function apiB2bAvailability(companyId, params) {
   //   unplaced  — they named times but their zone is unknown, so nothing can
   //               be placed; these are to counter-propose
   //   open      — they named nothing; tightest against what is already booked
-  const { pickBestFits } = require('../../b2b-outreach/lib/availability');
+  const { pickBestFits, sameWallClock } = require('../../b2b-outreach/lib/availability');
   const offered = (proposed.times || []).filter(t => !t.needsTimeZone).map(t => ({
     date: t.date,
     start: t.start || null,
@@ -3368,6 +3368,19 @@ async function apiB2bAvailability(companyId, params) {
   } else if (unplaced) {
     bestFitsScope = 'unplaced';
   }
+
+  // Is their clock our clock? Comparing zone NAMES is a different question:
+  // a Toronto partner is America/Toronto against our America/New_York, both
+  // Eastern, and the name test made every label print the same number twice.
+  // Checked at BOTH ends of the window so a DST change inside it (the US and
+  // Europe switch on different dates) counts as a difference rather than
+  // being decided by whichever day happened to be sampled.
+  const span = grid.days || [];
+  const sameClock = !tz.timeZone || (span.length
+    ? span.every(d => d.slots.length === 0
+      || (sameWallClock(new Date(d.slots[0].start), tz.timeZone, grid.timeZone)
+        && sameWallClock(new Date(d.slots[d.slots.length - 1].start), tz.timeZone, grid.timeZone)))
+    : sameWallClock(new Date(), tz.timeZone, grid.timeZone));
 
   const { data: meeting } = await sb.from('b2b_meetings')
     .select('id, title, starts_at, ends_at, meet_url, html_link, their_timezone, google_event_id, booked_by')
@@ -3391,6 +3404,9 @@ async function apiB2bAvailability(companyId, params) {
     // narrowed to their offer when they made one (see bestFitsScope above).
     bestFits,
     bestFitsScope,
+    // True when their clock reads the same as ours, so every surface can drop
+    // the "(9:00 AM your time)" half rather than each deciding for itself.
+    same_wall_clock: sameClock,
     booked: meeting || null,
     proposed_times: proposed.times,
     proposed_error: proposed.error,

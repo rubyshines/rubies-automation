@@ -6705,6 +6705,7 @@ async function selectOutreachEntry(companyId) {
   outreachHistory = null;
   outreachComposeFor = null;
   outreachRecipientOverride = null;
+  closeSchedulePanel();
   // The lit To do item survives only if it belongs to the company being opened.
   if (outreachTodoHighlight && findTodo(outreachTodoHighlight)?.company_id !== companyId) outreachTodoHighlight = null;
   location.hash = `outreach-${encodeURIComponent(companyId)}`; // reload restores this company
@@ -6768,6 +6769,7 @@ function outreachAdvancePast(companyId) {
   outreachDraft = null;
   outreachComposeFor = null;        // the send settled it (or there was none)
   outreachRecipientOverride = null;
+  closeSchedulePanel();
   // Only the queue is a worklist you burn down. In the directory and the
   // activity feed the row is a fact about the company, not a task — dropping it
   // on send would make the company you just wrote to vanish from the search you
@@ -7031,8 +7033,8 @@ async function cancelBookedCall(meetingId) {
   }
   showToast(res.already ? 'That call was already cancelled.' : `Cancelled ${fmtDateTimeET(res.start)} — they get the calendar cancellation.`, 'success');
   await loadOutreachContext(companyId, false);
-  const panel = document.getElementById('outreach-schedule-panel');
-  if (panel?.dataset.open === '1') openSchedulePanel(scheduleState?.duration_minutes || 30);
+  // The calendar itself changed, so this one really does re-read it.
+  if (scheduleOpen) openSchedulePanel(scheduleState?.duration_minutes || 30);
 }
 
 /**
@@ -7239,9 +7241,8 @@ async function saveLocation() {
   showToast(res.warning ? res.warning : `Saved — ${tz}`, res.warning ? 'error' : 'success');
   hideLocationForm();
   await loadOutreachContext(companyId, false);
-  // The schedule panel labels every slot in their time — refresh it if open.
-  const panel = document.getElementById('outreach-schedule-panel');
-  if (panel?.dataset.open === '1') openSchedulePanel(scheduleState?.duration_minutes || 30);
+  // The schedule panel labels every slot in their time — re-read it if open.
+  if (scheduleOpen) openSchedulePanel(scheduleState?.duration_minutes || 30);
 }
 
 /**
@@ -7692,6 +7693,8 @@ async function loadOutreachContext(companyId, allowRefetch) {
     }
   }
   renderOutreachSidebarContext();
+  // Both branches above can replace the div the panel lives in.
+  restoreSchedulePanel();
   maybeRefreshStaleSummary(companyId, h);
   // One follow-up fetch after the background Gmail sync has had time to land.
   // Cooldowns server-side guarantee the second response can't re-trigger it.
@@ -8385,8 +8388,14 @@ function renderOutreachDetail(entry, draft) {
     </div>` : '';
   // The subject is its own placeholder; a label above a field that says what it
   // is was one more line of uppercase between you and the draft.
+  //
+  // A reply shows the REAL subject rather than a promise to inherit one
+  // ("blank inherits the thread's" is a rule you have to hold in your head
+  // instead of a subject you can read). Safe only because the string shown is
+  // the string the send path computes for a blank box — both come from
+  // replySubject() — so a pre-filled box sends exactly what an empty one did.
   const subjectInput = (autosave) => `<input type="text" id="outreach-subject-editor" class="outreach-subject"
-    placeholder="Subject (blank inherits the thread's)"${autosave ? ' oninput="queueComposerAutosave()"' : ''}>`;
+    placeholder="Subject"${autosave ? ' oninput="queueComposerAutosave()"' : ''}>`;
   const editor = (autosave, placeholder) => `
     <div class="draft-editor-wrap">
       <textarea id="outreach-draft-editor" rows="8"
@@ -8436,9 +8445,11 @@ function renderOutreachDetail(entry, draft) {
         ${editor(true, 'Type your message here. Saved as you write.')}
         <div id="outreach-autosave" class="outreach-autosave"></div>
         ${outreachAttachmentsHtml(null)}` + tail;
+    document.getElementById('outreach-subject-editor').value = outreachReplySubject();
     initOutreachDropzone();
     initOutreachMics();
     loadOutreachTemplates(entry);
+    restoreSchedulePanel();
     return;
   }
 
@@ -8471,15 +8482,17 @@ function renderOutreachDetail(entry, draft) {
       ${Number.isInteger(s.next_touch_days) ? `<div class="outreach-recipient-note">Advisor timing: next touch in about ${s.next_touch_days} days, overriding the standard cadence once this is sent. The reason is in its audit.</div>` : ''}` + tail;
 
   // Set body + subject via .value (not innerHTML) and size the body to content.
-  // A blank subject is left blank rather than prefilled: for replies the draft
-  // carries no subject and the thread's is inherited at send time.
+  // A reply's draft row carries no subject of its own, so the box shows the
+  // one the thread gives it — the same string the send path would have
+  // computed from a blank box.
   const editorEl = document.getElementById('outreach-draft-editor');
   editorEl.value = draft.body || '';
   autoExpandTextarea(editorEl);
-  document.getElementById('outreach-subject-editor').value = draft.subject || '';
+  document.getElementById('outreach-subject-editor').value = draft.subject || outreachReplySubject();
   initOutreachDropzone();
   initOutreachMics();
   if (!draft.advisor) loadOutreachTemplates(entry);
+  restoreSchedulePanel();
 }
 
 async function regenerateOutreachDraft() {
@@ -8599,6 +8612,25 @@ async function dismissOutreachDraft() {
   outreachAdvancePast(companyId); // advance to the next company in the queue
 }
 
+/**
+ * The subject a reply goes out with, for the Subject box to show.
+ *
+ * Server-computed (`compose_target.reply_subject`), from the same helper the
+ * send path uses, so what you read is what gets sent. Empty for a brand-new
+ * email, where the subject is genuinely yours to write.
+ */
+function outreachReplySubject() {
+  // A draft already pinned to a thread takes THAT thread's subject — the
+  // compose target answers "where would a new message go", which is a
+  // different thread when the draft was raised against an older one.
+  const pinned = outreachDraft?.thread_id;
+  if (pinned) {
+    const thread = (outreachHistory?.threads || []).find(t => t.id === pinned);
+    if (thread) return thread.reply_subject || '';
+  }
+  return outreachHistory?.compose_target?.reply_subject || '';
+}
+
 // Quiet recipient line under the draft — the useful part of the old preview
 // step, shown up front so Send needs no confirmation round-trip.
 function outreachRecipientHtml() {
@@ -8623,11 +8655,11 @@ function outreachRecipientHtml() {
     </div>`;
   }
 
-  // One line to read, two fields to edit. Seeing exactly who this goes to is
-  // the last check before sending — and the resolved contact is sometimes not
-  // the person you are actually answering — but it is a line you read, not a
-  // form you fill, so the inputs open on "edit" and keep their ids for the
-  // save and send paths.
+  // To and Cc are ALWAYS open, never behind an "edit" toggle (2026-09-11).
+  // Who the mail reaches is the thing most worth checking before sending, and
+  // a cc folded away is a cc nobody checks — the colleague the contact kept on
+  // the conversation is exactly the address that goes missing. They read as
+  // mail-client fields because that is what they are.
   const toOverride = outreachDraft ? outreachDraft.structured?.to : override?.to;
   const toValue = toOverride || r?.email || '';
   const ccValue = outreachDraft
@@ -8636,32 +8668,22 @@ function outreachRecipientHtml() {
   const via = !toOverride && r?.via === 'general_email' ? ' (general inbox)' : '';
 
   return `<div id="outreach-recipient" class="outreach-recipient">
-    <div class="outreach-recipient-line">
-      To <b>${toValue ? esc(toValue) : '<span class="outreach-recipient-missing">nobody on file</span>'}</b>${via}${ccValue ? ` · cc ${esc(ccValue)}` : ''}
-      · ${threaded ? 'replies in the existing thread' : 'starts a new email'}
-      <button class="outreach-link-btn" onclick="toggleOutreachRecipientEdit()">edit</button>
+    <div class="outreach-recipient-row">
+      <span class="outreach-field-label">To</span>
+      <input type="text" id="outreach-to-editor" value="${esc(toValue)}"
+        placeholder="recipient@org.org" onchange="saveOutreachRecipients()">
+      ${via ? `<span class="outreach-recipient-via">${esc(via.trim())}</span>` : ''}
     </div>
-    <div class="outreach-recipient-edit" id="outreach-recipient-edit" hidden>
-      <div class="outreach-recipient-row">
-        <span class="outreach-field-label">To</span>
-        <input type="text" id="outreach-to-editor" value="${esc(toValue)}"
-          placeholder="recipient@org.org" onchange="saveOutreachRecipients()">
-      </div>
-      <div class="outreach-recipient-row">
-        <span class="outreach-field-label">Cc</span>
-        <input type="text" id="outreach-cc-editor" value="${esc(ccValue)}"
-          placeholder="(none) — comma separated" onchange="saveOutreachRecipients()">
-      </div>
-      <div class="outreach-recipient-note">from jamie@rubyshines.com</div>
+    <div class="outreach-recipient-row">
+      <span class="outreach-field-label">Cc</span>
+      <input type="text" id="outreach-cc-editor" value="${esc(ccValue)}"
+        placeholder="nobody" onchange="saveOutreachRecipients()">
+    </div>
+    <div class="outreach-recipient-note">
+      From jamie@rubyshines.com${toValue ? '' : ' · no address on file for them yet'}
+      · ${threaded ? 'replies in the existing thread' : 'starts a new email'}
     </div>
   </div>`;
-}
-
-function toggleOutreachRecipientEdit() {
-  const el = document.getElementById('outreach-recipient-edit');
-  if (!el) return;
-  el.hidden = !el.hidden;
-  if (!el.hidden) document.getElementById('outreach-to-editor')?.focus();
 }
 
 /**
@@ -8711,19 +8733,24 @@ function scheduleDurationOptions(selected) {
     `<option value="${m}"${m === selected ? ' selected' : ''}>${m} min</option>`).join('');
 }
 
+/**
+ * Is the panel open? Kept here rather than read off `dataset.open`, because
+ * the div holding that attribute is replaced whenever the detail pane
+ * re-renders — saving a contact, recording an outcome, a background context
+ * refresh. Reading the DOM meant the panel silently closed mid-booking and the
+ * picked slot went with it: Jamie had the scheduler open, edited the contact,
+ * and the scheduler vanished (2026-09-11).
+ */
+let scheduleOpen = false;
+
 async function openSchedulePanel(duration, timezone) {
   const el = document.getElementById('outreach-schedule-panel');
   if (!el || !outreachSelectedId) return;
-  if (el.dataset.open === '1' && duration === undefined && timezone === undefined) {
-    el.dataset.open = '0';
-    el.innerHTML = '';
-    scheduleState = null;
-    scheduleSelected = null;
-    scheduleNotes = '';
-    scheduleTitle = null;
-    syncSendButtonsForSchedule();
+  if (scheduleOpen && duration === undefined && timezone === undefined) {
+    closeSchedulePanel();
     return;
   }
+  scheduleOpen = true;
   el.dataset.open = '1';
   if (scheduleState && scheduleState.company?.id !== outreachSelectedId) {
     scheduleNotes = '';
@@ -8751,6 +8778,123 @@ async function openSchedulePanel(duration, timezone) {
   } catch (err) {
     el.innerHTML = `<div class="outreach-review-note">&#9888; Could not read your calendars: ${esc(err.message)}</div>`;
   }
+}
+
+/** Shut the panel and drop everything it was holding. */
+function closeSchedulePanel() {
+  scheduleOpen = false;
+  scheduleState = null;
+  scheduleSelected = null;
+  scheduleNotes = '';
+  scheduleTitle = null;
+  const el = document.getElementById('outreach-schedule-panel');
+  if (el) { el.dataset.open = '0'; el.innerHTML = ''; }
+  syncSendButtonsForSchedule();
+}
+
+/**
+ * Put the panel back after the detail pane was redrawn, from the state already
+ * in hand — no refetch, so the picked slot, the typed agenda and the week you
+ * had scrolled to all survive. Calendars are only re-read when something
+ * actually changed them (a booking, a move, a cancel), which those paths ask
+ * for themselves.
+ */
+function restoreSchedulePanel() {
+  if (!scheduleOpen) return;
+  const el = document.getElementById('outreach-schedule-panel');
+  if (!el) return;
+  // A company switch clears the panel rather than showing another company's
+  // calendar read under this one's name.
+  if (scheduleState && scheduleState.company?.id !== outreachSelectedId) { closeSchedulePanel(); return; }
+  el.dataset.open = '1';
+  if (scheduleState) renderSchedulePanel();
+  syncSendButtonsForSchedule();
+}
+
+/**
+ * What they offered, as a phrase rather than a row of chips.
+ *
+ * Their message is the CONSTRAINT on the list of times, not a second list of
+ * times. Stating it in words is what let the panel drop the duplicate day-by-day
+ * chip rows (2026-09-11) — and it keeps a claim we cannot place ("2pm", zone
+ * unknown) as the words they used, never silently widened to "they offered that
+ * day", which is a larger claim than the one they made.
+ */
+function scheduleOfferText(s) {
+  /** "09:00" -> "9:00 AM", for a wall-clock time we could not place in a zone. */
+  const wall = (hhmm) => {
+    const [h, m] = String(hhmm).split(':').map(Number);
+    if (!Number.isFinite(h)) return '';
+    return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  };
+  // Days are grouped by the WORDS they used, so "Mon 3-5, Tue 3-5, Wed 3-5"
+  // reads as "Mon Sept 14, Tue Sept 15, Wed Sept 16 3:00 PM-5:00 PM" — one
+  // offer, which is what it was.
+  const byWhen = new Map();
+  for (const t of (s.proposed_times || [])) {
+    const day = t.dayLabel || t.date || '';
+    let when;
+    if (t.needsTimeZone) {
+      when = t.wallClock && t.wallClockEnd ? `${wall(t.wallClock)}-${wall(t.wallClockEnd)} their time`
+        : t.wallClock ? `from ${wall(t.wallClock)} their time`
+          : t.wallClockEnd ? `until ${wall(t.wallClockEnd)} their time` : '';
+    } else if (t.start && !t.isRange) when = t.label;
+    else if (t.start && t.end) when = `${t.label}-${t.endLabel}`;
+    else if (t.start) when = `from ${t.label}`;
+    else if (t.end) when = `until ${t.endLabel}`;
+    else when = 'any time';
+    if (!when && !day) continue;
+    if (!byWhen.has(when)) byWhen.set(when, []);
+    const days = byWhen.get(when);
+    if (day && !days.includes(day)) days.push(day);
+  }
+  return [...byWhen.entries()].map(([when, days]) =>
+    [days.join(', '), when].filter(Boolean).join(' ').trim()).filter(Boolean);
+}
+
+/**
+ * The windows they offered, as the engine's `within` shape, or null when they
+ * named nothing placeable. Same derivation the server uses to constrain the
+ * suggestion list, so the week grid cannot disagree with the list above it
+ * about which times they can actually do.
+ */
+function scheduleOfferedWindows(s) {
+  const duration = (s?.duration_minutes || 30) * 60000;
+  const out = (s?.proposed_times || [])
+    .filter(t => !t.needsTimeZone && (t.start || t.end))
+    .map(t => ({
+      date: t.date,
+      start: t.start || null,
+      end: t.end || (t.start && !t.isRange ? new Date(Date.parse(t.start) + duration).toISOString() : null),
+    }));
+  return out.length ? out : null;
+}
+
+/** Does this slot fit inside one of those windows? Mirrors availability.slotWithin. */
+function scheduleSlotOffered(slot, date, windows) {
+  const t0 = Date.parse(slot.start);
+  const t1 = Date.parse(slot.end);
+  return windows.some(w => {
+    if (w.date && w.date !== date) return false;
+    if (w.start && t0 < Date.parse(w.start)) return false;
+    if (w.end && t1 > Date.parse(w.end)) return false;
+    return true;
+  });
+}
+
+/**
+ * The same reason on every row, said once above them. A label that works in a
+ * column ("first thing") does not work in a sentence ("Each is the first
+ * thing"), so the two forms are written out rather than glued together.
+ */
+function sharedReasonText(reason) {
+  if (!reason) return '';
+  return {
+    'first thing': 'Each is the first slot of the day.',
+    'earliest inside their window': 'Each is the earliest slot inside the window they gave.',
+    'earliest that suits them': 'Each is the earliest slot that lands in their working day.',
+    'earliest free': 'Each is the earliest free slot of the day.',
+  }[reason] || `Each sits ${reason}.`;
 }
 
 function renderSchedulePanel() {
@@ -8782,190 +8926,99 @@ function renderSchedulePanel() {
     ? `${esc(s.their_timezone.replace(/_/g, ' '))} <span class="schedule-tz-source">${esc(s.their_timezone_source)}</span>`
     : '<span class="schedule-tz-unknown">unknown — set it to see their local time</span>';
 
-  // Three kinds of suggestion: an exact instant is clickable as-is; a window
-  // ("after 1pm", "until 5:30") opens the free grid slots that fit inside it;
-  // a bare day opens the whole day.
-  // A fourth kind: times they stated in a zone nobody knows (a US org with no
-  // usable region). They cannot be placed on the grid, so they are shown as
-  // the words they used — not silently widened to "they offered this day",
-  // which is a different and larger claim than the one they made.
-  const named = [];
-  const windows = [];
-  const dayHints = [];
-  const zoneless = [];
-  for (const t of (s.proposed_times || [])) {
-    if (t.needsTimeZone) zoneless.push(t);
-    else if (t.start && !t.isRange) named.push(t);
-    else if (t.start || t.end) windows.push(t);
-    else dayHints.push(t);
-  }
+  // Their clock against ours, decided by the server at both ends of the window
+  // rather than by comparing zone NAMES — America/Toronto and America/New_York
+  // are two names for the same Eastern clock, and the name test printed every
+  // time twice for a Toronto partner.
+  const sameZone = s.same_wall_clock !== undefined
+    ? !!s.same_wall_clock
+    : (!s.their_timezone || s.their_timezone === s.timezone);
 
-  // Their local time is only worth printing when it differs from ours. For a
-  // Toronto org it is the same number twice, which reads as noise.
-  const sameZone = !s.their_timezone || s.their_timezone === s.timezone;
+  // ONE list of times, not two. Their offer used to render as a row per day of
+  // clickable chips AND again as a ranked strip of best fits directly beneath —
+  // the same slots, twice, in two shapes (2026-09-11). What they said is a
+  // CONSTRAINT, so it now reads as a sentence, and the times are a single
+  // ranked list: slots against a booking first, then the earliest hour of an
+  // open day. The engine ranks them; nothing is decided here.
+  const offerText = scheduleOfferText(s);
+
+  // A slot the engine could not place is not a slot — it is words they used.
+  const unplaceable = (s.proposed_times || []).some(t => t.needsTimeZone);
+
+  const lead = {
+    offered: 'Times that fit what they offered',
+    counter: 'None of their times are free',
+    unplaced: 'Set their timezone to use the times they gave',
+    open: 'Times to offer',
+  }[s.bestFitsScope || 'open'];
+
+  const sub = {
+    offered: offerText.length ? `They said ${offerText.join(', ')}.` : '',
+    counter: offerText.length
+      ? `They said ${offerText.join(', ')}, and none of it is open. Counter with one of these.`
+      : 'Counter with one of these.',
+    unplaced: offerText.length
+      ? `They said ${offerText.join(', ')}, which needs their timezone to place. Counter with one of these meanwhile.`
+      : 'Counter with one of these.',
+    open: 'They named no times, so these are yours to pick from.',
+  }[s.bestFitsScope || 'open'];
 
   /**
-   * One row per DAY, in the same shape as the availability grid below.
-   *
-   * Named times used to render as full-width buttons while a whole-day offer
-   * rendered as a label-plus-chips row — two layouts for the same kind of thing,
-   * and two times on 1 September took two rows. Grouping by day makes the
-   * formatting consistent by construction: the day is on the left, its clickable
-   * times are on the right, exactly as in the grid.
+   * Why this slot ranks where it does. Tier 0 already carries the engine's
+   * words ("right after Le JAG"); tier 1 got there by being the earliest hour
+   * that survived, and WHICH filter it survived is the useful part — 12:00 for
+   * a Pacific partner is not "the earliest", it is the earliest that is not
+   * 6am for them.
    */
-  const byDate = new Map();
-  const entryFor = (t) => {
-    if (!byDate.has(t.date)) byDate.set(t.date, { date: t.date, times: [], windows: [], zoneless: [], wholeDay: false, dayLabel: t.dayLabel });
-    return byDate.get(t.date);
-  };
-  for (const t of named) entryFor(t).times.push(t);
-  for (const w of windows) entryFor(w).windows.push(w);
-  for (const z of zoneless) entryFor(z).zoneless.push(z);
-  for (const h of dayHints) entryFor(h).wholeDay = true;
-
-  /** "09:00" → "9:00 AM", for wall-clock times we could not place in a zone. */
-  const wallClockLabel = (hhmm) => {
-    const [h, m] = String(hhmm).split(':').map(Number);
-    return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  const fitReason = (f) => {
+    if (f.tier === 0 || f.reason) return f.reason || 'next to a booking';
+    if (f.order === 0) return 'first thing';
+    if (s.bestFitsScope === 'offered') return 'earliest inside their window';
+    return s.their_timezone ? 'earliest that suits them' : 'earliest free';
   };
 
-  // A chip that sits right against something already booked is tinted and says
-  // so on hover — the grouping preference, without reordering their offer.
-  const slotChip = (start, label, { busy, busyWith, unsociable, reason, score } = {}) =>
-    `<button class="schedule-slot${busy ? ' is-busy' : ''}${unsociable ? ' is-unsociable' : ''}${!busy && score <= 1 ? ' is-fit' : ''}${scheduleSelected?.start === start ? ' is-selected' : ''}"
-      ${busy ? `disabled title="Busy — ${esc(busyWith || '')}"` : `onclick="selectScheduleSlot('${esc(start)}')"${reason ? ` title="${esc(reason)}"` : ''}`}
-      >${esc(label)}</button>`;
+  // When every row would carry the SAME reason it explains nothing and just
+  // repeats down the column — it belongs in the line above, once.
+  const reasons = (s.bestFits || []).map(fitReason);
+  const sharedReason = reasons.length > 1 && reasons.every(r => r === reasons[0]) ? reasons[0] : null;
 
-  const durationMs = (s.duration_minutes || 30) * 60000;
+  const fitRows = (s.bestFits || []).map(f => `
+    <button class="schedule-pick${scheduleSelected?.start === f.start ? ' is-selected' : ''}${f.unsociableForThem ? ' is-unsociable' : ''}"
+      onclick="selectScheduleSlot('${esc(f.start)}')">
+      <span class="schedule-pick-day">${esc(f.dayLabel || '')}</span>
+      <span class="schedule-pick-time">${esc(f.label)}</span>
+      <span class="schedule-pick-why">${sharedReason ? '' : esc(fitReason(f))}</span>
+      ${!sameZone && f.theirLabel
+        ? `<span class="schedule-pick-theirs">${esc(f.theirLabel)} for them${f.unsociableForThem ? ', outside their day' : ''}</span>`
+        : f.unsociableForThem ? '<span class="schedule-pick-theirs">outside their day</span>' : ''}
+    </button>`).join('');
 
-  const suggestionRows = [...byDate.values()]
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-    .map(entry => {
-      const day = (s.days || []).find(d => d.date === entry.date);
-      const label = esc(day?.label || entry.dayLabel || entry.date);
+  // Nothing to offer at all. The empty state says which of the two reasons it
+  // is, because "their times are all taken" and "your fortnight is full" need
+  // different actions from the operator.
+  const emptyNote = s.proposed_error
+    ? 'Could not read times from their last message. Pick from the week below.'
+    : unplaceable && !offerText.length
+      ? 'They named times in a timezone we do not know yet. Set it above, or pick from the week below.'
+      : 'Nothing free in the next two weeks. Pick from the week below, or widen the length.';
 
-      // Times in an unknown zone: say what they said, and what unlocks it.
-      if (entry.zoneless.length && !entry.times.length && !entry.windows.length && !entry.wholeDay) {
-        const said = entry.zoneless.map(z =>
-          z.wallClock && z.wallClockEnd ? `${wallClockLabel(z.wallClock)}–${wallClockLabel(z.wallClockEnd)}`
-            : z.wallClock ? `from ${wallClockLabel(z.wallClock)}`
-            : z.wallClockEnd ? `until ${wallClockLabel(z.wallClockEnd)}` : null).filter(Boolean).join(', ');
-        return `<div class="schedule-day schedule-day-offered">
-          <div class="schedule-day-label">${label}<span class="schedule-hint">they're free ${esc(said)} their time</span></div>
-          <div class="schedule-day-body"><span class="schedule-hint">Their timezone is unknown, so these can't be placed on the grid yet. Set it above and the matching slots appear here.</span></div>
-        </div>`;
-      }
+  const proposedHtml = `
+    <div class="schedule-pick-block">
+      <div class="schedule-pick-lead">${esc(lead)}</div>
+      ${sub || sharedReason
+        ? `<div class="schedule-pick-sub">${esc([sub, sharedReasonText(sharedReason)].filter(Boolean).join(' '))}</div>`
+        : ''}
+      ${fitRows
+        ? `<div class="schedule-picks">${fitRows}</div>`
+        : `<div class="schedule-pick-empty">${esc(emptyNote)}</div>`}
+    </div>`;
 
-      // The meeting has to FIT inside the window: start no earlier than its
-      // start, end (start + duration) no later than its end. An unstated bound
-      // is open.
-      const inWindow = sl => entry.windows.some(w => {
-        const t0 = Date.parse(sl.start);
-        if (w.start && t0 < Date.parse(w.start)) return false;
-        if (w.end && t0 + durationMs > Date.parse(w.end)) return false;
-        return true;
-      });
-
-      // When the panel picks slots ITSELF (whole-day or window expansion) it
-      // assumes they work 9-5 their zone and offers only those — 7 AM their
-      // time reads as careless. If their whole workday misses ours (Germany,
-      // Australia), fall back to every free slot, annotated, rather than an
-      // empty row. Times they NAMED are never filtered.
-      const offerable = sls => {
-        const free = sls.filter(sl => !sl.busy);
-        const sociable = free.filter(sl => !sl.outsideTheirWorkday);
-        return sociable.length ? sociable : free;
-      };
-
-      // A whole-day offer opens up every free slot on it; a window opens the
-      // free slots inside it; named times show only what they actually named.
-      let chips;
-      if (entry.wholeDay) {
-        chips = offerable(day?.slots || [])
-          .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem, reason: sl.reason, score: sl.score }));
-      } else {
-        const namedStarts = new Set(entry.times.map(t => t.start));
-        chips = entry.times.map(t => {
-          const state = findSlotState(t.start);
-          return slotChip(t.start, t.label, { busy: state.busy, busyWith: state.busyWith, unsociable: state.unsociableForThem, reason: state.reason, score: state.score });
-        }).concat(entry.windows.length
-          ? offerable(day?.slots || [])
-              .filter(sl => !namedStarts.has(sl.start) && inWindow(sl))
-              .map(sl => slotChip(sl.start, sl.label, { unsociable: sl.unsociableForThem, reason: sl.reason, score: sl.score }))
-          : []);
-      }
-
-      const windowText = entry.windows.map(w =>
-        w.label && w.endLabel ? `${w.label}–${w.endLabel}`
-          : w.label ? `from ${w.label}`
-          : w.endLabel ? `until ${w.endLabel}` : null)
-        .filter(Boolean).join(', ');
-      const note = entry.wholeDay ? 'they offered this day'
-        : windowText ? `they're free ${esc(windowText)}` : 'they suggested';
-
-      const theirParts = [
-        ...entry.times.map(t => t.theirLabel),
-        ...entry.windows.map(w =>
-          w.theirLabel && w.theirEndLabel ? `${w.theirLabel}–${w.theirEndLabel}`
-            : w.theirLabel ? `from ${w.theirLabel}`
-            : w.theirEndLabel ? `until ${w.theirEndLabel}` : null),
-      ].filter(Boolean);
-      const theirs = !sameZone && theirParts.length
-        ? `<span class="schedule-hint">${theirParts.map(esc).join(', ')} their time</span>` : '';
-
-      if (!chips.length) {
-        return `<div class="schedule-day schedule-day-offered">
-          <div class="schedule-day-label">${label}<span class="schedule-hint">${note}</span></div>
-          <div class="schedule-day-body"><span class="schedule-hint">nothing free that day</span></div>
-        </div>`;
-      }
-      return `<div class="schedule-day schedule-day-offered">
-        <div class="schedule-day-label">${label}<span class="schedule-hint">${note}</span></div>
-        <div class="schedule-day-body">
-          <div class="schedule-slots">${chips.join('')}</div>
-          ${theirs}
-        </div>
-      </div>`;
-    });
-
-  const suggestions = suggestionRows;
-
-  const proposedHtml = suggestions.length ? `
-    <div class="schedule-proposed">
-      <div class="schedule-label">They suggested</div>
-      ${suggestions.join('')}
-    </div>` : (s.proposed_error
-      ? `<div class="schedule-hint">Could not read times from their last message — pick from the grid.</div>`
-      : '');
-
-  // Their offer comes first when there is one, and the week is ALWAYS under
-  // it. It was folded behind a "none of these work" toggle, which hid the one
-  // thing the week is for: checking their offer against what is already booked
-  // before clicking (2026-09-09). The week is a different view of the same
-  // days, not a duplicate of their rows, so nothing repeats.
-
-  // The slots to offer first: one per day that already holds a call, the one
-  // sitting tightest against it. Jamie stacks calls rather than opening a
-  // second hole in a day. Scored by the engine, never here.
-  // The label says what the fits are relative to. "Best" against your own
-  // calendar is not best when they told you when they are free.
-  const fitsLabel = {
-    offered: 'Best fits inside what they offered',
-    counter: 'None of their times are free. Best fits to counter-propose',
-    unplaced: 'Their times can\'t be placed until their timezone is set. Best fits to counter-propose',
-    open: 'Best fits, tight against something already booked',
-  }[s.bestFitsScope || 'open'];
-  const fitsHtml = (s.bestFits || []).length ? `
-    <div class="schedule-fits-label">${esc(fitsLabel)}</div>
-    <div class="schedule-fits">${s.bestFits.map(f => `
-      <button class="schedule-fit${scheduleSelected?.start === f.start ? ' is-selected' : ''}${f.unsociableForThem ? ' is-unsociable' : ''}"
-        onclick="selectScheduleSlot('${esc(f.start)}')"
-        title="${esc(f.theirLabel && !sameZone ? `${f.theirLabel} their time` : '')}${f.unsociableForThem ? ' (outside their 8am–8pm)' : ''}">
-        <span class="schedule-fit-when">${esc(f.dayLabel)} ${esc(f.label)}</span>
-        <span class="schedule-fit-why">${esc(f.reason || '')}</span>
-      </button>`).join('')}</div>` : '';
-
-  const grid = fitsHtml + renderScheduleWeek(s, sameZone);
+  // The week is ALWAYS under the list, and is a different view of the same
+  // days rather than a second copy of the offer: every day at its real shape,
+  // with what is already booked drawn in. It was folded behind a "none of
+  // these work" toggle once, which hid the one thing it is for — checking a
+  // time against what is already there before clicking (2026-09-09).
+  const grid = renderScheduleWeek(s, sameZone);
 
   // The actions are ALWAYS rendered, disabled until a slot is picked. Hiding
   // them until selection meant the rehearsal button did not exist as far as a
@@ -9144,6 +9197,10 @@ function renderScheduleWeek(s, sameZone) {
   const gutter = [9, 10, 11, 12, 13, 14, 15, 16, 17].map(h =>
     `<span style="top:${(h - 9) * 2 * ROW}px">${((h + 11) % 12) + 1}${h < 12 ? 'a' : 'p'}</span>`).join('');
 
+  // The windows they gave, if any — the same shape the engine intersects with,
+  // read straight off the extracted times so the grid and the list agree.
+  const offered = scheduleOfferedWindows(s);
+
   const cols = w.days.map(d => {
     let col = `<div class="schedule-week-col${d.placeholder ? ` is-${d.placeholder}` : ''}" style="height:${height}px">`;
     for (let i = 1; i < SCHEDULE_DAY_MIN / 30; i++) {
@@ -9153,13 +9210,26 @@ function renderScheduleWeek(s, sameZone) {
       if (slot.busy) continue; // the block covers it
       const top = (scheduleMinutesIntoDay(slot.start, tz) / 30) * ROW;
       const cls = ['schedule-week-slot'];
-      if (slot.score <= 1) cls.push('is-fit');
+      // Outside what they told us they can do. Still clickable — countering is
+      // a real thing to want — but never dressed up as a good pick: the grid
+      // was highlighting 9am and 10am as prime slots against an offer that
+      // said 3-5pm, which is the "don't show me dates that don't fit them"
+      // complaint (2026-09-11). Highlighting is the claim; dimming is the
+      // truth for these.
+      const offTheirOffer = offered && !scheduleSlotOffered(slot, d.date, offered);
+      if (offTheirOffer) cls.push('is-off-offer');
+      // What "good pick" MEANS changes once they have told us when they are
+      // free: inside their window beats tight-against-a-booking, because a
+      // slot they cannot make is not a pick at all. Same story the list above
+      // tells, so the grid never highlights something the list refuses to
+      // offer.
+      else if (offered || slot.score <= 1) cls.push('is-fit');
       if (slot.unsociableForThem) cls.push('is-unsociable');
       if (scheduleSelected?.start === slot.start) cls.push('is-selected');
       const tip = [
         `${slot.label} ET`,
         slot.theirLabel && !sameZone ? `${slot.theirLabel} their time` : null,
-        slot.reason,
+        offTheirOffer ? 'outside the times they gave' : slot.reason,
         slot.unsociableForThem ? 'outside their 8am–8pm' : null,
       ].filter(Boolean).join(', ');
       col += `<button class="${cls.join(' ')}" style="top:${top}px" title="${esc(tip)}" aria-label="${esc(tip)}"
@@ -9193,10 +9263,11 @@ function renderScheduleWeek(s, sameZone) {
         <div class="schedule-week-gutter" style="height:${height}px">${gutter}</div>${cols}
       </div>
       <div class="schedule-week-legend">
-        <span class="l-fit">next to an existing booking</span>
+        <span class="l-fit">${offered ? 'inside the times they gave' : 'next to an existing booking'}</span>
         <span class="l-call">your calls</span>
         <span class="l-busy">other bookings</span>
         <span class="l-uns">outside their day</span>
+        ${offered ? '<span class="l-off">outside the times they gave</span>' : ''}
       </div>
     </div>`;
 }
